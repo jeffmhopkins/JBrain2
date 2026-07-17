@@ -63,11 +63,6 @@ _VALID_REASONING_EFFORTS = ("none", "low", "medium", "high")
 # a non-int / non-positive / bool value is dropped — a junk value must never read
 # as a window.
 LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
-# Catalog ids the operator has STAGED — the intent layer of the stage→load→unload
-# lifecycle: a model the operator wants the gateway to serve (and that the bar
-# projects RAM for) but that isn't necessarily resident yet. A list of catalog ids;
-# non-string and duplicate entries are dropped on read (order preserved).
-LLM_LOCAL_STAGED_KEY = "llm_local_staged"
 # Catalog ids the operator has asked to PROVISION (download + enable) from the PWA,
 # but that aren't on the box yet — the install queue. The update one-shot reads this
 # (owner-scoped, via jbrain.cli) and provisions the union of it, the current
@@ -556,17 +551,6 @@ class SqlSettingsStore:
             current[model_id] = window
         await self.upsert(ctx, LLM_LOCAL_CONTEXT_WINDOWS_KEY, current)
         return current
-
-    async def llm_local_staged(self, ctx: SessionContext) -> list[str]:
-        """Catalog ids the operator has staged, sanitized: a non-list store, or
-        non-string / duplicate entries, are dropped (first-seen order preserved)."""
-        return _dedup_str_list(await self.get(ctx, LLM_LOCAL_STAGED_KEY, []))
-
-    async def set_llm_local_staged(self, ctx: SessionContext, ids: list[str]) -> list[str]:
-        """Replace the staged set with `ids` (sanitized like the reader); returns it."""
-        clean = _dedup_str_list(ids)
-        await self.upsert(ctx, LLM_LOCAL_STAGED_KEY, clean)
-        return clean
 
     async def llm_local_provision_requested(self, ctx: SessionContext) -> list[str]:
         """Catalog ids queued for provisioning from the PWA, sanitized like the

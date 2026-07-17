@@ -510,28 +510,6 @@ class FakeSettingsStore:
         self.values["llm_local_context_windows"] = current
         return current
 
-    async def llm_local_staged(self, ctx: object) -> list[str]:
-        raw = self.values.get("llm_local_staged", [])
-        if not isinstance(raw, list):
-            return []
-        seen: set[str] = set()
-        out: list[str] = []
-        for mid in raw:
-            if isinstance(mid, str) and mid not in seen:
-                seen.add(mid)
-                out.append(mid)
-        return out
-
-    async def set_llm_local_staged(self, ctx: object, ids: list[str]) -> list[str]:
-        seen: set[str] = set()
-        clean: list[str] = []
-        for mid in ids:
-            if isinstance(mid, str) and mid not in seen:
-                seen.add(mid)
-                clean.append(mid)
-        self.values["llm_local_staged"] = clean
-        return clean
-
     async def llm_local_provision_requested(self, ctx: object) -> list[str]:
         raw = self.values.get("llm_local_provision_requested", [])
         if not isinstance(raw, list):

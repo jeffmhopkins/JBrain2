@@ -448,7 +448,6 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 32768,
       max_context_window: 262144,
       context_window_override: null,
-      staged: false,
       kv_gb: 1.5,
     },
     {
@@ -469,7 +468,6 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 131072,
       max_context_window: 131072,
       context_window_override: null,
-      staged: false,
       kv_gb: 4.5,
     },
     {
@@ -490,7 +488,6 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 32768,
       max_context_window: 262144,
       context_window_override: null,
-      staged: false,
       kv_gb: 11.5,
     },
     {
@@ -511,7 +508,6 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 32768,
       max_context_window: 131072,
       context_window_override: null,
-      staged: false,
       kv_gb: 7,
     },
   ],
@@ -3494,21 +3490,30 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (loadMatch && method === "POST") {
     const id = decodeURIComponent(loadMatch[1] ?? "");
     const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
-    if (model) {
-      model.loaded = true;
-      model.staged = false;
-    }
+    if (model) model.loaded = true;
     return json({
       loaded: LLM_SETTINGS.local_models.filter((m) => m.loaded).map((m) => m.id),
       reachable: true,
     });
   }
-  const stageMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/stage$/);
-  if (stageMatch && (method === "POST" || method === "DELETE")) {
-    const id = decodeURIComponent(stageMatch[1] ?? "");
+  const planMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/plan-load$/);
+  if (planMatch && method === "POST") {
+    const id = decodeURIComponent(planMatch[1] ?? "");
     const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
-    if (model) model.staged = method === "POST";
-    return json(LLM_SETTINGS);
+    // A simple mock plan: the model fits with no eviction (the demo box has room).
+    return json({
+      model_id: id,
+      measured: true,
+      already_resident: model?.loaded ?? false,
+      fits: true,
+      over: false,
+      over_box: false,
+      victims: [],
+      resident_gb: 0,
+      projected_gb: (model?.disk_gb ?? model?.size_gb ?? 0) + (model?.kv_gb ?? 0),
+      ceiling_gb: 96,
+      total_gb: 128,
+    });
   }
   const installMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/install$/);
   if (installMatch && (method === "POST" || method === "DELETE")) {

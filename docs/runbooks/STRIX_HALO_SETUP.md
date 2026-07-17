@@ -145,18 +145,24 @@ and starts the gateway.
 non-swapping group member, so the gateway never auto-evicts anyone — instead, before a
 model loads, the app (`jbrain.llm.residency`) frees the **fewest** resident models needed to
 keep **≥12.5% of RAM free** after it's resident (weights + KV, measured against live
-`/proc/meminfo` so image-gen and OS pressure count too), evicting biggest-first and sparing
-staged models. So you can **stage and load any model**: a small model (Qwen3.5-0.8B/4B)
-stays hot beside gpt-oss-120b, requesting the coder evicts the *big* model — not the tiny
-one — and a model too large to co-reside evicts everything and takes the box. Whatever an
-eviction removed (also an image render freeing the LLMs, or a code session giving the coder
-the box) is **remembered and restored at end of turn**, so the box drifts back to its prior
-steady state instead of cold-loading on demand. This replaced the old all-or-nothing pin
-that co-resided ~91 GB with no headroom and drove kernel-reclaim hard-freezes (see
-"Stability — hard-freeze / OOM hardening" below); the budget is what makes it safe. The
-12.5% floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`. **Staging** a model is an explicit "keep
-this hot and evict it last" — it's read live, so no restart or config regeneration is
-needed.
+`/proc/meminfo` so image-gen and OS pressure count too), evicting biggest-first. So you can
+**load any model**: a small model (Qwen3.5-0.8B/4B) stays hot beside gpt-oss-120b, requesting
+the coder evicts the *big* model — not the tiny one — and a model too large to co-reside
+evicts everything and takes the box. Whatever a *transient* eviction removed (an image render
+freeing the LLMs, or a code session giving the coder the box) is **remembered and restored at
+end of turn**, so the box drifts back to its prior steady state instead of cold-loading on
+demand. This replaced the old all-or-nothing pin that co-resided ~91 GB with no headroom and
+drove kernel-reclaim hard-freezes (see "Stability — hard-freeze / OOM hardening" below); the
+budget is what makes it safe. The 12.5% floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`.
+The Settings → On-box models screen exposes the same rule: **Staging** an available model is a
+transient *preview* — it dry-runs the eviction (`plan-load`) so you can see what loading it
+would evict before you commit, and **Load** applies exactly that. (There is no persisted
+keep-hot pin: models you use stay warm on their own via the restore above.) A model that
+**can't fit the box at all** — its footprint exceeds total RAM even after evicting everything —
+is **refused, not attempted**, on every path (the manual Load 409s, an auto-load fails the
+completion), and nothing is evicted for it: loading it would only OOM-crash the box, so the
+app declines rather than trying. That guard is the app's; earlyoom below is the OS-level
+backstop for the rest.
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.
@@ -334,10 +340,10 @@ churn. Harden the host against the rest (all idempotent and reversible):
    ```
 3. **The app evicts to a RAM budget, so nothing over-commits the box** — every load frees
    the fewest resident models needed to keep ≥12.5% of RAM free (`LOCAL_LLM_FREE_RAM_FRACTION`)
-   before it loads, and nothing is ever pinned beyond that floor. A model you **staged** in
-   the PWA is only evicted *last* (kept hot when there's room), never held past the budget —
-   so a big load still displaces it if that's the only way to fit. Unstage it (Settings →
-   LLM → On-box models) to drop the keep-hot preference.
+   before it loads, and nothing is ever pinned beyond that floor. There is no keep-hot pin to
+   over-commit: a manual **Load** (Settings → LLM → On-box models) evicts to the same budget —
+   the **Stage** preview shows what it will evict first — and models you use stay warm via the
+   end-of-turn restore, not a held pin.
 4. **Persistent logs** so the next event's full dump survives the freeze:
    ```bash
    sudo mkdir -p /var/log/journal

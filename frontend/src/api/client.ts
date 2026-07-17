@@ -476,10 +476,35 @@ export interface LocalModelInfo {
   max_context_window: number;
   /** The operator's per-model override (tokens), or null to use the default. */
   context_window_override: number | null;
-  /** Whether the operator has staged this model (the middle lifecycle state). */
-  staged: boolean;
   /** Estimated KV-cache GB at the effective window — the context portion of the bar. */
   kv_gb: number;
+}
+
+/** One model a staged load would evict — catalog id, label, and resident footprint (GB),
+ * so the screen can mark it on the memory bar during the preview. */
+export interface EvictionVictim {
+  id: string;
+  label: string;
+  gb: number;
+}
+
+/** The dry-run for the "stage" preview: what loading a model would evict right now, and
+ * where the box would land — no side effects. `measured` is false when the box can't be
+ * read (hosting off / gateway or meminfo down), so the screen just offers the load. */
+export interface LoadPlan {
+  model_id: string;
+  measured: boolean;
+  already_resident: boolean;
+  fits: boolean;
+  /** Even evicting everything leaves it over the free-RAM floor — it takes the box alone. */
+  over: boolean;
+  /** Even evicting everything, it can't fit total RAM — the load is refused (Load 409s). */
+  over_box: boolean;
+  victims: EvictionVictim[];
+  resident_gb: number;
+  projected_gb: number;
+  ceiling_gb: number;
+  total_gb: number;
 }
 
 /** Result of an unload: the catalog ids still resident, and whether the gateway answered. */
@@ -1856,13 +1881,14 @@ export const api = {
     return (await response.json()) as LlmSettings;
   },
 
-  /** Stage / unstage one model (intent to keep it served); returns the full snapshot. */
-  async stageLocalModel(id: string, on: boolean): Promise<LlmSettings> {
+  /** Dry-run the "stage" preview: what loading this model would evict right now (no side
+   * effects). The Load button then commits it. */
+  async planLoadLocalModel(id: string): Promise<LoadPlan> {
     const response = await request(
-      `/api/settings/llm/local-models/${encodeURIComponent(id)}/stage`,
-      { method: on ? "POST" : "DELETE" },
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/plan-load`,
+      { method: "POST" },
     );
-    return (await response.json()) as LlmSettings;
+    return (await response.json()) as LoadPlan;
   },
 
   /** Queue / unqueue an un-provisioned model for install on the next update;

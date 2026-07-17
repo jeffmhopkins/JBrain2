@@ -29,6 +29,7 @@ from jbrain.llm.providers import (
     provider_choices,
     supports_reasoning,
 )
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
 from jbrain.llm.router import TASK_DEFAULTS, TASK_REASONING_BUCKET, _split_spec
 from jbrain.settings_store import (
     JCODE_PLANNER_SAME,
@@ -90,6 +91,15 @@ def get_local_gateway(request: Request) -> LocalGatewayClient:
 
 
 LocalGatewayDep = Annotated[LocalGatewayClient, Depends(get_local_gateway)]
+
+
+def get_residency(request: Request) -> ResidencyCoordinator | None:
+    """The box's evictor/restorer, or None on a build without it wired (never in prod;
+    tolerated so the load / plan-load endpoints degrade to a plain warm)."""
+    return cast(ResidencyCoordinator | None, getattr(request.app.state, "residency", None))
+
+
+ResidencyDep = Annotated[ResidencyCoordinator | None, Depends(get_residency)]
 
 # served_model (what the gateway reports/loads) ↔ catalog id (what the screen uses).
 _SERVED_TO_ID = {m.served_model: m.id for m in local_catalog.CATALOG}
@@ -165,11 +175,8 @@ class LocalModelInfo(BaseModel):
     # conservative default). The picker's KV-cache estimate flags when a big one won't fit.
     max_context_window: int
     # The operator's per-model override (tokens), or null to use the default. Drives
-    # the size picker's current value; editable only while the model is idle.
+    # the size picker's current value; editable only while the model isn't resident.
     context_window_override: int | None
-    # Whether the operator has STAGED this model (intent to keep it served/warm) —
-    # the middle state of the stage→load→unload lifecycle.
-    staged: bool
     # Estimated KV-cache size (GB) at the EFFECTIVE window (override or default) —
     # the context portion of the model's memory-bar segment. An estimate, not a
     # measurement (see local_catalog.kv_gb_per_128k).
@@ -182,6 +189,40 @@ class LoadedModelsOut(BaseModel):
 
     loaded: list[str]
     reachable: bool
+
+
+class EvictionVictimOut(BaseModel):
+    """One model the staged load would evict — catalog id + label + its resident
+    footprint (GB), so the screen can mark it on the memory bar."""
+
+    id: str
+    label: str
+    gb: float
+
+
+class LoadPlanOut(BaseModel):
+    """The dry-run for the settings screen's stage preview: what loading `model_id`
+    would evict right now, and where the box would land — no side effects. The Load
+    button then commits it (the load endpoint runs the same eviction for real)."""
+
+    model_id: str
+    # False when the box can't be measured (hosting off / gateway or meminfo
+    # unreadable): the screen can't show an eviction preview, only offer the load.
+    measured: bool
+    # Already resident → loading is a no-op; fits → loads with no eviction.
+    already_resident: bool
+    fits: bool
+    # Even evicting everything leaves it over the free-RAM floor (it takes the box).
+    over: bool
+    # Even evicting everything, the model can't fit total RAM — the load is refused (a
+    # commit would 409). The screen disables "Load" and says why.
+    over_box: bool
+    victims: list[EvictionVictimOut]
+    # Measured used memory now, projected used after the load, the free-RAM floor, total.
+    resident_gb: float
+    projected_gb: float
+    ceiling_gb: float
+    total_gb: float
 
 
 class HostMemory(BaseModel):
@@ -294,7 +335,6 @@ async def _snapshot(
 ) -> LlmSettingsOut:
     overrides = await store.llm_task_overrides(ctx)
     windows = await store.llm_local_context_windows(ctx)
-    staged = set(await store.llm_local_staged(ctx))
     requested = set(await store.llm_local_provision_requested(ctx))
     removing = set(await store.llm_local_remove_requested(ctx))
     loaded = await _loaded_ids(settings, gateway)
@@ -318,7 +358,6 @@ async def _snapshot(
                 m,
                 m.id in loaded,
                 windows,
-                m.id in staged,
                 m.id in requested,
                 m.id in removing,
             )
@@ -398,7 +437,6 @@ def _local_model_info(
     m: local_catalog.LocalModel,
     loaded: bool,
     windows: dict[str, int],
-    staged: bool,
     requested: bool,
     removing: bool,
 ) -> LocalModelInfo:
@@ -429,7 +467,6 @@ def _local_model_info(
         context_window=m.context_window,
         max_context_window=m.max_context_window,
         context_window_override=override,
-        staged=staged,
         kv_gb=kv_gb,
     )
 
@@ -601,10 +638,22 @@ async def load_local_model(
     principal: PrincipalDep,
     settings: SettingsDep,
     gateway: LocalGatewayDep,
+    residency: ResidencyDep,
 ) -> LoadedModelsOut:
-    """Make the gateway load one model into memory (a warm-up probe — llama-swap
-    loads on first request). 404 for an unprovisioned id; 409 when hosting is off;
-    502 if the gateway rejects or can't be reached."""
+    """Make the gateway load one model into memory (the settings screen's stage → Load).
+    First frees room the deliberate way — evict the fewest, biggest resident models to hold
+    the free-RAM floor, WITHOUT scheduling them for restore (a manual load is a steady-state
+    change, not a transient displacement) — then warms the model. The eviction is exactly
+    what the stage preview (plan-load) showed. A model that can't fit the box even after
+    evicting everything is REFUSED with a 409 (loading it would OOM-crash the box) — nothing
+    is evicted in that case. 404 for an unprovisioned id; 409 when hosting is off or the
+    model can't fit; 502 if the gateway rejects or can't be reached."""
+    model = _require_provisioned(settings, model_id)
+    if residency is not None:
+        try:
+            await residency.free_room(model.served_model)  # evict-to-fit, or refuse if impossible
+        except ResidencyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await gateway_load(model_id, settings, gateway)
 
 
@@ -643,45 +692,58 @@ async def set_local_context_window(
     return await _snapshot(settings, store, ctx, gateway)
 
 
-@router.post("/settings/llm/local-models/{model_id}/stage")
-async def stage_local_model(
+@router.post("/settings/llm/local-models/{model_id}/plan-load")
+async def plan_load_local_model(
     model_id: str,
     principal: PrincipalDep,
     settings: SettingsDep,
     store: SettingsStoreDep,
-    gateway: LocalGatewayDep,
-) -> LlmSettingsOut:
-    """Mark a model staged: an explicit "keep this hot, and evict it LAST". 404/409 as
-    above. The staged set is read live by the residency coordinator
-    (jbrain.llm.residency) — it protects the model when freeing room for another load and
-    restores it after a displacement — so no gateway re-stamp is needed (every model is
-    already a non-swapping group member; the app is the sole evictor)."""
-    _require_provisioned(settings, model_id)
+    residency: ResidencyDep,
+) -> LoadPlanOut:
+    """Dry-run: what would loading `model_id` evict right now, and where would the box land?
+    No side effects — the settings screen's "stage" preview calls this so the operator sees
+    the eviction before committing the load. 404 for an unprovisioned id; 409 when hosting is
+    off. `measured` is false when the box can't be read (gateway/meminfo down): the screen
+    then just offers the load without an eviction preview."""
+    model = _require_provisioned(settings, model_id)
     ctx = ctx_for(principal)
-    staged = await store.llm_local_staged(ctx)
-    if model_id not in staged:
-        staged.append(model_id)
-        await store.set_llm_local_staged(ctx, staged)
-    return await _snapshot(settings, store, ctx, gateway)
-
-
-@router.delete("/settings/llm/local-models/{model_id}/stage")
-async def unstage_local_model(
-    model_id: str,
-    principal: PrincipalDep,
-    settings: SettingsDep,
-    store: SettingsStoreDep,
-    gateway: LocalGatewayDep,
-) -> LlmSettingsOut:
-    """Clear a model's staged flag. 404/409 as above. It drops out of the residency
-    coordinator's keep-hot / evict-last set, so it's again a normal eviction candidate
-    when the box needs room. No gateway re-stamp needed (membership isn't gated on
-    staging any more)."""
-    _require_provisioned(settings, model_id)
-    ctx = ctx_for(principal)
-    staged = [s for s in await store.llm_local_staged(ctx) if s != model_id]
-    await store.set_llm_local_staged(ctx, staged)
-    return await _snapshot(settings, store, ctx, gateway)
+    windows = await store.llm_local_context_windows(ctx)
+    plan = await residency.plan_load(model.served_model) if residency is not None else None
+    if plan is None:
+        return LoadPlanOut(
+            model_id=model_id,
+            measured=False,
+            already_resident=False,
+            fits=True,
+            over=False,
+            over_box=False,
+            victims=[],
+            resident_gb=0.0,
+            projected_gb=0.0,
+            ceiling_gb=0.0,
+            total_gb=0.0,
+        )
+    victims: list[EvictionVictimOut] = []
+    for served in plan.victims:
+        victim = local_catalog.get_by_served(served)
+        if victim is None:
+            continue  # a served name outside the catalog can't be sized/labelled — skip it
+        window = windows.get(victim.id, victim.context_window)
+        gb = local_catalog.footprint_gb(victim, window, disk_gb=_disk_gb(settings, victim.id))
+        victims.append(EvictionVictimOut(id=victim.id, label=victim.label, gb=round(gb, 1)))
+    return LoadPlanOut(
+        model_id=model_id,
+        measured=True,
+        already_resident=plan.already_resident,
+        fits=plan.fits,
+        over=plan.over,
+        over_box=plan.over_box,
+        victims=victims,
+        resident_gb=round(plan.resident_gb, 1),
+        projected_gb=round(plan.projected_gb, 1),
+        ceiling_gb=round(plan.ceiling_gb, 1),
+        total_gb=round(plan.total_gb, 1),
+    )
 
 
 @router.post("/settings/llm/local-models/{model_id}/install")

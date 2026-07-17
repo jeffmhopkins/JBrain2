@@ -6,6 +6,7 @@ import type {
   LlmProviderId,
   LlmSettings,
   LlmTask,
+  LoadPlan,
   LocalModelInfo,
   ReasoningEffort,
 } from "../api/client";
@@ -180,8 +181,15 @@ export function LLMSettingsScreen() {
   // LLMs open by default (the common case); the image section opens on demand.
   const [llmOpen, setLlmOpen] = useState(true);
   const [imgOpen, setImgOpen] = useState(false);
-  const [llmTab, setLlmTab] = useState<LlmTab>("installed");
+  // Reversed order (live first, broadest last): Resident · Available · Catalogue. The
+  // Available tab is the default — it's where staging (the load preview) lives.
+  const [llmTab, setLlmTab] = useState<LlmTab>("available");
   const [imgTab, setImgTab] = useState<ImgTab>("installed");
+  // The transient stage preview: the model whose load we're previewing, and the server's
+  // dry-run eviction plan for it. Staging is no longer a stored state — it lives only here
+  // until the operator commits (Load) or cancels.
+  const [stagedId, setStagedId] = useState<string | null>(null);
+  const [plan, setPlan] = useState<LoadPlan | null>(null);
   // Catalog ids with a per-model action (stage/load/unload/window) in flight — the
   // row's controls show a pending state and lock out a second concurrent action.
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -281,8 +289,15 @@ export function LLMSettingsScreen() {
     );
   }
 
+  function clearPreview() {
+    setStagedId(null);
+    setPlan(null);
+  }
+
   function unloadModel(id: string) {
     mark(id);
+    // Unloading changes what's resident, so any open preview is now stale.
+    if (stagedId !== null) clearPreview();
     api
       .unloadLocalModel(id)
       .then(reconcileLoaded)
@@ -290,23 +305,29 @@ export function LLMSettingsScreen() {
       .finally(() => unmark(id));
   }
 
+  // Commit a staged load: the endpoint evicts to fit (exactly what the preview showed) then
+  // warms the model. Reconcile the resident set and clear the preview.
   function loadModel(id: string) {
     mark(id);
     api
       .loadLocalModel(id)
-      .then(reconcileLoaded)
+      .then((res) => {
+        reconcileLoaded(res);
+        clearPreview();
+      })
       .catch(() => {})
       .finally(() => unmark(id));
   }
 
-  // stage + context-window return the full snapshot; reconcile it whole (guarded).
-  function stageModel(id: string, on: boolean) {
+  // Stage = preview the load: ask the server what loading this model would evict right now,
+  // and hold it as the transient preview. No side effects until the operator commits.
+  function previewStage(id: string) {
     mark(id);
-    const seq = ++putSeq.current;
     api
-      .stageLocalModel(id, on)
-      .then((s) => {
-        if (seq === putSeq.current) setSettings(s);
+      .planLoadLocalModel(id)
+      .then((p) => {
+        setStagedId(id);
+        setPlan(p);
       })
       .catch(() => {})
       .finally(() => unmark(id));
@@ -572,9 +593,12 @@ export function LLMSettingsScreen() {
         hostMemory={settings.host_memory}
         image={image}
         busy={busy}
+        stagedId={stagedId}
+        plan={plan}
         onUnload={unloadModel}
         onLoad={loadModel}
-        onStage={stageModel}
+        onStage={previewStage}
+        onCancelStage={clearPreview}
         onSetWindow={setContextWindow}
         onInstall={queueInstall}
         onUninstall={queueUninstall}
@@ -901,18 +925,25 @@ const fmtTokens = (n: number) => {
 const barName = (m: LocalModelInfo) => m.label.split(" ")[0];
 const residentGbOf = (m: LocalModelInfo) => (m.disk_gb ?? m.size_gb) + m.kv_gb;
 
-// The On-box LLM section's omnibox tabs and the image section's; both reuse the
-// shared `.seg-row` segmented control, accented per section (steel / violet).
-type LlmTab = "staged" | "installed" | "catalog";
+// The On-box LLM section's omnibox tabs (reversed order: Resident · Available · Catalogue)
+// and the image section's; both reuse the shared `.seg-row` segmented control, accented per
+// section (steel / violet).
+type LlmTab = "resident" | "available" | "catalogue";
 type ImgTab = "installed" | "catalog";
 
-// Small inline glyphs for the omnibox tabs (mirrors the mock's IC set): a clock for
-// staged-warm, a check for installed, a grid for the catalog.
+// Small inline glyphs for the omnibox tabs: a memory chip for resident, swap arrows for
+// available, a check for installed (image), a grid for the catalog(ue).
 const TabIcon = {
-  staged: (
+  resident: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" />
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M7 9v6M11 9v6M15 12h2" />
+    </svg>
+  ),
+  available: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M4 8h13M14 5l3 3-3 3" />
+      <path d="M20 16H7M10 13l-3 3 3 3" />
     </svg>
   ),
   installed: (
@@ -1015,9 +1046,12 @@ function OnBoxModelsCard({
   hostMemory,
   image,
   busy,
+  stagedId,
+  plan,
   onUnload,
   onLoad,
   onStage,
+  onCancelStage,
   onSetWindow,
   onInstall,
   onUninstall,
@@ -1041,9 +1075,12 @@ function OnBoxModelsCard({
   hostMemory: { total_gb: number; used_gb: number } | null;
   image: ImageSettings | null;
   busy: Set<string>;
+  stagedId: string | null;
+  plan: LoadPlan | null;
   onUnload: (id: string) => void;
   onLoad: (id: string) => void;
-  onStage: (id: string, on: boolean) => void;
+  onStage: (id: string) => void;
+  onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
   onInstall: (id: string, on: boolean) => void;
   onUninstall: (id: string, on: boolean) => void;
@@ -1054,13 +1091,18 @@ function OnBoxModelsCard({
   onStartImageService: () => void;
   onStopImageService: () => void;
 }) {
+  // "Available" is the router's swap roster (m.enabled); "resident" is loaded now.
   const enabled = models.filter((m) => m.enabled);
   const loaded = enabled.filter((m) => m.loaded);
-  const stagedOnly = enabled.filter((m) => m.staged && !m.loaded);
+  // The transient stage preview: the model whose load we're previewing (projected onto the
+  // bar) and the set of resident models the server says it would evict.
+  const stagedModel = stagedId !== null ? (models.find((m) => m.id === stagedId) ?? null) : null;
+  const stagedProjected = stagedModel !== null && !stagedModel.loaded ? stagedModel : null;
+  const victimIds = new Set((plan?.victims ?? []).map((v) => v.id));
   // Catalog models not on the box: the install rows. Queued ones carry an in-flight
   // download the sync one-shot is pulling.
-  const available = hostingEnabled ? models.filter((m) => !m.enabled) : [];
-  const queued = available.filter((m) => m.queued);
+  const notEnabled = hostingEnabled ? models.filter((m) => !m.enabled) : [];
+  const queued = notEnabled.filter((m) => m.queued);
   const queuedGb = queued.reduce((sum, m) => sum + m.size_gb, 0);
   // Provisioned models queued for removal — they apply through the same sync one-shot
   // as installs, so a pending uninstall surfaces the download bar too (otherwise a
@@ -1068,7 +1110,7 @@ function OnBoxModelsCard({
   const removing = hostingEnabled ? enabled.filter((m) => m.remove_queued) : [];
   // Resident footprint = weights + KV for everything actually loaded.
   const residentGb = loaded.reduce((sum, m) => sum + residentGbOf(m), 0);
-  const stagedGb = stagedOnly.reduce((sum, m) => sum + residentGbOf(m), 0);
+  const stagedGb = stagedProjected !== null ? residentGbOf(stagedProjected) : 0;
 
   // The image service's live VRAM draw shares the meter. ComfyUI has no per-model
   // "loaded" flag, so a non-trivial VRAM draw stands in for "a model is resident".
@@ -1081,7 +1123,7 @@ function OnBoxModelsCard({
   const anyOn = hostingEnabled || (image?.reachable ?? false);
   const summary = [
     hostingEnabled
-      ? `${loaded.length} loaded${stagedOnly.length ? ` · ${stagedOnly.length} staged` : ""}`
+      ? `${loaded.length} resident${stagedProjected !== null ? " · previewing" : ""}`
       : "",
     image?.reachable ? (imgActive ? "image resident" : "image idle") : "",
     anyOn ? `${Math.round(residentGb + imgUsedGb)} GB` : "",
@@ -1089,14 +1131,23 @@ function OnBoxModelsCard({
     .filter(Boolean)
     .join(" · ");
 
-  // Loaded segments first (resident), then staged (projected) — colored by slot.
-  const onBar = [...loaded, ...stagedOnly];
+  // Loaded segments first (resident), then the staged (projected) preview — colored by slot.
+  const onBar = stagedProjected !== null ? [...loaded, stagedProjected] : loaded;
   const total = hostMemory?.total_gb ?? imgMem?.total_gb ?? 0;
-  const projectedGb = residentGb + stagedGb;
-  const over = total > 0 && projectedGb + imgUsedGb > total;
+  // While previewing, size the track so both the outgoing (victim) and incoming (staged)
+  // segments show without clipping — the over-subscription is the whole point.
+  const den = stagedProjected !== null ? Math.max(total, residentGb + stagedGb) : total;
+  // Projected footprint after the load: the server's dry-run when measured, else a local
+  // estimate (resident + staged − evicted).
+  const victimGb = (plan?.victims ?? []).reduce((sum, v) => sum + v.gb, 0);
+  const projectedGb =
+    plan?.measured === true ? plan.projected_gb : residentGb + stagedGb - victimGb;
+  const over = plan?.over ?? false;
   const meterShown = total > 0 && (onBar.length > 0 || imgActive);
 
-  const llmMeta = hostingEnabled ? `${enabled.length} installed · ${loaded.length} loaded` : "off";
+  const llmMeta = hostingEnabled
+    ? `${enabled.length} available · ${loaded.length} resident`
+    : "off";
   const imgMeta = image?.reachable
     ? imgActive
       ? "running · resident"
@@ -1105,8 +1156,8 @@ function OnBoxModelsCard({
       ? "stopped"
       : "off";
 
-  // LLM tab filtering.
-  const llmRows = llmTab === "staged" ? stagedOnly : llmTab === "installed" ? enabled : models;
+  // LLM tab filtering (reversed order): resident (loaded) · available (roster) · catalogue (all).
+  const llmRows = llmTab === "resident" ? loaded : llmTab === "available" ? enabled : models;
 
   return (
     <section className="onbox-card" aria-label={`On-box models — ${anyOn ? summary : "off"}`}>
@@ -1114,7 +1165,7 @@ function OnBoxModelsCard({
       <div className="onbox-head">
         <div className="onbox-status">
           <span
-            className={`llm-local-dot${loaded.length > 0 || imgActive ? " on" : stagedOnly.length > 0 ? " amber" : ""}`}
+            className={`llm-local-dot${loaded.length > 0 || imgActive ? " on" : stagedProjected !== null ? " amber" : ""}`}
             aria-hidden="true"
           />
           <span className="onbox-status-title">On-box memory</span>
@@ -1126,14 +1177,15 @@ function OnBoxModelsCard({
               {onBar.map((m, i) => {
                 const weights = m.disk_gb ?? m.size_gb;
                 const res = weights + m.kv_gb;
-                const isStaged = m.staged && !m.loaded;
+                const isStaged = stagedProjected !== null && m.id === stagedProjected.id;
+                const isVictim = victimIds.has(m.id);
                 return (
                   <div
                     key={m.id}
-                    className={`llm-mem-seg${isStaged ? " staged" : ""}`}
-                    style={{ width: `${(res / total) * 100}%` }}
+                    className={`llm-mem-seg${isStaged ? " staged" : ""}${isVictim ? " evicting" : ""}`}
+                    style={{ width: `${(res / den) * 100}%` }}
                     title={`${m.label} — ${weights} GB weights + ${m.kv_gb} GB KV${
-                      isStaged ? " (staged)" : ""
+                      isStaged ? " (staged)" : isVictim ? " (would be evicted)" : ""
                     }`}
                   >
                     <div
@@ -1156,7 +1208,7 @@ function OnBoxModelsCard({
               {imgActive && (
                 <div
                   className="llm-mem-seg llm-mem-img"
-                  style={{ width: `${(imgUsedGb / total) * 100}%` }}
+                  style={{ width: `${(imgUsedGb / den) * 100}%` }}
                   title={`ComfyUI image — ${Math.round(imgUsedGb)} GB resident`}
                 >
                   <div className="llm-mem-w" style={{ width: "100%", background: IMG_GRADIENT }} />
@@ -1165,27 +1217,41 @@ function OnBoxModelsCard({
                   </span>
                 </div>
               )}
+              {/* The keep-free floor marker — only while previewing a measured load, when it
+                  explains the eviction. */}
+              {stagedProjected !== null && plan?.measured === true && (
+                <div
+                  className="llm-mem-floor"
+                  style={{ left: `${(plan.ceiling_gb / den) * 100}%` }}
+                  aria-hidden="true"
+                />
+              )}
             </div>
             <div className="llm-mem-cap">
-              <span>{Math.round(residentGb + imgUsedGb)} GB used</span>
+              <span>{Math.round(residentGb + imgUsedGb)} GB resident</span>
               {imgActive && (
                 <span className="onbox-mem-key">
                   <span className="onbox-mem-sw" />
                   image {Math.round(imgUsedGb)} GB
                 </span>
               )}
-              {stagedGb > 0.05 && (
-                <span className={`staged-note${over ? " over" : ""}`}>
-                  +{Math.round(stagedGb)} GB staged → {Math.round(projectedGb)} GB
-                  {over ? " ⚠ over" : ""}
-                </span>
-              )}
+              {stagedProjected !== null &&
+                (victimIds.size > 0 ? (
+                  <span className="staged-note over">
+                    evicts {(plan?.victims ?? []).map((v) => v.label.split(" ")[0]).join(", ")} →{" "}
+                    {Math.round(projectedGb)} GB{over ? " ⚠ still over" : ""}
+                  </span>
+                ) : (
+                  <span className="staged-note">
+                    +{Math.round(stagedGb)} GB staged → {Math.round(projectedGb)} GB
+                  </span>
+                ))}
               <span className="total">{Math.round(total)} GB total</span>
             </div>
           </div>
         ) : (
           <p className="onbox-mem-empty">
-            Nothing resident — load or stage a model, or run image generation, to fill the bar.
+            Nothing resident — load a model, or run image generation, to fill the bar.
           </p>
         )}
       </div>
@@ -1205,9 +1271,9 @@ function OnBoxModelsCard({
             active={llmTab}
             onTab={onLlmTab}
             tabs={[
-              { id: "staged", label: "Staged", icon: "staged" },
-              { id: "installed", label: "Installed", icon: "installed" },
-              { id: "catalog", label: "Catalog", icon: "catalog" },
+              { id: "resident", label: "Resident", icon: "resident" },
+              { id: "available", label: "Available", icon: "available" },
+              { id: "catalogue", label: "Catalogue", icon: "catalog" },
             ]}
           />
           <div className="onbox-list">
@@ -1218,26 +1284,33 @@ function OnBoxModelsCard({
                 in the tiers above.
               </p>
             )}
-            {hostingEnabled && llmTab === "staged" && stagedOnly.length === 0 && (
+            {hostingEnabled && llmTab === "resident" && loaded.length === 0 && (
               <p className="onbox-tab-hint">
-                No staged models. Staging keeps a model warm so it skips the cold load on its next
-                request.
+                Nothing resident. Stage an available model to load one — staging previews whether it
+                would evict anything first.
               </p>
             )}
-            {hostingEnabled && llmTab === "catalog" && (
+            {hostingEnabled && llmTab === "available" && (
               <p className="onbox-tab-hint">
-                Every catalog model. Install pulls the weights; Uninstall removes them and frees the
-                disk.
+                {stagedProjected !== null
+                  ? "Previewing a stage — Load to commit, or Cancel. The memory bar shows what it evicts."
+                  : "Installed models the router may swap in. Stage previews whether loading one evicts something."}
               </p>
             )}
-            {hostingEnabled && llmTab === "installed" && enabled.length === 0 && (
+            {hostingEnabled && llmTab === "available" && enabled.length === 0 && (
               <p className="llm-local-hint">
-                No models enabled yet — install one from the Catalog tab.
+                No models available yet — install one from the Catalogue tab.
+              </p>
+            )}
+            {hostingEnabled && llmTab === "catalogue" && (
+              <p className="onbox-tab-hint">
+                Every catalogue model. Install pulls the weights; make an installed model available
+                to let the router swap it in.
               </p>
             )}
             {hostingEnabled &&
               llmRows.map((m) =>
-                llmTab === "catalog" ? (
+                llmTab === "catalogue" ? (
                   m.enabled ? (
                     <UninstallRow
                       key={m.id}
@@ -1259,16 +1332,58 @@ function OnBoxModelsCard({
                     key={m.id}
                     model={m}
                     busy={busy.has(m.id)}
+                    staged={stagedId === m.id}
+                    isVictim={victimIds.has(m.id)}
+                    previewing={stagedId !== null}
                     onUnload={onUnload}
-                    onLoad={onLoad}
                     onStage={onStage}
                     onSetWindow={onSetWindow}
-                    onUninstall={onUninstall}
                   />
                 ),
               )}
           </div>
-          {llmTab !== "staged" &&
+          {/* The stage commit bar — reuses the queue action bar (rose when it forces an
+              eviction or when the model can't fit the box). Load runs the eviction for real,
+              then warms the model; an over-box model can't be loaded (the server would 409). */}
+          {stagedProjected !== null &&
+            (() => {
+              const tooBig = plan?.over_box === true;
+              return (
+                <div className={`llm-local-queue${victimIds.size > 0 || tooBig ? " evict" : ""}`}>
+                  <div className="llm-local-queue-text">
+                    <b>
+                      Staging {stagedProjected.label} · {Math.round(residentGbOf(stagedProjected))}{" "}
+                      GB
+                    </b>
+                    <span>
+                      {tooBig
+                        ? `Too big for this box — needs ~${Math.round(plan?.projected_gb ?? 0)} GB but only ${Math.round(plan?.total_gb ?? 0)} GB exists. Loading it would crash the box.`
+                        : plan?.measured === false
+                          ? "Ready to load — couldn't measure the box for an eviction preview."
+                          : victimIds.size > 0
+                            ? `Evicts ${(plan?.victims ?? [])
+                                .map((v) => v.label)
+                                .join(", ")} · resident → ${Math.round(projectedGb)} GB.`
+                            : `Fits under the floor — no eviction. Resident → ${Math.round(projectedGb)} GB.`}
+                    </span>
+                  </div>
+                  <div className="llm-local-act" style={{ marginLeft: "auto" }}>
+                    <button
+                      type="button"
+                      className="llm-local-btn load"
+                      disabled={busy.has(stagedProjected.id) || tooBig}
+                      onClick={() => onLoad(stagedProjected.id)}
+                    >
+                      {busy.has(stagedProjected.id) ? "…" : tooBig ? "Can't load" : "Load now"}
+                    </button>
+                    <button type="button" className="llm-local-btn" onClick={onCancelStage}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          {llmTab !== "resident" &&
             (queued.length > 0 || removing.length > 0 || downloadState !== "idle") && (
               <div className="llm-local-queue">
                 <div className="llm-local-queue-text">
@@ -1353,29 +1468,43 @@ function OnBoxModelsCard({
   );
 }
 
-// One provisioned LLM in the Installed/Staged tabs: its stage→load→unload lifecycle
-// controls, capability chips, and the live context-window picker (locked while loaded).
+// One provisioned LLM in the Resident/Available tabs. Resident → Unload; an available model
+// → Stage (previews the load's eviction) or, if it's the one being previewed, shows "staged".
+// A row the current preview would evict is flagged "will evict". Plus capability chips and the
+// live context-window picker (locked while resident).
 function LlmModelRow({
   model: m,
   busy: isBusy,
+  staged,
+  isVictim,
+  previewing,
   onUnload,
-  onLoad,
   onStage,
   onSetWindow,
-  onUninstall,
 }: {
   model: LocalModelInfo;
   busy: boolean;
+  // This row is the model currently being previewed (transient stage).
+  staged: boolean;
+  // This resident model would be evicted by the current preview.
+  isVictim: boolean;
+  // A stage preview is open (for some model) — disable Stage on other rows meanwhile.
+  previewing: boolean;
   onUnload: (id: string) => void;
-  onLoad: (id: string) => void;
-  onStage: (id: string, on: boolean) => void;
+  onStage: (id: string) => void;
   onSetWindow: (id: string, window: number | null) => void;
-  onUninstall: (id: string, on: boolean) => void;
 }) {
   const footprint = m.disk_gb ?? m.size_gb;
   const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
-  const state = m.loaded ? "loaded" : m.staged ? "staged" : "idle";
-  const editable = !m.loaded; // idle or staged — no live process to disrupt
+  const stateText = isVictim
+    ? "will evict"
+    : m.loaded
+      ? "resident"
+      : staged
+        ? "staged"
+        : "available";
+  const stateCls = isVictim ? " evicting" : m.loaded ? " on" : staged ? " staged" : " avail";
+  const editable = !m.loaded; // available (not resident) — no live process to disrupt
   const effWindow = m.context_window_override ?? m.context_window;
   // Choices run up to the model's native ceiling (not the conservative served
   // default), so the operator can opt into a bigger window the weights support.
@@ -1389,7 +1518,7 @@ function LlmModelRow({
     ]),
   ).sort((a, b) => a - b);
   return (
-    <div className={`llm-local-row on ${state}`}>
+    <div className={`llm-local-row on${isVictim ? " evicting" : ""}`}>
       <div className="llm-local-head">
         <div className="llm-local-name">
           {m.label}
@@ -1400,70 +1529,30 @@ function LlmModelRow({
         </div>
         <div className="llm-local-topright">
           <div className="llm-local-act">
-            {m.remove_queued ? (
-              // Removal is queued/applying — offer only "Keep" to back out.
+            {m.loaded ? (
               <button
                 type="button"
                 className="llm-local-btn"
                 disabled={isBusy}
-                onClick={() => onUninstall(m.id, false)}
+                onClick={() => onUnload(m.id)}
               >
-                {isBusy ? "…" : "Keep"}
+                {isBusy ? "…" : "Unload"}
               </button>
+            ) : staged ? (
+              // The previewed row — the commit bar below drives Load / Cancel.
+              <span className="llm-local-ctx-hint">previewing…</span>
             ) : (
-              <>
-                {state === "idle" && (
-                  <button
-                    type="button"
-                    className="llm-local-btn stage"
-                    disabled={isBusy}
-                    onClick={() => onStage(m.id, true)}
-                  >
-                    {isBusy ? "…" : "Stage"}
-                  </button>
-                )}
-                {state === "staged" && (
-                  <>
-                    <button
-                      type="button"
-                      className="llm-local-btn load"
-                      disabled={isBusy}
-                      onClick={() => onLoad(m.id)}
-                    >
-                      {isBusy ? "…" : "Load"}
-                    </button>
-                    <button
-                      type="button"
-                      className="llm-local-btn"
-                      disabled={isBusy}
-                      onClick={() => onStage(m.id, false)}
-                    >
-                      Unstage
-                    </button>
-                  </>
-                )}
-                {state === "loaded" && (
-                  <button
-                    type="button"
-                    className="llm-local-btn"
-                    disabled={isBusy}
-                    onClick={() => onUnload(m.id)}
-                  >
-                    {isBusy ? "…" : "Unload"}
-                  </button>
-                )}
-                {/* Uninstall lives only in the Catalog tab (a deliberate, tap-to-confirm
-                    destructive action) — the Installed tab is stage/load/unload only. */}
-              </>
+              <button
+                type="button"
+                className="llm-local-btn stage"
+                disabled={isBusy || previewing}
+                onClick={() => onStage(m.id)}
+              >
+                {isBusy ? "…" : "Stage"}
+              </button>
             )}
           </div>
-          <span
-            className={`llm-local-state${
-              m.remove_queued ? " removing" : m.loaded ? " on" : m.staged ? " staged" : ""
-            }`}
-          >
-            {m.remove_queued ? "uninstalling" : state}
-          </span>
+          <span className={`llm-local-state${stateCls}`}>{stateText}</span>
         </div>
       </div>
       <div className="llm-local-chips">
@@ -1563,7 +1652,7 @@ function UninstallRow({
 }) {
   const footprint = m.disk_gb ?? m.size_gb;
   const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
-  const state = m.loaded ? "loaded" : m.staged ? "staged" : "idle";
+  const state = m.loaded ? "resident" : m.enabled ? "available" : "installed";
   return (
     <div className={`llm-local-row on ${state}${m.remove_queued ? " removing" : ""}`}>
       <div className="llm-local-head">
