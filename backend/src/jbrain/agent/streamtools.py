@@ -27,10 +27,11 @@ import structlog
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.ingest.video import (
+    ProgressFn,
     VideoAnalysis,
     caption_frames,
     fuse_and_reduce,
-    transcribe_audio,
+    transcribe_audio_chunked,
 )
 from jbrain.llm import LlmRouter
 from jbrain.llm.local_gateway import LocalGateway
@@ -55,7 +56,6 @@ from jbrain.transcribe import TranscribeClient
 log = structlog.get_logger()
 
 _MODES = ("single", "window", "full")
-_AUDIO_MEDIA_TYPE = "audio/wav"
 
 
 def build_stream_handlers(
@@ -127,7 +127,7 @@ def build_stream_handlers(
                 if report:
                     report(0, 0, "Transcribing audio…")
                 transcript = await _transcribe_best_effort(
-                    transcribe, gateway, transcribe_model, sample.audio_wav
+                    transcribe, gateway, transcribe_model, sample.audio_wav, on_progress=report
                 )
             result = await fuse_and_reduce(captioned, transcript, router=router, on_progress=report)
         except StreamError as exc:
@@ -153,19 +153,21 @@ async def _transcribe_best_effort(
     gateway: LocalGateway | None,
     transcribe_model: str,
     audio_wav: bytes,
+    *,
+    on_progress: ProgressFn | None = None,
 ) -> dict | None:
     """Transcribe the audio segment, degrading to None (frames-only) on ANY failure —
-    a whisper/network hiccup must not sink an otherwise-good frame analysis. Mirrors the
-    unconfigured-whisper path, so the tool behaves the same whether whisper is absent or
-    merely unreachable."""
+    a whisper/network hiccup must not sink an otherwise-good frame analysis. Long audio
+    (a full-video pass) is transcribed in chunks so no single whisper call runs past its
+    timeout, with per-chunk progress; short audio takes the plain single call."""
     try:
-        return await transcribe_audio(
+        return await transcribe_audio_chunked(
             transcribe,
             gateway,
             transcribe_model,
             audio_wav,
             filename="stream-audio.wav",
-            media_type=_AUDIO_MEDIA_TYPE,
+            on_progress=on_progress,
         )
     except Exception as exc:  # noqa: BLE001 - best-effort: fall back to frames-only
         log.info("stream.transcribe_failed", error=repr(exc))

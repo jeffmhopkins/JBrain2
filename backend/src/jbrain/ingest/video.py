@@ -34,7 +34,9 @@ degrades to a frames-only one.
 
 import asyncio
 import base64
+import io
 import re
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -301,19 +303,111 @@ async def transcribe_audio(
         result = await transcribe.transcribe(data, filename=filename, media_type=media_type)
     finally:
         await _unload(gateway, model)
-    words = [
-        {
-            "text": w.text,
-            "start_ms": w.start_ms,
-            "end_ms": w.end_ms,
-            "confidence": round(w.confidence, 4),
-        }
-        for w in result.words
-    ]
+    words = _words_from(result)
     clean = result.text.strip()
     if not clean and not words:
         return None  # silent / non-speech audio — no transcript to fuse
     return {"text": clean, "words": words, "duration_ms": result.duration_ms}
+
+
+def _words_from(result: Any, *, offset_ms: int = 0) -> list[dict[str, Any]]:
+    """A transcript result's per-word rows, each shifted by `offset_ms` — so a chunk's
+    word timestamps land on the whole clip's timeline, not the chunk's."""
+    return [
+        {
+            "text": w.text,
+            "start_ms": w.start_ms + offset_ms,
+            "end_ms": w.end_ms + offset_ms,
+            "confidence": round(w.confidence, 4),
+        }
+        for w in result.words
+    ]
+
+
+# Split a long transcription into pieces this long so no single whisper call runs past
+# the client's request timeout (a 30-min clip in one call would; ~4-min chunks each
+# finish in well under it), and the owner sees per-chunk progress. Chunking does not
+# speed transcription up (one GPU, whisper already windows internally) — it makes a
+# long transcription reliable and observable, and keeps partial text if a chunk fails.
+WHISPER_CHUNK_S = 4 * 60.0
+
+
+async def transcribe_audio_chunked(
+    transcribe: TranscribeClient | None,
+    gateway: LocalGateway | None,
+    model: str,
+    wav: bytes,
+    *,
+    filename: str,
+    chunk_s: float = WHISPER_CHUNK_S,
+    on_progress: ProgressFn | None = None,
+) -> dict[str, Any] | None:
+    """Transcribe a 16 kHz mono WAV that may be long, in `chunk_s` pieces, merging the
+    text and time-shifted words onto one timeline. `wav` must be a real WAV (what the
+    stream sampler produces). Audio that fits in one chunk takes the plain path. The
+    model is freed once at the end. A chunk that fails is skipped (partial transcript),
+    so a single hiccup never loses the whole thing."""
+    if transcribe is None:
+        return None
+    chunks = _split_wav(wav, chunk_s)
+    if len(chunks) <= 1:
+        return await transcribe_audio(
+            transcribe, gateway, model, wav, filename=filename, media_type="audio/wav"
+        )
+
+    words: list[dict[str, Any]] = []
+    parts: list[str] = []
+    duration_ms = 0
+    try:
+        for i, (offset_ms, chunk) in enumerate(chunks, start=1):
+            if on_progress is not None:
+                on_progress(i, len(chunks), f"Transcribing {i}/{len(chunks)}")
+            try:
+                result = await transcribe.transcribe(
+                    chunk, filename=filename, media_type="audio/wav"
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad chunk shouldn't sink the rest
+                log.warning("video.transcribe_chunk_failed", chunk=i, error=repr(exc))
+                continue
+            words.extend(_words_from(result, offset_ms=offset_ms))
+            if result.text.strip():
+                parts.append(result.text.strip())
+            duration_ms = offset_ms + (result.duration_ms or 0)
+    finally:
+        await _unload(gateway, model)
+
+    text = " ".join(parts).strip()
+    if not text and not words:
+        return None
+    return {"text": text, "words": words, "duration_ms": duration_ms}
+
+
+def _split_wav(wav: bytes, chunk_s: float) -> list[tuple[int, bytes]]:
+    """Split a WAV into `(offset_ms, wav_bytes)` pieces of ≤ `chunk_s` each, re-wrapping
+    every piece with its own header so whisper reads it standalone. Returns a single
+    `(0, wav)` piece when the audio is short or can't be parsed (the caller then takes
+    the plain single-call path)."""
+    try:
+        with wave.open(io.BytesIO(wav), "rb") as src:
+            rate = src.getframerate()
+            total = src.getnframes()
+            params = src.getparams()
+            per_chunk = max(1, int(rate * chunk_s))
+            if rate <= 0 or total <= per_chunk:
+                return [(0, wav)]
+            out: list[tuple[int, bytes]] = []
+            for start in range(0, total, per_chunk):
+                src.setpos(start)
+                data = src.readframes(min(per_chunk, total - start))
+                buf = io.BytesIO()
+                with wave.open(buf, "wb") as dst:
+                    dst.setparams(params)
+                    dst.writeframes(data)
+                out.append((int(start / rate * 1000), buf.getvalue()))
+            return out
+    except (wave.Error, EOFError, OSError) as exc:
+        log.info("video.wav_split_failed", error=str(exc))
+        return [(0, wav)]
 
 
 def _duration_ms(frames: list[dict[str, Any]], transcript: dict[str, Any] | None) -> int | None:
