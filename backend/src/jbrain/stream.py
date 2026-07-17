@@ -59,10 +59,13 @@ MAX_WINDOW_S = 120.0  # the longest slice we sample/transcribe in one call
 DEFAULT_WINDOW_S = 10.0
 DEFAULT_WINDOW_FRAMES = 8  # frames for a window-mode grab
 DEFAULT_FULL_FRAMES = 16  # frames spread across a whole VOD in full mode
-# In full (whole-VOD) mode an in-turn whisper pass over the entire audio is only
-# tractable up to here; a longer video samples frames but transcribes nothing (the
-# tool tells the model to window a part it cares about).
-MAX_FULL_AUDIO_S = 300.0
+# In full (whole-VOD) mode we transcribe the entire audio track up to this length —
+# generous enough for a typical video (GPU whisper handles ~30 min in a few minutes,
+# which the "expensive" tool warns about). A longer clip (a podcast, an hour+ talk)
+# still samples frames across the whole video but skips the transcript rather than
+# tying up an in-turn whisper pass — download it as an attachment for the job-backed
+# whole-video transcription instead.
+MAX_FULL_AUDIO_S = 30 * 60.0
 DEFAULT_MAX_HEIGHT = 720  # cap the resolved format so ffmpeg reads bounded bytes
 AUDIO_SAMPLE_RATE = 16_000  # whisper's native rate; mono keeps the WAV small
 _RESOLVE_TIMEOUT_S = 30
