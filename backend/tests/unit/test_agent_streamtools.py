@@ -42,6 +42,23 @@ class FakeTranscribe:
         return self._transcript
 
 
+class RaisingTranscribe:
+    """A whisper client that fails (e.g. its backend host can't be resolved)."""
+
+    async def transcribe(self, audio: bytes, *, filename: str, media_type: str) -> Transcript:
+        raise OSError("[Errno -3] Temporary failure in name resolution")
+
+
+class RaisingRouter:
+    """A router whose vision/summarize call fails (an unreachable model backend)."""
+
+    async def complete(self, *args, **kwargs):
+        raise OSError("[Errno -3] Temporary failure in name resolution")
+
+    async def effective_spec(self, task: str):
+        return ("x", "grok-4.3")
+
+
 class FakeSampler:
     """Records the kwargs it was called with and returns a canned StreamSample, so a
     test asserts the handler translated each mode into the right sampler call."""
@@ -153,6 +170,32 @@ async def test_window_round_trip_returns_summary_and_stream_view() -> None:
     # (a stream has no served-thumbnail route); it's a data: URI, not an external URL (#9).
     assert all(f["thumb_data_uri"].startswith("data:image/jpeg;base64,") for f in data["frames"])
     assert data["youtube_id"] == ""  # a non-YouTube resolver → no embed
+
+
+async def test_whisper_failure_degrades_to_frames_only() -> None:
+    # A whisper backend that can't be reached must NOT kill the analysis — it falls back
+    # to frames-only (the documented "frames-only without whisper" posture).
+    blobs = FakeBlobs()
+    window = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8f")], audio_wav=b"RIFFwav"))
+    fake = FakeLlmClient(["a frame", "a summary"])
+    handlers = _handlers(
+        blobs, _router(fake), resolver=_resolver(VOD), window=window, transcribe=RaisingTranscribe()
+    )
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "window"}, CTX)
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["transcript"] is None  # degraded, not errored
+    assert [f["t_ms"] for f in out.view.data["frames"]] == [0]
+
+
+async def test_model_failure_returns_clean_error_not_raw_exception() -> None:
+    # An unreachable vision/summarize model surfaces as a clean, recoverable tool
+    # observation — never a raw "[Errno -3] …" leaking to the model.
+    blobs = FakeBlobs()
+    window = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8f")]))
+    handlers = _handlers(blobs, RaisingRouter(), resolver=_resolver(VOD), window=window)
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "single"}, CTX)
+    assert isinstance(out, str)
+    assert "couldn't" in out.lower() and "Errno" not in out
 
 
 async def test_youtube_source_carries_embed_id() -> None:

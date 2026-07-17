@@ -92,44 +92,52 @@ def build_stream_handlers(
             else None
         )
 
-        if report:
-            report(0, 0, "Opening stream…")
-        try:
-            resolved = await asyncio.to_thread(resolve, url, max_height=max_height)
-        except StreamError as exc:
-            return str(exc)
-
         want_audio = (
             mode != "single"
             and bool(arguments.get("transcribe", True))
             and (transcribe is not None)
         )
+        if report:
+            report(0, 0, "Opening stream…")
+        # One guard over the whole pipeline: a StreamError carries an actionable message
+        # (bad URL, live-in-full, a non-public resolved host); anything else — a network
+        # blip resolving a host, a local model that didn't answer — is turned into a
+        # clean recoverable observation instead of leaking a raw exception (e.g. a bare
+        # "[Errno -3] Temporary failure in name resolution") to the model, matching
+        # analyze_video's posture.
         try:
+            resolved = await asyncio.to_thread(resolve, url, max_height=max_height)
             sample = await _sample(
                 mode, resolved, arguments, want_audio, window_sampler, full_sampler
             )
+            if not sample.frames and not sample.audio_wav:
+                return f'I couldn\'t read any frames from that stream ("{resolved.title}").'
+            captioned = await caption_frames(
+                sample.frames,
+                filename=resolved.title,
+                router=router,
+                blobs=blobs,
+                on_progress=report,
+            )
+            # Whisper is best-effort (the "frames-only without whisper" contract): a
+            # transcription failure degrades to frames-only, it never kills an otherwise
+            # good frame analysis.
+            transcript = None
+            if want_audio and sample.audio_wav:
+                if report:
+                    report(0, 0, "Transcribing audio…")
+                transcript = await _transcribe_best_effort(
+                    transcribe, gateway, transcribe_model, sample.audio_wav
+                )
+            result = await fuse_and_reduce(captioned, transcript, router=router, on_progress=report)
         except StreamError as exc:
             return str(exc)
-        if not sample.frames and not sample.audio_wav:
-            return f'I couldn\'t read any frames from that stream ("{resolved.title}").'
-
-        captioned = await caption_frames(
-            sample.frames, filename=resolved.title, router=router, blobs=blobs, on_progress=report
-        )
-        transcript = None
-        if want_audio and sample.audio_wav:
-            if report:
-                report(0, 0, "Transcribing audio…")
-            transcript = await transcribe_audio(
-                transcribe,
-                gateway,
-                transcribe_model,
-                sample.audio_wav,
-                filename="stream-audio.wav",
-                media_type=_AUDIO_MEDIA_TYPE,
+        except Exception as exc:  # noqa: BLE001 - a tool error is a recoverable observation
+            log.warning("analyze_stream_failed", error=repr(exc))
+            return (
+                "I couldn't analyze that stream right now — the video host or the local "
+                "models couldn't be reached."
             )
-
-        result = await fuse_and_reduce(captioned, transcript, router=router, on_progress=report)
         if result is None:
             return f'I couldn\'t make anything of that stream ("{resolved.title}").'
         return ToolOutput(
@@ -138,6 +146,30 @@ def build_stream_handlers(
         )
 
     return {"analyze_stream": analyze_stream_tool}
+
+
+async def _transcribe_best_effort(
+    transcribe: TranscribeClient | None,
+    gateway: LocalGateway | None,
+    transcribe_model: str,
+    audio_wav: bytes,
+) -> dict | None:
+    """Transcribe the audio segment, degrading to None (frames-only) on ANY failure —
+    a whisper/network hiccup must not sink an otherwise-good frame analysis. Mirrors the
+    unconfigured-whisper path, so the tool behaves the same whether whisper is absent or
+    merely unreachable."""
+    try:
+        return await transcribe_audio(
+            transcribe,
+            gateway,
+            transcribe_model,
+            audio_wav,
+            filename="stream-audio.wav",
+            media_type=_AUDIO_MEDIA_TYPE,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort: fall back to frames-only
+        log.info("stream.transcribe_failed", error=repr(exc))
+        return None
 
 
 async def _sample(
