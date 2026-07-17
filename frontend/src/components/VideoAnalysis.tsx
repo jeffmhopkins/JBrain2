@@ -24,6 +24,11 @@ interface VideoAnalysisProps {
    * stream source (a live/remote URL is not a playable local attachment) — then the
    * card drops the <video> and the filmstrip frames are the whole timeline. */
   videoUrl?: string | undefined;
+  /** A YouTube video id (analyze_stream, YouTube source). When set, the card embeds the
+   * YouTube player instead of a <video> and drives the shared clock from it via
+   * postMessage — so the filmstrip + transcript sync to playback. Takes precedence over
+   * videoUrl. Server-derived id, never model-authored (the #9 exception, ASSISTANT.md). */
+  youtubeId?: string | undefined;
   filename: string;
   summary: string;
   frames: VideoFrame[];
@@ -49,8 +54,23 @@ export function activeFrameIndex(frames: VideoFrame[], currentMs: number): numbe
   return idx;
 }
 
+/** The YouTube embed origin — the cookieless host, so the player sets no cookie until
+ * play and our origin loads no third-party JS (we talk to it only via postMessage). */
+const YT_EMBED_ORIGIN = "https://www.youtube-nocookie.com";
+
+/** Whether a postMessage came from a YouTube embed (guards the time-sync listener
+ * against spoofed messages from any other frame). */
+function isYouTubeOrigin(origin: string): boolean {
+  try {
+    return /(^|\.)youtube(-nocookie)?\.com$/.test(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function VideoAnalysis({
   videoUrl,
+  youtubeId,
   filename,
   summary,
   frames,
@@ -58,9 +78,36 @@ export function VideoAnalysis({
   transcriptText,
 }: VideoAnalysisProps): ReactNode {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const [currentMs, setCurrentMs] = useState(0);
   const [playing, setPlaying] = useState(false);
+
+  // Command the embedded YouTube player over postMessage (no YouTube JS in our origin).
+  const postToPlayer = useCallback((func: string, args: unknown[] = []) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: "command", func, args }),
+      YT_EMBED_ORIGIN,
+    );
+  }, []);
+
+  // Drive the shared clock from the YouTube player: once it's listening it posts
+  // `infoDelivery` frames carrying currentTime, which advance the filmstrip + karaoke.
+  useEffect(() => {
+    if (!youtubeId) return;
+    const onMessage = (e: MessageEvent) => {
+      if (typeof e.data !== "string" || !isYouTubeOrigin(e.origin)) return;
+      try {
+        const msg = JSON.parse(e.data);
+        const t = msg?.info?.currentTime;
+        if (typeof t === "number") setCurrentMs(t * 1000);
+      } catch {
+        // non-JSON player chatter — ignore
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [youtubeId]);
 
   const hasTranscript = words.length > 0 || Boolean(transcriptText);
   const hasFrames = frames.length > 0;
@@ -100,13 +147,18 @@ export function VideoAnalysis({
     else strip.scrollLeft = target;
   }, [activeFrame]);
 
-  const seekTo = useCallback((ms: number) => {
-    const v = videoRef.current;
-    if (v) v.currentTime = ms / 1000;
-    // Update the clock even without a <video> (a stream card has none), so tapping a
-    // filmstrip frame still highlights it and surfaces its caption.
-    setCurrentMs(ms);
-  }, []);
+  const seekTo = useCallback(
+    (ms: number) => {
+      const v = videoRef.current;
+      if (v) v.currentTime = ms / 1000;
+      // Seek the embedded YouTube player too, so tapping a frame jumps playback.
+      if (youtubeId) postToPlayer("seekTo", [ms / 1000, true]);
+      // Update the clock even without a local <video>, so a stream card still
+      // highlights the tapped frame and surfaces its caption immediately.
+      setCurrentMs(ms);
+    },
+    [youtubeId, postToPlayer],
+  );
 
   const onTimeUpdate = () => videoRef.current && setCurrentMs(videoRef.current.currentTime * 1000);
 
@@ -125,7 +177,25 @@ export function VideoAnalysis({
           </span>
         )}
       </div>
-      {videoUrl && (
+      {youtubeId ? (
+        // The YouTube embed (cookieless host). enablejsapi lets us start `listening`
+        // for currentTime and send seekTo — over postMessage only, so no YouTube JS
+        // runs in our origin and the iframe is browser origin-isolated (the #9
+        // exception, ASSISTANT.md). Server-derived id, never model-authored.
+        <iframe
+          className="tv-vid-video"
+          ref={iframeRef}
+          title={filename}
+          src={`${YT_EMBED_ORIGIN}/embed/${encodeURIComponent(youtubeId)}?enablejsapi=1&playsinline=1&origin=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin : "")}`}
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          onLoad={() =>
+            iframeRef.current?.contentWindow?.postMessage(
+              JSON.stringify({ event: "listening" }),
+              YT_EMBED_ORIGIN,
+            )
+          }
+        />
+      ) : videoUrl ? (
         // biome-ignore lint/a11y/useMediaCaption: the transcript tab IS the caption.
         <video
           className="tv-vid-video"
@@ -138,7 +208,7 @@ export function VideoAnalysis({
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
         />
-      )}
+      ) : null}
       {hasFrames && (
         // The filmstrip is the scrubber: sampled frames are the timeline. Tap a frame
         // to seek; the active frame lifts and the strip scrolls to keep it centered.

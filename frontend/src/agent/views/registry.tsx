@@ -751,21 +751,27 @@ function videoFrames(value: unknown, thumbUrl: ((thumbId: string) => string) | n
  * the analyze_video / analyze_stream card. An attachment source builds media + thumbnail
  * srcs from the id (a chat attachment for jerv's tool, a note attachment otherwise); a
  * `stream` source (analyze_stream) has no attachment, so it renders no <video> and its
- * frames carry a small server-built inline `thumb_data_uri` (no external fetch, #9). No
- * URL rides the payload. */
+ * frames carry a small server-built inline `thumb_data_uri` (no external fetch, #9); a
+ * YouTube stream also carries `youtube_id`, which the card embeds as a player synced to
+ * the timeline (the #9 exception). No URL rides the payload. */
 function VideoAnalysisView({ data }: ViewProps): ReactNode {
   const attachmentId = String(data.attachment_id ?? "");
   const source = data.source === "note" ? "note" : data.source === "stream" ? "stream" : "chat";
   // A stream (analyze_stream) has no playable local attachment and no served thumbnail
-  // route — the card drops the <video> and renders frames as caption markers. A note/
-  // chat attachment builds its media + thumb srcs from the id (no URL rides the
-  // payload, invariant #9); thumbnails are served only for chat attachments.
+  // route — the card drops the <video> (embedding the YouTube player instead when the
+  // source is YouTube) and renders frames from their inline thumb. A note/chat
+  // attachment builds its media + thumb srcs from the id (no URL rides the payload,
+  // invariant #9); thumbnails are served only for chat attachments.
   const videoUrl =
     source === "stream"
       ? undefined
       : source === "note"
         ? attachmentUrl(attachmentId)
         : chatAttachmentUrl(attachmentId);
+  const youtubeId =
+    source === "stream" && typeof data.youtube_id === "string" && data.youtube_id
+      ? data.youtube_id
+      : undefined;
   const thumbUrl =
     source === "chat" ? (id: string) => chatAttachmentThumbUrl(attachmentId, id) : null;
   const transcript =
@@ -775,6 +781,7 @@ function VideoAnalysisView({ data }: ViewProps): ReactNode {
   return (
     <VideoAnalysis
       videoUrl={videoUrl}
+      youtubeId={youtubeId}
       filename={typeof data.filename === "string" ? data.filename : "video"}
       summary={typeof data.summary === "string" ? data.summary : ""}
       frames={videoFrames(data.frames, thumbUrl)}

@@ -455,6 +455,22 @@ fails the decode), with a validating proxy / manifest-host allowlist left as the
 hardening. Everything the frames/audio produce is jerv chat output — no fact is minted,
 no episodic memory is written.
 
+**The stream card's YouTube embed — a bounded, owner-approved exception to #9's
+"output triggers no external load".** The analyze_stream card normally shows the
+sampled frame stills inline (server-built thumbnail data URIs — no fetch). For a
+**YouTube** source it additionally embeds the YouTube player so the owner can watch,
+with the filmstrip + transcript **synced to playback**. This is a deliberate,
+owner-approved relaxation of #9 (the same spirit as jerv's direct web access), and it
+is bounded so it opens no exfiltration channel: the embedded video **id is
+server-derived** from the yt-dlp resolve (never model-authored, so injected content
+can't point the embed anywhere), the player loads from the **cookieless
+`youtube-nocookie.com`** host, and the app loads **no YouTube JS into its own origin** —
+the iframe is browser origin-isolated and the card talks to it **only via
+`postMessage`** (a `listening`/`seekTo`/`currentTime` bridge), so YouTube's frame cannot
+read the app and no third-party script runs in our context. Non-YouTube streams keep the
+still-only card. The embed is a `video_analysis` **view** field (`youtube_id`), data not
+model markup, like every other view.
+
 ### External connectors (the egress chokepoint)
 
 Some tasks genuinely need outside reference data — what a medication is, what a

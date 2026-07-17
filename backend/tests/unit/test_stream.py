@@ -35,10 +35,14 @@ def test_select_media_direct_url() -> None:
         "is_live": True,
         "duration": None,
         "webpage_url": "https://youtube.com/live/abc",
+        "extractor": "youtube",
+        "id": "abc123",
     }
     r = _select_media(info, fallback_url="https://youtube.com/live/abc")
     assert r.media_url == "https://cdn.example.com/v.m3u8"
     assert r.title == "Launch" and r.is_live is True and r.duration_s is None
+    # Provider + id are captured so a YouTube card can embed the synced player.
+    assert r.provider == "youtube" and r.video_id == "abc123"
 
 
 def test_select_media_requested_formats_fallback() -> None:

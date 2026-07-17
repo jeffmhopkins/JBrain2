@@ -113,6 +113,15 @@ LIVE = ResolvedStream(
     duration_s=None,
     webpage_url="https://youtube.com/live/xyz",
 )
+YOUTUBE = ResolvedStream(
+    media_url="https://cdn.example.com/live.m3u8",
+    title="Live Cam",
+    is_live=True,
+    duration_s=None,
+    webpage_url="https://youtube.com/live/xyz",
+    provider="youtube",
+    video_id="xyz123",
+)
 
 
 async def test_window_round_trip_returns_summary_and_stream_view() -> None:
@@ -143,6 +152,19 @@ async def test_window_round_trip_returns_summary_and_stream_view() -> None:
     # Each frame carries a server-inlined thumbnail data URI so the card shows the still
     # (a stream has no served-thumbnail route); it's a data: URI, not an external URL (#9).
     assert all(f["thumb_data_uri"].startswith("data:image/jpeg;base64,") for f in data["frames"])
+    assert data["youtube_id"] == ""  # a non-YouTube resolver → no embed
+
+
+async def test_youtube_source_carries_embed_id() -> None:
+    blobs = FakeBlobs()
+    window = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8f")]))
+    fake = FakeLlmClient(["a pad", "On the pad."])
+    handlers = _handlers(blobs, _router(fake), resolver=_resolver(YOUTUBE), window=window)
+
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "single"}, CTX)
+    assert isinstance(out, ToolOutput) and out.view is not None
+    # A YouTube source surfaces its video id so the card can embed the synced player.
+    assert out.view.data["youtube_id"] == "xyz123"
 
 
 async def test_single_mode_grabs_one_frame_without_audio() -> None:

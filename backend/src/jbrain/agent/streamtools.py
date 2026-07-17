@@ -209,7 +209,12 @@ def _stream_view(
     each frame carries a **small inline thumbnail data URI** (server-built, downscaled) —
     the card shows the actual still while triggering no render-time external fetch
     (invariant #9), the same pattern the image-gen preview uses. The page URL is the
-    owner-facing source, not a fetched resource."""
+    owner-facing source, not a fetched resource.
+
+    For a **YouTube** source the card also embeds the provider's player (`youtube_id`),
+    synced to the timeline via postMessage — a bounded, owner-approved exception to #9
+    (docs/reference/ASSISTANT.md): the id is server-derived from the yt-dlp resolve, not
+    model-authored, and the iframe is browser origin-isolated. Empty for non-YouTube."""
     analysis = result.analysis
     return ViewPayload(
         view="video_analysis",
@@ -221,12 +226,22 @@ def _stream_view(
             "stream_url": resolved.webpage_url,
             "is_live": resolved.is_live,
             "mode": mode,
+            "youtube_id": _youtube_id(resolved),
             "summary": result.summary,
             "duration_ms": analysis.get("duration_ms"),
             "frames": _frames_with_thumbs(analysis.get("frames", []), sampled),
             "transcript": analysis.get("transcript"),
         },
     )
+
+
+def _youtube_id(resolved: ResolvedStream) -> str:
+    """The YouTube video id to embed, or "" for a non-YouTube source. yt-dlp's youtube
+    extractor reports `provider == "youtube"` and an 11-char `video_id`; a live stream
+    is embeddable too. Anything else keeps the still card with no player."""
+    if resolved.provider == "youtube" and resolved.video_id:
+        return resolved.video_id
+    return ""
 
 
 def _frames_with_thumbs(captioned: list[dict], sampled: list[SampledFrame]) -> list[dict]:

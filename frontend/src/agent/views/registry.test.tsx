@@ -287,6 +287,31 @@ describe("ToolView registry", () => {
     expect(screen.getByText("The booster is still on the mount.")).toBeInTheDocument();
   });
 
+  it("embeds the YouTube player when a stream carries a youtube_id", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "video_analysis",
+          data: {
+            source: "stream",
+            media: "video",
+            filename: "Starship Live",
+            youtube_id: "dQw4w9WgXcQ",
+            is_live: true,
+            summary: "On the pad.",
+            frames: [
+              { t_ms: 0, caption: "On the pad.", thumb_data_uri: "data:image/jpeg;base64,AA" },
+            ],
+            transcript: null,
+          },
+        })}
+      />,
+    );
+    const iframe = container.querySelector("iframe");
+    expect(iframe?.getAttribute("src")).toContain("youtube-nocookie.com/embed/dQw4w9WgXcQ");
+    expect(container.querySelector("video")).toBeNull();
+  });
+
   it("renders a weather_card from data-only slots (hero + hourly strip)", () => {
     const { container } = render(
       <ToolView
