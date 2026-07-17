@@ -13,6 +13,7 @@ from jbrain.stream import (
     MAX_FRAMES,
     ResolvedStream,
     StreamError,
+    _input_guard_args,
     _select_media,
     guard_public_host_or_stream,
     sample_stream,
@@ -72,6 +73,18 @@ def test_guard_refuses_private_resolved_host() -> None:
         guard_public_host_or_stream("ftp://example.com/x", skip_dns=False)
     # With skip_dns (test path, no resolution) a well-formed public URL passes.
     guard_public_host_or_stream("https://cdn.example.com/v.m3u8", skip_dns=True)
+
+
+def test_url_input_restricted_to_network_protocols() -> None:
+    # A URL media input gets a protocol whitelist barring file:/pipe:/concat:/data:
+    # (a crafted manifest can't make ffmpeg open a local-file/exfil target).
+    args = _input_guard_args("https://cdn.example.com/live.m3u8")
+    assert args[0] == "-protocol_whitelist"
+    protos = args[1].split(",")
+    assert "https" in protos and "hls" in protos
+    assert "file" not in protos and "pipe" not in protos and "concat" not in protos
+    # A local file path (tests) is left unrestricted so ffmpeg can read it.
+    assert _input_guard_args("/tmp/clip.mp4") == []
 
 
 # ---- ffmpeg extraction against a synthetic clip -----------------------------

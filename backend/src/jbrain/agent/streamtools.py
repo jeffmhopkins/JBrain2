@@ -1,6 +1,6 @@
 """The `analyze_stream` agent tool: jerv reads a video **URL** — a live stream or an
 on-demand video — by sampling frames (and optionally its audio) and running the same
-caption→fuse→reduce as `analyze_video` (docs/plans/STREAM_ANALYSIS_PLAN.md, Wave 2).
+caption→fuse→reduce as `analyze_video` (docs/archive/STREAM_ANALYSIS_PLAN.md, Wave 2).
 
 The URL sibling of `analyze_video` (which reads an attachment). Where the attachment
 tool resolves a chat-scoped blob, this resolves a model-supplied URL with yt-dlp and

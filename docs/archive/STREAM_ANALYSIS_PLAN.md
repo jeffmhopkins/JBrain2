@@ -1,6 +1,6 @@
 # analyze_stream — build plan (URL-sourced video/stream analysis)
 
-> **Status:** In progress · **Last verified:** 2026-07-17 · **Waves:** W1✅ W2✅ W3◻️
+> **Status:** Shipped 2026-07 · **Last verified:** 2026-07-17 · **Waves:** W1✅ W2✅ W3✅
 
 Give **jerv** a sense it doesn't have: pull frame(s) — and optionally the audio —
 from a **video URL**, live or on-demand, so the model can actually *see* what a
@@ -156,16 +156,30 @@ stream source chip + a thumbnail path for `source:"stream"` frames — W2 emits 
 data-only payload (no `attachment_id`, so the card shows summary/timeline without
 per-frame images until W3 serves stream thumbs).
 
-### Wave 3 — Docs, egress hardening, card polish
-`ASSISTANT.md`: document `analyze_stream` as the **second jerv-only sanctioned
-direct outbound leg** in the web-exception section, and add it to the SERVICES.md
-tool inventory. `video_analysis` card: render the stream source chip for a
-`source:"stream"` payload (DESIGN.md note; still ids-only, no external load, #9).
-**Wave-level red-team** on the SSRF / yt-dlp / ffmpeg surface (PROCESS.md mandates
-a security gate for any egress/scope-touching wave): argv injection, resolver
-protocol allowlist, redirect-to-private, oversized/slow-loris segment, a
-non-video URL, a URL resolving to a private host. Reconcile
-`scripts/dev-setup.sh` + compose/Dockerfile; add the ROADMAP one-liner.
+### Wave 3 — Docs, egress hardening, safe stream card ✅
+**Egress docs:** `ASSISTANT.md` documents `analyze_stream` as the **second jerv-only
+sanctioned direct outbound leg** (its own paragraph in the web-exception section — the
+yt-dlp resolve profile, the dual SSRF guard on input + resolved host, the ffmpeg
+protocol whitelist, and the named segment-host residual) and folds it into the media-
+tools list; `SERVICES.md` lists it in the tool inventory. **Red-team hardening (shipped):**
+ffmpeg now runs a URL input under `-protocol_whitelist https,http,tls,tcp,crypto,hls`
+(a crafted manifest can't open `file:`/`pipe:`/`concat:`/`data:` — the local-file exfil
+class), on top of the Wave-1 SSRF guard, per-read `-rw_timeout`, wall-clock timeout, and
+bounded window; `_input_guard_args` is unit-tested. **Safe stream card (no GUI gate):**
+`VideoAnalysis`'s `videoUrl` is now optional — a `source:"stream"` payload renders the
+existing card with **no `<video>`** and frames as **caption markers** (the registry
+builds no attachment/thumb URL), and tapping a frame still highlights it + surfaces its
+caption; frontend tests cover both the component and the registry mapping. `yt-dlp` rode
+in as a pip dep (no compose/Dockerfile edit — W1); no ROADMAP phase change (a jerv tool,
+not a phase).
+
+**Deferred (the plan's out-of-scope, not regressions):** the *designed* stream card —
+a LIVE badge + a clickable source chip (a new visual surface → the 3-mock GUI gate) and
+**served per-frame stream thumbnails** (needs a validated, session-scoped blob-serving
+store, a real security surface — a stream has no persisted attachment row to validate a
+`thumb_id` against). The card is fully useful without them (summary + caption timeline +
+transcript); these are a clean follow-up. The segment-host SSRF residual (a validating
+proxy / manifest-host allowlist) is likewise future hardening, documented in ASSISTANT.md.
 
 ## Out of scope (named, not silently dropped)
 

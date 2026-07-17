@@ -1,5 +1,5 @@
 """URL-sourced video/stream sampling for the `analyze_stream` tool
-(docs/plans/STREAM_ANALYSIS_PLAN.md, Wave 1).
+(docs/archive/STREAM_ANALYSIS_PLAN.md, Wave 1).
 
 The URL sibling of `jbrain.media` (which samples an attachment's bytes): resolve a
 model-supplied video URL — a live stream or an on-demand video — to its direct
@@ -52,7 +52,7 @@ from jbrain.web.fetch import WebFetchError, guard_public_host
 
 log = structlog.get_logger()
 
-# Bounds (owner decisions, docs/plans/STREAM_ANALYSIS_PLAN.md). A live stream is
+# Bounds (owner decisions, docs/archive/STREAM_ANALYSIS_PLAN.md). A live stream is
 # unbounded, so every knob that could let ffmpeg read forever is capped here.
 MAX_FRAMES = 24  # the analyze_video budget — flat VLM cost regardless of stream length
 MAX_WINDOW_S = 120.0  # the longest slice we sample/transcribe in one call
@@ -70,6 +70,13 @@ _RESOLVE_TIMEOUT_S = 30
 # a slow-loris media host cannot hang the turn.
 _FFMPEG_SLACK_S = 60
 _RW_TIMEOUT_US = 20_000_000  # per-read socket timeout ffmpeg honours on a stalled host
+# ffmpeg opens whatever a (possibly crafted) HLS/DASH manifest references. Restrict a
+# URL input to network protocols only, so a malicious manifest cannot make ffmpeg open
+# a `file:`, `pipe:`, `concat:`, `data:`, or `subfile:` target — the local-file /
+# process exfil vectors. http stays (the residual same-family segment-host SSRF is
+# bounded by the SSRF guard on the resolved host, the read timeouts, and the fact that
+# no fetched-response bytes reach the model — only decoded pixels of valid video do).
+_URL_PROTOCOLS = "https,http,tls,tcp,crypto,hls,httpproxy"
 
 # Prefer a single combined (audio+video) format at or below the height cap — one URL
 # ffmpeg reads for both frames and audio (YouTube VOD itag 22, live HLS variants).
@@ -288,12 +295,23 @@ def sample_stream_full(
     return StreamSample(frames=deduped, audio_wav=audio)
 
 
+def _input_guard_args(media_url: str) -> list[str]:
+    """ffmpeg input args restricting a URL to network protocols only (`_URL_PROTOCOLS`),
+    so a crafted manifest can't reach a `file:`/`pipe:`/`concat:`/`data:` target. A
+    local file path (tests pass one as the media URL) is left unrestricted — the
+    whitelist would otherwise bar the `file` protocol it needs."""
+    if media_url.startswith(("http://", "https://")):
+        return ["-protocol_whitelist", _URL_PROTOCOLS]
+    return []
+
+
 def _grab_one(media_url: str, tmpdir: Path, *, at: float, longest_edge: int) -> bytes | None:
     """One fast frame at offset `at` via input seek (`-ss` before `-i`), or None on a
     decode miss. Bounded by the same per-read and wall-clock timeouts as the window
     pass, so a stalled host can't hang the grab."""
     out = tmpdir / f"grab_{int(at * 1000):09d}.jpg"
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-rw_timeout", str(_RW_TIMEOUT_US),
+           *_input_guard_args(media_url),
            "-ss", f"{at:.3f}", "-i", media_url, "-frames:v", "1",
            "-vf", f"scale='min({longest_edge},iw)':-2", "-q:v", "3", str(out)]
     try:
@@ -326,6 +344,7 @@ def _extract_frames(
     vf = scale if single else f"fps={fps:.6f},{scale}"
 
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-rw_timeout", str(_RW_TIMEOUT_US)]
+    cmd += _input_guard_args(media_url)
     if seek > 0:
         cmd += ["-ss", f"{seek:.3f}"]  # input seek (before -i): fast, VOD only
     cmd += ["-i", media_url]
@@ -359,6 +378,7 @@ def _extract_audio(media_url: str, tmpdir: Path, *, window: float, seek: float) 
         return b""
     out = tmpdir / "audio.wav"
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-rw_timeout", str(_RW_TIMEOUT_US)]
+    cmd += _input_guard_args(media_url)
     if seek > 0:
         cmd += ["-ss", f"{seek:.3f}"]
     cmd += ["-i", media_url, "-t", f"{window:.3f}", "-vn", "-ac", "1", "-ar",

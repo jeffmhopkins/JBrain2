@@ -1,4 +1,4 @@
-"""Dependency smoke test for analyze_stream (docs/plans/STREAM_ANALYSIS_PLAN.md,
+"""Dependency smoke test for analyze_stream (docs/archive/STREAM_ANALYSIS_PLAN.md,
 Wave 1; CLAUDE.md rule #8 single-source-of-truth). Fails fast if `yt-dlp` (stream
 URL → direct media URL resolution) is missing from a synced environment — so a
 broken `uv sync` / dev-setup step reddens here instead of deep in the tool wiring.

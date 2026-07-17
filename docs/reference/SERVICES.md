@@ -161,7 +161,9 @@ graph/wiki writes** (`propose_correction`, `propose_merge`, `relate`,
 (`weather` forecast + `weather_history` archive — full past-weather aggregates with
 on-box heat-index compute) **/ hurricane** ·
 **image** (`generate_image`/`edit_image`/`analyze_image`) ·
-**media** (`transcribe`, `analyze_video`) · **Gmail** (`gmail_*`) · **web**
+**media** (`transcribe`, `analyze_video`, `analyze_stream` — the last reads a video
+URL, live or on-demand, via yt-dlp + ffmpeg; a second SSRF-guarded outbound leg) ·
+**Gmail** (`gmail_*`) · **web**
 (`web_search`/`web_fetch`) · **sub-agents** (`spawn_subagent`) · **health
 lookups** · **host telemetry** (`query_server_metrics`) · `current_time`.
 

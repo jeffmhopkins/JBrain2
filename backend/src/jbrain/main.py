@@ -520,7 +520,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 transcribe_model=settings.whisper_model,
                 gateway=LocalGatewayClient(settings.whisper_url) if settings.whisper_url else None,
             )
-        # jerv's URL-sourced stream/video analysis (docs/plans/STREAM_ANALYSIS_PLAN.md):
+        # jerv's URL-sourced stream/video analysis (docs/archive/STREAM_ANALYSIS_PLAN.md):
         # resolve a video URL with yt-dlp and sample it with ffmpeg, then reuse the
         # analyze_video caption→fuse→reduce core. Wired only when BOTH ffmpeg and yt-dlp
         # are present; the registry drops the `analyze_stream` sidecar otherwise (graceful

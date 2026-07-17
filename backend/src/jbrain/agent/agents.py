@@ -60,7 +60,7 @@ SPAWN_TOOL = "spawn_subagent"
 # `generate_image`/
 # `edit_image`/`analyze_image`, `transcribe`, `analyze_video`, and `analyze_stream`
 # are `web`-gated jerv-only tools (`analyze_stream` reads a video URL — live or VOD —
-# via yt-dlp + ffmpeg, docs/plans/STREAM_ANALYSIS_PLAN.md; the SSRF-guarded second
+# via yt-dlp + ffmpeg, docs/archive/STREAM_ANALYSIS_PLAN.md; the SSRF-guarded second
 # outbound leg after web_fetch). `weather` runs directly over the pinned Open-Meteo upstreams (it
 # sends only a public place name / city centre, never the owner's precise fix — the
 # location firewall). The on-box tools (image/transcribe/video) drive the localhost

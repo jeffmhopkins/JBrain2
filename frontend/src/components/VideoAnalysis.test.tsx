@@ -61,6 +61,25 @@ describe("VideoAnalysis", () => {
     expect(video.currentTime).toBeCloseTo(4); // 4000ms
   });
 
+  it("renders a stream card with no <video> and scrubs captions via the filmstrip", () => {
+    // A stream source (analyze_stream) has no playable local video and no served
+    // thumbs: the card drops the <video>, frames render as markers, and tapping one
+    // still highlights it and surfaces its caption on the now-line.
+    const { container } = renderCard({
+      videoUrl: undefined,
+      frames: [
+        { tMs: 0, caption: "Rocket on the mount." },
+        { tMs: 2000, caption: "Venting vapor." },
+      ],
+    });
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.querySelectorAll(".tv-vid-frame")).toHaveLength(2);
+    expect(container.querySelector(".tv-vid-frame-img")).toBeNull();
+    expect(screen.getByText("Rocket on the mount.")).toBeInTheDocument(); // now-line
+    fireEvent.click(container.querySelectorAll(".tv-vid-frame")[1] as Element);
+    expect(screen.getByText("Venting vapor.")).toBeInTheDocument(); // scrubbed via caption
+  });
+
   it("falls back to a placeholder for a frame without a thumbnail", () => {
     const { container } = renderCard({
       frames: [{ tMs: 0, caption: "No still." }],

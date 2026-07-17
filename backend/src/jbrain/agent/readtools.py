@@ -83,7 +83,7 @@ OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
 # absent (graceful degrade, like the image/whisper tools).
 OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})
 # jerv's URL-sourced stream/video analysis sidecar, dropped from the registry when
-# ffmpeg OR yt-dlp is absent (docs/plans/STREAM_ANALYSIS_PLAN.md).
+# ffmpeg OR yt-dlp is absent (docs/archive/STREAM_ANALYSIS_PLAN.md).
 OPTIONAL_STREAM_TOOL = frozenset({"analyze_stream"})
 # The archivist persona's Gmail sidecars (`web`-class, opt-in), dropped from the
 # registry when Gmail is unconfigured — no refresh token, so no handlers are passed
