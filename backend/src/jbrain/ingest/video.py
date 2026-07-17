@@ -202,9 +202,38 @@ async def run_video_analysis(
     # MAP — sample frames (off the event loop) and caption each.
     report(0, 0, "Extracting frames…")
     frames = await asyncio.to_thread(sampler, data)
+    captioned = await caption_frames(
+        frames, filename=filename, router=router, blobs=blobs, on_progress=on_progress
+    )
+
+    # MAP — transcribe the audio track (best-effort; absent when whisper is off). The
+    # gateway's ffmpeg pulls the audio track from the whole video container.
+    if transcribe is not None:
+        report(0, 0, "Transcribing audio…")
+    transcript = await transcribe_audio(
+        transcribe, gateway, transcribe_model, data, filename=filename, media_type=media_type
+    )
+
+    # FUSE + REDUCE — one timeline, one summary.
+    return await fuse_and_reduce(captioned, transcript, router=router, on_progress=on_progress)
+
+
+async def caption_frames(
+    frames: list[SampledFrame],
+    *,
+    filename: str,
+    router: LlmRouter,
+    blobs: BlobStore,
+    on_progress: ProgressFn | None = None,
+) -> list[dict[str, Any]]:
+    """The MAP over frames: caption each sampled still with the vision model and store
+    its JPEG as a content-addressed blob (`thumb_id`, no URL — invariant #9). Shared by
+    the attachment path (`run_video_analysis`) and the URL path (the analyze_stream
+    tool), which pre-sample frames differently but caption them identically."""
     captioned: list[dict[str, Any]] = []
     for i, frame in enumerate(frames, start=1):
-        report(i, len(frames), f"Analyzing frame {i}/{len(frames)}")
+        if on_progress is not None:
+            on_progress(i, len(frames), f"Analyzing frame {i}/{len(frames)}")
         image = LlmImage(media_type="image/jpeg", data=base64.b64encode(frame.jpeg).decode("ascii"))
         caption = await router.complete(
             FRAME_CAPTION_TASK,
@@ -217,18 +246,25 @@ async def run_video_analysis(
         captioned.append(
             {"t_ms": frame.timestamp_ms, "caption": caption.text.strip(), "thumb_id": thumb_id}
         )
+    return captioned
 
-    # MAP — transcribe the audio track (best-effort; absent when whisper is off).
-    if transcribe is not None:
-        report(0, 0, "Transcribing audio…")
-    transcript = await _transcribe_audio(
-        transcribe, gateway, transcribe_model, data, filename=filename, media_type=media_type
-    )
+
+async def fuse_and_reduce(
+    captioned: list[dict[str, Any]],
+    transcript: dict[str, Any] | None,
+    *,
+    router: LlmRouter,
+    on_progress: ProgressFn | None = None,
+) -> VideoAnalysis | None:
+    """FUSE the captioned frames and the transcript on one [mm:ss] timeline, then
+    REDUCE it to a single summary. Returns None when there is nothing to summarize
+    (no frame captioned and no speech) so the caller skips rather than inventing a
+    summary from an empty timeline. Shared by the attachment and URL paths — both
+    arrive here with captioned frames + an optional transcript dict."""
     if not captioned and not transcript:
         return None
-
-    # FUSE + REDUCE — one timeline, one summary.
-    report(0, 0, "Writing summary…")
+    if on_progress is not None:
+        on_progress(0, 0, "Writing summary…")
     words = list(transcript["words"]) if transcript else []
     timeline = build_timeline(captioned, words)
     summary = await router.complete(
@@ -246,7 +282,7 @@ async def run_video_analysis(
     )
 
 
-async def _transcribe_audio(
+async def transcribe_audio(
     transcribe: TranscribeClient | None,
     gateway: LocalGateway | None,
     model: str,

@@ -33,6 +33,7 @@ dependencies = [
     "pyyaml>=6.0",
     "aiomqtt>=2.5.1",
     "geonamescache>=3.0.1",
+    "yt-dlp>=2024.8",
 ]
 
 [project.optional-dependencies]

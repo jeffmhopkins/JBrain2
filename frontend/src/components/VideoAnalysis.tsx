@@ -20,7 +20,10 @@ export interface VideoFrame {
 }
 
 interface VideoAnalysisProps {
-  videoUrl: string;
+  /** The scrubbable video src, built from an attachment id by the caller. Absent for a
+   * stream source (a live/remote URL is not a playable local attachment) — then the
+   * card drops the <video> and the filmstrip frames are the whole timeline. */
+  videoUrl?: string | undefined;
   filename: string;
   summary: string;
   frames: VideoFrame[];
@@ -99,10 +102,10 @@ export function VideoAnalysis({
 
   const seekTo = useCallback((ms: number) => {
     const v = videoRef.current;
-    if (v) {
-      v.currentTime = ms / 1000;
-      setCurrentMs(ms);
-    }
+    if (v) v.currentTime = ms / 1000;
+    // Update the clock even without a <video> (a stream card has none), so tapping a
+    // filmstrip frame still highlights it and surfaces its caption.
+    setCurrentMs(ms);
   }, []);
 
   const onTimeUpdate = () => videoRef.current && setCurrentMs(videoRef.current.currentTime * 1000);
@@ -122,18 +125,20 @@ export function VideoAnalysis({
           </span>
         )}
       </div>
-      {/* biome-ignore lint/a11y/useMediaCaption: the transcript tab IS the caption. */}
-      <video
-        className="tv-vid-video"
-        ref={videoRef}
-        src={videoUrl}
-        controls
-        preload="metadata"
-        onTimeUpdate={onTimeUpdate}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-      />
+      {videoUrl && (
+        // biome-ignore lint/a11y/useMediaCaption: the transcript tab IS the caption.
+        <video
+          className="tv-vid-video"
+          ref={videoRef}
+          src={videoUrl}
+          controls
+          preload="metadata"
+          onTimeUpdate={onTimeUpdate}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => setPlaying(false)}
+        />
+      )}
       {hasFrames && (
         // The filmstrip is the scrubber: sampled frames are the timeline. Tap a frame
         // to seek; the active frame lifts and the strip scrolls to keep it centered.

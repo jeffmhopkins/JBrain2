@@ -82,6 +82,9 @@ OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
 # jerv's on-box video analysis sidecar, dropped from the registry when ffmpeg is
 # absent (graceful degrade, like the image/whisper tools).
 OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})
+# jerv's URL-sourced stream/video analysis sidecar, dropped from the registry when
+# ffmpeg OR yt-dlp is absent (docs/archive/STREAM_ANALYSIS_PLAN.md).
+OPTIONAL_STREAM_TOOL = frozenset({"analyze_stream"})
 # The archivist persona's Gmail sidecars (`web`-class, opt-in), dropped from the
 # registry when Gmail is unconfigured — no refresh token, so no handlers are passed
 # (graceful degrade, docs/archive/EMAIL_ARCHIVIST_PLAN.md).
@@ -621,6 +624,7 @@ def build_registry(
     image_handlers: dict[str, ToolHandler] | None = None,
     transcribe_handlers: dict[str, ToolHandler] | None = None,
     video_handlers: dict[str, ToolHandler] | None = None,
+    stream_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
@@ -678,6 +682,9 @@ def build_registry(
             # jerv's local video analysis (`web`-gated, on-box), present only when
             # ffmpeg is available; otherwise its sidecar is dropped below.
             **(video_handlers or {}),
+            # jerv's URL-sourced stream/video analysis (`web`-gated), present only when
+            # ffmpeg AND yt-dlp are available; otherwise its sidecar is dropped below.
+            **(stream_handlers or {}),
             # The archivist persona's Gmail tools (`web`-gated), present only when a
             # Gmail refresh token is configured; otherwise their sidecars are dropped.
             **(gmail_handlers or {}),
@@ -696,6 +703,7 @@ def build_registry(
             OPTIONAL_IMAGE_TOOLS
             | OPTIONAL_TRANSCRIBE_TOOL
             | OPTIONAL_VIDEO_TOOL
+            | OPTIONAL_STREAM_TOOL
             | OPTIONAL_GMAIL_TOOLS
         ),
     )

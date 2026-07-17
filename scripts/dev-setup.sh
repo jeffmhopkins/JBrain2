@@ -47,10 +47,12 @@ ensure_uv() {
 }
 
 # Backend runtime deps are declared in backend/pyproject.toml and installed by the
-# `uv sync --all-extras` below (no per-dep line here). New dependency of note: the
-# EMR importer's `pyzipper` (AES-encrypted ZIP extraction, docs/plans/EMR_IMPORT_PLAN.md
-# §6.1) — synced here, guarded by the tests/unit/test_emr_deps.py import smoke test
-# (CLAUDE.md rule #8 single-source-of-truth).
+# `uv sync --all-extras` below (no per-dep line here). New dependencies of note:
+# the EMR importer's `pyzipper` (AES-encrypted ZIP extraction, docs/plans/EMR_IMPORT_PLAN.md
+# §6.1), guarded by tests/unit/test_emr_deps.py; and `yt-dlp` (the analyze_stream tool's
+# stream-URL → media-URL resolver, docs/archive/STREAM_ANALYSIS_PLAN.md), guarded by
+# tests/unit/test_stream_deps.py. Both are pure pip deps synced here (yt-dlp reuses the
+# ffmpeg installed above); the smoke tests enforce CLAUDE.md rule #8.
 sync_python() { # sync_python <dir>
   local dir="$1" stamp="py-${1//\//-}"
   if [ ! -f "$dir/pyproject.toml" ]; then

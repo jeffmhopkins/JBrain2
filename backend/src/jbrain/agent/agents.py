@@ -58,8 +58,10 @@ SPAWN_TOOL = "spawn_subagent"
 # `current_time` is allowlisted explicitly (a default-knowledge tool jerv's closed
 # allowlist could not otherwise reach); `current_location`, `weather`, `hurricane`,
 # `generate_image`/
-# `edit_image`/`analyze_image`, `transcribe`, and `analyze_video` are `web`-gated
-# jerv-only tools. `weather` runs directly over the pinned Open-Meteo upstreams (it
+# `edit_image`/`analyze_image`, `transcribe`, `analyze_video`, and `analyze_stream`
+# are `web`-gated jerv-only tools (`analyze_stream` reads a video URL — live or VOD —
+# via yt-dlp + ffmpeg, docs/archive/STREAM_ANALYSIS_PLAN.md; the SSRF-guarded second
+# outbound leg after web_fetch). `weather` runs directly over the pinned Open-Meteo upstreams (it
 # sends only a public place name / city centre, never the owner's precise fix — the
 # location firewall). The on-box tools (image/transcribe/video) drive the localhost
 # ComfyUI, docs/archive/IMAGE_GEN_PLAN.md; `transcribe` drives the on-box whisper gateway,
@@ -82,6 +84,7 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "analyze_image",
         "transcribe",
         "analyze_video",
+        "analyze_stream",
         "query_server_metrics",
         # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,

@@ -369,10 +369,16 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   forecast tool; one call spans up to a year, so a multi-year question is answered by
   one call per year. When the on-box backends are configured, jerv also gets the
   `web`-gated, jerv-only
-  **`transcribe`** (read an attached audio file via the local whisper gateway) and
-  the image tools (`generate_image`/`edit_image`/`analyze_image`) — each resolves a
+  **`transcribe`** (read an attached audio file via the local whisper gateway), the
+  image tools (`generate_image`/`edit_image`/`analyze_image`), and **`analyze_video`**
+  (read an attached video by sampling frames + transcribing audio) — each resolves a
   chat attachment by id under the session scope, runs an on-box model, and is dropped
-  from the registry when its backend is unconfigured (graceful degrade).
+  from the registry when its backend is unconfigured (graceful degrade). Its URL-sourced
+  sibling **`analyze_stream`** reads a video **URL** — a live stream or an on-demand
+  video — the same way, resolving it with yt-dlp and sampling frames (+ optional audio)
+  with ffmpeg; because that URL is model-supplied and off-box, it is a second sanctioned
+  outbound leg with its own egress discipline (below), dropped from the registry unless
+  **both** ffmpeg and yt-dlp are present (docs/archive/STREAM_ANALYSIS_PLAN.md).
 
   **Web citations.** jerv cites a web claim with an inline `[^n]` footnote marker
   (the same convention the curator uses for notes), numbered in the order the
@@ -429,6 +435,25 @@ owner-controlled version of what the model was doing on its own — only the pub
 URL travels off-box, and through an endpoint the owner pins (never one the model builds). The egress-Proposal
 connectors (below) remain the rule for every *other* agent and every off-box call that
 could carry owner data.
+
+**`analyze_stream` is the second direct outbound leg, bounded the same way.** Like
+`web_fetch` it runs directly (not a staged egress Proposal), and it is jerv-only — no
+knowledge-base tool, so no owner context rides into the URL. The URL is model-supplied,
+so the leg carries the same SSRF discipline: **yt-dlp resolves** the page URL to a
+direct media URL under a constrained profile (`noplaylist`, `skip_download`, a
+height-capped format, socket timeout, no cookies), the input URL **and** the resolved
+media host are run through the shared `guard_public_host` guard (a private/loopback/
+link-local/reserved target is refused), and **ffmpeg reads that media URL with a
+protocol whitelist** (`https,http,tls,tcp,crypto,hls` — no `file:`/`pipe:`/`concat:`/
+`data:`, so a crafted manifest can't turn ffmpeg into a local-file read) plus per-read
+and wall-clock timeouts and a bounded window (`-ss`/`-t`, never a whole-file download).
+The **residual**: ffmpeg fetches an HLS manifest's *segment* URLs itself, so only the
+top media host passes the guard — the segment-host case is bounded rather than closed
+(the resolved segments are same-CDN, no fetched-response bytes reach the model — only
+decoded pixels of *valid* video do, and an internal endpoint returning non-video simply
+fails the decode), with a validating proxy / manifest-host allowlist left as the future
+hardening. Everything the frames/audio produce is jerv chat output — no fact is minted,
+no episodic memory is written.
 
 ### External connectors (the egress chokepoint)
 

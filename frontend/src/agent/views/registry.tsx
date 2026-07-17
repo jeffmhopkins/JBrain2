@@ -736,17 +736,25 @@ function videoFrames(value: unknown, thumbUrl: ((thumbId: string) => string) | n
   });
 }
 
-/** `{attachment_id, source, filename, summary, duration_ms, frames:[{t_ms, caption,
- * thumb_id}], transcript:{text, words}|null}` — the analyze_video card. The component
- * builds the media + thumbnail srcs from the id + source (a chat attachment for jerv's
- * tool, a note attachment otherwise); no URL rides the payload (invariant #9). */
+/** `{attachment_id?, source, filename, summary, duration_ms, frames:[{t_ms, caption,
+ * thumb_id}], transcript:{text, words}|null, stream_url?, is_live?}` — the analyze_video
+ * / analyze_stream card. The component builds the media + thumbnail srcs from the id +
+ * source (a chat attachment for jerv's tool, a note attachment otherwise); a `stream`
+ * source (analyze_stream) has no attachment, so it renders no <video> and no served
+ * thumbs — summary + caption timeline only. No URL rides the payload (invariant #9). */
 function VideoAnalysisView({ data }: ViewProps): ReactNode {
   const attachmentId = String(data.attachment_id ?? "");
-  const source = data.source === "note" ? "note" : "chat";
+  const source = data.source === "note" ? "note" : data.source === "stream" ? "stream" : "chat";
+  // A stream (analyze_stream) has no playable local attachment and no served thumbnail
+  // route — the card drops the <video> and renders frames as caption markers. A note/
+  // chat attachment builds its media + thumb srcs from the id (no URL rides the
+  // payload, invariant #9); thumbnails are served only for chat attachments.
   const videoUrl =
-    source === "note" ? attachmentUrl(attachmentId) : chatAttachmentUrl(attachmentId);
-  // Thumbnails are served only for chat attachments (a note-attachment thumbnail route
-  // arrives with the note card); a note source renders frame markers without stills.
+    source === "stream"
+      ? undefined
+      : source === "note"
+        ? attachmentUrl(attachmentId)
+        : chatAttachmentUrl(attachmentId);
   const thumbUrl =
     source === "chat" ? (id: string) => chatAttachmentThumbUrl(attachmentId, id) : null;
   const transcript =

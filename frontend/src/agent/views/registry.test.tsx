@@ -250,6 +250,34 @@ describe("ToolView registry", () => {
     expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
   });
 
+  it("renders a video_analysis card for a stream source with no <video> or thumbs", () => {
+    // analyze_stream emits source:"stream" and no attachment_id — the card must not
+    // fabricate a broken <video> src or thumbnail fetch; it shows summary + captions.
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "video_analysis",
+          data: {
+            source: "stream",
+            media: "video",
+            filename: "Starship Live",
+            stream_url: "https://youtube.com/live/xyz",
+            is_live: true,
+            mode: "window",
+            summary: "The booster is still on the mount.",
+            frames: [{ t_ms: 0, caption: "Rocket on the mount.", thumb_id: "sha-x" }],
+            transcript: null,
+          },
+        })}
+      />,
+    );
+    expect(container.querySelector("video")).toBeNull(); // no playable local video
+    expect(container.querySelector(".tv-vid-frame-img")).toBeNull(); // no served thumb
+    expect(container.querySelector(".tv-vid-frame")).not.toBeNull(); // frame is a marker
+    expect(screen.getByText("Starship Live")).toBeInTheDocument();
+    expect(screen.getByText("The booster is still on the mount.")).toBeInTheDocument();
+  });
+
   it("renders a weather_card from data-only slots (hero + hourly strip)", () => {
     const { container } = render(
       <ToolView

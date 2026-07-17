@@ -118,7 +118,7 @@ def sample_frames(
         if not frames:
             return []
         stamped = _stamp(frames, duration=duration, fps=fps)
-        return _dedup(stamped, distance=dedup_distance)
+        return dedup_frames(stamped, distance=dedup_distance)
 
 
 def _sampling_fps(duration: float | None, max_frames: int) -> float:
@@ -181,10 +181,13 @@ def _stamp(paths: list[Path], *, duration: float | None, fps: float) -> list[Sam
     return out
 
 
-def _dedup(frames: list[SampledFrame], *, distance: int) -> list[SampledFrame]:
+def dedup_frames(
+    frames: list[SampledFrame], *, distance: int = DEFAULT_DEDUP_DISTANCE
+) -> list[SampledFrame]:
     """Drop frames whose dHash is within `distance` of the last KEPT frame — a static
     stretch collapses to one still while real cuts survive. The first frame is always
-    kept. `distance <= 0` disables dedup."""
+    kept. `distance <= 0` disables dedup. Public so the URL-sourced stream sampler
+    (jbrain.stream) reuses the exact same perceptual dedup as the attachment path."""
     if distance <= 0 or len(frames) < 2:
         return frames
     kept: list[SampledFrame] = []
