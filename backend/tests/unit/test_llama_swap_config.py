@@ -56,6 +56,14 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
     assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
 
 
+def test_render_enables_prompt_prefix_cache_reuse_for_every_model(tmp_path: Path) -> None:
+    # docs/plans/LLM_PROMPT_CACHE_PLAN.md W2: every model's llama-server command carries
+    # --cache-reuse so a stable system-prompt + history prefix is reused, not re-prefilled.
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    assert text.count("--cache-reuse 256") == len(_manifest())
+
+
 def test_render_adds_reasoning_format_only_for_thinking_models(tmp_path: Path) -> None:
     _lay_down(tmp_path)
     (tmp_path / "qwen3-next-80b-a3b-thinking").mkdir()
