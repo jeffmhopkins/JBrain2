@@ -31,7 +31,8 @@ const STATUS: OpsStatus = {
 
 const METRICS: OpsMetrics = {
   mem_total_bytes: 121 * 2 ** 30,
-  mem_available_bytes: 55 * 2 ** 30,
+  // free (22) + reclaimable cache (61) ≈ available (83); used ≈ 38 GB.
+  mem_available_bytes: 83 * 2 ** 30,
   swap_total_bytes: 0,
   swap_free_bytes: 0,
   disk_total_bytes: 1875 * 2 ** 30,
@@ -43,6 +44,7 @@ const METRICS: OpsMetrics = {
   gpu_busy_percent: 41,
   apu_power_w: 28.5,
   fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
+  // The 120B's weights live in GTT (33 GB), so its llama-server RSS is small.
   gpu_mem: {
     gtt_used_bytes: 33 * 2 ** 30,
     gtt_total_bytes: 120 * 2 ** 30,
@@ -50,16 +52,16 @@ const METRICS: OpsMetrics = {
     vram_total_bytes: 4 * 2 ** 30,
   },
   mem_breakdown: {
-    MemFree: 5 * 2 ** 30,
-    Buffers: 0.2 * 2 ** 30,
-    Cached: 40 * 2 ** 30,
+    MemFree: 22 * 2 ** 30,
+    Buffers: 1 * 2 ** 30,
+    Cached: 60 * 2 ** 30,
   },
   containers: [{ service: "api", mem_bytes: 87 * 2 ** 20 }],
   processes: [
     {
       service: "local-llm",
       pid: 101,
-      rss_bytes: 60 * 2 ** 30,
+      rss_bytes: 1.3 * 2 ** 30,
       command: "llama-server --model /models/gpt-oss-120b/x.gguf",
     },
     { service: "api", pid: 401, rss_bytes: 87 * 2 ** 20, command: "uvicorn jbrain.main:app" },
@@ -231,6 +233,18 @@ describe("OpsScreen", () => {
         fetchMock.mock.calls.some(([u]) => String(u).includes("metrics/history?range=7d")),
       ).toBe(true),
     );
+
+    // The top Refresh button refreshes the History graphs too (not just status +
+    // metrics): a fresh fetch for the current window fires.
+    const before = fetchMock.mock.calls.filter(([u]) =>
+      String(u).includes("metrics/history?range=7d"),
+    ).length;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([u]) => String(u).includes("metrics/history?range=7d")).length,
+      ).toBeGreaterThan(before),
+    );
   });
 
   it("the System card is expanded by default with the embedded Server update", async () => {
@@ -251,6 +265,25 @@ describe("OpsScreen", () => {
     expect(screen.getByText("28.5 W", { exact: false })).toBeInTheDocument();
     // Server update is folded into the Load row, not a separate footer card.
     expect(screen.getByRole("button", { name: "Update server" })).toBeInTheDocument();
+  });
+
+  it("counts reclaimable cache as available: memory 'used' is non-reclaimable only", async () => {
+    fetchMock.mockImplementation(
+      async (input) => baseMock(input) ?? new Response(null, { status: 404 }),
+    );
+
+    render(<OpsScreen />);
+
+    // used = total - free - cache = 121 - 22 - 61 = 38 GB (~31%), NOT the
+    // total-available figure (which would count reclaimable cache as used).
+    expect(await screen.findByText(/31% · 38\.0 GB \/ 121\.0 GB/)).toBeInTheDocument();
+
+    // Expand the breakdown: cache is grouped as available, not used.
+    fireEvent.click(screen.getByRole("button", { name: /System memory/ }));
+    // The footer reports available = cache + free with the reclaimable cache called
+    // out (lowercase — the note's "Reclaimable" is a separate element).
+    expect(await screen.findByText(/reclaimable cache/)).toBeInTheDocument();
+    expect(screen.getAllByText(/available/).length).toBeGreaterThan(0);
   });
 
   it("server update: tap-again confirm, then polls running → done with Reload app", async () => {

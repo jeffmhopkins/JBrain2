@@ -57,7 +57,7 @@ describe("TimeSeriesPlot", () => {
     expect((d.match(/M/g) ?? []).length).toBe(2);
   });
 
-  it("draws a filled peak band under the line when a band is given", () => {
+  it("draws a faint peak line above the average when a band is given", () => {
     const { container } = render(
       <TimeSeriesPlot
         series={[
@@ -65,12 +65,14 @@ describe("TimeSeriesPlot", () => {
         ]}
       />,
     );
-    // A band adds a filled (fill-opacity) path in addition to the stroked line.
-    const filled = [...container.querySelectorAll("path")].filter(
-      (p) => p.getAttribute("fill-opacity") != null,
+    // The peak is a faint stroked line (not a floor-anchored fill, which reads as
+    // "quantity used"): a second path with reduced stroke-opacity and no fill.
+    const faint = [...container.querySelectorAll("path")].filter(
+      (p) => p.getAttribute("stroke-opacity") === "0.5" && p.getAttribute("fill") === "none",
     );
-    expect(filled.length).toBe(1);
-    // Peak/low span the band too, so the true peak (5) is the axis max.
+    expect(faint.length).toBe(1);
+    expect(container.querySelector("path[fill-opacity]")).toBeNull(); // no area fill
+    // Peak/low span the peak line too, so the true peak (5) is the axis max.
     expect(container.textContent).toContain("5.0 peak");
   });
 

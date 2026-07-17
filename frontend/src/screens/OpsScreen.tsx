@@ -19,6 +19,30 @@ function fmtBytes(n: number): string {
   return `${(n / 1024).toFixed(0)} KB`;
 }
 
+/** Split system memory the way `free`/`htop` do: reclaimable page cache is
+ * AVAILABLE, not used. `used` is only the non-reclaimable occupancy (process RSS +
+ * iGPU device memory + kernel/slab); `cache` is reclaimable (freed the instant
+ * something needs it); `free` is untouched. So a box that has merely cached model
+ * files from disk reads as nearly empty, not ~13% "used". Falls back to the
+ * kernel's MemAvailable when the supervisor doesn't report the breakdown. */
+function memParts(m: OpsMetrics): {
+  total: number;
+  used: number;
+  cache: number;
+  free: number;
+} {
+  const total = m.mem_total_bytes;
+  const mb = m.mem_breakdown;
+  if (!mb) {
+    const used = Math.max(0, total - m.mem_available_bytes);
+    return { total, used, cache: 0, free: Math.max(0, m.mem_available_bytes) };
+  }
+  const cache = (mb.Cached ?? 0) + (mb.Buffers ?? 0);
+  const free = mb.MemFree ?? Math.max(0, total - m.mem_available_bytes);
+  const used = Math.max(0, total - free - cache);
+  return { total, used, cache, free };
+}
+
 function fmtUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
@@ -300,7 +324,8 @@ function SystemCard({ metrics }: { metrics: OpsMetrics | null }) {
 }
 
 function SystemRows({ metrics }: { metrics: OpsMetrics }) {
-  const memUsed = metrics.mem_total_bytes - metrics.mem_available_bytes;
+  // Reclaimable cache counts as available, so the meter reflects real occupancy.
+  const memUsed = memParts(metrics).used;
   const diskUsed = metrics.disk_total_bytes - metrics.disk_free_bytes;
   const swapUsed = metrics.swap_total_bytes - metrics.swap_free_bytes;
   return (
@@ -676,12 +701,16 @@ const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
 /** The body is a child of OpsCard, so it mounts (and fetches) only when the card
  * is expanded — a collapsed History card costs nothing. The range buttons drive
  * the refetch; the resolution note tells the operator raw vs hourly rollup. */
-function HistoryBody() {
+function HistoryBody({ refreshKey }: { refreshKey: number }) {
   const [range, setRange] = useState<MetricRange>("6h");
   const [history, setHistory] = useState<MetricsHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Refetch on a range change AND whenever the top Refresh bumps `refreshKey`, so
+  // the graphs stay in step with the rest of the page rather than only updating on
+  // mount or a range switch.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is a re-run trigger, not read in the effect
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -702,7 +731,7 @@ function HistoryBody() {
     return () => {
       cancelled = true;
     };
-  }, [range]);
+  }, [range, refreshKey]);
 
   const points = history?.points ?? [];
   return (
@@ -743,7 +772,7 @@ function HistoryBody() {
   );
 }
 
-function HistoryCard() {
+function HistoryCard({ refreshKey }: { refreshKey: number }) {
   return (
     <OpsCard
       title="History"
@@ -751,7 +780,7 @@ function HistoryCard() {
       bodyClassName="ops-graph-body"
       summaryCollapsed={<span className="ops-card-summary">graphs</span>}
     >
-      <HistoryBody />
+      <HistoryBody refreshKey={refreshKey} />
     </OpsCard>
   );
 }
@@ -805,8 +834,10 @@ function MemoryCard({
     );
   }
 
-  const total = metrics.mem_total_bytes;
-  const used = total - metrics.mem_available_bytes;
+  // `free`/`htop` view: reclaimable cache is AVAILABLE, so `used` is only the
+  // non-reclaimable occupancy — process RSS + iGPU device memory + kernel/slab.
+  // Cache and free are both available; cache just happens to hold model files.
+  const { total, used, cache, free } = memParts(metrics);
   const pct = total > 0 ? Math.round((used / total) * 100) : 0;
   // Per-process when the supervisor offers it; else fall back to per-container.
   const items: MemItem[] =
@@ -823,23 +854,13 @@ function MemoryCard({
         }));
   const accounted = items.reduce((s, p) => s + p.rss_bytes, 0);
 
-  // Honest decomposition of the WHOLE total (the `free -h` view), so the "used"
-  // figure — which folds in reclaimable cache and iGPU memory no process RSS can
-  // show — stops looking like a lie next to the process rows:
-  //   apps (RSS) + iGPU (GTT/VRAM) + kernel/other + cache (reclaimable) + free.
-  const mb = metrics.mem_breakdown;
+  // Split `used` for the bar/donut: process RSS + iGPU (GTT/VRAM, no per-process
+  // RSS) + the kernel/slab remainder. These three sum to `used`.
   const gpu = metrics.gpu_mem
     ? metrics.gpu_mem.gtt_used_bytes + metrics.gpu_mem.vram_used_bytes
     : 0;
-  // Page cache + buffers are reclaimable — freed the instant something needs the
-  // RAM (loading a model evicts them), so they are "used" only in the loosest sense.
-  const cache = mb ? (mb.Cached ?? 0) + (mb.Buffers ?? 0) : 0;
-  const memFree = mb?.MemFree ?? Math.max(0, total - used);
-  // Non-cache, non-free occupancy: process RSS + iGPU device memory + kernel/slab.
-  const realUsed = Math.max(0, total - memFree - cache);
-  const apps = Math.min(accounted, realUsed);
-  const kernel = Math.max(0, realUsed - apps - gpu);
-  const free = Math.max(0, total - apps - gpu - kernel - cache);
+  const apps = Math.min(accounted, used);
+  const kernel = Math.max(0, used - apps - gpu);
 
   const byRss = [...items].sort((a, b) => b.rss_bytes - a.rss_bytes);
   const rows =
@@ -1025,7 +1046,7 @@ function MemoryCard({
       )}
 
       <p className="ops-mem-foot">
-        <b>{fmtBytes(accounted)}</b> across {items.length}{" "}
+        <b>{fmtBytes(used)}</b> used (<b>{fmtBytes(accounted)}</b> {items.length}{" "}
         {metrics.processes.length > 0 ? "processes" : "containers"}
         {gpu > 0 && (
           <>
@@ -1034,19 +1055,19 @@ function MemoryCard({
           </>
         )}
         {" · "}
-        <b>{fmtBytes(kernel)}</b> kernel
+        <b>{fmtBytes(kernel)}</b> kernel){" · "}
+        <b>{fmtBytes(cache + free)}</b> available
         {cache > 0 && (
           <>
-            {" · "}
-            <b>{fmtBytes(cache)}</b> cache
+            {" "}
+            (<b>{fmtBytes(cache)}</b> reclaimable cache)
           </>
-        )}{" "}
-        · <b>{fmtBytes(free)}</b> free
+        )}
       </p>
       <p className="ops-mem-note">
-        The “used” total folds in reclaimable <b>cache</b> (model files read from disk — freed the
-        instant anything needs the RAM) and <b>iGPU</b> memory holding loaded model weights, neither
-        of which shows as per-process RSS — so “used” sits well above the process rows.
+        Reclaimable <b>cache</b> (model files read from disk) counts as available — it&apos;s freed
+        the instant anything needs the RAM. <b>iGPU</b> memory holding loaded model weights is real
+        usage but has no per-process RSS, so it shows as its own slice, not in the rows above.
       </p>
     </OpsCard>
   );
@@ -1057,6 +1078,10 @@ export function OpsScreen() {
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Bumped on every top-level refresh so self-fetching sub-cards (the History
+  // graphs, which own their range + fetch) refetch too — the top Refresh button
+  // means "refresh everything", not just the status + metrics fetched here.
+  const [refreshKey, setRefreshKey] = useState(0);
   // The Runs surface (Direction C) is an Ops sub-screen: it slides over Ops and
   // its back chevron returns here, matching the mock.
   const [showRuns, setShowRuns] = useState(false);
@@ -1064,6 +1089,7 @@ export function OpsScreen() {
   const refresh = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setRefreshKey((k) => k + 1);
     try {
       setContainers((await api.opsStatus()).containers);
       setMetrics(await api.opsMetrics());
@@ -1206,7 +1232,7 @@ export function OpsScreen() {
 
       <MemoryCard metrics={metrics} onRefresh={refresh} busy={busy} />
 
-      <HistoryCard />
+      <HistoryCard refreshKey={refreshKey} />
 
       {containers === null && !error ? (
         <p className="muted">Loading status…</p>

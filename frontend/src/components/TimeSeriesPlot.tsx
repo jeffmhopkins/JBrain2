@@ -17,8 +17,10 @@ export interface PlotLine {
   color: string;
   /** The line itself (typically the per-bucket average); null breaks the line. */
   values: (number | null)[];
-  /** Optional per-bucket peak (bucket max), drawn as a faint filled envelope under
-   * the line so a spike shorter than a bucket isn't averaged out of view. */
+  /** Optional per-bucket peak (bucket max), drawn as a fainter, thinner line ABOVE
+   * the average — the gap between the two lines is the headroom — so a spike
+   * shorter than a bucket isn't averaged out of view. Not a fill: an area anchored
+   * to the floor reads as "quantity used", not "peak". */
   band?: (number | null)[];
 }
 
@@ -57,35 +59,6 @@ function linePath(values: (number | null)[], min: number, max: number): string {
   return d.trim();
 }
 
-// A filled area from the baseline (chart floor) up to each band value — the peak
-// envelope. Each run of non-null samples is its own closed sub-path, so a gap
-// stays a gap rather than bridging the fill across missing buckets.
-function bandPath(values: (number | null)[], min: number, max: number): string {
-  const n = values.length;
-  let d = "";
-  let start = -1;
-  const flush = (end: number) => {
-    if (start < 0) return;
-    let seg = "";
-    for (let i = start; i <= end; i += 1) {
-      const v = values[i];
-      if (v == null) continue;
-      seg += `${seg ? "L" : "M"}${xAt(i, n).toFixed(2)} ${yAt(v, min, max).toFixed(2)} `;
-    }
-    d += `${seg}L${xAt(end, n).toFixed(2)} ${H} L${xAt(start, n).toFixed(2)} ${H} Z `;
-    start = -1;
-  };
-  values.forEach((v, i) => {
-    if (v == null) {
-      flush(i - 1);
-    } else if (start < 0) {
-      start = i;
-    }
-  });
-  flush(n - 1);
-  return d.trim();
-}
-
 function latestOf(values: (number | null)[]): number | null {
   for (let i = values.length - 1; i >= 0; i -= 1) {
     const v = values[i];
@@ -95,9 +68,9 @@ function latestOf(values: (number | null)[]): number | null {
 }
 
 function Sparkline({ label, lines, fmt }: PlotSeries): ReactNode {
-  // A shared Y-scale across every line AND its peak band in the panel, so two
-  // series (down/up) are comparable and the fill fits. Peak/low span the whole
-  // panel — with a band present, "peak" is the true bucket-max, not the avg.
+  // A shared Y-scale across every line AND its peak line in the panel, so two
+  // series (down/up) are comparable and the peak line fits. Peak/low span the
+  // whole panel — with a band present, "peak" is the true bucket-max, not the avg.
   const present = lines.flatMap((l) =>
     [...l.values, ...(l.band ?? [])].filter((v): v is number => v != null),
   );
@@ -138,11 +111,13 @@ function Sparkline({ label, lines, fmt }: PlotSeries): ReactNode {
         {lines.map((l, i) =>
           l.band?.some((v) => v != null) ? (
             <path
-              key={`band-${l.label ?? i}`}
-              d={bandPath(l.band, min, max)}
-              fill={l.color}
-              fillOpacity={0.16}
-              stroke="none"
+              key={`peak-${l.label ?? i}`}
+              d={linePath(l.band, min, max)}
+              fill="none"
+              stroke={l.color}
+              strokeWidth={1}
+              strokeOpacity={0.5}
+              vectorEffect="non-scaling-stroke"
             />
           ) : null,
         )}
