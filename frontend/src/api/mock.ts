@@ -3505,7 +3505,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const id = decodeURIComponent(availMatch[1] ?? "");
     const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
     const on = (JSON.parse(String(init?.body)) as { available: boolean }).available;
-    if (model && model.enabled) {
+    if (model?.enabled) {
       model.available = on;
       if (!on) model.loaded = false;
     }

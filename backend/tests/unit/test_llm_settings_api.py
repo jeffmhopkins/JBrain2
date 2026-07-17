@@ -693,9 +693,7 @@ def test_set_available_toggles_the_roster_and_unloads_on_unavailable() -> None:
     # roster (available False), keeps it installed (enabled True), and unloads it from memory.
     gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b", "gpt-oss-120b"})
     c, store = _authed_client(_local_settings(), gw)
-    resp = c.put(
-        "/api/settings/llm/local-models/qwen3-vl-30b/available", json={"available": False}
-    )
+    resp = c.put("/api/settings/llm/local-models/qwen3-vl-30b/available", json={"available": False})
     assert resp.status_code == 200, resp.text
     by_id = {m["id"]: m for m in resp.json()["local_models"]}
     assert by_id["qwen3-vl-30b"]["enabled"] is True  # still installed
