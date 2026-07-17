@@ -18,10 +18,11 @@ import {
 } from "../components/icons";
 import { shareUrl } from "../jcode/share";
 import {
-  KEY_SEQ,
   type Modifier,
+  type SpecialKey,
   type TerminalHandle,
   attachTerminal,
+  guardMobileInput,
   terminalWsUrl,
 } from "../jcode/terminal";
 import type { JcodeModelStatus, JcodePreview, JcodeSession, JcodeShare } from "../jcode/types";
@@ -34,7 +35,8 @@ const LOAD_SEC_PER_GB = 1.2;
 type Tab = "term" | "prev";
 
 // The bottom helper row for the interactive terminal: keys a soft keyboard can't send on
-// its own (Esc, Tab, arrows) plus sticky Ctrl/Alt that fold the next typed character.
+// its own (Esc, Tab, arrows) plus sticky Ctrl/Alt/Shift that fold the next keystroke — so
+// Shift then Tab sends the back-tab, Ctrl/Alt/Shift then an arrow the modified cursor key.
 // Shown only on touch devices (a physical keyboard sends these directly) via CSS. The keys
 // use onMouseDown→preventDefault so tapping never blurs the terminal — the soft keyboard
 // stays up and the modifier applies to the very next keystroke.
@@ -44,82 +46,53 @@ function JcodeKeys({
   onMod,
 }: {
   mod: Modifier | null;
-  onKey: (seq: string) => void;
+  onKey: (key: SpecialKey) => void;
   onMod: (mod: Modifier) => void;
 }) {
   const keep = (e: MouseEvent) => e.preventDefault();
+  const MODS: { id: Modifier; label: string }[] = [
+    { id: "ctrl", label: "ctrl" },
+    { id: "alt", label: "alt" },
+    { id: "shift", label: "shift" },
+  ];
+  const ARROWS: { key: SpecialKey; label: string; glyph: string }[] = [
+    { key: "left", label: "Left", glyph: "←" },
+    { key: "up", label: "Up", glyph: "↑" },
+    { key: "down", label: "Down", glyph: "↓" },
+    { key: "right", label: "Right", glyph: "→" },
+  ];
   return (
     <div className="jcode-keys" role="toolbar" aria-label="Terminal keys">
-      <button
-        type="button"
-        className="jcode-key"
-        onMouseDown={keep}
-        onClick={() => onKey(KEY_SEQ.esc)}
-      >
+      <button type="button" className="jcode-key" onMouseDown={keep} onClick={() => onKey("esc")}>
         esc
       </button>
-      <button
-        type="button"
-        className="jcode-key"
-        onMouseDown={keep}
-        onClick={() => onKey(KEY_SEQ.tab)}
-      >
+      <button type="button" className="jcode-key" onMouseDown={keep} onClick={() => onKey("tab")}>
         tab
       </button>
-      <button
-        type="button"
-        className={`jcode-key${mod === "ctrl" ? " on" : ""}`}
-        aria-pressed={mod === "ctrl"}
-        onMouseDown={keep}
-        onClick={() => onMod("ctrl")}
-      >
-        ctrl
-      </button>
-      <button
-        type="button"
-        className={`jcode-key${mod === "alt" ? " on" : ""}`}
-        aria-pressed={mod === "alt"}
-        onMouseDown={keep}
-        onClick={() => onMod("alt")}
-      >
-        alt
-      </button>
-      <button
-        type="button"
-        className="jcode-key"
-        aria-label="Left"
-        onMouseDown={keep}
-        onClick={() => onKey(KEY_SEQ.left)}
-      >
-        ←
-      </button>
-      <button
-        type="button"
-        className="jcode-key"
-        aria-label="Up"
-        onMouseDown={keep}
-        onClick={() => onKey(KEY_SEQ.up)}
-      >
-        ↑
-      </button>
-      <button
-        type="button"
-        className="jcode-key"
-        aria-label="Down"
-        onMouseDown={keep}
-        onClick={() => onKey(KEY_SEQ.down)}
-      >
-        ↓
-      </button>
-      <button
-        type="button"
-        className="jcode-key"
-        aria-label="Right"
-        onMouseDown={keep}
-        onClick={() => onKey(KEY_SEQ.right)}
-      >
-        →
-      </button>
+      {MODS.map((m) => (
+        <button
+          key={m.id}
+          type="button"
+          className={`jcode-key${mod === m.id ? " on" : ""}`}
+          aria-pressed={mod === m.id}
+          onMouseDown={keep}
+          onClick={() => onMod(m.id)}
+        >
+          {m.label}
+        </button>
+      ))}
+      {ARROWS.map((a) => (
+        <button
+          key={a.key}
+          type="button"
+          className="jcode-key"
+          aria-label={a.label}
+          onMouseDown={keep}
+          onClick={() => onKey(a.key)}
+        >
+          {a.glyph}
+        </button>
+      ))}
     </div>
   );
 }
@@ -170,6 +143,10 @@ function JcodeTerminal({
       term.loadAddon(fit);
       term.open(el);
       fit.fit();
+      // Neutralize the mobile OS's text substitution on xterm's helper textarea (iOS's
+      // double-space→". " shortcut and autocorrect duplicate the whole line otherwise).
+      const ta = el.querySelector<HTMLTextAreaElement>("textarea.xterm-helper-textarea");
+      const unguard = ta ? guardMobileInput(ta) : () => {};
       const ws = new WebSocket(terminalWsUrl(sid));
       const h = attachTerminal(term, ws, setMod);
       handle.current = h;
@@ -190,6 +167,7 @@ function JcodeTerminal({
       term.focus();
       cleanup = () => {
         ro.disconnect();
+        unguard();
         h.detach();
         handle.current = null;
         fitRef.current = null;
@@ -216,7 +194,7 @@ function JcodeTerminal({
 
   // Tapping a modifier toggles it (tap again to disarm); a control key sends straight through.
   const toggleMod = (m: Modifier) => handle.current?.setModifier(mod === m ? null : m);
-  const sendKey = (seq: string) => handle.current?.sendKey(seq);
+  const sendKey = (key: SpecialKey) => handle.current?.sendKey(key);
 
   return (
     <>
