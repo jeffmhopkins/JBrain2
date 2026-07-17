@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,12 @@ log = structlog.get_logger()
 MAX_FRAMES = 24  # the analyze_video budget — flat VLM cost regardless of stream length
 MAX_WINDOW_S = 120.0  # the longest slice we sample/transcribe in one call
 DEFAULT_WINDOW_S = 10.0
+DEFAULT_WINDOW_FRAMES = 8  # frames for a window-mode grab
+DEFAULT_FULL_FRAMES = 16  # frames spread across a whole VOD in full mode
+# In full (whole-VOD) mode an in-turn whisper pass over the entire audio is only
+# tractable up to here; a longer video samples frames but transcribes nothing (the
+# tool tells the model to window a part it cares about).
+MAX_FULL_AUDIO_S = 300.0
 DEFAULT_MAX_HEIGHT = 720  # cap the resolved format so ffmpeg reads bounded bytes
 AUDIO_SAMPLE_RATE = 16_000  # whisper's native rate; mono keeps the WAV small
 _RESOLVE_TIMEOUT_S = 30
@@ -97,6 +104,12 @@ class StreamSample:
 
     frames: list[SampledFrame]
     audio_wav: bytes = b""
+
+
+# The resolve_stream shape, injectable so the analyze_stream handler can be tested
+# without yt-dlp or a real network (a fake resolver returns a ResolvedStream pointing
+# at a local clip).
+Resolver = Callable[..., ResolvedStream]
 
 
 def ytdlp_available() -> bool:
@@ -233,6 +246,65 @@ def sample_stream(
         if want_audio:
             audio = _extract_audio(resolved.media_url, tmpdir, window=window, seek=seek)
     return StreamSample(frames=deduped, audio_wav=audio)
+
+
+def sample_stream_full(
+    resolved: ResolvedStream,
+    *,
+    frames: int = DEFAULT_FULL_FRAMES,
+    want_audio: bool = False,
+    longest_edge: int = DEFAULT_LONGEST_EDGE,
+    dedup_distance: int = DEFAULT_DEDUP_DISTANCE,
+) -> StreamSample:
+    """Sample ≤ `frames` stills spread evenly across a whole finite video — the
+    analyze_video "cover the clip" shape, for the "analyze this YouTube video" case.
+
+    Each frame is a fast discrete `-ss` seek-grab at the midpoint of its even bucket,
+    stamped at its true offset; the set is then deduped. Audio (when `want_audio`) is
+    the whole track as WAV, but only when the video is short enough to transcribe
+    in-turn (`MAX_FULL_AUDIO_S`) — a longer video returns frames-only. Refuses a live
+    stream or a video of unknown duration (use window mode there). Returns empty
+    frames (never raises for a decode miss)."""
+    if resolved.is_live or not resolved.duration_s:
+        raise StreamError("full analysis needs a finite video — use window mode for a live stream")
+    if not ffmpeg_available():
+        log.info("stream.sample_skipped", reason="ffmpeg unavailable")
+        return StreamSample(frames=[])
+
+    count = max(1, min(frames, MAX_FRAMES))
+    duration = resolved.duration_s
+    with tempfile.TemporaryDirectory(prefix="jbrain-stream-") as tmp:
+        tmpdir = Path(tmp)
+        sampled: list[SampledFrame] = []
+        for i in range(count):
+            at = duration * (i + 0.5) / count  # midpoint of each even bucket
+            jpeg = _grab_one(resolved.media_url, tmpdir, at=at, longest_edge=longest_edge)
+            if jpeg is not None:
+                sampled.append(SampledFrame(timestamp_ms=int(at * 1000), jpeg=jpeg))
+        deduped = dedup_frames(sampled, distance=dedup_distance)
+        audio = b""
+        if want_audio and duration <= MAX_FULL_AUDIO_S:
+            audio = _extract_audio(resolved.media_url, tmpdir, window=duration, seek=0.0)
+    return StreamSample(frames=deduped, audio_wav=audio)
+
+
+def _grab_one(media_url: str, tmpdir: Path, *, at: float, longest_edge: int) -> bytes | None:
+    """One fast frame at offset `at` via input seek (`-ss` before `-i`), or None on a
+    decode miss. Bounded by the same per-read and wall-clock timeouts as the window
+    pass, so a stalled host can't hang the grab."""
+    out = tmpdir / f"grab_{int(at * 1000):09d}.jpg"
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-rw_timeout", str(_RW_TIMEOUT_US),
+           "-ss", f"{at:.3f}", "-i", media_url, "-frames:v", "1",
+           "-vf", f"scale='min({longest_edge},iw)':-2", "-q:v", "3", str(out)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_SLACK_S, check=True)
+    except (subprocess.SubprocessError, OSError) as exc:
+        log.info("stream.grab_failed", at=round(at, 2), error=str(exc))
+        return None
+    try:
+        return out.read_bytes()
+    except OSError:
+        return None
 
 
 def _extract_frames(

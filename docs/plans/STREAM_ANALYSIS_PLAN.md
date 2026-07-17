@@ -1,6 +1,6 @@
 # analyze_stream — build plan (URL-sourced video/stream analysis)
 
-> **Status:** In progress · **Last verified:** 2026-07-17 · **Waves:** W1✅ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-17 · **Waves:** W1✅ W2✅ W3◻️
 
 Give **jerv** a sense it doesn't have: pull frame(s) — and optionally the audio —
 from a **video URL**, live or on-demand, so the model can actually *see* what a
@@ -132,19 +132,29 @@ manifest's **segment** URLs itself, so only the top media host passes our guard 
 the segment-host case is the red-team's to close (a validating proxy or a
 manifest-host allowlist).
 
-### Wave 2 — Shared reduce core + the `analyze_stream` tool
-Refactor `ingest/video.run_video_analysis` to expose a **`fuse_and_reduce(frames,
-transcript, *, router, filename, on_progress)`** core; the attachment path keeps
-its `data: bytes` + `sampler` front and calls it (behaviour byte-identical, guarded
-by its existing tests). New `agent/streamtools.py::build_stream_handlers` →
-`analyze_stream`: validate URL + params (reject `full` on a live stream, clamp
-caps), call `sample_stream`, transcribe the segment (best-effort), run
-`fuse_and_reduce`, return the summary + a `video_analysis` view (`source:"stream"`,
-stream title/URL chip). Add `agent/tools/analyze_stream.tool` (jerv-only, `web`,
-`expensive`, params: `url`, `mode`, `frames`, `window_s`, `seek`, `transcribe`).
-Registry wiring (readtools) offers it only when **both** ffmpeg and yt-dlp are
-present. Tests: adapter-fake multi-turn tool test (scripted `tool_use`), handler
-tests with a faked sampler, `.tool` sidecar validity + version-bump guard.
+### Wave 2 — Shared reduce core + the `analyze_stream` tool ✅
+`ingest/video.py` refactored to expose two shared, reused-by-both-paths helpers —
+**`caption_frames(frames, …)`** (the MAP: caption each sampled still, store its
+`thumb_id` blob) and **`fuse_and_reduce(captioned, transcript, …)`** (FUSE the
+timeline, REDUCE to a summary; returns None on nothing-to-summarize) — plus a public
+**`transcribe_audio(...)`** the stream path calls on its WAV segment. `run_video_analysis`
+now composes them in the same order, so the attachment path is behaviour-identical
+(its existing tests pass unchanged). `stream.py` gained **`sample_stream_full`** —
+whole-VOD discrete `-ss` seek-grabs (refuses live / unknown-duration), with whole-track
+whisper only under `MAX_FULL_AUDIO_S`. New `agent/streamtools.py::build_stream_handlers`
+→ `analyze_stream`: resolves the URL off-loop, dispatches `single`/`window`/`full`
+(clamping frames/window/seek), transcribes the segment best-effort, runs the shared
+core, and returns the summary + a `video_analysis` view (`source:"stream"`,
+`stream_url`, `is_live`, `mode`). `agent/tools/analyze_stream.tool` (jerv-only, `web`,
+`expensive`) added and pinned; wired into `build_registry` (`OPTIONAL_STREAM_TOOL`,
+offered only when **both** ffmpeg and yt-dlp are present) and jerv's allowlist;
+`main.py` builds the handlers behind the `ffmpeg_available() and ytdlp_available()`
+gate. Tests: `test_agent_streamtools.py` (mode routing, audio gating, view shape,
+error paths — faked resolver + samplers, no ffmpeg) and the `sample_stream_full`
+cases in `test_stream.py`. **Deferred to W3** (as scoped): the frontend renders the
+stream source chip + a thumbnail path for `source:"stream"` frames — W2 emits the
+data-only payload (no `attachment_id`, so the card shows summary/timeline without
+per-frame images until W3 serves stream thumbs).
 
 ### Wave 3 — Docs, egress hardening, card polish
 `ASSISTANT.md`: document `analyze_stream` as the **second jerv-only sanctioned

@@ -20,6 +20,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.streamtools import build_stream_handlers
 from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
@@ -124,6 +125,7 @@ from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
+from jbrain.stream import ytdlp_available
 from jbrain.tasks.repo import TaskRepo, TaskRunRepo
 from jbrain.tasks.runner import LoopTurnExecutor, TaskRunner
 from jbrain.tasks.scheduler import run_tasks_loop
@@ -518,6 +520,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 transcribe_model=settings.whisper_model,
                 gateway=LocalGatewayClient(settings.whisper_url) if settings.whisper_url else None,
             )
+        # jerv's URL-sourced stream/video analysis (docs/plans/STREAM_ANALYSIS_PLAN.md):
+        # resolve a video URL with yt-dlp and sample it with ffmpeg, then reuse the
+        # analyze_video caption→fuse→reduce core. Wired only when BOTH ffmpeg and yt-dlp
+        # are present; the registry drops the `analyze_stream` sidecar otherwise (graceful
+        # degrade). Whisper is optional — frames-only without it, like analyze_video.
+        stream_handlers: dict[str, ToolHandler] = {}
+        if ffmpeg_available() and ytdlp_available():
+            stream_handlers = build_stream_handlers(
+                app.state.blob_store,
+                app.state.llm_router,
+                transcribe=(
+                    WhisperCppClient(
+                        settings.whisper_url,
+                        settings.whisper_model,
+                        timeout=settings.whisper_timeout,
+                    )
+                    if settings.whisper_url
+                    else None
+                ),
+                transcribe_model=settings.whisper_model,
+                gateway=LocalGatewayClient(settings.whisper_url) if settings.whisper_url else None,
+            )
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -540,6 +564,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             image_handlers=image_handlers,
             transcribe_handlers=transcribe_handlers,
             video_handlers=video_handlers,
+            stream_handlers=stream_handlers,
             gmail_handlers=gmail_handlers,
         )
         app.state.agent_runlog = AgentRunLog(maker)

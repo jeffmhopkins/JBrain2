@@ -16,6 +16,7 @@ from jbrain.stream import (
     _select_media,
     guard_public_host_or_stream,
     sample_stream,
+    sample_stream_full,
     ytdlp_available,
 )
 
@@ -127,6 +128,32 @@ def test_frame_count_capped(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path, seconds=6))
     sample = sample_stream(r, frames=1000, window_s=6, dedup_distance=0)
     assert 0 < len(sample.frames) <= MAX_FRAMES  # frames param clamped to the budget
+
+
+@pytestmark_ffmpeg
+def test_full_samples_across_whole_vod(tmp_path) -> None:
+    r = _resolved(_make_clip(tmp_path, seconds=6), duration=6.0)
+    sample = sample_stream_full(r, frames=4, dedup_distance=0)
+    assert len(sample.frames) == 4  # one per even bucket, discrete seek-grabs
+    stamps = [f.timestamp_ms for f in sample.frames]
+    assert stamps == sorted(stamps)  # ascending true offsets
+    assert stamps[0] > 0 and stamps[-1] < 6000  # midpoints, inside the clip
+    assert all(f.jpeg[:2] == b"\xff\xd8" for f in sample.frames)
+
+
+def test_full_refuses_live_and_unknown_duration() -> None:
+    # No ffmpeg needed: the refusal precedes any sampling.
+    with pytest.raises(StreamError):
+        sample_stream_full(_resolved("x", is_live=True, duration=None), frames=4)
+    with pytest.raises(StreamError):
+        sample_stream_full(_resolved("x", is_live=False, duration=None), frames=4)
+
+
+@pytestmark_ffmpeg
+def test_full_audio_when_short_enough(tmp_path) -> None:
+    r = _resolved(_make_clip(tmp_path, seconds=4, with_audio=True), duration=4.0)
+    sample = sample_stream_full(r, frames=2, want_audio=True, dedup_distance=0)
+    assert sample.audio_wav[:4] == b"RIFF"  # whole-track WAV under the in-turn cap
 
 
 @pytestmark_ffmpeg
