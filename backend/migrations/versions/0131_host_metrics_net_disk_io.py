@@ -31,12 +31,8 @@ def upgrade() -> None:
     for col in _RAW_COLS:
         op.execute(f"ALTER TABLE app.host_metrics ADD COLUMN {col} double precision")
     for col in _RAW_COLS:
-        op.execute(
-            f"ALTER TABLE app.host_metrics_hourly ADD COLUMN {col}_avg double precision"
-        )
-        op.execute(
-            f"ALTER TABLE app.host_metrics_hourly ADD COLUMN {col}_max double precision"
-        )
+        op.execute(f"ALTER TABLE app.host_metrics_hourly ADD COLUMN {col}_avg double precision")
+        op.execute(f"ALTER TABLE app.host_metrics_hourly ADD COLUMN {col}_max double precision")
 
 
 def downgrade() -> None:
