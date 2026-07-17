@@ -506,8 +506,11 @@ async def test_run_loop_samples_and_maintains_metrics_when_supervisor_set(
     install(monkeypatch, fake)
     calls: dict[str, Any] = {"samples": 0, "rollup_windows": [], "prunes": 0}
 
-    async def fake_sample(maker: Any, ctx: Any, client: Any, token: str) -> bool:
+    async def fake_sample(
+        maker: Any, ctx: Any, client: Any, token: str, *, tracker: Any = None, now_s: Any = None
+    ) -> bool:
         assert ctx is queue.SYSTEM_CTX
+        assert isinstance(tracker, worker.ops_metrics.RateTracker)
         calls["samples"] += 1
         return True
 
@@ -571,7 +574,12 @@ async def test_sample_metrics_safely_swallows_errors(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(worker.ops_metrics, "sample_once", boom)
     # Must not raise — a supervisor blip is a missed sample, not a worker crash.
-    await worker._sample_metrics_safely(None, object(), "t")  # type: ignore[arg-type]
+    await worker._sample_metrics_safely(
+        None,  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        "t",
+        worker.ops_metrics.RateTracker(),
+    )
 
 
 async def test_run_loop_survives_transient_errors_and_retries_backfill(

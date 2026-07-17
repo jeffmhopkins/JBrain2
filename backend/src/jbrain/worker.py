@@ -295,12 +295,17 @@ async def _after_exhaustion(
 
 
 async def _sample_metrics_safely(
-    maker: async_sessionmaker[AsyncSession], client: httpx.AsyncClient, token: str
+    maker: async_sessionmaker[AsyncSession],
+    client: httpx.AsyncClient,
+    token: str,
+    tracker: ops_metrics.RateTracker,
 ) -> None:
     """Store one host-metrics sample, swallowing any error so a supervisor blip
-    (or a transient DB error) never disturbs the job loop — like the scheduler tick."""
+    (or a transient DB error) never disturbs the job loop — like the scheduler tick.
+    The `tracker` (one per worker) turns the supervisor's cumulative byte counters
+    into the network/disk throughput rates the sample stores."""
     try:
-        await ops_metrics.sample_once(maker, queue.SYSTEM_CTX, client, token)
+        await ops_metrics.sample_once(maker, queue.SYSTEM_CTX, client, token, tracker=tracker)
     except Exception as exc:  # noqa: BLE001 - a missed sample must not kill the worker
         log.warning("worker.metrics_sample_error", error=repr(exc))
 
@@ -334,6 +339,9 @@ async def run_loop(
     last_sample = 0.0
     last_maintenance = 0.0
     metrics_booted = False
+    # One tracker for the loop's lifetime: it remembers the previous sample's byte
+    # counters so each sample can store a network/disk throughput rate.
+    rate_tracker = ops_metrics.RateTracker()
     # The run-log writer the dispatcher uses when LIVE: one pipeline run per
     # dispatched event (§8). Built once off the same maker (owner-scoped writes).
     run_log = PipelineRunLog(maker)
@@ -367,7 +375,7 @@ async def run_loop(
         # background process, the right home for a periodic sampler). Gated on a
         # configured supervisor; both ticks are fault-swallowed like the others.
         if supervisor_client is not None and now - last_sample >= METRICS_SAMPLE_SECONDS:
-            await _sample_metrics_safely(maker, supervisor_client, supervisor_token)
+            await _sample_metrics_safely(maker, supervisor_client, supervisor_token, rate_tracker)
             last_sample = now
         if supervisor_client is not None and now - last_maintenance >= METRICS_MAINTENANCE_SECONDS:
             await _maintain_metrics_safely(maker, boot=not metrics_booted)

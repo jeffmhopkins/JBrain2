@@ -34,6 +34,16 @@ _DEFAULT_RANGE = "24h"
 _GIB = float(1 << 30)
 
 
+def _fmt_bps(value: float) -> str:
+    """Throughput bytes/sec -> human (1024-base), matching the Ops graph readout."""
+    units = ("B", "KiB", "MiB", "GiB")
+    n, i = value, 0
+    while n >= 1024 and i < len(units) - 1:
+        n /= 1024
+        i += 1
+    return f"{n:.1f} {units[i]}/s"
+
+
 def _stats(values: list[float]) -> tuple[float, float, float] | None:
     """`(latest, peak, avg)` over the non-null values, or None when empty."""
     if not values:
@@ -96,6 +106,19 @@ def _format(range_label: str, data: dict[str, Any]) -> str:
     swap = _stats(_series(points, "swap_used_bytes"))
     if swap and swap[1] > 0:
         lines.append(f"- Swap used: now {swap[0] / _GIB:.1f} GiB, peak {swap[1] / _GIB:.1f} GiB")
+
+    net_rx, net_tx = _stats(_series(points, "net_rx_bps")), _stats(_series(points, "net_tx_bps"))
+    if net_rx or net_tx:
+        rx = f"down peak {_fmt_bps(net_rx[1])}" if net_rx else ""
+        tx = f"up peak {_fmt_bps(net_tx[1])}" if net_tx else ""
+        lines.append(f"- Network: {', '.join(s for s in (rx, tx) if s)}")
+
+    disk_r = _stats(_series(points, "disk_read_bps"))
+    disk_w = _stats(_series(points, "disk_write_bps"))
+    if disk_r or disk_w:
+        rd = f"read peak {_fmt_bps(disk_r[1])}" if disk_r else ""
+        wr = f"write peak {_fmt_bps(disk_w[1])}" if disk_w else ""
+        lines.append(f"- Disk I/O: {', '.join(s for s in (rd, wr) if s)}")
 
     return "\n".join(lines)
 

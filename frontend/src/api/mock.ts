@@ -3861,6 +3861,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
         gpu_busy_percent: Math.max(0, Math.round(40 + wave * 30)),
         fan_rpm_max: Math.round(2000 + wave * 400),
         power_w: Math.round((25 + wave * 15) * 10) / 10,
+        net_rx_bps: Math.max(0, Math.round((8 + wave * 6) * 2 ** 20)),
+        net_tx_bps: Math.max(0, Math.round((2 + wave * 1.5) * 2 ** 20)),
+        disk_read_bps: Math.max(0, Math.round((30 + wave * 20) * 2 ** 20)),
+        disk_write_bps: Math.max(0, Math.round((12 + wave * 8) * 2 ** 20)),
       };
     });
     return json({
