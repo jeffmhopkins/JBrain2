@@ -26,26 +26,52 @@ export interface SocketLike {
 
 const WS_OPEN = 1; // WebSocket.OPEN
 
-/** A one-shot modifier the mobile key row arms for the next typed character. A physical
- * keyboard sends Ctrl/Alt combinations directly; a soft keyboard can't, so these are
- * applied here to the next keystroke instead. */
-export type Modifier = "ctrl" | "alt";
+/** A one-shot modifier the mobile key row arms for the next keystroke. A physical keyboard
+ * sends Ctrl/Alt/Shift combinations directly; a soft keyboard can't, so these are applied
+ * here to the next character or special key instead. */
+export type Modifier = "ctrl" | "alt" | "shift";
 
-/** Control sequences the mobile key row sends verbatim (no character to modify). */
-export const KEY_SEQ = {
+/** The named special keys the mobile row can send (a soft keyboard can't produce these). */
+export type SpecialKey = "esc" | "tab" | "up" | "down" | "left" | "right";
+
+/** Base control sequences for each special key (no modifier applied). */
+export const KEY_SEQ: Record<SpecialKey, string> = {
   esc: "\x1b",
   tab: "\t",
   up: "\x1b[A",
   down: "\x1b[B",
   right: "\x1b[C",
   left: "\x1b[D",
-} as const;
+};
+
+// The xterm modifier parameter is 1 + a bitmask (shift=1, alt=2, ctrl=4), encoded into the
+// CSI sequence for cursor keys as "\x1b[1;{param}{final}" (e.g. Shift+Up → \x1b[1;2A).
+const MOD_BIT: Record<Modifier, number> = { shift: 1, alt: 2, ctrl: 4 };
+const ARROW_FINAL: Partial<Record<SpecialKey, string>> = {
+  up: "A",
+  down: "B",
+  right: "C",
+  left: "D",
+};
+
+/** Resolve a special key to the bytes to send, folding in an armed modifier. Shift+Tab is the
+ * back-tab (CBT, \x1b[Z); Shift/Ctrl/Alt + an arrow use xterm's modified cursor-key encoding.
+ * Combinations with no standard sequence (e.g. Ctrl+Tab, a modified Esc) fall back to base. */
+export function keySequence(key: SpecialKey, mod: Modifier | null): string {
+  if (!mod) return KEY_SEQ[key];
+  if (key === "tab") return mod === "shift" ? "\x1b[Z" : KEY_SEQ.tab;
+  const final = ARROW_FINAL[key];
+  if (final) return `\x1b[1;${1 + MOD_BIT[mod]}${final}`;
+  return KEY_SEQ[key];
+}
 
 /** Apply a soft-keyboard modifier to a typed chunk. Ctrl folds letters to their control
  * code (a→\x01 … z→\x1a, plus the usual @[\]^_ and space→NUL); Alt (Meta) prefixes ESC,
- * the xterm convention. Anything Ctrl can't fold passes through untouched. */
+ * the xterm convention; Shift upper-cases (the soft keyboard sends the unshifted char).
+ * Anything Ctrl can't fold passes through untouched. */
 export function applyModifier(mod: Modifier, data: string): string {
   if (mod === "alt") return `\x1b${data}`;
+  if (mod === "shift") return data.toUpperCase();
   let out = "";
   for (const ch of data) {
     const code = ch.charCodeAt(0);
@@ -60,21 +86,43 @@ export function applyModifier(mod: Modifier, data: string): string {
   return out;
 }
 
+/** True for `beforeinput` inputTypes where the OS rewrites characters it believes are still
+ * in the field — iOS autocorrect and smart punctuation (the double-space→". " shortcut, smart
+ * quotes/dashes) all arrive as `insertReplacementText`. Plain typing (`insertText`), IME
+ * composition, and deletion are NOT replacements and must pass through untouched. */
+export function isReplacementInput(inputType: string): boolean {
+  return inputType === "insertReplacementText";
+}
+
+/** Stop the mobile OS from editing already-committed bytes through xterm's helper textarea.
+ * xterm forwards each keystroke to the shell and clears the textarea, so when iOS later fires a
+ * replacement edit (autocorrect, or the double-space→". " shortcut) it reconstructs and re-emits
+ * the whole line and the shell sees the input duplicated. A terminal never wants the OS to
+ * rewrite committed input, so cancel those replacement edits at the source. Returns a disposer. */
+export function guardMobileInput(textarea: HTMLTextAreaElement): () => void {
+  const onBeforeInput = (e: Event) => {
+    if (isReplacementInput((e as InputEvent).inputType)) e.preventDefault();
+  };
+  textarea.addEventListener("beforeinput", onBeforeInput);
+  return () => textarea.removeEventListener("beforeinput", onBeforeInput);
+}
+
 /** The live terminal bridge the screen drives: a disposer plus the hooks the mobile key
- * row needs — sending a raw control sequence, and arming a one-shot Ctrl/Alt modifier. */
+ * row needs — sending a special key, and arming a one-shot Ctrl/Alt/Shift modifier. */
 export interface TerminalHandle {
   /** Detach the listeners (the caller still closes the socket + disposes term). */
   detach(): void;
-  /** Send a control sequence (an arrow, Esc, Tab) straight to the shell. */
-  sendKey(seq: string): void;
-  /** Arm a modifier for the next typed character, or clear it (null). */
+  /** Send a special key (an arrow, Esc, Tab), folding in any armed modifier (then clearing
+   * it) — so an armed Shift + Tab sends the back-tab, an armed Ctrl + arrow the modified key. */
+  sendKey(key: SpecialKey): void;
+  /** Arm a modifier for the next keystroke, or clear it (null). */
   setModifier(mod: Modifier | null): void;
 }
 
 /** Bridge an xterm terminal to a session's shell socket: keystrokes/paste out as raw
  * bytes, the terminal's size out as a JSON resize control, and shell bytes in. When a
- * modifier is armed (the mobile Ctrl/Alt keys), the next typed chunk is transformed and
- * the modifier auto-clears. Returns a handle to detach and to drive the mobile key row. */
+ * modifier is armed (the mobile Ctrl/Alt/Shift keys), the next typed chunk is transformed
+ * and the modifier auto-clears. Returns a handle to detach and to drive the mobile key row. */
 export function attachTerminal(
   term: TermLike,
   ws: SocketLike,
@@ -111,7 +159,10 @@ export function attachTerminal(
       onData.dispose();
       onResize.dispose();
     },
-    sendKey: send,
+    sendKey(key) {
+      send(keySequence(key, modifier));
+      if (modifier) setModifier(null);
+    },
     setModifier,
   };
 }

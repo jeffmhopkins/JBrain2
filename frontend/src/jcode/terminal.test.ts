@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  KEY_SEQ,
   type SocketLike,
   type TermLike,
   applyModifier,
   attachTerminal,
+  guardMobileInput,
+  isReplacementInput,
+  keySequence,
   terminalWsUrl,
 } from "./terminal";
 
@@ -97,12 +99,27 @@ describe("attachTerminal", () => {
     vi.clearAllMocks();
   });
 
-  it("sends a control sequence verbatim via sendKey", () => {
+  it("sends a special key's base sequence via sendKey", () => {
     const term = new FakeTerm();
     const ws = fakeSocket();
     const { sendKey } = attachTerminal(term, ws);
-    sendKey(KEY_SEQ.up);
+    sendKey("up");
     expect(ws.sent[0]).toEqual(new TextEncoder().encode("\x1b[A"));
+  });
+
+  it("folds an armed modifier into the next special key, then auto-clears", () => {
+    const term = new FakeTerm();
+    const ws = fakeSocket();
+    const changes: (string | null)[] = [];
+    const { sendKey, setModifier } = attachTerminal(term, ws, (m) => changes.push(m));
+
+    setModifier("shift");
+    sendKey("tab"); // Shift+Tab → back-tab (CBT)
+    expect(ws.sent[0]).toEqual(new TextEncoder().encode("\x1b[Z"));
+
+    sendKey("tab"); // modifier consumed — next Tab is plain
+    expect(ws.sent[1]).toEqual(new TextEncoder().encode("\t"));
+    expect(changes).toEqual(["shift", null]);
   });
 
   it("folds the next keystroke under an armed Ctrl, then auto-clears", () => {
@@ -142,5 +159,77 @@ describe("applyModifier", () => {
   });
   it("prefixes ESC for Alt", () => {
     expect(applyModifier("alt", "x")).toBe("\x1bx");
+  });
+  it("upper-cases under Shift (the soft keyboard sends the unshifted char)", () => {
+    expect(applyModifier("shift", "a")).toBe("A");
+    expect(applyModifier("shift", "5")).toBe("5");
+  });
+});
+
+describe("keySequence", () => {
+  it("returns the base sequence with no modifier", () => {
+    expect(keySequence("tab", null)).toBe("\t");
+    expect(keySequence("up", null)).toBe("\x1b[A");
+  });
+  it("maps Shift+Tab to the back-tab (CBT)", () => {
+    expect(keySequence("tab", "shift")).toBe("\x1b[Z");
+  });
+  it("encodes modified cursor keys with the xterm modifier parameter", () => {
+    expect(keySequence("up", "shift")).toBe("\x1b[1;2A");
+    expect(keySequence("left", "alt")).toBe("\x1b[1;3D");
+    expect(keySequence("right", "ctrl")).toBe("\x1b[1;5C");
+  });
+  it("falls back to base for combinations with no standard sequence", () => {
+    expect(keySequence("tab", "ctrl")).toBe("\t");
+    expect(keySequence("esc", "shift")).toBe("\x1b");
+  });
+});
+
+describe("isReplacementInput", () => {
+  it("flags OS text-substitution edits and passes normal input through", () => {
+    // The double-space→". " shortcut, autocorrect, and smart quotes all fire as replacements.
+    expect(isReplacementInput("insertReplacementText")).toBe(true);
+    // Plain typing, composition, and deletion must not be cancelled.
+    expect(isReplacementInput("insertText")).toBe(false);
+    expect(isReplacementInput("insertCompositionText")).toBe(false);
+    expect(isReplacementInput("deleteContentBackward")).toBe(false);
+  });
+});
+
+describe("guardMobileInput", () => {
+  // A minimal EventTarget stand-in that records addEventListener/removeEventListener and can
+  // dispatch a beforeinput carrying an inputType (jsdom's InputEvent doesn't surface it here).
+  function fakeTextarea() {
+    let handler: ((e: Event) => void) | null = null;
+    return {
+      el: {
+        addEventListener: (type: string, cb: (e: Event) => void) => {
+          if (type === "beforeinput") handler = cb;
+        },
+        removeEventListener: () => {
+          handler = null;
+        },
+      } as unknown as HTMLTextAreaElement,
+      fire(inputType: string) {
+        let prevented = false;
+        const preventDefault = () => {
+          prevented = true;
+        };
+        handler?.({ inputType, preventDefault } as unknown as Event);
+        return prevented;
+      },
+      get attached() {
+        return handler !== null;
+      },
+    };
+  }
+
+  it("cancels replacement edits but lets plain typing through, and detaches", () => {
+    const ta = fakeTextarea();
+    const dispose = guardMobileInput(ta.el);
+    expect(ta.fire("insertReplacementText")).toBe(true); // the duplicating substitution
+    expect(ta.fire("insertText")).toBe(false); // a real keystroke
+    dispose();
+    expect(ta.attached).toBe(false);
   });
 });
