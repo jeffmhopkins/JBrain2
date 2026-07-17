@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
+from jbrain.llm.residency import ResidencyCoordinator
 from jbrain.llm.router import TASK_DEFAULTS
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
@@ -216,6 +217,11 @@ def _authed_client(
     app.state.auth_repo = FakeAuthRepo()
     app.state.settings_store = store
     app.state.local_gateway = gateway or FakeLocalGateway()
+    # Residency over the SAME fake gateway, so the load/plan-load endpoints exercise the
+    # real evictor against the test's running set (memory is monkeypatched per test).
+    app.state.residency = ResidencyCoordinator(
+        app.state.local_gateway, enabled=settings.local_llm_enabled, models_dir=""
+    )
     key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
     assert (
         c.post("/api/auth/session", json={"owner_key": key, "device_label": "t"}).status_code == 204
@@ -518,8 +524,8 @@ def test_unload_requires_auth() -> None:
         assert anon.post("/api/settings/llm/local-models/qwen3-vl-30b/unload").status_code == 401
 
 
-def test_drawer_reports_context_window_and_staged_fields() -> None:
-    # Defaults: each model reports its catalog window, no override, not staged.
+def test_drawer_reports_context_window_fields() -> None:
+    # Defaults: each model reports its catalog window and no override.
     c, _ = _authed_client(_local_settings())
     by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
     assert by_id["gpt-oss-120b"]["context_window"] == 131072  # served default == native
@@ -528,7 +534,8 @@ def test_drawer_reports_context_window_and_staged_fields() -> None:
     assert by_id["gpt-oss-120b"]["max_context_window"] == 131072
     assert by_id["qwen3-vl-30b"]["max_context_window"] == 262144
     assert all(m["context_window_override"] is None for m in by_id.values())
-    assert all(m["staged"] is False for m in by_id.values())
+    # `staged` is gone from the wire — staging is now a transient client-side preview.
+    assert all("staged" not in m for m in by_id.values())
 
 
 def test_set_context_window_round_trips_override() -> None:
@@ -631,45 +638,71 @@ def test_set_context_window_unloads_a_resident_model() -> None:
     assert gw.unloaded == ["gpt-oss-120b"]  # evicted so it reloads at 64k
 
 
-def test_stage_and_unstage_toggle_the_flag() -> None:
-    c, store = _authed_client(_local_settings())
-    resp = c.post("/api/settings/llm/local-models/qwen3-vl-30b/stage")
-    assert resp.status_code == 200, resp.text
-    by_id = {m["id"]: m for m in resp.json()["local_models"]}
-    assert by_id["qwen3-vl-30b"]["staged"] is True
-    assert by_id["gpt-oss-120b"]["staged"] is False
-    assert store.values["llm_local_staged"] == ["qwen3-vl-30b"]
-    # Staging again is idempotent (no duplicate).
-    c.post("/api/settings/llm/local-models/qwen3-vl-30b/stage")
-    assert store.values["llm_local_staged"] == ["qwen3-vl-30b"]
-    # Unstage clears it.
-    resp = c.delete("/api/settings/llm/local-models/qwen3-vl-30b/stage")
-    assert {m["id"]: m for m in resp.json()["local_models"]}["qwen3-vl-30b"]["staged"] is False
-    assert store.values["llm_local_staged"] == []
-
-
-def test_staging_does_not_regenerate_the_gateway_config(
+def test_plan_load_previews_the_eviction_without_touching_the_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Staging no longer touches llama-swap.yaml: every model is already a non-swapping group
-    # member, so membership isn't gated on staging. Staging is a pure keep-hot / evict-last
-    # hint the residency coordinator reads live — so stage/unstage must NOT re-stamp the config.
-    import jbrain.api.llm_settings as mod
+    # gpt-oss (63.5) resident, used=90; staging the coder would blow the 96 ceiling. The
+    # dry-run names gpt-oss as the victim (with its footprint), projects the landing point,
+    # and evicts NOTHING. (qwen3-235b is provisioned so it's a valid plan-load target.)
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    settings = _cloud_settings(
+        local_llm_enabled=True, local_models=["qwen3-coder-next", "gpt-oss-120b"]
+    )
+    c, _ = _authed_client(settings, gw)
+    resp = c.post("/api/settings/llm/local-models/qwen3-coder-next/plan-load")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["measured"] is True
+    assert body["fits"] is False and body["over"] is False and body["already_resident"] is False
+    assert [v["id"] for v in body["victims"]] == ["gpt-oss-120b"]
+    assert body["victims"][0]["gb"] == 63.5
+    assert body["ceiling_gb"] == 96.0
+    assert gw.unloaded == []  # dry-run — nothing evicted
 
-    writes: list[object] = []
-    monkeypatch.setattr(mod.llama_swap_config, "write", lambda *a, **k: writes.append(k) or "x")
+
+def test_plan_load_fits_when_there_is_room(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 40.0)
+    )
+    c, _ = _authed_client(_local_settings(), FakeLocalGateway(running={"gpt-oss-120b"}))
+    body = c.post("/api/settings/llm/local-models/qwen3-vl-30b/plan-load").json()
+    assert body["fits"] is True and body["victims"] == []
+
+
+def test_plan_load_is_unmeasured_when_memory_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A box that can't be measured → measured False, so the screen offers the load without an
+    # eviction preview rather than showing a wrong one.
+    monkeypatch.setattr("jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": None)
     c, _ = _authed_client(_local_settings())
-    c.post("/api/settings/llm/local-models/qwen3-vl-30b/stage")
-    c.post("/api/settings/llm/local-models/gpt-oss-120b/stage")
-    c.delete("/api/settings/llm/local-models/qwen3-vl-30b/stage")
-    assert writes == []  # no config regeneration on any stage/unstage
+    body = c.post("/api/settings/llm/local-models/qwen3-vl-30b/plan-load").json()
+    assert body["measured"] is False and body["victims"] == []
 
 
-def test_stage_404_and_409() -> None:
+def test_plan_load_404_and_409() -> None:
     c, _ = _authed_client(_local_settings())
-    assert c.post("/api/settings/llm/local-models/nope/stage").status_code == 404
+    assert c.post("/api/settings/llm/local-models/nope/plan-load").status_code == 404
     c2, _ = _authed_client(_cloud_settings())
-    assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/stage").status_code == 409
+    assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/plan-load").status_code == 409
+
+
+def test_load_evicts_to_fit_then_warms_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Committing the staged load: free_room evicts the same victim the preview showed, then the
+    # target is warmed. gpt-oss (63.5) resident at used=90; loading the coder evicts gpt-oss.
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    settings = _cloud_settings(
+        local_llm_enabled=True, local_models=["qwen3-coder-next", "gpt-oss-120b"]
+    )
+    c, _ = _authed_client(settings, gw)
+    resp = c.post("/api/settings/llm/local-models/qwen3-coder-next/load")
+    assert resp.status_code == 200, resp.text
+    assert gw.unloaded == ["gpt-oss-120b"]  # evicted to make room
+    assert "qwen3-coder-next" in gw.loaded  # then warmed
 
 
 def test_install_queues_an_unprovisioned_model() -> None:

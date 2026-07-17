@@ -1315,6 +1315,33 @@ h3 {
 .llm-mem-cap .total {
   margin-left: auto;
 }
+/* Stage preview (transient): a resident segment the staged load would evict turns to a
+   rose hatch with a struck-through label; the keep-free floor marker shows where the
+   eviction line sits. Both are preview-only chrome layered over the meter above. */
+.llm-mem-seg.evicting .llm-mem-label {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+.llm-mem-seg.evicting::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--rose) 0 5px,
+    color-mix(in srgb, var(--rose) 45%, #000) 5px 10px
+  );
+  opacity: 0.9;
+}
+.llm-mem-floor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 2px dashed var(--text);
+  z-index: 4;
+  pointer-events: none;
+}
 .llm-local-hint {
   font-size: var(--fs-micro);
   color: var(--text-2);
@@ -1465,6 +1492,12 @@ h3 {
 }
 .llm-local-state.staged {
   color: var(--amber);
+}
+.llm-local-state.avail {
+  color: var(--steel);
+}
+.llm-local-state.evicting {
+  color: var(--rose);
 }
 /* Lifecycle buttons: a hairline pill that tints to an accent on hover — Stage to
    steel, Load to green, and the default (Unstage/Unload) to the danger accent. */
@@ -1782,10 +1815,16 @@ h3 {
 .llm-local-state.removing {
   color: var(--rose);
 }
-.llm-local-row.removing {
+.llm-local-row.removing,
+.llm-local-row.evicting {
   border-left: 2px solid var(--rose);
   padding-left: 10px;
   margin-left: -12px;
+}
+/* The stage commit bar reuses .llm-local-queue; rose when the load forces an eviction. */
+.llm-local-queue.evict {
+  border-color: var(--rose);
+  background: var(--rose-tint);
 }
 
 /* The ambient --mode-tint that .seg-on fills with isn't set on this screen, so

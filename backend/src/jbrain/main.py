@@ -279,17 +279,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.local_gateway = LocalGatewayClient(settings.local_llm_url)
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
         # the free-RAM floor before each local load (wired as the router's local_admit below),
-        # and schedule_restore puts back whatever a transient displacement (image render, code
-        # session) removed at end of turn instead of cold-loading it. The staged set is read
-        # live (so staging/unstaging needs no restart); inert on a cloud-only box (enabled off,
-        # no staged loader).
+        # free_room does the same for the settings screen's deliberate load, plan_load previews
+        # an eviction without touching the box, and schedule_restore puts back whatever a
+        # transient displacement (image render, code session) removed at end of turn instead of
+        # cold-loading it. Inert on a cloud-only box (enabled off).
         app.state.residency = ResidencyCoordinator(
             app.state.local_gateway,
-            staged_loader=(
-                (lambda: settings_store.llm_local_staged(SYSTEM_CTX))
-                if settings.local_llm_enabled
-                else None
-            ),
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             models_dir=settings.local_models_dir,
             enabled=settings.local_llm_enabled,
