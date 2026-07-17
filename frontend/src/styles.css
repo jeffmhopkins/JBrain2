@@ -1265,6 +1265,10 @@ h3 {
   position: relative;
   overflow: hidden;
   transition: width 0.4s ease;
+  /* Keep the bar scaled to physical total: an over-subscribed preview must let the last
+     segment run off the edge (clipped by the bar), not shrink every segment to re-fit —
+     which would slide the fixed free-RAM floor marker left. */
+  flex-shrink: 0;
 }
 .llm-mem-seg + .llm-mem-seg {
   box-shadow: -1px 0 0 var(--bg);

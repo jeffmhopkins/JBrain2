@@ -1152,10 +1152,11 @@ function OnBoxModelsCard({
 
   // Loaded segments first (resident), then the staged (projected) preview — colored by slot.
   const onBar = stagedProjected !== null ? [...loaded, stagedProjected] : loaded;
+  // The bar is ALWAYS scaled to physical total (100% = the box), so the free-RAM floor
+  // marker sits at a fixed ceiling/total regardless of the preview. When a preview
+  // over-subscribes (resident + staged > total) the incoming segment simply runs off the
+  // right edge (clipped) — an honest "it won't fit", reinforced by the "⚠ over" caption.
   const total = hostMemory?.total_gb ?? imgMem?.total_gb ?? 0;
-  // While previewing, size the track so both the outgoing (victim) and incoming (staged)
-  // segments show without clipping — the over-subscription is the whole point.
-  const den = stagedProjected !== null ? Math.max(total, residentGb + stagedGb) : total;
   // Projected footprint after the load: the server's dry-run when measured, else a local
   // estimate (resident + staged − evicted).
   const victimGb = (plan?.victims ?? []).reduce((sum, v) => sum + v.gb, 0);
@@ -1202,7 +1203,7 @@ function OnBoxModelsCard({
                   <div
                     key={m.id}
                     className={`llm-mem-seg${isStaged ? " staged" : ""}${isVictim ? " evicting" : ""}`}
-                    style={{ width: `${(res / den) * 100}%` }}
+                    style={{ width: `${(res / total) * 100}%` }}
                     title={`${m.label} — ${weights} GB weights + ${m.kv_gb} GB KV${
                       isStaged ? " (staged)" : isVictim ? " (would be evicted)" : ""
                     }`}
@@ -1227,7 +1228,7 @@ function OnBoxModelsCard({
               {imgActive && (
                 <div
                   className="llm-mem-seg llm-mem-img"
-                  style={{ width: `${(imgUsedGb / den) * 100}%` }}
+                  style={{ width: `${(imgUsedGb / total) * 100}%` }}
                   title={`ComfyUI image — ${Math.round(imgUsedGb)} GB resident`}
                 >
                   <div className="llm-mem-w" style={{ width: "100%", background: IMG_GRADIENT }} />
@@ -1241,7 +1242,7 @@ function OnBoxModelsCard({
               {stagedProjected !== null && plan?.measured === true && (
                 <div
                   className="llm-mem-floor"
-                  style={{ left: `${(plan.ceiling_gb / den) * 100}%` }}
+                  style={{ left: `${(plan.ceiling_gb / total) * 100}%` }}
                   aria-hidden="true"
                 />
               )}
