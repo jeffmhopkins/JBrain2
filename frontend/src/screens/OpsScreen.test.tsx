@@ -43,6 +43,17 @@ const METRICS: OpsMetrics = {
   gpu_busy_percent: 41,
   apu_power_w: 28.5,
   fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
+  gpu_mem: {
+    gtt_used_bytes: 33 * 2 ** 30,
+    gtt_total_bytes: 120 * 2 ** 30,
+    vram_used_bytes: 2 * 2 ** 30,
+    vram_total_bytes: 4 * 2 ** 30,
+  },
+  mem_breakdown: {
+    MemFree: 5 * 2 ** 30,
+    Buffers: 0.2 * 2 ** 30,
+    Cached: 40 * 2 ** 30,
+  },
   containers: [{ service: "api", mem_bytes: 87 * 2 ** 20 }],
   processes: [
     {
@@ -73,16 +84,21 @@ const HISTORY: MetricsHistory = {
     {
       t: "2026-06-22T00:00:00Z",
       load_1m: 0.5,
+      load_1m_max: 0.8,
       load_5m: 0.5,
       load_15m: 0.5,
       mem_used_bytes: 60 * 2 ** 30,
+      mem_used_max_bytes: 64 * 2 ** 30,
       mem_total_bytes: 128 * 2 ** 30,
       swap_used_bytes: 0,
       disk_used_bytes: 500 * 2 ** 30,
+      disk_used_max_bytes: 500 * 2 ** 30,
       disk_total_bytes: 2000 * 2 ** 30,
       gpu_busy_percent: 40,
+      gpu_busy_max: 55,
       fan_rpm_max: 2100,
       power_w: 14.0,
+      power_w_max: 20.0,
       net_rx_bps: 8 * 2 ** 20,
       net_tx_bps: 2 * 2 ** 20,
       disk_read_bps: 30 * 2 ** 20,
@@ -91,16 +107,21 @@ const HISTORY: MetricsHistory = {
     {
       t: "2026-06-22T01:00:00Z",
       load_1m: 1.5,
+      load_1m_max: 1.9,
       load_5m: 1.2,
       load_15m: 1.0,
       mem_used_bytes: 72 * 2 ** 30,
+      mem_used_max_bytes: 78 * 2 ** 30,
       mem_total_bytes: 128 * 2 ** 30,
       swap_used_bytes: 0,
       disk_used_bytes: 520 * 2 ** 30,
+      disk_used_max_bytes: 520 * 2 ** 30,
       disk_total_bytes: 2000 * 2 ** 30,
       gpu_busy_percent: 70,
+      gpu_busy_max: 88,
       fan_rpm_max: 2600,
       power_w: 31.0,
+      power_w_max: 42.0,
       net_rx_bps: 14 * 2 ** 20,
       net_tx_bps: 3 * 2 ** 20,
       disk_read_bps: 50 * 2 ** 20,
@@ -198,8 +219,9 @@ describe("OpsScreen", () => {
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("metrics/history?range=6h"))).toBe(
       true,
     );
-    // Peak label reflects the higher of the two buckets (load 1.5).
-    expect(screen.getByText("1.50 peak")).toBeInTheDocument();
+    // Peak label reflects the bucket MAX band (load_1m_max 1.9), not the avg line
+    // (1.5) — so a spike shorter than a bucket still shows as the peak.
+    expect(screen.getByText("1.90 peak")).toBeInTheDocument();
     expect(screen.getByText("2 30s buckets")).toBeInTheDocument();
 
     // Picking a range refetches with that window.

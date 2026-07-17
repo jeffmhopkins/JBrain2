@@ -306,26 +306,38 @@ async def prune(
 
 # Raw and hourly share these output aliases so a point is built the same way from
 # either source. Raw derives *used* on the fly; hourly reads the stored *_avg.
+# Each downsample bucket carries BOTH the average (the chart's line) and the peak
+# (`*_max`, the chart's band) so a spike shorter than a bucket isn't averaged out
+# of view. Network/disk throughput report the bucket MAX only — a peak-throughput
+# history is what "did it saturate?" wants, so there is no separate average line.
 _RAW_SELECT = """
-    avg(load_1m) AS load_1m, avg(load_5m) AS load_5m, avg(load_15m) AS load_15m,
+    avg(load_1m) AS load_1m, max(load_1m) AS load_1m_max,
+    avg(load_5m) AS load_5m, avg(load_15m) AS load_15m,
     avg(mem_total_bytes - mem_available_bytes)::bigint AS mem_used,
+    max(mem_total_bytes - mem_available_bytes)::bigint AS mem_used_max,
     max(mem_total_bytes) AS mem_total,
     avg(swap_total_bytes - swap_free_bytes)::bigint AS swap_used,
     avg(disk_total_bytes - disk_free_bytes)::bigint AS disk_used,
+    max(disk_total_bytes - disk_free_bytes)::bigint AS disk_used_max,
     max(disk_total_bytes) AS disk_total,
-    avg(gpu_busy_percent) AS gpu, max(fan_rpm_max) AS fan, avg(power_w) AS power,
-    avg(net_rx_bps) AS net_rx, avg(net_tx_bps) AS net_tx,
-    avg(disk_read_bps) AS disk_read, avg(disk_write_bps) AS disk_write
+    avg(gpu_busy_percent) AS gpu, max(gpu_busy_percent) AS gpu_max,
+    max(fan_rpm_max) AS fan, avg(power_w) AS power, max(power_w) AS power_max,
+    max(net_rx_bps) AS net_rx, max(net_tx_bps) AS net_tx,
+    max(disk_read_bps) AS disk_read, max(disk_write_bps) AS disk_write
 """
 
 _HOURLY_SELECT = """
-    avg(load_1m_avg) AS load_1m, avg(load_5m_avg) AS load_5m, avg(load_15m_avg) AS load_15m,
-    avg(mem_used_avg)::bigint AS mem_used, max(mem_total_bytes) AS mem_total,
+    avg(load_1m_avg) AS load_1m, max(load_1m_max) AS load_1m_max,
+    avg(load_5m_avg) AS load_5m, avg(load_15m_avg) AS load_15m,
+    avg(mem_used_avg)::bigint AS mem_used, max(mem_used_max)::bigint AS mem_used_max,
+    max(mem_total_bytes) AS mem_total,
     avg(swap_used_avg)::bigint AS swap_used,
-    avg(disk_used_avg)::bigint AS disk_used, max(disk_total_bytes) AS disk_total,
-    avg(gpu_busy_avg) AS gpu, max(fan_rpm_max) AS fan, avg(power_w_avg) AS power,
-    avg(net_rx_bps_avg) AS net_rx, avg(net_tx_bps_avg) AS net_tx,
-    avg(disk_read_bps_avg) AS disk_read, avg(disk_write_bps_avg) AS disk_write
+    avg(disk_used_avg)::bigint AS disk_used, max(disk_used_max)::bigint AS disk_used_max,
+    max(disk_total_bytes) AS disk_total,
+    avg(gpu_busy_avg) AS gpu, max(gpu_busy_max) AS gpu_max,
+    max(fan_rpm_max) AS fan, avg(power_w_avg) AS power, max(power_w_max) AS power_max,
+    max(net_rx_bps_max) AS net_rx, max(net_tx_bps_max) AS net_tx,
+    max(disk_read_bps_max) AS disk_read, max(disk_write_bps_max) AS disk_write
 """
 
 
@@ -376,16 +388,21 @@ async def history(
         {
             "t": r["t"].isoformat(),
             "load_1m": _round(r["load_1m"]),
+            "load_1m_max": _round(r["load_1m_max"]),
             "load_5m": _round(r["load_5m"]),
             "load_15m": _round(r["load_15m"]),
             "mem_used_bytes": _int(r["mem_used"]),
+            "mem_used_max_bytes": _int(r["mem_used_max"]),
             "mem_total_bytes": _int(r["mem_total"]),
             "swap_used_bytes": _int(r["swap_used"]),
             "disk_used_bytes": _int(r["disk_used"]),
+            "disk_used_max_bytes": _int(r["disk_used_max"]),
             "disk_total_bytes": _int(r["disk_total"]),
             "gpu_busy_percent": _round(r["gpu"]),
+            "gpu_busy_max": _round(r["gpu_max"]),
             "fan_rpm_max": _int(r["fan"]),
             "power_w": _round(r["power"]),
+            "power_w_max": _round(r["power_max"]),
             "net_rx_bps": _round(r["net_rx"]),
             "net_tx_bps": _round(r["net_tx"]),
             "disk_read_bps": _round(r["disk_read"]),

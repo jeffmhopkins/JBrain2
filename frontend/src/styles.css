@@ -3013,9 +3013,32 @@ button.small {
 }
 
 .plot-now {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   font-size: var(--fs-sm);
   color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+
+/* One line's readout in a multi-line panel: a color swatch, an optional
+   sub-label (down/up, read/write), then the value. */
+.plot-now-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.plot-swatch {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.plot-sublabel {
+  color: var(--text-2);
 }
 
 .plot-svg {
@@ -3068,6 +3091,13 @@ button.small {
 
 .ops-card-body {
   border-top: 1px solid var(--border);
+}
+
+/* Cards whose body is free-form content (graphs, breakdown) rather than the
+   full-bleed vitals rows need their own inset — the rows carry their own padding,
+   this doesn't. */
+.ops-graph-body {
+  padding: 14px;
 }
 
 /* Group roll-up state on the header */
@@ -3152,9 +3182,24 @@ button.small {
   color: var(--text-2);
 }
 
+/* Full-width meter under the value line (memory/disk/gpu). */
 .ops-vmid .meter {
   margin-top: 7px;
-  max-width: 180px;
+}
+
+/* The value line: the used/total readout, with a right-aligned extra (e.g. swap)
+   sitting above the full-width bar rather than in its own column. */
+.ops-vline {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.ops-vextra {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
 }
 
 .ops-vsub {
@@ -3162,13 +3207,6 @@ button.small {
   font-size: var(--fs-micro);
   color: var(--text-3);
   margin-top: 3px;
-}
-
-.ops-vend {
-  margin-left: auto;
-  flex: none;
-  font-size: var(--fs-micro);
-  color: var(--text-2);
 }
 
 /* The Load row stacks its value line over the embedded Server update. */
@@ -3329,6 +3367,12 @@ button.small {
 }
 .g-kernel {
   color: var(--text-3);
+}
+.g-gpu {
+  color: var(--location);
+}
+.g-cache {
+  color: var(--slate);
 }
 
 /* The card body has no padding of its own; each row supplies the Ops-standard

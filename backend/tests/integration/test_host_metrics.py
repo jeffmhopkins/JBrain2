@@ -98,9 +98,29 @@ async def test_store_and_read_raw(maker: async_sessionmaker) -> None:
     assert point["fan_rpm_max"] == 2100
     assert point["gpu_busy_percent"] == 42.0
     assert point["power_w"] == 14.0
-    # Network + disk throughput ride the raw read as bytes/sec.
+    # Network + disk throughput ride the raw read as bytes/sec (bucket peak).
     assert point["net_rx_bps"] == 1_000_000.0
     assert point["disk_write_bps"] == 2_000_000.0
+    # Each point carries the bucket peak alongside the average line.
+    assert point["mem_used_max_bytes"] == 64 << 30
+    assert point["gpu_busy_max"] == 42.0
+    assert point["power_w_max"] == 14.0
+
+
+async def test_bucket_reports_peak_alongside_average(maker: async_sessionmaker) -> None:
+    # Two samples in one bucket (identical timestamp): the line is the average but
+    # the *_max carries the peak, so a spike isn't smoothed out of the history.
+    at = datetime.now(tz=UTC) - timedelta(hours=3)
+    await ops_metrics.store_sample(maker, OWNER, _sample(load=0.5, gpu=10.0), captured_at=at)
+    await ops_metrics.store_sample(maker, OWNER, _sample(load=1.5, gpu=90.0), captured_at=at)
+    out = await ops_metrics.history(
+        maker, OWNER, since=at - timedelta(seconds=20), until=at + timedelta(seconds=20)
+    )
+    point = out["points"][-1]
+    assert point["load_1m"] == 1.0  # avg of 0.5 and 1.5
+    assert point["load_1m_max"] == 1.5  # the peak survives
+    assert point["gpu_busy_percent"] == 50.0
+    assert point["gpu_busy_max"] == 90.0
 
 
 async def test_rate_columns_null_when_no_rates_given(maker: async_sessionmaker) -> None:
@@ -142,6 +162,8 @@ async def test_rollup_feeds_hourly_read(maker: async_sessionmaker) -> None:
     # Network + disk throughput roll up through the hourly path as well.
     assert any(p["net_rx_bps"] == 1_000_000.0 for p in out["points"])
     assert any(p["disk_read_bps"] == 5_000_000.0 for p in out["points"])
+    # The stored per-hour peak (gpu 0..30) reaches the hourly read's *_max band.
+    assert any(p["gpu_busy_max"] == 30.0 for p in out["points"])
 
 
 async def test_prune_drops_old_rows(maker: async_sessionmaker) -> None:
