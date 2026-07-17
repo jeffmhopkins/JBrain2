@@ -3979,7 +3979,8 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/ops/metrics") {
     return json({
       mem_total_bytes: 4 * 2 ** 30,
-      mem_available_bytes: 1.2 * 2 ** 30,
+      // free + reclaimable cache ≈ available; used (non-reclaimable) ≈ 1.85 GB.
+      mem_available_bytes: 2.15 * 2 ** 30,
       swap_total_bytes: 2 * 2 ** 30,
       swap_free_bytes: 1.9 * 2 ** 30,
       disk_total_bytes: 40 * 2 ** 30,
@@ -3991,19 +3992,19 @@ export const mockFetch: typeof fetch = async (input, init) => {
       gpu_busy_percent: 63,
       apu_power_w: 28.5,
       fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
-      // A loaded model puts ~30 GB in GTT; most of the rest of "used" is cache.
+      // A small loaded model sits in GTT; the rest of the box is cache + free.
       gpu_mem: {
-        gtt_used_bytes: 30 * 2 ** 30,
-        gtt_total_bytes: 120 * 2 ** 30,
-        vram_used_bytes: 2 * 2 ** 30,
-        vram_total_bytes: 4 * 2 ** 30,
+        gtt_used_bytes: 1.2 * 2 ** 30,
+        gtt_total_bytes: 3.8 * 2 ** 30,
+        vram_used_bytes: 0.3 * 2 ** 30,
+        vram_total_bytes: 0.5 * 2 ** 30,
       },
       mem_breakdown: {
-        MemFree: 6 * 2 ** 30,
-        Buffers: 0.2 * 2 ** 30,
-        Cached: 40 * 2 ** 30,
-        Shmem: 0.3 * 2 ** 30,
-        AnonPages: 3 * 2 ** 30,
+        MemFree: 0.8 * 2 ** 30,
+        Buffers: 0.05 * 2 ** 30,
+        Cached: 1.3 * 2 ** 30,
+        Shmem: 0.1 * 2 ** 30,
+        AnonPages: 0.4 * 2 ** 30,
       },
       containers: CONTAINERS.map((c, i) => ({
         service: c.service,

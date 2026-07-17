@@ -3374,6 +3374,11 @@ button.small {
 .g-cache {
   color: var(--slate);
 }
+/* Cache is reclaimable = available, so its bar segment is a faint block that reads
+   as headroom between the solid "used" segments and the empty free track. */
+.ops-mem-seg.g-cache {
+  background: color-mix(in srgb, var(--slate) 30%, transparent);
+}
 
 /* The card body has no padding of its own; each row supplies the Ops-standard
  * 14px horizontal inset so the memory card aligns with the System/service rows. */
