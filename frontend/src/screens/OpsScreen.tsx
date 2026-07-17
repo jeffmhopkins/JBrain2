@@ -308,14 +308,16 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
       <div className="ops-vrow">
         <span className="ops-vk">Memory</span>
         <div className="ops-vmid">
-          <span className="ops-vv">
-            {fmtBytes(memUsed)} <small>/ {fmtBytes(metrics.mem_total_bytes)}</small>
-          </span>
+          <div className="ops-vline">
+            <span className="ops-vv">
+              {fmtBytes(memUsed)} <small>/ {fmtBytes(metrics.mem_total_bytes)}</small>
+            </span>
+            {metrics.swap_total_bytes > 0 && (
+              <span className="ops-vextra">swap {fmtBytes(swapUsed)}</span>
+            )}
+          </div>
           <Meter used={memUsed} total={metrics.mem_total_bytes} />
         </div>
-        {metrics.swap_total_bytes > 0 && (
-          <span className="ops-vend">swap {fmtBytes(swapUsed)}</span>
-        )}
       </div>
       <div className="ops-vrow">
         <span className="ops-vk">Disk</span>
@@ -746,6 +748,7 @@ function HistoryCard() {
     <OpsCard
       title="History"
       defaultOpen
+      bodyClassName="ops-graph-body"
       summaryCollapsed={<span className="ops-card-summary">graphs</span>}
     >
       <HistoryBody />
@@ -819,8 +822,24 @@ function MemoryCard({
           command: "",
         }));
   const accounted = items.reduce((s, p) => s + p.rss_bytes, 0);
-  const kernel = Math.max(0, used - accounted);
-  const free = Math.max(0, total - used);
+
+  // Honest decomposition of the WHOLE total (the `free -h` view), so the "used"
+  // figure — which folds in reclaimable cache and iGPU memory no process RSS can
+  // show — stops looking like a lie next to the process rows:
+  //   apps (RSS) + iGPU (GTT/VRAM) + kernel/other + cache (reclaimable) + free.
+  const mb = metrics.mem_breakdown;
+  const gpu = metrics.gpu_mem
+    ? metrics.gpu_mem.gtt_used_bytes + metrics.gpu_mem.vram_used_bytes
+    : 0;
+  // Page cache + buffers are reclaimable — freed the instant something needs the
+  // RAM (loading a model evicts them), so they are "used" only in the loosest sense.
+  const cache = mb ? (mb.Cached ?? 0) + (mb.Buffers ?? 0) : 0;
+  const memFree = mb?.MemFree ?? Math.max(0, total - used);
+  // Non-cache, non-free occupancy: process RSS + iGPU device memory + kernel/slab.
+  const realUsed = Math.max(0, total - memFree - cache);
+  const apps = Math.min(accounted, realUsed);
+  const kernel = Math.max(0, realUsed - apps - gpu);
+  const free = Math.max(0, total - apps - gpu - kernel - cache);
 
   const byRss = [...items].sort((a, b) => b.rss_bytes - a.rss_bytes);
   const rows =
@@ -829,14 +848,17 @@ function MemoryCard({
       : [...items].sort((a, b) => (a.service + a.command).localeCompare(b.service + b.command));
   const maxRss = byRss[0]?.rss_bytes ?? 1;
 
-  // Donut composition by group (+ kernel slice), as cumulative dash offsets.
+  // Donut composition over the whole total (free is the uncovered remainder), as
+  // cumulative dash offsets: process groups, then iGPU, kernel, and cache slices.
   const groupTotals = new Map<string, number>();
   for (const p of items)
     groupTotals.set(memGroup(p.service), (groupTotals.get(memGroup(p.service)) ?? 0) + p.rss_bytes);
+  if (gpu > 0) groupTotals.set("gpu", gpu);
   if (kernel > 0) groupTotals.set("kernel", kernel);
+  if (cache > 0) groupTotals.set("cache", cache);
   let offset = 0;
   const arcs = [...groupTotals.entries()].map(([cls, v]) => {
-    const len = used > 0 ? (v / used) * 100 : 0;
+    const len = total > 0 ? (v / total) * 100 : 0;
     const arc = { cls, dash: `${len} ${100 - len}`, off: -offset };
     offset += len;
     return arc;
@@ -866,10 +888,22 @@ function MemoryCard({
             title={`${procLabel(p).name} · ${fmtBytes(p.rss_bytes)}`}
           />
         ))}
+        {gpu > 0 && (
+          <span
+            className="ops-mem-seg g-gpu"
+            style={{ width: `${(gpu / total) * 100}%` }}
+            title={`iGPU ${fmtBytes(gpu)} — loaded model weights in GTT/VRAM (no per-process RSS)`}
+          />
+        )}
         <span
           className="ops-mem-seg g-kernel"
           style={{ width: `${(kernel / total) * 100}%` }}
-          title="GPU, kernel & cache — includes model weights offloaded to the iGPU (no per-process RSS)"
+          title={`kernel & other ${fmtBytes(kernel)}`}
+        />
+        <span
+          className="ops-mem-seg g-cache"
+          style={{ width: `${(cache / total) * 100}%` }}
+          title={`cache ${fmtBytes(cache)} — reclaimable (freed on demand)`}
         />
       </div>
 
@@ -992,15 +1026,28 @@ function MemoryCard({
 
       <p className="ops-mem-foot">
         <b>{fmtBytes(accounted)}</b> across {items.length}{" "}
-        {metrics.processes.length > 0 ? "processes" : "containers"} · <b>{fmtBytes(kernel)}</b> GPU
-        + kernel &amp; cache · <b>{fmtBytes(free)}</b> free
+        {metrics.processes.length > 0 ? "processes" : "containers"}
+        {gpu > 0 && (
+          <>
+            {" · "}
+            <b>{fmtBytes(gpu)}</b> iGPU
+          </>
+        )}
+        {" · "}
+        <b>{fmtBytes(kernel)}</b> kernel
+        {cache > 0 && (
+          <>
+            {" · "}
+            <b>{fmtBytes(cache)}</b> cache
+          </>
+        )}{" "}
+        · <b>{fmtBytes(free)}</b> free
       </p>
-      {metrics.processes.length > 0 && (
-        <p className="ops-mem-note">
-          Models run on the iGPU — their weights live in GPU memory that per-process RSS can&apos;t
-          see, so they fall into “GPU + kernel &amp; cache,” not the rows above.
-        </p>
-      )}
+      <p className="ops-mem-note">
+        The “used” total folds in reclaimable <b>cache</b> (model files read from disk — freed the
+        instant anything needs the RAM) and <b>iGPU</b> memory holding loaded model weights, neither
+        of which shows as per-process RSS — so “used” sits well above the process rows.
+      </p>
     </OpsCard>
   );
 }

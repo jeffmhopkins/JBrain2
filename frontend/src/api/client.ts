@@ -235,6 +235,18 @@ export interface OpsMetrics {
   fan_rpm: Record<string, number> | null;
   /** APU/SoC package power in watts (amdgpu power1_average), or null when absent. */
   apu_power_w: number | null;
+  /** iGPU unified-memory usage (bytes): GTT is the bulk of a loaded model's device
+   * footprint, which no process RSS shows. null off AMD / when /sys isn't exposed. */
+  gpu_mem: {
+    gtt_used_bytes: number;
+    gtt_total_bytes: number;
+    vram_used_bytes: number;
+    vram_total_bytes: number;
+  } | null;
+  /** Curated /proc/meminfo lines (bytes) — Cached/Buffers/Shmem/… — so the memory
+   * breakdown can name the reclaimable cache the "used" total folds in. null when
+   * meminfo is unreadable. Keys are the raw meminfo labels. */
+  mem_breakdown: Record<string, number> | null;
   containers: { service: string; mem_bytes: number }[];
   /** Per-process RSS (via the supervisor's `docker top`), biggest first — the raw
    * breakdown behind each container, e.g. the local-llm container's separate
@@ -253,22 +265,30 @@ export interface OpsMetrics {
 export type MetricRange = "6h" | "24h" | "2d" | "7d" | "30d" | "90d" | "1y";
 
 /** One downsampled bucket. mem/swap/disk are *used* bytes alongside their totals;
- * any field is null when the host didn't report it (e.g. no GPU/fans). */
+ * any field is null when the host didn't report it (e.g. no GPU/fans). The `_max`
+ * fields carry the bucket's peak (the line is the average) so a spike shorter than
+ * a bucket still shows as the chart's peak band rather than being averaged away. */
 export interface MetricPoint {
   t: string;
   load_1m: number | null;
+  load_1m_max: number | null;
   load_5m: number | null;
   load_15m: number | null;
   mem_used_bytes: number | null;
+  mem_used_max_bytes: number | null;
   mem_total_bytes: number | null;
   swap_used_bytes: number | null;
   disk_used_bytes: number | null;
+  disk_used_max_bytes: number | null;
   disk_total_bytes: number | null;
   gpu_busy_percent: number | null;
+  gpu_busy_max: number | null;
   fan_rpm_max: number | null;
   power_w: number | null;
-  /** Network + disk throughput in bytes/sec, or null before the first post-restart
-   * sample has a prior counter to diff (or when the host didn't report a counter). */
+  power_w_max: number | null;
+  /** Network + disk throughput in bytes/sec — the bucket PEAK (max), so spikes
+   * survive downsampling. null before the first post-restart sample has a prior
+   * counter to diff (or when the host didn't report a counter). */
   net_rx_bps: number | null;
   net_tx_bps: number | null;
   disk_read_bps: number | null;
