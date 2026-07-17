@@ -1,6 +1,6 @@
 # analyze_stream — build plan (URL-sourced video/stream analysis)
 
-> **Status:** Scheduled · **Last verified:** 2026-07-17 · **Waves:** W1◻️ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-17 · **Waves:** W1✅ W2◻️ W3◻️
 
 Give **jerv** a sense it doesn't have: pull frame(s) — and optionally the audio —
 from a **video URL**, live or on-demand, so the model can actually *see* what a
@@ -32,9 +32,12 @@ reason about it: it is `analyze_video` with a different front door.
   expensive`. Sits beside `analyze_video`; the attachment tool is unchanged.
 - **Resolver: yt-dlp (broad).** Handles YouTube (live + VOD) and most stream
   sites; resolves a page/watch URL to the direct media manifest without a
-  headless browser. New runtime dependency → added to `scripts/dev-setup.sh`,
-  `backend/Dockerfile` (worker/api), and the CI backend job **in the same PR**
-  (non-negotiable #8). A `ytdlp_available()` gate mirrors `ffmpeg_available()`;
+  headless browser. It is a **pure pip dependency** (`backend/pyproject.toml` +
+  `uv.lock`), so it flows through the existing `uv sync` in `scripts/dev-setup.sh`,
+  the Dockerfile, and CI — no image or workflow edit is needed (it reuses the
+  ffmpeg already installed for `analyze_video`); the dep-of-note comment in
+  `dev-setup.sh` and the `test_stream_deps.py` smoke test satisfy non-negotiable
+  #8. A `ytdlp_available()` gate mirrors `ffmpeg_available()`;
   the sidecar is **dropped from the registry** when ffmpeg **or** yt-dlp is
   absent (graceful degrade, exactly like the image/whisper/analyze_video gates).
 - **One tool, two source shapes, three sampling modes:**
@@ -108,17 +111,26 @@ same way:
 
 ## Waves
 
-### Wave 1 — The stream sampler (`jbrain.stream`, new module)
-The one genuinely new media primitive. `ytdlp_available()` + `resolve_stream(url)`
-(yt-dlp → direct media URL(s), title, `is_live`, duration; argv-list subprocess,
-constrained flags, off-loop) and `sample_stream(url, *, mode, frames, window_s,
-from_live_edge, seek, want_audio)` → **SSRF-guard each resolved host** → ffmpeg
-pulls ms-stamped, deduped JPEGs across the bounded window (reusing
-`jbrain.media`'s downscale/dedup) + an optional bounded audio segment (bytes).
-Never buffers a whole file (`-ss`/`-t`/`--download-sections`). yt-dlp added to
-`scripts/dev-setup.sh`, `backend/Dockerfile`, and the CI backend job. Unit tests
-serve a synthetic HLS/MP4 over loopback (or fake the resolver) and **skip when the
-tools are absent**, matching the `analyze_video` test discipline.
+### Wave 1 — The stream sampler (`jbrain.stream`, new module) ✅
+The one genuinely new media primitive. Shipped in `backend/src/jbrain/stream.py`:
+`ytdlp_available()`; `resolve_stream(url)` (yt-dlp Python API, off-loop, constrained
+opts — `noplaylist`, `skip_download`, height-capped `format`, socket timeout, no
+cache — → a `ResolvedStream` of media URL / title / `is_live` / duration, with the
+resolved host run through the shared `guard_public_host` SSRF guard); and
+`sample_stream(resolved, *, frames, window_s, seek_s, want_audio, …)` → a bounded
+ffmpeg pass writing ms-stamped, downscaled, **dedup-shared** JPEGs across the window
+(`frames <= 1` is the single-grab fast path) + a best-effort second pass for the
+window's audio as 16 kHz mono WAV. Never buffers a whole file (`-ss`/`-t`, per-read
+`-rw_timeout`, wall-clock timeout). `jbrain.media._dedup` was promoted to a public
+`dedup_frames` so both samplers share the exact perceptual dedup. yt-dlp is a pip
+dep (pyproject + lock); `test_stream_deps.py` is the rule-#8 smoke test. Unit tests
+(`test_stream.py`) run ffmpeg against a synthetic local clip (frames path stands in
+for a media URL) and fake the resolver for the pure selection/guard cases — **all
+offline**, skipping the ffmpeg-backed tests when ffmpeg is absent, matching the
+`analyze_video` discipline. Residual for the W3 red-team: ffmpeg fetches an HLS
+manifest's **segment** URLs itself, so only the top media host passes our guard —
+the segment-host case is the red-team's to close (a validating proxy or a
+manifest-host allowlist).
 
 ### Wave 2 — Shared reduce core + the `analyze_stream` tool
 Refactor `ingest/video.run_video_analysis` to expose a **`fuse_and_reduce(frames,
