@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · Model states — catalogue / available / resident / staged (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14);
+    --amber-tint:rgba(201,163,106,.16); --rose-tint:rgba(207,138,143,.14); --violet-tint:rgba(164,147,201,.16);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+    --r-card:16px; --r-seg:12px; --r-pill:999px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:540px;margin:0 auto;padding:18px 16px 72px}
+  h1.title{font-size:20px;font-weight:500;margin:6px 0 3px}
+  p.meta{color:var(--text-2);font-size:13px;margin:0 0 18px}
+  code{font-family:var(--mono);font-size:.86em;background:var(--surface-2);padding:1px 5px;border-radius:5px;color:var(--text-2)}
+
+  /* ---- concept legend: catalogue ⊃ available ⊃ resident, + staged transient ---- */
+  .concept{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:14px;margin-bottom:16px}
+  .concept h2{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);margin:0 0 12px}
+  .rings{display:flex;flex-direction:column;gap:0}
+  .ring{border:1px dashed var(--border);border-radius:11px;padding:10px 12px 12px}
+  .ring + .ring{margin-top:-1px}
+  .ring.r-cat{border-color:color-mix(in srgb,var(--text-3) 70%,transparent)}
+  .ring.r-avail{border-color:color-mix(in srgb,var(--steel) 55%,transparent);margin:8px 8px}
+  .ring.r-res{border-color:color-mix(in srgb,var(--green) 55%,transparent);margin:8px 16px}
+  .ring-h{display:flex;align-items:baseline;gap:8px;margin-bottom:3px}
+  .ring-h b{font-size:13px;font-weight:600}
+  .ring-h .r-cat &,.ring-h span{color:var(--text-3)}
+  .ring-tag{font-size:10.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;padding:2px 7px;border-radius:var(--r-pill)}
+  .tag-cat{color:var(--text-2);background:var(--surface-2)}
+  .tag-avail{color:var(--steel);background:var(--steel-tint)}
+  .tag-res{color:var(--green);background:var(--green-tint)}
+  .tag-staged{color:var(--amber);background:var(--amber-tint)}
+  .ring p{margin:0;font-size:12px;color:var(--text-2);line-height:1.45}
+  .staged-note-concept{display:flex;align-items:flex-start;gap:9px;margin-top:12px;padding:10px 12px;border:1px dashed color-mix(in srgb,var(--amber) 55%,transparent);border-radius:11px;background:var(--amber-tint)}
+  .staged-note-concept p{margin:0;font-size:12px;color:var(--text-2);line-height:1.45}
+  .staged-note-concept b{color:var(--amber);font-weight:600}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+
+  /* ---- shared, always-visible unified-memory meter ---- */
+  .head{padding:13px 14px}
+  .status{display:flex;align-items:center;gap:10px}
+  .dot{width:9px;height:9px;border-radius:999px;background:var(--green);box-shadow:0 0 0 4px var(--green-tint);flex:none}
+  .dot.amber{background:var(--amber);box-shadow:0 0 0 4px var(--amber-tint)}
+  .status .ttl{font-weight:500}
+  .status .sub{color:var(--text-2);font-size:12.5px;margin-left:auto}
+  .mem{margin-top:12px}
+  .mem-bar{position:relative;height:30px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden;display:flex}
+  .seg{height:100%;display:flex;align-items:center;min-width:0;transition:width .4s ease,opacity .2s}
+  .seg .lab{font-size:11px;padding-left:7px;white-space:nowrap;overflow:hidden;color:#0E0F11;font-weight:600}
+  .seg.evicting{opacity:.9}
+  .seg.evicting .fill{background:repeating-linear-gradient(45deg,var(--rose),var(--rose) 5px,color-mix(in srgb,var(--rose) 55%,#000) 5px,color-mix(in srgb,var(--rose) 55%,#000) 10px) !important}
+  .seg.evicting .lab{color:#0E0F11;text-decoration:line-through;text-decoration-thickness:1.5px}
+  .seg.staged{opacity:1}
+  .seg.staged .fill{background:transparent !important;border:1.5px dashed var(--amber);border-radius:5px}
+  .seg.staged .lab{color:var(--amber)}
+  .seg .fill{position:absolute;inset:0;z-index:0}
+  .seg .lab{position:relative;z-index:1}
+  .seg .gb{opacity:.7;font-weight:600}
+  .ceiling{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--text-2);z-index:3}
+  .ceiling::after{content:"floor";position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--text-3);white-space:nowrap}
+  .mem-cap{display:flex;gap:10px;font-size:12px;color:var(--text-2);margin-top:8px;flex-wrap:wrap;align-items:center}
+  .mem-cap .total{margin-left:auto}
+  .mem-cap .proj{color:var(--amber)}
+  .mem-cap .proj.over{color:var(--rose)}
+
+  /* ---- staging preview banner ---- */
+  .preview{margin:12px 0 2px;border:1px solid color-mix(in srgb,var(--amber) 45%,var(--border));background:var(--amber-tint);border-radius:12px;padding:11px 13px}
+  .preview.fits{border-color:color-mix(in srgb,var(--green) 45%,var(--border));background:var(--green-tint)}
+  .preview.over{border-color:color-mix(in srgb,var(--rose) 45%,var(--border));background:var(--rose-tint)}
+  .preview-h{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+  .preview-h .pdot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none}
+  .preview.fits .pdot{background:var(--green)} .preview.over .pdot{background:var(--rose)}
+  .preview p{margin:6px 0 0;font-size:12px;color:var(--text-2);line-height:1.45}
+  .preview .victims{color:var(--rose);font-weight:600}
+  .preview-acts{display:flex;gap:8px;margin-top:11px}
+
+  /* ---- segmented tabs ---- */
+  .seg-row{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;margin:14px 14px 0}
+  .tab{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:.82em 0;font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:none;cursor:pointer;transition:background-color .15s}
+  .tab + .tab{border-left:1px solid var(--border)}
+  .tab .ic{display:inline-flex}.tab .ic svg{width:15px;height:15px;display:block}
+  .tab .cnt{font-size:11px;opacity:.7}
+  .tab.on{color:var(--text);font-weight:600;background:var(--steel-tint)}
+  .tab.on .ic{color:var(--steel)}
+
+  .list{padding:4px 14px 14px}
+  .tab-hint{font-size:12px;color:var(--text-2);margin:11px 2px 2px;line-height:1.45}
+  .row{padding:13px 0;border-top:1px solid var(--border)}.row:first-child{border-top:0}
+  .row.dim{opacity:.55}
+  .row.res-evicting{background:linear-gradient(90deg,var(--rose-tint),transparent);margin:0 -14px;padding:13px 14px;border-radius:8px}
+  .row-head{display:flex;align-items:flex-start;gap:10px}
+  .row-name{flex:1;min-width:0;font-weight:500;font-size:14.5px}
+  .row-meta{display:block;font-size:11.5px;color:var(--text-3);font-weight:400;margin-top:2px}
+  .row-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none}
+  .acts{display:flex;gap:6px}
+  .state{font-size:10.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--text-3)}
+  .state.resident{color:var(--green)}.state.staged{color:var(--amber)}.state.avail{color:var(--steel)}
+  .state.evicting{color:var(--rose)}.state.installed{color:var(--text-2)}.state.uninstalled{color:var(--text-3)}
+
+  .btn{font:inherit;font-size:11.5px;font-weight:500;cursor:pointer;border-radius:var(--r-pill);padding:5px 12px;border:1px solid var(--border);background:transparent;color:var(--text-2);transition:.15s;white-space:nowrap}
+  .btn:hover:not(:disabled){border-color:var(--steel);color:var(--steel);background:var(--steel-tint)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.primary{border-color:var(--green);color:var(--green)}
+  .btn.primary:hover:not(:disabled){background:var(--green-tint)}
+  .btn.stage{border-color:var(--amber);color:var(--amber)}
+  .btn.stage:hover:not(:disabled){background:var(--amber-tint)}
+  .btn.danger:hover:not(:disabled){border-color:var(--rose);color:var(--rose);background:var(--rose-tint)}
+
+  .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+  .chip{font-size:10.5px;font-weight:500;padding:2px 8px;border-radius:var(--r-pill);border:1px solid var(--border);color:var(--text-3)}
+  .chip.vision{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 40%,var(--border))}
+  .chip.tools{color:var(--teal);border-color:color-mix(in srgb,var(--teal) 40%,var(--border))}
+  .chip.reason{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 40%,var(--border))}
+
+  .foot{font-size:11.5px;color:var(--text-3);margin:16px 2px 0;line-height:1.5}
+  .foot b{color:var(--text-2);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="title">On-box model states</h1>
+  <p class="meta">Four states, one lifecycle. <b>Catalogue</b> and <b>Available</b> are tabs; <b>Resident</b> is a tab; <b>Staged</b> is a transient preview — tap <em>Stage</em> on any available model to see whether loading it would evict what's already resident.</p>
+
+  <!-- Concept legend -->
+  <div class="concept">
+    <h2>The four states</h2>
+    <div class="rings">
+      <div class="ring r-cat">
+        <div class="ring-h"><span class="ring-tag tag-cat">Catalogue</span></div>
+        <p>Every model JBrain knows about — <b>installed</b> (weights on disk) or <b>uninstalled</b>. Install pulls the weights; uninstall reclaims the disk.</p>
+        <div class="ring r-avail">
+          <div class="ring-h"><span class="ring-tag tag-avail">Available</span></div>
+          <p>Installed models the router is <b>allowed to swap in and out</b>. Only these compete for memory. Add/remove from the roster without touching disk.</p>
+          <div class="ring r-res">
+            <div class="ring-h"><span class="ring-tag tag-res">Resident</span></div>
+            <p>Loaded in unified memory <b>right now</b>. The subset the box is actually holding.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="staged-note-concept">
+      <span class="ring-tag tag-staged" style="flex:none">Staged</span>
+      <p><b>Not a stored state — a preview.</b> Staging an available model runs the eviction check and shows what would leave to make room, before you commit the load. Cancel and nothing changed.</p>
+    </div>
+  </div>
+
+  <!-- The interactive card -->
+  <div class="card">
+    <div class="head">
+      <div class="status">
+        <span class="dot" id="dot"></span>
+        <span class="ttl">Strix Halo · unified memory</span>
+        <span class="sub" id="summary"></span>
+      </div>
+      <div class="mem">
+        <div class="mem-bar" id="bar"></div>
+        <div class="mem-cap" id="cap"></div>
+      </div>
+      <div id="previewSlot"></div>
+    </div>
+
+    <div class="seg-row" role="tablist">
+      <button class="tab" data-tab="catalogue" role="tab">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+        Catalogue <span class="cnt" id="cnt-catalogue"></span>
+      </button>
+      <button class="tab" data-tab="available" role="tab">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 12h10M4 7h16M4 17h7"/><path d="M17 15l3 3-3 3" transform="translate(0 -6)"/></svg></span>
+        Available <span class="cnt" id="cnt-available"></span>
+      </button>
+      <button class="tab" data-tab="resident" role="tab">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9v6M11 9v6M15 12h2"/></svg></span>
+        Resident <span class="cnt" id="cnt-resident"></span>
+      </button>
+    </div>
+
+    <div class="list" id="list"></div>
+  </div>
+
+  <p class="foot">
+    <b>Box:</b> 128 GB unified memory · keep-free floor 25% → <b>96 GB usable ceiling</b> (the dashed marker). Staging evicts the fewest, biggest-footprint models first until the new one fits under the ceiling — the same rule the residency coordinator runs on the server (<code>ensure_room</code>). This is a mock: state is in-memory and resets on reload.
+  </p>
+</div>
+
+<script>
+"use strict";
+
+// Box budget. ceiling = the used-memory line we keep at/under (total * (1 - freeFraction)).
+const TOTAL = 128, FREE_FRACTION = 0.25;
+const CEILING = TOTAL * (1 - FREE_FRACTION); // 96
+
+// slot palette (position-stable, not identity): 1st green, 2nd amber, 3rd orange, ...
+const SLOT = [[138,34,58],[46,50,63],[28,48,62],[14,50,60],[200,30,58]];
+function slotFill(i, lighten=0){
+  const [h,s,l] = SLOT[i % SLOT.length];
+  const lt = Math.min(l+lighten, 88);
+  return `linear-gradient(90deg, hsl(${h-14} ${s}% ${lt}%), hsl(${h+14} ${s}% ${lt}%))`;
+}
+
+// The model universe. footprint = weightsGb + kvGb.
+// installed: weights on disk. available: in the router's swap roster. resident: loaded now.
+let models = [
+  { id:"glm46",       label:"GLM-4.6",           quant:"Q4_K_M", weightsGb:58, kvGb:4, installed:true,  available:true,  resident:true,  tools:true,  reason:true,  vision:false },
+  { id:"qwen3-30b",   label:"Qwen3-30B-A3B",     quant:"Q5_K_M", weightsGb:19, kvGb:2, installed:true,  available:true,  resident:true,  tools:true,  reason:true,  vision:false },
+  { id:"gptoss-20b",  label:"gpt-oss-20B",       quant:"Q6_K",   weightsGb:12, kvGb:1, installed:true,  available:true,  resident:false, tools:true,  reason:true,  vision:false },
+  { id:"scout",       label:"Llama-4-Scout",     quant:"Q4_K_M", weightsGb:38, kvGb:3, installed:true,  available:true,  resident:false, tools:true,  reason:false, vision:false },
+  { id:"gemma3-27b",  label:"Gemma-3-27B",       quant:"Q4_K_M", weightsGb:16, kvGb:2, installed:true,  available:true,  resident:false, tools:false, reason:false, vision:true  },
+  { id:"qwen3-coder", label:"Qwen3-Coder-30B",   quant:"Q4_K_M", weightsGb:18, kvGb:2, installed:true,  available:false, resident:false, tools:true,  reason:false, vision:false },
+  { id:"mistral-24b", label:"Mistral-Small-24B", quant:"Q5_K_M", weightsGb:14, kvGb:2, installed:true,  available:false, resident:false, tools:true,  reason:false, vision:false },
+  { id:"deepseek-v3", label:"DeepSeek-V3",       quant:"Q3_K_M", weightsGb:78, kvGb:5, installed:false, available:false, resident:false, tools:true,  reason:true,  vision:false },
+  { id:"phi4",        label:"Phi-4",             quant:"Q4_K_M", weightsGb:8,  kvGb:1, installed:false, available:false, resident:false, tools:false, reason:true,  vision:false },
+];
+
+const fp = m => m.weightsGb + m.kvGb;
+let stagedId = null;   // the transient preview; at most one at a time
+let tab = "available";
+
+// --- Eviction planner: mirrors ResidencyCoordinator.ensure_room ---
+// Evict the fewest resident models (biggest footprint first) until the staged model
+// fits under the ceiling. Returns the victims + projected used memory.
+function planEviction(stageM){
+  const resident = models.filter(m => m.resident && m.id !== stageM.id);
+  let used = resident.reduce((s,m) => s + fp(m), 0);
+  const predicted = used + fp(stageM);
+  if (predicted <= CEILING) return { victims:[], projectedUsed:predicted, fits:true, overBox:false };
+  // biggest-footprint first
+  const cands = [...resident].sort((a,b) => fp(b) - fp(a));
+  const victims = [];
+  let freed = 0;
+  for (const c of cands){
+    if (predicted - freed <= CEILING) break;
+    victims.push(c.id); freed += fp(c);
+  }
+  const projectedUsed = predicted - freed;
+  return { victims, projectedUsed, fits:false, overBox: projectedUsed > CEILING };
+}
+
+function stagedPlan(){
+  if (!stagedId) return null;
+  const m = models.find(x => x.id === stagedId);
+  return m ? { model:m, ...planEviction(m) } : null;
+}
+
+// --- Actions ---
+function stage(id){ stagedId = id; render(); }
+function cancelStage(){ stagedId = null; render(); }
+function commitLoad(){
+  const plan = stagedPlan();
+  if (!plan) return;
+  plan.victims.forEach(vid => { const v = models.find(m=>m.id===vid); if (v) v.resident = false; });
+  plan.model.resident = true;
+  stagedId = null;
+  tab = "resident";
+  render();
+}
+function unload(id){ const m = models.find(x=>x.id===id); if(m) m.resident=false; if(stagedId===id) stagedId=null; render(); }
+function toggleAvailable(id){
+  const m = models.find(x=>x.id===id); if(!m) return;
+  if (m.available){ m.available=false; m.resident=false; if(stagedId===id) stagedId=null; }
+  else m.available=true;
+  render();
+}
+function toggleInstalled(id){
+  const m = models.find(x=>x.id===id); if(!m) return;
+  if (m.installed){ m.installed=false; m.available=false; m.resident=false; if(stagedId===id) stagedId=null; }
+  else m.installed=true;
+  render();
+}
+
+// --- Render ---
+function el(html){ const t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstChild; }
+function chips(m){
+  const c=[];
+  if(m.vision) c.push(`<span class="chip vision">vision</span>`);
+  if(m.reason) c.push(`<span class="chip reason">reasoning</span>`);
+  if(m.tools)  c.push(`<span class="chip tools">tools</span>`);
+  return c.length ? `<div class="chips">${c.join("")}</div>` : "";
+}
+
+function renderMeter(){
+  const bar = document.getElementById("bar");
+  const cap = document.getElementById("cap");
+  const plan = stagedPlan();
+  const victims = new Set(plan ? plan.victims : []);
+  const resident = models.filter(m => m.resident);
+  const usedNow = resident.reduce((s,m)=>s+fp(m),0);
+
+  bar.innerHTML = "";
+  resident.forEach((m,i) => {
+    const w = fp(m);
+    const seg = el(`<div class="seg${victims.has(m.id)?" evicting":""}" style="width:${w/TOTAL*100}%" title="${m.label} — ${w} GB">
+      <div class="fill" style="background:${slotFill(i)}"></div>
+      <span class="lab">${m.label.split(/[- ]/)[0]} <span class="gb">${w}G</span></span></div>`);
+    bar.appendChild(seg);
+  });
+  if (plan){
+    const w = fp(plan.model);
+    const seg = el(`<div class="seg staged" style="width:${w/TOTAL*100}%" title="${plan.model.label} — staged ${w} GB">
+      <div class="fill"></div><span class="lab">${plan.model.label.split(/[- ]/)[0]} <span class="gb">+${w}G</span></span></div>`);
+    bar.appendChild(seg);
+  }
+  // ceiling marker
+  bar.appendChild(el(`<div class="ceiling" style="left:${CEILING/TOTAL*100}%"></div>`));
+
+  const projected = plan ? plan.projectedUsed : usedNow;
+  cap.innerHTML = `<span>${Math.round(usedNow)} GB resident</span>`
+    + (plan ? `<span class="proj${plan.overBox?" over":""}">→ ${Math.round(projected)} GB staged${plan.overBox?" ⚠ over floor":""}</span>` : "")
+    + `<span class="total">${TOTAL} GB total</span>`;
+
+  // status
+  document.getElementById("dot").className = "dot" + (plan ? " amber" : "");
+  document.getElementById("summary").textContent =
+    `${resident.length} resident · ${Math.round(usedNow)} / ${CEILING} GB` + (plan ? " · previewing" : "");
+}
+
+function renderPreview(){
+  const slot = document.getElementById("previewSlot");
+  const plan = stagedPlan();
+  if (!plan){ slot.innerHTML=""; return; }
+  const cls = plan.fits ? "fits" : (plan.overBox ? "over" : "");
+  let body;
+  if (plan.fits){
+    body = `<p>Fits under the ${CEILING} GB floor — <b>no eviction needed</b>. Resident goes to ${Math.round(plan.projectedUsed)} GB.</p>`;
+  } else {
+    const names = plan.victims.map(id => models.find(m=>m.id===id).label);
+    const freed = plan.victims.reduce((s,id)=>s+fp(models.find(m=>m.id===id)),0);
+    body = `<p>To make room, loading this evicts <span class="victims">${names.join(", ")}</span> (frees ${freed} GB). `
+      + `Resident lands at ${Math.round(plan.projectedUsed)} GB.` + (plan.overBox ? ` <b style="color:var(--rose)">Still over the floor — it takes the box alone.</b>` : ``) + `</p>`;
+  }
+  slot.innerHTML = "";
+  slot.appendChild(el(`<div class="preview ${cls}">
+    <div class="preview-h"><span class="pdot"></span>Staging ${plan.model.label} · ${fp(plan.model)} GB</div>
+    ${body}
+    <div class="preview-acts">
+      <button class="btn primary" id="pv-load">Load now</button>
+      <button class="btn" id="pv-cancel">Cancel</button>
+    </div></div>`));
+  document.getElementById("pv-load").onclick = commitLoad;
+  document.getElementById("pv-cancel").onclick = cancelStage;
+}
+
+function rowCatalogue(m){
+  const stateCls = m.installed ? "installed" : "uninstalled";
+  const stateTxt = m.installed ? (m.available ? "in roster" : "installed") : "uninstalled";
+  const acts = m.installed
+    ? `<button class="btn" data-act="avail" data-id="${m.id}">${m.available?"Remove from available":"Add to available"}</button>
+       <button class="btn danger" data-act="install" data-id="${m.id}">Uninstall</button>`
+    : `<button class="btn primary" data-act="install" data-id="${m.id}">Install</button>`;
+  return `<div class="row${m.installed?"":" dim"}"><div class="row-head">
+    <div class="row-name">${m.label}<span class="row-meta">${m.quant} · ${fp(m)} GB ${m.installed?"on disk":"download"}</span>${chips(m)}</div>
+    <div class="row-right"><span class="state ${stateCls}">${stateTxt}</span><div class="acts">${acts}</div></div>
+  </div></div>`;
+}
+
+function rowAvailable(m, victims){
+  const evicting = victims.has(m.id);
+  let state, acts;
+  if (evicting){ state = `<span class="state evicting">will evict</span>`; }
+  else if (m.resident){ state = `<span class="state resident">resident</span>`; }
+  else if (stagedId === m.id){ state = `<span class="state staged">staged</span>`; }
+  else { state = `<span class="state avail">available</span>`; }
+
+  if (m.resident){
+    acts = `<button class="btn danger" data-act="unload" data-id="${m.id}">Unload</button>`;
+  } else if (stagedId === m.id){
+    acts = `<button class="btn" data-act="cancel" data-id="${m.id}">Cancel</button>`;
+  } else {
+    acts = `<button class="btn stage" data-act="stage" data-id="${m.id}" ${stagedId?"disabled":""}>Stage</button>`;
+  }
+  return `<div class="row${evicting?" res-evicting":""}"><div class="row-head">
+    <div class="row-name">${m.label}<span class="row-meta">${m.quant} · ${fp(m)} GB${m.resident?" resident":""}</span>${chips(m)}</div>
+    <div class="row-right">${state}<div class="acts">${acts}</div></div>
+  </div></div>`;
+}
+
+function rowResident(m, victims){
+  const evicting = victims.has(m.id);
+  return `<div class="row${evicting?" res-evicting":""}"><div class="row-head">
+    <div class="row-name">${m.label}<span class="row-meta">${m.quant} · ${fp(m)} GB resident</span>${chips(m)}</div>
+    <div class="row-right"><span class="state ${evicting?"evicting":"resident"}">${evicting?"will evict":"resident"}</span>
+      <div class="acts"><button class="btn danger" data-act="unload" data-id="${m.id}">Unload</button></div></div>
+  </div></div>`;
+}
+
+function renderList(){
+  const list = document.getElementById("list");
+  const plan = stagedPlan();
+  const victims = new Set(plan ? plan.victims : []);
+  let rows = "", hint = "";
+
+  if (tab === "catalogue"){
+    hint = `Every model in the catalogue. Install pulls weights; add an installed model to <b>Available</b> to let the router swap it in.`;
+    rows = models.map(rowCatalogue).join("");
+  } else if (tab === "available"){
+    hint = stagedId
+      ? `Previewing a stage — <b>Load now</b> to commit, or Cancel. The meter and any evicted models are highlighted above.`
+      : `Installed models the router may swap in. Tap <b>Stage</b> to preview whether loading one would evict something.`;
+    rows = models.filter(m=>m.available).map(m=>rowAvailable(m,victims)).join("");
+  } else {
+    hint = `Loaded in memory now. Staging a bigger model from Available will show which of these it evicts.`;
+    const res = models.filter(m=>m.resident);
+    rows = res.length ? res.map(m=>rowResident(m,victims)).join("")
+      : `<p class="tab-hint">Nothing resident.</p>`;
+  }
+  list.innerHTML = `<p class="tab-hint">${hint}</p>` + rows;
+
+  list.querySelectorAll("[data-act]").forEach(btn => {
+    const id = btn.dataset.id, act = btn.dataset.act;
+    btn.onclick = () => {
+      if (act==="stage") stage(id);
+      else if (act==="cancel") cancelStage();
+      else if (act==="unload") unload(id);
+      else if (act==="avail") toggleAvailable(id);
+      else if (act==="install") toggleInstalled(id);
+    };
+  });
+}
+
+function renderTabs(){
+  document.getElementById("cnt-catalogue").textContent = models.length;
+  document.getElementById("cnt-available").textContent = models.filter(m=>m.available).length;
+  document.getElementById("cnt-resident").textContent = models.filter(m=>m.resident).length;
+  document.querySelectorAll(".tab").forEach(t => {
+    t.classList.toggle("on", t.dataset.tab === tab);
+    t.onclick = () => { tab = t.dataset.tab; render(); };
+  });
+}
+
+function render(){ renderMeter(); renderPreview(); renderTabs(); renderList(); }
+render();
+</script>
+</body>
+</html>
