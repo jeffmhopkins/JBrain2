@@ -70,6 +70,29 @@ class ContainerMemoryOut(BaseModel):
     mem_bytes: int
 
 
+class GpuMemOut(BaseModel):
+    # iGPU unified-memory usage/ceilings (bytes); gtt_used is the model device
+    # footprint the per-process RSS table can't attribute — see host_metrics.GpuMem.
+    gtt_used_bytes: int
+    gtt_total_bytes: int
+    vram_used_bytes: int
+    vram_total_bytes: int
+
+
+class NetCountersOut(BaseModel):
+    # Monotonic since-boot byte counters over physical interfaces; the sampler
+    # turns their delta into a throughput rate for the Ops history graph.
+    rx_bytes: int
+    tx_bytes: int
+
+
+class DiskCountersOut(BaseModel):
+    # Monotonic since-boot byte counters over whole block devices; the sampler
+    # turns their delta into a read/write throughput rate for Ops history.
+    read_bytes: int
+    write_bytes: int
+
+
 class MetricsResponse(BaseModel):
     mem_total_bytes: int
     mem_available_bytes: int
@@ -84,6 +107,15 @@ class MetricsResponse(BaseModel):
     gpu_busy_percent: float | None
     fan_rpm: dict[str, int] | None
     apu_power_w: float | None
+    # iGPU RAM the meter's total includes but no process shows as RSS; None off AMD.
+    gpu_mem: GpuMemOut | None = None
+    # Curated /proc/meminfo lines (bytes) attributing "used" to a kind; None if
+    # meminfo is unreadable.
+    mem_breakdown: dict[str, int] | None = None
+    # Cumulative rx/tx byte counters (physical interfaces); None if unreadable.
+    net: NetCountersOut | None = None
+    # Cumulative read/write byte counters (whole block devices); None if unreadable.
+    disk_io: DiskCountersOut | None = None
     containers: list[ContainerMemoryOut]
 
 
@@ -223,6 +255,30 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
             gpu_busy_percent=host.gpu_busy_percent,
             fan_rpm=host.fan_rpm,
             apu_power_w=host.apu_power_w,
+            gpu_mem=(
+                GpuMemOut(
+                    gtt_used_bytes=host.gpu_mem.gtt_used_bytes,
+                    gtt_total_bytes=host.gpu_mem.gtt_total_bytes,
+                    vram_used_bytes=host.gpu_mem.vram_used_bytes,
+                    vram_total_bytes=host.gpu_mem.vram_total_bytes,
+                )
+                if host.gpu_mem is not None
+                else None
+            ),
+            mem_breakdown=host.mem_breakdown,
+            net=(
+                NetCountersOut(rx_bytes=host.net.rx_bytes, tx_bytes=host.net.tx_bytes)
+                if host.net is not None
+                else None
+            ),
+            disk_io=(
+                DiskCountersOut(
+                    read_bytes=host.disk_io.read_bytes,
+                    write_bytes=host.disk_io.write_bytes,
+                )
+                if host.disk_io is not None
+                else None
+            ),
             containers=[
                 ContainerMemoryOut(service=c.service, mem_bytes=c.mem_bytes)
                 for c in gateway.container_memory()

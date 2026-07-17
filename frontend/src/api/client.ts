@@ -267,6 +267,12 @@ export interface MetricPoint {
   gpu_busy_percent: number | null;
   fan_rpm_max: number | null;
   power_w: number | null;
+  /** Network + disk throughput in bytes/sec, or null before the first post-restart
+   * sample has a prior counter to diff (or when the host didn't report a counter). */
+  net_rx_bps: number | null;
+  net_tx_bps: number | null;
+  disk_read_bps: number | null;
+  disk_write_bps: number | null;
 }
 
 export interface MetricsHistory {

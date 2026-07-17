@@ -52,6 +52,14 @@ def _sample(*, load: float = 0.5, gpu: float | None = 42.0, power: float | None 
     }
 
 
+_RATES = {
+    "net_rx_bps": 1_000_000.0,
+    "net_tx_bps": 250_000.0,
+    "disk_read_bps": 5_000_000.0,
+    "disk_write_bps": 2_000_000.0,
+}
+
+
 async def test_host_metrics_owner_only(maker: async_sessionmaker) -> None:
     """Both tables are owner-only: a non-owner capability session sees nothing."""
     await ops_metrics.store_sample(maker, OWNER, _sample())
@@ -70,7 +78,11 @@ async def test_store_and_read_raw(maker: async_sessionmaker) -> None:
     now = datetime.now(tz=UTC)
     for i in range(3):
         await ops_metrics.store_sample(
-            maker, OWNER, _sample(load=0.4 + i), captured_at=now - timedelta(minutes=i)
+            maker,
+            OWNER,
+            _sample(load=0.4 + i),
+            captured_at=now - timedelta(minutes=i),
+            rates=_RATES,
         )
 
     out = await ops_metrics.history(
@@ -86,6 +98,24 @@ async def test_store_and_read_raw(maker: async_sessionmaker) -> None:
     assert point["fan_rpm_max"] == 2100
     assert point["gpu_busy_percent"] == 42.0
     assert point["power_w"] == 14.0
+    # Network + disk throughput ride the raw read as bytes/sec.
+    assert point["net_rx_bps"] == 1_000_000.0
+    assert point["disk_write_bps"] == 2_000_000.0
+
+
+async def test_rate_columns_null_when_no_rates_given(maker: async_sessionmaker) -> None:
+    # store_sample without rates (the first post-restart sample) leaves the rate
+    # columns NULL, which the read surfaces as None rather than 0. Uses a distinct
+    # timestamp (this module's testcontainer DB is shared across tests) so the
+    # tight window sees only this row.
+    at = datetime.now(tz=UTC) - timedelta(hours=6)
+    await ops_metrics.store_sample(maker, OWNER, _sample(), captured_at=at)
+    out = await ops_metrics.history(
+        maker, OWNER, since=at - timedelta(seconds=20), until=at + timedelta(seconds=20)
+    )
+    assert out["points"], "expected the isolated sample"
+    assert out["points"][-1]["net_rx_bps"] is None
+    assert out["points"][-1]["disk_read_bps"] is None
 
 
 async def test_rollup_feeds_hourly_read(maker: async_sessionmaker) -> None:
@@ -97,6 +127,7 @@ async def test_rollup_feeds_hourly_read(maker: async_sessionmaker) -> None:
             OWNER,
             _sample(load=1.0, gpu=float(i * 10)),
             captured_at=old + timedelta(minutes=i),
+            rates=_RATES,
         )
     written = await ops_metrics.rollup(maker, OWNER, window=timedelta(days=10), now=now)
     assert written >= 1
@@ -108,6 +139,9 @@ async def test_rollup_feeds_hourly_read(maker: async_sessionmaker) -> None:
     assert any(p["mem_used_bytes"] == 64 << 30 for p in out["points"])
     # APU power rolls up through the hourly path too.
     assert any(p["power_w"] == 14.0 for p in out["points"])
+    # Network + disk throughput roll up through the hourly path as well.
+    assert any(p["net_rx_bps"] == 1_000_000.0 for p in out["points"])
+    assert any(p["disk_read_bps"] == 5_000_000.0 for p in out["points"])
 
 
 async def test_prune_drops_old_rows(maker: async_sessionmaker) -> None:

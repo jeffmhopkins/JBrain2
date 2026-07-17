@@ -60,6 +60,13 @@ class HostMetric(Base):
     fan_rpm_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fan_rpm: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     containers: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Network + disk throughput in bytes/sec (migration 0131), derived by the
+    # sampler from the delta between cumulative kernel counters. Nullable: the
+    # first post-restart sample and any counter reset store NULL, not a spike.
+    net_rx_bps: Mapped[float | None] = mapped_column(nullable=True)
+    net_tx_bps: Mapped[float | None] = mapped_column(nullable=True)
+    disk_read_bps: Mapped[float | None] = mapped_column(nullable=True)
+    disk_write_bps: Mapped[float | None] = mapped_column(nullable=True)
 
 
 class HostMetricHourly(Base):
@@ -90,3 +97,12 @@ class HostMetricHourly(Base):
     fan_rpm_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     power_w_avg: Mapped[float | None] = mapped_column(nullable=True)
     power_w_max: Mapped[float | None] = mapped_column(nullable=True)
+    # Network + disk throughput bytes/sec, avg + max per hour (migration 0131).
+    net_rx_bps_avg: Mapped[float | None] = mapped_column(nullable=True)
+    net_rx_bps_max: Mapped[float | None] = mapped_column(nullable=True)
+    net_tx_bps_avg: Mapped[float | None] = mapped_column(nullable=True)
+    net_tx_bps_max: Mapped[float | None] = mapped_column(nullable=True)
+    disk_read_bps_avg: Mapped[float | None] = mapped_column(nullable=True)
+    disk_read_bps_max: Mapped[float | None] = mapped_column(nullable=True)
+    disk_write_bps_avg: Mapped[float | None] = mapped_column(nullable=True)
+    disk_write_bps_max: Mapped[float | None] = mapped_column(nullable=True)

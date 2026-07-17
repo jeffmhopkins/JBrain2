@@ -83,6 +83,10 @@ const HISTORY: MetricsHistory = {
       gpu_busy_percent: 40,
       fan_rpm_max: 2100,
       power_w: 14.0,
+      net_rx_bps: 8 * 2 ** 20,
+      net_tx_bps: 2 * 2 ** 20,
+      disk_read_bps: 30 * 2 ** 20,
+      disk_write_bps: 12 * 2 ** 20,
     },
     {
       t: "2026-06-22T01:00:00Z",
@@ -97,6 +101,10 @@ const HISTORY: MetricsHistory = {
       gpu_busy_percent: 70,
       fan_rpm_max: 2600,
       power_w: 31.0,
+      net_rx_bps: 14 * 2 ** 20,
+      net_tx_bps: 3 * 2 ** 20,
+      disk_read_bps: 50 * 2 ** 20,
+      disk_write_bps: 20 * 2 ** 20,
     },
   ],
 };

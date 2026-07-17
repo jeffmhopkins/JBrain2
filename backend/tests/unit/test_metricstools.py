@@ -29,6 +29,10 @@ def _point(**over: Any) -> dict[str, Any]:
         "fan_rpm_max": 2000,
         "power_w": 14.0,
         "swap_used_bytes": 0,
+        "net_rx_bps": 8 << 20,
+        "net_tx_bps": 2 << 20,
+        "disk_read_bps": 30 << 20,
+        "disk_write_bps": 12 << 20,
     }
     base.update(over)
     return base
@@ -36,8 +40,8 @@ def _point(**over: Any) -> dict[str, Any]:
 
 async def test_summarizes_each_metric(monkeypatch: pytest.MonkeyPatch) -> None:
     points = [
-        _point(load_1m=0.5, fan_rpm_max=2000, power_w=12.0),
-        _point(load_1m=2.0, fan_rpm_max=3000, power_w=28.0),
+        _point(load_1m=0.5, fan_rpm_max=2000, power_w=12.0, net_rx_bps=8 << 20),
+        _point(load_1m=2.0, fan_rpm_max=3000, power_w=28.0, net_rx_bps=100 << 20),
     ]
 
     async def fake_history(maker, ctx, *, since, until=None, max_points=300):  # noqa: ANN001, ANN202
@@ -53,6 +57,9 @@ async def test_summarizes_each_metric(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Memory used: now 50%" in out
     assert "Fan (hottest): now 3000 rpm, peak 3000 rpm" in out
     assert "APU power: now 28.0 W, peak 28.0 W" in out
+    # Network + disk throughput report their peak (100 MiB/s down here).
+    assert "Network: down peak 100.0 MiB/s, up peak 2.0 MiB/s" in out
+    assert "Disk I/O: read peak 30.0 MiB/s, write peak 12.0 MiB/s" in out
     # It also emits a server_metrics view carrying the raw points for the chart.
     assert isinstance(out, ToolOutput)
     assert out.view is not None

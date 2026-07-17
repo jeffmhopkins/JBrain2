@@ -17,6 +17,8 @@ of 30s samples is ~10^5 rows).
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -62,6 +64,57 @@ def fan_rpm_max_of(fan_rpm: dict[str, int] | None) -> int | None:
     return max(fan_rpm.values())
 
 
+# Each throughput series: the stored rate column -> (metrics section, counter field
+# within it). The supervisor reports monotonic byte counters; the tracker below
+# diffs them into bytes/sec so history graphs a rate, not an ever-climbing total.
+_RATE_SOURCES: dict[str, tuple[str, str]] = {
+    "net_rx_bps": ("net", "rx_bytes"),
+    "net_tx_bps": ("net", "tx_bytes"),
+    "disk_read_bps": ("disk_io", "read_bytes"),
+    "disk_write_bps": ("disk_io", "write_bytes"),
+}
+
+
+def _counters(metrics: dict[str, Any]) -> dict[str, int | None]:
+    """Pull the cumulative byte counters out of a `/metrics` payload, one per rate
+    series — None for a series the supervisor didn't report (an older build, or a
+    read that failed), which the tracker turns into a null rate."""
+    out: dict[str, int | None] = {}
+    for col, (section, field) in _RATE_SOURCES.items():
+        block = metrics.get(section)
+        value = block.get(field) if isinstance(block, dict) else None
+        out[col] = value if isinstance(value, int) else None
+    return out
+
+
+class RateTracker:
+    """Turns the supervisor's monotonic byte counters into per-second throughput.
+
+    The worker holds ONE instance across sampling ticks; each `rates(now_s,
+    metrics)` diffs the current counters against the previous successful sample.
+    The first call (no prior), a non-positive time delta, and any counter that went
+    backwards (a reboot reset, or the field dropping out) yield None for that series
+    — never a bogus negative or divide-by-zero spike. Only successful samples
+    advance the baseline, so a missed tick just widens the next real interval."""
+
+    def __init__(self) -> None:
+        self._prev_s: float | None = None
+        self._prev: dict[str, int] = {}
+
+    def rates(self, now_s: float, metrics: dict[str, Any]) -> dict[str, float | None]:
+        current = _counters(metrics)
+        out: dict[str, float | None] = dict.fromkeys(_RATE_SOURCES)
+        dt = None if self._prev_s is None else now_s - self._prev_s
+        if dt is not None and dt > 0:
+            for col in _RATE_SOURCES:
+                cur, old = current[col], self._prev.get(col)
+                if cur is not None and old is not None and cur >= old:
+                    out[col] = (cur - old) / dt
+        self._prev_s = now_s
+        self._prev = {k: v for k, v in current.items() if v is not None}
+        return out
+
+
 async def fetch_supervisor_metrics(client: httpx.AsyncClient, token: str) -> dict[str, Any] | None:
     """GET the supervisor's host metrics, or None on any failure — the sampler
     skips a tick rather than letting a supervisor blip kill the worker loop."""
@@ -78,13 +131,24 @@ async def sample_once(
     ctx: SessionContext,
     client: httpx.AsyncClient,
     token: str,
+    *,
+    tracker: RateTracker | None = None,
+    now_s: float | None = None,
 ) -> bool:
     """Fetch the supervisor's host metrics and store one raw sample. Returns
-    False (storing nothing) when the supervisor is unreachable — a missed tick."""
+    False (storing nothing) when the supervisor is unreachable — a missed tick.
+
+    A `tracker` (the worker's long-lived one) derives network/disk throughput from
+    the delta since the last successful sample; without it the rate columns store
+    NULL. Only a successful fetch advances the tracker, so a missed tick doesn't
+    corrupt the next interval's rate."""
     metrics = await fetch_supervisor_metrics(client, token)
     if metrics is None:
         return False
-    await store_sample(maker, ctx, metrics)
+    rates = None
+    if tracker is not None:
+        rates = tracker.rates(time.monotonic() if now_s is None else now_s, metrics)
+    await store_sample(maker, ctx, metrics, rates=rates)
     return True
 
 
@@ -94,9 +158,13 @@ async def store_sample(
     metrics: dict[str, Any],
     *,
     captured_at: datetime | None = None,
+    rates: Mapping[str, float | None] | None = None,
 ) -> None:
-    """Insert one raw sample from a supervisor `/metrics` payload."""
+    """Insert one raw sample from a supervisor `/metrics` payload. `rates` carries
+    the derived network/disk throughput (bytes/sec); absent → the rate columns
+    store NULL."""
     fan_rpm = metrics.get("fan_rpm")
+    rates = rates or {}
     async with scoped_session(maker, ctx) as session:
         await session.execute(
             text(
@@ -105,12 +173,14 @@ async def store_sample(
                     captured_at, mem_total_bytes, mem_available_bytes,
                     swap_total_bytes, swap_free_bytes, disk_total_bytes, disk_free_bytes,
                     load_1m, load_5m, load_15m, uptime_seconds, gpu_busy_percent,
-                    power_w, fan_rpm_max, fan_rpm, containers
+                    power_w, fan_rpm_max, fan_rpm, containers,
+                    net_rx_bps, net_tx_bps, disk_read_bps, disk_write_bps
                 ) VALUES (
                     coalesce(:captured_at, now()), :mem_total, :mem_avail,
                     :swap_total, :swap_free, :disk_total, :disk_free,
                     :load_1m, :load_5m, :load_15m, :uptime, :gpu,
-                    :power, :fan_max, cast(:fan_rpm AS jsonb), cast(:containers AS jsonb)
+                    :power, :fan_max, cast(:fan_rpm AS jsonb), cast(:containers AS jsonb),
+                    :net_rx_bps, :net_tx_bps, :disk_read_bps, :disk_write_bps
                 )
                 """
             ),
@@ -133,6 +203,10 @@ async def store_sample(
                 "containers": json.dumps(metrics.get("containers"))
                 if metrics.get("containers") is not None
                 else None,
+                "net_rx_bps": rates.get("net_rx_bps"),
+                "net_tx_bps": rates.get("net_tx_bps"),
+                "disk_read_bps": rates.get("disk_read_bps"),
+                "disk_write_bps": rates.get("disk_write_bps"),
             },
         )
 
@@ -144,7 +218,9 @@ INSERT INTO app.host_metrics_hourly AS h (
     bucket, sample_count, load_1m_avg, load_1m_max, load_5m_avg, load_15m_avg,
     mem_total_bytes, mem_used_avg, mem_used_max, swap_used_avg, swap_used_max,
     disk_total_bytes, disk_used_avg, disk_used_max,
-    gpu_busy_avg, gpu_busy_max, fan_rpm_avg, fan_rpm_max, power_w_avg, power_w_max
+    gpu_busy_avg, gpu_busy_max, fan_rpm_avg, fan_rpm_max, power_w_avg, power_w_max,
+    net_rx_bps_avg, net_rx_bps_max, net_tx_bps_avg, net_tx_bps_max,
+    disk_read_bps_avg, disk_read_bps_max, disk_write_bps_avg, disk_write_bps_max
 )
 SELECT
     time_bucket(INTERVAL '1 hour', captured_at),
@@ -160,7 +236,9 @@ SELECT
     max(disk_total_bytes - disk_free_bytes),
     avg(gpu_busy_percent), max(gpu_busy_percent),
     avg(fan_rpm_max), max(fan_rpm_max),
-    avg(power_w), max(power_w)
+    avg(power_w), max(power_w),
+    avg(net_rx_bps), max(net_rx_bps), avg(net_tx_bps), max(net_tx_bps),
+    avg(disk_read_bps), max(disk_read_bps), avg(disk_write_bps), max(disk_write_bps)
 FROM app.host_metrics
 WHERE captured_at >= :since
 GROUP BY 1
@@ -175,7 +253,13 @@ ON CONFLICT (bucket) DO UPDATE SET
     disk_used_avg = EXCLUDED.disk_used_avg, disk_used_max = EXCLUDED.disk_used_max,
     gpu_busy_avg = EXCLUDED.gpu_busy_avg, gpu_busy_max = EXCLUDED.gpu_busy_max,
     fan_rpm_avg = EXCLUDED.fan_rpm_avg, fan_rpm_max = EXCLUDED.fan_rpm_max,
-    power_w_avg = EXCLUDED.power_w_avg, power_w_max = EXCLUDED.power_w_max
+    power_w_avg = EXCLUDED.power_w_avg, power_w_max = EXCLUDED.power_w_max,
+    net_rx_bps_avg = EXCLUDED.net_rx_bps_avg, net_rx_bps_max = EXCLUDED.net_rx_bps_max,
+    net_tx_bps_avg = EXCLUDED.net_tx_bps_avg, net_tx_bps_max = EXCLUDED.net_tx_bps_max,
+    disk_read_bps_avg = EXCLUDED.disk_read_bps_avg,
+    disk_read_bps_max = EXCLUDED.disk_read_bps_max,
+    disk_write_bps_avg = EXCLUDED.disk_write_bps_avg,
+    disk_write_bps_max = EXCLUDED.disk_write_bps_max
 """
 
 
@@ -229,7 +313,9 @@ _RAW_SELECT = """
     avg(swap_total_bytes - swap_free_bytes)::bigint AS swap_used,
     avg(disk_total_bytes - disk_free_bytes)::bigint AS disk_used,
     max(disk_total_bytes) AS disk_total,
-    avg(gpu_busy_percent) AS gpu, max(fan_rpm_max) AS fan, avg(power_w) AS power
+    avg(gpu_busy_percent) AS gpu, max(fan_rpm_max) AS fan, avg(power_w) AS power,
+    avg(net_rx_bps) AS net_rx, avg(net_tx_bps) AS net_tx,
+    avg(disk_read_bps) AS disk_read, avg(disk_write_bps) AS disk_write
 """
 
 _HOURLY_SELECT = """
@@ -237,7 +323,9 @@ _HOURLY_SELECT = """
     avg(mem_used_avg)::bigint AS mem_used, max(mem_total_bytes) AS mem_total,
     avg(swap_used_avg)::bigint AS swap_used,
     avg(disk_used_avg)::bigint AS disk_used, max(disk_total_bytes) AS disk_total,
-    avg(gpu_busy_avg) AS gpu, max(fan_rpm_max) AS fan, avg(power_w_avg) AS power
+    avg(gpu_busy_avg) AS gpu, max(fan_rpm_max) AS fan, avg(power_w_avg) AS power,
+    avg(net_rx_bps_avg) AS net_rx, avg(net_tx_bps_avg) AS net_tx,
+    avg(disk_read_bps_avg) AS disk_read, avg(disk_write_bps_avg) AS disk_write
 """
 
 
@@ -298,6 +386,10 @@ async def history(
             "gpu_busy_percent": _round(r["gpu"]),
             "fan_rpm_max": _int(r["fan"]),
             "power_w": _round(r["power"]),
+            "net_rx_bps": _round(r["net_rx"]),
+            "net_tx_bps": _round(r["net_tx"]),
+            "disk_read_bps": _round(r["disk_read"]),
+            "disk_write_bps": _round(r["disk_write"]),
         }
         for r in rows
     ]

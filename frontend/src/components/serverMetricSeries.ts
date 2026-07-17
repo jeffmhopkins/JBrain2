@@ -8,6 +8,18 @@ import type { PlotSeries } from "./TimeSeriesPlot";
 
 const pct = (v: number) => `${Math.round(v)}%`;
 
+// Throughput bytes/sec -> human, 1024-base to match the memory/disk readouts.
+function rate(v: number): string {
+  const units = ["B", "KB", "MB", "GB"];
+  let n = v;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${i > 0 && n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}/s`;
+}
+
 function memPct(p: MetricPoint): number | null {
   return p.mem_used_bytes != null && p.mem_total_bytes
     ? (p.mem_used_bytes / p.mem_total_bytes) * 100
@@ -48,6 +60,30 @@ export function serverMetricSeries(points: MetricPoint[]): PlotSeries[] {
       color: "var(--rose)",
       values: points.map((p) => p.fan_rpm_max),
       fmt: (v) => `${Math.round(v)} rpm`,
+    },
+    {
+      label: "Net down",
+      color: "var(--periwinkle)",
+      values: points.map((p) => p.net_rx_bps),
+      fmt: rate,
+    },
+    {
+      label: "Net up",
+      color: "var(--orchid)",
+      values: points.map((p) => p.net_tx_bps),
+      fmt: rate,
+    },
+    {
+      label: "Disk read",
+      color: "var(--sage)",
+      values: points.map((p) => p.disk_read_bps),
+      fmt: rate,
+    },
+    {
+      label: "Disk write",
+      color: "var(--terracotta)",
+      values: points.map((p) => p.disk_write_bps),
+      fmt: rate,
     },
   ];
 }
