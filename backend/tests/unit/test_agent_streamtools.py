@@ -5,7 +5,6 @@ an injected resolver returns a ResolvedStream and injected samplers return canne
 frames/audio, so the handler's mode routing, audio gating, and view shape are what's
 under test."""
 
-
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.streamtools import build_stream_handlers
 from jbrain.db.session import SessionContext
@@ -84,7 +83,11 @@ def _handlers(blobs, router, *, resolver, window=None, full=None, transcribe=Non
     if full is not None:
         kw["full_sampler"] = full
     return build_stream_handlers(
-        blobs, router, transcribe=transcribe, resolver=resolver, **kw  # type: ignore[arg-type]
+        blobs,
+        router,
+        transcribe=transcribe,
+        resolver=resolver,
+        **kw,  # type: ignore[arg-type]
     )
 
 
@@ -184,8 +187,14 @@ async def test_window_seek_and_frames_passed_through_for_vod() -> None:
     handlers = _handlers(blobs, _router(fake), resolver=_resolver(VOD), window=window)
 
     await handlers["analyze_stream"](
-        {"url": "u", "mode": "window", "frames": 3, "window_s": 20, "seek": 42,
-         "transcribe": False},
+        {
+            "url": "u",
+            "mode": "window",
+            "frames": 3,
+            "window_s": 20,
+            "seek": 42,
+            "transcribe": False,
+        },
         CTX,
     )
     assert window.calls == [{"frames": 3, "window_s": 20.0, "seek_s": 42.0, "want_audio": False}]

@@ -99,8 +99,15 @@ def _make_clip(tmp_path, *, seconds: int = 5, with_audio: bool = False) -> str:
     path stands in for a resolved media URL — ffmpeg reads a file path the same way
     it reads an http(s) media URL, so sampling is exercised end-to-end offline."""
     out = tmp_path / ("av.mp4" if with_audio else "v.mp4")
-    cmd = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
-           f"testsrc=duration={seconds}:size=320x240:rate=15"]
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc=duration={seconds}:size=320x240:rate=15",
+    ]
     if with_audio:
         cmd += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}"]
     cmd += ["-pix_fmt", "yuv420p", "-shortest", str(out)]

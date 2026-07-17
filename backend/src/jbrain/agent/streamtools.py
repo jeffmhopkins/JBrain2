@@ -79,7 +79,7 @@ def build_stream_handlers(
         url = str(arguments.get("url", "")).strip()
         if not url:
             return "analyze_stream needs a url."
-        mode = (str(arguments.get("mode", "window")).strip().lower() or "window")
+        mode = str(arguments.get("mode", "window")).strip().lower() or "window"
         if mode not in _MODES:
             return "mode must be one of: single, window, full."
 
@@ -97,8 +97,10 @@ def build_stream_handlers(
         except StreamError as exc:
             return str(exc)
 
-        want_audio = mode != "single" and bool(arguments.get("transcribe", True)) and (
-            transcribe is not None
+        want_audio = (
+            mode != "single"
+            and bool(arguments.get("transcribe", True))
+            and (transcribe is not None)
         )
         try:
             sample = await _sample(

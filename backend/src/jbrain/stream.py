@@ -310,10 +310,26 @@ def _grab_one(media_url: str, tmpdir: Path, *, at: float, longest_edge: int) -> 
     decode miss. Bounded by the same per-read and wall-clock timeouts as the window
     pass, so a stalled host can't hang the grab."""
     out = tmpdir / f"grab_{int(at * 1000):09d}.jpg"
-    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-rw_timeout", str(_RW_TIMEOUT_US),
-           *_input_guard_args(media_url),
-           "-ss", f"{at:.3f}", "-i", media_url, "-frames:v", "1",
-           "-vf", f"scale='min({longest_edge},iw)':-2", "-q:v", "3", str(out)]
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-v",
+        "error",
+        "-rw_timeout",
+        str(_RW_TIMEOUT_US),
+        *_input_guard_args(media_url),
+        "-ss",
+        f"{at:.3f}",
+        "-i",
+        media_url,
+        "-frames:v",
+        "1",
+        "-vf",
+        f"scale='min({longest_edge},iw)':-2",
+        "-q:v",
+        "3",
+        str(out),
+    ]
     try:
         subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_SLACK_S, check=True)
     except (subprocess.SubprocessError, OSError) as exc:
@@ -381,8 +397,20 @@ def _extract_audio(media_url: str, tmpdir: Path, *, window: float, seek: float) 
     cmd += _input_guard_args(media_url)
     if seek > 0:
         cmd += ["-ss", f"{seek:.3f}"]
-    cmd += ["-i", media_url, "-t", f"{window:.3f}", "-vn", "-ac", "1", "-ar",
-            str(AUDIO_SAMPLE_RATE), "-f", "wav", str(out)]
+    cmd += [
+        "-i",
+        media_url,
+        "-t",
+        f"{window:.3f}",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(AUDIO_SAMPLE_RATE),
+        "-f",
+        "wav",
+        str(out),
+    ]
     try:
         subprocess.run(cmd, capture_output=True, timeout=int(window + _FFMPEG_SLACK_S), check=True)
     except (subprocess.SubprocessError, OSError) as exc:
