@@ -16452,6 +16452,33 @@ button.auto-sect[aria-expanded="true"] > svg {
   font-size: var(--fs-micro);
   color: var(--text-2);
 }
+/* A live-stream badge (analyze_stream): a small red pill in the card header. */
+.tv-vid-live {
+  flex: 0 0 auto;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #fff;
+  background: var(--danger);
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+/* The source chip: a tappable link to the stream's page (host label + ↗). Pushed to
+   the right beside the frame count; on a stream that's where the frame meta also sits. */
+.tv-vid-src {
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: var(--fs-micro);
+  color: var(--steel);
+  text-decoration: none;
+}
+.tv-vid-src + .tv-vid-meta {
+  margin-left: 8px;
+}
+.tv-vid-src:hover {
+  text-decoration: underline;
+}
 .tv-vid-video {
   display: block;
   width: 100%;

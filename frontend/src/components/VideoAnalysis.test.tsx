@@ -139,6 +139,26 @@ describe("VideoAnalysis", () => {
     );
   });
 
+  it("shows a LIVE badge and a tappable source chip for a live stream", () => {
+    const { container } = renderCard({
+      videoUrl: undefined,
+      isLive: true,
+      sourceUrl: "https://www.youtube.com/live/xyz",
+      frames: YT_FRAMES,
+    });
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    const link = container.querySelector<HTMLAnchorElement>(".tv-vid-src");
+    expect(link?.getAttribute("href")).toBe("https://www.youtube.com/live/xyz");
+    expect(link?.getAttribute("rel")).toContain("noreferrer"); // no referrer leak (#9)
+    expect(link?.textContent).toContain("youtube.com"); // host label, not the full URL
+  });
+
+  it("shows no LIVE badge or source chip for a plain attachment video", () => {
+    const { container } = renderCard(); // videoUrl set, no isLive/sourceUrl
+    expect(screen.queryByText("LIVE")).toBeNull();
+    expect(container.querySelector(".tv-vid-src")).toBeNull();
+  });
+
   it("falls back to a placeholder for a frame without a thumbnail", () => {
     const { container } = renderCard({
       frames: [{ tMs: 0, caption: "No still." }],

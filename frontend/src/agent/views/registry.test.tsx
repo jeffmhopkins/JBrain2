@@ -298,6 +298,7 @@ describe("ToolView registry", () => {
             filename: "Starship Live",
             youtube_id: "dQw4w9WgXcQ",
             is_live: true,
+            stream_url: "https://youtube.com/live/xyz",
             summary: "On the pad.",
             frames: [
               { t_ms: 0, caption: "On the pad.", thumb_data_uri: "data:image/jpeg;base64,AA" },
@@ -310,6 +311,9 @@ describe("ToolView registry", () => {
     const iframe = container.querySelector("iframe");
     expect(iframe?.getAttribute("src")).toContain("youtube-nocookie.com/embed/dQw4w9WgXcQ");
     expect(container.querySelector("video")).toBeNull();
+    // is_live + stream_url flow through to the header LIVE badge and source chip.
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(container.querySelector(".tv-vid-src")).not.toBeNull();
   });
 
   it("renders a weather_card from data-only slots (hero + hourly strip)", () => {

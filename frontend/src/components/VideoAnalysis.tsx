@@ -29,6 +29,11 @@ interface VideoAnalysisProps {
    * postMessage — so the filmstrip + transcript sync to playback. Takes precedence over
    * videoUrl. Server-derived id, never model-authored (the #9 exception, ASSISTANT.md). */
   youtubeId?: string | undefined;
+  /** True when the source is a live stream — shows a LIVE badge in the header. */
+  isLive?: boolean | undefined;
+  /** The stream's page URL (analyze_stream) — a tappable source chip. For a non-YouTube
+   * stream (no embed) it's the way to go watch; server-derived, never model-authored. */
+  sourceUrl?: string | undefined;
   filename: string;
   summary: string;
   frames: VideoFrame[];
@@ -42,6 +47,16 @@ type Tab = "summary" | "transcript";
 function fmtTime(ms: number): string {
   const s = Number.isFinite(ms) && ms > 0 ? ms / 1000 : 0;
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+}
+
+/** The bare host of a source URL for the chip label (e.g. "youtube.com"), or "source"
+ * when it can't be parsed. Never renders the full URL, which can be long/opaque. */
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "source";
+  }
 }
 
 /** The index of the latest frame at or before `currentMs` (the active frame), or -1. */
@@ -71,6 +86,8 @@ function isYouTubeOrigin(origin: string): boolean {
 export function VideoAnalysis({
   videoUrl,
   youtubeId,
+  isLive,
+  sourceUrl,
   filename,
   summary,
   frames,
@@ -170,7 +187,19 @@ export function VideoAnalysis({
         <span className="tv-vid-fi" aria-hidden="true">
           <VideoIcon size={18} />
         </span>
+        {isLive && <span className="tv-vid-live">LIVE</span>}
         <span className="tv-vid-fn">{filename}</span>
+        {sourceUrl && (
+          <a
+            className="tv-vid-src"
+            href={sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            title={sourceUrl}
+          >
+            {sourceHost(sourceUrl)} ↗
+          </a>
+        )}
         {hasFrames && (
           <span className="tv-vid-meta">
             {frames.length} frame{frames.length === 1 ? "" : "s"}

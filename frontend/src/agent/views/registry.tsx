@@ -772,6 +772,13 @@ function VideoAnalysisView({ data }: ViewProps): ReactNode {
     source === "stream" && typeof data.youtube_id === "string" && data.youtube_id
       ? data.youtube_id
       : undefined;
+  // A stream carries its liveness + page URL for the header LIVE badge and source chip
+  // (data, not a rendered resource — the chip is a user-tapped link, #9).
+  const isLive = source === "stream" && data.is_live === true;
+  const sourceUrl =
+    source === "stream" && typeof data.stream_url === "string" && data.stream_url
+      ? data.stream_url
+      : undefined;
   const thumbUrl =
     source === "chat" ? (id: string) => chatAttachmentThumbUrl(attachmentId, id) : null;
   const transcript =
@@ -782,6 +789,8 @@ function VideoAnalysisView({ data }: ViewProps): ReactNode {
     <VideoAnalysis
       videoUrl={videoUrl}
       youtubeId={youtubeId}
+      isLive={isLive}
+      sourceUrl={sourceUrl}
       filename={typeof data.filename === "string" ? data.filename : "video"}
       summary={typeof data.summary === "string" ? data.summary : ""}
       frames={videoFrames(data.frames, thumbUrl)}
