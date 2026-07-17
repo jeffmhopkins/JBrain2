@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -157,7 +158,7 @@ async def store_sample(
     metrics: dict[str, Any],
     *,
     captured_at: datetime | None = None,
-    rates: dict[str, float | None] | None = None,
+    rates: Mapping[str, float | None] | None = None,
 ) -> None:
     """Insert one raw sample from a supervisor `/metrics` payload. `rates` carries
     the derived network/disk throughput (bytes/sec); absent → the rate columns
