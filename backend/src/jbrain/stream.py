@@ -35,7 +35,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +105,12 @@ class ResolvedStream:
     # instead of only a still. Empty for a provider we don't embed.
     provider: str = ""
     video_id: str = ""
+    # The HTTP headers yt-dlp used to fetch this format (User-Agent, etc.). ffmpeg MUST
+    # send these or a signed googlevideo URL — issued for a specific player client like
+    # ANDROID_VR — returns 403 Forbidden on the larger windowed/audio reads (a single
+    # frame's tiny read often slips through, which is why single mode worked and window
+    # didn't). Empty for a source that needs no special headers.
+    http_headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -198,10 +204,13 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
         info = playable[0]
 
     media_url = info.get("url")
+    headers = info.get("http_headers") or {}
     if not media_url:
         formats = info.get("requested_formats") or []
         if formats and formats[0].get("url"):
             media_url = formats[0]["url"]
+            # Prefer the selected format's own headers over the top-level ones.
+            headers = formats[0].get("http_headers") or headers
     if not media_url:
         raise StreamError("that video had no directly-readable media URL")
 
@@ -214,6 +223,7 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
         webpage_url=str(info.get("webpage_url") or fallback_url),
         provider=str(info.get("extractor") or "").lower(),
         video_id=str(info.get("id") or ""),
+        http_headers={str(k): str(v) for k, v in dict(headers).items()},
     )
 
 
@@ -254,11 +264,14 @@ def sample_stream(
             window=window,
             seek=seek,
             longest_edge=longest_edge,
+            headers=resolved.http_headers,
         )
         deduped = dedup_frames(sampled, distance=dedup_distance)
         audio = b""
         if want_audio:
-            audio = _extract_audio(resolved.media_url, tmpdir, window=window, seek=seek)
+            audio = _extract_audio(
+                resolved.media_url, tmpdir, window=window, seek=seek, headers=resolved.http_headers
+            )
     return StreamSample(frames=deduped, audio_wav=audio)
 
 
@@ -292,13 +305,25 @@ def sample_stream_full(
         sampled: list[SampledFrame] = []
         for i in range(count):
             at = duration * (i + 0.5) / count  # midpoint of each even bucket
-            jpeg = _grab_one(resolved.media_url, tmpdir, at=at, longest_edge=longest_edge)
+            jpeg = _grab_one(
+                resolved.media_url,
+                tmpdir,
+                at=at,
+                longest_edge=longest_edge,
+                headers=resolved.http_headers,
+            )
             if jpeg is not None:
                 sampled.append(SampledFrame(timestamp_ms=int(at * 1000), jpeg=jpeg))
         deduped = dedup_frames(sampled, distance=dedup_distance)
         audio = b""
         if want_audio and duration <= MAX_FULL_AUDIO_S:
-            audio = _extract_audio(resolved.media_url, tmpdir, window=duration, seek=0.0)
+            audio = _extract_audio(
+                resolved.media_url,
+                tmpdir,
+                window=duration,
+                seek=0.0,
+                headers=resolved.http_headers,
+            )
     return StreamSample(frames=deduped, audio_wav=audio)
 
 
@@ -312,7 +337,27 @@ def _input_guard_args(media_url: str) -> list[str]:
     return []
 
 
-def _grab_one(media_url: str, tmpdir: Path, *, at: float, longest_edge: int) -> bytes | None:
+def _header_args(headers: dict[str, str]) -> list[str]:
+    """ffmpeg input args carrying yt-dlp's request headers — the User-Agent via
+    `-user_agent` and the rest as CRLF-joined `-headers` — so ffmpeg fetches a signed
+    googlevideo URL with the same identity yt-dlp resolved it under. Without this a
+    windowed/audio read of an ANDROID_VR-client URL 403s. Empty (a local file / no
+    headers) adds nothing."""
+    if not headers:
+        return []
+    args: list[str] = []
+    ua = next((v for k, v in headers.items() if k.lower() == "user-agent"), "")
+    extra = "".join(f"{k}: {v}\r\n" for k, v in headers.items() if k.lower() != "user-agent")
+    if ua:
+        args += ["-user_agent", ua]
+    if extra:
+        args += ["-headers", extra]
+    return args
+
+
+def _grab_one(
+    media_url: str, tmpdir: Path, *, at: float, longest_edge: int, headers: dict[str, str]
+) -> bytes | None:
     """One fast frame at offset `at` via input seek (`-ss` before `-i`), or None on a
     decode miss. Bounded by the same per-read and wall-clock timeouts as the window
     pass, so a stalled host can't hang the grab."""
@@ -325,6 +370,7 @@ def _grab_one(media_url: str, tmpdir: Path, *, at: float, longest_edge: int) -> 
         "-rw_timeout",
         str(_RW_TIMEOUT_US),
         *_input_guard_args(media_url),
+        *_header_args(headers),
         "-ss",
         f"{at:.3f}",
         "-i",
@@ -356,6 +402,7 @@ def _extract_frames(
     window: float,
     seek: float,
     longest_edge: int,
+    headers: dict[str, str],
 ) -> list[SampledFrame]:
     """Run one bounded ffmpeg pass over the media window, returning window-relative
     stamped JPEGs. A single frame skips the fps filter (grab one still); a multi-frame
@@ -368,6 +415,7 @@ def _extract_frames(
 
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-rw_timeout", str(_RW_TIMEOUT_US)]
     cmd += _input_guard_args(media_url)
+    cmd += _header_args(headers)
     if seek > 0:
         cmd += ["-ss", f"{seek:.3f}"]  # input seek (before -i): fast, VOD only
     cmd += ["-i", media_url]
@@ -393,7 +441,9 @@ def _extract_frames(
     return out
 
 
-def _extract_audio(media_url: str, tmpdir: Path, *, window: float, seek: float) -> bytes:
+def _extract_audio(
+    media_url: str, tmpdir: Path, *, window: float, seek: float, headers: dict[str, str]
+) -> bytes:
     """Best-effort: pull the window's audio as 16 kHz mono WAV (whisper's native shape)
     with a second bounded ffmpeg pass. Returns b"" when the media has no audio track or
     the pass fails — the caller then runs frames-only. A window of 0 grabs nothing."""
@@ -402,6 +452,7 @@ def _extract_audio(media_url: str, tmpdir: Path, *, window: float, seek: float) 
     out = tmpdir / "audio.wav"
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-rw_timeout", str(_RW_TIMEOUT_US)]
     cmd += _input_guard_args(media_url)
+    cmd += _header_args(headers)
     if seek > 0:
         cmd += ["-ss", f"{seek:.3f}"]
     cmd += [

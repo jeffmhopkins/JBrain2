@@ -13,6 +13,7 @@ from jbrain.stream import (
     MAX_FRAMES,
     ResolvedStream,
     StreamError,
+    _header_args,
     _input_guard_args,
     _select_media,
     guard_public_host_or_stream,
@@ -43,6 +44,28 @@ def test_select_media_direct_url() -> None:
     assert r.title == "Launch" and r.is_live is True and r.duration_s is None
     # Provider + id are captured so a YouTube card can embed the synced player.
     assert r.provider == "youtube" and r.video_id == "abc123"
+
+
+def test_select_media_captures_http_headers() -> None:
+    # yt-dlp's request headers ride along so ffmpeg fetches the signed URL as yt-dlp did
+    # (else a windowed googlevideo read 403s).
+    info = {"url": "https://cdn/v.mp4", "http_headers": {"User-Agent": "yt/1.0"}, "title": "T"}
+    assert _select_media(info, fallback_url="x").http_headers == {"User-Agent": "yt/1.0"}
+    # A merged A/V selection: prefer the chosen format's own headers over the top-level.
+    info2 = {
+        "requested_formats": [{"url": "https://cdn/v.mp4", "http_headers": {"User-Agent": "fmt"}}],
+        "http_headers": {"User-Agent": "top"},
+    }
+    assert _select_media(info2, fallback_url="x").http_headers == {"User-Agent": "fmt"}
+
+
+def test_header_args_sends_user_agent_and_extras_to_ffmpeg() -> None:
+    args = _header_args({"User-Agent": "ANDROID_VR/1.0", "Accept": "*/*", "X-Foo": "bar"})
+    assert args[args.index("-user_agent") + 1] == "ANDROID_VR/1.0"
+    hdr = args[args.index("-headers") + 1]
+    assert "Accept: */*\r\n" in hdr and "X-Foo: bar\r\n" in hdr
+    assert "User-Agent" not in hdr  # UA goes via -user_agent, never duplicated
+    assert _header_args({}) == []  # no headers → no args (a local file adds nothing)
 
 
 def test_select_media_requested_formats_fallback() -> None:
