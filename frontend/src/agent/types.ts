@@ -374,6 +374,10 @@ export interface ChatRequest {
    * owner prose): `message` is the server-authored summary, framed as a data report so
    * the assistant acknowledges and continues without re-staging declined items. */
   proposal_outcome?: boolean;
+  /** This turn carries the RESULT of a deferred tool call that just finished off-turn
+   * (a full analyze_stream analysis): `message` is the server-authored summary + transcript,
+   * framed as a data report so jerv acknowledges the finished work and can quote it. */
+  deferred_outcome?: boolean;
 }
 
 // --- Proposals (the review inbox; /api/proposals) ---

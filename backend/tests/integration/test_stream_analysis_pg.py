@@ -84,6 +84,8 @@ async def test_deferred_job_writes_the_finished_card_to_the_result_row(
     assert row.result["mode"] == "full"
     assert row.result["summary"] == "A launch stream showing the rocket."
     assert len(row.result["frames"]) == 1
+    # The auto-resume report jerv is prompted with carries the summary (P3).
+    assert "A launch stream showing the rocket." in str(row.result["resume_message"])
 
 
 async def test_stop_mid_flight_cancels_the_analysis(

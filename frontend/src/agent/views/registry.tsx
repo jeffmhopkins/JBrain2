@@ -48,6 +48,10 @@ export interface ViewProps {
   /** Open an agent session by id — used by the sub-agent synthesis card to deep-link
    * each child row to its own session. Most views ignore it. */
   onOpenSession?: ((sessionId: string) => void) | undefined;
+  /** A deferred tool call finished — the task_status card calls this once (with the
+   * server-authored result report) so the controller sends the auto-resume turn. Only
+   * the task_status view uses it (DEFERRED_TOOL_CALLS_PLAN.md P3). */
+  onDeferredComplete?: ((resumeMessage: string) => void) | undefined;
 }
 
 // Tone/flag is an enum, never a color (DESIGN.md): the component maps it to a
@@ -807,7 +811,7 @@ function VideoAnalysisView({ data }: ViewProps): ReactNode {
  * video_analysis — the analyze_stream deferral is the first adopter). The result data the
  * job stored is the same video_analysis payload the in-turn card gets, so the swap is
  * seamless. Reusable: a future deferred tool adds a branch for its own result view. */
-function TaskStatusView({ data }: ViewProps): ReactNode {
+function TaskStatusView({ data, onDeferredComplete }: ViewProps): ReactNode {
   const resultId = typeof data.result_id === "string" ? data.result_id : "";
   const title = typeof data.title === "string" ? data.title : "Working…";
   if (!resultId) return null;
@@ -816,6 +820,7 @@ function TaskStatusView({ data }: ViewProps): ReactNode {
       resultId={resultId}
       title={title}
       renderResult={(result) => <VideoAnalysisView data={result} refs={[]} />}
+      onComplete={onDeferredComplete}
     />
   );
 }
@@ -2168,15 +2173,22 @@ export function isKnownView(name: string): boolean {
 export function ToolView({
   payload,
   onOpenSession,
+  onDeferredComplete,
 }: {
   payload: ViewPayload;
   onOpenSession?: ((sessionId: string) => void) | undefined;
+  onDeferredComplete?: ((resumeMessage: string) => void) | undefined;
 }): ReactNode {
   const Component = REGISTRY[payload.view];
   if (!Component) return null;
   return (
     <div className={`tool-view surface-${payload.surface}`}>
-      <Component data={payload.data} refs={payload.refs} onOpenSession={onOpenSession} />
+      <Component
+        data={payload.data}
+        refs={payload.refs}
+        onOpenSession={onOpenSession}
+        onDeferredComplete={onDeferredComplete}
+      />
     </div>
   );
 }

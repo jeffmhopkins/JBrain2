@@ -255,6 +255,26 @@ def summary_line(title: str, result: VideoAnalysis) -> str:
     return f'Analysis of "{title}":\n{summary}'
 
 
+# Cap the transcript excerpt carried into the auto-resume turn: enough for jerv to quote
+# and reason over, bounded so a long talk doesn't blow the context (the owner sees the
+# full transcript on the card regardless).
+_RESUME_TRANSCRIPT_CHARS = 6000
+
+
+def _resume_message(title: str, result: VideoAnalysis) -> str:
+    """The model-facing report the finished analysis auto-resumes with: the summary plus a
+    bounded transcript excerpt, so jerv acknowledges the work and can quote its content."""
+    parts = [summary_line(title, result)]
+    transcript = result.analysis.get("transcript")
+    text = (transcript or {}).get("text", "").strip() if isinstance(transcript, dict) else ""
+    if text:
+        excerpt = text[:_RESUME_TRANSCRIPT_CHARS]
+        if len(text) > _RESUME_TRANSCRIPT_CHARS:
+            excerpt += " …[transcript truncated]"
+        parts.append(f"Transcript:\n{excerpt}")
+    return "\n\n".join(parts)
+
+
 # --- the deferred worker job ----------------------------------------------------------
 
 
@@ -358,6 +378,10 @@ class StreamAnalysisPipeline:
         result, frames = out
         data = build_stream_view_data(resolved, result, mode, frames)
         data["summary_line"] = summary_line(resolved.title, result)
+        # The server-authored report the finished analysis auto-resumes into the chat with
+        # (P3): the summary plus a bounded transcript excerpt, so jerv can acknowledge the
+        # work AND quote its content. Framed as data (not instruction) by the /chat handler.
+        data["resume_message"] = _resume_message(resolved.title, result)
         await media_results.complete(self._maker, SYSTEM_CTX, result_id, result=data)
 
     async def _drain_progress(

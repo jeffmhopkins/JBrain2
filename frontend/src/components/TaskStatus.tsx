@@ -22,6 +22,11 @@ interface TaskStatusProps {
    * video_analysis card built from the stored data. Keeps this component reusable: the
    * status chrome is generic, only the result view is per-tool. */
   renderResult: (result: Record<string, unknown>) => ReactNode;
+  /** Called ONCE when THIS card observes the job finish (running → done), with the
+   * server-authored `resume_message`, so the controller sends the auto-resume turn that
+   * prompts jerv. Not called if the card mounts already-done (a reload) — so a re-open
+   * never re-fires the follow-up (DEFERRED_TOOL_CALLS_PLAN.md P3). */
+  onComplete?: ((resumeMessage: string) => void) | undefined;
 }
 
 // The truthful phase sequence a stream analysis moves through, matched from the server's
@@ -52,12 +57,36 @@ function fmtElapsed(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function TaskStatus({ resultId, title, renderResult }: TaskStatusProps): ReactNode {
+/** The server-authored report jerv auto-resumes with — the worker's `resume_message`
+ * (summary + transcript excerpt), falling back to the summary line / summary if absent. */
+function resumeMessage(result: Record<string, unknown>): string {
+  for (const key of ["resume_message", "summary_line", "summary"]) {
+    const v = result[key];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return "The analysis finished.";
+}
+
+export function TaskStatus({
+  resultId,
+  title,
+  renderResult,
+  onComplete,
+}: TaskStatusProps): ReactNode {
   const [data, setData] = useState<DeferredResult | null>(null);
   const [gone, setGone] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const startedAt = useRef(Date.now());
+  // Auto-resume fires exactly once, and only on a transition WE observed (running → done):
+  // a card that mounts already-done (a reload) never saw running, so it never re-prompts.
+  const onCompleteRef = useRef(onComplete);
+  const sawRunning = useRef(false);
+  const fired = useRef(false);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  });
 
   const status = data?.status ?? "running";
   const finished = TERMINAL.has(status) || gone;
@@ -70,7 +99,13 @@ export function TaskStatus({ resultId, title, renderResult }: TaskStatusProps): 
     const tick = async () => {
       try {
         const next = await api.deferredResult(resultId);
-        if (alive) setData(next);
+        if (!alive) return;
+        setData(next);
+        if (next.status === "running") sawRunning.current = true;
+        if (next.status === "done" && next.result && sawRunning.current && !fired.current) {
+          fired.current = true;
+          onCompleteRef.current?.(resumeMessage(next.result));
+        }
       } catch {
         if (alive) setGone(true);
       }
