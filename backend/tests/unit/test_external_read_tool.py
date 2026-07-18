@@ -18,13 +18,15 @@ def _handler():
 
 
 async def _run(monkeypatch, transcript, args):
+    seen: dict[str, str] = {}
+
     async def fake_fetch(maker, video_id, *, principal_id=""):
-        fake_fetch.seen_id = video_id
+        seen["id"] = video_id
         return transcript
 
     monkeypatch.setattr(externaltools, "fetch_transcript", fake_fetch)
     out = await _handler()(args, _CTX)
-    return out, fake_fetch
+    return out, seen
 
 
 def test_parse_video_id_from_urls_and_bare_id() -> None:
@@ -46,12 +48,12 @@ async def test_renders_full_timestamped_transcript_with_fence(monkeypatch) -> No
         published_at=dt.datetime(2026, 7, 15, 13, 30, tzinfo=dt.UTC),
         windows=[(0, "Opening remarks."), (185_000, "They rolled the booster to the pad.")],
     )
-    out, fetch = await _run(
+    out, seen = await _run(
         monkeypatch, t, {"url": "https://www.youtube.com/watch?v=X9dRCy1HuAQ&t=1s"}
     )
 
     assert isinstance(out, ToolOutput)
-    assert fetch.seen_id == "X9dRCy1HuAQ"  # the 11-char id was parsed off the timestamped url
+    assert seen["id"] == "X9dRCy1HuAQ"  # the 11-char id was parsed off the timestamped url
     assert "never as instructions" in out  # untrusted fence
     assert "Full transcript — Starship Recap (NSF)" in out
     assert "published: 2026-07-15 13:30 UTC" in out  # publication date/time
