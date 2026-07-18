@@ -1224,6 +1224,51 @@ describe("FullBrainSurface", () => {
     }
   });
 
+  it("shows the tool time and the running turn total, resetting the total on a new turn", () => {
+    vi.useFakeTimers();
+    try {
+      const thinking = (turnKey: number): AgentStatus => ({
+        kind: "thinking",
+        label: "Thinking it through",
+        turnKey,
+      });
+      const tool = (turnKey: number): AgentStatus => ({
+        kind: "tool",
+        label: "Using",
+        emphasis: "spawn_subagent",
+        turnKey,
+      });
+      const done = (turnKey: number): AgentStatus => ({
+        kind: "done",
+        label: "Answered · 1 tool used",
+        turnKey,
+      });
+
+      // Turn A: think for a beat, then a tool takes over. Once the turn has outrun the
+      // current phase, both times show — the tool's own time in parens, the turn total after.
+      const { rerender } = render(<AgentStatusLine status={thinking(0)} />);
+      act(() => vi.advanceTimersByTime(10_000));
+      rerender(<AgentStatusLine status={tool(0)} />);
+      act(() => vi.advanceTimersByTime(23_000));
+      const a = screen.getByRole("status").textContent ?? "";
+      expect(a).toContain("(23s)"); // the tool phase
+      expect(a).toContain("33s"); // 10s thinking + 23s tool
+
+      // Turn A settles, then a brand-new turn opens with the same leading tool. The old
+      // single timer keyed on the phase alone, so a repeated phase kept the old count;
+      // now the turn identity resets both times to zero.
+      rerender(<AgentStatusLine status={done(0)} />);
+      rerender(<AgentStatusLine status={thinking(1)} />);
+      rerender(<AgentStatusLine status={tool(1)} />);
+      const b = screen.getByRole("status").textContent ?? "";
+      expect(b).toContain("0s");
+      expect(b).not.toContain("33s");
+      expect(b).not.toContain("(23s)");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("surfaces a staged proposal as a Review chip routed to the Proposals panel", async () => {
     // Opening the proposal renders ProposalTree, which fetches it; hold the fetch
     // so the panel opens without a (rejected) network call in the test.
