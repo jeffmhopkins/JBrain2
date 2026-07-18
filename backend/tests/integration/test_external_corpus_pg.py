@@ -190,7 +190,7 @@ async def test_persist_embed_search_round_trip(maker) -> None:  # noqa: F811
                 text("SELECT count(*) FROM app.external_source_chunks WHERE source_id = :s"),
                 {"s": source_id},
             )
-        ).scalar() >= 1
+        ).scalar_one() >= 1
 
     embed = StaticEmbed()
     await ExternalSourceEmbedder(maker, embed, "test-model").embed_external_source(
