@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -97,6 +97,11 @@ async def persist_analysis(
         "summary": result.summary or None,
         "transcript_source": _transcript_source_label(transcript_source, resolved),
         "frames": json.dumps(frames),
+        # The full {text, words:[{text, start_ms, end_ms}]} for the card's synced-transcript tab
+        # (search still uses the windowed chunks). NULL when the analysis had no transcript.
+        "transcript": json.dumps(analysis.get("transcript"))
+        if analysis.get("transcript")
+        else None,
         "tool": result.tool,
         "origin": origin,
     }
@@ -107,17 +112,19 @@ async def persist_analysis(
                 text(
                     "INSERT INTO app.external_sources"
                     " (provider, video_id, url, title, channel_id, channel_name, published_at,"
-                    "  duration_s, duration_ms, summary, transcript_source, frames, tool, origin,"
-                    "  status, analyzed_at)"
+                    "  duration_s, duration_ms, summary, transcript_source, frames, transcript,"
+                    "  tool, origin, status, analyzed_at)"
                     " VALUES (:provider, :video_id, :url, :title, :channel_id, :channel_name,"
                     "  :published_at, :duration_s, :duration_ms, :summary, :transcript_source,"
-                    "  cast(:frames AS jsonb), :tool, :origin, 'done', now())"
+                    "  cast(:frames AS jsonb), cast(:transcript AS jsonb),"
+                    "  :tool, :origin, 'done', now())"
                     " ON CONFLICT (provider, video_id) DO UPDATE SET"
                     "  url = EXCLUDED.url, title = EXCLUDED.title,"
                     "  channel_id = EXCLUDED.channel_id, channel_name = EXCLUDED.channel_name,"
                     "  published_at = EXCLUDED.published_at, duration_s = EXCLUDED.duration_s,"
                     "  duration_ms = EXCLUDED.duration_ms, summary = EXCLUDED.summary,"
                     "  transcript_source = EXCLUDED.transcript_source, frames = EXCLUDED.frames,"
+                    "  transcript = EXCLUDED.transcript,"
                     "  tool = EXCLUDED.tool, status = 'done', last_error = NULL,"
                     "  analyzed_at = now(),"
                     "  summary_embedding = NULL, embedding_model = NULL"
@@ -182,7 +189,86 @@ async def filter_new_video_ids(
     return {v for v in video_ids if v not in present}
 
 
-# --- corpus search (the search_external tool's engine) --------------------------------
+@dataclass(frozen=True)
+class ExternalTranscript:
+    """One library video read in full: its metadata plus every passage window in order. The
+    windows concatenated ARE the transcript (at window granularity); `summary` is the fallback
+    when a source has no passage rows."""
+
+    source_id: str
+    title: str
+    channel_name: str
+    url: str
+    transcript_source: str
+    summary: str
+    duration_s: int | None
+    published_at: datetime | None
+    windows: list[tuple[int, str]]  # (t_ms, text), ordered by seq
+    # Extra fields the video-analysis card (show_external_video) needs; the text read tool
+    # (read_external_video) ignores them, so they default and stay out of its call sites.
+    video_id: str = ""
+    provider: str = ""
+    duration_ms: int | None = None
+    frames: list[dict] = field(default_factory=list)  # stored {t_ms, caption, thumb_id}
+    # The word/cue-level transcript {text, words:[{text, start_ms, end_ms}]} for the card's
+    # synced tab, or None when the source was analysed before it was stored (0135).
+    cued_transcript: dict | None = None
+
+
+async def fetch_transcript(
+    maker: async_sessionmaker[AsyncSession],
+    video_id: str,
+    *,
+    principal_id: str = "",
+) -> ExternalTranscript | None:
+    """The full stored transcript of one analysed video (its ordered passage windows) + metadata,
+    or None when no library source has that `video_id`. Reads under the purpose-built general
+    scope, the same firewall the search tool uses."""
+    if not video_id:
+        return None
+    async with scoped_session(maker, _corpus_read_context(principal_id)) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, title, channel_name, url, transcript_source, summary,"
+                    " duration_s, published_at, video_id, provider, duration_ms, frames,"
+                    " transcript"
+                    " FROM app.external_sources WHERE video_id = :vid"
+                    " ORDER BY analyzed_at DESC NULLS LAST LIMIT 1"
+                ),
+                {"vid": video_id},
+            )
+        ).first()
+        if row is None:
+            return None
+        chunks = (
+            await session.execute(
+                text(
+                    "SELECT t_ms, text FROM app.external_source_chunks"
+                    " WHERE source_id = :sid ORDER BY seq"
+                ),
+                {"sid": str(row.id)},
+            )
+        ).all()
+    return ExternalTranscript(
+        source_id=str(row.id),
+        title=row.title or "",
+        channel_name=row.channel_name or "",
+        url=row.url,
+        transcript_source=row.transcript_source or "",
+        summary=row.summary or "",
+        duration_s=int(row.duration_s) if row.duration_s is not None else None,
+        published_at=row.published_at,
+        windows=[(int(c.t_ms), (c.text or "").strip()) for c in chunks if (c.text or "").strip()],
+        video_id=row.video_id or "",
+        provider=row.provider or "",
+        duration_ms=int(row.duration_ms) if row.duration_ms is not None else None,
+        frames=list(row.frames or []),
+        cued_transcript=row.transcript if isinstance(row.transcript, dict) else None,
+    )
+
+
+# --- corpus search (the search_external_video tool's engine) --------------------------------
 
 # One hybrid RRF query over the corpus, mirroring SearchService: a dense + FTS leg over the
 # passage chunks and a source-level summary-dense leg, fused per-source (best_per_source), so

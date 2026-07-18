@@ -575,7 +575,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             video_handlers=video_handlers,
             stream_handlers=stream_handlers,
             gmail_handlers=gmail_handlers,
-            external_handlers=build_external_handlers(maker, TeiEmbedClient(settings.embed_url)),
+            external_handlers=build_external_handlers(
+                maker, TeiEmbedClient(settings.embed_url), blobs=app.state.blob_store
+            ),
         )
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)

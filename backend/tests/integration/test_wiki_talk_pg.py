@@ -393,6 +393,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
                 NwsClient(""),
                 NhcSurgeClient(""),
             ),
+            **build_external_handlers(stub, stub),  # the external-corpus sidecars' handlers
         },  # unused by the editor turn
         stub,  # city geocoder
         maker,  # sessionmaker for query_server_metrics

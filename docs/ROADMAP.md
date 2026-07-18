@@ -260,7 +260,7 @@ on llama-server's `--cache-reuse`/slot flags. Both waves open.
 (`external_sources`/`external_source_chunks`), deliberately kept out of the knowledge graph/wiki since
 third-party content is not a source of truth. Built on the shipped `analyze_stream` + captions-first
 (#879). Waves A–B shipped (the corpus tables, a timeline windower, the `analyze_stream` write-through,
-and the sandboxed-`jerv` `search_external` + `check_channel` tools); Wave C (a recurring Jerv Task for
+and the sandboxed-`jerv` `search_external_video` + `check_channel` tools); Wave C (a recurring Jerv Task for
 scheduling — no workflow-engine machinery) open.
 
 **In progress:** Deep research tool (build plan: `docs/plans/DEEP_RESEARCH_TOOL_PLAN.md`) — a

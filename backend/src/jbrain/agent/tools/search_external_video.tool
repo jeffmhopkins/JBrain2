@@ -1,5 +1,5 @@
 ---
-name: search_external
+name: search_external_video
 version: 1
 permission: web
 params:

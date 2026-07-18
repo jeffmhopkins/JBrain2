@@ -190,6 +190,13 @@ def resolve_stream(
         "retries": 1,
         "extractor_retries": 1,
         "cachedir": False,
+        # Ask the extractor to surface caption tracks in the info dict (captions-first, #879).
+        # We never download subtitle FILES (download=False), but recent yt-dlp only populates
+        # `subtitles`/`automatic_captions` when they're requested — without these the info dict
+        # came back caption-less on real YouTube and every video fell through to whisper.
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitleslangs": ["en", "en-orig", "en-US", "en-GB"],
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -321,6 +328,16 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
         raise StreamError("that video had no directly-readable media URL")
 
     duration = info.get("duration")
+    caption = select_caption(info)
+    # Diagnostic breadcrumb for the captions-first path: records what the extractor surfaced vs
+    # what got picked, so a "why did this whisper?" question is answerable from one log line
+    # (no track surfaced → extractor/opts problem; surfaced-but-unpicked → select_caption bug).
+    log.info(
+        "stream.caption_select",
+        subs=sorted((info.get("subtitles") or {}).keys())[:6],
+        auto=sorted((info.get("automatic_captions") or {}).keys())[:6],
+        picked=(f"{caption.kind}:{caption.lang}" if caption else None),
+    )
     return ResolvedStream(
         media_url=str(media_url),
         title=str(info.get("title") or info.get("webpage_url") or fallback_url),
@@ -330,7 +347,7 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
         provider=str(info.get("extractor") or "").lower(),
         video_id=str(info.get("id") or ""),
         http_headers={str(k): str(v) for k, v in dict(headers).items()},
-        caption=select_caption(info),
+        caption=caption,
         channel_id=str(info.get("channel_id") or info.get("uploader_id") or ""),
         channel_name=str(info.get("channel") or info.get("uploader") or ""),
         upload_date=str(info.get("upload_date") or ""),
