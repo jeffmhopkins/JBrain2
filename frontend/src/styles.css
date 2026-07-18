@@ -16598,6 +16598,173 @@ button.auto-sect[aria-expanded="true"] > svg {
   color: var(--text);
   white-space: pre-wrap;
 }
+
+/* --- task_status: the deferred-tool-call progress card (DEFERRED_TOOL_CALLS_PLAN P3) -- */
+.tv-task {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+.tv-task-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tv-task-icon {
+  display: inline-flex;
+  color: var(--text-2);
+}
+.tv-task-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.tv-task-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+}
+.tv-task-kind {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+.tv-task-pill {
+  margin-left: auto;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: var(--r-pill);
+  color: var(--accent);
+  background: var(--steel-tint);
+}
+.tv-task.state-failed .tv-task-pill {
+  color: var(--danger);
+  background: var(--danger-tint);
+}
+.tv-task.state-canceled .tv-task-pill {
+  color: var(--warn);
+  background: var(--amber-tint);
+}
+/* The progress bar: a determinate fill (width = step/total), or an indeterminate sweep
+   when the phase reports no count ("Opening stream…", "Writing summary…"). */
+.tv-task-bar {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  overflow: hidden;
+}
+.tv-task-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.tv-task-bar.is-indeterminate .tv-task-fill {
+  width: 40%;
+  animation: tv-task-sweep 1.3s ease-in-out infinite;
+}
+@keyframes tv-task-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+.tv-task-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tv-task-phase {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.tv-task-elapsed {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.tv-task-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tv-task-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-caption);
+}
+.tv-task-dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--r-pill);
+  border: 1.5px solid var(--text-3);
+}
+.tv-task-step-label {
+  color: var(--text-3);
+}
+.tv-task-step.is-done .tv-task-dot {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+.tv-task-step.is-done .tv-task-step-label {
+  color: var(--text-2);
+}
+.tv-task-step.is-active .tv-task-dot {
+  border-color: var(--accent);
+  border-right-color: transparent;
+  animation: tv-task-spin 0.7s linear infinite;
+}
+.tv-task-step.is-active .tv-task-step-label {
+  color: var(--text);
+}
+@keyframes tv-task-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.tv-task-stop {
+  align-self: flex-start;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--danger-tint);
+  border: none;
+  border-radius: var(--r-pill);
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.tv-task-stop:disabled {
+  color: var(--text-3);
+  background: var(--surface);
+  cursor: default;
+}
+.tv-task-terminal {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tv-task-bar.is-indeterminate .tv-task-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+  .tv-task-step.is-active .tv-task-dot {
+    animation: none;
+  }
+}
 /* --- trail metric legend (top-left, under the names) -------------------- */
 .lm-legend {
   position: absolute;

@@ -20,6 +20,7 @@ import {
   InteractiveChart,
   type PointFlag,
 } from "../../components/InteractiveChart";
+import { TaskStatus } from "../../components/TaskStatus";
 import { TimeSeriesPlot } from "../../components/TimeSeriesPlot";
 import { VideoAnalysis, type VideoFrame } from "../../components/VideoAnalysis";
 import { serverMetricSeries } from "../../components/serverMetricSeries";
@@ -796,6 +797,25 @@ function VideoAnalysisView({ data }: ViewProps): ReactNode {
       frames={videoFrames(data.frames, thumbUrl)}
       words={transcriptWords(transcript?.words)}
       transcriptText={typeof transcript?.text === "string" ? transcript.text : undefined}
+    />
+  );
+}
+
+/** `{result_id, result_view, title, ...}` — the task_status card for a deferred tool call
+ * (DEFERRED_TOOL_CALLS_PLAN.md P3). It polls the background job's progress and, on
+ * completion, swaps to the result view named by `result_view` (today always
+ * video_analysis — the analyze_stream deferral is the first adopter). The result data the
+ * job stored is the same video_analysis payload the in-turn card gets, so the swap is
+ * seamless. Reusable: a future deferred tool adds a branch for its own result view. */
+function TaskStatusView({ data }: ViewProps): ReactNode {
+  const resultId = typeof data.result_id === "string" ? data.result_id : "";
+  const title = typeof data.title === "string" ? data.title : "Working…";
+  if (!resultId) return null;
+  return (
+    <TaskStatus
+      resultId={resultId}
+      title={title}
+      renderResult={(result) => <VideoAnalysisView data={result} refs={[]} />}
     />
   );
 }
@@ -2130,6 +2150,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   generated_image: GeneratedImage,
   transcript: Transcript,
   video_analysis: VideoAnalysisView,
+  task_status: TaskStatusView,
   server_metrics: ServerMetrics,
   weather_card: WeatherCard,
   hurricane_card: HurricaneCard,
