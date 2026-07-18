@@ -92,37 +92,71 @@ tool is never in a child's allowlist). Every model call and child run charges th
 `TreeState` budget as a normal fan.
 
 ```
-question, breadth ──▶ (1) PLAN ────────────────────────────────────────┐
-                        one LLM call: outline of `breadth` sub-questions │
-                        + the report's section skeleton                  │
+question, breadth ──▶ (0) CLASSIFY ── one cheap LLM call: rate complexity ┐
+                          simple | comparative | deep  → sets the skip     │
+                          matrix below (narrow-only; never widens)         │
+                                                                         ▼
+                      (1) PLAN ────────────────────────────────────────── ┐
+                          one LLM call: outline of `breadth` sub-questions │
+                          + the report's section skeleton                  │
                                                                          ▼
                       (2) GATHER  ── spawn_fan(research × sub-questions) ─┐
-                          each child → cited summary (data boundary)      │
+                          each child → cited summary (data boundary),      │
+                          tiered source-quality corroboration              │
                                                                          ▼
-                      (3) REFLECT ── one LLM call: score coverage of the ─┐
-                          outline from summaries → up to k gap questions  │
+                      (3) REFLECT ── one LLM call: score coverage of the ─┐  ⟵ skipped if
+                          outline from summaries → up to k gap questions  │    simple
                           (empty ⇒ skip refill, go straight to synth)     │
                                                                          ▼
-                      (4) REFILL  ── spawn_fan(research × gaps)  [ROUND 2, │
-                          FINAL — no third round, ever]                    │
+                      (4) REFILL  ── spawn_fan(research × gaps)  [ROUND 2, │  ⟵ skipped if
+                          FINAL — no third round, ever]                    │    simple
                                                                          ▼
                       (5) SYNTHESIZE ── one LLM call: outline-driven ─────┐
                           report from ALL summaries, attribute-at-        │
                           extraction citations ([^n] → WebSource refs)    │
                                                                          ▼
-                      (6) CRITIQUE ── spawn one review child on the draft ┐
-                          ──▶ REVISE: one LLM call folds the critique     │
+                      (6) CRITIQUE ── spawn one review child on the draft ┐  ⟵ skipped if
+                          ──▶ REVISE: one LLM call folds the critique     │    simple/comparative
                           (exactly one pass)                              │
                                                                          ▼
                                           deep_research_report view ──────┘
 ```
 
+**The complexity skip matrix (step 0, borrowed from `kyuz0/deep-research-agent`).** The
+classifier may only ever *narrow* the pipeline — the two-round + critique machine is the
+hard ceiling, and a model that mis-rates high can never exceed it. Candidate default
+(final tiers a build-plan task, Open decision 5):
+
+| Tier | Gather | Reflect + refill | Critique/revise |
+|---|---|---|---|
+| **simple** (single/multi-fact) | 1–2 children | skip | skip |
+| **comparative** (N angles) | `breadth` children | skip | optional |
+| **deep** (synthesis) | `breadth` children | **run** | **run** |
+
+**One call, not two (local-box efficiency).** Step 0 folds into step 1's LLM call — the
+`plan` prompt returns `{complexity, outline}` in one shot — so classification costs no
+extra round-trip on a slow on-box model. They are drawn separately above only to show
+the control flow; a `simple` rating still yields a minimal 1–2-question outline from the
+same call.
+
 **Round accounting.** Rounds 2 (gather) + 4 (refill) are the only child fans. Together
 they obey `MAX_CHILDREN_PER_PARENT` (6) across the whole run — e.g. `breadth=4` gather
 + up to 2 gap children. Round 6 spawns exactly one `review` child. So a full run mints
-at most `6 + 1 = 7` children — well under `MAX_TOTAL_AGENTS_PER_TREE` (12). Steps 1, 3,
-5, and the revise half of 6 are direct jerv-model calls charged to the **root reserve**,
-not children.
+at most `6 + 1 = 7` children — well under `MAX_TOTAL_AGENTS_PER_TREE` (12). Steps 0, 1,
+3, 5, and the revise half of 6 are direct jerv-model calls charged to the **root
+reserve**, not children.
+
+**Tiered source-quality corroboration (step 2, borrowed).** The `research` children
+already corroborate across sources; the borrowed refinement is to make corroboration
+*proportional to source authority* rather than flat — an authoritative source (official
+docs, a spec sheet, a primary record) can stand on its own; a semi-authoritative one
+(an established publication) wants a second; an informal one (a forum, a blog) must be
+corroborated by at least one independent source or flagged uncertain. On a slow local
+box this is a direct budget win — it stops a child burning fetches double-confirming a
+primary source while still forcing corroboration where it matters. It lands as a clause
+in `research.prompt` (version-bumped, CI-guarded) and a mirrored rule in the synthesis
+prompt (an uncorroborated informal claim renders behind the view's **thin-sources**
+flag), not as new machinery.
 
 **Reuse, not reimplementation.** Steps 2 and 4 call the *existing* `spawn_fan` flat-fan
 path; the fed-forward critique in step 6 is exactly a `waves` producer→consumer hop
@@ -205,9 +239,20 @@ markup:
     never sees a raw page. This reference *validates* the choice; nothing to add.
   - **Complexity-scaled delegation** — it assesses query complexity first and scales
     (simple → one searcher; comparative → one per angle; only "deep research" runs the
-    full machine). **Adopt as a front gate** (see Settled decision 6): the plan step may
-    short-circuit the pipeline for a shallow question rather than always paying for two
-    rounds + a critique.
+    full machine). **Adopted** as step 0's classifier + skip matrix (Settled decision 6):
+    the plan step short-circuits the pipeline for a shallow question rather than always
+    paying for two rounds + a critique. Guarded narrow-only — it can never widen past the
+    structural ceiling.
+  - **Tiered source-quality corroboration** — its Searcher corroborates *proportional to
+    source authority* (authoritative → one source suffices; informal → needs a second).
+    **Adopted** as a clause in `research.prompt` + a mirrored synthesis rule (step 2
+    above); a direct fetch-budget win on a slow local box, and it feeds the view's
+    thin-sources flag. JBrain2's `research.prompt` corroborates flatly today; this makes
+    it authority-aware.
+  - **`think_tool` structured-reasoning pause** — a dedicated step that forces the agent
+    to reason before acting. JBrain2's **reflect** step (3) is the orchestration-level
+    analogue (an explicit coverage-scoring call between gather and refill); no per-child
+    think tool is added — the children's native reasoning trace already covers it.
   - **3-tier Orchestrator→Searcher→Analyzer, downward-only** — maps onto jerv (root) +
     the `research` (searcher) and `review` (analyzer) personas; JBrain2's `MAX_DEPTH=1`
     downward-only clamp is the same no-upward-loops shape.
@@ -235,11 +280,18 @@ the `amd-strix-halo-*-toolboxes` and author of `kyuz0/deep-research-agent`.)
 
 ## Testing (per `CLAUDE.md` #5 — 80% backend, security 100%, real Postgres, LLM faked)
 
-- **State machine (adapter fake, deterministic):** plan → gather → reflect → refill →
-  synthesize → critique → revise sequences in order; an **empty gap list skips refill**;
-  the **second round is the last** (a scripted third-round attempt is impossible by
-  construction, asserted); a critique with no findings still runs exactly one (no-op)
-  revise or skips it deterministically.
+- **State machine (adapter fake, deterministic):** classify → plan → gather → reflect →
+  refill → synthesize → critique → revise sequences in order; an **empty gap list skips
+  refill**; the **second round is the last** (a scripted third-round attempt is
+  impossible by construction, asserted); a critique with no findings still runs exactly
+  one (no-op) revise or skips it deterministically.
+- **Complexity gate (narrow-only):** a `simple` rating skips reflect+refill+critique; a
+  `comparative` rating skips reflect+refill; a classifier output that tries to *widen*
+  past the ceiling (e.g. "run three rounds") is clamped to the structural max — proven
+  with a scripted mis-rating that cannot exceed two rounds or `MAX_CHILDREN_PER_PARENT`.
+- **Tiered corroboration:** the source-quality clause is present + version-pinned in
+  `research.prompt`; a synthesized informal claim with no second source renders behind
+  the view's thin-sources flag (fixture-driven).
 - **Reuse boundaries:** gather/refill go through `spawn_fan` unchanged; the critique
   hop composes an escaped feed block; the flat-fan `tasks` path is byte-unchanged
   (characterization test).
@@ -262,15 +314,19 @@ CI green before merge. GUI wave through the mock gate.
 
 - **Wave D1 — Plan + synthesize spine (backend).** The `deep_research.py` service, the
   `deep_research` `.tool` sidecar + never-default registry exclusion, the `plan` and
-  `synthesize` `.prompt` files, and the single-round path (plan → gather via `spawn_fan`
+  `synthesize` `.prompt` files (the synthesize prompt carries the mirrored
+  source-quality rule), the **tiered source-quality clause** added to `research.prompt`
+  (version-bumped, CI-guarded), and the single-round path (plan → gather via `spawn_fan`
   → synthesize). Report returned as **text** first (no view yet) so the spine is
   testable end-to-end. Retune `tree.py` budget for a deep-research root (two big root
   calls in the reserve). Full state-machine + reuse-boundary + security tests.
-- **Wave D2 — Reflect + refill round + critique/revise (backend; red-team gated).** The
-  `reflect` `.prompt` + gap-eval call, the **one** bounded refill fan (`MAX_RESEARCH_ROUNDS
-  = 2`), two-fan admission, and the `review`-fed critique + one revision pass. The
-  load-bearing "bounded loop, not open loop" wave — every cap gets a zero-model-cooperation
-  test.
+- **Wave D2 — Complexity gate + reflect + refill round + critique/revise (backend;
+  red-team gated).** The step-0 **complexity classifier + narrow-only skip matrix**
+  (from `kyuz0/deep-research-agent`), the `reflect` `.prompt` + gap-eval call, the
+  **one** bounded refill fan (`MAX_RESEARCH_ROUNDS = 2`), two-fan admission, and the
+  `review`-fed critique + one revision pass. The load-bearing "bounded loop, not open
+  loop" wave — every cap, and the classifier's narrow-only clamp, gets a
+  zero-model-cooperation test.
 - **Wave D3 — `deep_research_report` tool-view (GUI; mock gate).** The registered view
   (outline layout, citation cards, provenance strip), the non-happy states, and the
   live-progress accordion reuse. `DESIGN.md` registry entry in the same PR. jerv.prompt
