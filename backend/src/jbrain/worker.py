@@ -27,7 +27,8 @@ from jbrain.analysis.reembed import REEMBED_SPEC, reembed_handler
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC, tag_consolidate_handler
 from jbrain.config import get_settings
 from jbrain.db.session import ScopeStampError, SessionContext, narrowed_context
-from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
+from jbrain.embed import ExternalSourceEmbedder, NoteEmbedder, PredicateEmbedder, TeiEmbedClient
+from jbrain.external.corpus import EMBED_EXTERNAL_SOURCE_SPEC
 from jbrain.gmail.provider import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC, triage_inbox_handler
 from jbrain.ingest import ocr
@@ -444,6 +445,9 @@ async def run() -> None:
     predicate_embedder = PredicateEmbedder(
         maker, TeiEmbedClient(settings.embed_url), settings.embed_model
     )
+    external_embedder = ExternalSourceEmbedder(
+        maker, TeiEmbedClient(settings.embed_url), settings.embed_model
+    )
     # Live per-task routing/reasoning overrides apply to worker LLM calls too,
     # so the settings screen governs background analysis without a restart.
     worker_settings_store = SqlSettingsStore(maker)
@@ -481,6 +485,7 @@ async def run() -> None:
     impls: dict[str, Handler] = {
         "ingest_note": pipeline.ingest_note,
         "embed_note": embedder.embed_note,
+        "embed_external_source": external_embedder.embed_external_source,
         "integrate_note": analyzer.integrate_note,
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
@@ -627,6 +632,7 @@ async def run() -> None:
             TRANSCRIBE_ATTACHMENT_SPEC,
             VIDEO_ANALYSIS_SPEC,
             ANALYZE_STREAM_URL_SPEC,
+            EMBED_EXTERNAL_SOURCE_SPEC,
             ENTITY_HYGIENE_SPEC,
             REEMBED_SPEC,
             TAG_CONSOLIDATE_SPEC,

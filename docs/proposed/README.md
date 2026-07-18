@@ -35,4 +35,5 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
-shipped and now live in `../archive/`.)_
+shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md` was promoted to
+`../plans/` and is in progress.)_

@@ -105,6 +105,74 @@ class NoteEmbedder:
         log.info("embed.done", note_id=note_id, chunks=len(rows))
 
 
+class ExternalSourceEmbedder:
+    """The embed_external_source job: fill NULL embeddings for one external-source video.
+
+    Two independent per-row fills, both re-checking NULL so a concurrent re-ingest can at
+    worst no-op a row (mirroring embed_note): the passage chunks in external_source_chunks,
+    and the single source-level summary vector on external_sources. The payload carries only
+    the source id (chunk ids are not stable across re-analysis)."""
+
+    def __init__(self, maker: async_sessionmaker[AsyncSession], client: EmbedClient, model: str):
+        self._maker = maker
+        self._client = client
+        self._model = model
+
+    async def embed_external_source(self, payload: dict[str, Any]) -> None:
+        source_id = str(payload["source_id"])
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            chunks = (
+                await session.execute(
+                    text(
+                        "SELECT id, text FROM app.external_source_chunks"
+                        " WHERE source_id = :sid AND embedding IS NULL ORDER BY seq"
+                    ),
+                    {"sid": source_id},
+                )
+            ).all()
+            summary_row = (
+                await session.execute(
+                    text(
+                        "SELECT summary FROM app.external_sources"
+                        " WHERE id = :sid AND summary_embedding IS NULL AND summary IS NOT NULL"
+                    ),
+                    {"sid": source_id},
+                )
+            ).first()
+
+        if chunks:
+            vectors = await self._client.embed([r.text for r in chunks])
+            async with scoped_session(self._maker, SYSTEM_CTX) as session:
+                await session.execute(
+                    text(
+                        "UPDATE app.external_source_chunks"
+                        " SET embedding = cast(:emb AS vector), embedding_model = :model"
+                        " WHERE id = :id AND embedding IS NULL"
+                    ),
+                    [
+                        {"id": str(row.id), "emb": vector_literal(vec), "model": self._model}
+                        for row, vec in zip(chunks, vectors, strict=True)
+                    ],
+                )
+        if summary_row is not None:
+            (summary_vec,) = await self._client.embed([summary_row.summary])
+            async with scoped_session(self._maker, SYSTEM_CTX) as session:
+                await session.execute(
+                    text(
+                        "UPDATE app.external_sources"
+                        " SET summary_embedding = cast(:emb AS vector), embedding_model = :model"
+                        " WHERE id = :sid AND summary_embedding IS NULL"
+                    ),
+                    {"sid": source_id, "emb": vector_literal(summary_vec), "model": self._model},
+                )
+        log.info(
+            "embed.external_source.done",
+            source_id=source_id,
+            chunks=len(chunks),
+            summary=summary_row is not None,
+        )
+
+
 class PredicateEmbedder:
     """The sync_predicates job: keep the canonical_predicates index in step with
     the live schema registry (predicate canonicalization Phase 2). Upserts a row

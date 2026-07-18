@@ -14,3 +14,4 @@ surface changes.
 | `LOCAL_ACCESS.md` | Signing in on the LAN when the internet/tunnel is down: mDNS `<name>.local` + Caddy local HTTPS. |
 | `DEBUG_ACCESS.md` | The owner debug console: a revocable, time-boxed `capability_token` for external assistant iteration. Off by default. |
 | `DEBUG_ACCESS_SESSION_GUIDE.md` | Assistant-facing runbook for the debug console: requesting a token and driving the box via `scripts/debug-connect.sh`. |
+| `EXTERNAL_VIDEO_WATCH.md` | Auto-ingesting a YouTube channel's new videos into the search corpus via a recurring Jerv Task (`check_channel` → `analyze_stream` → `search_external`). |
