@@ -45,8 +45,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX external_source_chunks_tsv_idx"
-        " ON app.external_source_chunks USING GIN (tsv)"
+        "CREATE INDEX external_source_chunks_tsv_idx ON app.external_source_chunks USING GIN (tsv)"
     )
     op.execute(
         "CREATE INDEX external_source_chunks_embedding_idx"

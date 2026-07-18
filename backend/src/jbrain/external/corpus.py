@@ -139,10 +139,7 @@ async def persist_analysis(
                     "INSERT INTO app.external_source_chunks (source_id, seq, t_ms, text)"
                     " VALUES (:sid, :seq, :t_ms, :text)"
                 ),
-                [
-                    {"sid": source_id, "seq": w.seq, "t_ms": w.t_ms, "text": w.text}
-                    for w in windows
-                ],
+                [{"sid": source_id, "seq": w.seq, "t_ms": w.t_ms, "text": w.text} for w in windows],
             )
 
     await enqueue(maker, SYSTEM_CTX, KIND_EMBED_EXTERNAL_SOURCE, {"source_id": source_id})
@@ -278,22 +275,16 @@ async def search_corpus(
         return ranking
 
     async with scoped_session(maker, ctx) as session:
-        fts = (
-            await session.execute(text(_CHUNK_FTS_SQL), {"q": query, "limit": _LEG_LIMIT})
-        ).all()
+        fts = (await session.execute(text(_CHUNK_FTS_SQL), {"q": query, "limit": _LEG_LIMIT})).all()
         rankings.append(ingest_rows(fts, is_chunk=True))
         if qvec is not None:
             vec = vector_literal(qvec)
             dense = (
-                await session.execute(
-                    text(_CHUNK_DENSE_SQL), {"qvec": vec, "limit": _LEG_LIMIT}
-                )
+                await session.execute(text(_CHUNK_DENSE_SQL), {"qvec": vec, "limit": _LEG_LIMIT})
             ).all()
             rankings.append(ingest_rows(dense, is_chunk=True))
             summ = (
-                await session.execute(
-                    text(_SUMMARY_DENSE_SQL), {"qvec": vec, "limit": _LEG_LIMIT}
-                )
+                await session.execute(text(_SUMMARY_DENSE_SQL), {"qvec": vec, "limit": _LEG_LIMIT})
             ).all()
             # Summary hits are a coarse fallback: only add a source the passage legs missed
             # (never overwrite a chunk hit's precise t_ms + passage).

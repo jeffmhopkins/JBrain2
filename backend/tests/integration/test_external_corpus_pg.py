@@ -89,22 +89,14 @@ async def test_external_sources_domain_firewall(maker) -> None:  # noqa: F811
 
     async with scoped_session(maker, GENERAL_ONLY) as s:
         assert (
-            await s.execute(
-                text("SELECT domain_code FROM app.external_sources ORDER BY 1")
-            )
+            await s.execute(text("SELECT domain_code FROM app.external_sources ORDER BY 1"))
         ).scalars().all() == ["general"]
     async with scoped_session(maker, HEALTH_ONLY) as s:
-        assert (
-            await s.execute(text("SELECT count(*) FROM app.external_sources"))
-        ).scalar() == 1
+        assert (await s.execute(text("SELECT count(*) FROM app.external_sources"))).scalar() == 1
     async with scoped_session(maker, UNSCOPED) as s:
-        assert (
-            await s.execute(text("SELECT count(*) FROM app.external_sources"))
-        ).scalar() == 0
+        assert (await s.execute(text("SELECT count(*) FROM app.external_sources"))).scalar() == 0
     async with scoped_session(maker, OWNER) as s:
-        assert (
-            await s.execute(text("SELECT count(*) FROM app.external_sources"))
-        ).scalar() == 2
+        assert (await s.execute(text("SELECT count(*) FROM app.external_sources"))).scalar() == 2
     # A general-scoped writer cannot smuggle a health row past WITH CHECK.
     with pytest.raises(ProgrammingError):
         async with scoped_session(maker, GENERAL_ONLY) as s:
@@ -132,9 +124,7 @@ async def test_external_source_chunks_domain_firewall(maker) -> None:  # noqa: F
 
     async with scoped_session(maker, GENERAL_ONLY) as s:
         assert (
-            await s.execute(
-                text("SELECT domain_code FROM app.external_source_chunks")
-            )
+            await s.execute(text("SELECT domain_code FROM app.external_source_chunks"))
         ).scalars().all() == ["general"]
     async with scoped_session(maker, UNSCOPED) as s:
         assert (
