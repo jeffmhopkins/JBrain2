@@ -44,7 +44,7 @@ from jbrain.llm import LlmImage
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.types import DEFAULT_MAX_TOKENS, UserMessage
+from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, UserMessage
 from jbrain.models.notes import Attachment
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
@@ -251,6 +251,11 @@ class ToolProbeRequest(BaseModel):
     # Registry tool NAMES to attach as schemas. Empty = no tools (a control run). Unknown
     # names 400 so a typo is obvious rather than silently probing the wrong set.
     tools: list[str] = Field(default_factory=list)
+    # Inline tool schemas, appended after the registry ones. Each is {name, description,
+    # input_schema}. This is the bisect knob: send a MUTATED copy of a real tool's schema
+    # (strip a field, drop an enum, replace fancy punctuation) to find which construct the
+    # gateway's tool-grammar builder chokes on — impossible with registry names alone.
+    raw_tools: list[dict[str, Any]] = Field(default_factory=list)
     max_tokens: int = Field(default=2048, ge=1, le=32768)
 
 
@@ -279,6 +284,20 @@ async def tool_probe(body: ToolProbeRequest, request: Request, _p: DebugDep) -> 
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown tools: {unknown}")
     llm_tools = [registry.get(name).as_llm_tool() for name in body.tools]
+    try:
+        llm_tools += [
+            LlmTool(
+                name=rt["name"],
+                description=rt.get("description", ""),
+                input_schema=rt.get("input_schema", {"type": "object", "properties": {}}),
+            )
+            for rt in body.raw_tools
+        ]
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"raw_tools need a 'name' (and optional description/input_schema): {exc}",
+        ) from exc
     router_ = _llm_router(request)
     provider, model = await router_.effective_spec(body.task, body.strength)
     log.info(
