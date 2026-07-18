@@ -50,8 +50,10 @@ link), and jerv can search *what was said and shown* across the corpus, cited ba
   length + publish date (the `search_external` -> `read_external_source` = `web_search` -> `web_fetch`
   pattern); and **`show_external_source`**, which rebuilds the **`video_analysis` card** (embed + frame
   timeline + tabs) from stored corpus rows so jerv can SHOW a library video, reusing the frontend
-  component verbatim (Phase-1 fidelity: frames render as caption markers, transcript is window-level —
-  stored thumbnails are blob refs and no word-level cues are kept; full fidelity is a follow-on).
+  component verbatim — **full fidelity**: frame thumbnails are re-inlined from the persisted blobs
+  (best-effort; a purged blob degrades to a marker), and the word/cue-level transcript is stored
+  (0135) to drive the synced-transcript tab. Only videos analysed *before* 0135 render text-only
+  (no backfill — the fine timing wasn't kept); re-analysing upgrades them.
 - **B:** the **`check_channel`** tool (list uploads via yt-dlp `extract_flat`, filter by title, dedup against
   the corpus, return new video links).
 - **C:** a recurring **Jerv Task** that calls `check_channel` for the owner's channels and `analyze_stream`

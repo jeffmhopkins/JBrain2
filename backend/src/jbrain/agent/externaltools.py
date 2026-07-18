@@ -124,8 +124,14 @@ def _card_data(t: ExternalTranscript, frames: list[dict]) -> dict:
     """The `video_analysis` card `data` for a library video — the same shape the live
     analyze_stream card uses (build_stream_view_data), rebuilt from stored corpus rows so the
     frontend renders the identical component. `frames` are pre-resolved (with inline thumbnails
-    when the blobs survive); the transcript is the window passages joined (no word-level cues)."""
-    text = "\n".join(passage for _, passage in t.windows)
+    when the blobs survive). The transcript is the stored word/cue-level `{text, words}` when it
+    was captured (0135) — driving the card's synced tab — else the window passages as plain text
+    (videos analysed before that column render text-only)."""
+    if t.cued_transcript:
+        transcript: dict | None = t.cued_transcript
+    else:
+        text = "\n".join(passage for _, passage in t.windows)
+        transcript = {"text": text} if text else None
     return {
         "source": "stream",
         "media": "video",
@@ -138,7 +144,7 @@ def _card_data(t: ExternalTranscript, frames: list[dict]) -> dict:
         "summary": t.summary,
         "duration_ms": t.duration_ms,
         "frames": frames,
-        "transcript": {"text": text} if text else None,
+        "transcript": transcript,
         "transcript_source": t.transcript_source,
     }
 

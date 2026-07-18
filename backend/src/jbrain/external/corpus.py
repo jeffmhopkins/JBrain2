@@ -97,6 +97,11 @@ async def persist_analysis(
         "summary": result.summary or None,
         "transcript_source": _transcript_source_label(transcript_source, resolved),
         "frames": json.dumps(frames),
+        # The full {text, words:[{text, start_ms, end_ms}]} for the card's synced-transcript tab
+        # (search still uses the windowed chunks). NULL when the analysis had no transcript.
+        "transcript": json.dumps(analysis.get("transcript"))
+        if analysis.get("transcript")
+        else None,
         "tool": result.tool,
         "origin": origin,
     }
@@ -107,17 +112,19 @@ async def persist_analysis(
                 text(
                     "INSERT INTO app.external_sources"
                     " (provider, video_id, url, title, channel_id, channel_name, published_at,"
-                    "  duration_s, duration_ms, summary, transcript_source, frames, tool, origin,"
-                    "  status, analyzed_at)"
+                    "  duration_s, duration_ms, summary, transcript_source, frames, transcript,"
+                    "  tool, origin, status, analyzed_at)"
                     " VALUES (:provider, :video_id, :url, :title, :channel_id, :channel_name,"
                     "  :published_at, :duration_s, :duration_ms, :summary, :transcript_source,"
-                    "  cast(:frames AS jsonb), :tool, :origin, 'done', now())"
+                    "  cast(:frames AS jsonb), cast(:transcript AS jsonb),"
+                    "  :tool, :origin, 'done', now())"
                     " ON CONFLICT (provider, video_id) DO UPDATE SET"
                     "  url = EXCLUDED.url, title = EXCLUDED.title,"
                     "  channel_id = EXCLUDED.channel_id, channel_name = EXCLUDED.channel_name,"
                     "  published_at = EXCLUDED.published_at, duration_s = EXCLUDED.duration_s,"
                     "  duration_ms = EXCLUDED.duration_ms, summary = EXCLUDED.summary,"
                     "  transcript_source = EXCLUDED.transcript_source, frames = EXCLUDED.frames,"
+                    "  transcript = EXCLUDED.transcript,"
                     "  tool = EXCLUDED.tool, status = 'done', last_error = NULL,"
                     "  analyzed_at = now(),"
                     "  summary_embedding = NULL, embedding_model = NULL"
@@ -203,6 +210,9 @@ class ExternalTranscript:
     provider: str = ""
     duration_ms: int | None = None
     frames: list[dict] = field(default_factory=list)  # stored {t_ms, caption, thumb_id}
+    # The word/cue-level transcript {text, words:[{text, start_ms, end_ms}]} for the card's
+    # synced tab, or None when the source was analysed before it was stored (0135).
+    cued_transcript: dict | None = None
 
 
 async def fetch_transcript(
@@ -221,7 +231,8 @@ async def fetch_transcript(
             await session.execute(
                 text(
                     "SELECT id, title, channel_name, url, transcript_source, summary,"
-                    " duration_s, published_at, video_id, provider, duration_ms, frames"
+                    " duration_s, published_at, video_id, provider, duration_ms, frames,"
+                    " transcript"
                     " FROM app.external_sources WHERE video_id = :vid"
                     " ORDER BY analyzed_at DESC NULLS LAST LIMIT 1"
                 ),
@@ -253,6 +264,7 @@ async def fetch_transcript(
         provider=row.provider or "",
         duration_ms=int(row.duration_ms) if row.duration_ms is not None else None,
         frames=list(row.frames or []),
+        cued_transcript=row.transcript if isinstance(row.transcript, dict) else None,
     )
 
 

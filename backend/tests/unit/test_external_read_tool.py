@@ -143,6 +143,60 @@ async def test_show_emits_the_video_analysis_card(monkeypatch) -> None:
     assert 'Showing "Starship Recap" — NSF.' in out  # the brief spoken line
 
 
+async def test_show_uses_stored_cued_transcript_for_the_synced_tab(monkeypatch) -> None:
+    # When the word/cue-level transcript was stored (0135), the card gets it verbatim (words +
+    # text) so the transcript tab syncs; otherwise (the other show tests) it falls back to plain
+    # window text.
+    cued = {
+        "text": "Booster to the pad.",
+        "words": [
+            {"text": "Booster", "start_ms": 6000, "end_ms": 6400},
+            {"text": "to", "start_ms": 6400, "end_ms": 6500},
+        ],
+    }
+    t = ExternalTranscript(
+        "s7",
+        "T",
+        "",
+        "https://youtu.be/x",
+        "whisper",
+        "s",
+        100,
+        None,
+        [(0, "window text")],
+        video_id="x",
+        provider="youtube",
+        duration_ms=100_000,
+        frames=[],
+        cued_transcript=cued,
+    )
+    out = await _run_show(monkeypatch, t, {"url": "https://youtu.be/x"})
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["transcript"] == cued  # the stored words drive the synced tab
+    assert out.view.data["transcript"]["words"][0]["text"] == "Booster"
+
+
+async def test_show_falls_back_to_window_text_without_cues(monkeypatch) -> None:
+    t = ExternalTranscript(
+        "s8",
+        "T",
+        "",
+        "https://youtu.be/x",
+        "captions:only",
+        "s",
+        100,
+        None,
+        [(0, "line one"), (5000, "line two")],
+        video_id="x",
+        provider="youtube",
+        duration_ms=100_000,
+        frames=[],
+    )
+    out = await _run_show(monkeypatch, t, {"url": "https://youtu.be/x"})
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["transcript"] == {"text": "line one\nline two"}  # plain fallback
+
+
 async def test_show_non_youtube_has_no_embed_id(monkeypatch) -> None:
     t = ExternalTranscript(
         "s2",
