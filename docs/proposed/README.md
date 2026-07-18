@@ -15,12 +15,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
-- `DEEP_RESEARCH_TOOL_PLAN.md` — a dedicated `deep_research` tool: turns one question
-  into a structured, cited report by orchestrating jerv's web-sandboxed sub-agent fan
-  across a bounded plan → gather → reflect → one-refill → synthesize → critique/revise
-  state machine. Web-scoped (rides jerv's sandbox), the honest generalization of
-  feeding waves; net-new is one tool + service + three prompts + a `deep_research_report`
-  tool-view. Waves D1 (spine) / D2 (refill round + critique) / D3 (view + steering).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
@@ -41,5 +35,5 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
-shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md` was promoted to
-`../plans/` and is in progress.)_
+shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md` and
+`DEEP_RESEARCH_TOOL_PLAN.md` were promoted to `../plans/` and are in progress.)_

@@ -50,6 +50,13 @@ WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 # wildcard can never absorb it (review B3).
 SPAWN_TOOL = "spawn_subagent"
 
+# The deep-research primitive (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md): jerv's one-call
+# bounded plan→gather→reflect→refill→synthesize→critique run over the web-sandboxed fan.
+# Like `spawn_subagent` it is `web`-gated and NEVER_DEFAULT, so curator's `tools=None`
+# wildcard can never absorb it; only jerv holds it, and a child never does (a child is a
+# leaf — the tool refuses at depth > 0).
+DEEP_RESEARCH_TOOL = "deep_research"
+
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather (forecast + history) + hurricane
 # lookups, the local
@@ -95,6 +102,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "query_server_metrics",
         # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,
+        # The deep-research primitive — jerv orchestrates a bounded research run over the
+        # same fan (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
+        DEEP_RESEARCH_TOOL,
     }
 )
 

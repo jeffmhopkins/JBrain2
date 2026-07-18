@@ -1,6 +1,17 @@
-# Deep Research Tool — Proposal
+# Deep Research Tool — Build Plan
 
-> **Status:** Proposed · **Last verified:** 2026-07-18
+> **Status:** In progress · **Last verified:** 2026-07-18 · **Waves:** D1✅ D2✅ D3◻️
+
+**Implementation status.** The **backend spine (D1) and orchestration (D2) are
+implemented on `claude/deep-research-tool-design-eaaxau`** — `agent/deep_research.py`
+(the state machine), the `deep_research` `.tool` sidecar (jerv-only + `NEVER_DEFAULT`),
+the plan/reflect/synthesize prompts, the source-quality clause on `research.prompt`
+(v7→v8), the `SpawnService.run_research_fan` fan runner, the `MAX_RESEARCH_ROUNDS`
+bound, and the jerv-registry wiring, with a full adapter-fake unit suite
+(`tests/unit/test_deep_research.py`) green. It returns the report as **structured text**
+(the view is D3). **Wave D3 — the `deep_research_report` tool-view + jerv.prompt
+steering — is not built** (it goes through the DESIGN.md mock gate). The formal
+per-wave adversarial reviews of PROCESS.md still apply before merge.
 
 A **dedicated `deep_research` tool** that turns a single research question into a
 structured, cited report by orchestrating jerv's existing web-sandboxed sub-agent
@@ -312,22 +323,31 @@ Each wave: parallel-task worktrees off a `wave-Dn` branch, per-task **and** wave
 adversarial review (security/red-team for any boundary/budget/sandbox surface), one PR,
 CI green before merge. GUI wave through the mock gate.
 
-- **Wave D1 — Plan + synthesize spine (backend).** The `deep_research.py` service, the
-  `deep_research` `.tool` sidecar + never-default registry exclusion, the `plan` and
-  `synthesize` `.prompt` files (the synthesize prompt carries the mirrored
+- **Wave D1 — Plan + synthesize spine (backend). ✅ LANDED (this branch).** The
+  `deep_research.py` service, the `deep_research` `.tool` sidecar + never-default
+  registry exclusion (`toolregistry.NEVER_DEFAULT`), the `deep_research_plan` and
+  `deep_research_synthesize` `.prompt` files (the synthesize prompt carries the mirrored
   source-quality rule), the **tiered source-quality clause** added to `research.prompt`
-  (version-bumped, CI-guarded), and the single-round path (plan → gather via `spawn_fan`
-  → synthesize). Report returned as **text** first (no view yet) so the spine is
-  testable end-to-end. Retune `tree.py` budget for a deep-research root (two big root
-  calls in the reserve). Full state-machine + reuse-boundary + security tests.
+  (v7→v8, CI-guarded + hash-pinned), the `SpawnService.run_research_fan` structured fan
+  runner (extracted `_execute_fan` core, shared with the flat fan), and the plan → gather
+  → synthesize path. Report returned as **text** (no view yet). Full state-machine +
+  reuse-boundary + security unit tests (`test_deep_research.py`). **Deviation from the
+  plan:** the `tree.py` budget was **not** retuned — the run reuses the existing tree
+  pool + 25% root reserve (Open decision 3's "reuse", not the recommended dedicated
+  multiplier); revisit if on-box synthesis+revise starves.
 - **Wave D2 — Complexity gate + reflect + refill round + critique/revise (backend;
-  red-team gated).** The step-0 **complexity classifier + narrow-only skip matrix**
-  (from `kyuz0/deep-research-agent`), the `reflect` `.prompt` + gap-eval call, the
-  **one** bounded refill fan (`MAX_RESEARCH_ROUNDS = 2`), two-fan admission, and the
-  `review`-fed critique + one revision pass. The load-bearing "bounded loop, not open
-  loop" wave — every cap, and the classifier's narrow-only clamp, gets a
-  zero-model-cooperation test.
-- **Wave D3 — `deep_research_report` tool-view (GUI; mock gate).** The registered view
+  red-team gated). ✅ LANDED (this branch).** The step-0 **complexity classifier +
+  narrow-only skip matrix** (folded into the plan call), the `deep_research_reflect`
+  `.prompt` + gap-eval call, the **one** bounded refill fan (`MAX_RESEARCH_ROUNDS = 2`
+  in `tree.py`), per-round admission via `run_research_fan` (a refused refill →
+  coverage-limited, not a crash), and the `review`-fed critique (escaped
+  `compose_feed_block`) + one revision pass. Every cap and the classifier's narrow-only
+  clamp has a zero-model-cooperation test. **Deviation:** no tree-wide wall-clock
+  deadline is set (the flat fans don't consult `TREE_WALL_CLOCK_S`); a two-round + critique
+  run is bounded by per-child caps × serial rounds, so the in-turn-vs-deferred question
+  (Open decision 2) stays open pending on-box timing.
+- **Wave D3 — `deep_research_report` tool-view (GUI; mock gate). ◻️ NOT STARTED.**
+  The registered view
   (outline layout, citation cards, provenance strip), the non-happy states, and the
   live-progress accordion reuse. `DESIGN.md` registry entry in the same PR. jerv.prompt
   steering (when to reach for `deep_research` vs. a plain fan vs. searching itself).

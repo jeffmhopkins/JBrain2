@@ -752,6 +752,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "search_external",
         # check_channel is `web`-classed (jerv-only): lists a channel's new uploads.
         "check_channel",
+        # deep_research is `web`-classed + NEVER_DEFAULT: jerv's bounded research run
+        # over the fan, never offered to the curator wildcard.
+        "deep_research",
     }
     shipped = {
         "search",
@@ -1183,6 +1186,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "check_channel",
             1,
             "4cbeee5e1cb151d0fba1a8274aa52e9dbf7e1359db96f14d5ec42a888ac83398",
+        ),
+        "deep_research.tool": (
+            "deep_research",
+            1,
+            "f863673a960702d1c794b35d8b5a18139c487dd3d1d0169d9c7d2528e4a85819",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
