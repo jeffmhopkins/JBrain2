@@ -849,8 +849,10 @@ function webSearch() { const n = 3 + ((Math.random()*3)|0); for (let i = 0; i < 
 function webFetch() { spawnTendril('fetch'); }
 
 function seedCascadeAt(anchor, strength) {
-  const branchK = Math.max(4, clamp(Math.round(eased.fire*10), 1, 10));
-  const maxHops = Math.max(8, clamp(Math.round(eased.fire*20), 2, 20));
+  // event cascades (prompt/answer/tendril arrivals) are chains too — a touch wider (3)
+  // and reliably long, so an arrival reads as a strong travelling strand, not a burst
+  const branchK = 3;
+  const maxHops = clamp(16 + Math.round(eased.fire*16), 16, 32);
   spawnFlood(anchor, 5, strength, branchK, maxHops, curDensity());
 }
 
@@ -1320,6 +1322,10 @@ function spawnPopup(text, kind) {         // kind: 'answer' (default) | 'prompt'
    tokens/sec drive how fast each front propagates.
    ========================================================================== */
 const MAX_FLOODS = 16;
+// How many ambient (load-driven) chains may run at once. Well below the pool size
+// (which keeps headroom for event/tendril cascades), so a GPU spike reads as a few
+// long chains rather than a dense cloud of simultaneous fronts.
+const MAX_CHAINS = 6;
 const floodPool = [];
 for (let i = 0; i < MAX_FLOODS; i++) {
   floodPool.push({ active: false, order: new Int32Array(NEURONS),
@@ -1421,7 +1427,7 @@ function updateFloods(dt) {
 // kept name for existing call sites: a burst/manual trigger = one strong, fast
 // flood from a random neuron
 function launchWave(speedHint) {
-  spawnFlood((Math.random() * NEURONS) | 0, 6.5, 1.2, 8, 16, clamp(eased.vram, 0.1, 1));
+  spawnFlood((Math.random() * NEURONS) | 0, 6.5, 1.2, 3, 28, clamp(eased.vram, 0.1, 1));
 }
 
 /* ============================================================================
@@ -1908,15 +1914,18 @@ function frame() {
   let activeCount = 0;
   for (const f of floodPool) if (f.active) activeCount++;
   // squared response keeps low activation very calm, then ramps up smoothly
-  const desired = drive * drive * MAX_FLOODS;
+  const desired = drive * drive * MAX_CHAINS;
   let toSpawn = Math.max(0, Math.round(desired) - activeCount);
   // a rare lone ripple when essentially idle, so it never looks fully dead
   idleAcc += dt * 0.18;
   if (idleAcc >= 1) { idleAcc -= 1; if (desired < 1) toSpawn = Math.max(toSpawn, 1); }
-  toSpawn = Math.min(toSpawn, 2);                            // cap/frame -> no visible burst
-  // GPU util sets how each cascade ROUTES: wavefront width 1..10 and depth 2..20 hops
-  const branchK = clamp(Math.round(eased.fire * 10), 1, 10);
-  const maxHops = clamp(Math.round(eased.fire * 20), 2, 20);
+  toSpawn = Math.min(toSpawn, 1);                            // one new chain/frame -> no burst
+  // Chains, not clouds: hold the wavefront to a near-single strand (width 2) so each
+  // cascade travels as a long chain through the graph. GPU util drives chain LENGTH,
+  // never width — a spike LENGTHENS the chains (up to 34 hops) instead of fanning
+  // them into a spreading blob.
+  const branchK = 2;
+  const maxHops = clamp(10 + Math.round(eased.fire * 24), 10, 34);
   for (let s = 0; s < toSpawn; s++) {
     const thinking = stats.llm.active && coreNodes.length;
     let seed = (thinking && Math.random() < 0.6)
