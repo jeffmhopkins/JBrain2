@@ -719,6 +719,41 @@ def test_tool_probe_surfaces_gateway_crash(debug_client: tuple[TestClient, str])
     assert body["tool_calls"] == []
 
 
+def test_tool_probe_accepts_inline_raw_schema(debug_client: tuple[TestClient, str]) -> None:
+    # Inline raw_tools let a probe send a MUTATED copy of a real schema (no registry name) to
+    # bisect which construct crashes the gateway grammar builder. They append to any named tools.
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/tool-probe",
+        headers=_auth(key),
+        json={
+            "user_text": "use it",
+            "raw_tools": [
+                {
+                    "name": "mutant",
+                    "description": "a hand-built schema",
+                    "input_schema": {"type": "object", "properties": {"x": {"type": "string"}}},
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tool_count"] == 1
+    assert body["tool_calls"][0]["name"] == "mutant"
+
+
+def test_tool_probe_rejects_raw_schema_without_name(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/tool-probe",
+        headers=_auth(key),
+        json={"user_text": "x", "raw_tools": [{"description": "no name"}]},
+    )
+    assert resp.status_code == 400
+    assert "name" in resp.json()["detail"]
+
+
 def test_tool_probe_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.post("/api/debug/tool-probe", json={"user_text": "x"}).status_code == 401

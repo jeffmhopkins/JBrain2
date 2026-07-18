@@ -106,6 +106,11 @@ scripts/debug-connect.sh tool-probe --task agent.turn --tools web_search,search 
 scripts/debug-connect.sh tool-probe --task agent.turn \
   --tools web_search,web_fetch,current_time,weather,search_external,check_channel "use a tool"
 
+# Bisect WHICH schema construct crashes the grammar builder: send an INLINE mutated schema
+# (a JSON file of [{name,description,input_schema}, ...]) — no registry name needed — and vary
+# one thing at a time (strip a field, drop an enum, swap fancy punctuation for ASCII), re-probe.
+scripts/debug-connect.sh tool-probe --task agent.turn --raw-tools-file /tmp/mutant.json "use a tool"
+
 # Read-only SQL (full read; runs in a READ ONLY transaction — writes are rejected).
 scripts/debug-connect.sh sql "select code, name from app.domains order by code"
 
