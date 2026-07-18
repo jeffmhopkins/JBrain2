@@ -754,6 +754,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "read_external_video",
         # show_external_video is `web`-classed (jerv-only): the video-analysis card from corpus.
         "show_external_video",
+        # remove_external_video is `web`-classed (jerv-only): stages an owner-approved removal.
+        "remove_external_video",
         # check_channel is `web`-classed (jerv-only): lists a channel's new uploads.
         "check_channel",
         # deep_research is `web`-classed + NEVER_DEFAULT: jerv's bounded research run
@@ -1195,6 +1197,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "show_external_video",
             1,
             "5c5cc42b9573683f5fad58fb0ecf10d91a4778ca46d184d7c0060a4cfaa28571",
+        ),
+        "remove_external_video.tool": (
+            "remove_external_video",
+            1,
+            "05c37cc6bec361537c5699ff07e276e399b72103c7514a8392863b3dda0fdbbf",
         ),
         "check_channel.tool": (
             "check_channel",

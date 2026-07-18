@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.connectortools import build_leaf_executor
 from jbrain.agent.proposals import ProposalRepo, enact_outcome_summary
@@ -174,6 +175,7 @@ async def enact_proposal(request: Request, principal: OwnerDep, proposal_id: str
         get_connector_service(request),
         get_job_queue(request),
         get_analysis_repo(request),
+        cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker),
     )
     ctx = ctx_for(principal)
     try:

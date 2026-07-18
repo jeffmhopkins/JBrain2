@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { InlineProposal } from "./InlineProposal";
+import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
 import type { EnactResult, ProposalDetail } from "./types";
+
+describe("INLINE_KINDS", () => {
+  it("acts a library-video removal inline (not shunted to the panel)", () => {
+    expect(INLINE_KINDS.has("remove-library-video")).toBe(true);
+  });
+});
 
 // A two-med tree where a summary note depends on both meds — mirrors the approved
 // mock (docs/mocks/inline-approvals/d-one-tree.html): editable med leaves + a

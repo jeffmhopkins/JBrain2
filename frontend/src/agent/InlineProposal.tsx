@@ -12,7 +12,16 @@ import type { Decision, EnactResult, ProposalDetail, ProposalNode } from "./type
 
 // The kinds acted on inline. wiki-restructure (a large multi-op tree) and intake-link
 // (a bespoke mint editor) stay on the Proposals panel for now — see the plan §1.
-export const INLINE_KINDS = new Set(["correction", "knowledge", "appointment", "merge", "egress"]);
+export const INLINE_KINDS = new Set([
+  "correction",
+  "knowledge",
+  "appointment",
+  "merge",
+  "egress",
+  // A one-leaf library-video removal jerv staged; the owner approves it here and the executor
+  // hard-deletes. Renders as a plain labelled leaf ("Remove … from your library").
+  "remove-library-video",
+]);
 
 // A leaf whose proposed text the owner may correct in place (the executor reads
 // preview.body at enact) — the same ops the backend's patch_node_body accepts.

@@ -12,6 +12,8 @@ agent-note kinds (correction/knowledge) and egress.
 
 import uuid
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.agent.mergetools import entity_merge_executor
 from jbrain.agent.proposals import (
@@ -31,6 +33,7 @@ from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.connectors.base import ConnectorRegistry, EgressGuardError, build_egress
 from jbrain.connectors.service import ConnectorService
 from jbrain.db.session import SessionContext
+from jbrain.external.corpus import delete_external_video
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import JobEnqueuer
 
@@ -114,13 +117,14 @@ def build_leaf_executor(
     connectors: ConnectorService,
     jobs: JobEnqueuer,
     analysis: SqlAnalysisRepo,
+    maker: async_sessionmaker[AsyncSession],
 ) -> LeafExecutor:
     """The Proposal executor, dispatching by leaf op: an egress_call fires the
     connector; a merge_entities leaf folds one entity into another through the
-    analysis repo; everything else (correction/knowledge, and a manage_appointment
-    change) re-enters as an agent note from its preview `body` (which enqueues
-    ingestion via `jobs`) — so an approved appointment flows through extraction to
-    the projection like any note."""
+    analysis repo; a delete_external_video leaf hard-deletes one library video; everything
+    else (correction/knowledge, and a manage_appointment change) re-enters as an agent note
+    from its preview `body` (which enqueues ingestion via `jobs`) — so an approved appointment
+    flows through extraction to the projection like any note."""
     note_executor = agent_note_executor(notes, jobs)
     egress = egress_executor(connectors)
     merge = entity_merge_executor(analysis)
@@ -136,6 +140,10 @@ def build_leaf_executor(
             await predicate_resolve(ctx, proposal, node)
         elif node.op == "add_intake_note":
             await intake_note(ctx, proposal, node)
+        elif node.op == "delete_external_video":
+            # The owner approved removing a library video; the trusted executor hard-deletes it
+            # (chunks cascade). `source_id` was fixed by the agent's scope-checked staging.
+            await delete_external_video(maker, ctx, str(node.preview.get("source_id", "")))
         elif node.op == "mint_intake_link":
             # No-op here: an intake-link Proposal is minted via the dedicated
             # mint-from-proposal endpoint (it surfaces the show-once secret, which a

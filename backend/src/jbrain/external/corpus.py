@@ -169,7 +169,7 @@ async def filter_new_video_ids(
 ) -> set[str]:
     """Of `video_ids`, the ones NOT already in the corpus (any status) — so `check_channel`
     only surfaces videos worth analysing, and an already-ingested video is never re-analysed.
-    Reads under the purpose-built general scope."""
+    Reads under the purpose-built external scope."""
     if not video_ids:
         return set()
     async with scoped_session(maker, _corpus_read_context(principal_id)) as session:
@@ -187,6 +187,23 @@ async def filter_new_video_ids(
             .all()
         )
     return {v for v in video_ids if v not in present}
+
+
+async def delete_external_video(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, source_id: str
+) -> bool:
+    """Hard-delete one library video: its `external_sources` row (chunks cascade, 0134). Runs at
+    proposal enact under the OWNER's context — the trusted executor, never jerv — after the owner
+    approved the removal. Returns True when a row was actually removed (idempotent: a re-enact or
+    an already-gone video is a harmless no-op)."""
+    async with scoped_session(maker, ctx) as session:
+        deleted = (
+            await session.execute(
+                text("DELETE FROM app.external_sources WHERE id = cast(:id AS uuid) RETURNING id"),
+                {"id": source_id},
+            )
+        ).first()
+    return deleted is not None
 
 
 @dataclass(frozen=True)
@@ -222,7 +239,7 @@ async def fetch_transcript(
     principal_id: str = "",
 ) -> ExternalTranscript | None:
     """The full stored transcript of one analysed video (its ordered passage windows) + metadata,
-    or None when no library source has that `video_id`. Reads under the purpose-built general
+    or None when no library source has that `video_id`. Reads under the purpose-built external
     scope, the same firewall the search tool uses."""
     if not video_id:
         return None
@@ -308,14 +325,15 @@ class CorpusHit:
 
 
 def _corpus_read_context(principal_id: str) -> SessionContext:
-    """The purpose-built read scope for the corpus tools: an owner session restricted to the
-    `general` domain ONLY (like a narrowed job context), so a persona whose own session is
-    empty-scoped (jerv) can read the general-domain corpus WITHOUT its firewall being widened —
-    the handler only ever runs corpus queries under it, so no other owner data is reachable."""
+    """The purpose-built scope for the corpus tools: an owner session restricted to the corpus's
+    own `external` domain ONLY (migration 0136), so a persona whose own session is empty-scoped
+    (jerv) can reach the video corpus and NOTHING owner-authored — its firewall is not widened to
+    `general`. The handler only ever runs corpus queries under it, so no other owner data is
+    reachable, and the same context serves the removal-proposal staging (Phase 2)."""
     return SessionContext(
         principal_id=principal_id,
         principal_kind="owner",
-        domain_scopes=("general",),
+        domain_scopes=("external",),
         owner_scoped=True,
     )
 

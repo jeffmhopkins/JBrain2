@@ -307,3 +307,69 @@ async def test_show_frame_degrades_to_marker_when_blob_missing(monkeypatch) -> N
     out = await built["show_external_video"]({"url": "https://youtu.be/x"}, _CTX)
     assert isinstance(out, ToolOutput) and out.view is not None
     assert out.view.data["frames"][0] == {"t_ms": 1000, "caption": "c"}  # marker, no thumb
+
+
+# --- remove_external_video: stages an owner-approved removal proposal ------------------
+
+
+class _FakeProposals:
+    def __init__(self) -> None:
+        self.staged = None
+
+    async def stage(self, ctx, *, principal_id, spec):  # noqa: ANN001
+        self.staged = spec
+        return "prop-1"
+
+
+async def test_remove_stages_a_removal_proposal(monkeypatch) -> None:
+    t = ExternalTranscript(
+        "s9",
+        "Starship Recap",
+        "",
+        "https://youtu.be/x",
+        "whisper",
+        "s",
+        100,
+        None,
+        [],
+        video_id="x",
+        provider="youtube",
+    )
+
+    async def fake_fetch(maker, video_id, *, principal_id=""):
+        return t
+
+    monkeypatch.setattr(externaltools, "fetch_transcript", fake_fetch)
+    props = _FakeProposals()
+    handler = build_external_handlers(object(), object(), proposals=props)[  # type: ignore[arg-type]
+        "remove_external_video"
+    ]
+    out = await handler({"url": "https://youtu.be/x"}, _CTX)
+
+    assert isinstance(out, ToolOutput)
+    # jerv PROPOSES — it returns a proposal chip, deletes nothing itself.
+    assert out.proposal is not None and out.proposal.kind == "remove-library-video"
+    assert "won't delete anything until you approve" in out
+    spec = props.staged
+    assert spec is not None and spec.kind == "remove-library-video" and spec.domain == "external"
+    node = spec.nodes[0]
+    assert node.op == "delete_external_video" and node.preview["source_id"] == "s9"
+    assert "Starship Recap" in node.label
+
+
+async def test_remove_not_found(monkeypatch) -> None:
+    async def fake_fetch(maker, video_id, *, principal_id=""):
+        return None
+
+    monkeypatch.setattr(externaltools, "fetch_transcript", fake_fetch)
+    handler = build_external_handlers(object(), object(), proposals=_FakeProposals())[  # type: ignore[arg-type]
+        "remove_external_video"
+    ]
+    out = await handler({"url": "https://youtu.be/zzz"}, _CTX)
+    assert "No analysed video in the library" in out
+
+
+async def test_remove_unavailable_without_a_proposal_repo() -> None:
+    handler = build_external_handlers(object(), object())["remove_external_video"]  # type: ignore[arg-type]
+    out = await handler({"url": "https://youtu.be/x"}, _CTX)
+    assert "isn't available" in out
