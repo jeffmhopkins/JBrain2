@@ -1190,6 +1190,35 @@ describe("FullBrainSurface", () => {
     }
   });
 
+  it("shows a live elapsed timer beside a running tool, resetting on a new tool", () => {
+    vi.useFakeTimers();
+    try {
+      const tool = (label: string, emphasis: string): AgentStatus => ({
+        kind: "tool",
+        label,
+        emphasis,
+      });
+
+      const { rerender } = render(<AgentStatusLine status={tool("Using", "spawn_subagent")} />);
+      // Starts at 0s.
+      expect(screen.getByRole("status").textContent).toContain("0s");
+
+      // Ticks each second while the tool runs; crosses into m+s past a minute.
+      act(() => vi.advanceTimersByTime(23_000));
+      expect(screen.getByRole("status").textContent).toContain("23s");
+      act(() => vi.advanceTimersByTime(5 * 60_000));
+      expect(screen.getByRole("status").textContent).toContain("5m 23s");
+
+      // A different tool re-anchors the count back to 0s.
+      rerender(<AgentStatusLine status={tool("Searching", "your notes")} />);
+      expect(screen.getByRole("status").textContent).toContain("Searching your notes");
+      expect(screen.getByRole("status").textContent).toContain("0s");
+      expect(screen.getByRole("status").textContent).not.toContain("5m");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("surfaces a staged proposal as a Review chip routed to the Proposals panel", async () => {
     // Opening the proposal renders ProposalTree, which fetches it; hold the fetch
     // so the panel opens without a (rejected) network call in the test.

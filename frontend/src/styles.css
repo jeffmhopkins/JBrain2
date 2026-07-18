@@ -9083,6 +9083,13 @@ button.small {
   color: var(--text);
   font-weight: 600;
 }
+.fb-shell .fb-status-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-3);
+}
 .fb-shell .fb-status.live .fb-status-lab {
   background: linear-gradient(100deg, var(--text-3) 30%, var(--steel) 50%, var(--text-3) 70%);
   background-size: 200% 100%;

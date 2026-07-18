@@ -34,6 +34,19 @@ import { ToolView } from "./views/registry";
 // swaps the label and re-arms the hold (see AgentStatusLine).
 const TOOL_HOLD_MS = 1000;
 
+// A running tool shows how long it's been going ("5m 23s") — a slow step (a
+// sub-agent fan, a web fetch) reads as working, not frozen. Compact: seconds
+// alone under a minute, m+s under an hour, h+m beyond.
+function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const s = total % 60;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 // Read-aloud control state for one settled answer: whether it's speaking, whether
 // auto-play is armed (the control's third state), and the tap / long-press handlers.
 interface AudioControl {
@@ -271,6 +284,13 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
   const [shown, setShown] = useState<AgentStatus | null>(status);
   const holdUntil = useRef(0);
   const heldTool = useRef<string | null>(null);
+  // The elapsed timer anchors to the tool currently on screen: `timedTool` is the
+  // last tool key it was anchored on and `toolStartedAt` when. Both are re-anchored
+  // in render the moment a different tool takes over (below), and `now` ticks once a
+  // second to advance the displayed count.
+  const timedTool = useRef<string | null>(null);
+  const toolStartedAt = useRef(0);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const now = Date.now();
@@ -308,9 +328,27 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
     return () => clearTimeout(t);
   }, [kind]);
 
+  // Tick once a second while a tool is on screen so its elapsed count advances;
+  // idle otherwise (no wasteful timer while thinking/answering/settled).
+  const showingTool = shown?.kind === "tool";
+  useEffect(() => {
+    if (!showingTool) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [showingTool]);
+
   if (!shown || (shown.kind === "done" && doneHidden)) return null;
   const live = shown.kind === "thinking" || shown.kind === "tool" || shown.kind === "answering";
   const cls = live ? "live" : shown.kind === "error" ? "err" : "done";
+  // Anchor (or re-anchor) the timer to the tool on screen. Done in render so the
+  // very first frame already reads "0s" — an effect-set anchor wouldn't force the
+  // extra re-render when the clock hasn't moved.
+  const toolKey = shown.kind === "tool" ? `${shown.label}|${shown.emphasis ?? ""}` : null;
+  if (toolKey !== null && toolKey !== timedTool.current) {
+    timedTool.current = toolKey;
+    toolStartedAt.current = now;
+  }
+  const elapsed = toolKey !== null ? Math.max(0, now - toolStartedAt.current) : null;
 
   return (
     <output className={`fb-status ${cls}`}>
@@ -320,6 +358,12 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
         {shown.emphasis ? <span className="tool"> {shown.emphasis}</span> : null}
         {live ? "…" : ""}
       </span>
+      {elapsed !== null ? (
+        // aria-hidden: a per-second announcement would spam the status region.
+        <span className="fb-status-time" aria-hidden="true">
+          {formatElapsed(elapsed)}
+        </span>
+      ) : null}
     </output>
   );
 }
