@@ -20,7 +20,12 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.embed import ExternalSourceEmbedder, vector_literal
-from jbrain.external.corpus import filter_new_video_ids, persist_analysis, search_corpus
+from jbrain.external.corpus import (
+    fetch_transcript,
+    filter_new_video_ids,
+    persist_analysis,
+    search_corpus,
+)
 from jbrain.ingest.video import VideoAnalysis
 from jbrain.stream import ResolvedStream
 from tests.conftest import docker_available
@@ -207,6 +212,16 @@ async def test_persist_embed_search_round_trip(maker) -> None:  # noqa: F811
     # Degraded (embed down) still answers via the keyword leg.
     down_hits, down_degraded = await search_corpus(maker, StaticEmbed(fail=True), "booster", 6)
     assert down_degraded and [h.source_id for h in down_hits] == [source_id]
+
+    # The full-read path returns metadata + every ordered passage (no embeddings needed).
+    t = await fetch_transcript(maker, "vid1")
+    assert t is not None
+    assert t.title == "Booster Rollout" and t.channel_name == "NSF"
+    assert t.duration_s == 20 and t.summary == "A booster rollout at the pad."
+    assert t.published_at is not None and t.published_at.year == 2026  # upload_date "20260715"
+    assert [w[1] for w in t.windows]  # passage windows came back, ordered by seq
+    assert t.windows == sorted(t.windows)  # ascending by t_ms
+    assert await fetch_transcript(maker, "nope") is None  # unknown id → None
 
 
 async def test_search_scope_excludes_health_corpus(maker) -> None:  # noqa: F811

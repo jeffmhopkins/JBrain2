@@ -89,6 +89,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
         "search_external",
+        # Read one library video's FULL transcript (search_external → read_external_source,
+        # the web_search → web_fetch pattern) when a single excerpt isn't enough.
+        "read_external_source",
         # List a channel's new uploads not yet in the corpus (the scheduling Task calls
         # this, then analyze_stream on each new match).
         "check_channel",

@@ -182,6 +182,70 @@ async def filter_new_video_ids(
     return {v for v in video_ids if v not in present}
 
 
+@dataclass(frozen=True)
+class ExternalTranscript:
+    """One library video read in full: its metadata plus every passage window in order. The
+    windows concatenated ARE the transcript (at window granularity); `summary` is the fallback
+    when a source has no passage rows."""
+
+    source_id: str
+    title: str
+    channel_name: str
+    url: str
+    transcript_source: str
+    summary: str
+    duration_s: int | None
+    published_at: datetime | None
+    windows: list[tuple[int, str]]  # (t_ms, text), ordered by seq
+
+
+async def fetch_transcript(
+    maker: async_sessionmaker[AsyncSession],
+    video_id: str,
+    *,
+    principal_id: str = "",
+) -> ExternalTranscript | None:
+    """The full stored transcript of one analysed video (its ordered passage windows) + metadata,
+    or None when no library source has that `video_id`. Reads under the purpose-built general
+    scope, the same firewall the search tool uses."""
+    if not video_id:
+        return None
+    async with scoped_session(maker, _corpus_read_context(principal_id)) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, title, channel_name, url, transcript_source, summary,"
+                    " duration_s, published_at"
+                    " FROM app.external_sources WHERE video_id = :vid"
+                    " ORDER BY analyzed_at DESC NULLS LAST LIMIT 1"
+                ),
+                {"vid": video_id},
+            )
+        ).first()
+        if row is None:
+            return None
+        chunks = (
+            await session.execute(
+                text(
+                    "SELECT t_ms, text FROM app.external_source_chunks"
+                    " WHERE source_id = :sid ORDER BY seq"
+                ),
+                {"sid": str(row.id)},
+            )
+        ).all()
+    return ExternalTranscript(
+        source_id=str(row.id),
+        title=row.title or "",
+        channel_name=row.channel_name or "",
+        url=row.url,
+        transcript_source=row.transcript_source or "",
+        summary=row.summary or "",
+        duration_s=int(row.duration_s) if row.duration_s is not None else None,
+        published_at=row.published_at,
+        windows=[(int(c.t_ms), (c.text or "").strip()) for c in chunks if (c.text or "").strip()],
+    )
+
+
 # --- corpus search (the search_external tool's engine) --------------------------------
 
 # One hybrid RRF query over the corpus, mirroring SearchService: a dense + FTS leg over the

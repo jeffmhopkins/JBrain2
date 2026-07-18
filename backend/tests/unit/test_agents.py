@@ -88,6 +88,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "analyze_video",
             "analyze_stream",
             "search_external",
+            "read_external_source",
             "check_channel",
             "query_server_metrics",
             "spawn_subagent",

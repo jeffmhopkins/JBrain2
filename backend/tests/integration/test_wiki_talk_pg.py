@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.session import read_context
@@ -392,6 +393,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
                 NwsClient(""),
                 NhcSurgeClient(""),
             ),
+            **build_external_handlers(stub, stub),  # the external-corpus sidecars' handlers
         },  # unused by the editor turn
         stub,  # city geocoder
         maker,  # sessionmaker for query_server_metrics
