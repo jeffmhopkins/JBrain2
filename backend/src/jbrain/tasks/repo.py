@@ -12,20 +12,29 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.tasks import Task, TaskRun
+from jbrain.models.tasks import Task, TaskGroup, TaskRun
 from jbrain.tasks.schedule import next_run_after, spec_from
 
 _SUMMARY_LEN = 240
 
 
 @dataclass(frozen=True)
+class TaskGroupInfo:
+    id: str
+    name: str
+    position: int
+
+
+@dataclass(frozen=True)
 class TaskInfo:
     id: str
     principal_id: str
+    group_id: str | None
+    position: int
     name: str
     prompt: str
     agent: str
@@ -65,6 +74,8 @@ def _info(row: Task) -> TaskInfo:
     return TaskInfo(
         id=str(row.id),
         principal_id=str(row.principal_id),
+        group_id=str(row.group_id) if row.group_id is not None else None,
+        position=row.position,
         name=row.name,
         prompt=row.prompt,
         agent=row.agent,
@@ -119,6 +130,72 @@ def _compute_next(row_or_fields: TaskInfo | Task, *, now: datetime) -> datetime 
     return next_run_after(spec, now)
 
 
+async def _next_position(session: AsyncSession, principal_id: str, group_id: str | None) -> int:
+    """The append index for a new task in `group_id` (NULL = Ungrouped): one past the
+    current max within that bucket, or 0 when the bucket is empty."""
+    gid = uuid.UUID(group_id) if group_id else None
+    cond = Task.group_id.is_(None) if gid is None else (Task.group_id == gid)
+    top = (await session.execute(select(func.max(Task.position)).where(cond))).scalar()
+    return 0 if top is None else int(top) + 1
+
+
+class TaskGroupRepo:
+    """Owner-scoped CRUD for the task buckets (RLS `is_owner()`). Groups carry only a
+    name + display `position`; task membership lives on `Task.group_id`."""
+
+    def __init__(self, maker: async_sessionmaker[AsyncSession]):
+        self._maker = maker
+
+    def _group_info(self, row: TaskGroup) -> TaskGroupInfo:
+        return TaskGroupInfo(id=str(row.id), name=row.name, position=row.position)
+
+    async def list(self, ctx: SessionContext) -> list[TaskGroupInfo]:
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(TaskGroup).order_by(TaskGroup.position, TaskGroup.created_at)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [self._group_info(r) for r in rows]
+
+    async def create(self, ctx: SessionContext, *, name: str) -> TaskGroupInfo:
+        async with scoped_session(self._maker, ctx) as session:
+            top = (await session.execute(select(func.max(TaskGroup.position)))).scalar()
+            row = TaskGroup(
+                principal_id=uuid.UUID(ctx.principal_id),
+                name=name,
+                position=0 if top is None else int(top) + 1,
+            )
+            session.add(row)
+            await session.flush()
+            await session.refresh(row)
+            return self._group_info(row)
+
+    async def rename(
+        self, ctx: SessionContext, group_id: str, *, name: str
+    ) -> TaskGroupInfo | None:
+        now = datetime.now(UTC)
+        async with scoped_session(self._maker, ctx) as session:
+            row = await session.get(TaskGroup, uuid.UUID(group_id))
+            if row is None:
+                return None
+            row.name = name
+            row.updated_at = now
+            await session.flush()
+            await session.refresh(row)
+            return self._group_info(row)
+
+    async def delete(self, ctx: SessionContext, group_id: str) -> None:
+        # Tasks in the group are SET NULL by the FK (they fall to Ungrouped), never
+        # deleted — deleting a bucket must not lose the owner's tasks.
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(delete(TaskGroup).where(TaskGroup.id == uuid.UUID(group_id)))
+
+
 class TaskRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
@@ -161,19 +238,53 @@ class TaskRepo:
         )
         row.next_run_at = _compute_next(_info(row), now=now) if enabled else None
         async with scoped_session(self._maker, ctx) as session:
+            # A new task appends to the end of the Ungrouped bucket (group_id NULL).
+            row.position = await _next_position(session, ctx.principal_id, None)
             session.add(row)
             await session.flush()
             await session.refresh(row)
             return _info(row)
 
     async def list(self, ctx: SessionContext) -> list[TaskInfo]:
+        # Ordered by intra-group position first (the persisted reorder), then newest
+        # for the tiebreak; the client buckets by group, so cross-group interleaving
+        # of equal positions is immaterial.
         async with scoped_session(self._maker, ctx) as session:
             rows = (
-                (await session.execute(select(Task).order_by(Task.created_at.desc())))
+                (
+                    await session.execute(
+                        select(Task).order_by(Task.position, Task.created_at.desc())
+                    )
+                )
                 .scalars()
                 .all()
             )
             return [_info(r) for r in rows]
+
+    async def reorder(
+        self, ctx: SessionContext, *, group_id: str | None, task_ids: Sequence[str]
+    ) -> list[TaskInfo]:
+        """Set the authoritative membership + order for one group's list: each id in
+        `task_ids` is moved into `group_id` (NULL = Ungrouped) at its list index. This
+        one call serves both a within-group reorder and a "Move to…" (the client sends
+        the destination group's full ordered id list with the moved task appended).
+        Ids not owned by the caller are silently skipped (RLS hides them)."""
+        gid = uuid.UUID(group_id) if group_id else None
+        moved: list[TaskInfo] = []
+        async with scoped_session(self._maker, ctx) as session:
+            if gid is not None:  # a real group must exist and belong to the owner
+                grp = await session.get(TaskGroup, gid)
+                if grp is None:
+                    return []
+            for i, tid in enumerate(task_ids):
+                row = await session.get(Task, uuid.UUID(tid))
+                if row is None:
+                    continue
+                row.group_id = gid
+                row.position = i
+                moved.append(_info(row))
+            await session.flush()
+        return moved
 
     async def get(self, ctx: SessionContext, task_id: str) -> TaskInfo | None:
         async with scoped_session(self._maker, ctx) as session:

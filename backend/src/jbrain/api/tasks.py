@@ -19,7 +19,14 @@ from jbrain.agent.agents import OWNER_AGENTS
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
-from jbrain.tasks.repo import TaskInfo, TaskRepo, TaskRunInfo, TaskRunRepo
+from jbrain.tasks.repo import (
+    TaskGroupInfo,
+    TaskGroupRepo,
+    TaskInfo,
+    TaskRepo,
+    TaskRunInfo,
+    TaskRunRepo,
+)
 from jbrain.tasks.runner import TaskRunner
 from jbrain.tasks.schedule import FREQS, KINDS
 
@@ -42,6 +49,10 @@ def get_task_runs(request: Request) -> TaskRunRepo:
 
 def get_task_runner(request: Request) -> TaskRunner:
     return cast(TaskRunner, request.app.state.task_runner)
+
+
+def get_task_groups(request: Request) -> TaskGroupRepo:
+    return cast(TaskGroupRepo, request.app.state.task_groups)
 
 
 class TaskBody(BaseModel):
@@ -146,6 +157,10 @@ class TaskRunOut(BaseModel):
 
 class TaskOut(BaseModel):
     id: str
+    # The owner-named bucket (NULL = the trailing "Ungrouped" section) + the task's
+    # 0-based rank within it; both are set by the reorder / move endpoints.
+    group_id: str | None
+    position: int
     name: str
     prompt: str
     agent: str
@@ -169,6 +184,8 @@ class TaskOut(BaseModel):
     def of(cls, t: TaskInfo, latest_run: "TaskRunInfo | None" = None) -> "TaskOut":
         return cls(
             id=t.id,
+            group_id=t.group_id,
+            position=t.position,
             name=t.name,
             prompt=t.prompt,
             agent=t.agent,
@@ -194,12 +211,78 @@ class EnabledPatch(BaseModel):
     enabled: bool
 
 
+class TaskGroupOut(BaseModel):
+    id: str
+    name: str
+    position: int
+
+    @classmethod
+    def of(cls, g: TaskGroupInfo) -> "TaskGroupOut":
+        return cls(id=g.id, name=g.name, position=g.position)
+
+
+class GroupBody(BaseModel):
+    """Create / rename payload for a task group."""
+
+    name: str = Field(min_length=1, max_length=80)
+
+
+class ReorderBody(BaseModel):
+    """Authoritative membership + order for one group's list (Direction B). The client
+    sends the destination group (NULL = Ungrouped) and its full ordered task ids — a
+    within-group drag reorders, a "Move to…" appends the moved id to the destination."""
+
+    group_id: str | None = None
+    task_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
 @router.get("/tasks")
 async def list_tasks(request: Request, principal: OwnerDep) -> list[TaskOut]:
     ctx = ctx_for(principal)
     tasks = await get_task_repo(request).list(ctx)
     latest = await get_task_runs(request).latest_per_task(ctx, [t.id for t in tasks])
     return [TaskOut.of(t, latest.get(t.id)) for t in tasks]
+
+
+@router.get("/task-groups")
+async def list_task_groups(request: Request, principal: OwnerDep) -> list[TaskGroupOut]:
+    groups = await get_task_groups(request).list(ctx_for(principal))
+    return [TaskGroupOut.of(g) for g in groups]
+
+
+@router.post("/task-groups", status_code=201)
+async def create_task_group(request: Request, principal: OwnerDep, body: GroupBody) -> TaskGroupOut:
+    created = await get_task_groups(request).create(ctx_for(principal), name=body.name.strip())
+    return TaskGroupOut.of(created)
+
+
+@router.patch("/task-groups/{group_id}")
+async def rename_task_group(
+    request: Request, principal: OwnerDep, group_id: str, body: GroupBody
+) -> TaskGroupOut:
+    updated = await get_task_groups(request).rename(
+        ctx_for(principal), group_id, name=body.name.strip()
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no such group")
+    return TaskGroupOut.of(updated)
+
+
+@router.delete("/task-groups/{group_id}", status_code=204)
+async def delete_task_group(request: Request, principal: OwnerDep, group_id: str) -> None:
+    # Its tasks fall to Ungrouped (FK SET NULL); they are never deleted.
+    await get_task_groups(request).delete(ctx_for(principal), group_id)
+
+
+@router.post("/tasks/reorder")
+async def reorder_tasks(request: Request, principal: OwnerDep, body: ReorderBody) -> list[TaskOut]:
+    # A non-null target must name a group the owner owns; the repo returns [] otherwise.
+    ctx = ctx_for(principal)
+    moved = await get_task_repo(request).reorder(
+        ctx, group_id=body.group_id, task_ids=body.task_ids
+    )
+    latest = await get_task_runs(request).latest_per_task(ctx, [t.id for t in moved])
+    return [TaskOut.of(t, latest.get(t.id)) for t in moved]
 
 
 @router.post("/tasks", status_code=201)

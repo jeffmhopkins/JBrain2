@@ -17,6 +17,24 @@ from sqlalchemy.orm import Mapped, mapped_column
 from jbrain.models.core import Base
 
 
+class TaskGroup(Base):
+    """An owner-named bucket the Tasks surface sorts tasks into (GUI Direction B).
+    `position` orders the groups themselves; a task's membership + intra-group order
+    live on `Task.group_id` / `Task.position`. Owner-only metadata (RLS)."""
+
+    __tablename__ = "task_groups"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    principal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.principals.id")
+    )
+    name: Mapped[str] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Task(Base):
     """A saved prompt + persona + schedule. `next_run_at` is the computed next fire
     (NULL for on-demand or a spent one-off); the scheduler claims rows whose
@@ -29,6 +47,13 @@ class Task(Base):
     principal_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.principals.id")
     )
+    # The owner-named bucket this task sits in (NULL = the trailing "Ungrouped"
+    # section); `position` is its 0-based rank within that bucket. Deleting a group
+    # SET NULLs its tasks (they become ungrouped), never deleting them.
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.task_groups.id", ondelete="SET NULL"), nullable=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     name: Mapped[str] = mapped_column(Text, default="", server_default="")
     prompt: Mapped[str] = mapped_column(Text)
     # The persona the run executes as — its data access is the firewall, not a label

@@ -1127,8 +1127,21 @@ export type ScheduleFreq = "daily" | "weekdays" | "weekly";
 
 /** A saved task — a prompt + persona + schedule + delivery. `next_run_at`/`last_run_at`
  * are server-computed; the editor sends only the spec. */
+/** An owner-named bucket the Tasks surface sorts tasks into (GUI Direction B —
+ * docs/mocks/task-grouping/). `position` orders the buckets themselves. */
+export interface TaskGroup {
+  id: string;
+  name: string;
+  position: number;
+}
+
 export interface Task {
   id: string;
+  /** The owner-named bucket this task sits in; null = the trailing "Ungrouped"
+   * section. `position` is its 0-based rank within that bucket. Both are written by
+   * the reorder endpoint (a within-group drag or a "Move to…"). */
+  group_id: string | null;
+  position: number;
   name: string;
   prompt: string;
   agent: TaskAgent;
@@ -2498,6 +2511,41 @@ export const api = {
   async taskRuns(id: string): Promise<TaskRun[]> {
     const response = await request(`/api/tasks/${encodeURIComponent(id)}/runs`);
     return (await response.json()) as TaskRun[];
+  },
+
+  // ----- task groups (Direction B: chips + move sheet) -----
+
+  async taskGroups(): Promise<TaskGroup[]> {
+    const response = await request("/api/task-groups");
+    return (await response.json()) as TaskGroup[];
+  },
+
+  async createTaskGroup(name: string): Promise<TaskGroup> {
+    const response = await request("/api/task-groups", jsonInit("POST", { name }));
+    return (await response.json()) as TaskGroup;
+  },
+
+  async renameTaskGroup(id: string, name: string): Promise<TaskGroup> {
+    const response = await request(
+      `/api/task-groups/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { name }),
+    );
+    return (await response.json()) as TaskGroup;
+  },
+
+  async deleteTaskGroup(id: string): Promise<void> {
+    await request(`/api/task-groups/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // Set the authoritative membership + order for one bucket's list. `groupId` null is
+  // the Ungrouped bucket; `taskIds` is its full ordered id list (a drag reorders, a
+  // "Move to…" appends the moved id to the destination). Returns the moved tasks.
+  async reorderTasks(groupId: string | null, taskIds: string[]): Promise<Task[]> {
+    const response = await request(
+      "/api/tasks/reorder",
+      jsonInit("POST", { group_id: groupId, task_ids: taskIds }),
+    );
+    return (await response.json()) as Task[];
   },
 
   // ===== Phase 4: the agent — sessions + Full Brain chat (docs/reference/ASSISTANT.md) =====

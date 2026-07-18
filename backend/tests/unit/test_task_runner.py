@@ -20,6 +20,8 @@ def _task(**over: object) -> TaskInfo:
     base: dict[str, object] = dict(
         id="task-1",
         principal_id=OWNER.principal_id,
+        group_id=None,
+        position=0,
         name="Morning brief",
         prompt="Give me the news.",
         agent="jerv",

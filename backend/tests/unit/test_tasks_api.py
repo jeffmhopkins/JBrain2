@@ -9,8 +9,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from jbrain.api import tasks as tasks_api
-from jbrain.api.tasks import TaskBody
-from jbrain.tasks.repo import TaskInfo, TaskRunInfo
+from jbrain.api.tasks import GroupBody, ReorderBody, TaskBody
+from jbrain.tasks.repo import TaskGroupInfo, TaskInfo, TaskRunInfo
 
 NOW = datetime(2026, 6, 24, 12, tzinfo=UTC)
 PID = "11111111-1111-1111-1111-111111111111"
@@ -21,6 +21,8 @@ def _task(**over: object) -> TaskInfo:
     base: dict[str, object] = dict(
         id="task-1",
         principal_id=PID,
+        group_id=None,
+        position=0,
         name="Brief",
         prompt="news",
         agent="jerv",
@@ -126,6 +128,30 @@ class FakeRepo:
     async def mark_ran(self, ctx, task_id, *, at):  # type: ignore[no-untyped-def]
         self.marked.append(task_id)
 
+    async def reorder(self, ctx, *, group_id, task_ids):  # type: ignore[no-untyped-def]
+        self.reordered = (group_id, list(task_ids))
+        return [_task(id=tid, group_id=group_id, position=i) for i, tid in enumerate(task_ids)]
+
+
+class FakeGroups:
+    def __init__(self) -> None:
+        self.groups = {"g1": TaskGroupInfo(id="g1", name="Money", position=0)}
+        self.deleted: list[str] = []
+
+    async def list(self, ctx):  # type: ignore[no-untyped-def]
+        return list(self.groups.values())
+
+    async def create(self, ctx, *, name):  # type: ignore[no-untyped-def]
+        return TaskGroupInfo(id="g2", name=name, position=1)
+
+    async def rename(self, ctx, group_id, *, name):  # type: ignore[no-untyped-def]
+        if group_id not in self.groups:
+            return None
+        return TaskGroupInfo(id=group_id, name=name, position=0)
+
+    async def delete(self, ctx, group_id):  # type: ignore[no-untyped-def]
+        self.deleted.append(group_id)
+
 
 class FakeRunner:
     async def run(self, ctx, task, *, trigger):  # type: ignore[no-untyped-def]
@@ -170,8 +196,13 @@ class FakeRuns:
         return {tid: _run(tid) for tid in task_ids}
 
 
-def _request(repo: FakeRepo) -> SimpleNamespace:
-    state = SimpleNamespace(task_repo=repo, task_runner=FakeRunner(), task_runs=FakeRuns())
+def _request(repo: FakeRepo, groups: "FakeGroups | None" = None) -> SimpleNamespace:
+    state = SimpleNamespace(
+        task_repo=repo,
+        task_runner=FakeRunner(),
+        task_runs=FakeRuns(),
+        task_groups=groups or FakeGroups(),
+    )
     return SimpleNamespace(app=SimpleNamespace(state=state))
 
 
@@ -219,3 +250,41 @@ async def test_delete_and_runs() -> None:
     await tasks_api.delete_task(req, PRINCIPAL, "task-1")  # type: ignore[arg-type]
     assert repo.deleted == ["task-1"]
     assert await tasks_api.task_runs(req, PRINCIPAL, "task-1") == []  # type: ignore[arg-type]
+
+
+# ---- groups + reorder (Direction B) ----
+
+
+@pytest.mark.asyncio
+async def test_group_crud() -> None:
+    groups = FakeGroups()
+    req = _request(FakeRepo(), groups)
+    listed = await tasks_api.list_task_groups(req, PRINCIPAL)  # type: ignore[arg-type]
+    assert [g.name for g in listed] == ["Money"]
+    created = await tasks_api.create_task_group(req, PRINCIPAL, GroupBody(name="  Health  "))  # type: ignore[arg-type]
+    assert created.name == "Health"  # the name is trimmed at the edge
+    renamed = await tasks_api.rename_task_group(req, PRINCIPAL, "g1", GroupBody(name="Finance"))  # type: ignore[arg-type]
+    assert renamed.name == "Finance"
+    with pytest.raises(HTTPException):
+        await tasks_api.rename_task_group(req, PRINCIPAL, "missing", GroupBody(name="x"))  # type: ignore[arg-type]
+    await tasks_api.delete_task_group(req, PRINCIPAL, "g1")  # type: ignore[arg-type]
+    assert groups.deleted == ["g1"]
+
+
+@pytest.mark.asyncio
+async def test_reorder_sets_group_and_position() -> None:
+    repo = FakeRepo()
+    req = _request(repo)
+    body = ReorderBody(group_id="g1", task_ids=["task-3", "task-1"])
+    out = await tasks_api.reorder_tasks(req, PRINCIPAL, body)  # type: ignore[arg-type]
+    assert repo.reordered == ("g1", ["task-3", "task-1"])
+    # Order returned reflects the sent sequence, each stamped with its list index.
+    assert [(t.id, t.group_id, t.position) for t in out] == [
+        ("task-3", "g1", 0),
+        ("task-1", "g1", 1),
+    ]
+
+    # A NULL target moves tasks back to the Ungrouped bucket.
+    back = ReorderBody(group_id=None, task_ids=["task-1"])
+    ungrouped = await tasks_api.reorder_tasks(req, PRINCIPAL, back)  # type: ignore[arg-type]
+    assert ungrouped[0].group_id is None

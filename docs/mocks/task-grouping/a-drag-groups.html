@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Task grouping · A — drag handles + custom groups</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;cursor:pointer;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .spacer{margin-left:auto;}
+  .bar .editbtn{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:13px;font-weight:500;padding:7px 13px;border-radius:999px;cursor:pointer;display:flex;align-items:center;gap:6px;}
+  .bar .editbtn.on{background:var(--steel-tint);border-color:var(--steel);color:var(--steel);}
+
+  .body{flex:1;overflow-y:auto;padding:6px 14px 26px;}
+  .hint-strip{font-size:12px;color:var(--text-2);background:var(--steel-tint);border:1px solid rgba(127,167,201,.28);border-radius:11px;padding:9px 12px;margin:8px 0 4px;display:none;gap:8px;align-items:center;line-height:1.45;}
+  .editing .hint-strip{display:flex;}
+  .hint-strip svg{width:15px;height:15px;color:var(--steel);flex:none;}
+
+  /* group */
+  .grp{margin-top:14px;}
+  .grp-head{display:flex;align-items:center;gap:9px;padding:4px 2px 8px;cursor:pointer;}
+  .grp-cx{width:15px;height:15px;color:var(--text-3);transition:transform .16s;flex:none;}
+  .grp.collapsed .grp-cx{transform:rotate(-90deg);}
+  .grp-name{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:600;}
+  .grp-dot{width:7px;height:7px;border-radius:999px;flex:none;}
+  .grp-count{font-size:11px;color:var(--text-3);background:var(--surface-2);border-radius:999px;padding:2px 8px;margin-left:auto;font-variant-numeric:tabular-nums;}
+  .grp-ren{background:none;border:none;color:var(--text-3);padding:4px;cursor:pointer;display:none;}
+  .editing .grp-ren{display:inline-flex;}
+  .editing .grp-count{margin-left:0;}
+  .editing .grp-head .grp-count{margin-left:auto;}
+  .grp-list{display:flex;flex-direction:column;gap:9px;min-height:6px;}
+  .grp.collapsed .grp-list{display:none;}
+  .grp.dropinto > .grp-head .grp-name{color:var(--steel);}
+
+  /* task card */
+  .task{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;position:relative;touch-action:pan-y;}
+  .task.off{opacity:.55;}
+  .task-head{width:100%;text-align:left;background:none;border:none;color:inherit;font:inherit;padding:12px 13px;display:flex;gap:10px;align-items:flex-start;cursor:pointer;}
+  .grab{width:0;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--text-3);flex:none;transition:width .16s;cursor:grab;touch-action:none;align-self:stretch;}
+  .editing .grab{width:26px;}
+  .grab svg{width:18px;height:18px;}
+  .sdot{width:9px;height:9px;border-radius:999px;flex:none;margin-top:5px;}
+  .sdot.running{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  .sdot.ok{background:var(--green);}.sdot.failed{background:var(--rose);}.sdot.idle{background:var(--text-3);}.sdot.pending{background:var(--amber);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .tmain{flex:1;min-width:0;}
+  .tname{font-size:15px;font-weight:600;line-height:1.3;}
+  .twhen{font-size:12.5px;color:var(--text-2);margin-top:4px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .agc{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;}
+  .agc.jerv{background:var(--violet-tint);color:var(--violet);}
+  .agc.curator{background:var(--steel-tint);color:var(--steel);}
+  .agc.teacher{background:var(--amber-tint);color:var(--amber);}
+  .agc.archivist{background:var(--green-tint);color:var(--green);}
+  .tmeta{font-size:11.5px;color:var(--text-3);margin-top:5px;font-variant-numeric:tabular-nums;}
+  .tmeta .st-failed{color:var(--rose);}.tmeta .st-running{color:var(--green);}
+  .sw{flex:none;width:42px;height:25px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);position:relative;cursor:pointer;padding:0;margin-top:2px;transition:.16s;}
+  .sw[aria-checked="true"]{background:var(--green-tint);border-color:rgba(143,188,154,.45);}
+  .sw .knob{position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:999px;background:var(--text-3);transition:.16s;}
+  .sw[aria-checked="true"] .knob{left:19px;background:var(--green);}
+  .chev{width:15px;height:15px;color:var(--text-3);flex:none;margin-top:4px;}
+  .editing .task-head .sw,.editing .task-head .chev{display:none;}
+
+  /* drag state */
+  .task.lifted{position:fixed;z-index:200;box-shadow:0 14px 34px rgba(0,0,0,.5);border-color:var(--steel);pointer-events:none;width:auto;}
+  .ph{border:1.5px dashed var(--steel);background:var(--steel-tint);border-radius:16px;}
+
+  /* add group */
+  .addgrp{display:none;width:100%;margin-top:16px;border:1px dashed var(--border);background:transparent;color:var(--text-2);font:inherit;font-size:13px;font-weight:500;border-radius:13px;padding:12px;align-items:center;justify-content:center;gap:8px;cursor:pointer;}
+  .editing .addgrp{display:flex;}
+  .addgrp svg{width:16px;height:16px;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:120;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .ti{color:var(--steel);flex:none;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Task grouping · A — drag handles + custom groups</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    <b>Direct manipulation.</b> Tap <b>Reorder</b> to reveal a grab handle on every card and a
+    <b>＋ New group</b> row. Drag a card to reorder it — or drop it under a different group header to
+    re-file it. Group headers collapse (tap) and rename (pencil). No menus, no modes-within-modes.
+    <i>Try dragging a card across a group boundary.</i>
+  </div>
+
+  <div class="phone" id="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Tasks</span>
+      <span class="spacer"></span>
+      <button class="editbtn" id="editbtn" onclick="toggleEdit()">
+        <svg id="editicon" width="15" height="15" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        <span id="editlab">Reorder</span>
+      </button>
+    </div>
+
+    <div class="body" id="body">
+      <div class="hint-strip">
+        <svg viewBox="0 0 24 24"><path d="M5 9l3 3-3 3M9 5l3 3M12 3v18"/></svg>
+        Drag the ⋮⋮ handle to reorder. Drop a card under another group to move it.
+      </div>
+      <div id="groups"></div>
+      <button class="addgrp" onclick="addGroup()">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New group
+      </button>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+
+const AGENT={jerv:'Jerv',curator:'Curator',teacher:'Teacher',archivist:'Archivist'};
+const GROUPS=[
+  {id:'g-morning',name:'Morning routine',collapsed:false},
+  {id:'g-finance',name:'Money',collapsed:false},
+  {id:'g-house',name:'Household',collapsed:false},
+];
+const TASKS=[
+  {id:'t1',g:'g-morning',name:'Morning news brief',agent:'jerv',sched:'Weekdays · 7:00',enabled:true,last:'ok',meta:'last run ok · next tomorrow 7:00'},
+  {id:'t2',g:'g-morning',name:'Today on my calendar',agent:'curator',sched:'Daily · 6:45',enabled:true,last:'ok',meta:'last run ok · next tomorrow 6:45'},
+  {id:'t3',g:'g-finance',name:'Markets & portfolio watch',agent:'jerv',sched:'Daily · 16:30',enabled:true,last:'running',meta:'running now'},
+  {id:'t4',g:'g-finance',name:'Spending recap',agent:'curator',sched:'Weekly S · 20:00',enabled:false,last:'idle',meta:'paused'},
+  {id:'t5',g:'g-house',name:'Grocery list tidy-up',agent:'curator',sched:'On demand',enabled:true,last:'ok',meta:'run it any time · last ran 3d ago'},
+  {id:'t6',g:'g-house',name:'Weekly note review',agent:'curator',sched:'Sun · 18:00',enabled:true,last:'failed',meta:'last run failed · next Sun 18:00'},
+];
+
+function agentChip(t){return `<span class="agc ${t.agent}">${AGENT[t.agent]}</span><span>${t.sched}</span>`;}
+function metaHtml(t){
+  return t.meta.replace('running now','<span class="st-running">running now</span>').replace('last run failed','<span class="st-failed">last run failed</span>');
+}
+function taskCard(t){
+  return `<div class="task ${t.enabled?'':'off'}" data-id="${t.id}">
+    <div class="task-head" onclick="tapCard(event)">
+      <span class="grab" data-grab title="Drag to reorder"><svg viewBox="0 0 24 24"><path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01"/></svg></span>
+      <span class="sdot ${t.enabled?t.last:'idle'}"></span>
+      <span class="tmain">
+        <span class="tname">${t.name}</span>
+        <span class="twhen">${agentChip(t)}</span>
+        <span class="tmeta">${metaHtml(t)}</span>
+      </span>
+      <span class="sw" role="switch" aria-checked="${t.enabled}" onclick="flip(this,event)"><span class="knob"></span></span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </div>
+  </div>`;
+}
+function groupDotColor(gid){
+  const ts=TASKS.filter(t=>t.g===gid&&t.enabled);
+  if(ts.some(t=>t.last==='failed'))return 'var(--rose)';
+  if(ts.some(t=>t.last==='running'))return 'var(--green)';
+  if(ts.length===0)return 'var(--text-3)';
+  return 'var(--green)';
+}
+function render(){
+  const root=document.getElementById('groups');
+  root.innerHTML=GROUPS.map(g=>{
+    const ts=TASKS.filter(t=>t.g===g.id);
+    return `<div class="grp ${g.collapsed?'collapsed':''}" data-gid="${g.id}">
+      <div class="grp-head" onclick="toggleGroup('${g.id}',event)">
+        <svg class="grp-cx" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="grp-dot" style="background:${groupDotColor(g.id)}"></span>
+        <span class="grp-name">${g.name}</span>
+        <button class="grp-ren" onclick="renameGroup('${g.id}',event)" aria-label="Rename group"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+        <span class="grp-count">${ts.length}</span>
+      </div>
+      <div class="grp-list" data-list="${g.id}">${ts.map(taskCard).join('')}</div>
+    </div>`;
+  }).join('');
+  bindDrag();
+}
+function tapCard(e){
+  if(document.getElementById('phone').classList.contains('editing'))return;
+  if(e.target.closest('.sw'))return;
+  toast('Card would expand to prompt + recent runs.');
+}
+function flip(el,e){e.stopPropagation();
+  const on=el.getAttribute('aria-checked')!=='true';el.setAttribute('aria-checked',String(on));
+  const card=el.closest('.task');const id=card.dataset.id;const t=TASKS.find(x=>x.id===id);
+  t.enabled=on;card.classList.toggle('off',!on);
+  card.querySelector('.sdot').className='sdot '+(on?t.last:'idle');
+  card.querySelector('.tmeta').innerHTML=on?metaHtml(t):'paused';
+  toast(`${t.name} ${on?'resumed':'paused'}.`);
+}
+function toggleGroup(gid,e){
+  if(e.target.closest('.grp-ren'))return;
+  const g=GROUPS.find(x=>x.id===gid);g.collapsed=!g.collapsed;
+  document.querySelector(`.grp[data-gid="${gid}"]`).classList.toggle('collapsed',g.collapsed);
+}
+function renameGroup(gid,e){e.stopPropagation();
+  const g=GROUPS.find(x=>x.id===gid);
+  const name=prompt('Rename group',g.name);
+  if(name&&name.trim()){g.name=name.trim();render();toast('Group renamed.');}
+}
+function addGroup(){
+  const name=prompt('New group name','New group');
+  if(name&&name.trim()){GROUPS.push({id:'g'+Date.now(),name:name.trim(),collapsed:false});render();toast('Group added — drag tasks into it.');}
+}
+function toggleEdit(){
+  const p=document.getElementById('phone');const on=!p.classList.contains('editing');
+  p.classList.toggle('editing',on);
+  document.getElementById('editbtn').classList.toggle('on',on);
+  document.getElementById('editlab').textContent=on?'Done':'Reorder';
+  document.getElementById('editicon').innerHTML=on?'<path d="M5 12l4 4L19 7"/>':'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>';
+}
+
+/* ---- pointer drag with placeholder, multi-container (per group) ---- */
+let drag=null;
+function bindDrag(){
+  document.querySelectorAll('[data-grab]').forEach(h=>{
+    h.onpointerdown=startDrag;
+  });
+}
+function startDrag(e){
+  if(!document.getElementById('phone').classList.contains('editing'))return;
+  e.preventDefault();
+  const card=e.target.closest('.task');
+  const r=card.getBoundingClientRect();
+  const ph=document.createElement('div');ph.className='ph';ph.style.height=r.height+'px';
+  card.parentNode.insertBefore(ph,card.nextSibling);
+  card.classList.add('lifted');
+  card.style.width=r.width+'px';card.style.height=r.height+'px';
+  drag={card,ph,dx:e.clientX-r.left,dy:e.clientY-r.top};
+  moveDrag(e);
+  const move=moveDrag,up=endDrag;
+  window.addEventListener('pointermove',move);
+  window.addEventListener('pointerup',up,{once:true});
+  drag._move=move;
+}
+function moveDrag(e){
+  const {card,dx,dy}=drag;
+  card.style.left=(e.clientX-dx)+'px';
+  card.style.top=(e.clientY-dy)+'px';
+  // find target list + insertion point
+  const lists=[...document.querySelectorAll('.grp:not(.collapsed) .grp-list')];
+  document.querySelectorAll('.grp').forEach(g=>g.classList.remove('dropinto'));
+  let target=null;
+  for(const l of lists){
+    const r=l.closest('.grp').getBoundingClientRect();
+    if(e.clientY>=r.top&&e.clientY<=r.bottom){target=l;break;}
+  }
+  if(!target){ // fallback: nearest list by vertical distance
+    let best=1e9;for(const l of lists){const r=l.getBoundingClientRect();const d=Math.abs((r.top+r.bottom)/2-e.clientY);if(d<best){best=d;target=l;}}
+  }
+  if(!target)return;
+  target.closest('.grp').classList.add('dropinto');
+  const cards=[...target.querySelectorAll('.task:not(.lifted)')];
+  let before=null;
+  for(const c of cards){const r=c.getBoundingClientRect();if(e.clientY<r.top+r.height/2){before=c;break;}}
+  if(before)target.insertBefore(drag.ph,before);else target.appendChild(drag.ph);
+}
+function endDrag(){
+  const {card,ph}=drag;
+  window.removeEventListener('pointermove',drag._move);
+  const list=ph.parentNode;const gid=list.dataset.list;
+  card.classList.remove('lifted');
+  card.style.cssText='';
+  list.insertBefore(card,ph);
+  ph.remove();
+  document.querySelectorAll('.grp').forEach(g=>g.classList.remove('dropinto'));
+  // sync model order + group
+  const t=TASKS.find(x=>x.id===card.dataset.id);
+  const movedGroup=t.g!==gid;
+  t.g=gid;
+  reorderModel();
+  // refresh counts/dots
+  GROUPS.forEach(g=>{
+    const el=document.querySelector(`.grp[data-gid="${g.id}"]`);
+    if(el){el.querySelector('.grp-count').textContent=TASKS.filter(x=>x.g===g.id).length;
+      el.querySelector('.grp-dot').style.background=groupDotColor(g.id);}
+  });
+  const gname=GROUPS.find(g=>g.id===gid).name;
+  toast(movedGroup?`Moved to “${gname}”.`:'Order saved.');
+  drag=null;
+}
+function reorderModel(){
+  const order=[];
+  document.querySelectorAll('.grp-list').forEach(l=>{
+    l.querySelectorAll('.task').forEach(c=>{const t=TASKS.find(x=>x.id===c.dataset.id);t.g=l.dataset.list;order.push(t);});
+  });
+  TASKS.length=0;TASKS.push(...order);
+}
+
+function toast(msg){const t=document.getElementById('toast');
+  t.innerHTML=`<svg class="ti" width="16" height="16" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>${msg}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),2600);}
+
+render();
+</script>
+</body>
+</html>

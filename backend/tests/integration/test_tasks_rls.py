@@ -4,6 +4,7 @@ advances `next_run_at`, deleting a task cascades its runs, and a full task run l
 real session/run/transcript/task_run rows.
 """
 
+import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -21,7 +22,7 @@ from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.tasks.repo import TaskRepo, TaskRunRepo
+from jbrain.tasks.repo import TaskGroupRepo, TaskRepo, TaskRunRepo
 from jbrain.tasks.runner import ExecutedTurn, TaskRunner
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -260,6 +261,73 @@ async def test_latest_per_task_returns_the_newest_run(maker: async_sessionmaker)
     assert await runs.latest_per_task(owner, []) == {}
     token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
     assert await runs.latest_per_task(token, [t1.id]) == {}
+
+
+async def test_task_groups_are_owner_only(maker: async_sessionmaker) -> None:
+    """Migration 0136: task_groups is owner-only metadata (CLAUDE.md rule 3), like the
+    tasks it buckets. A capability token sees none; a narrowed owner still sees its own."""
+    owner = await _owner_ctx(maker)
+    groups = TaskGroupRepo(maker)
+    g = await groups.create(owner, name="Money")
+    assert g.position == 0  # first group anchors the order
+    g2 = await groups.create(owner, name="Household")
+    assert g2.position == 1  # each new group appends
+
+    assert [x.name for x in await groups.list(owner)] == ["Money", "Household"]
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    assert await groups.list(token) == []
+    narrowed = SessionContext(
+        principal_id=owner.principal_id,
+        principal_kind="owner",
+        domain_scopes=("general",),
+        owner_scoped=True,
+    )
+    assert len(await groups.list(narrowed)) == 2
+
+    renamed = await groups.rename(owner, g.id, name="Finance")
+    assert renamed is not None and renamed.name == "Finance"
+
+
+async def test_reorder_sets_group_and_position(maker: async_sessionmaker) -> None:
+    """`reorder` writes the authoritative membership + order for one group's list — the
+    single call behind both a within-group drag and a "Move to…". A new task appends to
+    the Ungrouped bucket; reordering into a real group stamps 0-based positions."""
+    owner = await _owner_ctx(maker)
+    repo, groups = TaskRepo(maker), TaskGroupRepo(maker)
+    t1 = await _make_task(repo, owner, name="one")
+    t2 = await _make_task(repo, owner, name="two")
+    # New tasks land ungrouped, each appended one past the current Ungrouped tail
+    # (absolute positions accrue across the shared test DB — only the delta is fixed).
+    assert t1.group_id is None and t2.group_id is None
+    assert t2.position == t1.position + 1
+
+    g = await groups.create(owner, name="Money")
+    moved = await repo.reorder(owner, group_id=g.id, task_ids=[t2.id, t1.id])
+    assert [(m.id, m.group_id, m.position) for m in moved] == [
+        (t2.id, g.id, 0),
+        (t1.id, g.id, 1),
+    ]
+    # The list reflects the new order within the group.
+    by_id = {t.id: t for t in await repo.list(owner)}
+    assert by_id[t2.id].group_id == g.id and by_id[t2.id].position == 0
+
+    # Reordering into a non-existent group is a no-op (nothing moves).
+    assert await repo.reorder(owner, group_id=str(uuid.uuid4()), task_ids=[t1.id]) == []
+
+
+async def test_deleting_a_group_ungroups_its_tasks(maker: async_sessionmaker) -> None:
+    """Deleting a bucket must never lose tasks: the FK SET NULLs them back to Ungrouped
+    (migration 0136), unlike deleting the task itself which cascades its runs."""
+    owner = await _owner_ctx(maker)
+    repo, groups = TaskRepo(maker), TaskGroupRepo(maker)
+    task = await _make_task(repo, owner, name="filed")
+    g = await groups.create(owner, name="Money")
+    await repo.reorder(owner, group_id=g.id, task_ids=[task.id])
+    assert (await repo.get(owner, task.id)).group_id == g.id  # type: ignore[union-attr]
+
+    await groups.delete(owner, g.id)
+    survivor = await repo.get(owner, task.id)
+    assert survivor is not None and survivor.group_id is None  # ungrouped, not deleted
 
 
 async def test_full_run_lands_session_run_and_task_run(maker: async_sessionmaker) -> None:

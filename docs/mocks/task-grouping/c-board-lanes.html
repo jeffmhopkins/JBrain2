@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Task grouping · C — swimlane board</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;cursor:pointer;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .spacer{margin-left:auto;}
+  .bar .iconbtn{appearance:none;border:none;background:none;color:var(--text-2);padding:6px;cursor:pointer;}
+
+  /* lane pager dots */
+  .pager{display:flex;gap:6px;justify-content:center;padding:9px 0 4px;flex:none;}
+  .pager .pd{width:6px;height:6px;border-radius:999px;background:var(--border);transition:.2s;}
+  .pager .pd.on{background:var(--steel);width:18px;}
+
+  .board{flex:1;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;}
+  .board::-webkit-scrollbar{display:none;}
+  .lane{flex:none;width:390px;scroll-snap-align:center;display:flex;flex-direction:column;padding:6px 16px 20px;overflow-y:auto;}
+  .lane-head{display:flex;align-items:center;gap:9px;padding:8px 2px 12px;position:sticky;top:0;background:var(--bg);z-index:5;}
+  .lane-dot{width:9px;height:9px;border-radius:999px;flex:none;}
+  .lane-name{font-size:17px;font-weight:600;}
+  .lane-count{font-size:12px;color:var(--text-3);background:var(--surface-2);border-radius:999px;padding:2px 9px;}
+  .lane-ren{margin-left:auto;background:none;border:none;color:var(--text-3);padding:5px;cursor:pointer;}
+  .lane-list{display:flex;flex-direction:column;gap:9px;min-height:60px;flex:1;}
+  .lane.dropinto{background:var(--steel-tint);border-radius:16px;}
+  .lane-empty{font-size:12.5px;color:var(--text-3);text-align:center;padding:26px 10px;border:1px dashed var(--border);border-radius:14px;}
+
+  .task{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;touch-action:pan-y;}
+  .task.off{opacity:.55;}
+  .task-inner{padding:12px 13px;display:flex;gap:10px;align-items:flex-start;cursor:grab;touch-action:none;}
+  .sdot{width:9px;height:9px;border-radius:999px;flex:none;margin-top:5px;}
+  .sdot.running{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  .sdot.ok{background:var(--green);}.sdot.failed{background:var(--rose);}.sdot.idle{background:var(--text-3);}.sdot.pending{background:var(--amber);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .tmain{flex:1;min-width:0;}
+  .tname{font-size:15px;font-weight:600;line-height:1.3;}
+  .twhen{font-size:12.5px;color:var(--text-2);margin-top:4px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .agc{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;}
+  .agc.jerv{background:var(--violet-tint);color:var(--violet);}
+  .agc.curator{background:var(--steel-tint);color:var(--steel);}
+  .agc.teacher{background:var(--amber-tint);color:var(--amber);}
+  .agc.archivist{background:var(--green-tint);color:var(--green);}
+  .tmeta{font-size:11.5px;color:var(--text-3);margin-top:5px;font-variant-numeric:tabular-nums;}
+  .tmeta .st-failed{color:var(--rose);}.tmeta .st-running{color:var(--green);}
+  .sw{flex:none;width:42px;height:25px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);position:relative;cursor:pointer;padding:0;margin-top:2px;transition:.16s;}
+  .sw[aria-checked="true"]{background:var(--green-tint);border-color:rgba(143,188,154,.45);}
+  .sw .knob{position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:999px;background:var(--text-3);transition:.16s;}
+  .sw[aria-checked="true"] .knob{left:19px;background:var(--green);}
+
+  .task.lifted{position:fixed;z-index:200;box-shadow:0 14px 34px rgba(0,0,0,.5);border-color:var(--steel);pointer-events:none;}
+  .ph{border:1.5px dashed var(--steel);background:var(--steel-tint);border-radius:16px;}
+
+  .newlane{flex:none;width:200px;scroll-snap-align:center;display:flex;align-items:center;justify-content:center;padding:16px;}
+  .newlane button{width:100%;height:120px;border:1px dashed var(--border);background:transparent;color:var(--text-3);font:inherit;font-size:13px;font-weight:500;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;}
+  .newlane button svg{width:22px;height:22px;}
+
+  .dragtip{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:9px 12px;font-size:12px;color:var(--text-2);display:flex;gap:8px;align-items:center;z-index:60;}
+  .dragtip svg{width:15px;height:15px;color:var(--steel);flex:none;}
+  .dragtip.hide{display:none;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:120;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .ti{color:var(--steel);flex:none;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Task grouping · C — swimlane board</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    <b>One group per screen.</b> Each group is a full-width <b>lane</b> you swipe between (pager dots
+    up top); the last panel is <b>＋ New lane</b>. Drag a card to reorder within its lane, or drag it
+    to the screen edge to carry it into the neighbouring group. Fewer tasks visible at once, but each
+    group gets its own uncluttered space — the Kanban mental model on a phone.
+  </div>
+
+  <div class="phone" id="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Tasks</span>
+      <span class="spacer"></span>
+      <button class="iconbtn" onclick="toast('＋ New task editor would open.')" aria-label="New task"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
+
+    <div class="pager" id="pager"></div>
+    <div class="board" id="board"></div>
+
+    <div class="dragtip" id="dragtip"><svg viewBox="0 0 24 24"><path d="M5 9l-3 3 3 3M19 9l3 3-3 3M9 5l3-3 3 3M9 19l3 3 3-3"/></svg>Hold &amp; drag a card. Drag to the left/right edge to move it to the next group.</div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+
+const AGENT={jerv:'Jerv',curator:'Curator',teacher:'Teacher',archivist:'Archivist'};
+const GROUPS=[
+  {id:'g-morning',name:'Morning routine'},
+  {id:'g-finance',name:'Money'},
+  {id:'g-house',name:'Household'},
+];
+const TASKS=[
+  {id:'t1',g:'g-morning',name:'Morning news brief',agent:'jerv',sched:'Weekdays · 7:00',enabled:true,last:'ok',meta:'last run ok · next tomorrow 7:00'},
+  {id:'t2',g:'g-morning',name:'Today on my calendar',agent:'curator',sched:'Daily · 6:45',enabled:true,last:'ok',meta:'last run ok · next tomorrow 6:45'},
+  {id:'t3',g:'g-finance',name:'Markets & portfolio watch',agent:'jerv',sched:'Daily · 16:30',enabled:true,last:'running',meta:'running now'},
+  {id:'t4',g:'g-finance',name:'Spending recap',agent:'curator',sched:'Weekly S · 20:00',enabled:false,last:'idle',meta:'paused'},
+  {id:'t5',g:'g-house',name:'Grocery list tidy-up',agent:'curator',sched:'On demand',enabled:true,last:'ok',meta:'run it any time · last ran 3d ago'},
+  {id:'t6',g:'g-house',name:'Weekly note review',agent:'curator',sched:'Sun · 18:00',enabled:true,last:'failed',meta:'last run failed · next Sun 18:00'},
+];
+
+function laneDot(gid){const ts=TASKS.filter(t=>t.g===gid&&t.enabled);
+  if(ts.some(t=>t.last==='failed'))return 'var(--rose)';
+  if(ts.some(t=>t.last==='running'))return 'var(--green)';
+  if(!ts.length)return 'var(--text-3)';return 'var(--green)';}
+function metaHtml(t){return t.meta.replace('running now','<span class="st-running">running now</span>').replace('last run failed','<span class="st-failed">last run failed</span>');}
+function taskCard(t){
+  return `<div class="task ${t.enabled?'':'off'}" data-id="${t.id}">
+    <div class="task-inner" data-grab onclick="tapCard(event)">
+      <span class="sdot ${t.enabled?t.last:'idle'}"></span>
+      <span class="tmain">
+        <span class="tname">${t.name}</span>
+        <span class="twhen"><span class="agc ${t.agent}">${AGENT[t.agent]}</span><span>${t.sched}</span></span>
+        <span class="tmeta">${metaHtml(t)}</span>
+      </span>
+      <span class="sw" role="switch" aria-checked="${t.enabled}" onclick="flip(this,event)"><span class="knob"></span></span>
+    </div>
+  </div>`;
+}
+function render(){
+  const board=document.getElementById('board');
+  board.innerHTML=GROUPS.map(g=>{
+    const ts=TASKS.filter(t=>t.g===g.id);
+    return `<section class="lane" data-gid="${g.id}">
+      <div class="lane-head">
+        <span class="lane-dot" style="background:${laneDot(g.id)}"></span>
+        <span class="lane-name">${g.name}</span>
+        <span class="lane-count">${ts.length}</span>
+        <button class="lane-ren" onclick="renameLane('${g.id}')" aria-label="Rename"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+      </div>
+      <div class="lane-list" data-list="${g.id}">${ts.length?ts.map(taskCard).join(''):'<div class="lane-empty">No tasks here yet — drag one in from another group.</div>'}</div>
+    </section>`;
+  }).join('')+`<div class="newlane"><button onclick="addLane()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New lane</button></div>`;
+  bindDrag();renderPager();updatePager();
+}
+function renderPager(){
+  document.getElementById('pager').innerHTML=GROUPS.map((g,i)=>`<span class="pd" data-i="${i}"></span>`).join('')+`<span class="pd" data-i="${GROUPS.length}"></span>`;
+}
+function updatePager(){
+  const board=document.getElementById('board');const i=Math.round(board.scrollLeft/390);
+  document.querySelectorAll('.pager .pd').forEach((d,idx)=>d.classList.toggle('on',idx===i));
+}
+document.getElementById('board').addEventListener('scroll',()=>{updatePager();},{passive:true});
+
+function tapCard(e){
+  if(e.target.closest('.sw'))return;
+  if(document.getElementById('phone').classList.contains('dragging'))return;
+  toast('Card would expand to prompt + recent runs.');
+}
+function flip(el,e){e.stopPropagation();
+  const on=el.getAttribute('aria-checked')!=='true';el.setAttribute('aria-checked',String(on));
+  const card=el.closest('.task');const t=TASKS.find(x=>x.id===card.dataset.id);
+  t.enabled=on;card.classList.toggle('off',!on);
+  card.querySelector('.sdot').className='sdot '+(on?t.last:'idle');
+  card.querySelector('.tmeta').innerHTML=on?metaHtml(t):'paused';
+  const lane=card.closest('.lane');lane.querySelector('.lane-dot').style.background=laneDot(t.g);
+  toast(`${t.name} ${on?'resumed':'paused'}.`);
+}
+function renameLane(gid){const g=GROUPS.find(x=>x.id===gid);const n=prompt('Rename group',g.name);if(n&&n.trim()){g.name=n.trim();render();}}
+function addLane(){const n=prompt('New group name','New group');if(n&&n.trim()){GROUPS.push({id:'g'+Date.now(),name:n.trim()});render();toast('Lane added — swipe to it.');}}
+
+/* ---- drag: reorder in-lane + carry to adjacent lane at edges ---- */
+let drag=null,edgeTimer=null;
+function bindDrag(){document.querySelectorAll('[data-grab]').forEach(h=>h.onpointerdown=startDrag);}
+function startDrag(e){
+  if(e.target.closest('.sw'))return;
+  const card=e.target.closest('.task');
+  const r=card.getBoundingClientRect();
+  // require a small hold-ish threshold via pointermove; simplest: start immediately but keep scroll usable — we preventDefault on move
+  drag={card,startX:e.clientX,startY:e.clientY,r,armed:false};
+  window.addEventListener('pointermove',maybeStart);
+  window.addEventListener('pointerup',cancelMaybe,{once:true});
+}
+function maybeStart(e){
+  if(!drag)return;
+  const dxAbs=Math.abs(e.clientX-drag.startX),dyAbs=Math.abs(e.clientY-drag.startY);
+  if(!drag.armed){
+    if(dyAbs>6&&dyAbs>dxAbs){ // vertical intent -> start dragging card
+      arm(e);
+    }else if(dxAbs>10){ // horizontal intent -> let the board pager scroll, abort card drag
+      window.removeEventListener('pointermove',maybeStart);drag=null;return;
+    }
+    return;
+  }
+  moveDrag(e);
+}
+function cancelMaybe(){window.removeEventListener('pointermove',maybeStart);if(drag&&!drag.armed)drag=null;}
+function arm(e){
+  const {card,r}=drag;
+  document.getElementById('phone').classList.add('dragging');
+  document.getElementById('dragtip').classList.remove('hide');
+  const ph=document.createElement('div');ph.className='ph';ph.style.height=r.height+'px';
+  card.parentNode.insertBefore(ph,card.nextSibling);
+  card.classList.add('lifted');card.style.width=r.width+'px';card.style.height=r.height+'px';
+  drag.ph=ph;drag.dx=e.clientX-r.left;drag.dy=e.clientY-r.top;drag.armed=true;
+  window.removeEventListener('pointermove',maybeStart);
+  window.addEventListener('pointermove',moveDrag);
+  window.addEventListener('pointerup',endDrag,{once:true});
+  moveDrag(e);
+}
+function moveDrag(e){
+  const {card,dx,dy}=drag;
+  card.style.left=(e.clientX-dx)+'px';card.style.top=(e.clientY-dy)+'px';
+  const phoneR=document.getElementById('phone').getBoundingClientRect();
+  const board=document.getElementById('board');
+  // edge carry: if near left/right edge, page the board
+  const nearLeft=e.clientX<phoneR.left+42, nearRight=e.clientX>phoneR.right-42;
+  if((nearLeft||nearRight)&&!edgeTimer){
+    edgeTimer=setTimeout(()=>{
+      const cur=Math.round(board.scrollLeft/390);
+      const to=Math.max(0,Math.min(GROUPS.length-1,cur+(nearRight?1:-1)));
+      board.scrollTo({left:to*390,behavior:'smooth'});
+      edgeTimer=null;
+    },420);
+  }else if(!nearLeft&&!nearRight&&edgeTimer){clearTimeout(edgeTimer);edgeTimer=null;}
+  // which lane is centered
+  document.querySelectorAll('.lane').forEach(l=>l.classList.remove('dropinto'));
+  const idx=Math.round(board.scrollLeft/390);
+  const lane=document.querySelectorAll('.lane')[idx];if(!lane)return;
+  lane.classList.add('dropinto');
+  const list=lane.querySelector('.lane-list');
+  const empty=list.querySelector('.lane-empty');if(empty)empty.remove();
+  const cards=[...list.querySelectorAll('.task:not(.lifted)')];
+  let before=null;for(const c of cards){const r=c.getBoundingClientRect();if(e.clientY<r.top+r.height/2){before=c;break;}}
+  if(before)list.insertBefore(drag.ph,before);else list.appendChild(drag.ph);
+}
+function endDrag(){
+  if(edgeTimer){clearTimeout(edgeTimer);edgeTimer=null;}
+  const {card,ph}=drag;window.removeEventListener('pointermove',moveDrag);
+  const list=ph.parentNode;const gid=list.dataset.list;
+  card.classList.remove('lifted');card.style.cssText='';
+  list.insertBefore(card,ph);ph.remove();
+  document.querySelectorAll('.lane').forEach(l=>l.classList.remove('dropinto'));
+  document.getElementById('phone').classList.remove('dragging');
+  const t=TASKS.find(x=>x.id===card.dataset.id);const from=t.g;t.g=gid;
+  // sync order
+  const order=[];document.querySelectorAll('.lane-list').forEach(l=>l.querySelectorAll('.task').forEach(c=>{const tt=TASKS.find(x=>x.id===c.dataset.id);tt.g=l.dataset.list;order.push(tt);}));
+  TASKS.length=0;TASKS.push(...order);
+  // refresh counts/dots without full re-render (keeps scroll position)
+  GROUPS.forEach(g=>{const el=document.querySelector(`.lane[data-gid="${g.id}"]`);if(!el)return;
+    const n=TASKS.filter(x=>x.g===g.id).length;el.querySelector('.lane-count').textContent=n;el.querySelector('.lane-dot').style.background=laneDot(g.id);
+    const ll=el.querySelector('.lane-list');if(!n&&!ll.querySelector('.lane-empty'))ll.innerHTML='<div class="lane-empty">No tasks here yet — drag one in from another group.</div>';});
+  bindDrag();
+  toast(from!==gid?`Moved to “${GROUPS.find(g=>g.id===gid).name}”.`:'Order saved.');
+  drag=null;
+}
+setTimeout(()=>document.getElementById('dragtip').classList.add('hide'),6000);
+render();
+</script>
+</body>
+</html>
