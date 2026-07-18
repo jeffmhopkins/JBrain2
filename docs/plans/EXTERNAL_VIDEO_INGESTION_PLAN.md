@@ -53,7 +53,11 @@ link), and jerv can search *what was said and shown* across the corpus, cited ba
   component verbatim — **full fidelity**: frame thumbnails are re-inlined from the persisted blobs
   (best-effort; a purged blob degrades to a marker), and the word/cue-level transcript is stored
   (0135) to drive the synced-transcript tab. Only videos analysed *before* 0135 render text-only
-  (no backfill — the fine timing wasn't kept); re-analysing upgrades them.
+  (no backfill — the fine timing wasn't kept); re-analysing upgrades them. The corpus has its own
+  **`external` domain** (0136) — jerv reaches the video corpus and nothing owner-authored — and
+  **`remove_external_video`** lets the owner drop a video: jerv only STAGES a one-leaf removal
+  proposal the owner approves inline (`remove-library-video`), and the trusted Proposal executor
+  hard-deletes it (chunks cascade). jerv never deletes directly.
 - **B:** the **`check_channel`** tool (list uploads via yt-dlp `extract_flat`, filter by title, dedup against
   the corpus, return new video links).
 - **C:** a recurring **Jerv Task** that calls `check_channel` for the owner's channels and `analyze_stream`

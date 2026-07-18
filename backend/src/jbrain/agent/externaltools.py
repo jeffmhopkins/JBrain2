@@ -2,10 +2,11 @@
 video corpus) and `check_channel` (list a channel's new uploads worth analysing).
 
 Like the web tools, these are sandboxed jerv-only surfaces (`web` permission), but they read a
-LOCAL, general-domain table (and, for check_channel, list public channel metadata) rather than
-the open web. jerv's own tool session is empty-scoped, so the handler opens a purpose-built
-owner+general read (jbrain.external.corpus) used ONLY for the corpus query — the tool gets
-corpus access, the persona's firewall is not widened.
+LOCAL table in the corpus's own `external` domain (and, for check_channel, list public channel
+metadata) rather than the open web. jerv's own tool session is empty-scoped, so the handler opens
+a purpose-built owner+external read (jbrain.external.corpus) used ONLY for the corpus query — the
+tool reaches the video corpus and nothing owner-authored, and the persona's firewall is not widened.
+remove_external_video goes further: jerv only STAGES a removal proposal the owner approves inline.
 
 The corpus is third-party, attacker-authorable content, so search results are fenced as
 untrusted quoted data (not instructions), and each hit is a WebSource citation chip pointing at
@@ -15,15 +16,18 @@ the video + timestamp — the same [^n] footnote model the web tools use.
 import asyncio
 import base64
 import re
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.contracts import ViewPayload, WebSource
+from jbrain.agent.contracts import ProposalRef, ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
+from jbrain.agent.proposals import NodeSpec, ProposalRepo, ProposalSpec
 from jbrain.embed import EmbedClient
 from jbrain.external.corpus import (
     CorpusHit,
     ExternalTranscript,
+    _corpus_read_context,
     fetch_transcript,
     filter_new_video_ids,
     search_corpus,
@@ -155,6 +159,7 @@ def build_external_handlers(
     lister: ChannelLister = list_channel_uploads,
     *,
     blobs: BlobStore | None = None,
+    proposals: ProposalRepo | None = None,
 ) -> dict[str, ToolHandler]:
     async def search_external_video_tool(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
@@ -252,9 +257,51 @@ def build_external_handlers(
         channel = f" — {t.channel_name}" if t.channel_name else ""
         return ToolOutput(f'Showing "{t.title}"{channel}.', view=view)
 
+    async def remove_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        if proposals is None:
+            return "removing videos isn't available here."
+        ref = str(arguments.get("url") or arguments.get("video_id") or "").strip()
+        if not ref:
+            return "remove_external_video needs the url (or id) of a video in the library."
+        pid = ctx.session.principal_id
+        if not pid:
+            return "can't stage a removal without an owner principal."
+        t = await fetch_transcript(maker, _parse_video_id(ref), principal_id=pid)
+        if t is None:
+            return (
+                f"No analysed video in the library matches '{ref}'."
+                " Use search_external_video to find one first."
+            )
+        # jerv only PROPOSES: it stages a one-leaf removal the owner approves inline; the trusted
+        # executor does the delete. Staged under the corpus's external scope (jerv's own session is
+        # empty-scoped and couldn't satisfy the proposals firewall for the external domain).
+        node = NodeSpec(
+            id=str(uuid.uuid4()),
+            type="leaf",
+            op="delete_external_video",
+            label=f'Remove "{t.title}" from your library',
+            preview={"source_id": t.source_id, "title": t.title, "url": t.url},
+        )
+        spec = ProposalSpec(
+            kind="remove-library-video",
+            domain="external",
+            title=f'Remove "{t.title}"',
+            nodes=[node],
+            provenance={"source": "chat"},
+            session_id=ctx.agent_session_id,
+        )
+        prop_id = await proposals.stage(_corpus_read_context(pid), principal_id=pid, spec=spec)
+        return ToolOutput(
+            f'Staged the removal of "{t.title}". I won\'t delete anything until you approve it.',
+            proposal=ProposalRef(proposal_id=prop_id, kind="remove-library-video"),
+        )
+
     return {
         "search_external_video": search_external_video_tool,
         "check_channel": check_channel_tool,
         "read_external_video": read_external_video_tool,
         "show_external_video": show_external_video_tool,
+        # Always registered so its sidecar always pairs; the handler returns "not available" when
+        # no ProposalRepo is wired (a read-only test build). In the app it's always present.
+        "remove_external_video": remove_external_video_tool,
     }

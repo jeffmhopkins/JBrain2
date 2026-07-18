@@ -129,7 +129,7 @@ class FakeAnalysis:
 
 async def test_leaf_executor_dispatches_by_op() -> None:
     notes, svc, jobs, analysis = FakeNotes(), FakeConnectorService(), FakeJobs(), FakeAnalysis()
-    execute = build_leaf_executor(notes, svc, jobs, analysis)  # type: ignore[arg-type]
+    execute = build_leaf_executor(notes, svc, jobs, analysis, object())  # type: ignore[arg-type]
     proposal = ProposalRow("p", "egress", "approved", "health", "t", None)
 
     egress_node = NodeRow(

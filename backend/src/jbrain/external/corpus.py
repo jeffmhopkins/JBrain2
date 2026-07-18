@@ -189,6 +189,23 @@ async def filter_new_video_ids(
     return {v for v in video_ids if v not in present}
 
 
+async def delete_external_video(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, source_id: str
+) -> bool:
+    """Hard-delete one library video: its `external_sources` row (chunks cascade, 0134). Runs at
+    proposal enact under the OWNER's context — the trusted executor, never jerv — after the owner
+    approved the removal. Returns True when a row was actually removed (idempotent: a re-enact or
+    an already-gone video is a harmless no-op)."""
+    async with scoped_session(maker, ctx) as session:
+        deleted = (
+            await session.execute(
+                text("DELETE FROM app.external_sources WHERE id = cast(:id AS uuid) RETURNING id"),
+                {"id": source_id},
+            )
+        ).first()
+    return deleted is not None
+
+
 @dataclass(frozen=True)
 class ExternalTranscript:
     """One library video read in full: its metadata plus every passage window in order. The

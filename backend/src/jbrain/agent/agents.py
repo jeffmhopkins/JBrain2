@@ -102,6 +102,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # SHOW one library video as the video-analysis card (embed + frame timeline + tabs),
         # rebuilt from stored corpus data — when the owner wants to see/watch it, not read it.
         "show_external_video",
+        # Stage the removal of one library video for the owner's inline approval — jerv proposes,
+        # the owner approves, the trusted executor hard-deletes (jerv never deletes directly).
+        "remove_external_video",
         # List a channel's new uploads not yet in the corpus (the scheduling Task calls
         # this, then analyze_stream on each new match).
         "check_channel",
