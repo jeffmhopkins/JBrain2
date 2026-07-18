@@ -195,21 +195,28 @@ def build_external_handlers(
 
     async def list_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         limit = max(1, min(int(arguments.get("limit", _LIST_DEFAULT) or _LIST_DEFAULT), _LIST_MAX))
-        offset = max(0, int(arguments.get("offset", 0) or 0))
+        page = max(1, int(arguments.get("page", 1) or 1))
         videos, total = await list_corpus(
-            maker, limit=limit, offset=offset, principal_id=ctx.session.principal_id
+            maker, limit=limit, offset=(page - 1) * limit, principal_id=ctx.session.principal_id
         )
         if total == 0:
             return "The video library is empty — no videos have been analysed yet."
         noun = "video" if total == 1 else "videos"
-        if not videos:  # offset past the end
-            return f"The library holds {total} {noun}; there are none past offset {offset}."
+        pages = (total + limit - 1) // limit  # ceil: total pages at this page size
+        if not videos:  # page past the last one
+            return (
+                f"The library holds {total} {noun} ({pages} page(s) at {limit}/page);"
+                f" page {page} is past the end."
+            )
 
-        first, last = offset + 1, offset + len(videos)
+        first = (page - 1) * limit + 1
+        last = first + len(videos) - 1
         span = f"video {first}" if first == last else f"videos {first}–{last}"
+        paged = pages > 1
         header = (
-            f"Your video library holds {total} {noun}. Listing {span}"
-            f"{f' of {total}' if len(videos) < total else ''}, most recently analysed first:"
+            f"Your video library holds {total} {noun}."
+            f"{f' Page {page} of {pages}' if paged else ''} — listing {span}"
+            f"{f' of {total}' if paged else ''}, most recently analysed first:"
         )
         lines: list[str] = []
         sources: list[WebSource] = []
@@ -224,8 +231,10 @@ def build_external_handlers(
             lines.append(f"- {v.title or v.url}{channel}{meta}\n  {v.url}")
             sources.append(WebSource(url=v.url, title=v.title or v.url))
         footer = ""
-        if last < total:
-            footer = f"\n\n{total - last} more — call again with offset {last} for the next page."
+        if page < pages:
+            footer = (
+                f"\n\n{total - last} more — call again with page {page + 1} for the next {noun}."
+            )
         # Titles/channels are third-party metadata (attacker-authorable), so fence them as
         # data to report, never as instructions — the same posture as the search results.
         note = (

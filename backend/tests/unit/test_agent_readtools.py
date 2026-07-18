@@ -1193,7 +1193,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "list_external_video.tool": (
             "list_external_video",
             1,
-            "e83bda6ca121e68b60dee7296fadab7269a5929ae357d2c39b41f07d09b37398",
+            "21e6ff676f81063cb5022512377db4c7dff31a6595e2253fcbc787bc3f29cb3a",
         ),
         "read_external_video.tool": (
             "read_external_video",

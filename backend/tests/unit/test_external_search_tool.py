@@ -85,8 +85,10 @@ def _list_handler():
     return build_external_handlers(object(), object())["list_external_video"]  # type: ignore[arg-type]
 
 
-async def _run_list(monkeypatch, videos, total, args):
+async def _run_list(monkeypatch, videos, total, args, *, expect_offset=None):
     async def fake_list(maker, *, limit, offset=0, principal_id=""):
+        if expect_offset is not None:
+            assert offset == expect_offset
         return videos, total
 
     monkeypatch.setattr(externaltools, "list_corpus", fake_list)
@@ -115,15 +117,27 @@ async def test_list_reports_total_and_metadata(monkeypatch) -> None:
             duration_s=3725,  # 1:02:05
         )
     ]
-    out = await _run_list(monkeypatch, videos, 3, {})
+    # limit 1 over a total of 3 → page 1 of 3, and the next-page pointer uses page 2.
+    out = await _run_list(monkeypatch, videos, 3, {"limit": 1}, expect_offset=0)
 
     assert isinstance(out, ToolOutput)
     assert "holds 3 videos" in out
+    assert "Page 1 of 3" in out
     assert "Starship Update — NSF" in out
     assert "published 2026-07-15" in out and "1:02:05" in out
-    # A partial page advertises how to fetch the next one.
-    assert "offset 1 for the next page" in out
+    # A non-final page advertises how to fetch the next one, by page number.
+    assert "call again with page 2" in out
     assert out.web_sources[0].url == "https://www.youtube.com/watch?v=abc"
+
+
+async def test_list_page_maps_to_offset(monkeypatch) -> None:
+    # page 3 at limit 10 → offset 20; a full page (no remainder) has no next pointer.
+    videos = [_video(f"V{i}") for i in range(10)]
+    out = await _run_list(
+        monkeypatch, videos, 30, {"page": 3, "limit": 10}, expect_offset=20
+    )
+    assert "Page 3 of 3" in out
+    assert "call again with page" not in out  # last page
 
 
 async def test_list_empty_library(monkeypatch) -> None:
@@ -131,14 +145,15 @@ async def test_list_empty_library(monkeypatch) -> None:
     assert out == "The video library is empty — no videos have been analysed yet."
 
 
-async def test_list_offset_past_end(monkeypatch) -> None:
-    out = await _run_list(monkeypatch, [], 5, {"offset": 99})
-    assert "holds 5 videos" in out and "none past offset 99" in out
+async def test_list_page_past_end(monkeypatch) -> None:
+    out = await _run_list(monkeypatch, [], 5, {"page": 99})
+    assert "holds 5 videos" in out and "page 99 is past the end" in out
 
 
 async def test_list_full_page_has_no_next_pointer(monkeypatch) -> None:
-    # The whole library fits on one page — no pagination footer, no "of N" qualifier.
+    # The whole library fits on one page — no "Page X of Y" and no next-page pointer.
     videos = [_video("A"), _video("B")]
     out = await _run_list(monkeypatch, videos, 2, {})
     assert "holds 2 videos" in out
-    assert "next page" not in out
+    assert "Page 1 of" not in out
+    assert "call again" not in out
