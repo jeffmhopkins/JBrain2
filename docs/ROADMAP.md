@@ -259,6 +259,6 @@ on llama-server's `--cache-reuse`/slot flags. Both waves open.
 — any analysed YouTube video (ad hoc or scheduled) lands in an isolated, embedded, searchable corpus
 (`external_sources`/`external_source_chunks`), deliberately kept out of the knowledge graph/wiki since
 third-party content is not a source of truth. Built on the shipped `analyze_stream` + captions-first
-(#879). Wave A shipped (the corpus tables, a timeline windower, the `analyze_stream` write-through, and
-the sandboxed-`jerv` `search_external` tool); Wave B (a `check_channel` tool) and Wave C (a recurring
-Jerv Task for scheduling — no workflow-engine machinery) open.
+(#879). Waves A–B shipped (the corpus tables, a timeline windower, the `analyze_stream` write-through,
+and the sandboxed-`jerv` `search_external` + `check_channel` tools); Wave C (a recurring Jerv Task for
+scheduling — no workflow-engine machinery) open.

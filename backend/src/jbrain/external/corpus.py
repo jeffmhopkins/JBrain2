@@ -156,6 +156,35 @@ async def persist_analysis(
     return source_id
 
 
+async def filter_new_video_ids(
+    maker: async_sessionmaker[AsyncSession],
+    provider: str,
+    video_ids: list[str],
+    *,
+    principal_id: str = "",
+) -> set[str]:
+    """Of `video_ids`, the ones NOT already in the corpus (any status) — so `check_channel`
+    only surfaces videos worth analysing, and an already-ingested video is never re-analysed.
+    Reads under the purpose-built general scope."""
+    if not video_ids:
+        return set()
+    async with scoped_session(maker, _corpus_read_context(principal_id)) as session:
+        present = set(
+            (
+                await session.execute(
+                    text(
+                        "SELECT video_id FROM app.external_sources"
+                        " WHERE provider = :p AND video_id = ANY(:vids)"
+                    ),
+                    {"p": provider, "vids": video_ids},
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return {v for v in video_ids if v not in present}
+
+
 # --- corpus search (the search_external tool's engine) --------------------------------
 
 # One hybrid RRF query over the corpus, mirroring SearchService: a dense + FTS leg over the

@@ -750,6 +750,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # search_external is `web`-classed (jerv-only), reading the external-source
         # video corpus via a purpose-built scope, never the curator wildcard.
         "search_external",
+        # check_channel is `web`-classed (jerv-only): lists a channel's new uploads.
+        "check_channel",
     }
     shipped = {
         "search",
@@ -1176,6 +1178,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "search_external",
             1,
             "0a422aa1b430a8de914588a9bed15b440bffce72dbb4df1309e504aff486a2bb",
+        ),
+        "check_channel.tool": (
+            "check_channel",
+            1,
+            "4cbeee5e1cb151d0fba1a8274aa52e9dbf7e1359db96f14d5ec42a888ac83398",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

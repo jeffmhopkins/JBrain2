@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.embed import ExternalSourceEmbedder, vector_literal
-from jbrain.external.corpus import persist_analysis, search_corpus
+from jbrain.external.corpus import filter_new_video_ids, persist_analysis, search_corpus
 from jbrain.ingest.video import VideoAnalysis
 from jbrain.stream import ResolvedStream
 from tests.conftest import docker_available
@@ -247,3 +247,17 @@ async def test_search_scope_excludes_health_corpus(maker) -> None:  # noqa: F811
 
     hits, _ = await search_corpus(maker, StaticEmbed(), "booster", 6)
     assert all(h.source_id != hid for h in hits)
+
+
+async def test_filter_new_video_ids_skips_ingested(maker) -> None:  # noqa: F811
+    # An already-ingested video is not "new"; check_channel uses this to avoid re-analysis.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.external_sources (provider, video_id, url, status)"
+                " VALUES ('youtube', 'known1', 'https://y', 'done')"
+            )
+        )
+    fresh = await filter_new_video_ids(maker, "youtube", ["known1", "new2", "new3"])
+    assert fresh == {"new2", "new3"}
+    assert await filter_new_video_ids(maker, "youtube", []) == set()

@@ -1,13 +1,14 @@
 # External Video Ingestion (YouTube corpus) — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-18 · **Waves:** A✅ B◻️ C◻️
+> **Status:** In progress · **Last verified:** 2026-07-18 · **Waves:** A✅ B✅ C◻️
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): shaped, **hardened by a five-focus adversarial
 review**, and **re-sequenced around agent tools + the shipped Tasks feature** (owner decision) rather than
 the workflow engine. **Wave A (Phase A — corpus + analyse + search) is built** (migrations 0133–0134, the
 timeline windower, the `embed_external_source` job, the `analyze_stream` write-through, and the
-`search_external` jerv tool — with unit + real-Postgres RLS/round-trip tests); Waves B (`check_channel`)
-and C (the scheduling Task) are open (§14). The re-sequencing drops the poll/reconcile actions, the window-gate settings row, the seed
+`search_external` jerv tool). **Wave B (Phase B — the `check_channel` tool) is built** (a yt-dlp
+flat-listing channel lister, the `check_channel` jerv tool with title-filter + corpus-dedup, unit +
+integration tests). Wave C (the scheduling Task) is open (§14). The re-sequencing drops the poll/reconcile actions, the window-gate settings row, the seed
 migration, and the `pending_vod` reconciler state machine entirely. It builds on the shipped
 `analyze_stream` capability (yt-dlp resolution, the shared caption→fuse→reduce pipeline, and the
 **captions-first transcript** from #879) to turn any analysed video — ad hoc or scheduled — into a
@@ -389,8 +390,10 @@ snapshot as of `Last verified`; the source of truth is `backend/migrations/versi
   `search_external` tool (untrusted-content fence + jerv purpose-built scoped read) + formatting/degraded
   unit tests + a real-Postgres persist→embed→search round-trip and scope-isolation test. **Done: analyse a
   video in chat, then search it.**
-- **W2 (Phase B) — `check_channel`.** The tool + handler + corpus-dedup + tests. **Done: jerv lists new
-  matching uploads.**
+- **W2 (Phase B) — `check_channel`. ✅ Built.** The yt-dlp flat-listing channel lister
+  (`list_channel_uploads`, id-validated + SSRF-guarded), the `check_channel` jerv tool (title-filter +
+  corpus-dedup so an already-ingested video is never re-analysed), unit tests + a real-Postgres dedup
+  test. **Done: jerv lists new matching uploads.**
 - **W3 (Phase C) — Scheduling.** Document + create the recurring Jerv Task; confirm end-to-end nightly. No
   backend code beyond a possible small prompt/runbook. **Done: it runs itself.**
 

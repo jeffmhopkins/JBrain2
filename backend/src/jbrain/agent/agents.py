@@ -89,6 +89,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
         "search_external",
+        # List a channel's new uploads not yet in the corpus (the scheduling Task calls
+        # this, then analyze_stream on each new match).
+        "check_channel",
         "query_server_metrics",
         # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,

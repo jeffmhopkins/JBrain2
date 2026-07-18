@@ -213,6 +213,87 @@ def guard_public_host_or_stream(url: str, *, skip_dns: bool) -> None:
         raise StreamError(str(exc)) from exc
 
 
+@dataclass(frozen=True)
+class ChannelVideo:
+    """One upload from a channel listing — ids + title only (a flat extraction, no
+    per-video resolve). The watch URL is derived from the id so it matches what a later
+    `resolve_stream`/persist would key on."""
+
+    video_id: str
+    title: str
+    url: str
+
+
+# The channel-uploads lister, injectable so `check_channel` is testable without yt-dlp or a
+# real network (a fake returns canned ChannelVideos).
+ChannelLister = Callable[..., list["ChannelVideo"]]
+
+
+def valid_channel_id(channel_id: str) -> bool:
+    """A yt-dlp channel id (`UC…`) or an `@handle` — never a URL. Whitelisted chars only, so
+    it can't smuggle a path/scheme into the constructed listing URL."""
+    cid = channel_id.strip()
+    if not cid or len(cid) > 128:
+        return False
+    return all(c.isalnum() or c in "_-.@" for c in cid)
+
+
+def list_channel_uploads(
+    channel_id: str, *, limit: int = 10, skip_guard: bool = False
+) -> list[ChannelVideo]:
+    """List a channel's most recent uploads via yt-dlp flat extraction (ids + titles, no
+    per-video resolve — cheap). `channel_id` is a validated id/@handle, never a URL. Blocking
+    (yt-dlp does network I/O) — the caller runs it off the event loop. Raises `StreamError`
+    on an invalid id or an unlistable channel."""
+    cid = channel_id.strip()
+    if not valid_channel_id(cid):
+        raise StreamError("that doesn't look like a channel id (expected a UC… id or @handle)")
+    path = cid if cid.startswith("@") else f"channel/{cid}"
+    url = f"https://www.youtube.com/{path}/videos"
+    guard_public_host_or_stream(url, skip_dns=skip_guard)  # the constructed URL must be public
+    try:
+        import yt_dlp
+    except ImportError as exc:  # pragma: no cover - env without the dep
+        raise StreamError("channel listing is unavailable (yt-dlp not installed)") from exc
+
+    opts: Any = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": "in_playlist",
+        "playlistend": max(1, limit),
+        "socket_timeout": _RESOLVE_TIMEOUT_S,
+        "retries": 1,
+        "extractor_retries": 1,
+        "cachedir": False,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:  # noqa: BLE001 - yt-dlp raises a wide, unstable set
+        log.warning("stream.channel_list_failed", channel_id=cid, error=repr(exc))
+        raise StreamError("that channel couldn't be listed") from exc
+
+    entries = (info or {}).get("entries") or []
+    out: list[ChannelVideo] = []
+    for entry in entries:
+        if not entry:
+            continue
+        vid = str(entry.get("id") or "")
+        if not vid:
+            continue
+        out.append(
+            ChannelVideo(
+                video_id=vid,
+                title=str(entry.get("title") or ""),
+                url=f"https://www.youtube.com/watch?v={vid}",
+            )
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
     """Turn yt-dlp's info dict into a `ResolvedStream`. With `noplaylist` a single
     video is expected, but a URL that still resolves to a playlist yields `entries`;
