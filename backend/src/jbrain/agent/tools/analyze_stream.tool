@@ -1,8 +1,16 @@
 ---
 name: analyze_stream
-version: 4
+version: 5
 permission: web
 cost_class: expensive
+# NOTE: `mode` and `captions` intentionally carry NO JSON-Schema `enum`. gpt-oss's
+# harmony tool path (llama.cpp `--jinja`) builds a GBNF grammar over the tool union, and
+# an `enum` on a property of THIS many-optional-property object deterministically segfaults
+# the upstream (bisected via the debug tool-probe: the enum × full-optional-field-set
+# interaction, not byte size or punctuation). The allowed values live in the descriptions
+# instead, and both are validated in the handler anyway (`mode` against MODES in
+# streamtools.py; `captions` normalised by `_caption_pref` in ingest/stream_analysis.py,
+# unknown → "auto"), so dropping the schema-level constraint changes no behaviour.
 params:
   type: object
   properties:
@@ -11,8 +19,7 @@ params:
       description: The video URL to look at — a live stream or an on-demand video (e.g. a YouTube watch or live link, or most stream sites).
     mode:
       type: string
-      enum: [single, window, full]
-      description: "How much of the video to analyze. `full`: the WHOLE on-demand video — pick this whenever the owner asks to analyze the whole / full / entire video (frames spread across the entire duration, plus the transcript up to ~30 min); NOT valid for a live stream. `window`: a short slice of a few seconds — for a live stream (what's happening now) or one specific moment of a video (pass `seek`). `single`: one frame. Defaults to window; use `full` for any whole-video request."
+      description: "One of: single | window | full. How much of the video to analyze. `full`: the WHOLE on-demand video — pick this whenever the owner asks to analyze the whole / full / entire video (frames spread across the entire duration, plus the transcript up to ~30 min); NOT valid for a live stream. `window`: a short slice of a few seconds — for a live stream (what's happening now) or one specific moment of a video (pass `seek`). `single`: one frame. Defaults to window; use `full` for any whole-video request."
     frames:
       type: integer
       description: How many frames to sample in window or full mode (1–24). Full mode spreads them across the whole video; defaults to a sensible number. Ignored in full mode when `interval_s` is set (which controls density instead).
@@ -30,8 +37,7 @@ params:
       description: Whether to also transcribe the audio (window/full mode). Defaults to true; ignored in single mode.
     captions:
       type: string
-      enum: [auto, off, only]
-      description: "Full mode only: where the transcript comes from. `auto` (default) uses the provider's OWN captions when the video has them (YouTube etc.) — instant, covers the whole video, no length cap — and falls back to your local whisper otherwise. `off` forces local whisper (use this to RE-RUN a video with your own transcription instead of the provider's captions). `only` uses provider captions or none (never whisper). Ignored in window/single mode, which always whisper their short slice."
+      description: "One of: auto | off | only. Full mode only: where the transcript comes from. `auto` (default) uses the provider's OWN captions when the video has them (YouTube etc.) — instant, covers the whole video, no length cap — and falls back to your local whisper otherwise. `off` forces local whisper (use this to RE-RUN a video with your own transcription instead of the provider's captions). `only` uses provider captions or none (never whisper). Ignored in window/single mode, which always whisper their short slice."
   required: [url]
 ---
 Look at a video URL — a live stream or an on-demand video — and understand what it

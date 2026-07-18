@@ -4,6 +4,7 @@ run_editor_turn orchestration (prose -> reply, empty -> None) with an empty regi
 
 from typing import Any
 
+from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.toolregistry import ToolRegistry
@@ -157,6 +158,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
                 NwsClient(""),
                 NhcSurgeClient(""),
             ),
+            **build_external_handlers(stub, stub),  # search_external + check_channel sidecars
         },
         stub,  # city geocoder
         stub,  # sessionmaker (query_server_metrics binds it but never calls it here)

@@ -1091,8 +1091,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "analyze_stream.tool": (
             "analyze_stream",
-            4,
-            "797c836320839f07843039c0166bd8e339d9308fca7de03446a6212626595d08",
+            5,
+            "cf8dda315ac80597dd693eab603c51e577ad43f5f6d9d847e76fb30bd82f742a",
         ),
         "query_server_metrics.tool": (
             "query_server_metrics",
@@ -1192,6 +1192,19 @@ def test_sidecars_pinned_to_their_versions() -> None:
     for filename, expected in pins.items():
         tf = load_tool(TOOLS_DIR / filename)
         assert (tf.spec.name, tf.spec.version, tf.digest) == expected
+
+
+def test_analyze_stream_params_carry_no_enum() -> None:
+    """Regression guard: `analyze_stream` must ship NO JSON-Schema `enum`. gpt-oss's
+    harmony tool path (llama.cpp `--jinja`) builds a GBNF grammar over the tool union,
+    and an `enum` on a property of this many-optional-property object deterministically
+    segfaults the upstream (HTTP 500) — bisected via the debug tool-probe as the
+    enum × full-optional-field-set interaction, not byte size. Allowed values live in the
+    descriptions and are validated in the handler, so re-adding an `enum` here would
+    reintroduce the crash for no gain. See the sidecar's frontmatter note."""
+    props = load_tool(TOOLS_DIR / "analyze_stream.tool").spec.params["properties"]
+    with_enum = [name for name, schema in props.items() if "enum" in schema]
+    assert with_enum == [], f"analyze_stream props must not use enum (gpt-oss crash): {with_enum}"
 
 
 def test_query_server_metrics_offered_to_jerv() -> None:
