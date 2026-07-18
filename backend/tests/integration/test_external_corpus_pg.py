@@ -219,7 +219,7 @@ async def test_persist_embed_search_round_trip(maker) -> None:  # noqa: F811
     assert t.title == "Booster Rollout" and t.channel_name == "NSF"
     assert t.duration_s == 20 and t.summary == "A booster rollout at the pad."
     assert t.published_at is not None and t.published_at.year == 2026  # upload_date "20260715"
-    # The video-analysis card fields (show_external_source) round-trip too.
+    # The video-analysis card fields (show_external_video) round-trip too.
     assert t.video_id == "vid1" and t.provider == "youtube"
     assert t.duration_ms == 20_000 and t.frames and t.frames[0]["caption"]
     # The word-level transcript (0135) is stored + read back for the synced card tab.

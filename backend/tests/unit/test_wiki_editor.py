@@ -158,7 +158,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
                 NwsClient(""),
                 NhcSurgeClient(""),
             ),
-            **build_external_handlers(stub, stub),  # search_external + check_channel sidecars
+            **build_external_handlers(stub, stub),  # search_external_video + check_channel sidecars
         },
         stub,  # city geocoder
         stub,  # sessionmaker (query_server_metrics binds it but never calls it here)

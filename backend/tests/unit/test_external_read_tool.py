@@ -1,4 +1,4 @@
-"""Unit tests for the read_external_source tool handler: url/id parsing, the full timestamped
+"""Unit tests for the read_external_video tool handler: url/id parsing, the full timestamped
 transcript render, the untrusted fence, truncation, and the not-found path. The DB read
 (fetch_transcript) is covered by the integration tests; here it is stubbed."""
 
@@ -14,7 +14,7 @@ _CTX = ToolContext(session=SessionContext(principal_id="owner", principal_kind="
 
 
 def _handler():
-    return build_external_handlers(object(), object())["read_external_source"]  # type: ignore[arg-type]
+    return build_external_handlers(object(), object())["read_external_video"]  # type: ignore[arg-type]
 
 
 async def _run(monkeypatch, transcript, args):
@@ -97,11 +97,11 @@ async def test_present_but_empty_transcript(monkeypatch) -> None:
     assert "no stored transcript" in out
 
 
-# --- show_external_source: the video-analysis card ------------------------------------
+# --- show_external_video: the video-analysis card ------------------------------------
 
 
 def _show_handler():
-    return build_external_handlers(object(), object())["show_external_source"]  # type: ignore[arg-type]
+    return build_external_handlers(object(), object())["show_external_video"]  # type: ignore[arg-type]
 
 
 async def _run_show(monkeypatch, transcript, args):
@@ -266,7 +266,7 @@ async def test_show_inlines_thumbnails_when_the_blob_store_has_them(monkeypatch)
 
     monkeypatch.setattr(externaltools, "fetch_transcript", fake_fetch)
     built = build_external_handlers(object(), object(), blobs=blobs)  # type: ignore[arg-type]
-    handler = built["show_external_source"]
+    handler = built["show_external_video"]
     out = await handler({"url": "https://youtu.be/x"}, _CTX)
 
     assert isinstance(out, ToolOutput) and out.view is not None
@@ -304,6 +304,6 @@ async def test_show_frame_degrades_to_marker_when_blob_missing(monkeypatch) -> N
 
     monkeypatch.setattr(externaltools, "fetch_transcript", fake_fetch)
     built = build_external_handlers(object(), object(), blobs=_EmptyBlobs())  # type: ignore[arg-type]
-    out = await built["show_external_source"]({"url": "https://youtu.be/x"}, _CTX)
+    out = await built["show_external_video"]({"url": "https://youtu.be/x"}, _CTX)
     assert isinstance(out, ToolOutput) and out.view is not None
     assert out.view.data["frames"][0] == {"t_ms": 1000, "caption": "c"}  # marker, no thumb

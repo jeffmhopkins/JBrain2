@@ -1,4 +1,4 @@
-"""jerv's external-source video tools: `search_external` (hybrid search over the ingested
+"""jerv's external-source video tools: `search_external_video` (hybrid search over the ingested
 video corpus) and `check_channel` (list a channel's new uploads worth analysing).
 
 Like the web tools, these are sandboxed jerv-only surfaces (`web` permission), but they read a
@@ -36,7 +36,7 @@ _MAX_LIMIT = 10
 _CHANNEL_MAX = 25
 # A full transcript can be large; cap the returned text so one read can't swamp jerv's context.
 # ~60k chars ≈ 15k tokens — enough for a long episode; longer is truncated with a pointer to
-# search_external for jumping to a specific moment.
+# search_external_video for jumping to a specific moment.
 _TRANSCRIPT_MAX_CHARS = 60_000
 
 # Pull the video id out of a watch/short/live/embed URL (or accept a bare id the search tool
@@ -93,7 +93,7 @@ def _render_transcript(t: ExternalTranscript) -> str:
     transcript = f"\n\nTranscript:\n{text}" if text else "\n\n(No timestamped transcript stored.)"
     body = f"{header}{summary}{transcript}"
     if truncated:
-        body += "\n\n[transcript truncated — use search_external to jump to a specific moment]"
+        body += "\n\n[transcript truncated — use search_external_video to jump to a moment]"
     return body
 
 
@@ -156,10 +156,10 @@ def build_external_handlers(
     *,
     blobs: BlobStore | None = None,
 ) -> dict[str, ToolHandler]:
-    async def search_external_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def search_external_video_tool(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
         if not query:
-            return "search_external needs a non-empty query."
+            return "search_external_video needs a non-empty query."
         limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
         hits, degraded = await search_corpus(
             maker, embedder, query, limit, principal_id=ctx.session.principal_id
@@ -217,17 +217,17 @@ def build_external_handlers(
             " (analyze_stream one in full mode to add it):\n" + "\n".join(lines)
         )
 
-    async def read_external_source_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+    async def read_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         ref = str(arguments.get("url") or arguments.get("video_id") or "").strip()
         if not ref:
-            return "read_external_source needs the url (or id) of a video in the library."
+            return "read_external_video needs the url (or id) of a video in the library."
         transcript = await fetch_transcript(
             maker, _parse_video_id(ref), principal_id=ctx.session.principal_id
         )
         if transcript is None:
             return (
                 f"No analysed video in the library matches '{ref}'."
-                " Use search_external to find one first."
+                " Use search_external_video to find one first."
             )
         if not transcript.windows and not transcript.summary:
             return f"'{transcript.title}' is in the library but has no stored transcript."
@@ -235,17 +235,17 @@ def build_external_handlers(
         source = WebSource(url=transcript.url, title=transcript.title or transcript.url)
         return ToolOutput(body, web_sources=(source,))
 
-    async def show_external_source_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+    async def show_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         ref = str(arguments.get("url") or arguments.get("video_id") or "").strip()
         if not ref:
-            return "show_external_source needs the url (or id) of a video in the library."
+            return "show_external_video needs the url (or id) of a video in the library."
         t = await fetch_transcript(
             maker, _parse_video_id(ref), principal_id=ctx.session.principal_id
         )
         if t is None:
             return (
                 f"No analysed video in the library matches '{ref}'."
-                " Use search_external to find one first."
+                " Use search_external_video to find one first."
             )
         frames = await _frame_views(t.frames, blobs)
         view = ViewPayload(view="video_analysis", surface="inline", data=_card_data(t, frames))
@@ -253,8 +253,8 @@ def build_external_handlers(
         return ToolOutput(f'Showing "{t.title}"{channel}.', view=view)
 
     return {
-        "search_external": search_external_tool,
+        "search_external_video": search_external_video_tool,
         "check_channel": check_channel_tool,
-        "read_external_source": read_external_source_tool,
-        "show_external_source": show_external_source_tool,
+        "read_external_video": read_external_video_tool,
+        "show_external_video": show_external_video_tool,
     }

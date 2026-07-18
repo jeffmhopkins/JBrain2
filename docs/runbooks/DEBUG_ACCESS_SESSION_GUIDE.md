@@ -104,7 +104,7 @@ scripts/debug-connect.sh vision <attachment_id> --task vision.ocr --system "ONLY
 # that payload — e.g. "local: HTTP 500".
 scripts/debug-connect.sh tool-probe --task agent.turn --tools web_search,search "find the news"
 scripts/debug-connect.sh tool-probe --task agent.turn \
-  --tools web_search,web_fetch,current_time,weather,search_external,check_channel "use a tool"
+  --tools web_search,web_fetch,current_time,weather,search_external_video,check_channel "use a tool"
 
 # Bisect WHICH schema construct crashes the grammar builder: send an INLINE mutated schema
 # (a JSON file of [{name,description,input_schema}, ...]) — no registry name needed — and vary

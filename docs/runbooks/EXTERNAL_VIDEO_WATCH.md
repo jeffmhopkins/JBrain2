@@ -15,7 +15,7 @@ Three jerv tools make the corpus self-maintaining once a Task drives them:
 - **`analyze_stream`** (full mode) — analyses a video and, on completion, **writes it through**
   to the corpus (summary + timeline passages + embeddings). Reuses the analysis it produces,
   so there is no extra cost, and a repeat is a no-op (`ON CONFLICT`).
-- **`search_external`** — hybrid search over everything ingested, cited to the video + timestamp.
+- **`search_external_video`** — hybrid search over everything ingested, cited to the video + timestamp.
 
 A Task is just a saved jerv prompt on a schedule; the agent loop does discovery → analysis.
 
@@ -46,9 +46,9 @@ Notes:
 
 ## Verifying it works
 
-- Ad hoc first: in chat, ask jerv to analyse one video (full mode), then `search_external` for a
+- Ad hoc first: in chat, ask jerv to analyse one video (full mode), then `search_external_video` for a
   phrase from it — it should come back cited to the timestamp.
-- After a Task run: `search_external` finds the newly-ingested videos; the Tasks/Runs view shows
+- After a Task run: `search_external_video` finds the newly-ingested videos; the Tasks/Runs view shows
   the run and surfaces any failed analysis.
 
 ## Cost & retention

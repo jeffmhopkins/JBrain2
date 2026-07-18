@@ -1,4 +1,4 @@
-"""Unit tests for the search_external tool handler: formatting, deep-links, the untrusted
+"""Unit tests for the search_external_video tool handler: formatting, deep-links, the untrusted
 fence, and the degraded (embed-down) note. The corpus query itself (search_corpus) is
 covered by the integration tests; here it is stubbed."""
 
@@ -12,7 +12,7 @@ _CTX = ToolContext(session=SessionContext(principal_id="owner", principal_kind="
 
 
 def _handler():
-    return build_external_handlers(object(), object())["search_external"]  # type: ignore[arg-type]
+    return build_external_handlers(object(), object())["search_external_video"]  # type: ignore[arg-type]
 
 
 async def _run(monkeypatch, hits, degraded, args):
@@ -72,7 +72,7 @@ async def test_degraded_note_when_embed_down(monkeypatch) -> None:
 
 async def test_empty_and_blank_query(monkeypatch) -> None:
     assert await _run(monkeypatch, [], False, {"query": "   "}) == (
-        "search_external needs a non-empty query."
+        "search_external_video needs a non-empty query."
     )
     assert await _run(monkeypatch, [], False, {"query": "nothing"}) == (
         "No videos in the library matched 'nothing'."

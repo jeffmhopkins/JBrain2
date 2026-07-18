@@ -747,13 +747,13 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
-        # search_external is `web`-classed (jerv-only), reading the external-source
+        # search_external_video is `web`-classed (jerv-only), reading the external-source
         # video corpus via a purpose-built scope, never the curator wildcard.
-        "search_external",
-        # read_external_source is `web`-classed (jerv-only): one library video's full transcript.
-        "read_external_source",
-        # show_external_source is `web`-classed (jerv-only): the video-analysis card from corpus.
-        "show_external_source",
+        "search_external_video",
+        # read_external_video is `web`-classed (jerv-only): one library video's full transcript.
+        "read_external_video",
+        # show_external_video is `web`-classed (jerv-only): the video-analysis card from corpus.
+        "show_external_video",
         # check_channel is `web`-classed (jerv-only): lists a channel's new uploads.
         "check_channel",
     }
@@ -1178,20 +1178,20 @@ def test_sidecars_pinned_to_their_versions() -> None:
             5,
             "0951333387033c01df060fe90a71058d3414ec6edd22e1c44ef8bb01f417a744",
         ),
-        "search_external.tool": (
-            "search_external",
+        "search_external_video.tool": (
+            "search_external_video",
             1,
-            "0a422aa1b430a8de914588a9bed15b440bffce72dbb4df1309e504aff486a2bb",
+            "9bdd5b5f8906de816abdcbfd750cf1abb67e48482d2af7adde9dc641416e71d5",
         ),
-        "read_external_source.tool": (
-            "read_external_source",
+        "read_external_video.tool": (
+            "read_external_video",
             1,
-            "dbdc338c23c4ee0c1a7d36d626e76f18c948eaf7bcb960e256d32e29441313df",
+            "15e160e9e1bf7b7a3c7b77a1401b0980645f6f00af49298ce585df7aba8397f0",
         ),
-        "show_external_source.tool": (
-            "show_external_source",
+        "show_external_video.tool": (
+            "show_external_video",
             1,
-            "5282b40374f3707f297e389e3be009829b1ae2b4e31d53970a12879d389dfd9c",
+            "5c5cc42b9573683f5fad58fb0ecf10d91a4778ca46d184d7c0060a4cfaa28571",
         ),
         "check_channel.tool": (
             "check_channel",

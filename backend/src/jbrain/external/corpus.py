@@ -204,8 +204,8 @@ class ExternalTranscript:
     duration_s: int | None
     published_at: datetime | None
     windows: list[tuple[int, str]]  # (t_ms, text), ordered by seq
-    # Extra fields the video-analysis card (show_external_source) needs; the text read tool
-    # (read_external_source) ignores them, so they default and stay out of its call sites.
+    # Extra fields the video-analysis card (show_external_video) needs; the text read tool
+    # (read_external_video) ignores them, so they default and stay out of its call sites.
     video_id: str = ""
     provider: str = ""
     duration_ms: int | None = None
@@ -268,7 +268,7 @@ async def fetch_transcript(
     )
 
 
-# --- corpus search (the search_external tool's engine) --------------------------------
+# --- corpus search (the search_external_video tool's engine) --------------------------------
 
 # One hybrid RRF query over the corpus, mirroring SearchService: a dense + FTS leg over the
 # passage chunks and a source-level summary-dense leg, fused per-source (best_per_source), so

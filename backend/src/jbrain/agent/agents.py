@@ -88,13 +88,13 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # Search the external-source video corpus (analysed YouTube videos). Sandboxed
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
-        "search_external",
-        # Read one library video's FULL transcript (search_external → read_external_source,
+        "search_external_video",
+        # Read one library video's FULL transcript (search_external_video → read_external_video,
         # the web_search → web_fetch pattern) when a single excerpt isn't enough.
-        "read_external_source",
+        "read_external_video",
         # SHOW one library video as the video-analysis card (embed + frame timeline + tabs),
         # rebuilt from stored corpus data — when the owner wants to see/watch it, not read it.
-        "show_external_source",
+        "show_external_video",
         # List a channel's new uploads not yet in the corpus (the scheduling Task calls
         # this, then analyze_stream on each new match).
         "check_channel",
