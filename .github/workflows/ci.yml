@@ -22,6 +22,10 @@ jobs:
       jcode: ${{ steps.f.outputs.jcode }}
       frontend: ${{ steps.f.outputs.frontend }}
     steps:
+      # paths-filter uses the compare API on pull_request events, but falls back to
+      # local git on push (merge to main) — where it needs a checkout, or it exits
+      # 128 ("not a git repository") and the job (cosmetically) fails on every merge.
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: f
         with:
