@@ -38,6 +38,7 @@ pytestmark = [
 
 GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
 HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
+EXTERNAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("external",))
 DIMS = 384
 
 
@@ -187,6 +188,27 @@ async def test_persist_embed_search_round_trip(maker) -> None:  # noqa: F811
         maker, resolved=resolved, result=result, transcript_source="captions"
     )
     assert source_id is not None
+
+    # The write-through lands the row in the corpus's own `external` domain (0136), so it's
+    # firewalled from `general` owner knowledge: an external scope sees it, general does not.
+    async with scoped_session(maker, OWNER) as s:
+        assert (
+            await s.execute(
+                text("SELECT domain_code FROM app.external_sources WHERE id = :s"), {"s": source_id}
+            )
+        ).scalar_one() == "external"
+    async with scoped_session(maker, EXTERNAL_ONLY) as s:
+        assert (
+            await s.execute(
+                text("SELECT count(*) FROM app.external_sources WHERE id = :s"), {"s": source_id}
+            )
+        ).scalar_one() == 1
+    async with scoped_session(maker, GENERAL_ONLY) as s:
+        assert (
+            await s.execute(
+                text("SELECT count(*) FROM app.external_sources WHERE id = :s"), {"s": source_id}
+            )
+        ).scalar_one() == 0
 
     # Passages were built and are FTS-visible immediately (embeddings fill next).
     async with scoped_session(maker, OWNER) as s:

@@ -41,11 +41,11 @@ embedded row in a **standalone external-source corpus** (transcript + summary + 
 link), and jerv can search *what was said and shown* across the corpus, cited back to the video + timestamp.
 
 **In scope (by phase):**
-- **A:** `app.external_sources` + `app.external_source_chunks` (general-domain, owner-scoped, RLS-firewalled);
+- **A:** `app.external_sources` + `app.external_source_chunks` (external-domain, owner-scoped, RLS-firewalled);
   the **timeline windower** (structured frames+utterances → time-stamped clean-prose passages); the
   `embed_external_source` follow-up; the **write-through** on full-mode `analyze_stream` completion
   (reuses the analysis already produced — zero extra cost); the **`search_external_video`** tool for jerv,
-  reading via a purpose-built general scope, with **untrusted-content fencing**; the sibling
+  reading via a purpose-built external scope, with **untrusted-content fencing**; the sibling
   **`read_external_video`** tool that returns one library video's full timestamped transcript + summary +
   length + publish date (the `search_external_video` -> `read_external_video` = `web_search` -> `web_fetch`
   pattern); and **`show_external_video`**, which rebuilds the **`video_analysis` card** (embed + frame
@@ -269,7 +269,7 @@ a chat-initiated analysis, `task` when the Task runs it (both persist identicall
   domain_scopes=('general',)))` used **only** for the two-table corpus query. This grants the *tool* — not
   the *persona* — general read on exactly the corpus tables; jerv's own session stays empty-scoped, so owner
   notes (`app.chunks`) and any future general owner-data table remain unreachable. Safe because the corpus
-  is deliberately non-sensitive general-domain third-party content. An integration test asserts jerv gets
+  is deliberately non-sensitive external-domain third-party content. An integration test asserts jerv gets
   corpus rows **and nothing else**.
 
 ### 6.3 `check_channel` tool (Phase B)
@@ -279,7 +279,7 @@ a chat-initiated analysis, `task` when the Task runs it (both persist identicall
   title_include (optional), limit (default 10, max 25)}`. `domains: [general]`.
 - **Handler**: yt-dlp `extract_flat` on the channel's uploads feed (bounded to `limit`), filter by
   `title_include` (case-insensitive substring), then **dedup against the corpus** — drop any `video_id`
-  already in `external_sources` (read via the same purpose-built general scope as §6.2). Returns the fresh
+  already in `external_sources` (read via the same purpose-built external scope as §6.2). Returns the fresh
   matches as `{video_id, title, url}` list text so the agent can decide what to analyse. Added to
   `JERV_TOOLS`. `channel_id` is validated as an id, not an arbitrary URL (§9 egress).
 
@@ -375,7 +375,7 @@ snapshot as of `Last verified`; the source of truth is `backend/migrations/versi
   deep-link + degraded FTS-only + untrusted-fence; `check_channel` filtering + corpus-dedup;
   `transcript_source` from `resolved.caption.kind`; write-through `ON CONFLICT` idempotency.
 - **Integration (real Postgres/testcontainers):** two RLS isolation tests; write-through → persist → embed
-  round-trip (real chunks + vectors); `search_external_video` returns a seeded passage under general scope and
+  round-trip (real chunks + vectors); `search_external_video` returns a seeded passage under the external scope and
   **nothing** under UNSCOPED/health-only; the graph `search` never returns an external chunk **and**
   `search_external_video` never returns a note (structural isolation); **jerv's purpose-built read returns corpus
   rows and cannot reach `app.chunks`**; idempotent re-ingest.
