@@ -911,6 +911,68 @@ describe("ToolView registry", () => {
     expect(queryByLabelText("Open Pricing session")).toBeNull();
   });
 
+  it("renders a deep_research_report with provenance chips, the report body, and a roster", () => {
+    expect(isKnownView("deep_research_report")).toBe(true);
+    const { getByText, queryByText } = render(
+      <ToolView
+        payload={payload({
+          view: "deep_research_report",
+          data: {
+            question: "How does HNSW indexing work?",
+            complexity: "deep",
+            report_md:
+              "## Overview\n\nHNSW builds a layered graph.\n\n## Sources\n[^1] example.com",
+            sub_agents: 3,
+            rounds: 2,
+            revised: true,
+            coverage_limited: false,
+            truncated: false,
+            children: [
+              { label: "graph structure", persona: "research", ok: true, session_id: "s1" },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(getByText("How does HNSW indexing work?")).toBeInTheDocument();
+    expect(getByText("deep")).toBeInTheDocument();
+    expect(getByText("2 rounds")).toBeInTheDocument();
+    expect(getByText("revised")).toBeInTheDocument();
+    expect(getByText("Overview")).toBeInTheDocument();
+    // The roster is collapsed until toggled.
+    expect(queryByText("graph structure")).toBeNull();
+    fireEvent.click(getByText(/1 sub-agent/));
+    expect(getByText("graph structure")).toBeInTheDocument();
+  });
+
+  it("shows coverage-limited and truncated flags, and deep-links a report roster row", () => {
+    const onOpenSession = vi.fn();
+    const { getByText, getByLabelText } = render(
+      <ToolView
+        onOpenSession={onOpenSession}
+        payload={payload({
+          view: "deep_research_report",
+          data: {
+            question: "Q",
+            complexity: "comparative",
+            report_md: "A report.",
+            sub_agents: 1,
+            rounds: 1,
+            revised: false,
+            coverage_limited: true,
+            truncated: true,
+            children: [{ label: "angle one", persona: "research", ok: true, session_id: "s9" }],
+          },
+        })}
+      />,
+    );
+    expect(getByText("coverage limited")).toBeInTheDocument();
+    expect(getByText("truncated")).toBeInTheDocument();
+    fireEvent.click(getByText(/1 sub-agent/));
+    fireEvent.click(getByLabelText("Open angle one session"));
+    expect(onOpenSession).toHaveBeenCalledWith("s9");
+  });
+
   it("groups a staged feeding-waves roster by wave, with feed edges and a distinct skip", () => {
     const { getByText, getAllByText } = render(
       <ToolView

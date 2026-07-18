@@ -10092,6 +10092,66 @@ button.small {
   line-height: 1.5;
   white-space: pre-wrap;
 }
+/* deep_research_report (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md, Wave D3): the report body
+   plus a provenance strip and a collapsible sub-agent roster (rows reuse the tv-syn-*
+   classes). Standard tool-view frame; flags are enum tones the theme colors. */
+.fb-shell .tv-dr-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fb-shell .tv-dr-cap {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.fb-shell .tv-dr-q {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  color: var(--text-1);
+}
+.fb-shell .tv-dr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0 8px;
+}
+.fb-shell .tv-dr-chip {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+.fb-shell .tv-dr-chip.warn {
+  color: var(--amber, #c9a36a);
+  border-color: var(--amber, #c9a36a);
+}
+.fb-shell .tv-dr-report {
+  font-size: var(--fs-secondary);
+  line-height: 1.55;
+  color: var(--text-1);
+}
+.fb-shell .tv-dr-roster {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.fb-shell .tv-dr-rtoggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fb-shell .tv-dr-row {
+  padding: 5px 0;
+}
 .fb-shell .tv-stat .tv-stat-value {
   font-size: 22px;
   font-weight: 600;

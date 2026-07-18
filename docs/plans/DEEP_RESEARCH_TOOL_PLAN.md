@@ -1,17 +1,20 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-18 · **Waves:** D1✅ D2✅ D3◻️
+> **Status:** In progress · **Last verified:** 2026-07-18 · **Waves:** D1✅ D2✅ D3◻️ (code landed; mock-gate sign-off pending)
 
-**Implementation status.** The **backend spine (D1) and orchestration (D2) are
-implemented on `claude/deep-research-tool-design-eaaxau`** — `agent/deep_research.py`
-(the state machine), the `deep_research` `.tool` sidecar (jerv-only + `NEVER_DEFAULT`),
-the plan/reflect/synthesize prompts, the source-quality clause on `research.prompt`
-(v7→v8), the `SpawnService.run_research_fan` fan runner, the `MAX_RESEARCH_ROUNDS`
-bound, and the jerv-registry wiring, with a full adapter-fake unit suite
-(`tests/unit/test_deep_research.py`) green. It returns the report as **structured text**
-(the view is D3). **Wave D3 — the `deep_research_report` tool-view + jerv.prompt
-steering — is not built** (it goes through the DESIGN.md mock gate). The formal
-per-wave adversarial reviews of PROCESS.md still apply before merge.
+**Implementation status.** All three waves are **implemented on
+`claude/deep-research-tool-design-eaaxau`**: D1 (spine) + D2 (orchestration) —
+`agent/deep_research.py` (the state machine), the `deep_research` `.tool` sidecar
+(jerv-only + `NEVER_DEFAULT`), the plan/reflect/synthesize prompts, the source-quality
+clause on `research.prompt` (v7→v8), the `SpawnService.run_research_fan` fan runner, the
+`MAX_RESEARCH_ROUNDS` bound, and the jerv-registry wiring; and D3 — the
+`deep_research_report` tool-view emitted by the backend and rendered by the registered
+frontend component (`registry.tsx`, `.tv-dr-*` styles), plus the `jerv.prompt` v24→v25
+steering. Full unit suites green: `tests/unit/test_deep_research.py` (adapter fake) and
+`registry.test.tsx` (the view). **Still open before "settled":** the D3 **mock-gate
+sign-off** on the non-happy states + a reference mock (DESIGN.md marks it pending), the
+**on-box budget/wall-clock tuning** (Open decisions 2–3), and the formal per-wave
+PROCESS.md adversarial reviews before merge.
 
 A **dedicated `deep_research` tool** that turns a single research question into a
 structured, cited report by orchestrating jerv's existing web-sandboxed sub-agent
@@ -346,7 +349,16 @@ CI green before merge. GUI wave through the mock gate.
   deadline is set (the flat fans don't consult `TREE_WALL_CLOCK_S`); a two-round + critique
   run is bounded by per-child caps × serial rounds, so the in-turn-vs-deferred question
   (Open decision 2) stays open pending on-box timing.
-- **Wave D3 — `deep_research_report` tool-view (GUI; mock gate). ◻️ NOT STARTED.**
+- **Wave D3 — `deep_research_report` tool-view (GUI; mock gate). ✅ LANDED (this
+  branch; mock-gate sign-off pending).** The backend emits the `deep_research_report`
+  view (`deep_research._report_view`); the frontend renders it via a registered
+  component (`registry.tsx`, `.tv-dr-*` styles) — a provenance strip (complexity, source
+  count, rounds, revised/coverage-limited/truncated enum-tone flags), the report body
+  through the shared `<Markdown>` path, and a collapsible sub-agent roster that deep-links
+  each child's session (reusing `.tv-syn-*` rows). `DESIGN.md` registry entry added;
+  `jerv.prompt` v24→v25 steers when to reach for `deep_research`. `registry.test.tsx`
+  covers the render, the flags, and the deep-link. **Pending:** the mock-gate sign-off on
+  the non-happy states + a reference mock (the entry is marked pending in DESIGN.md).
   The registered view
   (outline layout, citation cards, provenance strip), the non-happy states, and the
   live-progress accordion reuse. `DESIGN.md` registry entry in the same PR. jerv.prompt

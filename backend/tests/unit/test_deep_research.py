@@ -183,6 +183,22 @@ async def test_deep_run_full_sequence() -> None:
     assert "complexity: deep" in out
 
 
+async def test_run_emits_the_report_view() -> None:
+    """The tool result carries the registered `deep_research_report` view, with the
+    report Markdown, the provenance counts, and the sub-agent roster (data only)."""
+    router = _FakeRouter(complexity="deep", covered=False, gaps=("gap one",))
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+    view = out.view  # type: ignore[attr-defined]
+    assert view is not None and view.view == "deep_research_report"
+    d = view.data
+    assert d["complexity"] == "deep"
+    assert d["rounds"] == 2 and d["revised"] is True
+    assert "REVISED REPORT" in d["report_md"]
+    assert d["sub_agents"] == len(d["children"]) >= 1
+    assert all("session_id" in c for c in d["children"])
+
+
 async def test_findings_are_fed_as_bounded_data() -> None:
     """The gathered summaries reach the synthesizer inside the data/instruction
     boundary (the feeding-waves envelope), never as bare prose."""

@@ -24,6 +24,7 @@ import { TaskStatus } from "../../components/TaskStatus";
 import { TimeSeriesPlot } from "../../components/TimeSeriesPlot";
 import { VideoAnalysis, type VideoFrame } from "../../components/VideoAnalysis";
 import { serverMetricSeries } from "../../components/serverMetricSeries";
+import { Markdown } from "../markdown";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
 import {
@@ -1339,6 +1340,102 @@ function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
   );
 }
 
+/** The deep_research run's report (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md, Wave D3): the
+ * synthesized report Markdown, a provenance strip (complexity, source count, rounds, and
+ * the revised / coverage-limited / truncated flags), and a collapsible sub-agent roster
+ * whose rows deep-link to each child's own session on reopen. Data-only: the report
+ * Markdown came from the synthesizer over the escaped-envelope findings (never
+ * model-authored markup — it renders through <Markdown>, the same path as an assistant
+ * turn), and every count is derived from DB-run state. The `[^n]` footnotes render as the
+ * report's own numbered chips (its `## Sources` section maps them); the flags are enum
+ * tones the theme colors, never a model-sent color (DESIGN.md). */
+function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
+  const question = typeof data.question === "string" ? data.question : "";
+  const complexity = typeof data.complexity === "string" ? data.complexity : "";
+  const reportMd = typeof data.report_md === "string" ? data.report_md : "";
+  const subAgents = typeof data.sub_agents === "number" ? data.sub_agents : 0;
+  const rounds = typeof data.rounds === "number" ? data.rounds : 1;
+  const revised = data.revised === true;
+  const coverageLimited = data.coverage_limited === true;
+  const truncated = data.truncated === true;
+  const children = Array.isArray(data.children) ? data.children : [];
+  const [openRoster, setOpenRoster] = useState(false);
+
+  const chips = [
+    complexity,
+    `${subAgents} source${subAgents === 1 ? "" : "s"}`,
+    `${rounds} round${rounds === 1 ? "" : "s"}`,
+    revised ? "revised" : "",
+  ].filter(Boolean);
+
+  return (
+    <div className="tv-dr">
+      <div className="tv-dr-head">
+        <span className="tv-dr-cap">deep research</span>
+        {question && <span className="tv-dr-q">{question}</span>}
+      </div>
+      <div className="tv-dr-chips">
+        {chips.map((c) => (
+          <span className="tv-dr-chip" key={c}>
+            {c}
+          </span>
+        ))}
+        {coverageLimited && <span className="tv-dr-chip warn">coverage limited</span>}
+        {truncated && <span className="tv-dr-chip warn">truncated</span>}
+      </div>
+      <div className="tv-dr-report">
+        <Markdown text={reportMd} />
+      </div>
+      {children.length > 0 && (
+        <div className="tv-dr-roster">
+          <button
+            type="button"
+            className="tv-dr-rtoggle"
+            aria-expanded={openRoster}
+            onClick={() => setOpenRoster((v) => !v)}
+          >
+            <span aria-hidden="true">{openRoster ? "▾" : "▸"}</span> {children.length} sub-agent
+            {children.length === 1 ? "" : "s"}
+          </button>
+          {openRoster && (
+            <div className="tv-dr-rlist">
+              {children.map((raw, i) => {
+                const c = (raw ?? {}) as Record<string, unknown>;
+                const label = String(c.label ?? "");
+                const persona = String(c.persona ?? "");
+                const ok = c.ok === true;
+                const sessionId = typeof c.session_id === "string" ? c.session_id : "";
+                return (
+                  <div className="tv-syn-rowwrap tv-dr-row" key={sessionId || i}>
+                    <span className="tv-syn-row">
+                      <span className={`tv-syn-mark${ok ? "" : " bad"}`} aria-hidden="true">
+                        {ok ? "✓" : "✕"}
+                      </span>
+                      <span className="tv-syn-clbl">{label}</span>
+                      <span className="tv-syn-ptag">{persona}</span>
+                    </span>
+                    {onOpenSession && sessionId && (
+                      <button
+                        type="button"
+                        className="tv-syn-open"
+                        title="Open sub-agent session"
+                        aria-label={`Open ${label || "sub-agent"} session`}
+                        onClick={() => onOpenSession(sessionId)}
+                      >
+                        <OpenSessionIcon />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- hurricane_card --------------------------------------------------------
 // jerv's tabbed active-tropical-cyclone view (docs/reference/DESIGN.md "hurricane_card
 // tool-view"; build plan docs/archive/HURRICANE_TABS_PLAN.md). Data-only slots;
@@ -2163,6 +2260,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   weather_card: WeatherCard,
   hurricane_card: HurricaneCard,
   subagent_synthesis: SubagentSynthesis,
+  deep_research_report: DeepResearchReport,
   chart: ChartCard,
   lab_chart: ChartCard,
 };

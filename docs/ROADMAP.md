@@ -269,6 +269,7 @@ orchestrating the existing web-sandboxed sub-agent fan across a bounded
 plan→gather→reflect→one-refill→synthesize→critique/revise run (a complexity skip matrix + tiered
 source-quality corroboration borrowed from `kyuz0/deep-research-agent`, the owner's local-model
 reference). The honest generalization of feeding waves — bounded, in-request, one owner turn — reusing
-`spawn_fan`, the tree budget, and the research/review personas unchanged. Backend D1 (spine) + D2
-(refill round + critique) landed on-branch with a full adapter-fake suite; D3 (the
-`deep_research_report` tool-view + jerv steering, mock-gated) open.
+`spawn_fan`, the tree budget, and the research/review personas unchanged. All three waves landed
+on-branch (D1 spine, D2 refill round + critique, D3 the `deep_research_report` tool-view + jerv
+steering) with full backend + frontend unit suites; the D3 mock-gate sign-off and on-box budget /
+wall-clock tuning remain before it is marked settled.

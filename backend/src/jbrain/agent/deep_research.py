@@ -25,6 +25,7 @@ from pathlib import Path
 import structlog
 
 from jbrain.agent.briefs import compose_feed_block, prepend_feed
+from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.spawn import SpawnService, _ChildResult
 from jbrain.agent.tree import MAX_CHILDREN_PER_PARENT, MAX_DEPTH
@@ -191,15 +192,21 @@ class DeepResearchService:
                 report = await self._synthesize(ctx, question, sections, results, critique=critique)
                 revised = True
 
+        rounds = 1 + (1 if refill else 0)
         log.info(
             "deep_research.done",
             complexity=complexity,
             sub_agents=sum(1 for r in results if r.ok),
-            rounds=1 + (1 if refill else 0),
+            rounds=rounds,
             revised=revised,
             coverage_limited=coverage_limited,
         )
-        return ToolOutput(_frame(report, question, complexity, results, coverage_limited, revised))
+        return ToolOutput(
+            _frame(report, question, complexity, results, coverage_limited, revised),
+            view=_report_view(
+                report, question, complexity, rounds, results, coverage_limited, revised
+            ),
+        )
 
     # --- the orchestration LLM calls (each charged to the shared tree budget) ------
 
@@ -334,6 +341,46 @@ def _frame(
         notes.append("gap round skipped (budget) — coverage may be partial")
     header = f"DEEP RESEARCH REPORT — {question}\n({'; '.join(notes)})"
     return f"{header}\n\n{report}"
+
+
+def _report_view(
+    report: str,
+    question: str,
+    complexity: str,
+    rounds: int,
+    results: list[_ChildResult],
+    coverage_limited: bool,
+    revised: bool,
+) -> ViewPayload:
+    """The registered `deep_research_report` tool-view (DESIGN.md): the report Markdown
+    plus a provenance strip (complexity, source count, rounds, revised / coverage flags)
+    and the sub-agent roster (each row deep-links to its own session on reopen). Data
+    only — the model authors none of it; the report Markdown came from the synthesizer
+    over the escaped-envelope findings, and every count is derived from DB-run state."""
+    ran = sum(1 for r in results if r.ok)
+    return ViewPayload(
+        view="deep_research_report",
+        data={
+            "question": question,
+            "complexity": complexity,
+            "report_md": report,
+            "sub_agents": ran,
+            "rounds": rounds,
+            "revised": revised,
+            "coverage_limited": coverage_limited,
+            "truncated": any(r.truncated for r in results),
+            "children": [
+                {
+                    "label": r.label,
+                    "persona": r.persona,
+                    "ok": r.ok,
+                    "summary": r.summary,
+                    "session_id": r.session_id,
+                }
+                for r in results
+            ],
+        },
+    )
 
 
 class DeepResearchRef:

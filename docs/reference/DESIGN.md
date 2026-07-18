@@ -1248,6 +1248,24 @@ render of an already-firewalled read. Tokens-only `.tv-cc-*`/`.tv-plot-*` classe
 frame matches the live `.tool-view`. Owner-facing chat artifact; never a note, never
 RAG-indexed.
 
+### `deep_research_report` tool-view (build plan `docs/plans/DEEP_RESEARCH_TOOL_PLAN.md`, Wave D3 — **mock-gate sign-off pending**)
+
+jerv's `deep_research` run returns its finished report as this registered view. Data-only
+slots: `{question, complexity, report_md, sub_agents, rounds, revised, coverage_limited,
+truncated, children:[{label, persona, ok, summary, session_id}]}`. It renders a provenance
+strip (the `complexity` label, a source count, the round count, and the
+`revised`/`coverage_limited`/`truncated` flags — closed enums/booleans the theme colors,
+never a model-sent color), the report body, and a collapsible sub-agent roster whose rows
+deep-link to each child's own session on reopen (reusing the `.tv-syn-*` roster classes).
+The report body is **`report_md` rendered through the shared `<Markdown>` path** — the same
+renderer an assistant turn uses — which is safe because the Markdown came from the
+synthesizer model over the escaped-envelope findings and carries no model-authored markup,
+URLs, or scripts (I-9); its `[^n]` footnotes render as the report's own numbered chips (the
+report's `## Sources` section maps them). Tokens-only `.tv-dr-*` classes; the frame matches
+the live `.tool-view`. Like every view it is **data, not instruction** (I-1) and renders no
+external resource (I-9). The non-happy states (coverage-limited / truncated / thin-sources)
+and a reference mock go through the mock gate before this is marked settled.
+
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
 The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen
