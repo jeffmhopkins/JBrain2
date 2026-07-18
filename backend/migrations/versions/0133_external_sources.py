@@ -45,7 +45,8 @@ def upgrade() -> None:
             -- vectors live on external_source_chunks. Written by the embed_external_source job.
             summary_embedding vector(384),
             embedding_model text,
-            -- which transcript the analysis used: 'captions:manual' | 'captions:auto' | 'whisper' | ''.
+            -- which transcript the analysis used:
+            -- 'captions:manual' | 'captions:auto' | 'whisper' | ''.
             transcript_source text,
             -- [{t_ms, caption, thumb_id}] for thumbnails-at-timestamp; NOT the per-word
             -- transcript (that text is the searchable chunks — storing it here too is bloat).

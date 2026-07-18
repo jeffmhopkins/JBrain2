@@ -1,4 +1,4 @@
-"""External video corpus — searchable, time-stamped passages (EXTERNAL_VIDEO_INGESTION_PLAN.md, Phase A).
+"""External video corpus — searchable, time-stamped passages (EXTERNAL_VIDEO_INGESTION_PLAN.md).
 
 The retrieval surface for the external-source corpus: one row per time-coherent passage of a
 video's fused timeline (frame captions + spoken utterances), produced by the timeline windower —
