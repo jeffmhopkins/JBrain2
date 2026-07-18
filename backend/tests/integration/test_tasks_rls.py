@@ -264,7 +264,7 @@ async def test_latest_per_task_returns_the_newest_run(maker: async_sessionmaker)
 
 
 async def test_task_groups_are_owner_only(maker: async_sessionmaker) -> None:
-    """Migration 0136: task_groups is owner-only metadata (CLAUDE.md rule 3), like the
+    """Migration 0137: task_groups is owner-only metadata (CLAUDE.md rule 3), like the
     tasks it buckets. A capability token sees none; a narrowed owner still sees its own."""
     owner = await _owner_ctx(maker)
     groups = TaskGroupRepo(maker)
@@ -317,7 +317,7 @@ async def test_reorder_sets_group_and_position(maker: async_sessionmaker) -> Non
 
 async def test_deleting_a_group_ungroups_its_tasks(maker: async_sessionmaker) -> None:
     """Deleting a bucket must never lose tasks: the FK SET NULLs them back to Ungrouped
-    (migration 0136), unlike deleting the task itself which cascades its runs."""
+    (migration 0137), unlike deleting the task itself which cascades its runs."""
     owner = await _owner_ctx(maker)
     repo, groups = TaskRepo(maker), TaskGroupRepo(maker)
     task = await _make_task(repo, owner, name="filed")

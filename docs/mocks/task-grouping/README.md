@@ -13,7 +13,7 @@ toggle, the shared bottom `Sheet`, the filter-chip row from Runs). This was that
 > **Decided: Direction B** ("chips + move sheet"). It keeps membership (a deliberate menu pick)
 > and order (an opt-in drag) as separate concerns, reuses the settled filter-chip + Sheet
 > paradigms, and avoids accidental cross-group drags. Shipped full-stack (`app.task_groups` +
-> `tasks.group_id`/`position`, migration 0136; `/api/task-groups` + `/api/tasks/reorder`;
+> `tasks.group_id`/`position`, migration 0137; `/api/task-groups` + `/api/tasks/reorder`;
 > `TasksScreen` + `MoveTaskSheet`). D's accessible ▲▼/keyboard reorder was folded into B's
 > Organize mode rather than shipping as its own screen. The full write-up lives in
 > `docs/reference/DESIGN.md` §"Tasks — grouping & reordering". The A/C/D mocks are retained as

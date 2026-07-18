@@ -1498,7 +1498,7 @@ one-gesture rivals (A's cross-group drag, C's board) and the button-only manager
   **SET-NULLs its tasks back to Ungrouped**, never deleting them.
 - **Persistence.** A task gains `group_id` (FK, `ON DELETE SET NULL`) + a 0-based
   `position` within its bucket; groups are their own owner-only RLS table
-  (`app.task_groups`, migration 0136). One `POST /api/tasks/reorder`
+  (`app.task_groups`, migration 0137). One `POST /api/tasks/reorder`
   `{group_id, task_ids}` is the authoritative write behind **both** a within-group
   reorder and a move (the client sends the destination's full ordered id list with
   the moved id appended). `GET /api/tasks` returns tasks pre-sorted by position;
