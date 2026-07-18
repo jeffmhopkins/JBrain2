@@ -287,12 +287,15 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
   const [shown, setShown] = useState<AgentStatus | null>(status);
   const holdUntil = useRef(0);
   const heldTool = useRef<string | null>(null);
-  // The elapsed timer anchors to the live phase on screen (thinking / a specific
-  // tool / answering): `timedPhase` is the last phase key it was anchored on and
-  // `phaseStartedAt` when. Both are re-anchored in render the moment the phase
-  // changes (below), and `now` ticks once a second to advance the displayed count.
+  // Two elapsed timers run off the live status: the current phase (thinking / a
+  // specific tool / answering) and the whole turn. Each keeps the key it was last
+  // anchored on (`timedPhase` / `timedTurn`) and the wall-clock it started
+  // (`phaseStartedAt` / `turnStartedAt`); both re-anchor in render the moment their key
+  // changes (below). `now` ticks once a second to advance the displayed counts.
   const timedPhase = useRef<string | null>(null);
   const phaseStartedAt = useRef(0);
+  const timedTurn = useRef<number | null>(null);
+  const turnStartedAt = useRef(0);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -344,20 +347,39 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
   if (!shown || (shown.kind === "done" && doneHidden)) return null;
   const live = shown.kind === "thinking" || shown.kind === "tool" || shown.kind === "answering";
   const cls = live ? "live" : shown.kind === "error" ? "err" : "done";
-  // Anchor (or re-anchor) the timer to the live phase on screen — thinking, a
-  // specific tool (keyed by its label so a new tool restarts it), or answering.
+  // Anchor (or re-anchor) the turn timer whenever the turn changes — the moment a new
+  // agent turn begins, its total restarts from zero. `turnKey` is steady across the
+  // turn's phases so the total keeps climbing through them.
+  const turnKey = shown.turnKey;
+  if (turnKey !== undefined && turnKey !== timedTurn.current) {
+    timedTurn.current = turnKey;
+    // Read the clock fresh, not the (possibly stale) `now` state: after an idle gap the
+    // ticker is stopped, so anchoring to `now` would make the fresh turn inherit the old
+    // time and jump on the next tick. The elapsed below clamps to 0 until `now` catches up.
+    turnStartedAt.current = Date.now();
+  }
+  // Anchor (or re-anchor) the phase timer to the live phase on screen — thinking, a
+  // specific tool (keyed by its label so a new tool restarts it), or answering. The
+  // turn is folded into the key so the same phase in a fresh turn still restarts.
   // Done in render so the very first frame already reads "0s"; an effect-set anchor
   // wouldn't force the extra re-render when the clock hasn't moved.
   const phaseKey = !live
     ? null
     : shown.kind === "tool"
-      ? `tool|${shown.label}|${shown.emphasis ?? ""}`
-      : shown.kind;
+      ? `${turnKey}|tool|${shown.label}|${shown.emphasis ?? ""}`
+      : `${turnKey}|${shown.kind}`;
   if (phaseKey !== null && phaseKey !== timedPhase.current) {
     timedPhase.current = phaseKey;
-    phaseStartedAt.current = now;
+    phaseStartedAt.current = Date.now();
   }
-  const elapsed = phaseKey !== null ? Math.max(0, now - phaseStartedAt.current) : null;
+  const phaseElapsed = live ? Math.max(0, now - phaseStartedAt.current) : null;
+  const turnElapsed =
+    live && turnKey !== undefined ? Math.max(0, now - turnStartedAt.current) : null;
+  // Show the turn total next to the phase time only once the turn has outrun the
+  // current phase — before that they'd read identically. Sub-second slack absorbs the
+  // one-tick lag between the two anchors.
+  const showTurn =
+    turnElapsed !== null && phaseElapsed !== null && turnElapsed - phaseElapsed >= 1000;
 
   return (
     <output className={`fb-status ${cls}`}>
@@ -367,10 +389,12 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
         {shown.emphasis ? <span className="tool"> {shown.emphasis}</span> : null}
         {live ? "…" : ""}
       </span>
-      {elapsed !== null ? (
+      {phaseElapsed !== null ? (
         // aria-hidden: a per-second announcement would spam the status region.
         <span className="fb-status-time" aria-hidden="true">
-          {formatElapsed(elapsed)}
+          {showTurn && turnElapsed !== null
+            ? `(${formatElapsed(phaseElapsed)}) ${formatElapsed(turnElapsed)}`
+            : formatElapsed(phaseElapsed)}
         </span>
       ) : null}
     </output>

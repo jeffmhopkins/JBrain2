@@ -12,6 +12,11 @@ export interface AgentStatus {
   label: string;
   /** Emphasised tail — the tool's object ("your notes"), rendered stronger. */
   emphasis?: string;
+  /** Identity of the live turn, so the status line can reset its per-turn timer at a
+   * turn boundary. Steady across a turn's phases (thinking → tool → answering) and
+   * distinct across turns — a new turn appends messages, so the count changes exactly
+   * there. Absent only when a status is built by hand (tests). */
+  turnKey?: number;
 }
 
 // Friendly verb + object per tool (names come from the agent registry). Anything
@@ -51,12 +56,8 @@ const STOP_LABELS: Record<string, string> = {
   error: "Something went wrong",
 };
 
-/** The current agent status, or null when idle (nothing to show). Reads only the
- * live (last) assistant turn. */
-export function agentStatus(messages: TranscriptMessage[]): AgentStatus | null {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== "assistant") return null;
-
+/** The status of the live turn's current phase, without its turn identity. */
+function phaseStatus(last: TranscriptMessage): AgentStatus {
   if (last.streaming) {
     const running = last.tools.find((t) => t.ok === undefined);
     // A multi-phase tool streams a live phase label ("Analyzing frame 12/30") — show
@@ -78,4 +79,15 @@ export function agentStatus(messages: TranscriptMessage[]): AgentStatus | null {
     kind: "done",
     label: used ? `Answered · ${used} tool${used > 1 ? "s" : ""} used` : "Answered",
   };
+}
+
+/** The current agent status, or null when idle (nothing to show). Reads only the
+ * live (last) assistant turn. */
+export function agentStatus(messages: TranscriptMessage[]): AgentStatus | null {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "assistant") return null;
+  // Tag the phase with the turn's identity so the view resets its turn timer at each
+  // boundary. The last message's index is steady across the turn and bumps when the
+  // next turn's user+assistant pair is appended.
+  return { ...phaseStatus(last), turnKey: messages.length - 1 };
 }
