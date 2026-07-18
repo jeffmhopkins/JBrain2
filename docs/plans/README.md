@@ -1,6 +1,6 @@
 # Plans — active build plans
 
-> **Status:** Living · **Last verified:** 2026-07-13
+> **Status:** Living · **Last verified:** 2026-07-18
 
 Active, multi-wave build plans (`Scheduled` / `In progress` / `Parked`, per
 `../DOC_LIFECYCLE.md`). A plan archives to `../archive/` in the PR that lands its
@@ -12,4 +12,3 @@ last wave; proposed-but-unscheduled ideas live in `../proposed/`.
 | `PHASE6_WIKI_PLAN.md` | **In progress** — Phase 6 (Wiki). Waves A–C shipped (builder, citations, Talk); Wave D open (re-enable schedules, grounding-gate tuning, purge→rebuild). |
 | `JCODE_SESSION_ISOLATION_PLAN.md` | **Parked** — per-session network namespace; the P0 substrate was reverted after the P1 spike. Kept for a future revisit. |
 | `LLM_PROMPT_CACHE_PLAN.md` | **Scheduled** — cut on-box first-token latency by reusing the static jerv/curator prompt prefix. W1 (cache-stable prompt layout — move the volatile `now_block` to the tail) + W2 (llama-server `--cache-reuse`/slot flags); both open. |
-| `DEFERRED_TOOL_CALLS_PLAN.md` | **Scheduled** — a reusable "deferred tool call": a long/expensive tool kicks a background job, the turn ends, a live `task_status` card shows progress, and the result auto-resumes into the chat. `analyze_stream` (full-video) is the first adopter. P1 cancel-safe async subprocesses · P2 the deferred-tool primitive + worker job · P3 the reusable status card + auto-resume. One PR; all open. |

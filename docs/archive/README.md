@@ -1,6 +1,6 @@
 # JBrain2 — docs archive
 
-> **Status:** Living · **Last verified:** 2026-07-13
+> **Status:** Living · **Last verified:** 2026-07-18
 
 Historical documents: completed build plans, fulfilled contracts, rejected
 designs, and the design research that informed them. Kept for the audit trail
@@ -36,6 +36,7 @@ its ship evidence.
 | `HURRICANE_TABS_PLAN.md` | Tabbed hurricane card (track/cone/alerts/surge). |
 | `VIDEO_ANALYSIS_PLAN.md` | On-box video understanding. |
 | `STREAM_ANALYSIS_PLAN.md` | `analyze_stream`: jerv reads a video URL (live/VOD) via yt-dlp + ffmpeg. |
+| `DEFERRED_TOOL_CALLS_PLAN.md` | Turn-ending background jobs + a reusable `task_status` card; `analyze_stream` full-video is the first adopter. |
 | `WHISPER_TRANSCRIPTION_PLAN.md` | On-box whisper.cpp transcription. |
 | `READ_ALOUD_LEGIBILITY.md` | Read-aloud legibility + fluidity: shared `speakable` normalizer + stream-safe chunker + prefetch pump (W1/W2), and the `wall`/`tts-stt` split with warm piper (W0). |
 | `READ_ALOUD_AUDIOBOOK_PLAN.md` | Audiobook-grade Kokoro read-aloud: two-layer `toProse`/`toUtterance` split, misaki G2P + `KOKORO_LEXICON`, env-tunable pacing (speed + trailing silence), narrator voice blends, and an automatic markup-vs-prose classifier (no mode UI). W0–W4 shipped. |

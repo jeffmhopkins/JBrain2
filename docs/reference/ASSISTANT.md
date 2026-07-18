@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-13
+> **Status:** Living · **Last verified:** 2026-07-18
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -378,7 +378,12 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   video — the same way, resolving it with yt-dlp and sampling frames (+ optional audio)
   with ffmpeg; because that URL is model-supplied and off-box, it is a second sanctioned
   outbound leg with its own egress discipline (below), dropped from the registry unless
-  **both** ffmpeg and yt-dlp are present (docs/archive/STREAM_ANALYSIS_PLAN.md).
+  **both** ffmpeg and yt-dlp are present (docs/archive/STREAM_ANALYSIS_PLAN.md). A short
+  grab (`single` / short `window`) runs in-turn; a whole-video (`full`) or long `window`
+  pass is minutes of work, so it **defers** — the tool kicks a background job, the turn
+  **ends** behind a live `task_status` card, and the finished analysis auto-resumes into
+  the chat (the first adopter of the reusable **deferred tool call** mechanism,
+  docs/archive/DEFERRED_TOOL_CALLS_PLAN.md).
 
   **Web citations.** jerv cites a web claim with an inline `[^n]` footnote marker
   (the same convention the curator uses for notes), numbered in the order the
