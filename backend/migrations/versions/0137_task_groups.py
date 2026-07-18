@@ -8,15 +8,15 @@ Groups are owner-only metadata (RLS `is_owner()`, like `tasks` itself, 0093).
 Deleting a group leaves its tasks intact but ungrouped (ON DELETE SET NULL) — an
 ungrouped task simply falls to the trailing "Ungrouped" section on the client.
 
-Revision ID: 0136
-Revises: 0135
+Revision ID: 0137
+Revises: 0136
 Create Date: 2026-07-18
 """
 
 from alembic import op
 
-revision = "0136"
-down_revision = "0135"
+revision = "0137"
+down_revision = "0136"
 branch_labels = None
 depends_on = None
 
