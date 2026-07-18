@@ -28,6 +28,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api import llm_settings
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
 from jbrain.api.llm_settings import LlmSettingsOut, LlmSettingsPut, LoadedModelsOut
@@ -43,7 +44,7 @@ from jbrain.llm import LlmImage
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.types import DEFAULT_MAX_TOKENS
+from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, UserMessage
 from jbrain.models.notes import Attachment
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
@@ -230,6 +231,109 @@ async def complete(body: CompleteRequest, request: Request, _p: DebugDep) -> Com
     use /complete-async + /jobs/{id} for those."""
     request.state.debug_detail = body.user_text
     return await _run_completion(_llm_router(request), body)
+
+
+# --- Tool-calling probe -----------------------------------------------------
+# Send a CHOSEN set of tool schemas to a routed model and return the model's proposed
+# tool calls — never executing a handler. Purpose-built to diagnose a model/gateway
+# tool-calling failure remotely: vary `tools` (by name, from the live registry) and see
+# which set errors. E.g. bisect "does gpt-oss crash at N tools?" by probing 15 vs 17
+# names, or send the full set to reproduce a crash. Reuses the llm.complete scope (it IS
+# a converse); no data write, and no tool handler ever runs — only schemas go to the model.
+
+
+class ToolProbeRequest(BaseModel):
+    user_text: str = Field(min_length=1)
+    system: str = ""
+    # Route like /complete: a known task (live overrides apply) or a raw strength tier.
+    task: str = "agent.turn"
+    strength: str | None = None
+    # Registry tool NAMES to attach as schemas. Empty = no tools (a control run). Unknown
+    # names 400 so a typo is obvious rather than silently probing the wrong set.
+    tools: list[str] = Field(default_factory=list)
+    # Inline tool schemas, appended after the registry ones. Each is {name, description,
+    # input_schema}. This is the bisect knob: send a MUTATED copy of a real tool's schema
+    # (strip a field, drop an enum, replace fancy punctuation) to find which construct the
+    # gateway's tool-grammar builder chokes on — impossible with registry names alone.
+    raw_tools: list[dict[str, Any]] = Field(default_factory=list)
+    max_tokens: int = Field(default=2048, ge=1, le=32768)
+
+
+class ToolProbeOut(BaseModel):
+    provider: str
+    model: str
+    tool_count: int
+    # The model's PROPOSED calls (name + arguments), never executed. Empty when it answered
+    # without calling a tool.
+    tool_calls: list[dict[str, Any]]
+    text: str
+    stop_reason: str
+    input_tokens: int
+    output_tokens: int
+    # Populated (with tool_calls empty) when the converse failed — e.g. the gateway crashed
+    # on the tool payload ("local: HTTP 500"). Returned 200 so probes are easy to compare.
+    error: str | None = None
+
+
+@router.post("/tool-probe")
+async def tool_probe(body: ToolProbeRequest, request: Request, _p: DebugDep) -> ToolProbeOut:
+    """Probe tool-calling with a specified schema set (no handler runs). See the module note."""
+    request.state.debug_detail = f"{len(body.tools)} tools: {','.join(body.tools[:24])}"
+    registry = cast(ToolRegistry, request.app.state.agent_registry)
+    unknown = [t for t in body.tools if t not in registry.names()]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown tools: {unknown}")
+    llm_tools = [registry.get(name).as_llm_tool() for name in body.tools]
+    try:
+        llm_tools += [
+            LlmTool(
+                name=rt["name"],
+                description=rt.get("description", ""),
+                input_schema=rt.get("input_schema", {"type": "object", "properties": {}}),
+            )
+            for rt in body.raw_tools
+        ]
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"raw_tools need a 'name' (and optional description/input_schema): {exc}",
+        ) from exc
+    router_ = _llm_router(request)
+    provider, model = await router_.effective_spec(body.task, body.strength)
+    log.info(
+        "debug.tool_probe", task=body.task, provider=provider, model=model, tools=len(llm_tools)
+    )
+    try:
+        turn = await router_.converse(
+            body.task,
+            system=body.system,
+            messages=[UserMessage(text=body.user_text)],
+            tools=llm_tools,
+            max_tokens=body.max_tokens,
+            strength=body.strength,
+        )
+    except LlmError as exc:
+        return ToolProbeOut(
+            provider=provider,
+            model=model,
+            tool_count=len(llm_tools),
+            tool_calls=[],
+            text="",
+            stop_reason="error",
+            input_tokens=0,
+            output_tokens=0,
+            error=str(exc),
+        )
+    return ToolProbeOut(
+        provider=provider,
+        model=model,
+        tool_count=len(llm_tools),
+        tool_calls=[{"name": c.name, "arguments": c.arguments} for c in turn.tool_calls],
+        text=turn.text,
+        stop_reason=turn.stop_reason,
+        input_tokens=turn.usage.input_tokens,
+        output_tokens=turn.usage.output_tokens,
+    )
 
 
 # --- Vision iteration -------------------------------------------------------

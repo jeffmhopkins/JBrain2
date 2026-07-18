@@ -87,6 +87,8 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "transcribe",
             "analyze_video",
             "analyze_stream",
+            "search_external",
+            "check_channel",
             "query_server_metrics",
             "spawn_subagent",
         }

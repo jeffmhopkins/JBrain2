@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-07-17
+> **Status:** Living · **Last verified:** 2026-07-18
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -176,6 +176,17 @@ local-llm` shows llama-swap listening and the resident models loaded.
 > some setups despite free memory. If it fails to load, either reduce its
 > context in the generated `local-models/llama-swap.yaml` (add `-c 8192`), or
 > switch the gateway to the ROCm fp4 base (below), which is the better fp4 path.
+>
+> **Known caveat — gpt-oss tool-calling grammar (JSON-Schema `enum`).** gpt-oss's
+> harmony tool path (llama.cpp `--jinja`) builds a GBNF grammar over the tool union,
+> and a JSON-Schema `enum` on a property of a many-optional-property tool object
+> deterministically segfaults the upstream (turn returns HTTP 500). Bisected via the
+> debug `tool-probe` (`docs/runbooks/DEBUG_ACCESS_SESSION_GUIDE.md`) as the
+> enum × full-optional-field-set interaction — not tool count, byte size, or
+> non-ASCII text. **When authoring a `.tool` sidecar that may be served by gpt-oss,
+> keep allowed values in the description and validate them in the handler rather than
+> using `enum`** (there is a regression test pinning `analyze_stream` enum-free).
+> Cloud models and Qwen are unaffected.
 
 ## Phase 7 — Route tasks to local (in the UI)
 Open your domain → paste the owner key (`jbrain reset-owner-key` to mint a new

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent import media_results
 from jbrain.captions import fetch_caption_transcript
+from jbrain.external.corpus import persist_analysis
 from jbrain.ingest.video import (
     ProgressFn,
     VideoAnalysis,
@@ -439,6 +440,17 @@ class StreamAnalysisPipeline:
             )
             return
         result, frames, source = out
+        # Write a full-mode analysis through to the durable external-source corpus so it's
+        # searchable later (the "any video analysed goes in the library" intent). Reuses the
+        # analysis just produced — zero extra model cost. Best-effort: a corpus-write failure
+        # must never fail the chat-facing analysis, so it's swallowed here.
+        if mode == "full":
+            try:
+                await persist_analysis(
+                    self._maker, resolved=resolved, result=result, transcript_source=source
+                )
+            except Exception as exc:  # noqa: BLE001 - corpus write is a side benefit, not the job
+                log.warning("stream.corpus_write_failed", url=url, error=repr(exc))
         data = build_stream_view_data(resolved, result, mode, frames, source)
         data["summary_line"] = summary_line(resolved.title, result)
         # The server-authored report the finished analysis auto-resumes into the chat with

@@ -18,7 +18,7 @@ from jbrain.api.debug import VisionRequest, _jsonable, _run_vision
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.llm.errors import LlmError
-from jbrain.llm.types import LlmResult, LlmUsage
+from jbrain.llm.types import LlmResult, LlmTurn, LlmUsage, ToolCall
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
 
@@ -44,6 +44,19 @@ class _StubRouter:
             text=f"echo:{kw['user_text']}",
             parsed=None,
             usage=LlmUsage(input_tokens=3, output_tokens=5),
+        )
+
+    async def converse(self, task: str, *, messages: Any, tools: Any = (), **kw: Any) -> LlmTurn:
+        # 'boom' stands in for a gateway crash on the tool payload (the case tool-probe exists
+        # to catch) so the error-surfacing path is exercised.
+        if messages and getattr(messages[0], "text", "") == "boom":
+            raise LlmError("local: HTTP 500")
+        calls = (ToolCall(id="c1", name=tools[0].name, arguments={"q": "x"}),) if tools else ()
+        return LlmTurn(
+            text="ok",
+            tool_calls=calls,
+            stop_reason="tool_use" if tools else "end_turn",
+            usage=LlmUsage(input_tokens=7, output_tokens=9),
         )
 
 
@@ -660,3 +673,87 @@ def test_read_and_switch_routing(debug_client: tuple[TestClient, str]) -> None:
     assert resp.status_code == 200
     task = next(t for t in resp.json()["tasks"] if t["id"] == "agent.turn")
     assert task["provider"] == "claude"
+
+
+# --- tool-calling probe -----------------------------------------------------
+
+
+def test_tool_probe_returns_proposed_calls(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/tool-probe",
+        headers=_auth(key),
+        json={"user_text": "find it", "tools": ["search"]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "local" and body["model"] == "gpt-oss-120b"
+    assert body["tool_count"] == 1
+    assert body["tool_calls"][0]["name"] == "search"
+    assert body["error"] is None
+
+
+def test_tool_probe_rejects_unknown_tool(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/tool-probe",
+        headers=_auth(key),
+        json={"user_text": "hi", "tools": ["not_a_real_tool"]},
+    )
+    assert resp.status_code == 400
+    assert "not_a_real_tool" in resp.json()["detail"]
+
+
+def test_tool_probe_surfaces_gateway_crash(debug_client: tuple[TestClient, str]) -> None:
+    # A gateway crash on the tool payload comes back as a 200 with `error` set (not a 500),
+    # so bisecting probes across tool counts is easy to read.
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/tool-probe",
+        headers=_auth(key),
+        json={"user_text": "boom", "tools": ["search"]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["error"] and "500" in body["error"]
+    assert body["tool_calls"] == []
+
+
+def test_tool_probe_accepts_inline_raw_schema(debug_client: tuple[TestClient, str]) -> None:
+    # Inline raw_tools let a probe send a MUTATED copy of a real schema (no registry name) to
+    # bisect which construct crashes the gateway grammar builder. They append to any named tools.
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/tool-probe",
+        headers=_auth(key),
+        json={
+            "user_text": "use it",
+            "raw_tools": [
+                {
+                    "name": "mutant",
+                    "description": "a hand-built schema",
+                    "input_schema": {"type": "object", "properties": {"x": {"type": "string"}}},
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tool_count"] == 1
+    assert body["tool_calls"][0]["name"] == "mutant"
+
+
+def test_tool_probe_rejects_raw_schema_without_name(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/tool-probe",
+        headers=_auth(key),
+        json={"user_text": "x", "raw_tools": [{"description": "no name"}]},
+    )
+    assert resp.status_code == 400
+    assert "name" in resp.json()["detail"]
+
+
+def test_tool_probe_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.post("/api/debug/tool-probe", json={"user_text": "x"}).status_code == 401

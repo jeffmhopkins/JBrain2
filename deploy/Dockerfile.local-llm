@@ -14,9 +14,12 @@
 #   - kernel >= 6.18.9 (avoid < 6.18.4 — gfx1151 stability bug)
 #   - linux-firmware 20260110+ (avoid 20251125 — breaks ROCm on Strix Halo)
 #
-# SUPPLY CHAIN: this is a community image. Pin LOCAL_LLM_BASE to a digest
-# (kyuz0/amd-strix-halo-toolboxes@sha256:...) for a reproducible, trusted build
-# once you've confirmed a tag works on your box.
+# SUPPLY CHAIN: this is a community image, and the `:vulkan-radv` TAG tracks
+# llama.cpp master — so `llama-server` was a moving target and a gpt-oss tool-call
+# grammar regression rode in unnoticed (tool-carrying turns crash the upstream). The
+# default is now PINNED to a digest for a reproducible build; bump it deliberately
+# (and re-verify gpt-oss tool calling after) rather than floating on the tag. Override
+# LOCAL_LLM_BASE in .env to pin a different variant (e.g. a rocm-* digest).
 #
 # This image is built only when the operator enables local hosting; it is never
 # part of the default stack.
@@ -24,7 +27,7 @@
 # Declared in the global scope (before the first FROM) so it is visible to the
 # runtime FROM below; an ARG declared after a FROM is scoped to that stage and
 # the later FROM would resolve it to blank.
-ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv
+ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:e5acc83b946810971e09a0db4ee577af628b46c3f64592f8c2cfcfa65d6d0e48
 
 # Build llama-swap (pure-Go) in a throwaway stage so we don't need a toolchain
 # in the runtime image. Pinned to a COMMIT, not a tag: llama-swap releases are

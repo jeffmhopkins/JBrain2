@@ -254,3 +254,11 @@ citing its note).
 on-box first-token latency by keeping the static jerv/curator system-prompt prefix reusable across
 turns: W1 makes the prompt prefix byte-stable (move the volatile `now_block` to the tail), W2 turns
 on llama-server's `--cache-reuse`/slot flags. Both waves open.
+
+**In progress:** External video ingestion (build plan: `docs/plans/EXTERNAL_VIDEO_INGESTION_PLAN.md`)
+— any analysed YouTube video (ad hoc or scheduled) lands in an isolated, embedded, searchable corpus
+(`external_sources`/`external_source_chunks`), deliberately kept out of the knowledge graph/wiki since
+third-party content is not a source of truth. Built on the shipped `analyze_stream` + captions-first
+(#879). Waves A–B shipped (the corpus tables, a timeline windower, the `analyze_stream` write-through,
+and the sandboxed-`jerv` `search_external` + `check_channel` tools); Wave C (a recurring Jerv Task for
+scheduling — no workflow-engine machinery) open.

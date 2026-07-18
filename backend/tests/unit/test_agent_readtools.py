@@ -4,6 +4,7 @@ services, and the shipped sidecars bound + pinned to their versions."""
 from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
+from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.readtools import (
@@ -728,6 +729,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # city geocoder
         object(),  # type: ignore[arg-type]  # sessionmaker (query_server_metrics)
         object(),  # type: ignore[arg-type]  # external reverse geocoder
+        external_handlers=build_external_handlers(object(), object()),  # type: ignore[arg-type]
     )
     # The `web` (opt-in) permission class — never offered to the default knowledge
     # agent (allow=None) at any scope. current_location is on-box but rides this gate;
@@ -745,6 +747,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
+        # search_external is `web`-classed (jerv-only), reading the external-source
+        # video corpus via a purpose-built scope, never the curator wildcard.
+        "search_external",
+        # check_channel is `web`-classed (jerv-only): lists a channel's new uploads.
+        "check_channel",
     }
     shipped = {
         "search",
@@ -1084,8 +1091,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "analyze_stream.tool": (
             "analyze_stream",
-            4,
-            "797c836320839f07843039c0166bd8e339d9308fca7de03446a6212626595d08",
+            5,
+            "cf8dda315ac80597dd693eab603c51e577ad43f5f6d9d847e76fb30bd82f742a",
         ),
         "query_server_metrics.tool": (
             "query_server_metrics",
@@ -1167,6 +1174,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             5,
             "0951333387033c01df060fe90a71058d3414ec6edd22e1c44ef8bb01f417a744",
         ),
+        "search_external.tool": (
+            "search_external",
+            1,
+            "0a422aa1b430a8de914588a9bed15b440bffce72dbb4df1309e504aff486a2bb",
+        ),
+        "check_channel.tool": (
+            "check_channel",
+            1,
+            "4cbeee5e1cb151d0fba1a8274aa52e9dbf7e1359db96f14d5ec42a888ac83398",
+        ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
     # unpinned (the gap this closes: propose_merge was registered but never pinned).
@@ -1175,6 +1192,19 @@ def test_sidecars_pinned_to_their_versions() -> None:
     for filename, expected in pins.items():
         tf = load_tool(TOOLS_DIR / filename)
         assert (tf.spec.name, tf.spec.version, tf.digest) == expected
+
+
+def test_analyze_stream_params_carry_no_enum() -> None:
+    """Regression guard: `analyze_stream` must ship NO JSON-Schema `enum`. gpt-oss's
+    harmony tool path (llama.cpp `--jinja`) builds a GBNF grammar over the tool union,
+    and an `enum` on a property of this many-optional-property object deterministically
+    segfaults the upstream (HTTP 500) — bisected via the debug tool-probe as the
+    enum × full-optional-field-set interaction, not byte size. Allowed values live in the
+    descriptions and are validated in the handler, so re-adding an `enum` here would
+    reintroduce the crash for no gain. See the sidecar's frontmatter note."""
+    props = load_tool(TOOLS_DIR / "analyze_stream.tool").spec.params["properties"]
+    with_enum = [name for name, schema in props.items() if "enum" in schema]
+    assert with_enum == [], f"analyze_stream props must not use enum (gpt-oss crash): {with_enum}"
 
 
 def test_query_server_metrics_offered_to_jerv() -> None:

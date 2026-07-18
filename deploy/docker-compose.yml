@@ -295,9 +295,14 @@ services:
       context: ./src
       dockerfile: deploy/Dockerfile.local-llm
       args:
-        # Selectable gfx1151 base (default Vulkan/RADV). Set LOCAL_LLM_BASE to a
-        # rocm-* tag — or pin a @sha256 digest — to switch the backend.
-        LOCAL_LLM_BASE: ${LOCAL_LLM_BASE:-docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv}
+        # Selectable gfx1151 base (default Vulkan/RADV), now PINNED by digest instead of the
+        # floating `:vulkan-radv` tag: the tag tracked llama.cpp master, so `llama-server`
+        # silently rode a moving build and a gpt-oss tool-call grammar regression crept in
+        # (tool-carrying turns crash the upstream). Pinning makes the build reproducible and
+        # stops future silent regressions. Bump this digest deliberately to move llama.cpp,
+        # and re-verify tool calling on gpt-oss after. rocm users pin their own variant's
+        # digest via LOCAL_LLM_BASE in .env.
+        LOCAL_LLM_BASE: ${LOCAL_LLM_BASE:-docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:e5acc83b946810971e09a0db4ee577af628b46c3f64592f8c2cfcfa65d6d0e48}
     restart: unless-stopped
     # Read the config from the /models mount — no separate single-file bind mount
     # (a missing file would make Docker create a directory and wedge the gateway).

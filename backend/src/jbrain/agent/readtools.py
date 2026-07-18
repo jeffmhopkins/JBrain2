@@ -626,6 +626,7 @@ def build_registry(
     video_handlers: dict[str, ToolHandler] | None = None,
     stream_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
+    external_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -685,6 +686,9 @@ def build_registry(
             # jerv's URL-sourced stream/video analysis (`web`-gated), present only when
             # ffmpeg AND yt-dlp are available; otherwise its sidecar is dropped below.
             **(stream_handlers or {}),
+            # jerv's search over the external-source video corpus (`web`-gated). Reads the
+            # general-domain corpus via a purpose-built scope (EXTERNAL_VIDEO_INGESTION_PLAN.md).
+            **(external_handlers or {}),
             # The archivist persona's Gmail tools (`web`-gated), present only when a
             # Gmail refresh token is configured; otherwise their sidecars are dropped.
             **(gmail_handlers or {}),

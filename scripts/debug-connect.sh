@@ -114,6 +114,43 @@ PY
     _call POST /api/debug/complete "$body" | _pp
     ;;
 
+  tool-probe) # [--task agent.turn] [--tools a,b,c] [--raw-tools-file f.json] [--system "<prompt>"] [--max-tokens N] "<user text>"
+    # Send a chosen set of tool SCHEMAS to the routed model and return its PROPOSED tool calls —
+    # no handler runs. For bisecting tool-calling crashes (e.g. does gpt-oss die at N tools?):
+    # vary --tools and watch which set returns an `error`. --raw-tools-file sends INLINE mutated
+    # schemas ([{name,description,input_schema}, ...]) so you can bisect which schema construct
+    # crashes the gateway's tool-grammar builder (strip a field/enum/punctuation, re-probe).
+    SYSTEM="" TASK="" TOOLS="" MAXTOK="" RAWFILE=""
+    while [ "${1:-}" != "" ]; do
+      case "$1" in
+        --system) SYSTEM="$2"; shift 2 ;;
+        --task) TASK="$2"; shift 2 ;;
+        --tools) TOOLS="$2"; shift 2 ;;   # comma-separated registry tool names
+        --raw-tools-file) RAWFILE="$2"; shift 2 ;;  # JSON file: [{name,description,input_schema}, ...]
+        --max-tokens) MAXTOK="$2"; shift 2 ;;
+        --) shift; break ;;
+        -*) echo "unknown flag: $1" >&2; exit 2 ;;
+        *) break ;;
+      esac
+    done
+    USERTEXT="$(_text_arg "$@")"
+    body="$(SYSTEM="$SYSTEM" TASK="$TASK" TOOLS="$TOOLS" MAXTOK="$MAXTOK" RAWFILE="$RAWFILE" USERTEXT="$USERTEXT" python3 - <<'PY'
+import json, os
+b = {"user_text": os.environ["USERTEXT"] or "Use one of your tools to help me."}
+if os.environ.get("SYSTEM"): b["system"] = os.environ["SYSTEM"]
+if os.environ.get("TASK"): b["task"] = os.environ["TASK"]
+if os.environ.get("MAXTOK"): b["max_tokens"] = int(os.environ["MAXTOK"])
+b["tools"] = [t for t in os.environ.get("TOOLS", "").split(",") if t.strip()]
+raw = os.environ.get("RAWFILE", "")
+if raw:
+    with open(raw, encoding="utf-8") as fh:
+        b["raw_tools"] = json.load(fh)
+print(json.dumps(b))
+PY
+)"
+    _call POST /api/debug/tool-probe "$body" | _pp
+    ;;
+
   vision) # <attachment_id> [--task vision.caption|vision.ocr] [--system "<prompt>"] [--max-tokens N]
     ATT="${1:-}"; [ -n "$ATT" ] || { echo "usage: debug-connect.sh vision <attachment_id> [--task ...] [--system ...]" >&2; exit 2; }
     shift
