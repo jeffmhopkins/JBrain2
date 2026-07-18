@@ -18,6 +18,7 @@ search_external has found which video they mean. Pass that video's URL.
 
 Prefer read_external_source instead when the owner wants the CONTENT in words (to summarize or
 answer a question); prefer this when they want the video itself in front of them. The card is
-rebuilt from stored data, so frames appear as caption markers rather than thumbnails, and the
-transcript is the stored passages (not word-synced). The card is the owner-facing surface — a
-brief line acknowledging it is enough; don't restate the summary.
+rebuilt from stored data: frames show their thumbnails when the stored stills are still on hand
+(otherwise caption-only markers), and the transcript is the stored passages (not word-synced).
+The card is the owner-facing surface — a brief line acknowledging it is enough; don't restate the
+summary.

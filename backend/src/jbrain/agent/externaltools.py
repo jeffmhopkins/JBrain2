@@ -13,6 +13,7 @@ the video + timestamp — the same [^n] footnote model the web tools use.
 """
 
 import asyncio
+import base64
 import re
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -27,6 +28,8 @@ from jbrain.external.corpus import (
     filter_new_video_ids,
     search_corpus,
 )
+from jbrain.media import jpeg_thumbnail
+from jbrain.storage import BlobStore
 from jbrain.stream import ChannelLister, StreamError, list_channel_uploads, valid_channel_id
 
 _MAX_LIMIT = 10
@@ -94,17 +97,34 @@ def _render_transcript(t: ExternalTranscript) -> str:
     return body
 
 
-def _card_data(t: ExternalTranscript) -> dict:
+async def _frame_views(raw_frames: list[dict], blobs: BlobStore | None) -> list[dict]:
+    """The card's frame list from the stored `{t_ms, caption, thumb_id}` rows. When a blob store
+    is available we redeem each `thumb_id` into an inline `thumb_data_uri` (the same still the live
+    card shows, rebuilt from the persisted blob) so frames render as thumbnails, not bare markers.
+    Best-effort per frame: a purged/missing blob just falls back to a marker, never a failure."""
+    frames: list[dict] = []
+    for f in raw_frames:
+        if not isinstance(f, dict):
+            continue
+        frame = {"t_ms": int(f.get("t_ms", 0)), "caption": str(f.get("caption", ""))}
+        thumb_id = f.get("thumb_id")
+        if blobs is not None and isinstance(thumb_id, str) and thumb_id:
+            try:
+                thumb = jpeg_thumbnail(await blobs.get(thumb_id))
+                frame["thumb_data_uri"] = (
+                    "data:image/jpeg;base64," + base64.b64encode(thumb).decode()
+                )
+            except Exception:  # noqa: BLE001 - a missing/purged blob degrades to a marker, not an error
+                pass
+        frames.append(frame)
+    return frames
+
+
+def _card_data(t: ExternalTranscript, frames: list[dict]) -> dict:
     """The `video_analysis` card `data` for a library video — the same shape the live
     analyze_stream card uses (build_stream_view_data), rebuilt from stored corpus rows so the
-    frontend renders the identical component. Frames carry only {t_ms, caption} (the stored
-    thumbnails are blob refs, not inline bytes — they render as markers, not stills), and the
-    transcript is the window passages joined (no word-level cues are stored)."""
-    frames = [
-        {"t_ms": int(f.get("t_ms", 0)), "caption": str(f.get("caption", ""))}
-        for f in t.frames
-        if isinstance(f, dict)
-    ]
+    frontend renders the identical component. `frames` are pre-resolved (with inline thumbnails
+    when the blobs survive); the transcript is the window passages joined (no word-level cues)."""
     text = "\n".join(passage for _, passage in t.windows)
     return {
         "source": "stream",
@@ -127,6 +147,8 @@ def build_external_handlers(
     maker: async_sessionmaker[AsyncSession],
     embedder: EmbedClient,
     lister: ChannelLister = list_channel_uploads,
+    *,
+    blobs: BlobStore | None = None,
 ) -> dict[str, ToolHandler]:
     async def search_external_tool(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
@@ -219,7 +241,8 @@ def build_external_handlers(
                 f"No analysed video in the library matches '{ref}'."
                 " Use search_external to find one first."
             )
-        view = ViewPayload(view="video_analysis", surface="inline", data=_card_data(t))
+        frames = await _frame_views(t.frames, blobs)
+        view = ViewPayload(view="video_analysis", surface="inline", data=_card_data(t, frames))
         channel = f" — {t.channel_name}" if t.channel_name else ""
         return ToolOutput(f'Showing "{t.title}"{channel}.', view=view)
 

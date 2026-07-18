@@ -167,3 +167,89 @@ async def test_show_non_youtube_has_no_embed_id(monkeypatch) -> None:
 async def test_show_not_found(monkeypatch) -> None:
     out = await _run_show(monkeypatch, None, {"url": "https://youtu.be/zzz"})
     assert "No analysed video in the library" in out
+
+
+class _FakeBlobs:
+    def __init__(self, jpeg: bytes) -> None:
+        self.jpeg = jpeg
+
+    async def put(self, data: bytes) -> str:
+        return "sha"
+
+    async def get(self, sha256: str) -> bytes:
+        return self.jpeg
+
+
+async def test_show_inlines_thumbnails_when_the_blob_store_has_them(monkeypatch) -> None:
+    # With a blob store, a frame's thumb_id is redeemed into an inline thumbnail; without one
+    # (the other show tests) the frame stays a bare marker.
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (320, 180), (10, 120, 200)).save(buf, format="JPEG")
+    blobs = _FakeBlobs(buf.getvalue())
+
+    t = ExternalTranscript(
+        "s5",
+        "T",
+        "",
+        "https://youtu.be/x",
+        "captions:auto",
+        "s",
+        100,
+        None,
+        [(0, "hi")],
+        video_id="x",
+        provider="youtube",
+        duration_ms=100_000,
+        frames=[{"t_ms": 1000, "caption": "c", "thumb_id": "sha1"}],
+    )
+
+    async def fake_fetch(maker, video_id, *, principal_id=""):
+        return t
+
+    monkeypatch.setattr(externaltools, "fetch_transcript", fake_fetch)
+    built = build_external_handlers(object(), object(), blobs=blobs)  # type: ignore[arg-type]
+    handler = built["show_external_source"]
+    out = await handler({"url": "https://youtu.be/x"}, _CTX)
+
+    assert isinstance(out, ToolOutput) and out.view is not None
+    frame = out.view.data["frames"][0]
+    assert frame["t_ms"] == 1000 and frame["caption"] == "c"
+    assert frame["thumb_data_uri"].startswith("data:image/jpeg;base64,")  # blob inlined
+
+
+async def test_show_frame_degrades_to_marker_when_blob_missing(monkeypatch) -> None:
+    class _EmptyBlobs:
+        async def put(self, data: bytes) -> str:
+            return "sha"
+
+        async def get(self, sha256: str) -> bytes:
+            raise KeyError(sha256)  # purged/missing
+
+    t = ExternalTranscript(
+        "s6",
+        "T",
+        "",
+        "https://youtu.be/x",
+        "captions:auto",
+        "s",
+        100,
+        None,
+        [(0, "hi")],
+        video_id="x",
+        provider="youtube",
+        duration_ms=100_000,
+        frames=[{"t_ms": 1000, "caption": "c", "thumb_id": "gone"}],
+    )
+
+    async def fake_fetch(maker, video_id, *, principal_id=""):
+        return t
+
+    monkeypatch.setattr(externaltools, "fetch_transcript", fake_fetch)
+    built = build_external_handlers(object(), object(), blobs=_EmptyBlobs())  # type: ignore[arg-type]
+    out = await built["show_external_source"]({"url": "https://youtu.be/x"}, _CTX)
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["frames"][0] == {"t_ms": 1000, "caption": "c"}  # marker, no thumb

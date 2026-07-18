@@ -1191,7 +1191,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "show_external_source.tool": (
             "show_external_source",
             1,
-            "81891c12f46e904ebc7aecd69170cac596f3406aca81b687f85947ac1c20ecfc",
+            "5282b40374f3707f297e389e3be009829b1ae2b4e31d53970a12879d389dfd9c",
         ),
         "check_channel.tool": (
             "check_channel",
