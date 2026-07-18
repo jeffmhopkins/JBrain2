@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-07-04
+> **Status:** Living · **Last verified:** 2026-07-18
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -15,6 +15,12 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `DEEP_RESEARCH_TOOL_PLAN.md` — a dedicated `deep_research` tool: turns one question
+  into a structured, cited report by orchestrating jerv's web-sandboxed sub-agent fan
+  across a bounded plan → gather → reflect → one-refill → synthesize → critique/revise
+  state machine. Web-scoped (rides jerv's sandbox), the honest generalization of
+  feeding waves; net-new is one tool + service + three prompts + a `deep_research_report`
+  tool-view. Waves D1 (spine) / D2 (refill round + critique) / D3 (view + steering).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
