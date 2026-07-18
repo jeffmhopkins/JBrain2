@@ -619,7 +619,7 @@ type Block =
   | { kind: "p"; text: string }
   | { kind: "h"; level: number; text: string }
   | { kind: "ul"; items: string[] }
-  | { kind: "ol"; items: string[] }
+  | { kind: "ol"; items: string[]; start: number }
   | { kind: "code"; code: string }
   | { kind: "quote"; text: string }
   | { kind: "table"; head: string[]; align: Align[]; rows: string[][] }
@@ -634,13 +634,52 @@ const displayMathClose = (l: string): "$$" | "\\]" | null => {
   return null;
 };
 
+// A bullet (`- `/`* `/`+ `) or ordered (`1. `) list item opening a line. The ordered
+// form captures its number so a list can start at the marker the model actually used.
+const UL_ITEM = /^\s*[-*+]\s+/;
+const OL_ITEM = /^\s*(\d+)\.\s+/;
+
 const isSpecial = (l: string): boolean =>
   /^(#{1,6})\s+/.test(l) ||
   /^```/.test(l.trim()) ||
   /^>\s?/.test(l) ||
-  /^\s*[-*+]\s+/.test(l) ||
-  /^\s*\d+\.\s+/.test(l) ||
+  UL_ITEM.test(l) ||
+  OL_ITEM.test(l) ||
   displayMathClose(l) !== null;
+
+/** Collect a run of list items matching `item`, treating a blank line BETWEEN two
+ * items as a loose-list separator, not a list break. Models routinely double-space
+ * their bullets and restart every ordered marker at "1." — without this each item
+ * parses as its own single-item list, so an ordered list renders "1. 1. 1." instead
+ * of "1. 2. 3.". Blank runs are swallowed only when another same-kind item follows;
+ * a blank line before anything else still ends the list. Returns the items and the
+ * line index to resume from. */
+function collectList(
+  lines: string[],
+  start: number,
+  item: RegExp,
+): { items: string[]; next: number } {
+  const items: string[] = [];
+  let i = start;
+  while (i < lines.length) {
+    const line = lines[i] ?? "";
+    if (item.test(line)) {
+      items.push(line.replace(item, ""));
+      i++;
+      continue;
+    }
+    if (line.trim() === "") {
+      let j = i + 1;
+      while (j < lines.length && (lines[j] ?? "").trim() === "") j++;
+      if (j < lines.length && item.test(lines[j] ?? "")) {
+        i = j; // swallow the blank run — the list continues past it
+        continue;
+      }
+    }
+    break;
+  }
+  return { items, next: i };
+}
 
 /** Split one pipe-table row into trimmed cells: drop a single leading/trailing
  * `|` border, then split on unescaped `|` (a `\|` is a literal pipe in a cell).
@@ -741,18 +780,19 @@ function parseBlocks(src: string): Block[] {
       blocks.push({ kind: "quote", text: buf.join(" ") });
       continue;
     }
-    if (/^\s*[-*+]\s+/.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i] ?? ""))
-        items.push((lines[i++] ?? "").replace(/^\s*[-*+]\s+/, ""));
+    if (UL_ITEM.test(line)) {
+      const { items, next } = collectList(lines, i, UL_ITEM);
       blocks.push({ kind: "ul", items });
+      i = next;
       continue;
     }
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i] ?? ""))
-        items.push((lines[i++] ?? "").replace(/^\s*\d+\.\s+/, ""));
-      blocks.push({ kind: "ol", items });
+    if (OL_ITEM.test(line)) {
+      // Honour the first marker's number as the list's start; a model that (correctly)
+      // opens at "1." lands start=1, so the rendered <ol> auto-numbers from there.
+      const start = Number(OL_ITEM.exec(line)?.[1] ?? 1);
+      const { items, next } = collectList(lines, i, OL_ITEM);
+      blocks.push({ kind: "ol", items, start });
+      i = next;
       continue;
     }
     if (startsTable(lines, i)) {
@@ -806,7 +846,9 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
       );
     case "ol":
       return (
-        <ol key={key} className="md-ol">
+        // `start` only when the list doesn't begin at 1 — a plain <ol> auto-numbers
+        // from 1, so the common case stays clean markup.
+        <ol key={key} className="md-ol" start={b.start !== 1 ? b.start : undefined}>
           {b.items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list order is stable
             <li key={`${key}-${i}`}>{inline(it, `${key}-${i}`, ctx)}</li>

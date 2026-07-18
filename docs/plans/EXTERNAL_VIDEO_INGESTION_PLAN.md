@@ -57,7 +57,11 @@ link), and jerv can search *what was said and shown* across the corpus, cited ba
   **`external` domain** (0136) — jerv reaches the video corpus and nothing owner-authored — and
   **`remove_external_video`** lets the owner drop a video: jerv only STAGES a one-leaf removal
   proposal the owner approves inline (`remove-library-video`), and the trusted Proposal executor
-  hard-deletes it (chunks cascade). jerv never deletes directly.
+  hard-deletes it (chunks cascade). jerv never deletes directly. A follow-on
+  **`list_external_video`** tool (`list_corpus` engine) enumerates/paginates the library and reports
+  its **exact total** — so "what's in my library?" / "how many videos do I have?" answers from a real
+  listing (metadata only, newest-analysed first), not a fuzzy `search_external_video` query; a blank
+  search query now points at it instead of dead-ending.
 - **B:** the **`check_channel`** tool (list uploads via yt-dlp `extract_flat`, filter by title, dedup against
   the corpus, return new video links).
 - **C:** a recurring **Jerv Task** that calls `check_channel` for the owner's channels and `analyze_stream`

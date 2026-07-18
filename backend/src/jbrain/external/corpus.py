@@ -285,6 +285,67 @@ async def fetch_transcript(
     )
 
 
+@dataclass(frozen=True)
+class LibraryVideo:
+    """One video in a library listing — the metadata a browse/count needs, no transcript.
+    `total` on the enclosing result carries the full library size so a paged listing can
+    say "N of M" without a second round-trip."""
+
+    title: str
+    channel_name: str
+    url: str
+    published_at: datetime | None
+    duration_s: int | None
+    video_id: str
+    provider: str
+
+
+async def list_corpus(
+    maker: async_sessionmaker[AsyncSession],
+    *,
+    limit: int,
+    offset: int = 0,
+    principal_id: str = "",
+) -> tuple[list[LibraryVideo], int]:
+    """A page of the analysed-video library (newest analysis first) plus the library's TOTAL
+    size — the engine behind list_external_video, so the owner can enumerate or count what's
+    ingested without a fuzzy search. Only `done` sources count as "in the library" (an
+    in-flight or unavailable analysis isn't yet a readable video). Reads under the same
+    purpose-built external scope the other corpus tools use."""
+    async with scoped_session(maker, _corpus_read_context(principal_id)) as session:
+        total = (
+            await session.execute(
+                text("SELECT count(*) FROM app.external_sources WHERE status = 'done'")
+            )
+        ).scalar_one()
+        if total == 0 or offset >= total:
+            return [], int(total)
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT title, channel_name, url, published_at, duration_s, video_id, provider"
+                    " FROM app.external_sources WHERE status = 'done'"
+                    " ORDER BY analyzed_at DESC NULLS LAST, created_at DESC, id"
+                    " LIMIT :limit OFFSET :offset"
+                ),
+                {"limit": limit, "offset": offset},
+            )
+        ).all()
+    videos = [
+        LibraryVideo(
+            title=r.title or "",
+            channel_name=r.channel_name or "",
+            url=r.url,
+            published_at=r.published_at,
+            duration_s=int(r.duration_s) if r.duration_s is not None else None,
+            video_id=r.video_id or "",
+            provider=r.provider or "",
+        )
+        for r in rows
+    ]
+    return videos, int(total)
+
+
 # --- corpus search (the search_external_video tool's engine) --------------------------------
 
 # One hybrid RRF query over the corpus, mirroring SearchService: a dense + FTS leg over the

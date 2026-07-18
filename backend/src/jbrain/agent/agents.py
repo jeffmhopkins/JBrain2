@@ -96,6 +96,10 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
         "search_external_video",
+        # Enumerate / count the whole library (title, channel, date, length per video) with an
+        # exact total — the browse/count companion to the content search, so "what's in my
+        # library?" answers from a real listing, not a fuzzy query.
+        "list_external_video",
         # Read one library video's FULL transcript (search_external_video → read_external_video,
         # the web_search → web_fetch pattern) when a single excerpt isn't enough.
         "read_external_video",
