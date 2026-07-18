@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Task grouping · B — filter chips + move sheet</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;cursor:pointer;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .spacer{margin-left:auto;}
+  .bar .iconbtn{appearance:none;border:none;background:none;color:var(--text-2);padding:6px;cursor:pointer;border-radius:9px;}
+  .bar .iconbtn.on{background:var(--steel-tint);color:var(--steel);}
+
+  /* chip row */
+  .chips{display:flex;gap:8px;padding:11px 14px 9px;overflow-x:auto;border-bottom:1px solid var(--border);flex:none;scrollbar-width:none;}
+  .chips::-webkit-scrollbar{display:none;}
+  .chip{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:13px;font-weight:500;padding:7px 14px;border-radius:999px;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:7px;flex:none;}
+  .chip .n{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .chip.on{background:var(--steel-tint);border-color:var(--steel);color:var(--steel);}
+  .chip.on .n{color:var(--steel);}
+  .chip.addchip{color:var(--text-3);border-style:dashed;}
+
+  .body{flex:1;overflow-y:auto;padding:8px 14px 26px;}
+  .grouphdr{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:600;margin:16px 2px 9px;display:flex;align-items:center;gap:8px;}
+  .grouphdr:first-child{margin-top:6px;}
+  .grouphdr .gc{font-size:11px;background:var(--surface-2);border-radius:999px;padding:2px 8px;color:var(--text-3);}
+  .reorder-note{font-size:11.5px;color:var(--text-3);margin:2px 2px 10px;display:none;align-items:center;gap:7px;}
+  .reordering .reorder-note{display:flex;}
+  .reorder-note svg{width:14px;height:14px;color:var(--steel);}
+
+  .task{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:9px;touch-action:pan-y;}
+  .task.off{opacity:.55;}
+  .task-head{width:100%;text-align:left;background:none;border:none;color:inherit;font:inherit;padding:12px 13px;display:flex;gap:10px;align-items:flex-start;cursor:pointer;}
+  .grab{width:0;overflow:hidden;display:flex;align-items:center;color:var(--text-3);flex:none;transition:width .16s;cursor:grab;touch-action:none;}
+  .reordering .grab{width:24px;}
+  .grab svg{width:18px;height:18px;}
+  .sdot{width:9px;height:9px;border-radius:999px;flex:none;margin-top:5px;}
+  .sdot.running{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  .sdot.ok{background:var(--green);}.sdot.failed{background:var(--rose);}.sdot.idle{background:var(--text-3);}.sdot.pending{background:var(--amber);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .tmain{flex:1;min-width:0;}
+  .tname{font-size:15px;font-weight:600;line-height:1.3;}
+  .twhen{font-size:12.5px;color:var(--text-2);margin-top:4px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .gtag{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text-3);background:var(--surface-2);border-radius:999px;padding:2px 8px;}
+  .gtag .gd{width:6px;height:6px;border-radius:999px;background:var(--steel);}
+  .agc{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;}
+  .agc.jerv{background:var(--violet-tint);color:var(--violet);}
+  .agc.curator{background:var(--steel-tint);color:var(--steel);}
+  .agc.teacher{background:var(--amber-tint);color:var(--amber);}
+  .agc.archivist{background:var(--green-tint);color:var(--green);}
+  .tmeta{font-size:11.5px;color:var(--text-3);margin-top:5px;font-variant-numeric:tabular-nums;}
+  .tmeta .st-failed{color:var(--rose);}.tmeta .st-running{color:var(--green);}
+  .sw{flex:none;width:42px;height:25px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);position:relative;cursor:pointer;padding:0;margin-top:2px;transition:.16s;}
+  .sw[aria-checked="true"]{background:var(--green-tint);border-color:rgba(143,188,154,.45);}
+  .sw .knob{position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:999px;background:var(--text-3);transition:.16s;}
+  .sw[aria-checked="true"] .knob{left:19px;background:var(--green);}
+  .kebab{flex:none;background:none;border:none;color:var(--text-3);padding:4px 2px;cursor:pointer;margin-top:2px;}
+  .reordering .task-head .sw,.reordering .task-head .kebab{display:none;}
+
+  .task.lifted{position:fixed;z-index:200;box-shadow:0 14px 34px rgba(0,0,0,.5);border-color:var(--steel);pointer-events:none;}
+  .ph{border:1.5px dashed var(--steel);background:var(--steel-tint);border-radius:16px;margin-bottom:9px;}
+
+  /* sheet */
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.2s;z-index:90;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:20px 20px 0 0;transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:100;padding:8px 14px calc(18px + env(safe-area-inset-bottom));}
+  .sheet.show{transform:translateY(0);}
+  .handle{width:38px;height:4px;border-radius:999px;background:var(--border);margin:6px auto 10px;}
+  .sheet-ttl{font-size:13px;color:var(--text-2);margin:2px 2px 12px;}
+  .sheet-ttl b{color:var(--text);font-weight:600;}
+  .moverow{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;border:none;color:inherit;font:inherit;padding:13px 4px;border-top:1px solid var(--border);cursor:pointer;}
+  .moverow:first-of-type{border-top:none;}
+  .moverow .gd{width:9px;height:9px;border-radius:999px;background:var(--steel);flex:none;}
+  .moverow .mn{flex:1;font-size:15px;}
+  .moverow .mc{font-size:12px;color:var(--text-3);}
+  .moverow .tick{width:18px;height:18px;color:var(--steel);opacity:0;}
+  .moverow.cur .tick{opacity:1;}
+  .moverow.new{color:var(--steel);}
+  .moverow.new .gd{background:var(--text-3);}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:120;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .ti{color:var(--steel);flex:none;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Task grouping · B — filter chips + move sheet</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    <b>Grouping is a filter; reorder stays simple.</b> A scrollable <b>chip row</b> is the group
+    switch — <b>All</b> shows every task under its group header; tapping a chip narrows to one group.
+    Filing a task is a <b>⋯ → Move to…</b> bottom sheet (never a drag across the screen). The
+    <b>⇅</b> icon arms lightweight reorder <i>within the current view</i> only.
+  </div>
+
+  <div class="phone" id="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Tasks</span>
+      <span class="spacer"></span>
+      <button class="iconbtn" id="reobtn" onclick="toggleReorder()" aria-label="Reorder">
+        <svg width="21" height="21" viewBox="0 0 24 24"><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3"/></svg>
+      </button>
+    </div>
+
+    <div class="chips" id="chips"></div>
+
+    <div class="body" id="body"></div>
+
+    <div class="scrim" id="scrim" onclick="closeSheet()"></div>
+    <div class="sheet" id="sheet">
+      <div class="handle"></div>
+      <div class="sheet-ttl" id="sheet-ttl">Move task</div>
+      <div id="moverows"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+
+const AGENT={jerv:'Jerv',curator:'Curator',teacher:'Teacher',archivist:'Archivist'};
+const GROUPS=[
+  {id:'g-morning',name:'Morning routine'},
+  {id:'g-finance',name:'Money'},
+  {id:'g-house',name:'Household'},
+];
+const TASKS=[
+  {id:'t1',g:'g-morning',name:'Morning news brief',agent:'jerv',sched:'Weekdays · 7:00',enabled:true,last:'ok',meta:'last run ok · next tomorrow 7:00'},
+  {id:'t2',g:'g-morning',name:'Today on my calendar',agent:'curator',sched:'Daily · 6:45',enabled:true,last:'ok',meta:'last run ok · next tomorrow 6:45'},
+  {id:'t3',g:'g-finance',name:'Markets & portfolio watch',agent:'jerv',sched:'Daily · 16:30',enabled:true,last:'running',meta:'running now'},
+  {id:'t4',g:'g-finance',name:'Spending recap',agent:'curator',sched:'Weekly S · 20:00',enabled:false,last:'idle',meta:'paused'},
+  {id:'t5',g:'g-house',name:'Grocery list tidy-up',agent:'curator',sched:'On demand',enabled:true,last:'ok',meta:'run it any time · last ran 3d ago'},
+  {id:'t6',g:'g-house',name:'Weekly note review',agent:'curator',sched:'Sun · 18:00',enabled:true,last:'failed',meta:'last run failed · next Sun 18:00'},
+];
+let filter='all';        // 'all' or group id
+let sheetFor=null;       // task id being moved
+
+function gname(id){return GROUPS.find(g=>g.id===id)?.name||'—';}
+function metaHtml(t){return t.meta.replace('running now','<span class="st-running">running now</span>').replace('last run failed','<span class="st-failed">last run failed</span>');}
+
+function renderChips(){
+  const c=document.getElementById('chips');
+  const all=`<button class="chip ${filter==='all'?'on':''}" onclick="setFilter('all')">All <span class="n">${TASKS.length}</span></button>`;
+  const gs=GROUPS.map(g=>`<button class="chip ${filter===g.id?'on':''}" onclick="setFilter('${g.id}')">${g.name} <span class="n">${TASKS.filter(t=>t.g===g.id).length}</span></button>`).join('');
+  const add=`<button class="chip addchip" onclick="addGroup()"><svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Group</button>`;
+  c.innerHTML=all+gs+add;
+}
+function taskCard(t,showGroupTag){
+  return `<div class="task ${t.enabled?'':'off'}" data-id="${t.id}">
+    <div class="task-head" onclick="tapCard(event)">
+      <span class="grab" data-grab><svg viewBox="0 0 24 24"><path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01"/></svg></span>
+      <span class="sdot ${t.enabled?t.last:'idle'}"></span>
+      <span class="tmain">
+        <span class="tname">${t.name}</span>
+        <span class="twhen">
+          <span class="agc ${t.agent}">${AGENT[t.agent]}</span><span>${t.sched}</span>
+          ${showGroupTag?`<span class="gtag"><span class="gd"></span>${gname(t.g)}</span>`:''}
+        </span>
+        <span class="tmeta">${metaHtml(t)}</span>
+      </span>
+      <span class="sw" role="switch" aria-checked="${t.enabled}" onclick="flip(this,event)"><span class="knob"></span></span>
+      <button class="kebab" onclick="openSheet('${t.id}',event)" aria-label="Task menu"><svg width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+    </div>
+  </div>`;
+}
+function render(){
+  renderChips();
+  const body=document.getElementById('body');
+  const note=`<div class="reorder-note"><svg viewBox="0 0 24 24"><path d="M9 5l3 3-3 3M15 5l-3 3 3 3"/></svg>Drag ⋮⋮ to reorder — order is kept within each group.</div>`;
+  if(filter==='all'){
+    body.innerHTML=note+GROUPS.map(g=>{
+      const ts=TASKS.filter(t=>t.g===g.id);if(!ts.length)return '';
+      return `<div class="grouphdr">${g.name}<span class="gc">${ts.length}</span></div>`+ts.map(t=>taskCard(t,false)).join('');
+    }).join('');
+  }else{
+    const ts=TASKS.filter(t=>t.g===filter);
+    body.innerHTML=note+ts.map(t=>taskCard(t,false)).join('');
+  }
+  bindDrag();
+}
+function setFilter(f){filter=f;render();}
+function tapCard(e){
+  if(document.getElementById('phone').classList.contains('reordering'))return;
+  if(e.target.closest('.sw')||e.target.closest('.kebab'))return;
+  toast('Card would expand to prompt + recent runs.');
+}
+function flip(el,e){e.stopPropagation();
+  const on=el.getAttribute('aria-checked')!=='true';el.setAttribute('aria-checked',String(on));
+  const card=el.closest('.task');const t=TASKS.find(x=>x.id===card.dataset.id);
+  t.enabled=on;card.classList.toggle('off',!on);
+  card.querySelector('.sdot').className='sdot '+(on?t.last:'idle');
+  card.querySelector('.tmeta').innerHTML=on?metaHtml(t):'paused';
+  renderChips();toast(`${t.name} ${on?'resumed':'paused'}.`);
+}
+function toggleReorder(){
+  const p=document.getElementById('phone');const on=!p.classList.contains('reordering');
+  p.classList.toggle('reordering',on);
+  document.getElementById('reobtn').classList.toggle('on',on);
+  toast(on?'Reorder on — drag within this view.':'Order saved.');
+}
+
+/* move sheet */
+function openSheet(id,e){e.stopPropagation();sheetFor=id;
+  const t=TASKS.find(x=>x.id===id);
+  document.getElementById('sheet-ttl').innerHTML=`Move <b>${t.name}</b> to…`;
+  document.getElementById('moverows').innerHTML=GROUPS.map(g=>`
+    <button class="moverow ${g.id===t.g?'cur':''}" onclick="moveTo('${g.id}')">
+      <span class="gd"></span><span class="mn">${g.name}</span>
+      <span class="mc">${TASKS.filter(x=>x.g===g.id).length}</span>
+      <svg class="tick" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>
+    </button>`).join('')+`
+    <button class="moverow new" onclick="moveToNew()"><span class="gd"></span><span class="mn">New group…</span></button>`;
+  document.getElementById('sheet').classList.add('show');
+  document.getElementById('scrim').classList.add('show');
+}
+function closeSheet(){document.getElementById('sheet').classList.remove('show');document.getElementById('scrim').classList.remove('show');sheetFor=null;}
+function moveTo(gid){
+  const t=TASKS.find(x=>x.id===sheetFor);const from=t.g;t.g=gid;closeSheet();render();
+  if(from!==gid)toast(`Moved to “${gname(gid)}”.`);
+}
+function moveToNew(){
+  const name=prompt('New group name','New group');if(!name||!name.trim())return;
+  const id='g'+Date.now();GROUPS.push({id,name:name.trim()});
+  const t=TASKS.find(x=>x.id===sheetFor);t.g=id;closeSheet();render();toast(`Created “${name.trim()}” and moved here.`);
+}
+function addGroup(){const name=prompt('New group name','New group');if(name&&name.trim()){GROUPS.push({id:'g'+Date.now(),name:name.trim()});render();toast('Group added.');}}
+
+/* drag within one list */
+let drag=null;
+function bindDrag(){document.querySelectorAll('[data-grab]').forEach(h=>h.onpointerdown=startDrag);}
+function startDrag(e){
+  if(!document.getElementById('phone').classList.contains('reordering'))return;
+  e.preventDefault();
+  const card=e.target.closest('.task');const r=card.getBoundingClientRect();
+  const ph=document.createElement('div');ph.className='ph';ph.style.height=r.height+'px';
+  card.parentNode.insertBefore(ph,card.nextSibling);
+  card.classList.add('lifted');card.style.width=r.width+'px';card.style.height=r.height+'px';
+  drag={card,ph,dx:e.clientX-r.left,dy:e.clientY-r.top,container:card.parentNode};
+  moveDrag(e);
+  drag._move=moveDrag;window.addEventListener('pointermove',moveDrag);window.addEventListener('pointerup',endDrag,{once:true});
+}
+function moveDrag(e){
+  const {card,dx,dy,container}=drag;
+  card.style.left=(e.clientX-dx)+'px';card.style.top=(e.clientY-dy)+'px';
+  const cards=[...container.querySelectorAll('.task:not(.lifted)')];
+  let before=null;
+  for(const c of cards){const r=c.getBoundingClientRect();if(e.clientY<r.top+r.height/2){before=c;break;}}
+  if(before)container.insertBefore(drag.ph,before);else container.appendChild(drag.ph);
+}
+function endDrag(){
+  const {card,ph,container}=drag;window.removeEventListener('pointermove',drag._move);
+  card.classList.remove('lifted');card.style.cssText='';
+  container.insertBefore(card,ph);ph.remove();
+  // sync model order for the affected group(s) from full DOM
+  const domOrder=[...document.querySelectorAll('.task')].map(c=>c.dataset.id);
+  TASKS.sort((a,b)=>{const ia=domOrder.indexOf(a.id),ib=domOrder.indexOf(b.id);
+    if(ia===-1||ib===-1)return 0;return ia-ib;});
+  toast('Order saved.');drag=null;
+}
+
+function toast(msg){const t=document.getElementById('toast');
+  t.innerHTML=`<svg class="ti" width="16" height="16" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>${msg}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),2600);}
+
+render();
+</script>
+</body>
+</html>
