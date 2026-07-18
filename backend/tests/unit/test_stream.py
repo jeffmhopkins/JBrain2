@@ -19,6 +19,7 @@ from jbrain.stream import (
     _input_guard_args,
     _select_media,
     guard_public_host_or_stream,
+    resolve_stream,
     sample_stream,
     sample_stream_full,
     ytdlp_available,
@@ -63,6 +64,57 @@ def test_select_media_direct_url() -> None:
     assert r.title == "Launch" and r.is_live is True and r.duration_s is None
     # Provider + id are captured so a YouTube card can embed the synced player.
     assert r.provider == "youtube" and r.video_id == "abc123"
+
+
+def test_select_media_wires_automatic_caption_track() -> None:
+    # A YouTube info dict with only ASR (`automatic_captions`) yields a `caption` track on the
+    # resolved stream (kind=auto) — the wiring the captions-first path depends on.
+    info = {
+        "url": "https://cdn/v.mp4",
+        "title": "T",
+        "id": "x",
+        "extractor": "youtube",
+        "automatic_captions": {
+            "en": [{"url": "https://youtube.com/api/timedtext?x", "ext": "json3"}]
+        },
+    }
+    r = _select_media(info, fallback_url="x")
+    assert r.caption is not None and r.caption.kind == "auto" and r.caption.lang == "en"
+
+
+def test_resolve_stream_requests_caption_tracks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression for the whisper-always bug: the resolve opts MUST ask yt-dlp to surface caption
+    # tracks, else the info dict comes back caption-less and every video falls through to whisper.
+    import yt_dlp
+
+    captured: dict = {}
+
+    class FakeYDL:
+        def __init__(self, opts: dict) -> None:
+            captured.update(opts)
+
+        def __enter__(self) -> "FakeYDL":
+            return self
+
+        def __exit__(self, *_a: object) -> bool:
+            return False
+
+        def extract_info(self, url: str, download: bool = False) -> dict:
+            return {
+                "url": "https://cdn.example.com/v.mp4",
+                "title": "T",
+                "id": "x",
+                "webpage_url": url,
+                "extractor": "youtube",
+                "automatic_captions": {"en": [{"url": "https://x/timedtext", "ext": "json3"}]},
+            }
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDL)
+    r = resolve_stream("https://www.youtube.com/watch?v=x", skip_guard=True)
+    assert captured.get("writesubtitles") is True
+    assert captured.get("writeautomaticsub") is True
+    assert "en" in captured.get("subtitleslangs", [])
+    assert r.caption is not None and r.caption.kind == "auto"  # wired through to the stream
 
 
 def test_select_media_captures_http_headers() -> None:
