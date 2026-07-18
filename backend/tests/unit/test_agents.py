@@ -91,10 +91,12 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "check_channel",
             "query_server_metrics",
             "spawn_subagent",
+            "deep_research",
         }
     )
     assert jerv.reads_knowledge_base is False
     assert jerv.tools is not None and SPAWN_TOOL in jerv.tools  # jerv is the spawner
+    assert "deep_research" in jerv.tools  # jerv is the deep-research orchestrator
 
 
 def test_image_tools_are_jerv_only() -> None:
@@ -238,16 +240,16 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v24",
-            "714bdb179f212a49b9936c974adcdbbc1415b65470929bbfaf69864a0680d8b1",
+            "agent-jerv-v25",
+            "e7476e650d5261087b027c7574938fef4b59cffdbbe3b870fb44e650ba976a17",
         ),
         "archivist": (
             "agent-archivist-v6",
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
         ),
         "research": (
-            "agent-research-v7",
-            "d3ca280cd200d2c45f5d6840fa78eeb30b968d5745a9144b371bafc781eff1ff",
+            "agent-research-v8",
+            "1370612f9227c055dfa051f5c41f8032eb0be43784df3650764e994b4d51690d",
         ),
         "review": (
             "agent-review-v5",

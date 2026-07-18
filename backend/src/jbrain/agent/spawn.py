@@ -32,6 +32,7 @@ gathered children.
 import asyncio
 import contextlib
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 import structlog
@@ -472,7 +473,27 @@ class SpawnService:
         tree.admit(len(plans))
 
         max_parallel = await self._effective_max_parallel(args.get("max_parallel"))
+        results = await self._execute_fan(ctx, tree, plans, max_parallel=max_parallel)
+        # The text observation is what the parent synthesizes from; the view is the
+        # UI's structured render of the same fan result (the registered
+        # `subagent_synthesis` tool-view, DESIGN.md). Both carry the same data.
+        return ToolOutput(_observation(results), view=_synthesis_view(results))
 
+    async def _execute_fan(
+        self,
+        ctx: ToolContext,
+        tree: TreeState,
+        plans: list[_ChildPlan],
+        *,
+        max_parallel: int,
+    ) -> list[_ChildResult]:
+        """Mint, launch, and await one flat fan of pre-validated, already-admitted
+        plans; return the structured results in plan order. This is the single fan
+        execution path — shared by the `spawn_subagent` flat fan and by
+        `deep_research`'s gather/refill rounds — so the parent⊆child clamp, the
+        `no_memory` / no-location sandbox, and the lineage all apply identically no
+        matter who launches the fan. The caller owns validation, admission
+        (`tree.admit`), and folding the results into an observation/view."""
         owner_ctx = SessionContext(principal_id=ctx.session.principal_id, principal_kind="owner")
         sem = asyncio.Semaphore(max_parallel)
 
@@ -523,13 +544,38 @@ class SpawnService:
         # run-log close (status=cancelled) lands inline, not stranded "running". Paired
         # with the loop cancelling this dispatched fan (loop.py), a Stop tears the whole
         # tree down cleanly (test_cancelled_child_runlog_settles_inline_not_detached).
-        results = await asyncio.gather(
+        return await asyncio.gather(
             *(_run_and_collect(i, plan, child) for i, (plan, child) in enumerate(minted))
         )
-        # The text observation is what the parent synthesizes from; the view is the
-        # UI's structured render of the same fan result (the registered
-        # `subagent_synthesis` tool-view, DESIGN.md). Both carry the same data.
-        return ToolOutput(_observation(results), view=_synthesis_view(results))
+
+    async def run_research_fan(
+        self,
+        ctx: ToolContext,
+        *,
+        briefs: Sequence[tuple[str, str]],
+        persona: str = "research",
+        effort: str | None = None,
+        max_parallel: int | None = None,
+    ) -> list[_ChildResult]:
+        """Run one flat fan of `persona` children for `deep_research`'s gather/refill
+        rounds and return the structured results (no observation/view fold — the caller
+        composes the report). `briefs` is `(label, brief_text)` per child.
+
+        Enforces the SAME admission and sandbox as the `spawn_subagent` flat fan by
+        going through `_execute_fan`; the caller (`deep_research`) is responsible for
+        the depth/tree guards and for keeping total children across its rounds within
+        `MAX_CHILDREN_PER_PARENT`. Returns `[]` when the fan cannot be admitted (tree
+        total or budget floor), so the caller renders a coverage-limited report rather
+        than failing — a refused refill is not a crash."""
+        tree = ctx.tree
+        if tree is None or not briefs:
+            return []
+        plans = [_ChildPlan(persona, label, brief, effort) for label, brief in briefs]
+        if not tree.can_admit(len(plans)) or not tree.can_admit_budget(len(plans)):
+            return []
+        tree.admit(len(plans))
+        n = await self._effective_max_parallel(max_parallel)
+        return await self._execute_fan(ctx, tree, plans, max_parallel=n)
 
     async def _spawn_waves(self, ctx: ToolContext, args: dict) -> str:
         """Run an ordered sequence of disconnected waves, feeding each wave's summaries

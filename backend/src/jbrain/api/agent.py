@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.agent.agents import SPAWN_TOOL, agent_for
+from jbrain.agent.agents import DEEP_RESEARCH_TOOL, SPAWN_TOOL, agent_for
 from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_attachment_content
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.brainevents import brain_text_enabled
@@ -615,11 +615,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
     # ...but never for a spawner (jerv): buffer-retry re-produces the turn, which would
-    # re-dispatch spawn_subagent and re-run the ENTIRE fan — new child sessions + token
-    # spend — on each retry. That is the "multiply model chains across the fan" failure
-    # the reflexion-off-for-children rule prevents (docs/archive/SUBAGENT_SPAWNING_PLAN.md M6),
-    # just relocated to the parent layer. Post-hoc verify-and-annotate still applies.
-    if profile.tools is not None and SPAWN_TOOL in profile.tools:
+    # re-dispatch spawn_subagent (or deep_research) and re-run the ENTIRE fan — new child
+    # sessions + token spend — on each retry. That is the "multiply model chains across the
+    # fan" failure the reflexion-off-for-children rule prevents
+    # (docs/archive/SUBAGENT_SPAWNING_PLAN.md M6), just relocated to the parent layer.
+    # Post-hoc verify-and-annotate still applies. (jerv holds both tools, so the
+    # SPAWN_TOOL check already covers deep_research today; DEEP_RESEARCH_TOOL is named too
+    # so a future deep-research-only agent stays covered.)
+    if profile.tools is not None and profile.tools & {SPAWN_TOOL, DEEP_RESEARCH_TOOL}:
         buffer_retry = False
     # The PWA's live position for this turn (both coords or nothing), reused by the
     # location tool to answer from the phone's current spot. When a turn carries a

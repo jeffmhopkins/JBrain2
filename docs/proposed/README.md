@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-07-04
+> **Status:** Living · **Last verified:** 2026-07-18
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -35,5 +35,5 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
-shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md` was promoted to
-`../plans/` and is in progress.)_
+shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md` and
+`DEEP_RESEARCH_TOOL_PLAN.md` were promoted to `../plans/` and are in progress.)_

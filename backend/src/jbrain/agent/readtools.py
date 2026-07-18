@@ -27,6 +27,7 @@ from jbrain.agent.charttools import build_chart_handlers
 from jbrain.agent.clock import build_clock_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
+from jbrain.agent.deep_research import DeepResearchRef, DeepResearchService
 from jbrain.agent.geocodetools import build_geocode_handlers
 from jbrain.agent.labtools import build_lab_handlers
 from jbrain.agent.listtools import build_list_handlers
@@ -640,6 +641,10 @@ def build_registry(
     Fails at startup if a sidecar and handler don't match exactly, so a new .tool
     can never ship unwired."""
     spawn_ref = SpawnRef()
+    # Deep research is late-bound like the spawn primitive: its service needs the spawn
+    # service (which needs the very registry being built), so it is wired below once both
+    # exist (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
+    deep_research_ref = DeepResearchRef()
     registry = load_registry(
         TOOLS_DIR,
         {
@@ -702,6 +707,11 @@ def build_registry(
             # registry exists. jerv (+ research/review children) reach it by
             # allowlist; curator's tools=None never does (NEVER_DEFAULT).
             "spawn_subagent": spawn_ref,
+            # The deep-research primitive: a bounded plan→gather→reflect→refill→
+            # synthesize→critique run over the same fan. jerv-only + NEVER_DEFAULT
+            # (curator's tools=None never absorbs it), wired below once the spawn
+            # service exists (deep research runs its fans through it).
+            "deep_research": deep_research_ref,
         },
         optional=(
             OPTIONAL_IMAGE_TOOLS
@@ -722,4 +732,8 @@ def build_registry(
             runlog=AgentRunLog(maker),
             transcript=AgentTranscript(maker),
         )
+        # Deep research runs its gather/refill/critique fans through the spawn service,
+        # so it is wired once that exists. Same guard: no router → the ref stays unbound
+        # and a deep_research call refuses cleanly.
+        deep_research_ref.service = DeepResearchService(router=router, spawn=spawn_ref.service)
     return registry
