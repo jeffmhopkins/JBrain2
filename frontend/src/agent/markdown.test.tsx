@@ -35,6 +35,39 @@ describe("Markdown", () => {
     expect(out).toContain('<pre class="md-pre"><code>code line</code></pre>');
   });
 
+  it("keeps a blank-line-separated ordered list as one auto-numbered list", () => {
+    // The model double-spaces its items AND restarts every marker at "1." — the old
+    // parser split this into three single-item <ol>s, each rendering "1." (the reported
+    // "1. 1. 1." bug). It must now be ONE <ol> so the browser numbers 1, 2, 3.
+    const out = html('1. "First video"\n\n1. "Second video"\n\n1. "Third video"');
+    expect((out.match(/<ol[ >]/g) ?? []).length).toBe(1);
+    expect((out.match(/<li>/g) ?? []).length).toBe(3);
+    // start=1 is the default, so no explicit start attribute clutters the markup.
+    expect(out).toContain('<ol class="md-ol">');
+    expect(out).toContain("First video");
+    expect(out).toContain("Third video");
+  });
+
+  it("keeps a blank-line-separated bullet list as one list", () => {
+    const out = html("- one\n\n- two\n\n- three");
+    expect((out.match(/<ul[ >]/g) ?? []).length).toBe(1);
+    expect((out.match(/<li>/g) ?? []).length).toBe(3);
+  });
+
+  it("honours an ordered list that starts at a non-1 number", () => {
+    const out = html("3. third\n4. fourth");
+    expect(out).toContain('<ol class="md-ol" start="3">');
+    expect((out.match(/<li>/g) ?? []).length).toBe(2);
+  });
+
+  it("splits two ordered lists separated by prose into distinct lists", () => {
+    // A paragraph between the lists ends the first — they must NOT merge across it.
+    const out = html("1. a\n2. b\n\nSome prose.\n\n1. c\n2. d");
+    expect((out.match(/<ol[ >]/g) ?? []).length).toBe(2);
+    expect(out).toContain('<p class="md-p">Some prose.</p>');
+    expect((out.match(/<li>/g) ?? []).length).toBe(4);
+  });
+
   it("renders a GFM pipe table as a real table grid", () => {
     const out = html(
       "| Time | Temp | Notes |\n|------|------|-------|\n| 6 PM | 93 | Strongest rain |\n| 8 PM | 87 | Easing |",

@@ -6,6 +6,7 @@ Embedding vectors are deterministic fakes (the embed container never runs in tes
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -24,6 +25,7 @@ from jbrain.external.corpus import (
     delete_external_video,
     fetch_transcript,
     filter_new_video_ids,
+    list_corpus,
     persist_analysis,
     search_corpus,
 )
@@ -251,6 +253,65 @@ async def test_persist_embed_search_round_trip(maker) -> None:  # noqa: F811
     assert [w[1] for w in t.windows]  # passage windows came back, ordered by seq
     assert t.windows == sorted(t.windows)  # ascending by t_ms
     assert await fetch_transcript(maker, "nope") is None  # unknown id → None
+
+
+async def _clear_sources(maker) -> None:
+    # The module shares one database across tests, so start from a known-empty corpus
+    # rather than assuming order (chunks cascade on the delete).
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(text("DELETE FROM app.external_sources"))
+
+
+async def test_list_corpus_counts_and_pages(maker) -> None:  # noqa: F811
+    await _clear_sources(maker)
+    # An empty library reports zero and returns no rows.
+    videos, total = await list_corpus(maker, limit=10)
+    assert total == 0 and videos == []
+
+    # Three done sources with distinct analyzed_at, plus an in-flight one that must NOT count.
+    async with scoped_session(maker, OWNER) as s:
+        for i, day in enumerate((10, 12, 15)):
+            await s.execute(
+                text(
+                    "INSERT INTO app.external_sources"
+                    " (provider, video_id, url, title, status, analyzed_at)"
+                    " VALUES ('youtube', :vid, 'https://y', :title, 'done', :ts)"
+                ),
+                {
+                    "vid": f"done{i}",
+                    "title": f"Video {i}",
+                    "ts": datetime(2026, 7, day, tzinfo=UTC),
+                },
+            )
+        await s.execute(
+            text(
+                "INSERT INTO app.external_sources (provider, video_id, url, title, status)"
+                " VALUES ('youtube', 'wip', 'https://y', 'Analysing', 'analyzing')"
+            )
+        )
+
+    # Total counts only the `done` library; newest analysis is listed first.
+    page, total = await list_corpus(maker, limit=2)
+    assert total == 3
+    assert [v.title for v in page] == ["Video 2", "Video 1"]  # 07-15, 07-12
+    assert page[0].video_id == "done2"
+
+    # The second page picks up the remainder.
+    page2, total2 = await list_corpus(maker, limit=2, offset=2)
+    assert total2 == 3 and [v.title for v in page2] == ["Video 0"]
+
+    # An offset past the end returns the true total but no rows.
+    empty, total3 = await list_corpus(maker, limit=2, offset=99)
+    assert total3 == 3 and empty == []
+
+
+async def test_list_corpus_scope_excludes_health(maker) -> None:  # noqa: F811
+    # A health-domain source is firewalled out of the tool's external-only read scope, so it
+    # never inflates the "how many videos" count.
+    await _clear_sources(maker)
+    await _insert_source(maker, OWNER, "health")
+    _, total = await list_corpus(maker, limit=10)
+    assert total == 0
 
 
 async def test_search_scope_excludes_health_corpus(maker) -> None:  # noqa: F811

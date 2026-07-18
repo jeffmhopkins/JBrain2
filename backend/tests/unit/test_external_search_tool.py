@@ -2,11 +2,13 @@
 fence, and the degraded (embed-down) note. The corpus query itself (search_corpus) is
 covered by the integration tests; here it is stubbed."""
 
+from datetime import datetime
+
 import jbrain.agent.externaltools as externaltools
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.db.session import SessionContext
-from jbrain.external.corpus import CorpusHit
+from jbrain.external.corpus import CorpusHit, LibraryVideo
 
 _CTX = ToolContext(session=SessionContext(principal_id="owner", principal_kind="owner"), scopes=())
 
@@ -71,9 +73,72 @@ async def test_degraded_note_when_embed_down(monkeypatch) -> None:
 
 
 async def test_empty_and_blank_query(monkeypatch) -> None:
-    assert await _run(monkeypatch, [], False, {"query": "   "}) == (
-        "search_external_video needs a non-empty query."
-    )
+    # A blank query no longer dead-ends — it points at the browse/count tool.
+    blank = await _run(monkeypatch, [], False, {"query": "   "})
+    assert "non-empty query" in blank and "list_external_video" in blank
     assert await _run(monkeypatch, [], False, {"query": "nothing"}) == (
         "No videos in the library matched 'nothing'."
     )
+
+
+def _list_handler():
+    return build_external_handlers(object(), object())["list_external_video"]  # type: ignore[arg-type]
+
+
+async def _run_list(monkeypatch, videos, total, args):
+    async def fake_list(maker, *, limit, offset=0, principal_id=""):
+        return videos, total
+
+    monkeypatch.setattr(externaltools, "list_corpus", fake_list)
+    return await _list_handler()(args, _CTX)
+
+
+def _video(title: str, **kw) -> LibraryVideo:
+    return LibraryVideo(
+        title=title,
+        channel_name=kw.get("channel_name", ""),
+        url=kw.get("url", f"https://youtu.be/{title}"),
+        published_at=kw.get("published_at"),
+        duration_s=kw.get("duration_s"),
+        video_id=kw.get("video_id", title),
+        provider=kw.get("provider", "youtube"),
+    )
+
+
+async def test_list_reports_total_and_metadata(monkeypatch) -> None:
+    videos = [
+        _video(
+            "Starship Update",
+            channel_name="NSF",
+            url="https://www.youtube.com/watch?v=abc",
+            published_at=datetime(2026, 7, 15),
+            duration_s=3725,  # 1:02:05
+        )
+    ]
+    out = await _run_list(monkeypatch, videos, 3, {})
+
+    assert isinstance(out, ToolOutput)
+    assert "holds 3 videos" in out
+    assert "Starship Update — NSF" in out
+    assert "published 2026-07-15" in out and "1:02:05" in out
+    # A partial page advertises how to fetch the next one.
+    assert "offset 1 for the next page" in out
+    assert out.web_sources[0].url == "https://www.youtube.com/watch?v=abc"
+
+
+async def test_list_empty_library(monkeypatch) -> None:
+    out = await _run_list(monkeypatch, [], 0, {})
+    assert out == "The video library is empty — no videos have been analysed yet."
+
+
+async def test_list_offset_past_end(monkeypatch) -> None:
+    out = await _run_list(monkeypatch, [], 5, {"offset": 99})
+    assert "holds 5 videos" in out and "none past offset 99" in out
+
+
+async def test_list_full_page_has_no_next_pointer(monkeypatch) -> None:
+    # The whole library fits on one page — no pagination footer, no "of N" qualifier.
+    videos = [_video("A"), _video("B")]
+    out = await _run_list(monkeypatch, videos, 2, {})
+    assert "holds 2 videos" in out
+    assert "next page" not in out

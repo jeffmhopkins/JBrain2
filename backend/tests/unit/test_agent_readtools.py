@@ -750,6 +750,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # search_external_video is `web`-classed (jerv-only), reading the external-source
         # video corpus via a purpose-built scope, never the curator wildcard.
         "search_external_video",
+        # list_external_video is `web`-classed (jerv-only): enumerate/count the whole library.
+        "list_external_video",
         # read_external_video is `web`-classed (jerv-only): one library video's full transcript.
         "read_external_video",
         # show_external_video is `web`-classed (jerv-only): the video-analysis card from corpus.
@@ -1187,6 +1189,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "search_external_video",
             1,
             "9bdd5b5f8906de816abdcbfd750cf1abb67e48482d2af7adde9dc641416e71d5",
+        ),
+        "list_external_video.tool": (
+            "list_external_video",
+            1,
+            "e83bda6ca121e68b60dee7296fadab7269a5929ae357d2c39b41f07d09b37398",
         ),
         "read_external_video.tool": (
             "read_external_video",
