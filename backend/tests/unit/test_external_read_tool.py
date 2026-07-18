@@ -95,3 +95,75 @@ async def test_present_but_empty_transcript(monkeypatch) -> None:
     t = ExternalTranscript("s4", "Empty", "", "https://youtu.be/e", "", "", None, None, [])
     out, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/e"})
     assert "no stored transcript" in out
+
+
+# --- show_external_source: the video-analysis card ------------------------------------
+
+
+def _show_handler():
+    return build_external_handlers(object(), object())["show_external_source"]  # type: ignore[arg-type]
+
+
+async def _run_show(monkeypatch, transcript, args):
+    async def fake_fetch(maker, video_id, *, principal_id=""):
+        return transcript
+
+    monkeypatch.setattr(externaltools, "fetch_transcript", fake_fetch)
+    return await _show_handler()(args, _CTX)
+
+
+async def test_show_emits_the_video_analysis_card(monkeypatch) -> None:
+    t = ExternalTranscript(
+        source_id="s1",
+        title="Starship Recap",
+        channel_name="NSF",
+        url="https://www.youtube.com/watch?v=X9dRCy1HuAQ",
+        transcript_source="captions:auto",
+        summary="A recap.",
+        duration_s=1386,
+        published_at=None,
+        windows=[(0, "Opening."), (185_000, "Booster to the pad.")],
+        video_id="X9dRCy1HuAQ",
+        provider="youtube",
+        duration_ms=1_386_000,
+        frames=[{"t_ms": 43_312, "caption": "A rocket on the pad.", "thumb_id": "sha"}],
+    )
+    out = await _run_show(monkeypatch, t, {"url": "https://youtu.be/X9dRCy1HuAQ?t=90"})
+
+    assert isinstance(out, ToolOutput)
+    assert out.view is not None and out.view.view == "video_analysis"
+    data = out.view.data
+    assert data["source"] == "stream"
+    assert data["youtube_id"] == "X9dRCy1HuAQ"  # embeddable YouTube id
+    assert data["summary"] == "A recap." and data["duration_ms"] == 1_386_000
+    assert data["transcript_source"] == "captions:auto"
+    # Frames carry t_ms + caption only (no inline thumbnail → the card renders markers).
+    assert data["frames"] == [{"t_ms": 43_312, "caption": "A rocket on the pad."}]
+    assert data["transcript"] == {"text": "Opening.\nBooster to the pad."}
+    assert 'Showing "Starship Recap" — NSF.' in out  # the brief spoken line
+
+
+async def test_show_non_youtube_has_no_embed_id(monkeypatch) -> None:
+    t = ExternalTranscript(
+        "s2",
+        "Clip",
+        "",
+        "https://vimeo.com/1",
+        "whisper",
+        "s",
+        10,
+        None,
+        [(0, "hi")],
+        video_id="1",
+        provider="vimeo",
+        duration_ms=10_000,
+        frames=[],
+    )
+    out = await _run_show(monkeypatch, t, {"url": "https://vimeo.com/1"})
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["youtube_id"] == ""  # only YouTube embeds
+
+
+async def test_show_not_found(monkeypatch) -> None:
+    out = await _run_show(monkeypatch, None, {"url": "https://youtu.be/zzz"})
+    assert "No analysed video in the library" in out

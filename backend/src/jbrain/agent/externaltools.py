@@ -17,7 +17,7 @@ import re
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.contracts import WebSource
+from jbrain.agent.contracts import ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.embed import EmbedClient
 from jbrain.external.corpus import (
@@ -92,6 +92,35 @@ def _render_transcript(t: ExternalTranscript) -> str:
     if truncated:
         body += "\n\n[transcript truncated — use search_external to jump to a specific moment]"
     return body
+
+
+def _card_data(t: ExternalTranscript) -> dict:
+    """The `video_analysis` card `data` for a library video — the same shape the live
+    analyze_stream card uses (build_stream_view_data), rebuilt from stored corpus rows so the
+    frontend renders the identical component. Frames carry only {t_ms, caption} (the stored
+    thumbnails are blob refs, not inline bytes — they render as markers, not stills), and the
+    transcript is the window passages joined (no word-level cues are stored)."""
+    frames = [
+        {"t_ms": int(f.get("t_ms", 0)), "caption": str(f.get("caption", ""))}
+        for f in t.frames
+        if isinstance(f, dict)
+    ]
+    text = "\n".join(passage for _, passage in t.windows)
+    return {
+        "source": "stream",
+        "media": "video",
+        "filename": t.title,
+        "stream_url": t.url,
+        "is_live": False,
+        "mode": "full",
+        # Only a YouTube source has an embeddable id; other providers show the source chip only.
+        "youtube_id": t.video_id if t.provider == "youtube" else "",
+        "summary": t.summary,
+        "duration_ms": t.duration_ms,
+        "frames": frames,
+        "transcript": {"text": text} if text else None,
+        "transcript_source": t.transcript_source,
+    }
 
 
 def build_external_handlers(
@@ -178,8 +207,25 @@ def build_external_handlers(
         source = WebSource(url=transcript.url, title=transcript.title or transcript.url)
         return ToolOutput(body, web_sources=(source,))
 
+    async def show_external_source_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        ref = str(arguments.get("url") or arguments.get("video_id") or "").strip()
+        if not ref:
+            return "show_external_source needs the url (or id) of a video in the library."
+        t = await fetch_transcript(
+            maker, _parse_video_id(ref), principal_id=ctx.session.principal_id
+        )
+        if t is None:
+            return (
+                f"No analysed video in the library matches '{ref}'."
+                " Use search_external to find one first."
+            )
+        view = ViewPayload(view="video_analysis", surface="inline", data=_card_data(t))
+        channel = f" — {t.channel_name}" if t.channel_name else ""
+        return ToolOutput(f'Showing "{t.title}"{channel}.', view=view)
+
     return {
         "search_external": search_external_tool,
         "check_channel": check_channel_tool,
         "read_external_source": read_external_source_tool,
+        "show_external_source": show_external_source_tool,
     }

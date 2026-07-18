@@ -219,6 +219,9 @@ async def test_persist_embed_search_round_trip(maker) -> None:  # noqa: F811
     assert t.title == "Booster Rollout" and t.channel_name == "NSF"
     assert t.duration_s == 20 and t.summary == "A booster rollout at the pad."
     assert t.published_at is not None and t.published_at.year == 2026  # upload_date "20260715"
+    # The video-analysis card fields (show_external_source) round-trip too.
+    assert t.video_id == "vid1" and t.provider == "youtube"
+    assert t.duration_ms == 20_000 and t.frames and t.frames[0]["caption"]
     assert [w[1] for w in t.windows]  # passage windows came back, ordered by seq
     assert t.windows == sorted(t.windows)  # ascending by t_ms
     assert await fetch_transcript(maker, "nope") is None  # unknown id → None

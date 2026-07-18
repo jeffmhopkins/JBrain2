@@ -92,6 +92,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # Read one library video's FULL transcript (search_external → read_external_source,
         # the web_search → web_fetch pattern) when a single excerpt isn't enough.
         "read_external_source",
+        # SHOW one library video as the video-analysis card (embed + frame timeline + tabs),
+        # rebuilt from stored corpus data — when the owner wants to see/watch it, not read it.
+        "show_external_source",
         # List a channel's new uploads not yet in the corpus (the scheduling Task calls
         # this, then analyze_stream on each new match).
         "check_channel",

@@ -752,6 +752,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "search_external",
         # read_external_source is `web`-classed (jerv-only): one library video's full transcript.
         "read_external_source",
+        # show_external_source is `web`-classed (jerv-only): the video-analysis card from corpus.
+        "show_external_source",
         # check_channel is `web`-classed (jerv-only): lists a channel's new uploads.
         "check_channel",
     }
@@ -1185,6 +1187,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_external_source",
             1,
             "dbdc338c23c4ee0c1a7d36d626e76f18c948eaf7bcb960e256d32e29441313df",
+        ),
+        "show_external_source.tool": (
+            "show_external_source",
+            1,
+            "81891c12f46e904ebc7aecd69170cac596f3406aca81b687f85947ac1c20ecfc",
         ),
         "check_channel.tool": (
             "check_channel",

@@ -45,9 +45,13 @@ link), and jerv can search *what was said and shown* across the corpus, cited ba
   the **timeline windower** (structured frames+utterances → time-stamped clean-prose passages); the
   `embed_external_source` follow-up; the **write-through** on full-mode `analyze_stream` completion
   (reuses the analysis already produced — zero extra cost); the **`search_external`** tool for jerv,
-  reading via a purpose-built general scope, with **untrusted-content fencing**; and the sibling
+  reading via a purpose-built general scope, with **untrusted-content fencing**; the sibling
   **`read_external_source`** tool that returns one library video's full timestamped transcript + summary +
-  length (the `search_external` -> `read_external_source` = `web_search` -> `web_fetch` pattern).
+  length + publish date (the `search_external` -> `read_external_source` = `web_search` -> `web_fetch`
+  pattern); and **`show_external_source`**, which rebuilds the **`video_analysis` card** (embed + frame
+  timeline + tabs) from stored corpus rows so jerv can SHOW a library video, reusing the frontend
+  component verbatim (Phase-1 fidelity: frames render as caption markers, transcript is window-level —
+  stored thumbnails are blob refs and no word-level cues are kept; full fidelity is a follow-on).
 - **B:** the **`check_channel`** tool (list uploads via yt-dlp `extract_flat`, filter by title, dedup against
   the corpus, return new video links).
 - **C:** a recurring **Jerv Task** that calls `check_channel` for the owner's channels and `analyze_stream`

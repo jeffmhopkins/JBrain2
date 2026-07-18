@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -197,6 +197,12 @@ class ExternalTranscript:
     duration_s: int | None
     published_at: datetime | None
     windows: list[tuple[int, str]]  # (t_ms, text), ordered by seq
+    # Extra fields the video-analysis card (show_external_source) needs; the text read tool
+    # (read_external_source) ignores them, so they default and stay out of its call sites.
+    video_id: str = ""
+    provider: str = ""
+    duration_ms: int | None = None
+    frames: list[dict] = field(default_factory=list)  # stored {t_ms, caption, thumb_id}
 
 
 async def fetch_transcript(
@@ -215,7 +221,7 @@ async def fetch_transcript(
             await session.execute(
                 text(
                     "SELECT id, title, channel_name, url, transcript_source, summary,"
-                    " duration_s, published_at"
+                    " duration_s, published_at, video_id, provider, duration_ms, frames"
                     " FROM app.external_sources WHERE video_id = :vid"
                     " ORDER BY analyzed_at DESC NULLS LAST LIMIT 1"
                 ),
@@ -243,6 +249,10 @@ async def fetch_transcript(
         duration_s=int(row.duration_s) if row.duration_s is not None else None,
         published_at=row.published_at,
         windows=[(int(c.t_ms), (c.text or "").strip()) for c in chunks if (c.text or "").strip()],
+        video_id=row.video_id or "",
+        provider=row.provider or "",
+        duration_ms=int(row.duration_ms) if row.duration_ms is not None else None,
+        frames=list(row.frames or []),
     )
 
 
