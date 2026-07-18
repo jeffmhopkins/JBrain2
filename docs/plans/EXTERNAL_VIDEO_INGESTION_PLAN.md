@@ -8,7 +8,9 @@ the workflow engine. **Wave A (Phase A — corpus + analyse + search) is built**
 timeline windower, the `embed_external_source` job, the `analyze_stream` write-through, and the
 `search_external` jerv tool). **Wave B (Phase B — the `check_channel` tool) is built** (a yt-dlp
 flat-listing channel lister, the `check_channel` jerv tool with title-filter + corpus-dedup, unit +
-integration tests). Wave C (the scheduling Task) is open (§14). The re-sequencing drops the poll/reconcile actions, the window-gate settings row, the seed
+integration tests). Wave C is the owner's runtime step — its runbook is written
+(`../runbooks/EXTERNAL_VIDEO_WATCH.md`), and creating the recurring Jerv Task is done on the owner's box
+(§14). The re-sequencing drops the poll/reconcile actions, the window-gate settings row, the seed
 migration, and the `pending_vod` reconciler state machine entirely. It builds on the shipped
 `analyze_stream` capability (yt-dlp resolution, the shared caption→fuse→reduce pipeline, and the
 **captions-first transcript** from #879) to turn any analysed video — ad hoc or scheduled — into a
@@ -394,8 +396,11 @@ snapshot as of `Last verified`; the source of truth is `backend/migrations/versi
   (`list_channel_uploads`, id-validated + SSRF-guarded), the `check_channel` jerv tool (title-filter +
   corpus-dedup so an already-ingested video is never re-analysed), unit tests + a real-Postgres dedup
   test. **Done: jerv lists new matching uploads.**
-- **W3 (Phase C) — Scheduling.** Document + create the recurring Jerv Task; confirm end-to-end nightly. No
-  backend code beyond a possible small prompt/runbook. **Done: it runs itself.**
+- **W3 (Phase C) — Scheduling.** No backend code. The runbook is written
+  (`../runbooks/EXTERNAL_VIDEO_WATCH.md`: the recommended Task prompt, cadence, per-run cap, and cost
+  notes); **creating the recurring Jerv Task and confirming the nightly run is the owner's runtime
+  step** (owner opted to configure it on their box). Marked ◻️ until that end-to-end confirmation;
+  flip the plan to Shipped + archive once the Task is live.
 
 Per `PROCESS.md`: independent adversarial review (reviewer ≠ builder) per wave, local lint+typecheck+unit
 green before merge, one PR per wave, CI green before proceeding. No GUI gate (no new GUI surface).
