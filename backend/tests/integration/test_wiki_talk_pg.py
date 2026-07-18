@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.session import read_context
@@ -395,6 +396,9 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         },  # unused by the editor turn
         stub,  # city geocoder
         maker,  # sessionmaker for query_server_metrics
+        # search_external/check_channel are non-optional sidecars, so a full registry
+        # build must supply their handlers (stubs — the editor turn never calls them).
+        external_handlers=build_external_handlers(stub, stub),
     )
 
 
