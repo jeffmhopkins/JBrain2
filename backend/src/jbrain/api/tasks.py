@@ -251,9 +251,7 @@ async def list_task_groups(request: Request, principal: OwnerDep) -> list[TaskGr
 
 
 @router.post("/task-groups", status_code=201)
-async def create_task_group(
-    request: Request, principal: OwnerDep, body: GroupBody
-) -> TaskGroupOut:
+async def create_task_group(request: Request, principal: OwnerDep, body: GroupBody) -> TaskGroupOut:
     created = await get_task_groups(request).create(ctx_for(principal), name=body.name.strip())
     return TaskGroupOut.of(created)
 

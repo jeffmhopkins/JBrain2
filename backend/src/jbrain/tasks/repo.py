@@ -135,9 +135,7 @@ async def _next_position(session: AsyncSession, principal_id: str, group_id: str
     current max within that bucket, or 0 when the bucket is empty."""
     gid = uuid.UUID(group_id) if group_id else None
     cond = Task.group_id.is_(None) if gid is None else (Task.group_id == gid)
-    top = (
-        await session.execute(select(func.max(Task.position)).where(cond))
-    ).scalar()
+    top = (await session.execute(select(func.max(Task.position)).where(cond))).scalar()
     return 0 if top is None else int(top) + 1
 
 
@@ -166,9 +164,7 @@ class TaskGroupRepo:
 
     async def create(self, ctx: SessionContext, *, name: str) -> TaskGroupInfo:
         async with scoped_session(self._maker, ctx) as session:
-            top = (
-                await session.execute(select(func.max(TaskGroup.position)))
-            ).scalar()
+            top = (await session.execute(select(func.max(TaskGroup.position)))).scalar()
             row = TaskGroup(
                 principal_id=uuid.UUID(ctx.principal_id),
                 name=name,
