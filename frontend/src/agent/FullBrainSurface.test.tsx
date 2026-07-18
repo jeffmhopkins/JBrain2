@@ -1190,6 +1190,40 @@ describe("FullBrainSurface", () => {
     }
   });
 
+  it("shows a live elapsed timer through each phase, re-anchoring on a phase change", () => {
+    vi.useFakeTimers();
+    try {
+      const tool = (label: string, emphasis: string): AgentStatus => ({
+        kind: "tool",
+        label,
+        emphasis,
+      });
+      const thinking: AgentStatus = { kind: "thinking", label: "Thinking it through" };
+
+      // Thinking counts too — the pill ticks the moment the turn starts.
+      const { rerender } = render(<AgentStatusLine status={thinking} />);
+      expect(screen.getByRole("status").textContent).toContain("0s");
+      act(() => vi.advanceTimersByTime(8_000));
+      expect(screen.getByRole("status").textContent).toContain("8s");
+
+      // A tool takes over: the count re-anchors to 0s, then crosses into m+s.
+      rerender(<AgentStatusLine status={tool("Using", "spawn_subagent")} />);
+      expect(screen.getByRole("status").textContent).toContain("0s");
+      act(() => vi.advanceTimersByTime(23_000));
+      expect(screen.getByRole("status").textContent).toContain("23s");
+      act(() => vi.advanceTimersByTime(5 * 60_000));
+      expect(screen.getByRole("status").textContent).toContain("5m 23s");
+
+      // A different tool re-anchors the count back to 0s.
+      rerender(<AgentStatusLine status={tool("Searching", "your notes")} />);
+      expect(screen.getByRole("status").textContent).toContain("Searching your notes");
+      expect(screen.getByRole("status").textContent).toContain("0s");
+      expect(screen.getByRole("status").textContent).not.toContain("5m");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("surfaces a staged proposal as a Review chip routed to the Proposals panel", async () => {
     // Opening the proposal renders ProposalTree, which fetches it; hold the fetch
     // so the panel opens without a (rejected) network call in the test.
