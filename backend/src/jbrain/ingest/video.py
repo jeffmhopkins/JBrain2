@@ -305,7 +305,15 @@ async def transcribe_audio(
         result = await transcribe.transcribe(data, filename=filename, media_type=media_type)
     finally:
         await _unload(gateway, model)
-    words = _words_from(result)
+    return transcript_payload(result)
+
+
+def transcript_payload(result: Any, *, offset_ms: int = 0) -> dict[str, Any] | None:
+    """The fused transcript dict ({text, words, duration_ms}) from any result carrying
+    `.text`/`.words`/`.duration_ms` — a whisper `Transcript` OR a provider-caption one —
+    or None when there's no speech to fuse. One source of truth for the transcript shape
+    both transcription paths emit."""
+    words = _words_from(result, offset_ms=offset_ms)
     clean = result.text.strip()
     if not clean and not words:
         return None  # silent / non-speech audio — no transcript to fuse

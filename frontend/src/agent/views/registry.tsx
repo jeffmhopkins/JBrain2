@@ -801,6 +801,9 @@ function VideoAnalysisView({ data }: ViewProps): ReactNode {
       frames={videoFrames(data.frames, thumbUrl)}
       words={transcriptWords(transcript?.words)}
       transcriptText={typeof transcript?.text === "string" ? transcript.text : undefined}
+      transcriptSource={
+        typeof data.transcript_source === "string" ? data.transcript_source : undefined
+      }
     />
   );
 }

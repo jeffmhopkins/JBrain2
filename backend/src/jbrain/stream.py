@@ -40,6 +40,7 @@ from typing import Any
 
 import structlog
 
+from jbrain.captions import CaptionTrack, select_caption
 from jbrain.media import (
     DEFAULT_DEDUP_DISTANCE,
     DEFAULT_LONGEST_EDGE,
@@ -122,6 +123,12 @@ class ResolvedStream:
     # frame's tiny read often slips through, which is why single mode worked and window
     # didn't). Empty for a source that needs no special headers.
     http_headers: dict[str, str] = field(default_factory=dict)
+    # The best provider caption track yt-dlp surfaced in the SAME info dict (human
+    # `subtitles` or the provider's ASR `automatic_captions`), or None when the source
+    # carries none. When present the pipeline can fetch + parse it as the transcript and
+    # skip whisper entirely — instant, whole-video, and (for json3) drift-free. Selected
+    # at no extra resolve cost; USED only when the caption preference allows (jbrain.captions).
+    caption: CaptionTrack | None = None
 
 
 @dataclass(frozen=True)
@@ -235,6 +242,7 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
         provider=str(info.get("extractor") or "").lower(),
         video_id=str(info.get("id") or ""),
         http_headers={str(k): str(v) for k, v in dict(headers).items()},
+        caption=select_caption(info),
     )
 
 

@@ -103,11 +103,7 @@ def build_stream_handlers(
             if sink is not None
             else None
         )
-        want_audio = (
-            mode != "single"
-            and bool(arguments.get("transcribe", True))
-            and (transcribe is not None)
-        )
+        want_transcript = mode != "single" and bool(arguments.get("transcribe", True))
         if report:
             report(0, 0, "Opening stream…")
         # One guard over the whole pipeline: a StreamError carries an actionable message
@@ -120,7 +116,7 @@ def build_stream_handlers(
                 resolved,
                 mode,
                 arguments,
-                want_audio=want_audio,
+                want_transcript=want_transcript,
                 router=router,
                 blobs=blobs,
                 transcribe=transcribe,
@@ -140,13 +136,13 @@ def build_stream_handlers(
             )
         if out is None:
             return f'I couldn\'t read any frames from that stream ("{resolved.title}").'
-        result, frames = out
+        result, frames, source = out
         return ToolOutput(
             summary_line(resolved.title, result),
             view=ViewPayload(
                 view="video_analysis",
                 surface="inline",
-                data=build_stream_view_data(resolved, result, mode, frames),
+                data=build_stream_view_data(resolved, result, mode, frames, source),
             ),
         )
 
@@ -179,7 +175,7 @@ async def _kick_deferred(
     session_id = str(ctx.agent_session_id)
     result_id = await media_results.create(ctx.session, session_id=session_id)
     payload: dict = {"result_id": result_id, "url": url, "mode": mode}
-    for key in ("frames", "window_s", "seek", "interval_s"):
+    for key in ("frames", "window_s", "seek", "interval_s", "captions"):
         if key in arguments:
             payload[key] = arguments[key]
     job_id = await queue.enqueue(ctx.session, KIND_ANALYZE_STREAM_URL, payload)

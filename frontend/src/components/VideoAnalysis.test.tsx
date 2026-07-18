@@ -184,6 +184,30 @@ describe("VideoAnalysis", () => {
     expect(video.currentTime).toBeCloseTo(4.2); // 4200ms
   });
 
+  it("notes the transcript source (provider captions) on the Transcript tab", () => {
+    renderCard({ transcriptSource: "captions" });
+    fireEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(screen.getByText("From the source's own captions")).toBeInTheDocument();
+  });
+
+  it("notes a locally-transcribed source, and shows no note when the source is unknown", () => {
+    const { rerender } = renderCard({ transcriptSource: "whisper" });
+    fireEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(screen.getByText("Transcribed locally")).toBeInTheDocument();
+
+    rerender(
+      <VideoAnalysis
+        videoUrl="/clip.mp4"
+        filename="walkthrough.mp4"
+        summary="s"
+        frames={FRAMES}
+        words={WORDS}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(screen.queryByText("Transcribed locally")).toBeNull();
+  });
+
   it("shows no tab bar when the clip has no speech (summary only), but keeps the filmstrip", () => {
     const { container } = renderCard({ words: [], transcriptText: undefined });
     expect(screen.queryByRole("tablist")).toBeNull();

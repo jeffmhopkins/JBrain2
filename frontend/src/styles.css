@@ -16606,6 +16606,17 @@ button.auto-sect[aria-expanded="true"] > svg {
   white-space: pre-wrap;
 }
 
+/* A muted note at the top of the Transcript tab saying where the transcript came from —
+   the provider's own captions vs the local whisper pass (the analyze_stream captions
+   feature), so the owner knows which source produced it. */
+.tv-vid-tsrc {
+  margin: 0 0 8px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
 /* --- task_status: the deferred-tool-call progress card (DEFERRED_TOOL_CALLS_PLAN P3) -- */
 /* The card supplies its own frame, so drop the generic tool-view wrapper's border/bg to
    avoid a double frame (the .atx / .tv-cc pattern). */

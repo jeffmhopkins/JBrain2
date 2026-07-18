@@ -88,6 +88,46 @@ async def test_deferred_job_writes_the_finished_card_to_the_result_row(
     assert "A launch stream showing the rocket." in str(row.result["resume_message"])
 
 
+async def test_deferred_job_uses_provider_captions_when_available(
+    maker: async_sessionmaker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A caption-bearing video defers, and the worker transcribes from the provider's
+    # captions (no whisper client wired) — the finished card tags its source.
+    from jbrain.captions import CaptionTrack
+    from jbrain.transcribe import Transcript, Word
+
+    async def fake_fetch(track, headers, *, transport=None):
+        return Transcript(text="Captioned words.", words=(Word("Captioned", 0, 300, 0.9),))
+
+    monkeypatch.setattr(stream_analysis, "fetch_caption_transcript", fake_fetch)
+    cc_vod = ResolvedStream(
+        media_url="https://cdn.example.com/v.mp4",
+        title="Captioned Talk",
+        is_live=False,
+        duration_s=600.0,
+        webpage_url="https://youtube.com/watch?v=cc",
+        caption=CaptionTrack(
+            url="https://cc.example.com/x.json3", ext="json3", kind="auto", lang="en"
+        ),
+    )
+    blobs = FsBlobStore(tmp_path)
+    rid = await media_results.create(maker, OWNER, session_id="chat-1")
+    full = _sampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8\xff frame")]))
+    fake = FakeLlmClient(["a slide", "A talk about the thing."])
+    pipeline = StreamAnalysisPipeline(
+        maker, blobs, _router(fake), resolver=_resolver(cc_vod), full_sampler=full
+    )
+
+    await pipeline.analyze_stream_url({"result_id": rid, "url": "u", "mode": "full"})
+
+    row = await media_results.get(maker, OWNER, rid)
+    assert row is not None and row.status == "done" and row.result is not None
+    assert row.result["transcript_source"] == "captions"
+    assert row.result["transcript"]["text"] == "Captioned words."
+    # The auto-resume report carries the caption transcript so jerv can quote it.
+    assert "Captioned words." in str(row.result["resume_message"])
+
+
 async def test_stop_mid_flight_cancels_the_analysis(
     maker: async_sessionmaker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

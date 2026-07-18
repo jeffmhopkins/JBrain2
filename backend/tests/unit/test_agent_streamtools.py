@@ -5,8 +5,11 @@ an injected resolver returns a ResolvedStream and injected samplers return canne
 frames/audio, so the handler's mode routing, audio gating, and view shape are what's
 under test."""
 
+from dataclasses import replace
+
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.streamtools import build_stream_handlers
+from jbrain.captions import CaptionTrack
 from jbrain.db.session import SessionContext
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.media import SampledFrame
@@ -363,6 +366,109 @@ async def test_audio_skipped_when_whisper_unconfigured() -> None:
     assert window.calls[0]["want_audio"] is False
     assert isinstance(out, ToolOutput) and out.view is not None
     assert out.view.data["transcript"] is None
+
+
+# --- captions-first transcript source (full mode) --------------------------------------
+
+CC_VOD = replace(
+    VOD,
+    caption=CaptionTrack(
+        url="https://cc.example.com/x.json3", ext="json3", kind="manual", lang="en"
+    ),
+)
+
+
+def _cc_transcript() -> Transcript:
+    return Transcript(
+        text="Provider caption text.",
+        words=(Word("Provider", 0, 300, 0.9), Word("caption", 300, 600, 0.9)),
+        duration_ms=8000,
+    )
+
+
+async def test_full_mode_prefers_provider_captions_and_skips_whisper(monkeypatch) -> None:
+    # A full-mode video with a provider caption track uses those captions (whole-video,
+    # instant) instead of whisper — and skips the audio ffmpeg leg entirely.
+    async def fake_fetch(track, headers, *, transport=None):
+        assert track.ext == "json3"
+        return _cc_transcript()
+
+    monkeypatch.setattr("jbrain.ingest.stream_analysis.fetch_caption_transcript", fake_fetch)
+    full = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8a")], audio_wav=b"RIFFwav"))
+    whisper = FakeTranscribe(_transcript())
+    fake = FakeLlmClient(["a frame", "A whole-video summary."])
+    handlers = _handlers(
+        FakeBlobs(), _router(fake), resolver=_resolver(CC_VOD), full=full, transcribe=whisper
+    )
+
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "full"}, CTX)
+
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["transcript_source"] == "captions"
+    assert out.view.data["transcript"]["text"] == "Provider caption text."
+    assert whisper.calls == []  # captions won → whisper never ran
+    assert full.calls[0]["want_audio"] is False  # audio leg skipped
+
+
+async def test_captions_off_forces_whisper(monkeypatch) -> None:
+    # `captions: off` is the re-run lever: ignore an available caption track, use whisper.
+    fetched: list[int] = []
+
+    async def fake_fetch(track, headers, *, transport=None):  # pragma: no cover - must not run
+        fetched.append(1)
+        return _cc_transcript()
+
+    monkeypatch.setattr("jbrain.ingest.stream_analysis.fetch_caption_transcript", fake_fetch)
+    full = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8a")], audio_wav=b"RIFFwav"))
+    whisper = FakeTranscribe(_transcript())
+    fake = FakeLlmClient(["a frame", "A summary."])
+    handlers = _handlers(
+        FakeBlobs(), _router(fake), resolver=_resolver(CC_VOD), full=full, transcribe=whisper
+    )
+
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "full", "captions": "off"}, CTX)
+
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["transcript_source"] == "whisper"
+    assert fetched == []  # the caption track was never fetched
+    assert whisper.calls and full.calls[0]["want_audio"] is True
+
+
+async def test_captions_only_takes_no_whisper_fallback(monkeypatch) -> None:
+    # `captions: only` with no usable caption track yields no transcript — never whisper.
+    async def fake_fetch(track, headers, *, transport=None):
+        return None  # e.g. the fetch was refused / empty
+
+    monkeypatch.setattr("jbrain.ingest.stream_analysis.fetch_caption_transcript", fake_fetch)
+    full = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8a")], audio_wav=b"RIFFwav"))
+    whisper = FakeTranscribe(_transcript())
+    fake = FakeLlmClient(["a frame", "A summary."])
+    handlers = _handlers(
+        FakeBlobs(), _router(fake), resolver=_resolver(CC_VOD), full=full, transcribe=whisper
+    )
+
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "full", "captions": "only"}, CTX)
+
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["transcript"] is None
+    assert out.view.data["transcript_source"] == ""
+    assert whisper.calls == [] and full.calls[0]["want_audio"] is False
+
+
+async def test_full_mode_auto_falls_back_to_whisper_without_captions() -> None:
+    # A captionless VOD in auto mode transcribes with whisper, tagged as the source.
+    full = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8a")], audio_wav=b"RIFFwav"))
+    whisper = FakeTranscribe(_transcript())
+    fake = FakeLlmClient(["a frame", "A summary."])
+    handlers = _handlers(
+        FakeBlobs(), _router(fake), resolver=_resolver(VOD), full=full, transcribe=whisper
+    )
+
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "full"}, CTX)
+
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["transcript_source"] == "whisper"
+    assert whisper.calls and full.calls[0]["want_audio"] is True
 
 
 # --- the in-turn ↔ defer routing (DEFERRED_TOOL_CALLS_PLAN.md P2) ----------------------
