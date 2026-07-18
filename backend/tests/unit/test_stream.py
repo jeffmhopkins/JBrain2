@@ -11,8 +11,10 @@ import pytest
 from jbrain.media import ffmpeg_available
 from jbrain.stream import (
     MAX_FRAMES,
+    MAX_FULL_FRAMES,
     ResolvedStream,
     StreamError,
+    _full_frame_count,
     _header_args,
     _input_guard_args,
     _select_media,
@@ -21,6 +23,23 @@ from jbrain.stream import (
     sample_stream_full,
     ytdlp_available,
 )
+
+
+def test_full_frame_count_uses_interval_density_when_given() -> None:
+    # interval_s (> 0) → one frame every N seconds, scaling with the video's length,
+    # bounded by MAX_FULL_FRAMES; a frame every 30 s of a 600 s video = 20.
+    assert _full_frame_count(frames=16, interval_s=30.0, duration=600.0) == 20
+    assert _full_frame_count(frames=16, interval_s=60.0, duration=600.0) == 10
+    # A dense interval on a long video is capped, not unbounded (cost stays bounded).
+    assert _full_frame_count(frames=16, interval_s=1.0, duration=100000.0) == MAX_FULL_FRAMES
+    assert _full_frame_count(frames=16, interval_s=99999.0, duration=600.0) == 1  # ≥1 always
+
+
+def test_full_frame_count_falls_back_to_flat_total_without_interval() -> None:
+    # No interval → the flat `frames` total, clamped to the in-turn budget MAX_FRAMES.
+    assert _full_frame_count(frames=8, interval_s=0.0, duration=600.0) == 8
+    assert _full_frame_count(frames=1000, interval_s=0.0, duration=600.0) == MAX_FRAMES
+
 
 # ---- pure selection + guard (no ffmpeg, no network) -------------------------
 

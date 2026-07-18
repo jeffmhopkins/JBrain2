@@ -179,7 +179,7 @@ async def _kick_deferred(
     session_id = str(ctx.agent_session_id)
     result_id = await media_results.create(ctx.session, session_id=session_id)
     payload: dict = {"result_id": result_id, "url": url, "mode": mode}
-    for key in ("frames", "window_s", "seek"):
+    for key in ("frames", "window_s", "seek", "interval_s"):
         if key in arguments:
             payload[key] = arguments[key]
     job_id = await queue.enqueue(ctx.session, KIND_ANALYZE_STREAM_URL, payload)

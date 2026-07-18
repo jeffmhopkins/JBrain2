@@ -41,6 +41,11 @@ const PHASES: { key: string; label: string; match: RegExp }[] = [
 ];
 
 const POLL_MS = 1500;
+// A long analysis polls for minutes, so a single transient blip (a tunnel hiccup, a
+// momentary 5xx) is essentially guaranteed and must NOT read as failure — only give up
+// after this many CONSECUTIVE failures (~a few seconds of no contact). A success resets
+// the count, so the card rides out blips and keeps following the job to completion.
+const MAX_POLL_FAILURES = 8;
 const TERMINAL = new Set(["done", "failed", "canceled"]);
 
 function currentPhase(label: string): number {
@@ -83,6 +88,7 @@ export function TaskStatus({
   const onCompleteRef = useRef(onComplete);
   const sawRunning = useRef(false);
   const fired = useRef(false);
+  const failures = useRef(0);
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -100,6 +106,7 @@ export function TaskStatus({
       try {
         const next = await api.deferredResult(resultId);
         if (!alive) return;
+        failures.current = 0; // a good read clears any transient-failure streak
         setData(next);
         if (next.status === "running") sawRunning.current = true;
         if (next.status === "done" && next.result && sawRunning.current && !fired.current) {
@@ -107,7 +114,12 @@ export function TaskStatus({
           onCompleteRef.current?.(resumeMessage(next.result));
         }
       } catch {
-        if (alive) setGone(true);
+        // A blip is not a failure — the job runs detached and is almost certainly still
+        // going. Only give up after several consecutive misses (the row may have been
+        // reaped); the work itself is safe on the server regardless.
+        if (!alive) return;
+        failures.current += 1;
+        if (failures.current >= MAX_POLL_FAILURES) setGone(true);
       }
     };
     void tick();
@@ -118,16 +130,20 @@ export function TaskStatus({
     };
   }, [resultId, finished]);
 
-  // A live elapsed timer while the work runs (client-side; the card mounted when the turn
-  // ended, which is ~when the job started).
+  // A live elapsed timer while the work runs. Anchored to the server's start time once a
+  // poll returns it, so reopening the chat mid-run shows the TRUE elapsed (not time since
+  // this mount) — the seamless-reconnect requirement. Falls back to mount time until the
+  // first poll lands.
+  const serverStart = data?.started_at ? Date.parse(data.started_at) : Number.NaN;
+  const anchor = Number.isNaN(serverStart) ? startedAt.current : serverStart;
   useEffect(() => {
     if (finished) return;
     const id = setInterval(
-      () => setElapsed(Math.floor((Date.now() - startedAt.current) / 1000)),
+      () => setElapsed(Math.max(0, Math.floor((Date.now() - anchor) / 1000))),
       1000,
     );
     return () => clearInterval(id);
-  }, [finished]);
+  }, [finished, anchor]);
 
   const onStop = useCallback(async () => {
     setStopping(true);
@@ -153,9 +169,16 @@ export function TaskStatus({
   const pct = determinate ? Math.min(100, Math.round((step / total) * 100)) : 0;
   const phase = currentPhase(label);
 
-  const pill =
-    status === "failed" || gone ? "Failed" : status === "canceled" ? "Stopped" : "Running";
-  const stateClass = gone ? "failed" : status;
+  const pill = gone
+    ? "Offline"
+    : status === "failed"
+      ? "Failed"
+      : status === "canceled"
+        ? "Stopped"
+        : "Running";
+  // A poll give-up (gone) is a lost connection, not a failed job — an amber warn, not the
+  // rose error tone reserved for an analysis that actually failed.
+  const stateClass = gone ? "canceled" : status;
 
   return (
     <div className={`tv-task state-${stateClass}`}>
@@ -213,9 +236,11 @@ export function TaskStatus({
 
       {finished && status !== "done" && (
         <p className="tv-task-terminal">
-          {status === "canceled"
-            ? "Stopped — the analysis was cancelled."
-            : (data?.error ?? "That analysis couldn't be completed.")}
+          {gone && status === "running"
+            ? "Lost contact with the analysis — it's still running on the server; reopen this chat to see the result."
+            : status === "canceled"
+              ? "Stopped — the analysis was cancelled."
+              : (data?.error ?? "That analysis couldn't be completed.")}
         </p>
       )}
     </div>

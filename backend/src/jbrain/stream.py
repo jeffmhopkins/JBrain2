@@ -60,6 +60,13 @@ MAX_WINDOW_S = 120.0  # the longest slice we sample/transcribe in one call
 DEFAULT_WINDOW_S = 10.0
 DEFAULT_WINDOW_FRAMES = 8  # frames for a window-mode grab
 DEFAULT_FULL_FRAMES = 16  # frames spread across a whole VOD in full mode
+# In full mode the owner can instead ask for a sampling DENSITY — one frame every
+# `interval_s` seconds (i.e. frames-per-minute) — so a long video gets proportionally
+# more coverage than a flat total would (the analyze_video "cover the clip" idea, but
+# rate-controlled). Bounded by this higher cap: each frame is one vision caption, so
+# cost scales with count, but the full-mode job runs off-turn where a heavier budget is
+# acceptable. Without an interval the flat `frames` total (≤ MAX_FRAMES) still applies.
+MAX_FULL_FRAMES = 60
 # In full (whole-VOD) mode we transcribe the entire audio track up to this length —
 # generous enough for a typical video (GPU whisper handles ~30 min in a few minutes,
 # which the "expensive" tool warns about). A longer clip (a podcast, an hour+ talk)
@@ -279,16 +286,30 @@ async def sample_stream(
     return StreamSample(frames=deduped, audio_wav=audio)
 
 
+def _full_frame_count(frames: int, interval_s: float, duration: float) -> int:
+    """How many stills to grab across a whole VOD. With `interval_s` (> 0) the owner asked
+    for a DENSITY — one frame every `interval_s` seconds — so the count scales with the
+    video's length (a frame every 30 s of a 20-min video ≈ 40), bounded by MAX_FULL_FRAMES.
+    Without it, the flat `frames` total applies (bounded by MAX_FRAMES)."""
+    if interval_s > 0:
+        return max(1, min(round(duration / interval_s), MAX_FULL_FRAMES))
+    return max(1, min(frames, MAX_FRAMES))
+
+
 async def sample_stream_full(
     resolved: ResolvedStream,
     *,
     frames: int = DEFAULT_FULL_FRAMES,
+    interval_s: float = 0.0,
     want_audio: bool = False,
     longest_edge: int = DEFAULT_LONGEST_EDGE,
     dedup_distance: int = DEFAULT_DEDUP_DISTANCE,
 ) -> StreamSample:
-    """Sample ≤ `frames` stills spread evenly across a whole finite video — the
-    analyze_video "cover the clip" shape, for the "analyze this YouTube video" case.
+    """Sample stills spread evenly across a whole finite video — the analyze_video "cover
+    the clip" shape, for the "analyze this YouTube video" case. Count is either a flat
+    `frames` total OR, when `interval_s` (> 0) is given, a density — one frame every
+    `interval_s` seconds (frames-per-minute), so a long video gets proportional coverage
+    (bounded by MAX_FULL_FRAMES).
 
     Each frame is a fast discrete `-ss` seek-grab at the midpoint of its even bucket,
     stamped at its true offset; the set is then deduped. Audio (when `want_audio`) is
@@ -302,8 +323,8 @@ async def sample_stream_full(
         log.info("stream.sample_skipped", reason="ffmpeg unavailable")
         return StreamSample(frames=[])
 
-    count = max(1, min(frames, MAX_FRAMES))
     duration = resolved.duration_s
+    count = _full_frame_count(frames, interval_s, duration)
     with tempfile.TemporaryDirectory(prefix="jbrain-stream-") as tmp:
         tmpdir = Path(tmp)
         sampled: list[SampledFrame] = []

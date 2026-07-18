@@ -38,6 +38,7 @@ class MediaResult:
     result: dict[str, Any] | None  # the video_analysis view data, once done
     error: str | None
     job_id: str | None
+    created_at: str  # ISO — the card bases its elapsed timer on this, so a reopen is seamless
 
 
 def _row_to_result(row: Any) -> MediaResult:
@@ -49,6 +50,7 @@ def _row_to_result(row: Any) -> MediaResult:
         result=dict(row.result) if row.result is not None else None,
         error=row.error,
         job_id=str(row.job_id) if row.job_id is not None else None,
+        created_at=row.created_at.isoformat() if row.created_at is not None else "",
     )
 
 
@@ -173,7 +175,7 @@ async def get(
         row = (
             await session.execute(
                 text(
-                    "SELECT id, session_id, status, progress, result, error, job_id"
+                    "SELECT id, session_id, status, progress, result, error, job_id, created_at"
                     " FROM app.media_analysis_results WHERE id = :id"
                 ),
                 {"id": result_id},

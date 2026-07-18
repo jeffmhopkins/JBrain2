@@ -926,6 +926,9 @@ class DeferredResultOut(BaseModel):
     progress: dict[str, Any]
     result: dict[str, Any] | None
     error: str | None
+    # When the job started (the row's creation) — the card's elapsed timer reads this, so
+    # reopening the chat mid-run shows the true elapsed time, not time-since-reopen.
+    started_at: str
 
 
 @router.get("/chat/deferred/{result_id}", response_model=DeferredResultOut)
@@ -943,6 +946,7 @@ async def get_deferred_result(request: Request, principal: OwnerDep, result_id: 
         progress=row.progress,
         result=row.result,
         error=row.error,
+        started_at=row.created_at,
     )
 
 

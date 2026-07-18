@@ -123,7 +123,10 @@ async def sample_for_mode(
     finite VOD."""
     if mode == "full":
         frames = clamp_frames(arguments.get("frames"), DEFAULT_FULL_FRAMES)
-        return await full_sampler(resolved, frames=frames, want_audio=want_audio)
+        interval = positive_float(arguments.get("interval_s"))
+        return await full_sampler(
+            resolved, frames=frames, interval_s=interval, want_audio=want_audio
+        )
     if mode == "single":
         return await window_sampler(resolved, frames=1, window_s=0.0, want_audio=False)
     frames = clamp_frames(arguments.get("frames"), DEFAULT_WINDOW_FRAMES)
