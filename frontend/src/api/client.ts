@@ -60,6 +60,9 @@ export interface DeferredResult {
   progress: { step?: number; total?: number; label?: string };
   result: Record<string, unknown> | null;
   error: string | null;
+  /** ISO start time (row creation) — the card's elapsed timer reads this so a reopen
+   * mid-run shows true elapsed, not time-since-reopen. */
+  started_at?: string;
 }
 
 /** A provisioned device with its location activity (GET /api/locations/devices).

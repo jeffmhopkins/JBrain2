@@ -16607,6 +16607,13 @@ button.auto-sect[aria-expanded="true"] > svg {
 }
 
 /* --- task_status: the deferred-tool-call progress card (DEFERRED_TOOL_CALLS_PLAN P3) -- */
+/* The card supplies its own frame, so drop the generic tool-view wrapper's border/bg to
+   avoid a double frame (the .atx / .tv-cc pattern). */
+.fb-shell .tool-view:has(.tv-task) {
+  border: 0;
+  padding: 0;
+  background: none;
+}
 .tv-task {
   display: flex;
   flex-direction: column;
@@ -16616,33 +16623,48 @@ button.auto-sect[aria-expanded="true"] > svg {
   border: 1px solid var(--border);
   border-radius: var(--r-card);
 }
+/* The header stays on one line at any font scale: the title and kind truncate with an
+   ellipsis before they wrap, and the state pill never shrinks or breaks mid-word. */
 .tv-task-hd {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 .tv-task-icon {
+  flex: none;
   display: inline-flex;
   color: var(--text-2);
 }
 .tv-task-icon svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 .tv-task-title {
-  font-size: var(--fs-body);
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--fs-secondary);
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tv-task-kind {
-  font-size: var(--fs-caption);
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-micro);
   color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tv-task-pill {
+  flex: none;
   margin-left: auto;
-  font-size: var(--fs-caption);
+  font-size: var(--fs-micro);
   font-weight: 600;
-  padding: 2px 10px;
+  white-space: nowrap;
+  padding: 2px 9px;
   border-radius: var(--r-pill);
   color: var(--accent);
   background: var(--steel-tint);
@@ -16689,11 +16711,16 @@ button.auto-sect[aria-expanded="true"] > svg {
   gap: 12px;
 }
 .tv-task-phase {
-  font-size: var(--fs-caption);
+  min-width: 0;
+  font-size: var(--fs-head);
   color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tv-task-elapsed {
-  font-size: var(--fs-caption);
+  flex: none;
+  font-size: var(--fs-head);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -16709,7 +16736,7 @@ button.auto-sect[aria-expanded="true"] > svg {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: var(--fs-caption);
+  font-size: var(--fs-head);
 }
 .tv-task-dot {
   flex: none;
@@ -16743,7 +16770,7 @@ button.auto-sect[aria-expanded="true"] > svg {
 }
 .tv-task-stop {
   align-self: flex-start;
-  font-size: var(--fs-caption);
+  font-size: var(--fs-head);
   font-weight: 600;
   color: var(--danger);
   background: var(--danger-tint);
@@ -16759,7 +16786,7 @@ button.auto-sect[aria-expanded="true"] > svg {
 }
 .tv-task-terminal {
   margin: 0;
-  font-size: var(--fs-caption);
+  font-size: var(--fs-head);
   color: var(--text-2);
 }
 @media (prefers-reduced-motion: reduce) {
