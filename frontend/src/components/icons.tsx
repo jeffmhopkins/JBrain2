@@ -39,6 +39,23 @@ export const MoreIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const GripIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="9" cy="6" r="1" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="6" r="1" fill="currentColor" stroke="none" />
+    <circle cx="9" cy="12" r="1" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="12" r="1" fill="currentColor" stroke="none" />
+    <circle cx="9" cy="18" r="1" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="18" r="1" fill="currentColor" stroke="none" />
+  </Icon>
+);
+
+export const ReorderIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3" />
+  </Icon>
+);
+
 export const SearchIcon = (p: IconProps) => (
   <Icon {...p}>
     <circle cx="11" cy="11" r="7" />

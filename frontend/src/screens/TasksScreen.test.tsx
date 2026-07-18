@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type Task, type TaskRun, api } from "../api/client";
+import { type Task, type TaskGroup, type TaskRun, api } from "../api/client";
 import { TasksScreen } from "./TasksScreen";
 
 const FUTURE = new Date(Date.now() + 3600_000).toISOString();
@@ -21,8 +21,14 @@ const LATEST_T1: TaskRun = {
   ended_at: new Date(Date.now() - 240_000).toISOString(),
 };
 
-const SCHEDULED: Task = {
+const GROUPS: TaskGroup[] = [{ id: "g-money", name: "Money", position: 0 }];
+
+// A grouped task and an ungrouped one, so both the group header and the trailing
+// "Ungrouped" bucket render.
+const GROUPED: Task = {
   id: "t1",
+  group_id: "g-money",
+  position: 0,
   name: "Morning brief",
   prompt: "Give me the news.",
   agent: "jerv",
@@ -41,9 +47,10 @@ const SCHEDULED: Task = {
   latest_run: LATEST_T1,
 };
 
-const MANUAL: Task = {
-  ...SCHEDULED,
+const UNGROUPED_TASK: Task = {
+  ...GROUPED,
   id: "t2",
+  group_id: null,
   name: "Ad hoc digest",
   schedule_kind: "on_demand",
   schedule_freq: null,
@@ -67,8 +74,9 @@ const RUN: TaskRun = {
   ended_at: new Date(Date.now() - 7100_000).toISOString(),
 };
 
-function mount(tasks: Task[] = [SCHEDULED, MANUAL]) {
+function mount(tasks: Task[] = [GROUPED, UNGROUPED_TASK], groups: TaskGroup[] = GROUPS) {
   vi.spyOn(api, "tasks").mockResolvedValue(tasks);
+  vi.spyOn(api, "taskGroups").mockResolvedValue(groups);
   vi.spyOn(api, "taskRuns").mockResolvedValue([RUN]);
   const onClose = vi.fn();
   const onOpenSession = vi.fn();
@@ -79,17 +87,97 @@ function mount(tasks: Task[] = [SCHEDULED, MANUAL]) {
 describe("TasksScreen", () => {
   beforeEach(() => localStorage.clear()); // per-task "viewed" markers are device-local
 
-  it("renders the Scheduled and On demand groups", async () => {
+  it("renders custom group headers and a trailing Ungrouped bucket", async () => {
     mount();
     expect(await screen.findByText("Morning brief")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Scheduled" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "On demand" })).toBeInTheDocument();
+    // The group the owner named + the system Ungrouped catch-all, both as headers.
+    expect(screen.getByRole("heading", { name: "Money" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ungrouped" })).toBeInTheDocument();
     expect(screen.getByText("Ad hoc digest")).toBeInTheDocument();
+  });
+
+  it("filters to one group via the chip row", async () => {
+    mount();
+    await screen.findByText("Morning brief");
+    fireEvent.click(screen.getByRole("tab", { name: /^Money/ }));
+    // Only the Money task remains; the ungrouped one is filtered out.
+    expect(screen.getByText("Morning brief")).toBeInTheDocument();
+    expect(screen.queryByText("Ad hoc digest")).not.toBeInTheDocument();
+  });
+
+  it("moves a task to another group through the ⋯ sheet", async () => {
+    const reorder = vi.spyOn(api, "reorderTasks").mockResolvedValue([]);
+    mount();
+    await screen.findByText("Ad hoc digest");
+    // Open the ungrouped task's move sheet and file it into Money.
+    fireEvent.click(screen.getByRole("button", { name: "Move Ad hoc digest to a group" }));
+    const sheet = await screen.findByRole("dialog", { name: "Move task" });
+    fireEvent.click(within(sheet).getByRole("button", { name: /Money/ }));
+    await waitFor(() => expect(reorder).toHaveBeenCalled());
+    // Destination bucket is Money, and the moved id is appended to its ordered list.
+    expect(reorder).toHaveBeenCalledWith("g-money", ["t1", "t2"]);
+  });
+
+  it("creates a group from the move sheet and files the task into it", async () => {
+    const createGroup = vi
+      .spyOn(api, "createTaskGroup")
+      .mockResolvedValue({ id: "g-new", name: "Errands", position: 1 });
+    const reorder = vi.spyOn(api, "reorderTasks").mockResolvedValue([]);
+    mount();
+    await screen.findByText("Ad hoc digest");
+    fireEvent.click(screen.getByRole("button", { name: "Move Ad hoc digest to a group" }));
+    const sheet = await screen.findByRole("dialog", { name: "Move task" });
+    fireEvent.click(within(sheet).getByRole("button", { name: "New group…" }));
+    fireEvent.change(within(sheet).getByLabelText("New group name"), {
+      target: { value: "Errands" },
+    });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(createGroup).toHaveBeenCalledWith("Errands"));
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith("g-new", ["t2"]));
+  });
+
+  it("reorders a task within its group via the keyboard grip", async () => {
+    const reorder = vi.spyOn(api, "reorderTasks").mockResolvedValue([]);
+    // Two tasks in the same group so there is something to reorder.
+    const a = { ...GROUPED, id: "t1", name: "Alpha", position: 0 };
+    const b = { ...GROUPED, id: "t3", name: "Beta", position: 1 };
+    mount([a, b]);
+    await screen.findByText("Alpha");
+    fireEvent.click(screen.getByRole("button", { name: "Organize groups and order" }));
+    // Nudge Alpha down past Beta with the arrow key on its grip handle.
+    fireEvent.keyDown(screen.getByRole("button", { name: /Reorder Alpha/ }), { key: "ArrowDown" });
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith("g-money", ["t3", "t1"]));
+  });
+
+  it("renames a group inline in organize mode", async () => {
+    const rename = vi
+      .spyOn(api, "renameTaskGroup")
+      .mockResolvedValue({ id: "g-money", name: "Finance", position: 0 });
+    mount();
+    await screen.findByText("Morning brief");
+    fireEvent.click(screen.getByRole("button", { name: "Organize groups and order" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rename Money" }));
+    const input = screen.getByLabelText("Rename group");
+    fireEvent.change(input, { target: { value: "Finance" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(rename).toHaveBeenCalledWith("g-money", "Finance"));
+  });
+
+  it("deletes a group behind a tap-again confirm", async () => {
+    const del = vi.spyOn(api, "deleteTaskGroup").mockResolvedValue(undefined);
+    mount();
+    await screen.findByText("Morning brief");
+    fireEvent.click(screen.getByRole("button", { name: "Organize groups and order" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Money" }));
+    // First tap arms; nothing deleted yet.
+    expect(del).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete Money" }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith("g-money"));
   });
 
   it("toggles a task through the optimistic enable endpoint", async () => {
     const setEnabled = vi.spyOn(api, "setTaskEnabled").mockResolvedValue({
-      ...SCHEDULED,
+      ...GROUPED,
       enabled: false,
     });
     mount();
@@ -107,7 +195,6 @@ describe("TasksScreen", () => {
 
   it("shows the latest result on the collapsed card and opens its session in one tap", async () => {
     const { onOpenSession } = mount();
-    // The band summary is visible without expanding the card.
     const band = await screen.findByRole("button", { name: /Open latest session/ });
     expect(screen.getByText("Daily Action Brief — 3 items need a reply")).toBeInTheDocument();
     fireEvent.click(band);
@@ -119,7 +206,6 @@ describe("TasksScreen", () => {
     const band = await screen.findByRole("button", { name: /Open latest session/ });
     expect(screen.getByText("NEW")).toBeInTheDocument();
     fireEvent.click(band);
-    // Nothing new to surface anymore: the band disappears, leaving just the header.
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /Open latest session/ })).not.toBeInTheDocument(),
     );
@@ -128,12 +214,8 @@ describe("TasksScreen", () => {
   });
 
   it("persists the viewed marker so the band stays hidden after a remount", async () => {
-    // The user's actual flow: opening a session unmounts this screen (the handoff
-    // drops the Tasks card to reveal the chat), then reopening Tasks must keep the
-    // band hidden. The marker has to reach localStorage — not just component state —
-    // for that to survive the remount. A wrapper that unmounts TasksScreen on open
-    // mirrors the live handoff so this guards the persistence end-to-end.
-    vi.spyOn(api, "tasks").mockResolvedValue([SCHEDULED, MANUAL]);
+    vi.spyOn(api, "tasks").mockResolvedValue([GROUPED, UNGROUPED_TASK]);
+    vi.spyOn(api, "taskGroups").mockResolvedValue(GROUPS);
     vi.spyOn(api, "taskRuns").mockResolvedValue([RUN]);
     function Harness() {
       const [open, setOpen] = useState(true);
@@ -149,8 +231,7 @@ describe("TasksScreen", () => {
     unmount();
 
     render(<TasksScreen onClose={vi.fn()} onOpenSession={vi.fn()} />);
-    await screen.findByText("Morning brief"); // the card is back…
-    // …but its viewed band is not — the marker survived in localStorage.
+    await screen.findByText("Morning brief");
     expect(screen.queryByRole("button", { name: /Open latest session/ })).not.toBeInTheDocument();
     expect(screen.queryByText("NEW")).not.toBeInTheDocument();
   });
@@ -170,7 +251,7 @@ describe("TasksScreen", () => {
   });
 
   it("creates a task from the editor", async () => {
-    const createTask = vi.spyOn(api, "createTask").mockResolvedValue(SCHEDULED);
+    const createTask = vi.spyOn(api, "createTask").mockResolvedValue(GROUPED);
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "New task" }));
     const prompt = await screen.findByPlaceholderText("Tell the agent what to do on each run…");
@@ -183,17 +264,16 @@ describe("TasksScreen", () => {
   it("creates an Archivist task (Gmail organizer, no scope dial)", async () => {
     const createTask = vi
       .spyOn(api, "createTask")
-      .mockResolvedValue({ ...SCHEDULED, agent: "archivist" });
+      .mockResolvedValue({ ...GROUPED, agent: "archivist" });
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "New task" }));
     const prompt = await screen.findByPlaceholderText("Tell the agent what to do on each run…");
     fireEvent.change(prompt, { target: { value: "Label everything from chase.com." } });
-    // The Archivist is offered in the agent picker; selecting it starts with no scopes.
     fireEvent.click(screen.getByRole("button", { name: /Archivist/ }));
     fireEvent.click(screen.getByText("Save task"));
     await waitFor(() => expect(createTask).toHaveBeenCalled());
     expect(createTask.mock.calls[0]?.[0].agent).toBe("archivist");
-    expect(createTask.mock.calls[0]?.[0].domain_scopes).toEqual([]); // a non-KB persona reads nothing
+    expect(createTask.mock.calls[0]?.[0].domain_scopes).toEqual([]);
   });
 
   it("opens the session an older run produced from the expanded history", async () => {

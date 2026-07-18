@@ -128,7 +128,7 @@ from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.stream import ytdlp_available
-from jbrain.tasks.repo import TaskRepo, TaskRunRepo
+from jbrain.tasks.repo import TaskGroupRepo, TaskRepo, TaskRunRepo
 from jbrain.tasks.runner import LoopTurnExecutor, TaskRunner
 from jbrain.tasks.scheduler import run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
@@ -596,6 +596,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the scheduler loop (below) is the web-process driver (that's where the agent
         # stack lives and where "Run now" already executes).
         app.state.task_repo = TaskRepo(maker)
+        app.state.task_groups = TaskGroupRepo(maker)
         app.state.task_runs = TaskRunRepo(maker)
         app.state.task_runner = TaskRunner(
             sessions=app.state.agent_sessions,

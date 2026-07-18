@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-14
+> **Status:** Living · **Last verified:** 2026-07-18
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1470,6 +1470,46 @@ recognition signal) and **B** (an unread-inbox reframe with a `New · All`
 segmented sort — more screen surgery than the problem warranted, and it buried
 the config behind the disclosure). C keeps the per-card model while making the
 result a first-class, always-visible dock.
+
+## Tasks — grouping & reordering (settled in a four-way review — chosen **B, "chips + move sheet"** over A "drag handles + groups", C "swimlane board", and D "organize manager"; reference mocks `docs/mocks/task-grouping/{a-drag-groups,b-chips-move-sheet,c-board-lanes,d-organize-manager}.html`, `docs/mocks/task-grouping/README.md`)
+
+The Tasks screen auto-bucketed tasks into two **fixed, system-defined** sections
+(Scheduled / On demand) with no owner control over membership or order. Grouping
+is now **owner-defined**, and **B keeps the two concerns separate** — membership
+is a deliberate menu pick, order is an opt-in drag — which is why it won over the
+one-gesture rivals (A's cross-group drag, C's board) and the button-only manager
+(D):
+
+- **A group is an owner-named bucket.** A **chip row** (the settled `filter-chip`
+  pattern) is the group switch: **All** shows every task under its group header,
+  each chip narrows to one bucket. Tasks with no group fall to a trailing
+  **Ungrouped** section (so existing tasks migrate untouched — grouping *augments*
+  the old split rather than forcing a backfill). The Scheduled / On-demand headers
+  are retired.
+- **Filing is a `⋯ → Move to…` sheet, never a cross-screen drag** (composes the
+  shared `Sheet`, mirroring `MoveDomainSheet`): the owner's groups as rows (current
+  one ticked), an **Ungrouped** escape, and a **New group…** row that creates a
+  bucket and files the task into it in the same tap.
+- **Order is an opt-in "Organize" mode** (the reorder toggle in the top bar). It
+  arms an in-place **grip** on each card — drag to reorder **within a group only**,
+  or focus the grip and use **↑ ↓** (the accessible/keyboard path, the D insight
+  carried across as the drag equivalent). Organize mode also reveals **inline
+  rename** and a **tap-again delete** on each group header; deleting a bucket
+  **SET-NULLs its tasks back to Ungrouped**, never deleting them.
+- **Persistence.** A task gains `group_id` (FK, `ON DELETE SET NULL`) + a 0-based
+  `position` within its bucket; groups are their own owner-only RLS table
+  (`app.task_groups`, migration 0136). One `POST /api/tasks/reorder`
+  `{group_id, task_ids}` is the authoritative write behind **both** a within-group
+  reorder and a move (the client sends the destination's full ordered id list with
+  the moved id appended). `GET /api/tasks` returns tasks pre-sorted by position;
+  `GET/POST/PATCH/DELETE /api/task-groups` manage the buckets.
+
+Rejected: **A** (one drag does membership + order, but cross-group drag over a long
+list fights autoscroll and offers no non-drag path), **C** (a swimlane board — one
+group visible at a time loses the overview and horizontal paging fights vertical
+drag; over-built for a handful of tasks), and **D** (button-only organize manager —
+reliable and accessible, but less tactile; its ▲▼/keyboard path was folded into B's
+Organize mode instead of shipping as its own screen).
 
 ## Sub-agent spawning surfaces (settled; build plan `docs/archive/SUBAGENT_SPAWNING_PLAN.md`)
 

@@ -8,9 +8,16 @@ directions each propose a different interaction model for owner-defined organiza
 
 Per `docs/reference/DESIGN.md` §"UI development process", a new surface gets a **3–4 variant
 review before any wiring** — even when it reuses settled paradigms (the task card, the enable
-toggle, the shared bottom `Sheet`, the filter-chip row from Runs). This is that round; **no
-decision is baked into `DESIGN.md` yet** — pick one and the reasoning gets written up there in
-the same PR.
+toggle, the shared bottom `Sheet`, the filter-chip row from Runs). This was that round.
+
+> **Decided: Direction B** ("chips + move sheet"). It keeps membership (a deliberate menu pick)
+> and order (an opt-in drag) as separate concerns, reuses the settled filter-chip + Sheet
+> paradigms, and avoids accidental cross-group drags. Shipped full-stack (`app.task_groups` +
+> `tasks.group_id`/`position`, migration 0136; `/api/task-groups` + `/api/tasks/reorder`;
+> `TasksScreen` + `MoveTaskSheet`). D's accessible ▲▼/keyboard reorder was folded into B's
+> Organize mode rather than shipping as its own screen. The full write-up lives in
+> `docs/reference/DESIGN.md` §"Tasks — grouping & reordering". The A/C/D mocks are retained as
+> the record of the round.
 
 All four are single-file, dark-first with a working theme toggle, phone-framed (390×820),
 tokens-only (no raw hex outside the token sheet), Lucide-style outline icons, no emoji. Each is

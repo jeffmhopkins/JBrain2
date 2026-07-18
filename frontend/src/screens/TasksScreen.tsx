@@ -1,31 +1,37 @@
 // The Tasks surface — saved prompts that spawn an agent session on a schedule or on
-// demand (binding mock docs/mocks/tasks-launcher-a-list-editor.html, Direction A).
-// A self-contained full-screen overlay (its own back bar), like Automations. Cards
-// read "agent · schedule" with an enable toggle + next/last-run meta and a docked
-// "latest result" band — one tap to the newest run's session, a steel NEW signal
-// until viewed (docs/reference/DESIGN.md "Tasks — the result band"). Expanding a card loads
-// its full recent runs (each links to the session it produced). "＋ New task" rises
-// a full-screen editor: prompt, agent (Curator reveals a scope dial), schedule, and
-// delivery. Reflects live state — the cards come from /api/tasks.
+// demand. Organization is GUI Direction B (docs/mocks/task-grouping/b-chips-move-sheet):
+// grouping is a *filter* (a chip row switches buckets), filing a task is a deliberate
+// ⋯ → Move-to sheet (never a drag across the screen), and an Organize toggle arms a
+// lightweight reorder *within the current view* (drag the grip, or arrow-key it) plus
+// inline rename / delete of the owner's groups. Cards still read "agent · schedule"
+// with an enable toggle + next/last-run meta and the docked "latest result" band.
+// Reflects live state — cards come from /api/tasks, buckets from /api/task-groups.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type ScheduleFreq,
   type ScheduleKind,
   type Task,
   type TaskAgent,
+  type TaskGroup,
   type TaskInput,
   type TaskRun,
   api,
 } from "../api/client";
+import { MoveTaskSheet } from "../components/MoveTaskSheet";
 import {
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  GripIcon,
+  MoreIcon,
+  PencilIcon,
   PlayIcon,
   PlusIcon,
   RefreshIcon,
+  ReorderIcon,
+  TrashIcon,
   XIcon,
 } from "../components/icons";
 import { isUnviewed, loadViewed, writeViewed } from "../tasks/viewed";
@@ -42,6 +48,10 @@ const AGENT_LABEL: Record<TaskAgent, string> = {
 };
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"]; // Sunday=0 … Saturday=6
 const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]; // stable keys for the chips
+
+/** The chip filter value: everything, one group, or the trailing ungrouped bucket. */
+const ALL = "all";
+const UNGROUPED = "ungrouped";
 
 function fmtAgo(iso: string): string {
   const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
@@ -93,12 +103,11 @@ function runDot(status: TaskRun["status"]): string {
   return status === "error" ? "failed" : status === "running" ? "running" : "ok";
 }
 
-/** The card's "latest result" band — a one-tap dock to the newest run's session
- * (Direction C), shown only while that result is unviewed: the steel left-edge
- * accent + NEW pill + full-strength summary. Once its session has been opened on
- * this device there is nothing new to surface, so the band disappears and the card
- * collapses to its header; the full run history still lives in the expanded body.
- * A task that has never run shows an inert "No runs yet" placeholder. */
+/** The card's "latest result" band — a one-tap dock to the newest run's session,
+ * shown only while that result is unviewed. Once its session has been opened on this
+ * device the band disappears and the card collapses to its header; the full run
+ * history still lives in the expanded body. A task that has never run shows an inert
+ * "No runs yet" placeholder. */
 function TaskBand({
   task,
   unviewed,
@@ -157,32 +166,62 @@ interface CardProps {
   task: Task;
   open: boolean;
   running: boolean;
+  reordering: boolean;
   unviewed: boolean;
   runs: TaskRun[] | null;
   onToggleOpen: () => void;
   onFlip: () => void;
   onRun: () => void;
   onEdit: () => void;
+  onMove: () => void;
   onOpenRun: (run: TaskRun) => void;
+  onDragStart: (e: React.PointerEvent) => void;
+  onNudge: (dir: -1 | 1) => void;
 }
 
 function TaskCard({
   task,
   open,
   running,
+  reordering,
   unviewed,
   runs,
   onToggleOpen,
   onFlip,
   onRun,
   onEdit,
+  onMove,
   onOpenRun,
+  onDragStart,
+  onNudge,
 }: CardProps) {
   const dot = running ? "running" : !task.enabled ? "idle" : "ok";
   return (
-    <div className={`task-card${task.enabled ? "" : " off"}${open ? " open" : ""}`}>
+    <div
+      className={`task-card${task.enabled ? "" : " off"}${open ? " open" : ""}${reordering ? " reordering" : ""}`}
+      data-task-id={task.id}
+    >
       <div className="task-head">
-        <button type="button" className="task-headbtn" onClick={onToggleOpen}>
+        {reordering && (
+          <button
+            type="button"
+            className="task-grab"
+            aria-label={`Reorder ${task.name || "task"} (drag, or use the arrow keys)`}
+            onPointerDown={onDragStart}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                onNudge(-1);
+              } else if (e.key === "ArrowDown") {
+                e.preventDefault();
+                onNudge(1);
+              }
+            }}
+          >
+            <GripIcon size={18} />
+          </button>
+        )}
+        <button type="button" className="task-headbtn" onClick={onToggleOpen} disabled={reordering}>
           <span className={`task-dot ${dot}`} aria-hidden="true" />
           <span className="task-main">
             <span className="task-name">{task.name || "Untitled task"}</span>
@@ -197,20 +236,32 @@ function TaskCard({
             </span>
             <span className="task-meta">{metaLine(task)}</span>
           </span>
-          <ChevronRightIcon size={15} />
+          {!reordering && <ChevronRightIcon size={15} />}
         </button>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={task.enabled}
-          aria-label={`${task.enabled ? "Pause" : "Resume"} ${task.name || "task"}`}
-          className="task-sw"
-          onClick={onFlip}
-        >
-          <span className="task-knob" />
-        </button>
+        {!reordering && (
+          <>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={task.enabled}
+              aria-label={`${task.enabled ? "Pause" : "Resume"} ${task.name || "task"}`}
+              className="task-sw"
+              onClick={onFlip}
+            >
+              <span className="task-knob" />
+            </button>
+            <button
+              type="button"
+              className="task-kebab"
+              aria-label={`Move ${task.name || "task"} to a group`}
+              onClick={onMove}
+            >
+              <MoreIcon size={18} />
+            </button>
+          </>
+        )}
       </div>
-      {open && (
+      {open && !reordering && (
         <div className="task-body">
           <div className="task-blab">Prompt</div>
           <div className="task-prompt">{task.prompt}</div>
@@ -259,7 +310,7 @@ function TaskCard({
           )}
           <div className="task-acts">
             <button type="button" onClick={onEdit}>
-              <PlusIcon size={14} />
+              <PencilIcon size={14} />
               Edit
             </button>
             <button
@@ -661,7 +712,10 @@ interface TasksScreenProps {
 
 export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [groups, setGroups] = useState<TaskGroup[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string>(ALL);
+  const [reordering, setReordering] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [runsByTask, setRunsByTask] = useState<Record<string, TaskRun[]>>({});
@@ -669,12 +723,17 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [viewed, setViewed] = useState<Record<string, string>>(loadViewed);
+  const [moveFor, setMoveFor] = useState<Task | null>(null);
+  const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState("");
+  const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  const dragId = useRef<string | null>(null);
 
   // Opening the newest run's session clears that task's "new" band on this device.
-  // Persist OUTSIDE the state updater: opening a session unmounts this screen (the
-  // handoff drops the Tasks card to reveal the chat), and React never runs a queued
-  // updater for an unmounting component — so a write inside it would be lost and the
-  // band would re-show "new". Writing synchronously here lands before the unmount.
+  // Persist OUTSIDE the state updater: opening a session unmounts this screen, and
+  // React never runs a queued updater for an unmounting component — so a write inside
+  // it would be lost and the band would re-show "new". Writing synchronously here lands
+  // before the unmount.
   const markViewed = useCallback((task: Task) => {
     const latest = task.latest_run;
     if (latest === null) return;
@@ -683,8 +742,6 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     writeViewed(task.id, startedAt);
   }, []);
 
-  // Open the agent session a run produced; opening the latest run also marks the
-  // task viewed (a run without a session — e.g. an early failure — isn't openable).
   function openRun(task: Task, run: TaskRun): void {
     if (run.session_id === null) return;
     if (task.latest_run !== null && run.id === task.latest_run.id) markViewed(task);
@@ -694,7 +751,9 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      setTasks(await api.tasks());
+      const [t, g] = await Promise.all([api.tasks(), api.taskGroups()]);
+      setTasks(t);
+      setGroups(g);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -782,27 +841,198 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     }
   }
 
-  const scheduled = tasks?.filter((t) => t.schedule_kind !== "on_demand") ?? [];
-  const onDemand = tasks?.filter((t) => t.schedule_kind === "on_demand") ?? [];
+  // ---- grouping + ordering ----
 
-  function renderGroup(label: string, group: Task[]) {
-    if (group.length === 0) return null;
+  const groupIdOf = (t: Task): string | null => t.group_id;
+  const tasksInBucket = (bucket: string | null): Task[] =>
+    (tasks ?? []).filter((t) => groupIdOf(t) === bucket);
+
+  // Persist the current in-array order of a bucket as its authoritative order/positions.
+  async function persistOrder(bucket: string | null, next: Task[]): Promise<void> {
+    const ids = next.filter((t) => groupIdOf(t) === bucket).map((t) => t.id);
+    try {
+      await api.reorderTasks(bucket, ids);
+    } catch (err) {
+      setToast(errorMessage(err));
+      await refresh();
+    }
+  }
+
+  // Move `task` into `bucket` (null = Ungrouped), appended to that bucket's end.
+  async function moveTo(task: Task, bucket: string | null): Promise<void> {
+    setMoveFor(null);
+    if (task.group_id === bucket) return;
+    const next = (tasks ?? [])
+      .filter((t) => t.id !== task.id)
+      .concat([{ ...task, group_id: bucket }]);
+    setTasks(next);
+    const label = bucket === null ? "Ungrouped" : (groups.find((g) => g.id === bucket)?.name ?? "");
+    setToast(`Moved to “${label}”.`);
+    await persistOrder(bucket, next);
+  }
+
+  async function moveToNewGroup(task: Task, name: string): Promise<void> {
+    setMoveFor(null);
+    try {
+      const g = await api.createTaskGroup(name);
+      setGroups((gs) => [...gs, g]);
+      await moveTo(task, g.id);
+      // moveTo's own toast can't see the just-created group's name (stale closure).
+      setToast(`Created “${g.name}” — task moved.`);
+    } catch (err) {
+      setToast(errorMessage(err));
+      await refresh();
+    }
+  }
+
+  // Reorder a task within its bucket by one step (the arrow-key path; drag uses the
+  // same persist). Swapping in the array is enough — the bucket renders in array order.
+  function nudge(task: Task, dir: -1 | 1): void {
+    if (tasks === null) return;
+    const bucket = task.group_id;
+    const inBucket = tasksInBucket(bucket);
+    const idx = inBucket.findIndex((t) => t.id === task.id);
+    const swapWith = inBucket[idx + dir];
+    if (!swapWith) return;
+    const next = tasks.filter((t) => t.id !== task.id);
+    const at = next.indexOf(swapWith) + (dir === 1 ? 1 : 0);
+    next.splice(at, 0, task);
+    setTasks(next);
+    void persistOrder(bucket, next);
+  }
+
+  // Pointer drag: reorder within the same bucket by hovering another card. Uses
+  // elementFromPoint over live state (no manual DOM), so React owns the reflow.
+  function startDrag(task: Task, e: React.PointerEvent): void {
+    e.preventDefault();
+    dragId.current = task.id;
+    const bucket = task.group_id;
+    const onMoveEv = (ev: PointerEvent) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const card = el?.closest<HTMLElement>("[data-task-id]");
+      const overId = card?.dataset.taskId;
+      if (!overId || overId === dragId.current) return;
+      setTasks((list) => {
+        if (list === null) return list;
+        const dragging = list.find((t) => t.id === dragId.current);
+        const over = list.find((t) => t.id === overId);
+        if (!dragging || !over || over.group_id !== bucket || dragging.group_id !== bucket) {
+          return list;
+        }
+        const next = list.filter((t) => t.id !== dragging.id);
+        next.splice(next.indexOf(over), 0, dragging);
+        return next;
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMoveEv);
+      window.removeEventListener("pointerup", onUp);
+      dragId.current = null;
+      // Persist the bucket's settled order.
+      setTasks((list) => {
+        if (list !== null) void persistOrder(bucket, list);
+        return list;
+      });
+    };
+    window.addEventListener("pointermove", onMoveEv);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  async function commitRename(groupId: string): Promise<void> {
+    const name = renameText.trim();
+    setRenamingGroup(null);
+    const current = groups.find((g) => g.id === groupId);
+    if (!name || name === current?.name) return;
+    setGroups((gs) => gs.map((g) => (g.id === groupId ? { ...g, name } : g)));
+    try {
+      await api.renameTaskGroup(groupId, name);
+    } catch (err) {
+      setToast(errorMessage(err));
+      await refresh();
+    }
+  }
+
+  async function deleteGroup(groupId: string): Promise<void> {
+    setArmedDelete(null);
+    try {
+      await api.deleteTaskGroup(groupId);
+      setToast("Group deleted — its tasks moved to Ungrouped.");
+      if (filter === groupId) setFilter(ALL);
+      await refresh();
+    } catch (err) {
+      setToast(errorMessage(err));
+    }
+  }
+
+  function renderBucket(bucket: string | null, name: string, showHeader: boolean) {
+    const list = tasksInBucket(bucket);
+    if (list.length === 0 && bucket === null) return null; // no empty Ungrouped header
     return (
-      <div>
-        <h3 className="runs-sect">{label}</h3>
-        {group.map((task) => (
+      <div key={bucket ?? UNGROUPED} className="task-bucket">
+        {showHeader && (
+          <div className="task-grouphdr">
+            {reordering && bucket !== null && renamingGroup === bucket ? (
+              <input
+                className="task-grename"
+                // biome-ignore lint/a11y/noAutofocus: the header morphed into an input on the user's tap.
+                autoFocus
+                aria-label="Rename group"
+                value={renameText}
+                onChange={(e) => setRenameText(e.target.value)}
+                onBlur={() => void commitRename(bucket)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void commitRename(bucket);
+                  if (e.key === "Escape") setRenamingGroup(null);
+                }}
+              />
+            ) : (
+              <h3 className="task-gname">{name}</h3>
+            )}
+            <span className="task-gcount">{list.length}</span>
+            {reordering && bucket !== null && renamingGroup !== bucket && (
+              <span className="task-gacts">
+                <button
+                  type="button"
+                  className="task-gact"
+                  aria-label={`Rename ${name}`}
+                  onClick={() => {
+                    setRenameText(name);
+                    setRenamingGroup(bucket);
+                  }}
+                >
+                  <PencilIcon size={15} />
+                </button>
+                <button
+                  type="button"
+                  className={`task-gact${armedDelete === bucket ? " armed" : ""}`}
+                  aria-label={armedDelete === bucket ? `Confirm delete ${name}` : `Delete ${name}`}
+                  onClick={() =>
+                    armedDelete === bucket ? void deleteGroup(bucket) : setArmedDelete(bucket)
+                  }
+                >
+                  {armedDelete === bucket ? "delete?" : <TrashIcon size={15} />}
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+        {list.map((task) => (
           <TaskCard
             key={task.id}
             task={task}
             open={openId === task.id}
             running={running.has(task.id)}
+            reordering={reordering}
             unviewed={isUnviewed(task, viewed)}
             runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}
             onToggleOpen={() => toggleOpen(task.id)}
             onFlip={() => void flip(task)}
             onRun={() => void runNow(task)}
             onEdit={() => setDraft(draftFrom(task))}
+            onMove={() => setMoveFor(task)}
             onOpenRun={(run) => openRun(task, run)}
+            onDragStart={(e) => startDrag(task, e)}
+            onNudge={(dir) => nudge(task, dir)}
           />
         ))}
       </div>
@@ -821,6 +1051,9 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     );
   }
 
+  const ungroupedCount = tasksInBucket(null).length;
+  const hasAny = (tasks?.length ?? 0) > 0;
+
   return (
     <section className="runs-screen">
       <header className="runs-bar">
@@ -830,7 +1063,20 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
         <h2 className="runs-bar-title">Tasks</h2>
         <button
           type="button"
-          className="icon-btn runs-refresh"
+          className={`icon-btn${reordering ? " on" : ""}`}
+          onClick={() => {
+            setReordering((r) => !r);
+            setRenamingGroup(null);
+            setArmedDelete(null);
+          }}
+          aria-label={reordering ? "Done organizing" : "Organize groups and order"}
+          aria-pressed={reordering}
+        >
+          <ReorderIcon size={20} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
           onClick={() => setDraft(draftFrom(null))}
           aria-label="New task"
         >
@@ -841,6 +1087,43 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
         </button>
       </header>
 
+      {hasAny && (
+        <div className="task-chiprow" role="tablist" aria-label="Group filter">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={filter === ALL}
+            className={`task-chip${filter === ALL ? " on" : ""}`}
+            onClick={() => setFilter(ALL)}
+          >
+            All <span className="task-chip-n">{tasks?.length ?? 0}</span>
+          </button>
+          {groups.map((g) => (
+            <button
+              type="button"
+              key={g.id}
+              role="tab"
+              aria-selected={filter === g.id}
+              className={`task-chip${filter === g.id ? " on" : ""}`}
+              onClick={() => setFilter(g.id)}
+            >
+              {g.name} <span className="task-chip-n">{tasksInBucket(g.id).length}</span>
+            </button>
+          ))}
+          {ungroupedCount > 0 && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={filter === UNGROUPED}
+              className={`task-chip${filter === UNGROUPED ? " on" : ""}`}
+              onClick={() => setFilter(UNGROUPED)}
+            >
+              Ungrouped <span className="task-chip-n">{ungroupedCount}</span>
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="runs-body">
         {error !== null && (
           <p className="error" role="alert">
@@ -848,20 +1131,31 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
           </p>
         )}
 
+        {reordering && (
+          <p className="task-reorder-note">
+            Drag the grip to reorder within a group, or focus it and use ↑ ↓. Rename or delete a
+            group from its header.
+          </p>
+        )}
+
         {tasks === null && error === null ? (
           <p className="muted">Loading tasks…</p>
-        ) : tasks !== null && tasks.length === 0 ? (
+        ) : !hasAny ? (
           <p className="muted runs-empty">
             No tasks yet — create one to have an agent run a prompt for you.
           </p>
-        ) : (
+        ) : filter === ALL ? (
           <>
-            {renderGroup("Scheduled", scheduled)}
-            {renderGroup("On demand", onDemand)}
+            {groups.map((g) => renderBucket(g.id, g.name, true))}
+            {renderBucket(null, "Ungrouped", true)}
           </>
+        ) : filter === UNGROUPED ? (
+          renderBucket(null, "Ungrouped", false)
+        ) : (
+          renderBucket(filter, groups.find((g) => g.id === filter)?.name ?? "", false)
         )}
 
-        {openId !== null && tasks?.some((t) => t.id === openId) && (
+        {openId !== null && !reordering && tasks?.some((t) => t.id === openId) && (
           <div className="task-delwrap">
             <button
               type="button"
@@ -876,6 +1170,17 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
           </div>
         )}
       </div>
+
+      {moveFor !== null && (
+        <MoveTaskSheet
+          taskName={moveFor.name || "task"}
+          currentGroupId={moveFor.group_id}
+          groups={groups}
+          onMove={(gid) => void moveTo(moveFor, gid)}
+          onCreateAndMove={(name) => void moveToNewGroup(moveFor, name)}
+          onClose={() => setMoveFor(null)}
+        />
+      )}
 
       {toast !== null && (
         <output className="runs-toast">
