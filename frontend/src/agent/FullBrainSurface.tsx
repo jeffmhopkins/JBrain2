@@ -558,8 +558,8 @@ function Bubble({
         <LiveToolStatus key={t.id} tool={t} />
       ))}
       {viewsToRender.map((v, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
         <ToolView
+          // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
           key={i}
           payload={v}
           onOpenSession={onOpenSession}
@@ -673,8 +673,8 @@ function Bubble({
               />
             )}
             {otherViews.map((v, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
               <ToolView
+                // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
                 key={i}
                 payload={v}
                 onOpenSession={onOpenSession}
