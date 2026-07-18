@@ -17,9 +17,9 @@ Nothing here calls the LLM or touches storage — it is pure media work, run off
 event loop by the caller (a worker job).
 """
 
+import asyncio
 import io
 import shutil
-import subprocess
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -29,6 +29,34 @@ import structlog
 from PIL import Image
 
 log = structlog.get_logger()
+
+
+async def run_media_proc(cmd: list[str], *, timeout_s: float) -> tuple[int | None, bytes, bytes]:
+    """Run one media subprocess (ffmpeg/ffprobe) on the event loop, bounded by `timeout_s`
+    and **cancel-safe**: a timeout OR a cancelled turn/job `kill()`s the child promptly
+    and reaps it, so no ffmpeg orphan outlives the work. This is the property the old
+    blocking `subprocess.run` in a thread could not offer — a thread can't be cancelled,
+    so a Stop left ffmpeg running to its own timeout (DEFERRED_TOOL_CALLS_PLAN.md P1).
+    Every command is still an argv-list, never a shell string (the URL/path is data).
+    Returns `(returncode, stdout, stderr)`; raises `OSError` on a spawn failure and
+    `TimeoutError` on the wall-clock bound (both a clean "no frames" for the caller)."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout_s)
+    except (TimeoutError, asyncio.CancelledError):
+        proc.kill()
+        await proc.wait()
+        raise
+    return proc.returncode, stdout, stderr
+
+
+def _sorted_jpegs(tmpdir: Path, pattern: str = "frame_*.jpg") -> list[Path]:
+    """The sampled JPEG output paths in order — a sync helper so the async samplers
+    keep their (blocking) directory glob off an `async def` body (ruff ASYNC240)."""
+    return sorted(tmpdir.glob(pattern))
+
 
 # Owner-chosen defaults (docs/archive/VIDEO_ANALYSIS_PLAN.md): a bounded frame budget keeps
 # the VLM cost flat regardless of clip length; 768px is the VLM-friendly longest
@@ -57,12 +85,12 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
-def probe_duration_s(path: Path) -> float | None:
+async def probe_duration_s(path: Path) -> float | None:
     """The clip's duration in seconds via ffprobe, or None if it can't be read
     (a streamed container without a header duration; the caller falls back to a
     fixed sampling rate)."""
     try:
-        out = subprocess.run(
+        rc, stdout, _ = await run_media_proc(
             [
                 "ffprobe",
                 "-v",
@@ -73,16 +101,15 @@ def probe_duration_s(path: Path) -> float | None:
                 "default=noprint_wrappers=1:nokey=1",
                 str(path),
             ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=True,
-        ).stdout.strip()
-    except (subprocess.SubprocessError, OSError) as exc:
+            timeout_s=60,
+        )
+    except (OSError, TimeoutError) as exc:
         log.info("video.probe_failed", error=str(exc))
         return None
+    if rc != 0:
+        return None
     try:
-        seconds = float(out)
+        seconds = float(stdout.decode("utf-8", "replace").strip())
     except ValueError:
         return None
     if seconds <= 0 or seconds > _MAX_REASONABLE_DURATION_S:
@@ -90,7 +117,7 @@ def probe_duration_s(path: Path) -> float | None:
     return seconds
 
 
-def sample_frames(
+async def sample_frames(
     video: bytes,
     *,
     max_frames: int = DEFAULT_MAX_FRAMES,
@@ -104,7 +131,11 @@ def sample_frames(
     ffmpeg for `fps = max_frames / duration` so the kept frames are one-per-bucket;
     without it (no header duration) it falls back to 1 fps capped at `max_frames`.
     Near-duplicate frames are then dropped by dHash. Returns [] when ffmpeg is
-    unavailable or the clip yields no decodable frames (never raises for empty)."""
+    unavailable or the clip yields no decodable frames (never raises for empty).
+
+    Async so the ffmpeg/ffprobe legs run as cancel-safe subprocesses on the event
+    loop — a cancelled turn or job kills them promptly (DEFERRED_TOOL_CALLS_PLAN.md
+    P1), where the old thread-offloaded blocking call left ffmpeg orphaned."""
     if not ffmpeg_available():
         log.info("video.sample_skipped", reason="ffmpeg unavailable")
         return []
@@ -112,9 +143,11 @@ def sample_frames(
         tmpdir = Path(tmp)
         src = tmpdir / "in"
         src.write_bytes(video)
-        duration = probe_duration_s(src)
+        duration = await probe_duration_s(src)
         fps = _sampling_fps(duration, max_frames)
-        frames = _extract(src, tmpdir, fps=fps, longest_edge=longest_edge, max_frames=max_frames)
+        frames = await _extract(
+            src, tmpdir, fps=fps, longest_edge=longest_edge, max_frames=max_frames
+        )
         if not frames:
             return []
         stamped = _stamp(frames, duration=duration, fps=fps)
@@ -130,7 +163,7 @@ def _sampling_fps(duration: float | None, max_frames: int) -> float:
     return max(max_frames / duration, 0.05)
 
 
-def _extract(
+async def _extract(
     src: Path, tmpdir: Path, *, fps: float, longest_edge: int, max_frames: int
 ) -> list[Path]:
     """Run ffmpeg to write ≤ max_frames downscaled JPEGs; return their sorted paths.
@@ -138,7 +171,7 @@ def _extract(
     pattern = tmpdir / "frame_%05d.jpg"
     vf = f"fps={fps:.6f},scale='min({longest_edge},iw)':-2"
     try:
-        subprocess.run(
+        rc, _, stderr = await run_media_proc(
             [
                 "ffmpeg",
                 "-nostdin",
@@ -156,17 +189,15 @@ def _extract(
                 "3",
                 str(pattern),
             ],
-            capture_output=True,
-            timeout=600,
-            check=True,
+            timeout_s=600,
         )
-    except subprocess.CalledProcessError as exc:
-        log.warning("video.extract_failed", stderr=exc.stderr.decode("utf-8", "replace")[-500:])
-        return []
-    except (subprocess.SubprocessError, OSError) as exc:
+    except (OSError, TimeoutError) as exc:
         log.warning("video.extract_failed", error=str(exc))
         return []
-    return sorted(tmpdir.glob("frame_*.jpg"))
+    if rc != 0:
+        log.warning("video.extract_failed", stderr=stderr.decode("utf-8", "replace")[-500:])
+        return []
+    return _sorted_jpegs(tmpdir)
 
 
 def _stamp(paths: list[Path], *, duration: float | None, fps: float) -> list[SampledFrame]:

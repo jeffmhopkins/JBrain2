@@ -182,25 +182,21 @@ async def _sample(
     window_sampler,
     full_sampler,
 ) -> StreamSample:
-    """Dispatch the requested mode to the right (blocking) sampler, off the event loop.
-    `single` and `window` share the windowed sampler (single = one frame, no window);
-    `full` covers a whole finite VOD."""
+    """Dispatch the requested mode to the right sampler. The samplers are async, so
+    their ffmpeg legs are cancel-safe subprocesses on the event loop — a cancelled
+    turn kills ffmpeg promptly rather than orphaning it (DEFERRED_TOOL_CALLS_PLAN.md
+    P1). `single` and `window` share the windowed sampler (single = one frame, no
+    window); `full` covers a whole finite VOD."""
     if mode == "full":
         frames = _clamp_frames(arguments.get("frames"), DEFAULT_FULL_FRAMES)
-        return await asyncio.to_thread(
-            lambda: full_sampler(resolved, frames=frames, want_audio=want_audio)
-        )
+        return await full_sampler(resolved, frames=frames, want_audio=want_audio)
     if mode == "single":
-        return await asyncio.to_thread(
-            lambda: window_sampler(resolved, frames=1, window_s=0.0, want_audio=False)
-        )
+        return await window_sampler(resolved, frames=1, window_s=0.0, want_audio=False)
     frames = _clamp_frames(arguments.get("frames"), DEFAULT_WINDOW_FRAMES)
     window = _clamp_window(arguments.get("window_s"))
     seek = _positive_float(arguments.get("seek"))
-    return await asyncio.to_thread(
-        lambda: window_sampler(
-            resolved, frames=frames, window_s=window, seek_s=seek, want_audio=want_audio
-        )
+    return await window_sampler(
+        resolved, frames=frames, window_s=window, seek_s=seek, want_audio=want_audio
     )
 
 

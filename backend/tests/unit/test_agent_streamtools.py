@@ -67,7 +67,7 @@ class FakeSampler:
         self._sample = sample
         self.calls: list[dict] = []
 
-    def __call__(self, resolved: ResolvedStream, **kw) -> StreamSample:
+    async def __call__(self, resolved: ResolvedStream, **kw) -> StreamSample:
         self.calls.append(kw)
         return self._sample
 

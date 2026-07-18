@@ -167,9 +167,9 @@ def _resolved(url: str, *, is_live: bool = False, duration: float | None = 5.0) 
 
 
 @pytestmark_ffmpeg
-def test_single_grab_returns_one_frame(tmp_path) -> None:
+async def test_single_grab_returns_one_frame(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path))
-    sample = sample_stream(r, frames=1, window_s=0)
+    sample = await sample_stream(r, frames=1, window_s=0)
     assert len(sample.frames) == 1
     assert sample.frames[0].timestamp_ms == 0
     assert sample.frames[0].jpeg[:2] == b"\xff\xd8"  # JPEG SOI
@@ -177,11 +177,11 @@ def test_single_grab_returns_one_frame(tmp_path) -> None:
 
 
 @pytestmark_ffmpeg
-def test_window_returns_multiple_stamped_frames(tmp_path) -> None:
+async def test_window_returns_multiple_stamped_frames(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path, seconds=5))
     # dedup off here: testsrc is coarse enough that the dHash collapses it (dedup is
     # exercised by the media suite) — this test isolates window spacing + stamping.
-    sample = sample_stream(r, frames=4, window_s=4, dedup_distance=0)
+    sample = await sample_stream(r, frames=4, window_s=4, dedup_distance=0)
     assert 3 <= len(sample.frames) <= 4  # ~1 fps across a 4s window
     stamps = [f.timestamp_ms for f in sample.frames]
     assert stamps == sorted(stamps) and stamps[0] == 0  # window-relative, ascending
@@ -189,16 +189,16 @@ def test_window_returns_multiple_stamped_frames(tmp_path) -> None:
 
 
 @pytestmark_ffmpeg
-def test_frame_count_capped(tmp_path) -> None:
+async def test_frame_count_capped(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path, seconds=6))
-    sample = sample_stream(r, frames=1000, window_s=6, dedup_distance=0)
+    sample = await sample_stream(r, frames=1000, window_s=6, dedup_distance=0)
     assert 0 < len(sample.frames) <= MAX_FRAMES  # frames param clamped to the budget
 
 
 @pytestmark_ffmpeg
-def test_full_samples_across_whole_vod(tmp_path) -> None:
+async def test_full_samples_across_whole_vod(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path, seconds=6), duration=6.0)
-    sample = sample_stream_full(r, frames=4, dedup_distance=0)
+    sample = await sample_stream_full(r, frames=4, dedup_distance=0)
     assert len(sample.frames) == 4  # one per even bucket, discrete seek-grabs
     stamps = [f.timestamp_ms for f in sample.frames]
     assert stamps == sorted(stamps)  # ascending true offsets
@@ -206,39 +206,39 @@ def test_full_samples_across_whole_vod(tmp_path) -> None:
     assert all(f.jpeg[:2] == b"\xff\xd8" for f in sample.frames)
 
 
-def test_full_refuses_live_and_unknown_duration() -> None:
+async def test_full_refuses_live_and_unknown_duration() -> None:
     # No ffmpeg needed: the refusal precedes any sampling.
     with pytest.raises(StreamError):
-        sample_stream_full(_resolved("x", is_live=True, duration=None), frames=4)
+        await sample_stream_full(_resolved("x", is_live=True, duration=None), frames=4)
     with pytest.raises(StreamError):
-        sample_stream_full(_resolved("x", is_live=False, duration=None), frames=4)
+        await sample_stream_full(_resolved("x", is_live=False, duration=None), frames=4)
 
 
 @pytestmark_ffmpeg
-def test_full_audio_when_short_enough(tmp_path) -> None:
+async def test_full_audio_when_short_enough(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path, seconds=4, with_audio=True), duration=4.0)
-    sample = sample_stream_full(r, frames=2, want_audio=True, dedup_distance=0)
+    sample = await sample_stream_full(r, frames=2, want_audio=True, dedup_distance=0)
     assert sample.audio_wav[:4] == b"RIFF"  # whole-track WAV under the in-turn cap
 
 
 @pytestmark_ffmpeg
-def test_audio_extracted_when_requested(tmp_path) -> None:
+async def test_audio_extracted_when_requested(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path, seconds=4, with_audio=True))
-    sample = sample_stream(r, frames=2, window_s=3, want_audio=True)
+    sample = await sample_stream(r, frames=2, window_s=3, want_audio=True)
     assert sample.audio_wav[:4] == b"RIFF"  # a real WAV, not header-only
     assert len(sample.audio_wav) > 1000
 
 
 @pytestmark_ffmpeg
-def test_audio_empty_when_media_has_no_track(tmp_path) -> None:
+async def test_audio_empty_when_media_has_no_track(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path, seconds=4, with_audio=False))
-    sample = sample_stream(r, frames=2, window_s=3, want_audio=True)
+    sample = await sample_stream(r, frames=2, window_s=3, want_audio=True)
     assert sample.audio_wav == b""  # video-only media degrades to frames-only
 
 
 @pytestmark_ffmpeg
-def test_unreadable_media_returns_empty(tmp_path) -> None:
+async def test_unreadable_media_returns_empty(tmp_path) -> None:
     bogus = tmp_path / "notavideo.mp4"
     bogus.write_bytes(b"this is not a video")
-    sample = sample_stream(_resolved(str(bogus)), frames=3, window_s=2)
+    sample = await sample_stream(_resolved(str(bogus)), frames=3, window_s=2)
     assert sample.frames == [] and sample.audio_wav == b""

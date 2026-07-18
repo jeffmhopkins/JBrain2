@@ -80,7 +80,7 @@ class FakeGateway:
 def fake_sampler(frames: list[SampledFrame]):
     """A sampler that ignores the bytes and returns canned frames (no ffmpeg)."""
 
-    def _sample(video: bytes) -> list[SampledFrame]:
+    async def _sample(video: bytes) -> list[SampledFrame]:
         return list(frames)
 
     return _sample

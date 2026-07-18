@@ -32,7 +32,6 @@ the event loop and hands the frames/audio to the shared caption→fuse→reduce 
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -45,8 +44,10 @@ from jbrain.media import (
     DEFAULT_DEDUP_DISTANCE,
     DEFAULT_LONGEST_EDGE,
     SampledFrame,
+    _sorted_jpegs,
     dedup_frames,
     ffmpeg_available,
+    run_media_proc,
 )
 from jbrain.web.fetch import WebFetchError, guard_public_host
 
@@ -230,7 +231,7 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
     )
 
 
-def sample_stream(
+async def sample_stream(
     resolved: ResolvedStream,
     *,
     frames: int = 8,
@@ -260,7 +261,7 @@ def sample_stream(
 
     with tempfile.TemporaryDirectory(prefix="jbrain-stream-") as tmp:
         tmpdir = Path(tmp)
-        sampled = _extract_frames(
+        sampled = await _extract_frames(
             resolved.media_url,
             tmpdir,
             frames=frames,
@@ -272,13 +273,13 @@ def sample_stream(
         deduped = dedup_frames(sampled, distance=dedup_distance)
         audio = b""
         if want_audio:
-            audio = _extract_audio(
+            audio = await _extract_audio(
                 resolved.media_url, tmpdir, window=window, seek=seek, headers=resolved.http_headers
             )
     return StreamSample(frames=deduped, audio_wav=audio)
 
 
-def sample_stream_full(
+async def sample_stream_full(
     resolved: ResolvedStream,
     *,
     frames: int = DEFAULT_FULL_FRAMES,
@@ -308,7 +309,7 @@ def sample_stream_full(
         sampled: list[SampledFrame] = []
         for i in range(count):
             at = duration * (i + 0.5) / count  # midpoint of each even bucket
-            jpeg = _grab_one(
+            jpeg = await _grab_one(
                 resolved.media_url,
                 tmpdir,
                 at=at,
@@ -320,7 +321,7 @@ def sample_stream_full(
         deduped = dedup_frames(sampled, distance=dedup_distance)
         audio = b""
         if want_audio and duration <= MAX_FULL_AUDIO_S:
-            audio = _extract_audio(
+            audio = await _extract_audio(
                 resolved.media_url,
                 tmpdir,
                 window=duration,
@@ -358,12 +359,12 @@ def _header_args(headers: dict[str, str]) -> list[str]:
     return args
 
 
-def _grab_one(
+async def _grab_one(
     media_url: str, tmpdir: Path, *, at: float, longest_edge: int, headers: dict[str, str]
 ) -> bytes | None:
     """One fast frame at offset `at` via input seek (`-ss` before `-i`), or None on a
     decode miss. Bounded by the same per-read and wall-clock timeouts as the window
-    pass, so a stalled host can't hang the grab."""
+    pass, so a stalled host can't hang the grab; the ffmpeg leg is cancel-safe."""
     out = tmpdir / f"grab_{int(at * 1000):09d}.jpg"
     cmd = [
         "ffmpeg",
@@ -387,9 +388,12 @@ def _grab_one(
         str(out),
     ]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_SLACK_S, check=True)
-    except (subprocess.SubprocessError, OSError) as exc:
+        rc, _, _ = await run_media_proc(cmd, timeout_s=_FFMPEG_SLACK_S)
+    except (OSError, TimeoutError) as exc:
         log.info("stream.grab_failed", at=round(at, 2), error=str(exc))
+        return None
+    if rc != 0:
+        log.info("stream.grab_failed", at=round(at, 2), rc=rc)
         return None
     try:
         return out.read_bytes()
@@ -397,7 +401,7 @@ def _grab_one(
         return None
 
 
-def _extract_frames(
+async def _extract_frames(
     media_url: str,
     tmpdir: Path,
     *,
@@ -428,15 +432,15 @@ def _extract_frames(
 
     timeout = int(window + _FFMPEG_SLACK_S) if not single else _FFMPEG_SLACK_S
     try:
-        subprocess.run(cmd, capture_output=True, timeout=timeout, check=True)
-    except subprocess.CalledProcessError as exc:
-        log.warning("stream.frames_failed", stderr=exc.stderr.decode("utf-8", "replace")[-500:])
-        return []
-    except (subprocess.SubprocessError, OSError) as exc:  # timeout / spawn failure
+        rc, _, stderr = await run_media_proc(cmd, timeout_s=timeout)
+    except (OSError, TimeoutError) as exc:  # timeout / spawn failure
         log.warning("stream.frames_failed", error=str(exc))
         return []
+    if rc != 0:
+        log.warning("stream.frames_failed", stderr=stderr.decode("utf-8", "replace")[-500:])
+        return []
 
-    paths = sorted(tmpdir.glob("frame_*.jpg"))
+    paths = _sorted_jpegs(tmpdir)
     out: list[SampledFrame] = []
     for i, p in enumerate(paths):
         seconds = 0.0 if single else i / fps
@@ -444,7 +448,7 @@ def _extract_frames(
     return out
 
 
-def _extract_audio(
+async def _extract_audio(
     media_url: str, tmpdir: Path, *, window: float, seek: float, headers: dict[str, str]
 ) -> bytes:
     """Best-effort: pull the window's audio as 16 kHz mono WAV (whisper's native shape)
@@ -473,9 +477,12 @@ def _extract_audio(
         str(out),
     ]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=int(window + _FFMPEG_SLACK_S), check=True)
-    except (subprocess.SubprocessError, OSError) as exc:
+        rc, _, _ = await run_media_proc(cmd, timeout_s=int(window + _FFMPEG_SLACK_S))
+    except (OSError, TimeoutError) as exc:
         log.info("stream.audio_failed", error=str(exc))
+        return b""
+    if rc != 0:
+        log.info("stream.audio_failed", rc=rc)
         return b""
     try:
         data = out.read_bytes()
