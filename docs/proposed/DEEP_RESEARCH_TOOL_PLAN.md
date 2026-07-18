@@ -19,9 +19,11 @@ migration 0105), the tree caps + budget (`agent/tree.py`), the persona prompts
 (`agent/prompts/{research,review,summarize}.prompt`), the `spawn_subagent` sidecar
 (`agent/tools/spawn_subagent.tool`), and the tool-view registry
 (`docs/reference/DESIGN.md` §"Agent tool views") — and reconciled with the
-`CLAUDE.md` non-negotiables and `docs/reference/ASSISTANT.md`. An open-source
-landscape survey (LangChain `open_deep_research`, `gpt-researcher`,
-`dzhng/deep-research`, Stanford STORM) informs the design; see §"Prior art".
+`CLAUDE.md` non-negotiables and `docs/reference/ASSISTANT.md`. The owner's reference
+— `kyuz0/deep-research-agent`, a **local-model** deep-research agent (Donato
+Capitella) — and an open-source landscape survey (LangChain `open_deep_research`,
+`gpt-researcher`, `dzhng/deep-research`, Stanford STORM) inform the design; see
+§"Prior art".
 
 ## Why this fits (the lean litmus)
 
@@ -72,6 +74,14 @@ whole run is one owner turn, ephemeral, bounded in agents, budget, and wall-cloc
 5. **Critique/revise pass in v1.** After synthesis a `review` child critiques the
    draft; the synthesizer runs **one** bounded revision pass (the `gpt-researcher`
    multi-agent pattern). Not an open-ended review loop — exactly one revision.
+6. **Complexity-scaled entry (from `kyuz0/deep-research-agent`).** The plan step (1)
+   assesses the question's complexity and **may short-circuit** the pipeline: a shallow
+   question runs a single small gather fan and a plain synthesis, skipping the reflect
+   round and/or the critique pass. `deep_research` is already opt-in (jerv chooses to
+   call it, and jerv.prompt still steers a bare lookup to `web_search`), so this gate is
+   a *within-tool* budget saver, not a second refusal — the full two-round + critique
+   machine is the ceiling, not the floor. The complexity classes and exactly which
+   phases each skips are a build-plan task (see Open decisions).
 
 ## Architecture — the bounded state machine
 
@@ -184,6 +194,31 @@ markup:
 
 ## Prior art (what informed the design)
 
+- **`kyuz0/deep-research-agent`** — the **owner's reference** (Donato Capitella /
+  `kyuz0`, from his "Deep Research Agent locally on Strix Halo" video), and the most
+  directly-applicable one because it is **built for local models on small context
+  windows** — exactly JBrain2's on-box constraint. Its load-bearing ideas, and how they
+  land here:
+  - **Context separation** — its Orchestrator holds *no web tools and no file-reading
+    tools*; Searcher/Analyzer children pre-process so the planner's context stays lean.
+    **JBrain2 already embodies this**: children return only compressed summaries and jerv
+    never sees a raw page. This reference *validates* the choice; nothing to add.
+  - **Complexity-scaled delegation** — it assesses query complexity first and scales
+    (simple → one searcher; comparative → one per angle; only "deep research" runs the
+    full machine). **Adopt as a front gate** (see Settled decision 6): the plan step may
+    short-circuit the pipeline for a shallow question rather than always paying for two
+    rounds + a critique.
+  - **3-tier Orchestrator→Searcher→Analyzer, downward-only** — maps onto jerv (root) +
+    the `research` (searcher) and `review` (analyzer) personas; JBrain2's `MAX_DEPTH=1`
+    downward-only clamp is the same no-upward-loops shape.
+  - **Disk workspace as shared scratchpad** (fetch→markdown→workspace, grep/read/write,
+    `final_report.md`). JBrain2 **deliberately diverges**: non-negotiable #2 forbids raw
+    paths, and the `waves`/`feed` envelope already carries round-1 findings into round-2
+    children as escaped data — so we keep the ephemeral-summary model, not a filesystem.
+  - **Global per-tool quotas + anti-loop prompt directives** as the budget model.
+    JBrain2's structural caps (per-child steps/wall-clock, tree budget, fixed round
+    count) are *stronger* (harness-enforced, zero model cooperation), so we keep ours;
+    the reference confirms the "must bound tool-call sprawl on a local box" instinct.
 - **LangChain `open_deep_research`** — the **Scope → Research → Write** three-phase
   spine and the separate-compression-before-writer discipline. Our steps 1/2-4/5 map to
   it; per-child summaries are already the compression.
@@ -193,9 +228,10 @@ markup:
 - **Stanford STORM** — outline-first synthesis and attribute-at-extraction citations,
   which align with JBrain2's notes-as-sole-truth ethos.
 
-(The "Strix author has a deep-research repo" lead was investigated and **not
-confirmed** — Strix is `0xallam`, who has no such project; the closest real reference
-is `dzhng/deep-research`.)
+(Origin of the reference: the owner recalled "the Strix / toolboxes person has a deep
+research project." **Confirmed** — "Strix" is **AMD Strix Halo** hardware, not the
+`0xallam` pentesting agent; the person is **Donato Capitella / `kyuz0`**, maintainer of
+the `amd-strix-halo-*-toolboxes` and author of `kyuz0/deep-research-agent`.)
 
 ## Testing (per `CLAUDE.md` #5 — 80% backend, security 100%, real Postgres, LLM faked)
 
@@ -261,6 +297,14 @@ overlap D2 (different surface).
 4. **Revise trigger.** Always run the one revision pass, or only when the critique
    surfaces findings above a severity bar (skip a clean bill)? Recommend: skip the revise
    call when the critique returns no actionable findings (saves a large root call).
+5. **Complexity classes + skip matrix (Settled decision 6).** How many complexity tiers
+   does the plan step classify into, and which phases does each skip? A candidate,
+   adapted from `kyuz0/deep-research-agent`'s tiers: *simple* → 1–2 gather children, no
+   reflect, no critique; *comparative* → full-breadth gather, no reflect, critique
+   optional; *deep* → the full two-round + critique machine. Confirm the tiers and the
+   classifier (a cheap one-shot on the question, charged to the root reserve). Guard:
+   the classifier is model judgment, so it may only ever *narrow* the pipeline — it can
+   never widen past the structural ceiling (two rounds, `MAX_CHILDREN_PER_PARENT`).
 
 ## Deferred past v1
 
