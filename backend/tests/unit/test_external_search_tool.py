@@ -133,9 +133,7 @@ async def test_list_reports_total_and_metadata(monkeypatch) -> None:
 async def test_list_page_maps_to_offset(monkeypatch) -> None:
     # page 3 at limit 10 → offset 20; a full page (no remainder) has no next pointer.
     videos = [_video(f"V{i}") for i in range(10)]
-    out = await _run_list(
-        monkeypatch, videos, 30, {"page": 3, "limit": 10}, expect_offset=20
-    )
+    out = await _run_list(monkeypatch, videos, 30, {"page": 3, "limit": 10}, expect_offset=20)
     assert "Page 3 of 3" in out
     assert "call again with page" not in out  # last page
 
