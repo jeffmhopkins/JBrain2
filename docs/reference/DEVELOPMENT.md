@@ -1,6 +1,6 @@
 # JBrain2 — Development Standards
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-18
 
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
@@ -74,6 +74,18 @@ better than narrated code, and stale comments are worse than none.
 - **Conventional Commits**: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
   `chore:`.
 - No force-pushes to `main`.
+- **`main` branch protection requires branches to be up to date before merging.**
+  Required status checks alone are not enough: they run against a PR's *merge
+  base*, which goes stale the moment another PR lands on `main`. Two branches cut
+  from the same commit can each pass CI in isolation and both merge — that is how
+  two migrations claimed the same revision (`0136`) and broke `alembic upgrade
+  head` on the box, since the collision only exists once both are on `main`. The
+  `test_migrations.py` single-head guard *does* catch it, but only when both files
+  are present in one tree. "Up to date before merging" is what forces the
+  second-merging PR to re-sync `main` and re-run that guard against the combined
+  tree, so the conflict surfaces at PR time instead of on the box. Enable it in
+  the `main` protection rule alongside the required `backend` / `frontend` /
+  `docs` checks.
 - **Docs reconciled in the same PR** (per `docs/DOC_LIFECYCLE.md`): plan status
   flipped or archived when its waves land, Living docs corrected when behaviour
   changes, and `Last verified` bumped. Run `scripts/docs-freshness.sh` first.
