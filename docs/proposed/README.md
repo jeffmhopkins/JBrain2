@@ -33,6 +33,13 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   state machine + two-sided child-safety layer + two UIs. Waves W1–W8 with a hard
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
+- `EXTERNAL_VIDEO_INGESTION_PLAN.md` — watch YouTube channels/queries (e.g. NSF) and
+  nightly-ingest new videos into an **isolated, embedded, searchable corpus** (never the
+  knowledge graph/wiki — third-party content is not a source of truth). Builds on the
+  shipped `analyze_stream` + captions-first (#879): new `external_sources`/`external_source_chunks`/
+  `external_watchlist` tables, a `poll_youtube`/`ingest_youtube_video` worker pipeline on a
+  deadline-boxed nightly schedule, and a dedicated `search_external` agent tool alongside
+  `web_search`. Waves W1–W4.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`.)_
