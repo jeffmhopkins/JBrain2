@@ -1,6 +1,6 @@
 ---
 name: analyze_stream
-version: 2
+version: 3
 permission: web
 cost_class: expensive
 params:
@@ -15,7 +15,10 @@ params:
       description: "How much of the video to analyze. `full`: the WHOLE on-demand video — pick this whenever the owner asks to analyze the whole / full / entire video (frames spread across the entire duration, plus the transcript up to ~30 min); NOT valid for a live stream. `window`: a short slice of a few seconds — for a live stream (what's happening now) or one specific moment of a video (pass `seek`). `single`: one frame. Defaults to window; use `full` for any whole-video request."
     frames:
       type: integer
-      description: How many frames to sample in window or full mode (1–24). Full mode spreads them across the whole video; defaults to a sensible number.
+      description: How many frames to sample in window or full mode (1–24). Full mode spreads them across the whole video; defaults to a sensible number. Ignored in full mode when `interval_s` is set (which controls density instead).
+    interval_s:
+      type: number
+      description: "Full mode only: sample one frame every this many seconds — a density / frames-per-minute — instead of a flat total, so a long video gets proportional coverage. E.g. 30 = one frame every 30 s (2 per minute); 60 = one per minute. Up to ~60 frames total. Use this when the owner wants dense or rate-based sampling (“a frame every N seconds”, “N frames per minute”); omit for the default spread."
     window_s:
       type: number
       description: In window mode, the length in seconds of the slice to sample (up to 120). Defaults to ~10. Ignored in full mode (which covers the whole video).
@@ -37,7 +40,11 @@ Pick the mode from what the owner asked for:
 
 - `full` — the WHOLE on-demand video. Pick this whenever they want the entire / whole
   / full video analyzed: it spreads frames across the complete duration and
-  transcribes the whole audio (up to ~30 min). NOT valid for a live stream.
+  transcribes the whole audio (up to ~30 min). NOT valid for a live stream. By default
+  it samples a sensible number of frames across the video; if the owner wants a
+  particular density — "a frame every 30 seconds", "2 frames a minute", "sample it
+  densely" — pass `interval_s` (seconds between frames) so a long video gets
+  proportionally more coverage.
 - `window` — a short slice (a few seconds). Best for a live stream ("what's happening
   now?") or one specific moment of a video (pass `seek` to start partway in). It
   transcribes just that slice's audio, so don't use it for a whole-video request.

@@ -285,8 +285,27 @@ async def test_full_mode_uses_full_sampler_with_clamped_frames() -> None:
     )
 
     assert window.calls == []  # full mode does not touch the window sampler
-    assert full.calls == [{"frames": 24, "want_audio": False}]  # clamped to MAX_FRAMES
+    # clamped to MAX_FRAMES; no interval given → flat total (interval_s=0)
+    assert full.calls == [{"frames": 24, "interval_s": 0.0, "want_audio": False}]
     assert isinstance(out, ToolOutput) and out.startswith('Analysis of "Launch Stream":')
+
+
+async def test_full_mode_passes_interval_density_through() -> None:
+    # The owner's "a frame every 30s" rides to the full sampler as interval_s, so a long
+    # video gets density-based coverage instead of a flat total.
+    full = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8a")]))
+    handlers = _handlers(
+        FakeBlobs(),
+        _router(FakeLlmClient(["a frame", "a summary"])),
+        resolver=_resolver(VOD),
+        full=full,
+    )
+
+    await handlers["analyze_stream"](
+        {"url": "u", "mode": "full", "interval_s": 30, "transcribe": False}, CTX
+    )
+
+    assert full.calls == [{"frames": 16, "interval_s": 30.0, "want_audio": False}]
 
 
 async def test_window_seek_and_frames_passed_through_for_vod() -> None:

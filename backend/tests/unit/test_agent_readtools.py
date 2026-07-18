@@ -1084,8 +1084,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "analyze_stream.tool": (
             "analyze_stream",
-            2,
-            "c05c5ac0d76734528daf0dcf73d6508f9361587fd23156a3c6178bf8a51fd8c9",
+            3,
+            "b2e64f5b7a8095af2e1b5072282aaaf1b9dad44f408d1bbf0da9137955ec334a",
         ),
         "query_server_metrics.tool": (
             "query_server_metrics",
