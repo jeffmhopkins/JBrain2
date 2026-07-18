@@ -234,14 +234,31 @@ class JobRef:
     summary: str
 
 
+@dataclass(frozen=True)
+class DeferredRef:
+    """A tool call that kicked a background job AND ends the turn: the `job_id` to
+    cancel, the `result_id` (the run-scoped `media_analysis_results` row) the
+    `task_status` card polls for live progress and swaps to on completion, and the chat
+    `session_id` the finished result auto-resumes into. Unlike a plain `JobRef` (which
+    enqueues but keeps the turn going), a `deferred` result tells the loop to stream the
+    tool's `task_status` view and finish the turn (`stop_reason="deferred"`) — the work
+    runs off-turn and reports back later (DEFERRED_TOOL_CALLS_PLAN.md P2). One deferred
+    call ends the turn; the model does not get another step."""
+
+    job_id: str
+    result_id: str
+    session_id: str
+
+
 class ToolOutput(str):
     """A tool observation that also carries what the tool surfaced for the UI —
     note sources (source cards), web sources (favicon citation chips), a staged
     proposal (a "Review proposal" chip), resolved entities, a rich `view` (a
-    registered component the PWA renders, e.g. a checklist), and/or a `job` it
-    deferred to the queue. It *is* the model-facing text (a str subclass), so
-    handlers keep their `-> str` contract and existing call sites are untouched;
-    `_dispatch` pulls the extras off when present."""
+    registered component the PWA renders, e.g. a checklist), a `job` it deferred to
+    the queue, and/or a turn-ending `deferred` handle (a background job whose
+    `task_status` card takes over — the turn ends). It *is* the model-facing text (a
+    str subclass), so handlers keep their `-> str` contract and existing call sites
+    are untouched; `_dispatch` pulls the extras off when present."""
 
     sources: tuple[NoteSource, ...]
     web_sources: tuple[WebSource, ...]
@@ -249,6 +266,7 @@ class ToolOutput(str):
     entities: tuple[EntityRef, ...]
     view: ViewPayload | None
     job: JobRef | None
+    deferred: DeferredRef | None
 
     def __new__(
         cls,
@@ -259,6 +277,7 @@ class ToolOutput(str):
         view: ViewPayload | None = None,
         job: JobRef | None = None,
         web_sources: tuple[WebSource, ...] = (),
+        deferred: DeferredRef | None = None,
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
@@ -267,6 +286,7 @@ class ToolOutput(str):
         out.entities = entities
         out.view = view
         out.job = job
+        out.deferred = deferred
         return out
 
 
@@ -296,7 +316,7 @@ class AgentResult:
 class _Dispatched:
     """One tool call's outcome: the result fed back to the model, plus what it
     surfaced for the UI (sources, a staged proposal, entities, a rich view, an
-    enqueued job)."""
+    enqueued job, and/or a turn-ending deferred handle)."""
 
     result: ToolResult
     sources: tuple[NoteSource, ...]
@@ -305,6 +325,7 @@ class _Dispatched:
     view: ViewPayload | None
     job: JobRef | None
     web_sources: tuple[WebSource, ...] = ()
+    deferred: DeferredRef | None = None
 
 
 @dataclass(frozen=True)
@@ -739,6 +760,7 @@ class AgentLoop:
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
             any_error = False
+            deferred_seen: DeferredRef | None = None
             for call in turn.tool_calls:
                 yield ToolCallEvent(id=call.id, name=call.name, arguments=call.arguments)
                 # Run the tool while draining any progress it reports into
@@ -809,11 +831,29 @@ class AgentLoop:
                     yield JobEnqueuedEvent(
                         job_id=dispatched.job.job_id, summary=dispatched.job.summary
                     )
+                if dispatched.deferred is not None:
+                    deferred_seen = dispatched.deferred
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
                 )
                 idx += 1
             messages.append(ToolResultMessage(results=results))
+
+            if deferred_seen is not None:
+                # A tool kicked a background job and streamed its task_status card, which
+                # now owns the turn: end here (do NOT call the model again) — the job runs
+                # off-turn under its own cancel-safe worker, and its result auto-resumes
+                # into the chat as a follow-up turn (DEFERRED_TOOL_CALLS_PLAN.md P2/P3).
+                async for ev in self._finish(
+                    "deferred",
+                    answer_parts,
+                    surfaced_sources,
+                    surfaced_entities,
+                    mutated,
+                    general_knowledge_label,
+                ):
+                    yield ev
+                return
 
             consecutive_errors = consecutive_errors + 1 if any_error else 0
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
@@ -1196,6 +1236,7 @@ class AgentLoop:
             out.view if out else None,
             out.job if out else None,
             out.web_sources if out else (),
+            out.deferred if out else None,
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:
