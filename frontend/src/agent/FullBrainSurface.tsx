@@ -375,11 +375,16 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
   const phaseElapsed = live ? Math.max(0, now - phaseStartedAt.current) : null;
   const turnElapsed =
     live && turnKey !== undefined ? Math.max(0, now - turnStartedAt.current) : null;
-  // Show the turn total next to the phase time only once the turn has outrun the
-  // current phase — before that they'd read identically. Sub-second slack absorbs the
-  // one-tick lag between the two anchors.
+  // The parenthesised phase time is only meaningful for a tool call — how long *this*
+  // step has run against the turn total. Thinking (and answering) is the turn itself,
+  // so it shows a single number: the total. Show the tool's own time next to the total
+  // only once the turn has outrun the current phase — before that they'd read
+  // identically. Sub-second slack absorbs the one-tick lag between the two anchors.
   const showTurn =
-    turnElapsed !== null && phaseElapsed !== null && turnElapsed - phaseElapsed >= 1000;
+    shown.kind === "tool" &&
+    turnElapsed !== null &&
+    phaseElapsed !== null &&
+    turnElapsed - phaseElapsed >= 1000;
 
   return (
     <output className={`fb-status ${cls}`}>
@@ -392,9 +397,13 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
       {phaseElapsed !== null ? (
         // aria-hidden: a per-second announcement would spam the status region.
         <span className="fb-status-time" aria-hidden="true">
-          {showTurn && turnElapsed !== null
-            ? `(${formatElapsed(phaseElapsed)}) ${formatElapsed(turnElapsed)}`
-            : formatElapsed(phaseElapsed)}
+          {shown.kind === "tool"
+            ? showTurn && turnElapsed !== null
+              ? `(${formatElapsed(phaseElapsed)}) ${formatElapsed(turnElapsed)}`
+              : formatElapsed(phaseElapsed)
+            : // Thinking / answering: just the running total (falls back to the phase
+              // time when there's no turn identity, e.g. a hand-built status in tests).
+              formatElapsed(turnElapsed ?? phaseElapsed)}
         </span>
       ) : null}
     </output>

@@ -1269,6 +1269,38 @@ describe("FullBrainSurface", () => {
     }
   });
 
+  it("shows only the running total while thinking, reserving the parenthesised time for tools", () => {
+    vi.useFakeTimers();
+    try {
+      const thinking = (turnKey: number): AgentStatus => ({
+        kind: "thinking",
+        label: "Thinking it through",
+        turnKey,
+      });
+      const tool = (turnKey: number): AgentStatus => ({
+        kind: "tool",
+        label: "Using",
+        emphasis: "spawn_subagent",
+        turnKey,
+      });
+
+      // A tool runs for a beat, then the agent goes back to thinking. The thinking pill
+      // reads the turn total alone — no parenthesised phase time — even though the phase
+      // is younger than the turn (it's the screenshot's "(6s) 1m 23s" collapsed to one).
+      const { rerender } = render(<AgentStatusLine status={tool(0)} />);
+      act(() => vi.advanceTimersByTime(20_000));
+      rerender(<AgentStatusLine status={thinking(0)} />);
+      act(() => vi.advanceTimersByTime(6_000));
+      const text = screen.getByRole("status").textContent ?? "";
+      expect(text).toContain("Thinking it through");
+      expect(text).toContain("26s"); // the turn total (20s tool + 6s thinking)
+      expect(text).not.toContain("(6s)"); // no per-phase parenthetical while thinking
+      expect(text).not.toContain("("); // no parenthetical at all
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("surfaces a staged proposal as a Review chip routed to the Proposals panel", async () => {
     // Opening the proposal renders ProposalTree, which fetches it; hold the fetch
     // so the panel opens without a (rejected) network call in the test.
