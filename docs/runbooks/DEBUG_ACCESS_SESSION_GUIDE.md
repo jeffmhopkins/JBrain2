@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-07-06
+> **Status:** Living · **Last verified:** 2026-07-18
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -96,6 +96,15 @@ scripts/debug-connect.sh complete --strength low \
 # OCR/caption prose against the real vision model. The image-layer twin of `complete`.
 scripts/debug-connect.sh vision <attachment_id> --task vision.caption
 scripts/debug-connect.sh vision <attachment_id> --task vision.ocr --system "ONLY transcribe legible text."
+
+# Tool-calling probe — send a CHOSEN set of tool schemas (by registry name) to a routed
+# model and get back its PROPOSED tool calls; NO handler runs. Built to bisect a tool-calling
+# crash remotely (e.g. does gpt-oss die at N tools?): vary --tools and watch which set
+# returns an `error`. `error` populated (200, tool_calls empty) means the gateway failed on
+# that payload — e.g. "local: HTTP 500".
+scripts/debug-connect.sh tool-probe --task agent.turn --tools web_search,search "find the news"
+scripts/debug-connect.sh tool-probe --task agent.turn \
+  --tools web_search,web_fetch,current_time,weather,search_external,check_channel "use a tool"
 
 # Read-only SQL (full read; runs in a READ ONLY transaction — writes are rejected).
 scripts/debug-connect.sh sql "select code, name from app.domains order by code"
