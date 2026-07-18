@@ -383,7 +383,12 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   pass is minutes of work, so it **defers** — the tool kicks a background job, the turn
   **ends** behind a live `task_status` card, and the finished analysis auto-resumes into
   the chat (the first adopter of the reusable **deferred tool call** mechanism,
-  docs/archive/DEFERRED_TOOL_CALLS_PLAN.md).
+  docs/archive/DEFERRED_TOOL_CALLS_PLAN.md). In full mode the transcript comes from the
+  **provider's own captions** when the video carries them (`jbrain.captions` fetches +
+  parses YouTube's `json3`/`vtt` over the same egress-guarded, size-capped leg) — instant,
+  whole-video, and drift-free — falling back to the local whisper pass otherwise; a
+  `captions` preference (`auto`/`off`/`only`) lets jerv force a whisper re-run, and the
+  card notes which source produced the transcript.
 
   **Web citations.** jerv cites a web claim with an inline `[^n]` footnote marker
   (the same convention the curator uses for notes), numbered in the order the

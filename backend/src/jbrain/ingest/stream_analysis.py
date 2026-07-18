@@ -28,12 +28,14 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent import media_results
+from jbrain.captions import fetch_caption_transcript
 from jbrain.ingest.video import (
     ProgressFn,
     VideoAnalysis,
     caption_frames,
     fuse_and_reduce,
     transcribe_audio_chunked,
+    transcript_payload,
 )
 from jbrain.llm import LlmRouter
 from jbrain.llm.local_gateway import LocalGateway
@@ -61,6 +63,16 @@ from jbrain.workflow.registry import ActionSpec
 log = structlog.get_logger()
 
 MODES = ("single", "window", "full")
+
+# The transcript-source preference for full mode (window/single always use whisper on their
+# localized audio — a whole-video caption track wouldn't align to a sampled slice). `auto`:
+# provider captions when available, else whisper. `off`: always whisper (the "re-run with our
+# own transcription" lever). `only`: provider captions or no transcript (never whisper).
+CAPTION_PREFS = ("auto", "off", "only")
+
+# The `transcript_source` values a finished analysis reports on its card.
+SOURCE_CAPTIONS = "captions"
+SOURCE_WHISPER = "whisper"
 
 KIND_ANALYZE_STREAM_URL = "analyze_stream_url"
 
@@ -165,12 +177,26 @@ async def transcribe_best_effort(
         return None
 
 
+async def fetch_captions_best_effort(
+    resolved: ResolvedStream, on_progress: ProgressFn | None
+) -> dict | None:
+    """Fetch + parse the resolved stream's provider caption track into the transcript dict
+    shape, or None when it has none / the fetch was refused or empty (the caller then falls
+    back to whisper). Best-effort: a caption miss never sinks the analysis."""
+    if resolved.caption is None:
+        return None
+    if on_progress is not None:
+        on_progress(0, 0, "Reading captions…")
+    transcript = await fetch_caption_transcript(resolved.caption, resolved.http_headers)
+    return transcript_payload(transcript) if transcript is not None else None
+
+
 async def run_stream_pipeline(
     resolved: ResolvedStream,
     mode: str,
     arguments: dict,
     *,
-    want_audio: bool,
+    want_transcript: bool,
     router: LlmRouter,
     blobs: BlobStore,
     transcribe: TranscribeClient | None,
@@ -179,29 +205,57 @@ async def run_stream_pipeline(
     window_sampler=sample_stream,
     full_sampler=sample_stream_full,
     on_progress: ProgressFn | None = None,
-) -> tuple[VideoAnalysis, list[SampledFrame]] | None:
-    """Sample→caption→transcribe→reduce one already-resolved stream. Returns the analysis
-    plus the sampled frames (for the card's inline thumbnails), or None when the media
-    yielded neither a frame nor any speech (nothing to summarize)."""
-    sample = await sample_for_mode(
-        mode, resolved, arguments, want_audio, window_sampler, full_sampler
+) -> tuple[VideoAnalysis, list[SampledFrame], str] | None:
+    """Sample→caption→transcribe→reduce one already-resolved stream, captions-first. Returns
+    the analysis, the sampled frames (for the card's inline thumbnails), and which transcript
+    source was used ("captions"/"whisper"/""), or None when the media yielded nothing to
+    summarize.
+
+    In full mode a preference (`captions`: auto/off/only) chooses the transcript source:
+    provider captions (whole-video, instant, drift-free) when available, else whisper. When
+    captions win we skip the audio ffmpeg leg AND the whisper pass entirely. Window/single
+    always whisper their localized audio (whole-video captions wouldn't align to a slice)."""
+    pref = _caption_pref(arguments)
+    transcript: dict | None = None
+    source = ""
+    # Full mode, transcript wanted, preference allows captions: try the provider track first.
+    if mode == "full" and want_transcript and pref != "off":
+        transcript = await fetch_captions_best_effort(resolved, on_progress)
+        if transcript is not None:
+            source = SOURCE_CAPTIONS
+
+    # Whisper unless captions already won, the preference forbids it, or it's unconfigured.
+    forbid_whisper = mode == "full" and pref == "only"
+    use_whisper = (
+        want_transcript and transcript is None and not forbid_whisper and transcribe is not None
     )
-    if not sample.frames and not sample.audio_wav:
+
+    sample = await sample_for_mode(
+        mode, resolved, arguments, use_whisper, window_sampler, full_sampler
+    )
+    if not sample.frames and not sample.audio_wav and transcript is None:
         return None
     captioned = await caption_frames(
         sample.frames, filename=resolved.title, router=router, blobs=blobs, on_progress=on_progress
     )
-    transcript = None
-    if want_audio and sample.audio_wav:
+    if use_whisper and sample.audio_wav:
         if on_progress is not None:
             on_progress(0, 0, "Transcribing audio…")
-        transcript = await transcribe_best_effort(
+        whispered = await transcribe_best_effort(
             transcribe, gateway, transcribe_model, sample.audio_wav, on_progress=on_progress
         )
+        if whispered is not None:
+            transcript, source = whispered, SOURCE_WHISPER
     result = await fuse_and_reduce(captioned, transcript, router=router, on_progress=on_progress)
     if result is None:
         return None
-    return result, sample.frames
+    return result, sample.frames, source
+
+
+def _caption_pref(arguments: dict) -> str:
+    """The full-mode transcript-source preference (auto/off/only), defaulting to `auto`."""
+    pref = str(arguments.get("captions", "auto")).strip().lower()
+    return pref if pref in CAPTION_PREFS else "auto"
 
 
 def youtube_id(resolved: ResolvedStream) -> str:
@@ -228,13 +282,18 @@ def _frames_with_thumbs(captioned: list[dict], sampled: list[SampledFrame]) -> l
 
 
 def build_stream_view_data(
-    resolved: ResolvedStream, result: VideoAnalysis, mode: str, sampled: list[SampledFrame]
+    resolved: ResolvedStream,
+    result: VideoAnalysis,
+    mode: str,
+    sampled: list[SampledFrame],
+    transcript_source: str = "",
 ) -> dict:
     """The `video_analysis` card's `data` for a stream source — the summary, the per-frame
-    timeline with inline thumbnails, the transcript, the stream's page URL + live flag,
-    and (for YouTube) the embeddable id. Shared verbatim by the in-turn path (wrapped in a
-    ViewPayload) and the deferred path (stored on the result row so the status card swaps
-    to the exact same component on completion)."""
+    timeline with inline thumbnails, the transcript, the stream's page URL + live flag, the
+    transcript source (provider captions vs whisper), and (for YouTube) the embeddable id.
+    Shared verbatim by the in-turn path (wrapped in a ViewPayload) and the deferred path
+    (stored on the result row so the status card swaps to the exact same component on
+    completion)."""
     analysis = result.analysis
     return {
         "source": "stream",
@@ -248,6 +307,7 @@ def build_stream_view_data(
         "duration_ms": analysis.get("duration_ms"),
         "frames": _frames_with_thumbs(analysis.get("frames", []), sampled),
         "transcript": analysis.get("transcript"),
+        "transcript_source": transcript_source,
     }
 
 
@@ -343,7 +403,7 @@ class StreamAnalysisPipeline:
     async def _run(self, payload: dict, result_id: str) -> None:
         url = str(payload["url"])
         mode = str(payload.get("mode", "full"))
-        want_audio = mode != "single" and self._transcribe is not None
+        want_transcript = mode != "single"
 
         # A queue + one drainer task turns the sync ProgressFn into ordered async writes
         # onto the result row (the emit_progress pattern) — no fire-and-forget task that
@@ -357,7 +417,7 @@ class StreamAnalysisPipeline:
                 resolved,
                 mode,
                 payload,
-                want_audio=want_audio,
+                want_transcript=want_transcript,
                 router=self._router,
                 blobs=self._blobs,
                 transcribe=self._transcribe,
@@ -378,8 +438,8 @@ class StreamAnalysisPipeline:
                 error=f'I couldn\'t read anything from that stream ("{resolved.title}").',
             )
             return
-        result, frames = out
-        data = build_stream_view_data(resolved, result, mode, frames)
+        result, frames, source = out
+        data = build_stream_view_data(resolved, result, mode, frames, source)
         data["summary_line"] = summary_line(resolved.title, result)
         # The server-authored report the finished analysis auto-resumes into the chat with
         # (P3): the summary plus a bounded transcript excerpt, so jerv can acknowledge the

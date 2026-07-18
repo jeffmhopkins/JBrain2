@@ -40,6 +40,10 @@ interface VideoAnalysisProps {
   words: TranscriptWord[];
   /** Plain transcript fallback when there is no per-word data. */
   transcriptText?: string | undefined;
+  /** Where the transcript came from: "captions" (the provider's own) or "whisper" (the
+   * local transcription). Shown as a small note on the transcript tab so the owner knows
+   * which source produced it (and can ask to re-run with the other). */
+  transcriptSource?: string | undefined;
 }
 
 type Tab = "summary" | "transcript";
@@ -47,6 +51,14 @@ type Tab = "summary" | "transcript";
 function fmtTime(ms: number): string {
   const s = Number.isFinite(ms) && ms > 0 ? ms / 1000 : 0;
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+}
+
+/** A short label for where the transcript came from — the provider's own captions vs the
+ * local whisper transcription — or "" when unknown (then no note renders). */
+function transcriptSourceLabel(source: string | undefined): string {
+  if (source === "captions") return "From the source's own captions";
+  if (source === "whisper") return "Transcribed locally";
+  return "";
 }
 
 /** The bare host of a source URL for the chip label (e.g. "youtube.com"), or "source"
@@ -93,6 +105,7 @@ export function VideoAnalysis({
   frames,
   words,
   transcriptText,
+  transcriptSource,
 }: VideoAnalysisProps): ReactNode {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -292,12 +305,17 @@ export function VideoAnalysis({
           <p className="tv-vid-summary">{summary || "No summary was produced for this video."}</p>
         )}
         {active === "transcript" && (
-          <TranscriptBody
-            words={words}
-            currentIdx={currentIdx}
-            onSeek={seekTo}
-            text={transcriptText}
-          />
+          <>
+            {transcriptSourceLabel(transcriptSource) && (
+              <p className="tv-vid-tsrc">{transcriptSourceLabel(transcriptSource)}</p>
+            )}
+            <TranscriptBody
+              words={words}
+              currentIdx={currentIdx}
+              onSeek={seekTo}
+              text={transcriptText}
+            />
+          </>
         )}
       </div>
     </div>

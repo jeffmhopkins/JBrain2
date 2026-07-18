@@ -1,6 +1,6 @@
 ---
 name: analyze_stream
-version: 3
+version: 4
 permission: web
 cost_class: expensive
 params:
@@ -28,6 +28,10 @@ params:
     transcribe:
       type: boolean
       description: Whether to also transcribe the audio (window/full mode). Defaults to true; ignored in single mode.
+    captions:
+      type: string
+      enum: [auto, off, only]
+      description: "Full mode only: where the transcript comes from. `auto` (default) uses the provider's OWN captions when the video has them (YouTube etc.) — instant, covers the whole video, no length cap — and falls back to your local whisper otherwise. `off` forces local whisper (use this to RE-RUN a video with your own transcription instead of the provider's captions). `only` uses provider captions or none (never whisper). Ignored in window/single mode, which always whisper their short slice."
   required: [url]
 ---
 Look at a video URL — a live stream or an on-demand video — and understand what it
@@ -52,9 +56,17 @@ Pick the mode from what the owner asked for:
 
 So "analyze / transcribe the whole (or full, or entire) video" → `full`; "what's on
 this live stream" → `single` or `window`; "what happens around 3:00" → `window` with
-`seek`. A video longer than ~30 min transcribes only its first ~30 min in full mode
-(it still samples frames across all of it) — for a full transcript of a very long
-video, have the owner attach it and use the video tool instead.
+`seek`.
+
+In full mode the transcript comes from the provider's OWN captions when the video has
+them (most YouTube videos do) — instant, covering the whole video with no length cap —
+and otherwise from your local whisper. The card notes which source was used. This means
+a video longer than ~30 min can still get a COMPLETE transcript when it has captions;
+only a captionless long video falls back to whisper's first ~30 min. If the owner wants
+your own transcription instead of the provider's captions (e.g. the captions look wrong
+or auto-generated), re-run the same URL with `captions: off` to force whisper; `only`
+uses captions or nothing. For a full transcript of a very long, captionless video, have
+the owner attach it and use the video tool instead.
 
 Returns a summary of what was seen and heard; it inserts nothing and shows the owner
 nothing beyond an analysis card, so report what you learned in your own words. It
