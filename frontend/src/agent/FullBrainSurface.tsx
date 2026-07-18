@@ -165,6 +165,9 @@ export function FullBrainSurface({
                 }}
                 onProposalEnacted={onProposalEnacted}
                 onProposalOutcome={(outcome) => fb.send(outcome, { proposalOutcome: true })}
+                onDeferredComplete={(msg) => {
+                  void fb.send(msg, { deferredOutcome: true });
+                }}
                 chatBusy={fb.busy}
                 onStop={fb.stop}
                 onOpenSession={fb.requestOpen}
@@ -398,6 +401,7 @@ function Bubble({
   onOpenEntity,
   onStop,
   onOpenSession,
+  onDeferredComplete,
   audio,
 }: {
   message: TranscriptMessage;
@@ -415,6 +419,8 @@ function Bubble({
   onStop?: (() => void) | undefined;
   /** Open a sub-agent child's own session by id (from the fan's row). */
   onOpenSession?: ((sessionId: string) => void) | undefined;
+  /** A deferred tool call's task_status card finished — send the auto-resume turn. */
+  onDeferredComplete?: ((resumeMessage: string) => void) | undefined;
   /** Read-aloud control for this settled answer: `playing` = it's speaking now,
    * `autoPlay` = auto-play armed (third icon state); `onToggle` plays/pauses it,
    * `onToggleAuto` (long-press) flips auto-play. Absent = read-aloud off (no control,
@@ -602,8 +608,13 @@ function Bubble({
         <LiveToolStatus key={t.id} tool={t} />
       ))}
       {viewsToRender.map((v, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
-        <ToolView key={i} payload={v} onOpenSession={onOpenSession} />
+        <ToolView
+          // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
+          key={i}
+          payload={v}
+          onOpenSession={onOpenSession}
+          onDeferredComplete={onDeferredComplete}
+        />
       ))}
       {stagedAffordance}
     </>
@@ -692,7 +703,11 @@ function Bubble({
         {imageViews.map((v, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
           <div className="bubble ai bubble-media" key={`v-${i}`}>
-            <ToolView payload={v} onOpenSession={onOpenSession} />
+            <ToolView
+              payload={v}
+              onOpenSession={onOpenSession}
+              onDeferredComplete={onDeferredComplete}
+            />
           </div>
         ))}
         {hasReply && (
@@ -708,8 +723,13 @@ function Bubble({
               />
             )}
             {otherViews.map((v, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
-              <ToolView key={i} payload={v} onOpenSession={onOpenSession} />
+              <ToolView
+                // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
+                key={i}
+                payload={v}
+                onOpenSession={onOpenSession}
+                onDeferredComplete={onDeferredComplete}
+              />
             ))}
             {stagedAffordance}
             {generalKnowledge && <GeneralKnowledgeNote />}

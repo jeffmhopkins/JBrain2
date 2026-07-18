@@ -67,7 +67,7 @@ class FakeSampler:
         self._sample = sample
         self.calls: list[dict] = []
 
-    def __call__(self, resolved: ResolvedStream, **kw) -> StreamSample:
+    async def __call__(self, resolved: ResolvedStream, **kw) -> StreamSample:
         self.calls.append(kw)
         return self._sample
 
@@ -93,12 +93,54 @@ def _raising_resolver(exc: StreamError):
     return resolve
 
 
-def _handlers(blobs, router, *, resolver, window=None, full=None, transcribe=None):
+class FakeQueue:
+    """Records enqueued jobs; the deferral path only ever calls `enqueue`."""
+
+    def __init__(self) -> None:
+        self.jobs: list[dict] = []
+
+    async def enqueue(self, ctx, kind, payload, *, principal_id=None, domain_code=None) -> str:
+        job_id = f"job-{len(self.jobs) + 1}"
+        self.jobs.append({"kind": kind, "payload": payload})
+        return job_id
+
+
+class FakeMediaResults:
+    """In-memory MediaResults: records created rows + attached jobs for the deferral test."""
+
+    def __init__(self) -> None:
+        self.created: list[dict] = []
+        self.attached: list[tuple[str, str]] = []
+
+    async def create(self, ctx, *, session_id, run_id=None) -> str:
+        result_id = f"res-{len(self.created) + 1}"
+        self.created.append({"session_id": session_id})
+        return result_id
+
+    async def attach_job(self, ctx, result_id, job_id) -> None:
+        self.attached.append((result_id, job_id))
+
+
+def _handlers(
+    blobs,
+    router,
+    *,
+    resolver,
+    window=None,
+    full=None,
+    transcribe=None,
+    queue=None,
+    media_results=None,
+):
     kw = {}
     if window is not None:
         kw["window_sampler"] = window
     if full is not None:
         kw["full_sampler"] = full
+    if queue is not None:
+        kw["queue"] = queue
+    if media_results is not None:
+        kw["media_results"] = media_results
     return build_stream_handlers(
         blobs,
         router,
@@ -302,3 +344,80 @@ async def test_audio_skipped_when_whisper_unconfigured() -> None:
     assert window.calls[0]["want_audio"] is False
     assert isinstance(out, ToolOutput) and out.view is not None
     assert out.view.data["transcript"] is None
+
+
+# --- the in-turn ↔ defer routing (DEFERRED_TOOL_CALLS_PLAN.md P2) ----------------------
+
+
+async def test_full_mode_defers_to_a_background_job() -> None:
+    # With the queue + result store wired, a full (whole-video) analysis does NOT run
+    # in-turn: it opens a result row, enqueues the analyze_stream_url job, and returns a
+    # `deferred` result carrying the task_status card so the loop ends the turn.
+    q, mr = FakeQueue(), FakeMediaResults()
+    full = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8a")]))
+    window = FakeSampler(StreamSample(frames=[]))
+    handlers = _handlers(
+        FakeBlobs(),
+        _router(FakeLlmClient([])),
+        resolver=_resolver(VOD),
+        window=window,
+        full=full,
+        queue=q,
+        media_results=mr,
+    )
+
+    out = await handlers["analyze_stream"](
+        {"url": "https://youtube.com/watch?v=abc", "mode": "full"}, CTX
+    )
+
+    assert isinstance(out, ToolOutput)
+    assert out.deferred is not None and out.deferred.session_id == SESSION
+    assert out.view is not None and out.view.view == "task_status"
+    assert out.view.data["result_id"] == out.deferred.result_id
+    # It kicked the job (carrying the url + mode) and never sampled in-turn.
+    assert len(q.jobs) == 1 and q.jobs[0]["kind"] == "analyze_stream_url"
+    assert q.jobs[0]["payload"]["url"] == "https://youtube.com/watch?v=abc"
+    assert q.jobs[0]["payload"]["mode"] == "full"
+    assert mr.attached == [(out.deferred.result_id, out.deferred.job_id)]
+    assert full.calls == [] and window.calls == []
+
+
+async def test_short_window_stays_in_turn_even_with_defer_wired() -> None:
+    # The threshold routes by cost: a short window is fast, so it runs in-turn and returns
+    # its video_analysis card directly — no job enqueued — even though deferral is wired.
+    q, mr = FakeQueue(), FakeMediaResults()
+    window = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8x")]))
+    fake = FakeLlmClient(["a frame", "a summary"])
+    handlers = _handlers(
+        FakeBlobs(),
+        _router(fake),
+        resolver=_resolver(VOD),
+        window=window,
+        queue=q,
+        media_results=mr,
+    )
+
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "window", "window_s": 10}, CTX)
+
+    assert isinstance(out, ToolOutput) and out.deferred is None
+    assert out.view is not None and out.view.view == "video_analysis"
+    assert q.jobs == [] and window.calls  # ran in-turn, nothing deferred
+
+
+async def test_long_window_defers() -> None:
+    # A window longer than the in-turn budget defers, like full mode.
+    q, mr = FakeQueue(), FakeMediaResults()
+    window = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8x")]))
+    handlers = _handlers(
+        FakeBlobs(),
+        _router(FakeLlmClient([])),
+        resolver=_resolver(VOD),
+        window=window,
+        queue=q,
+        media_results=mr,
+    )
+
+    out = await handlers["analyze_stream"]({"url": "u", "mode": "window", "window_s": 90}, CTX)
+
+    assert isinstance(out, ToolOutput) and out.deferred is not None
+    assert len(q.jobs) == 1 and window.calls == []

@@ -15,6 +15,7 @@ from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
+from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
@@ -258,6 +259,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.generated_image_repo = GeneratedImageRepo()
         app.state.backup_shelf = FsBackupShelf(settings.backups_dir)
         app.state.job_queue = PgJobQueue(maker)
+        # Deferred media-analysis results (DEFERRED_TOOL_CALLS_PLAN.md P2): the store the
+        # analyze_stream deferral writes to and the task_status card polls / cancels.
+        app.state.media_results = MediaResults(maker)
         # The action registry the emergency-trigger control resolves a sweep's
         # pipeline through (workflow/scheduler.fire_trigger) and the Automations
         # surface renders the Catalog from. Composed from API_ACTION_SPECS (module
@@ -541,6 +545,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ),
                 transcribe_model=settings.whisper_model,
                 gateway=LocalGatewayClient(settings.whisper_url) if settings.whisper_url else None,
+                # The deferred path (DEFERRED_TOOL_CALLS_PLAN.md P2): a full/long analysis
+                # kicks the analyze_stream_url job and stores its result for the status card.
+                queue=app.state.job_queue,
+                media_results=app.state.media_results,
             )
         app.state.agent_registry = build_registry(
             app.state.search_service,

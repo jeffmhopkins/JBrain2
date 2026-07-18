@@ -32,11 +32,11 @@ can't decode degrades to a transcript-only analysis, and an unconfigured whisper
 degrades to a frames-only one.
 """
 
-import asyncio
 import base64
 import io
 import re
 import wave
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -149,9 +149,11 @@ def build_timeline(frames: list[dict[str, Any]], words: list[dict[str, Any]]) ->
 
 
 class VideoSampler(Protocol):
-    """The frame sampler the caller runs off the event loop (faked in tests)."""
+    """The frame sampler, an async coroutine so its ffmpeg legs are cancel-safe
+    subprocesses on the event loop (faked in tests). A cancelled turn/job kills
+    ffmpeg promptly (DEFERRED_TOOL_CALLS_PLAN.md P1)."""
 
-    def __call__(self, video: bytes) -> list[SampledFrame]: ...
+    def __call__(self, video: bytes) -> Awaitable[list[SampledFrame]]: ...
 
 
 class ProgressFn(Protocol):
@@ -201,9 +203,9 @@ async def run_video_analysis(
         if on_progress is not None:
             on_progress(step, total, label)
 
-    # MAP — sample frames (off the event loop) and caption each.
+    # MAP — sample frames (a cancel-safe ffmpeg subprocess on the loop) and caption each.
     report(0, 0, "Extracting frames…")
-    frames = await asyncio.to_thread(sampler, data)
+    frames = await sampler(data)
     captioned = await caption_frames(
         frames, filename=filename, router=router, blobs=blobs, on_progress=on_progress
     )
@@ -449,8 +451,8 @@ class VideoPipeline:
         self._transcribe = transcribe
         self._transcribe_model = transcribe_model
         self._gateway = gateway
-        # media.sample_frames is blocking (ffmpeg subprocess); run_video_analysis runs
-        # it via asyncio.to_thread. Injectable so tests need no ffmpeg.
+        # media.sample_frames is an async cancel-safe ffmpeg subprocess;
+        # run_video_analysis awaits it. Injectable so tests need no ffmpeg.
         self._sampler: VideoSampler = sampler or media.sample_frames
 
     async def analyze_video_attachment(self, payload: dict[str, Any]) -> None:

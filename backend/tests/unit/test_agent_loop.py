@@ -32,6 +32,7 @@ from jbrain.agent.loop import (
     SYSTEM_PROMPT,
     SYSTEM_VERSION,
     AgentLoop,
+    DeferredRef,
     Guardrails,
     JobRef,
     ToolContext,
@@ -102,6 +103,14 @@ async def view_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
 
 async def job_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
     return ToolOutput("queued the export", job=JobRef(job_id="j7", summary="exporting your notes"))
+
+
+async def deferred_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    return ToolOutput(
+        "Analyzing the full video — I'll report back when it's done.",
+        view=ViewPayload(view="task_status", data={"result_id": "r1", "state": "running"}),
+        deferred=DeferredRef(job_id="j1", result_id="r1", session_id="s1"),
+    )
 
 
 def router_with(turns: list[LlmTurn]) -> tuple[LlmRouter, FakeLlmClient]:
@@ -454,6 +463,25 @@ async def test_run_stream_interleaves_tool_progress_before_the_result() -> None:
     last_progress = max(i for i, e in enumerate(events) if isinstance(e, ToolProgressEvent))
     first_result = next(i for i, e in enumerate(events) if isinstance(e, ToolResultEvent))
     assert last_progress < first_result
+
+
+async def test_run_stream_deferred_tool_ends_the_turn() -> None:
+    # A single scripted turn calls the deferred tool. The loop must stream the
+    # task_status view and finish with stop_reason="deferred" WITHOUT calling the model
+    # again — only one turn is scripted, so a second model call would exhaust the fake
+    # and raise. This is the turn-ending contract (DEFERRED_TOOL_CALLS_PLAN.md P2).
+    turns = [LlmTurn("", (ToolCall("c1", "defer", {}),), "tool_use", LlmUsage(1, 1))]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("defer", deferred_tool)))
+    events = await collect(loop)
+
+    views = [e for e in events if isinstance(e, ToolViewEvent)]
+    assert len(views) == 1 and views[0].view.view == "task_status"
+    done = [e for e in events if isinstance(e, DoneEvent)]
+    assert len(done) == 1 and done[0].stop_reason == "deferred"
+    # The turn ended on the deferral: exactly one tool call, no second model turn.
+    assert sum(isinstance(e, ToolCallEvent) for e in events) == 1
+    assert done[0] is events[-1]  # nothing trails the terminal done for a jerv-style turn
 
 
 async def test_run_stream_cancels_an_in_flight_tool_when_the_turn_is_cancelled() -> None:

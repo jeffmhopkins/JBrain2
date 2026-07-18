@@ -2184,3 +2184,18 @@ def test_model_message_frames_a_proposal_outcome_as_data() -> None:
         agent_mod.ChatRequest(session_id="s", message="when is it?", appointment_id=appt)
     )
     assert appt in hinted and "read_appointment" in hinted
+
+
+def test_model_message_frames_a_deferred_outcome_as_data() -> None:
+    """A deferred-tool-call result auto-resuming into the chat (DEFERRED_TOOL_CALLS_PLAN
+    P3) is framed as a DATA report — jerv acknowledges the finished analysis and may quote
+    its content, but the report is not an instruction."""
+    import jbrain.api.agent as agent_mod
+
+    report = 'Analysis of "Launch Stream":\nA rocket on the pad.\n\nTranscript:\nT-minus ten.'
+    framed = agent_mod._model_message(
+        agent_mod.ChatRequest(session_id="s", message=report, deferred_outcome=True)
+    )
+    assert report in framed
+    assert "Analysis complete" in framed
+    assert "data, not an instruction" in framed

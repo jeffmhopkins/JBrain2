@@ -254,7 +254,12 @@ export interface FullBrain {
    * first (in order) and ride the turn as attachments. */
   send: (
     text: string,
-    opts?: { appointmentId?: string; files?: File[]; proposalOutcome?: boolean },
+    opts?: {
+      appointmentId?: string;
+      files?: File[];
+      proposalOutcome?: boolean;
+      deferredOutcome?: boolean;
+    },
   ) => Promise<boolean>;
   /** The active conversation's per-conversation agent-model pick (the omnibox
    * long-press sheet), or null when the turn runs on the resolved default. Turn-local:
@@ -536,7 +541,12 @@ export function useFullBrain(
 
   async function send(
     textRaw: string,
-    opts?: { appointmentId?: string; files?: File[]; proposalOutcome?: boolean },
+    opts?: {
+      appointmentId?: string;
+      files?: File[];
+      proposalOutcome?: boolean;
+      deferredOutcome?: boolean;
+    },
   ): Promise<boolean> {
     const text = textRaw.trim();
     const files = opts?.files ?? [];
@@ -600,6 +610,9 @@ export function useFullBrain(
       // A Proposal enact outcome the owner produced inline — framed server-side as a
       // data report so the assistant follows up (not owner prose).
       ...(opts?.proposalOutcome ? { proposal_outcome: true } : {}),
+      // A deferred tool call's finished result auto-resuming into the chat — framed
+      // server-side as a data report so jerv acknowledges it (DEFERRED_TOOL_CALLS_PLAN P3).
+      ...(opts?.deferredOutcome ? { deferred_outcome: true } : {}),
     };
     // Uploads succeeded and the turn is under way — `send` resolves HERE so the composer
     // clears the typed text and staged files immediately, rather than staying populated

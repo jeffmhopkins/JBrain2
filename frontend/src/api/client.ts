@@ -51,6 +51,17 @@ export interface Principal {
   label: string;
 }
 
+/** A deferred media analysis' live state (GET /api/chat/deferred/{id}), polled by the
+ * task_status card. `result` is the finished video_analysis card data once `status` is
+ * `done`; `progress` drives the bar/label while running. */
+export interface DeferredResult {
+  result_id: string;
+  status: "running" | "done" | "failed" | "canceled";
+  progress: { step?: number; total?: number; label?: string };
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
 /** A provisioned device with its location activity (GET /api/locations/devices).
  * `id` is the device's subject id; activity fields are null until its first fix. */
 export interface DeviceSummary {
@@ -2592,6 +2603,20 @@ export const api = {
    * explicit signal does. Best-effort/idempotent on the server. */
   async cancelChatRun(runId: string): Promise<void> {
     await request(`/api/chat/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+  },
+
+  /** Poll a deferred media analysis (the task_status card): its live progress, and — once
+   * `status` is `done` — the finished result in the video_analysis card's data shape so
+   * the card swaps to it (DEFERRED_TOOL_CALLS_PLAN.md P2/P3). */
+  async deferredResult(resultId: string): Promise<DeferredResult> {
+    const response = await request(`/api/chat/deferred/${encodeURIComponent(resultId)}`);
+    return (await response.json()) as DeferredResult;
+  },
+
+  /** Stop a running deferred analysis (the card's Stop): cancels the worker job so its
+   * ffmpeg/whisper legs terminate. Idempotent — a finished analysis is a no-op. */
+  async cancelDeferredResult(resultId: string): Promise<void> {
+    await request(`/api/chat/deferred/${encodeURIComponent(resultId)}/cancel`, { method: "POST" });
   },
 
   // --- Code mode (jcode), Wave J3. Owner-only; routes 404 when jcode isn't enabled. ---

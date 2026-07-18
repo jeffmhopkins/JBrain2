@@ -632,6 +632,9 @@ async def test_run_registers_all_job_handlers(
         # The video sibling — in-code only, not in ACTION_SPECS / the app.actions
         # seed (docs/archive/VIDEO_ANALYSIS_PLAN.md).
         "analyze_video_attachment",
+        # The URL sibling of analyze_video_attachment — a deferred analyze_stream kicks
+        # it (in-code only, DEFERRED_TOOL_CALLS_PLAN.md P2).
+        "analyze_stream_url",
         "consolidate_predicates",
         "sync_predicates",
         # The purge sweep is now a fireable action (Phase-5 Track B).

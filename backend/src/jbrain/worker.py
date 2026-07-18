@@ -35,6 +35,7 @@ from jbrain.ingest.emr.import_handler import EMR_PARSE_SPEC, EmrImportPipeline
 from jbrain.ingest.emr.intake_handler import EMR_IMPORT_SPEC, EmrIntakePipeline
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
+from jbrain.ingest.stream_analysis import ANALYZE_STREAM_URL_SPEC, StreamAnalysisPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router
@@ -515,6 +516,24 @@ async def run() -> None:
             transcribe_model=settings.whisper_model,
             gateway=LocalGatewayClient(settings.whisper_url) if transcribe_enabled else None,
         ).analyze_video_attachment,
+        # The URL sibling of analyze_video_attachment, deferred off a chat turn
+        # (DEFERRED_TOOL_CALLS_PLAN.md P2): resolve a video URL with yt-dlp, run the shared
+        # stream pipeline, stream progress onto the result row for the task_status card,
+        # and store the finished analysis. Kicked on demand by a deferred analyze_stream.
+        "analyze_stream_url": StreamAnalysisPipeline(
+            maker,
+            blobs,
+            router,
+            transcribe=(
+                WhisperCppClient(
+                    settings.whisper_url, settings.whisper_model, timeout=settings.whisper_timeout
+                )
+                if transcribe_enabled
+                else None
+            ),
+            transcribe_model=settings.whisper_model,
+            gateway=LocalGatewayClient(settings.whisper_url) if transcribe_enabled else None,
+        ).analyze_stream_url,
         # EMR import (docs/plans/EMR_IMPORT_PLAN.md), a two-stage pipeline the seeded
         # `emr_import`/`emr_parse` triggers drive off note.ingested. Stage 1 decrypts the
         # archive in place and re-ingests (enqueue_ingest re-chunks the decrypted PDFs);
@@ -607,6 +626,7 @@ async def run() -> None:
             scheduler.GEOFENCE_SWEEP_ACTION,
             TRANSCRIBE_ATTACHMENT_SPEC,
             VIDEO_ANALYSIS_SPEC,
+            ANALYZE_STREAM_URL_SPEC,
             ENTITY_HYGIENE_SPEC,
             REEMBED_SPEC,
             TAG_CONSOLIDATE_SPEC,

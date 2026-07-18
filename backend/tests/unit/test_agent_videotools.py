@@ -98,7 +98,7 @@ def _handlers(blobs, attachments, router, **kw):
 
 
 def _sampler(frames: list[SampledFrame]):
-    def _sample(video: bytes) -> list[SampledFrame]:
+    async def _sample(video: bytes) -> list[SampledFrame]:
         return list(frames)
 
     return _sample
