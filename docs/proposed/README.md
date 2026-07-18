@@ -33,14 +33,7 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   state machine + two-sided child-safety layer + two UIs. Waves W1–W8 with a hard
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
-- `EXTERNAL_VIDEO_INGESTION_PLAN.md` — turn any analysed YouTube video (ad hoc or scheduled)
-  into an **isolated, embedded, searchable corpus** (never the knowledge graph/wiki — third-party
-  content is not a source of truth). Builds on the shipped `analyze_stream` + captions-first (#879),
-  and is **re-sequenced onto agent tools + the shipped Tasks feature** (no workflow-engine machinery):
-  new `external_sources`/`external_source_chunks` tables + a timeline windower; an `analyze_stream`
-  write-through; a `search_external` tool for the sandboxed `jerv` (alongside `web_search`, via a
-  purpose-built general-scoped read); a `check_channel` tool; and a recurring Jerv **Task** for
-  scheduling. Phases A (corpus+search) → B (`check_channel`) → C (Task).
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
-shipped and now live in `../archive/`.)_
+shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md` was promoted to
+`../plans/` and is in progress.)_

@@ -1,10 +1,13 @@
 # External Video Ingestion (YouTube corpus) — Build Plan
 
-> **Status:** Proposed · **Last verified:** 2026-07-18
+> **Status:** In progress · **Last verified:** 2026-07-18 · **Waves:** A✅ B◻️ C◻️
 
-**A proposed build plan** (per `docs/DOC_LIFECYCLE.md`): shaped, **hardened by a five-focus adversarial
+**An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): shaped, **hardened by a five-focus adversarial
 review**, and **re-sequenced around agent tools + the shipped Tasks feature** (owner decision) rather than
-the workflow engine — which drops the poll/reconcile actions, the window-gate settings row, the seed
+the workflow engine. **Wave A (Phase A — corpus + analyse + search) is built** (migrations 0133–0134, the
+timeline windower, the `embed_external_source` job, the `analyze_stream` write-through, and the
+`search_external` jerv tool — with unit + real-Postgres RLS/round-trip tests); Waves B (`check_channel`)
+and C (the scheduling Task) are open (§14). The re-sequencing drops the poll/reconcile actions, the window-gate settings row, the seed
 migration, and the `pending_vod` reconciler state machine entirely. It builds on the shipped
 `analyze_stream` capability (yt-dlp resolution, the shared caption→fuse→reduce pipeline, and the
 **captions-first transcript** from #879) to turn any analysed video — ad hoc or scheduled — into a
@@ -346,12 +349,13 @@ thumbnails.
 
 ---
 
-## 11. Migrations (snapshot; re-derive the head)
+## 11. Migrations
 
-1. `00NN_external_sources` — source table + summary HNSW + RLS quartet.
-2. `00NN_external_source_chunks` — chunk table + tsv GIN + embedding HNSW + RLS quartet.
+1. `0133_external_sources` — source table + summary HNSW + RLS quartet. **Built (Wave A).**
+2. `0134_external_source_chunks` — chunk table + tsv GIN + embedding HNSW + RLS quartet. **Built (Wave A).**
 
-(No seed migration — scheduling is a runtime Task. No watchlist migration in v1.)
+(No seed migration — scheduling is a runtime Task. No watchlist migration in v1. Numbers are a
+snapshot as of `Last verified`; the source of truth is `backend/migrations/versions/`.)
 
 ## 12. Tests (80% backend, security 100%)
 
@@ -379,10 +383,12 @@ thumbnails.
 
 ## 14. Waves (= the Phase 0 sequence)
 
-- **W1 (Phase A) — Corpus + analyse + search.** Two tables + migrations + RLS isolation tests; the timeline
-  windower; `embed_external_source` (+ `reembed` targets); the `analyze_stream` write-through; `ResolvedStream`
-  extension; `MAX_FULL_AUDIO_S` bump; the `search_external` tool (fencing + jerv scoped read) + injection
-  test. **Done: analyse a video in chat, then search it.**
+- **W1 (Phase A) — Corpus + analyse + search. ✅ Built.** Two tables (migrations 0133–0134) + RLS isolation
+  tests; the timeline windower + unit tests; `embed_external_source` (+ `reembed` targets); the
+  `analyze_stream` write-through; `ResolvedStream` metadata extension; `MAX_FULL_AUDIO_S` bump; the
+  `search_external` tool (untrusted-content fence + jerv purpose-built scoped read) + formatting/degraded
+  unit tests + a real-Postgres persist→embed→search round-trip and scope-isolation test. **Done: analyse a
+  video in chat, then search it.**
 - **W2 (Phase B) — `check_channel`.** The tool + handler + corpus-dedup + tests. **Done: jerv lists new
   matching uploads.**
 - **W3 (Phase C) — Scheduling.** Document + create the recurring Jerv Task; confirm end-to-end nightly. No

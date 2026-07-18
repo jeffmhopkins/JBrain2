@@ -68,13 +68,13 @@ DEFAULT_FULL_FRAMES = 16  # frames spread across a whole VOD in full mode
 # cost scales with count, but the full-mode job runs off-turn where a heavier budget is
 # acceptable. Without an interval the flat `frames` total (≤ MAX_FRAMES) still applies.
 MAX_FULL_FRAMES = 60
-# In full (whole-VOD) mode we transcribe the entire audio track up to this length —
-# generous enough for a typical video (GPU whisper handles ~30 min in a few minutes,
-# which the "expensive" tool warns about). A longer clip (a podcast, an hour+ talk)
-# still samples frames across the whole video but skips the transcript rather than
-# tying up an in-turn whisper pass — download it as an attachment for the job-backed
-# whole-video transcription instead.
-MAX_FULL_AUDIO_S = 30 * 60.0
+# In full (whole-VOD) mode we transcribe the audio track up to this length — the whisper
+# FALLBACK ceiling only (a captioned video is uncapped: provider captions cover the whole
+# video with no transcription, #879). Whisper is chunked (transcribe_audio_chunked), so a
+# 90-min clip is segmented rather than one giant pass. Longer still samples frames across
+# the whole video but skips the whisper transcript. Corpus ingestion prefers captions:auto,
+# so this ceiling bites only on the rare uncaptioned upload.
+MAX_FULL_AUDIO_S = 90 * 60.0
 DEFAULT_MAX_HEIGHT = 720  # cap the resolved format so ffmpeg reads bounded bytes
 AUDIO_SAMPLE_RATE = 16_000  # whisper's native rate; mono keeps the WAV small
 _RESOLVE_TIMEOUT_S = 30
@@ -129,6 +129,13 @@ class ResolvedStream:
     # skip whisper entirely — instant, whole-video, and (for json3) drift-free. Selected
     # at no extra resolve cost; USED only when the caption preference allows (jbrain.captions).
     caption: CaptionTrack | None = None
+    # Channel/publish metadata yt-dlp already carries in the same single-video info dict,
+    # kept for the external-source corpus row (the write-through) and its search results.
+    # Dropped by the card path; empty/None for a source that omits them or a flat listing.
+    channel_id: str = ""
+    channel_name: str = ""
+    upload_date: str = ""  # yt-dlp's YYYYMMDD string; parsed to published_at at persist time
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -243,6 +250,10 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
         video_id=str(info.get("id") or ""),
         http_headers={str(k): str(v) for k, v in dict(headers).items()},
         caption=select_caption(info),
+        channel_id=str(info.get("channel_id") or info.get("uploader_id") or ""),
+        channel_name=str(info.get("channel") or info.get("uploader") or ""),
+        upload_date=str(info.get("upload_date") or ""),
+        description=str(info.get("description") or ""),
     )
 
 

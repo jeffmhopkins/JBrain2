@@ -85,6 +85,10 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "transcribe",
         "analyze_video",
         "analyze_stream",
+        # Search the external-source video corpus (analysed YouTube videos). Sandboxed
+        # jerv-only alongside web_search; reads the general-domain corpus via a
+        # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
+        "search_external",
         "query_server_metrics",
         # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.brainevents import build_event_emitter, build_flag_emitter
+from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
@@ -574,6 +575,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             video_handlers=video_handlers,
             stream_handlers=stream_handlers,
             gmail_handlers=gmail_handlers,
+            external_handlers=build_external_handlers(
+                maker, TeiEmbedClient(settings.embed_url)
+            ),
         )
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)

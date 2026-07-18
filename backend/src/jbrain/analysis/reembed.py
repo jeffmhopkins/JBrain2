@@ -70,6 +70,36 @@ _TARGETS = (
             " WHERE id = cast(:id AS uuid)"
         ),
     ),
+    # The external-source corpus: passage chunks + the source-level summary vector. Their
+    # only other embed path is embed_external_source on ingest, so a model swap re-embeds
+    # them here (like entities).
+    _Target(
+        name="external_source_chunks",
+        select=(
+            "SELECT id::text AS id, text AS src FROM app.external_source_chunks"
+            " WHERE embedding IS NULL OR embedding_model IS DISTINCT FROM :model"
+            " ORDER BY id LIMIT :limit"
+        ),
+        update=(
+            "UPDATE app.external_source_chunks"
+            " SET embedding = cast(:emb AS vector), embedding_model = :model"
+            " WHERE id = cast(:id AS uuid)"
+        ),
+    ),
+    _Target(
+        name="external_sources",
+        select=(
+            "SELECT id::text AS id, summary AS src FROM app.external_sources"
+            " WHERE summary IS NOT NULL AND btrim(summary) <> ''"
+            "   AND (summary_embedding IS NULL OR embedding_model IS DISTINCT FROM :model)"
+            " ORDER BY id LIMIT :limit"
+        ),
+        update=(
+            "UPDATE app.external_sources"
+            " SET summary_embedding = cast(:emb AS vector), embedding_model = :model"
+            " WHERE id = cast(:id AS uuid)"
+        ),
+    ),
 )
 
 
