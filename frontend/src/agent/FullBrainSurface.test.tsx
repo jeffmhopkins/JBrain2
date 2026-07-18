@@ -1190,7 +1190,7 @@ describe("FullBrainSurface", () => {
     }
   });
 
-  it("shows a live elapsed timer beside a running tool, resetting on a new tool", () => {
+  it("shows a live elapsed timer through each phase, re-anchoring on a phase change", () => {
     vi.useFakeTimers();
     try {
       const tool = (label: string, emphasis: string): AgentStatus => ({
@@ -1198,12 +1198,17 @@ describe("FullBrainSurface", () => {
         label,
         emphasis,
       });
+      const thinking: AgentStatus = { kind: "thinking", label: "Thinking it through" };
 
-      const { rerender } = render(<AgentStatusLine status={tool("Using", "spawn_subagent")} />);
-      // Starts at 0s.
+      // Thinking counts too — the pill ticks the moment the turn starts.
+      const { rerender } = render(<AgentStatusLine status={thinking} />);
       expect(screen.getByRole("status").textContent).toContain("0s");
+      act(() => vi.advanceTimersByTime(8_000));
+      expect(screen.getByRole("status").textContent).toContain("8s");
 
-      // Ticks each second while the tool runs; crosses into m+s past a minute.
+      // A tool takes over: the count re-anchors to 0s, then crosses into m+s.
+      rerender(<AgentStatusLine status={tool("Using", "spawn_subagent")} />);
+      expect(screen.getByRole("status").textContent).toContain("0s");
       act(() => vi.advanceTimersByTime(23_000));
       expect(screen.getByRole("status").textContent).toContain("23s");
       act(() => vi.advanceTimersByTime(5 * 60_000));

@@ -284,12 +284,12 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
   const [shown, setShown] = useState<AgentStatus | null>(status);
   const holdUntil = useRef(0);
   const heldTool = useRef<string | null>(null);
-  // The elapsed timer anchors to the tool currently on screen: `timedTool` is the
-  // last tool key it was anchored on and `toolStartedAt` when. Both are re-anchored
-  // in render the moment a different tool takes over (below), and `now` ticks once a
-  // second to advance the displayed count.
-  const timedTool = useRef<string | null>(null);
-  const toolStartedAt = useRef(0);
+  // The elapsed timer anchors to the live phase on screen (thinking / a specific
+  // tool / answering): `timedPhase` is the last phase key it was anchored on and
+  // `phaseStartedAt` when. Both are re-anchored in render the moment the phase
+  // changes (below), and `now` ticks once a second to advance the displayed count.
+  const timedPhase = useRef<string | null>(null);
+  const phaseStartedAt = useRef(0);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -328,27 +328,33 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
     return () => clearTimeout(t);
   }, [kind]);
 
-  // Tick once a second while a tool is on screen so its elapsed count advances;
-  // idle otherwise (no wasteful timer while thinking/answering/settled).
-  const showingTool = shown?.kind === "tool";
+  // Tick once a second while a live phase (thinking / a tool / answering) is on
+  // screen so its elapsed count advances; idle otherwise (no timer while settled).
+  const ticking =
+    shown?.kind === "thinking" || shown?.kind === "tool" || shown?.kind === "answering";
   useEffect(() => {
-    if (!showingTool) return;
+    if (!ticking) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [showingTool]);
+  }, [ticking]);
 
   if (!shown || (shown.kind === "done" && doneHidden)) return null;
   const live = shown.kind === "thinking" || shown.kind === "tool" || shown.kind === "answering";
   const cls = live ? "live" : shown.kind === "error" ? "err" : "done";
-  // Anchor (or re-anchor) the timer to the tool on screen. Done in render so the
-  // very first frame already reads "0s" — an effect-set anchor wouldn't force the
-  // extra re-render when the clock hasn't moved.
-  const toolKey = shown.kind === "tool" ? `${shown.label}|${shown.emphasis ?? ""}` : null;
-  if (toolKey !== null && toolKey !== timedTool.current) {
-    timedTool.current = toolKey;
-    toolStartedAt.current = now;
+  // Anchor (or re-anchor) the timer to the live phase on screen — thinking, a
+  // specific tool (keyed by its label so a new tool restarts it), or answering.
+  // Done in render so the very first frame already reads "0s"; an effect-set anchor
+  // wouldn't force the extra re-render when the clock hasn't moved.
+  const phaseKey = !live
+    ? null
+    : shown.kind === "tool"
+      ? `tool|${shown.label}|${shown.emphasis ?? ""}`
+      : shown.kind;
+  if (phaseKey !== null && phaseKey !== timedPhase.current) {
+    timedPhase.current = phaseKey;
+    phaseStartedAt.current = now;
   }
-  const elapsed = toolKey !== null ? Math.max(0, now - toolStartedAt.current) : null;
+  const elapsed = phaseKey !== null ? Math.max(0, now - phaseStartedAt.current) : null;
 
   return (
     <output className={`fb-status ${cls}`}>
