@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.readtools import build_registry
+from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.session import read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.weatherhistorytools import build_weather_history_handlers
@@ -394,6 +395,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
                 NhcSurgeClient(""),
             ),
             **build_external_handlers(stub, stub),  # the external-corpus sidecars' handlers
+            **build_research_report_handlers(stub, stub),  # the report-library sidecars' handlers
         },  # unused by the editor turn
         stub,  # city geocoder
         maker,  # sessionmaker for query_server_metrics
