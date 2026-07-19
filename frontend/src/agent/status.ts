@@ -14,9 +14,13 @@ export interface AgentStatus {
   emphasis?: string;
   /** Identity of the live turn, so the status line can reset its per-turn timer at a
    * turn boundary. Steady across a turn's phases (thinking → tool → answering) and
-   * distinct across turns — a new turn appends messages, so the count changes exactly
-   * there. Absent only when a status is built by hand (tests). */
-  turnKey?: number;
+   * distinct across turns — a new turn appends messages, so the message count changes
+   * exactly there. Scoped by the session id so it is also distinct ACROSS conversations:
+   * the message-index alone collides (every conversation's first turn is index 1), which
+   * left the timer anchored to a prior conversation's start when the status line (which
+   * persists across conversation switches) failed to re-anchor. Absent only when a status
+   * is built by hand (tests). */
+  turnKey?: string;
 }
 
 // Friendly verb + object per tool (names come from the agent registry). Anything
@@ -82,12 +86,14 @@ function phaseStatus(last: TranscriptMessage): AgentStatus {
 }
 
 /** The current agent status, or null when idle (nothing to show). Reads only the
- * live (last) assistant turn. */
-export function agentStatus(messages: TranscriptMessage[]): AgentStatus | null {
+ * live (last) assistant turn. `sessionId` scopes the turn identity to the conversation
+ * so the timer re-anchors when you switch chats (see `turnKey`). */
+export function agentStatus(messages: TranscriptMessage[], sessionId?: string): AgentStatus | null {
   const last = messages[messages.length - 1];
   if (!last || last.role !== "assistant") return null;
   // Tag the phase with the turn's identity so the view resets its turn timer at each
   // boundary. The last message's index is steady across the turn and bumps when the
-  // next turn's user+assistant pair is appended.
-  return { ...phaseStatus(last), turnKey: messages.length - 1 };
+  // next turn's user+assistant pair is appended; the session id keeps two conversations'
+  // same-index turns from colliding.
+  return { ...phaseStatus(last), turnKey: `${sessionId ?? ""}#${messages.length - 1}` };
 }

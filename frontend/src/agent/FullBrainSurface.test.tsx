@@ -1227,18 +1227,18 @@ describe("FullBrainSurface", () => {
   it("shows the tool time and the running turn total, resetting the total on a new turn", () => {
     vi.useFakeTimers();
     try {
-      const thinking = (turnKey: number): AgentStatus => ({
+      const thinking = (turnKey: string): AgentStatus => ({
         kind: "thinking",
         label: "Thinking it through",
         turnKey,
       });
-      const tool = (turnKey: number): AgentStatus => ({
+      const tool = (turnKey: string): AgentStatus => ({
         kind: "tool",
         label: "Using",
         emphasis: "spawn_subagent",
         turnKey,
       });
-      const done = (turnKey: number): AgentStatus => ({
+      const done = (turnKey: string): AgentStatus => ({
         kind: "done",
         label: "Answered · 1 tool used",
         turnKey,
@@ -1246,9 +1246,9 @@ describe("FullBrainSurface", () => {
 
       // Turn A: think for a beat, then a tool takes over. Once the turn has outrun the
       // current phase, both times show — the tool's own time in parens, the turn total after.
-      const { rerender } = render(<AgentStatusLine status={thinking(0)} />);
+      const { rerender } = render(<AgentStatusLine status={thinking("s1#1")} />);
       act(() => vi.advanceTimersByTime(10_000));
-      rerender(<AgentStatusLine status={tool(0)} />);
+      rerender(<AgentStatusLine status={tool("s1#1")} />);
       act(() => vi.advanceTimersByTime(23_000));
       const a = screen.getByRole("status").textContent ?? "";
       expect(a).toContain("(23s)"); // the tool phase
@@ -1257,9 +1257,9 @@ describe("FullBrainSurface", () => {
       // Turn A settles, then a brand-new turn opens with the same leading tool. The old
       // single timer keyed on the phase alone, so a repeated phase kept the old count;
       // now the turn identity resets both times to zero.
-      rerender(<AgentStatusLine status={done(0)} />);
-      rerender(<AgentStatusLine status={thinking(1)} />);
-      rerender(<AgentStatusLine status={tool(1)} />);
+      rerender(<AgentStatusLine status={done("s1#1")} />);
+      rerender(<AgentStatusLine status={thinking("s1#3")} />);
+      rerender(<AgentStatusLine status={tool("s1#3")} />);
       const b = screen.getByRole("status").textContent ?? "";
       expect(b).toContain("0s");
       expect(b).not.toContain("33s");
@@ -1272,12 +1272,12 @@ describe("FullBrainSurface", () => {
   it("shows only the running total while thinking, reserving the parenthesised time for tools", () => {
     vi.useFakeTimers();
     try {
-      const thinking = (turnKey: number): AgentStatus => ({
+      const thinking = (turnKey: string): AgentStatus => ({
         kind: "thinking",
         label: "Thinking it through",
         turnKey,
       });
-      const tool = (turnKey: number): AgentStatus => ({
+      const tool = (turnKey: string): AgentStatus => ({
         kind: "tool",
         label: "Using",
         emphasis: "spawn_subagent",
@@ -1287,9 +1287,9 @@ describe("FullBrainSurface", () => {
       // A tool runs for a beat, then the agent goes back to thinking. The thinking pill
       // reads the turn total alone — no parenthesised phase time — even though the phase
       // is younger than the turn (it's the screenshot's "(6s) 1m 23s" collapsed to one).
-      const { rerender } = render(<AgentStatusLine status={tool(0)} />);
+      const { rerender } = render(<AgentStatusLine status={tool("s1#1")} />);
       act(() => vi.advanceTimersByTime(20_000));
-      rerender(<AgentStatusLine status={thinking(0)} />);
+      rerender(<AgentStatusLine status={thinking("s1#1")} />);
       act(() => vi.advanceTimersByTime(6_000));
       const text = screen.getByRole("status").textContent ?? "";
       expect(text).toContain("Thinking it through");
