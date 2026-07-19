@@ -973,7 +973,7 @@ describe("ToolView registry", () => {
 
   it("renders a deep_research_report with provenance chips, the report body, and a roster", () => {
     expect(isKnownView("deep_research_report")).toBe(true);
-    const { getByText, queryByText, container } = render(
+    const { getByText, getByLabelText, queryByText, container } = render(
       <ToolView
         payload={payload({
           view: "deep_research_report",
@@ -1001,6 +1001,12 @@ describe("ToolView registry", () => {
     expect(getByText("2 rounds")).toBeInTheDocument();
     expect(getByText("cross-checked")).toBeInTheDocument();
     expect(getByText("revised")).toBeInTheDocument();
+    // Copy + download act on the raw report Markdown.
+    expect(getByLabelText("Copy report Markdown")).toBeInTheDocument();
+    expect(getByLabelText("Download report as Markdown")).toBeInTheDocument();
+    // The report body is collapsed by default — it opens on tap.
+    expect(queryByText("Overview")).toBeNull();
+    fireEvent.click(getByText("Show report"));
     expect(getByText("Overview")).toBeInTheDocument();
     // The report's [^1] renders as a tappable favicon citation linking to the real URL
     // (web_sources[0]) — citations tracked end-to-end, the favicon standard.
