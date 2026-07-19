@@ -45,12 +45,14 @@ import json
 from pathlib import Path
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.briefs import compose_feed_block, prepend_feed
 from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.spawn import SpawnService, _ChildResult
 from jbrain.agent.tree import MAX_DEPTH
+from jbrain.external.research_corpus import persist_report
 from jbrain.llm import LlmRouter
 from jbrain.llm.promptfile import load_prompt
 
@@ -181,9 +183,18 @@ def _findings_block(results: list[_ChildResult]) -> str:
 class DeepResearchService:
     """Drives one deep-research run in-request, reusing the spawn fan for every stage."""
 
-    def __init__(self, *, router: LlmRouter, spawn: SpawnService) -> None:
+    def __init__(
+        self,
+        *,
+        router: LlmRouter,
+        spawn: SpawnService,
+        maker: async_sessionmaker[AsyncSession] | None = None,
+    ) -> None:
         self._router = router
         self._spawn = spawn
+        # The report library writer's session maker. Optional: a headless/test build without a
+        # DB skips persistence (the report still renders), so persist is always best-effort.
+        self._maker = maker
 
     async def research(self, ctx: ToolContext, args: dict) -> str:
         # --- guards (mirror the spawn fan: owner turn, depth 0, a seeded tree) -----
@@ -219,7 +230,11 @@ class DeepResearchService:
             gather = await self._spawn.run_research_fan(
                 ctx,
                 briefs=[(_label(sq, i), sq) for i, sq in enumerate(sub_questions)],
-                effort="medium",
+                # Research children run at LOW reasoning: a gather angle is a focused
+                # search-and-summarize, not a hard reasoning task, and the lower step cap
+                # curbs the over-searching that hammered the upstream engines. The review
+                # children (analyst, critique) keep medium — that's where the thinking is.
+                effort="low",
             )
             if not any(r.ok for r in gather):
                 return _refuse(
@@ -253,7 +268,7 @@ class DeepResearchService:
                     refill = await self._spawn.run_research_fan(
                         ctx,
                         briefs=[(_label(g, i), g) for i, g in enumerate(gaps)],
-                        effort="medium",
+                        effort="low",  # research children run at low reasoning (see gather)
                     )
                     # A refill that was admitted but produced NOTHING usable (every gap
                     # child failed) added no coverage — report it as partial, and don't
@@ -313,6 +328,21 @@ class DeepResearchService:
             revised=revised,
             coverage_limited=coverage_limited,
         )
+        # Persist the finished report to the library (best-effort): a follow-up turn reads it
+        # back through the report tools, and it joins the browsable research corpus. A DB/write
+        # failure never fails the report the owner already sees.
+        await self._persist(
+            ctx,
+            question=question,
+            report=report,
+            complexity=complexity,
+            rounds=rounds,
+            roster=roster,
+            sources=sources,
+            analyzed=analyzed,
+            revised=revised,
+            coverage_limited=coverage_limited,
+        )
         return ToolOutput(
             _frame(report, question, complexity, roster, analyzed, coverage_limited, revised),
             view=_report_view(
@@ -327,6 +357,42 @@ class DeepResearchService:
                 revised,
             ),
         )
+
+    async def _persist(
+        self,
+        ctx: ToolContext,
+        *,
+        question: str,
+        report: str,
+        complexity: str,
+        rounds: int,
+        roster: list[_ChildResult],
+        sources: list[WebSource],
+        analyzed: bool,
+        revised: bool,
+        coverage_limited: bool,
+    ) -> None:
+        """Write the finished report into the library (best-effort). None maker (headless/test)
+        or any DB error is swallowed — the report the owner already sees never depends on it."""
+        if self._maker is None:
+            return
+        try:
+            await persist_report(
+                self._maker,
+                session_id=ctx.agent_session_id,
+                question=question,
+                report_md=report,
+                complexity=complexity,
+                rounds=rounds,
+                sub_agents=_findings_count(roster),
+                analyzed=analyzed,
+                revised=revised,
+                coverage_limited=coverage_limited,
+                truncated=any(r.truncated for r in roster),
+                sources=[{"url": ws.url, "title": ws.title} for ws in sources],
+            )
+        except Exception:  # noqa: BLE001 - best-effort; the report already rendered
+            log.warning("deep_research.persist_failed", exc_info=True)
 
     def _phase(self, ctx: ToolContext, step: int, label: str) -> None:
         """Emit a visible phase line for the current stage. Reuses the multi-phase

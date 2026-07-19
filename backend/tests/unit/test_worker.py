@@ -638,6 +638,10 @@ async def test_run_registers_all_job_handlers(
         # The external-source (analysed-video corpus) embedder — in-code only, not in
         # ACTION_SPECS / the app.actions seed (docs/plans/EXTERNAL_VIDEO_INGESTION_PLAN.md).
         "embed_external_source",
+        # The research-report corpus embedder (the deep-research report library) —
+        # in-code only, not in ACTION_SPECS / the app.actions seed
+        # (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md).
+        "embed_research_report",
         "consolidate_predicates",
         "sync_predicates",
         # The purge sweep is now a fireable action (Phase-5 Track B).

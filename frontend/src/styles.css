@@ -10161,6 +10161,41 @@ button.small {
   font-weight: 500;
   color: var(--text-1);
 }
+/* Copy / download actions pinned to the right of the report header. */
+.fb-shell .tv-dr-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.fb-shell .tv-dr-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-shell .tv-dr-act:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+.fb-shell .tv-dr-act.done {
+  color: var(--green, #8fbc9a);
+}
+.fb-shell .tv-dr-act svg {
+  width: 15px;
+  height: 15px;
+}
+/* The report-body disclosure (collapsed by default), a touch of room above it. */
+.fb-shell .tv-dr-report-toggle {
+  margin-top: 2px;
+}
 .fb-shell .tv-dr-chips {
   display: flex;
   flex-wrap: wrap;

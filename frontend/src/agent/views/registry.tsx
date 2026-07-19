@@ -1218,6 +1218,32 @@ function OpenSessionIcon(): ReactNode {
   );
 }
 
+// Report-action glyphs (deep_research_report header): copy → check on success, download.
+function CopyIcon(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h8" />
+    </svg>
+  );
+}
+function CheckIcon(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M5 13l4 4 10-11" />
+    </svg>
+  );
+}
+function DownloadIcon(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M12 4v11" />
+      <path d="M8 11l4 4 4-4" />
+      <path d="M5 19h14" />
+    </svg>
+  );
+}
+
 function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
   const ran = typeof data.ran === "number" ? data.ran : 0;
   const failed = typeof data.failed === "number" ? data.failed : 0;
@@ -1372,6 +1398,36 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
   const truncated = data.truncated === true;
   const children = Array.isArray(data.children) ? data.children : [];
   const [openRoster, setOpenRoster] = useState(false);
+  // The report can be long, so it collapses by default — the question + provenance chips
+  // stay visible and the body opens on tap. Copy / download act on the raw Markdown.
+  const [openReport, setOpenReport] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(copyTimer.current ?? undefined), []);
+
+  function copyReport(): void {
+    void navigator.clipboard?.writeText(reportMd);
+    setCopied(true);
+    clearTimeout(copyTimer.current ?? undefined);
+    copyTimer.current = setTimeout(() => setCopied(false), 1500);
+  }
+  function downloadReport(): void {
+    const slug =
+      (question || "research-report")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60) || "research-report";
+    const blob = new Blob([reportMd], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${slug}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   // The report's `[^n]` markers map positionally to this global source registry, so each
   // renders as a tappable favicon citation (the same standard jerv's web answers use).
@@ -1396,6 +1452,28 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
       <div className="tv-dr-head">
         <span className="tv-dr-cap">deep research</span>
         {question && <span className="tv-dr-q">{question}</span>}
+        {reportMd && (
+          <div className="tv-dr-actions">
+            <button
+              type="button"
+              className={`tv-dr-act${copied ? " done" : ""}`}
+              onClick={copyReport}
+              aria-label={copied ? "Copied" : "Copy report Markdown"}
+              title={copied ? "Copied" : "Copy Markdown"}
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+            </button>
+            <button
+              type="button"
+              className="tv-dr-act"
+              onClick={downloadReport}
+              aria-label="Download report as Markdown"
+              title="Download .md"
+            >
+              <DownloadIcon />
+            </button>
+          </div>
+        )}
       </div>
       <div className="tv-dr-chips">
         {chips.map((c) => (
@@ -1406,9 +1484,24 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
         {coverageLimited && <span className="tv-dr-chip warn">coverage limited</span>}
         {truncated && <span className="tv-dr-chip warn">truncated</span>}
       </div>
-      <div className="tv-dr-report">
-        <Markdown text={reportMd} cites={cites} />
-      </div>
+      {reportMd && (
+        <>
+          <button
+            type="button"
+            className="tv-dr-rtoggle tv-dr-report-toggle"
+            aria-expanded={openReport}
+            onClick={() => setOpenReport((v) => !v)}
+          >
+            <span aria-hidden="true">{openReport ? "▾" : "▸"}</span>{" "}
+            {openReport ? "Hide report" : "Show report"}
+          </button>
+          {openReport && (
+            <div className="tv-dr-report">
+              <Markdown text={reportMd} cites={cites} />
+            </div>
+          )}
+        </>
+      )}
       {children.length > 0 && (
         <div className="tv-dr-roster">
           <button

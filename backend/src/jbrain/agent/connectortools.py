@@ -34,6 +34,7 @@ from jbrain.connectors.base import ConnectorRegistry, EgressGuardError, build_eg
 from jbrain.connectors.service import ConnectorService
 from jbrain.db.session import SessionContext
 from jbrain.external.corpus import delete_external_video
+from jbrain.external.research_corpus import delete_report as delete_research_report
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import JobEnqueuer
 
@@ -144,6 +145,10 @@ def build_leaf_executor(
             # The owner approved removing a library video; the trusted executor hard-deletes it
             # (chunks cascade). `source_id` was fixed by the agent's scope-checked staging.
             await delete_external_video(maker, ctx, str(node.preview.get("source_id", "")))
+        elif node.op == "delete_research_report":
+            # The owner approved removing a stored research report; the trusted executor
+            # hard-deletes it. `report_id` was fixed by the agent's scope-checked staging.
+            await delete_research_report(maker, ctx, str(node.preview.get("report_id", "")))
         elif node.op == "mint_intake_link":
             # No-op here: an intake-link Proposal is minted via the dedicated
             # mint-from-proposal endpoint (it surfaces the show-once secret, which a

@@ -22,6 +22,7 @@ from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
+from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.streamtools import build_stream_handlers
@@ -621,6 +622,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 maker,
                 TeiEmbedClient(settings.embed_url),
                 blobs=app.state.blob_store,
+                proposals=app.state.agent_proposals,
+            ),
+            research_report_handlers=build_research_report_handlers(
+                maker,
+                TeiEmbedClient(settings.embed_url),
                 proposals=app.state.agent_proposals,
             ),
         )

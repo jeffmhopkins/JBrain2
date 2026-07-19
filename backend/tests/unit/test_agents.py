@@ -99,6 +99,11 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "query_server_metrics",
             "spawn_subagent",
             "deep_research",
+            "list_research_report",
+            "search_research_report",
+            "read_research_report",
+            "show_research_report",
+            "remove_research_report",
         }
     )
     assert jerv.reads_knowledge_base is False

@@ -640,6 +640,7 @@ def build_registry(
     compare_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
+    research_report_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -717,6 +718,7 @@ def build_registry(
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
             # general-domain corpus via a purpose-built scope (EXTERNAL_VIDEO_INGESTION_PLAN.md).
             **(external_handlers or {}),
+            **(research_report_handlers or {}),
             # The archivist persona's Gmail tools (`web`-gated), present only when a
             # Gmail refresh token is configured; otherwise their sidecars are dropped.
             **(gmail_handlers or {}),
@@ -761,5 +763,7 @@ def build_registry(
         # Deep research runs its gather/refill/critique fans through the spawn service,
         # so it is wired once that exists. Same guard: no router → the ref stays unbound
         # and a deep_research call refuses cleanly.
-        deep_research_ref.service = DeepResearchService(router=router, spawn=spawn_ref.service)
+        deep_research_ref.service = DeepResearchService(
+            router=router, spawn=spawn_ref.service, maker=maker
+        )
     return registry

@@ -173,6 +173,45 @@ class ExternalSourceEmbedder:
         )
 
 
+class ResearchReportEmbedder:
+    """The embed_research_report job: fill the NULL summary embedding for one research report.
+
+    A report has no passage chunks (external.research_corpus), so this is a single per-row fill,
+    re-checking NULL so a concurrent re-run of the same question at worst no-ops the row (mirroring
+    embed_note). The payload carries only the report id."""
+
+    def __init__(self, maker: async_sessionmaker[AsyncSession], client: EmbedClient, model: str):
+        self._maker = maker
+        self._client = client
+        self._model = model
+
+    async def embed_research_report(self, payload: dict[str, Any]) -> None:
+        report_id = str(payload["report_id"])
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT summary FROM app.research_reports"
+                        " WHERE id = :rid AND summary_embedding IS NULL AND summary IS NOT NULL"
+                    ),
+                    {"rid": report_id},
+                )
+            ).first()
+        if row is None:
+            return  # already embedded, or no summary to embed — a harmless no-op
+        (summary_vec,) = await self._client.embed([row.summary])
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            await session.execute(
+                text(
+                    "UPDATE app.research_reports"
+                    " SET summary_embedding = cast(:emb AS vector), embedding_model = :model"
+                    " WHERE id = :rid AND summary_embedding IS NULL"
+                ),
+                {"rid": report_id, "emb": vector_literal(summary_vec), "model": self._model},
+            )
+        log.info("embed.research_report.done", report_id=report_id)
+
+
 class PredicateEmbedder:
     """The sync_predicates job: keep the canonical_predicates index in step with
     the live schema registry (predicate canonicalization Phase 2). Upserts a row

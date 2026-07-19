@@ -7,6 +7,7 @@ from typing import Any
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.readtools import build_registry
+from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
@@ -159,6 +160,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
                 NhcSurgeClient(""),
             ),
             **build_external_handlers(stub, stub),  # search_external_video + check_channel sidecars
+            **build_research_report_handlers(stub, stub),  # *_research_report sidecars
         },
         stub,  # city geocoder
         stub,  # sessionmaker (query_server_metrics binds it but never calls it here)

@@ -25,6 +25,7 @@ from jbrain.agent.readtools import (
     neighborhood_entities,
     neighborhood_sources,
 )
+from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
@@ -730,6 +731,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # sessionmaker (query_server_metrics)
         object(),  # type: ignore[arg-type]  # external reverse geocoder
         external_handlers=build_external_handlers(object(), object()),  # type: ignore[arg-type]
+        research_report_handlers=build_research_report_handlers(object(), object()),  # type: ignore[arg-type]
     )
     # The `web` (opt-in) permission class — never offered to the default knowledge
     # agent (allow=None) at any scope. current_location is on-box but rides this gate;
@@ -763,6 +765,14 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # deep_research is `web`-classed + NEVER_DEFAULT: jerv's bounded research run
         # over the fan, never offered to the curator wildcard.
         "deep_research",
+        # The deep-research report library (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md) —
+        # `web`-classed (jerv-only), reading/managing the research-report corpus via a
+        # purpose-built scope, never the curator wildcard.
+        "search_research_report",
+        "list_research_report",
+        "read_research_report",
+        "show_research_report",
+        "remove_research_report",
     }
     shipped = {
         "search",
@@ -1234,6 +1244,31 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "deep_research",
             1,
             "f863673a960702d1c794b35d8b5a18139c487dd3d1d0169d9c7d2528e4a85819",
+        ),
+        "list_research_report.tool": (
+            "list_research_report",
+            1,
+            "bfa298bd6a8dea64295f7fbaf36a3fad1d9b782bd49057764f688e5c4ef459c8",
+        ),
+        "search_research_report.tool": (
+            "search_research_report",
+            1,
+            "abf2b04a88333f8dc6bfe135b8d38cbdfc6c18c7af4d9477fe01c7387eeb53e3",
+        ),
+        "read_research_report.tool": (
+            "read_research_report",
+            1,
+            "19522ba829bba3570b0f5f46127d88892f160d273d5b6eb947bd7ae38ad7722d",
+        ),
+        "show_research_report.tool": (
+            "show_research_report",
+            1,
+            "20ed01ffe32a026231c7c1e36e8160f85ac986b029a3bfe77de86788393aa0a6",
+        ),
+        "remove_research_report.tool": (
+            "remove_research_report",
+            1,
+            "7450bd163900253dde202db50eb7a4581e12985480b25fddb2c3f75371c0e91c",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

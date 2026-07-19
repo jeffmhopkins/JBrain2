@@ -128,6 +128,15 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # The deep-research primitive — jerv orchestrates a bounded research run over the
         # same fan (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
         DEEP_RESEARCH_TOOL,
+        # The deep-research report library — browse / search / read / show / remove the
+        # reports deep_research persisted, the same corpus pattern as the video tools. read_
+        # returns a report's FULL text, so a follow-up turn can reference an earlier run
+        # (the chat history keeps only jerv's summary of it).
+        "list_research_report",
+        "search_research_report",
+        "read_research_report",
+        "show_research_report",
+        "remove_research_report",
     }
 )
 
