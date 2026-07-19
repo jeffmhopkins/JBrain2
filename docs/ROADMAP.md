@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-07-05
+> **Status:** Living · **Last verified:** 2026-07-19
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -285,3 +285,12 @@ analyze-video/stream card on intermediate steps. Grabbed/fetched stills are firs
 fabricated an image comparison it had no way to perform; reconciled with a four-lens review. V0 (the
 `analyze_stream` `single`-mode `seek` fix — it dropped `seek` and always sampled t=0) shipped
 on-branch; V1–V6 open.
+
+**Scheduled:** Research Library (build plan: `docs/plans/RESEARCH_LIBRARY_PLAN.md`) — the owner's
+browse door to the two `external`-corpus artifacts jerv produces on its own turns: deep-research
+reports (`research_reports`) and video analyses (`external_sources`). A card-launcher
+`ResearchLibraryScreen` (GUI variant B — segmented Reports/Videos tabs, locked;
+`docs/mocks/research-library/`) to search, view, and delete them, over a net-new owner-gated HTTP
+API that reuses the existing corpus read/search/fetch/delete callables (no migration, no new grant —
+both tables already carry the DELETE grant + domain RLS). Waves R1 (backend API), R2 (list surface),
+R3 (detail layer + item actions), all open.
