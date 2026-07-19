@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.plan
-version: dr-plan-v3
+version: dr-plan-v4
 description: Plans a deep-research run — rates the question's complexity and decomposes it into self-contained web-research sub-questions plus a report outline.
 strength: high
 ---
@@ -21,10 +21,15 @@ Return your plan as JSON matching the provided schema. Nothing else.
   expose follow-up gaps ("how does X actually work / hold up", "what's the full state
   of Y"). Full breadth, a gap round, and a critique pass all earn their keep.
 
-**Write the sub-questions** (`sub_questions`) — this is the core of the plan:
-- Each entry is a **plain string** of brief text — never a JSON object, never an
-  `{"id": …, "brief": …}` pair, never numbered. Just the brief itself.
-- Each is a self-contained research brief that a fresh sub-agent with only web access
+**Write the sub-questions** (`sub_questions`) — this is the core of the plan. Each entry
+is an object with two fields:
+- `title` — a SHORT label for this angle, 3–6 words, that names what it covers ("Cost per
+  kWh", "Dominant manufacturers", "Safety & thermal runaway"). It is only a row heading in
+  the UI — not the research instruction. No trailing punctuation, not a full sentence.
+- `brief` — the full, self-contained research instruction (the rules below). This is what
+  the sub-agent actually works; put ALL the needed context here, never in the title.
+
+- The `brief` is a self-contained research instruction that a fresh sub-agent with only web access
   can fully answer on its own. It sees ONLY that brief — never this question, never its
   siblings, never their findings — so restate whatever context it needs. Never write
   "the above topic", "compare to the other one", or "the sources gathered above".

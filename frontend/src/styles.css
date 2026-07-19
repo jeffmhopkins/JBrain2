@@ -8306,6 +8306,15 @@ button.small {
      bubble above it (e.g. an expanded "Thinking" trace) is tall. Keep its own size. */
   flex: none;
 }
+/* The status header + budget meter pin to the top of the fan's internal scroll (the card
+   scrolls past `max-height`), so "who's running" and the tree budget stay visible while the
+   sub-agent rows scroll under them. Opaque bg + z-index so rows never show through. */
+.fb-shell .fb-sa-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-2);
+}
 .fb-shell .fb-sa-head {
   display: flex;
   align-items: center;
