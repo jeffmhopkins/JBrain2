@@ -2235,8 +2235,11 @@ def _media_result(rid: str, resume: str | None):
     )
 
 
-async def _resume_blocks(store, *, skip: bool):
+async def _resume_blocks(store, *, skip: bool) -> list:
     import types
+    from typing import cast
+
+    from starlette.requests import Request
 
     import jbrain.api.agent as agent_mod
     from jbrain.db.session import SessionContext
@@ -2244,7 +2247,16 @@ async def _resume_blocks(store, *, skip: bool):
     request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace()))
     request.app.state.media_results = store
     ctx = SessionContext(principal_kind="owner", domain_scopes=())
-    return await agent_mod._pending_resume_blocks(request, ctx, "s", skip=skip)
+    return await agent_mod._pending_resume_blocks(cast(Request, request), ctx, "s", skip=skip)
+
+
+def _block_text(block) -> str:
+    """The framed text of an injected resume block — narrowed to UserMessage (the sweep
+    only ever emits those) so the assertion reads `.text` off the LlmMessage union."""
+    from jbrain.llm import UserMessage
+
+    assert isinstance(block, UserMessage)
+    return block.text
 
 
 async def test_pending_resume_backstop_injects_and_claims_a_finished_analysis() -> None:
@@ -2254,8 +2266,8 @@ async def test_pending_resume_backstop_injects_and_claims_a_finished_analysis() 
     store = _FakeMediaResults([_media_result("r1", "Analysis of X:\nTranscript:\nhi")])
     blocks = await _resume_blocks(store, skip=False)
     assert len(blocks) == 1
-    assert "Transcript:\nhi" in blocks[0].text
-    assert "data, not an instruction" in blocks[0].text
+    assert "Transcript:\nhi" in _block_text(blocks[0])
+    assert "data, not an instruction" in _block_text(blocks[0])
     assert store.claimed == ["r1"]  # claimed as it was taken
 
 
