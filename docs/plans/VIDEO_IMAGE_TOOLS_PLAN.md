@@ -1,6 +1,6 @@
 # Video/Image Inspection Tools — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** V0✅ V1✅ V2◻️ V3◻️ V4◻️ V5◻️ V6◻️
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** V0✅ V1✅ V2✅ V3◻️ V4◻️ V5◻️ V6◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — every VLM call through
 > the LLM adapter (rule 1), every blob through the storage abstraction (rule 2),
@@ -360,7 +360,7 @@ bumped for any sidecar/prompt added or changed.
 |---|---|---|
 | **V0 ✅** | **B1** — threaded `seek_s` through single-mode dispatch (`stream_analysis.py`) + hybrid fast+accurate seek and a bounded near-black retry in `stream.py` (`_grab_one` full-mode path untouched, its fast seek preserved). | **Shipped on-branch.** Regression tests: a synthetic black-intro clip asserts `seek` moves the single grab off the black intro and the near-black retry reaches content (`test_stream.py`); the streamtools test asserts single mode threads `seek` (was dropped). `window`/`full` paths unchanged. The sidecar already documented single-mode `seek` (now true), so no `.tool` bump. |
 | **V1 ✅** | Shared substrate: the reversible `provenance` Alembic migration (nullable `text`, no CHECK), the model `insert(provenance=…)` param + a gallery `list()` filter (`provenance IS NULL`, `get(id)` unchanged), the **provenance-aware in-chat card copy** ("grabbed from video"/"fetched from web", never "seed 0 · web_fetch"), and the RLS-isolation confirmation. | **Shipped on-branch.** RLS test extended (provenanced row owner-only, hidden from the gallery, still resolvable by id) — verified against real Postgres; frontend card test added. **Deferred:** the `_resolve_source` hoist moves to **V4** (its first consumer — no point refactoring with no caller in V1); the **two-image `agent.vision` probe** is an on-box runtime check (no local VL model in CI) — the adapter already forwards a multi-image sequence uncapped (accuracy review), so V4 carries the native-vs-stitch decision with the stitch as the guaranteed path. |
-| **V2** | **`grab_frame`** (URL + the net-new attachment seek-to-T primitive) + `question`/`n`/`show` + sidecar + wiring (dropped without ffmpeg). | Reuses V0's grab, V1's storage. **Frontend viewless-render test lands here** (first `show:false` producer). Faked yt-dlp/ffmpeg. |
+| **V2 ✅** | **`grab_frame`** (URL + the net-new attachment seek-to-T primitive via a temp file + the V0 grab) + `question` (grab-and-read in one hop) + `show` + the `grab_frame.tool` sidecar + `agent/chat_images.py` (shared persist/view/pixel-cap) + registry/jerv-allowlist/main.py wiring (dropped without ffmpeg). | **Shipped on-branch.** Unit tests: sidecar is `web`/read-shaped/jerv-only, dropped without a handler. Integration (real Postgres): URL + attachment grabs persist a `provenance='ffmpeg'` row (hidden from the gallery, resolvable by id), `show=false` suppresses the card, `question` runs the inline vision read, and the one-source/live/no-frame/non-video error paths. `test_agents`/version-pin updated. **Deferred:** `n` (multiple stills around T) — the V0 near-black retry already covers the "landed on black" case; a multi-image return needs a multi-card view, so it rides a later iteration (open decision 7). |
 | **V3** | **`fetch_image`** + the redirect-safe **`fetch_bytes`** path (moved here from v1's V1 — its only consumer) + image validation + pixel cap + `WebSource` citation + dep plumbing + sidecar + wiring. | **Security paths at 100%**: reject-on-`None` sniff, per-hop redirect re-guard, pixel-ceiling/decompression-bomb, non-image body. |
 | **V4** | **`analyze_image` 2..N widening + `compare_images` sidecar** + the always-on side-by-side stitch (adopting V1's spike outcome as design, not fallback) + router-availability wiring. | Confirm the resolver reuse + list contract; if the spike was negative, the stitch **is** the compare path (scope already sized in V1). |
 | **V5** | **`show: false`** on `analyze_video` + `analyze_stream` + sidecar copy (extend V2's viewless test to these). | Small; could fold into V2. |
@@ -411,3 +411,7 @@ registered-view **copy** change (recorded in §7).
 6. **Lifecycle/cache for chat images** — grabbed/fetched rows are permanent; if the
    gallery filter (§3) hides them the accumulation is invisible, but a `(url, seek)`
    grab cache and a cleanup story are deferred out-of-scope, named not silent.
+7. **`grab_frame` `n` (multiple stills around T)** — deferred from V2 (§T1). The V0
+   near-black retry already handles the "landed on a bad frame" case; returning N stills
+   needs a multi-image card (the single `generated_image` view shows one). A later
+   iteration if the single grab proves insufficient in practice.

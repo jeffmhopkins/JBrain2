@@ -13,6 +13,7 @@ from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.brainevents import build_event_emitter, build_flag_emitter
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
+from jbrain.agent.grabtools import build_grab_frame_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
@@ -551,6 +552,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 queue=app.state.job_queue,
                 media_results=app.state.media_results,
             )
+        # jerv's single-frame grab (VIDEO_IMAGE_TOOLS_PLAN.md): extract a still from a
+        # video URL or attachment at a timestamp and persist it as a first-class chat
+        # image (analyze_image/compare_images read it by id). Wired only when ffmpeg can
+        # sample frames; the URL path also uses yt-dlp (degrades cleanly without it).
+        grab_handlers: dict[str, ToolHandler] = {}
+        if ffmpeg_available():
+            grab_handlers = build_grab_frame_handlers(
+                app.state.blob_store,
+                app.state.turn_attachments,
+                app.state.generated_image_repo,
+                maker,
+                app.state.llm_router,
+            )
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -574,6 +588,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             transcribe_handlers=transcribe_handlers,
             video_handlers=video_handlers,
             stream_handlers=stream_handlers,
+            grab_handlers=grab_handlers,
             gmail_handlers=gmail_handlers,
             external_handlers=build_external_handlers(
                 maker,
