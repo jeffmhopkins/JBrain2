@@ -1,6 +1,6 @@
 ---
 name: analyze_stream
-version: 5
+version: 6
 permission: web
 cost_class: expensive
 # NOTE: `mode` and `captions` intentionally carry NO JSON-Schema `enum`. gpt-oss's
@@ -38,6 +38,9 @@ params:
     captions:
       type: string
       description: "One of: auto | off | only. Full mode only: where the transcript comes from. `auto` (default) uses the provider's OWN captions when the video has them (YouTube etc.) — instant, covers the whole video, no length cap — and falls back to your local whisper otherwise. `off` forces local whisper (use this to RE-RUN a video with your own transcription instead of the provider's captions). `only` uses provider captions or none (never whisper). Ignored in window/single mode, which always whisper their short slice."
+    show:
+      type: boolean
+      description: Whether to show the owner the analysis card. Default true. Set false when the analysis is just an intermediate step toward your answer and the card would be noise. (A long full/window analysis that runs in the background still shows its progress card.)
   required: [url]
 ---
 Look at a video URL — a live stream or an on-demand video — and understand what it

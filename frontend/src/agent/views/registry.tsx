@@ -682,11 +682,22 @@ function GeneratedImage({ data }: ViewProps): ReactNode {
   const height = asDim(data.height);
   const model = typeof data.model === "string" ? data.model : "";
   const seed = typeof data.seed === "number" ? data.seed : null;
+  const provenance = typeof data.provenance === "string" ? data.provenance : "";
   const alt = prompt || "Generated image";
-  // Surface the seed on the card so the owner can see it and ask to reuse it.
-  const meta = `${width} × ${height}${seed !== null ? ` · seed ${seed}` : ""}${
-    model ? ` · ${model}` : ""
-  }`;
+  // A provenanced still (a grabbed video frame / a fetched web image) is NOT a render:
+  // label its origin honestly and drop the seed/model line, which would otherwise read
+  // "seed 0 · web_fetch". A real generation/edit surfaces its seed so the owner can reuse it.
+  const originLabel =
+    provenance === "ffmpeg"
+      ? "grabbed from video"
+      : provenance === "web_fetch"
+        ? "fetched from web"
+        : provenance === "compare"
+          ? "side-by-side comparison"
+          : "";
+  const meta = originLabel
+    ? `${width} × ${height} · ${originLabel}`
+    : `${width} × ${height}${seed !== null ? ` · seed ${seed}` : ""}${model ? ` · ${model}` : ""}`;
 
   if (kind === "edit") {
     return (

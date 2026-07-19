@@ -160,6 +160,58 @@ async def test_web_fetch_tool_lists_links_for_navigation() -> None:
     assert "https://x.example/docs" in out
 
 
+# --- fetch_bytes (the image byte path, redirect-safe) ----------------------
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+async def test_fetch_bytes_returns_content_type_and_body() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_PNG, headers={"content-type": "image/png"})
+
+    ct, body = await WebFetcher(transport=httpx.MockTransport(handle)).fetch_bytes(
+        "https://cdn.example/a.png"
+    )
+    assert ct == "image/png" and body == _PNG
+
+
+async def test_fetch_bytes_follows_a_redirect_through_the_per_hop_guard() -> None:
+    # Auto-redirect is OFF; the manual loop re-guards each hop and follows a 30x by hand.
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/redir":
+            return httpx.Response(302, headers={"location": "https://cdn.example/final.png"})
+        return httpx.Response(200, content=_PNG, headers={"content-type": "image/png"})
+
+    ct, body = await WebFetcher(transport=httpx.MockTransport(handle)).fetch_bytes(
+        "https://cdn.example/redir"
+    )
+    assert ct == "image/png" and body == _PNG
+
+
+async def test_fetch_bytes_refuses_a_redirect_to_a_non_public_scheme() -> None:
+    # A 30x whose Location is a file:/ target is refused by the per-hop guard — a crafted
+    # redirect can't turn the fetch into a local-file read (the SSRF discipline, invariant #9).
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "file:///etc/passwd"})
+
+    with pytest.raises(WebFetchError):
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch_bytes(
+            "https://cdn.example/redir"
+        )
+
+
+async def test_fetch_bytes_caps_the_download_size() -> None:
+    big = b"\x89PNG\r\n\x1a\n" + b"\x00" * 10_000
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=big, headers={"content-type": "image/png"})
+
+    _, body = await WebFetcher(transport=httpx.MockTransport(handle)).fetch_bytes(
+        "https://cdn.example/big.png", max_bytes=1000
+    )
+    assert len(body) == 1000  # truncated to the cap, never buffered whole
+
+
 # --- web sources (favicon citation chips) ----------------------------------
 
 

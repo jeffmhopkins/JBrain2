@@ -591,6 +591,66 @@ describe("ToolView registry", () => {
     expect(noSeed.container.querySelector(".tv-genimg-cap")?.textContent).toBe("512 × 512");
   });
 
+  it("labels a provenanced still by its origin, never 'seed 0 · <source>'", () => {
+    // A grabbed frame / fetched web image reuses the generated_image card but is not a
+    // render — its seed/model are 0/'web_fetch' sentinels that must not leak into the meta.
+    const grabbed = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "f1",
+            kind: "generate",
+            width: 640,
+            height: 360,
+            seed: 0,
+            model: "ffmpeg",
+            provenance: "ffmpeg",
+          },
+        })}
+      />,
+    );
+    expect(grabbed.getByText("640 × 360 · grabbed from video")).toBeInTheDocument();
+    expect(grabbed.queryByText(/seed/)).not.toBeInTheDocument();
+    grabbed.unmount();
+    const fetched = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "w1",
+            kind: "generate",
+            width: 800,
+            height: 800,
+            seed: 0,
+            model: "web_fetch",
+            provenance: "web_fetch",
+          },
+        })}
+      />,
+    );
+    expect(fetched.getByText("800 × 800 · fetched from web")).toBeInTheDocument();
+    expect(fetched.queryByText(/web_fetch/)).not.toBeInTheDocument();
+    fetched.unmount();
+    const compare = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "c1",
+            kind: "generate",
+            width: 148,
+            height: 40,
+            seed: 0,
+            model: "compare",
+            provenance: "compare",
+          },
+        })}
+      />,
+    );
+    expect(compare.getByText("148 × 40 · side-by-side comparison")).toBeInTheDocument();
+  });
+
   it("a generate image drops the kind pill and offers a full-screen expand", () => {
     const { container, getByLabelText } = render(
       <ToolView

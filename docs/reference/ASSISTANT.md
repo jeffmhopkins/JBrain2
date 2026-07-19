@@ -403,6 +403,25 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   `captions` preference (`auto`/`off`/`only`) lets jerv force a whisper re-run, and the
   card notes which source produced the transcript.
 
+  **Seeing a specific still — the visual-QA tools** (docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md).
+  The analyze tools give a text *caption* of a whole clip; three tools let jerv work with a
+  single **image** it can re-examine and compare. **`grab_frame`** extracts a still from a
+  video (a URL or an attachment) at a `seek` timestamp and persists it as a first-class chat
+  image, returning an `image_id` (an optional `question` runs the vision read inline, grab-
+  and-look in one hop) — the "screenshot the video at this moment" step, and the fix for a
+  question like *"what module is on screen at 2:44?"* that a whole-clip caption can't answer.
+  **`fetch_image`** fetches an image **URL** through the same SSRF-guarded fetcher (validating
+  the bytes really are an image) and persists it — jerv's only way to *see* a picture on the
+  web, since `web_fetch` returns page text and strips images. **`compare_images`** takes a
+  **list** of image ids (grabbed frames, fetched web images, attachments) and answers a compare
+  prompt with one vision call, always showing the owner a **side-by-side** of exactly what it
+  compared — so a visual verdict is never a claim the owner can't check. The intended chain for
+  *"is the module in this video the same as the one online?"* is `grab_frame` the moment →
+  `fetch_image` the reference photo(s) → `compare_images` their ids; grabbed/fetched stills are
+  owner-only `generated_images` rows (a `provenance` stamp keeps them out of the gallery), and
+  each tool takes `show: false` to suppress its card when it's only an intermediate step — the
+  same suppression `analyze_video`/`analyze_stream` now accept for a mid-reasoning read.
+
   **Web citations.** jerv cites a web claim with an inline `[^n]` footnote marker
   (the same convention the curator uses for notes), numbered in the order the
   sources appeared across its `web_search` / `web_fetch` calls. Each call surfaces a

@@ -1097,13 +1097,28 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "analyze_video.tool": (
             "analyze_video",
-            1,
-            "d160a8e87df2b6ea2577c6ae485d37d9e43641981aa0b49716a6f6dad786e78f",
+            2,
+            "e4765dd86c2e0731b25bbf79931400ae544775f96074c115e2e7044bc8f78ebc",
         ),
         "analyze_stream.tool": (
             "analyze_stream",
-            5,
-            "cf8dda315ac80597dd693eab603c51e577ad43f5f6d9d847e76fb30bd82f742a",
+            6,
+            "ce8c05b92d813ca7372e79f2eb2ec5e66bff866401ee7f8d60889aede61edda7",
+        ),
+        "grab_frame.tool": (
+            "grab_frame",
+            1,
+            "043a76352e9a99143dc3788b3be91110588e8f28e545d6c987bf196984f48a55",
+        ),
+        "fetch_image.tool": (
+            "fetch_image",
+            1,
+            "f788bb6f1d91402d864837b56a4708af563adffa68af060abff3d84d5e4c605e",
+        ),
+        "compare_images.tool": (
+            "compare_images",
+            1,
+            "217dfd26b2e7e5c240f1e6a52e519516ece325c841b4af31f2f50cb06fb10939",
         ),
         "query_server_metrics.tool": (
             "query_server_metrics",

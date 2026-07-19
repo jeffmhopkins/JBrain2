@@ -273,3 +273,15 @@ reference). The honest generalization of feeding waves — bounded, in-request, 
 on-branch (D1 spine, D2 refill round + critique, D3 the `deep_research_report` tool-view + jerv
 steering) with full backend + frontend unit suites; the D3 mock-gate sign-off and on-box budget /
 wall-clock tuning remain before it is marked settled.
+
+**In progress:** Video/image inspection tools (build plan: `docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md`) —
+give jerv eyes on a specific still so a visual question is answered from pixels it actually saw, not a
+guess. `grab_frame` (persist a frame from a video URL/attachment at time T, optional inline `question`
+to grab-and-read in one hop), `fetch_image` (per-hop-SSRF-guarded, validated web-image fetch — jerv
+was previously blind to web images), a 2..N-source widening of `analyze_image` (+ a `compare_images`
+sidecar) that always emits an owner-visible side-by-side, and a `show: false` flag to suppress the
+analyze-video/stream card on intermediate steps. Grabbed/fetched stills are first-class chat images
+(`generated_images` + a nullable `provenance` column). Motivated by a real session where jerv
+fabricated an image comparison it had no way to perform; reconciled with a four-lens review. V0 (the
+`analyze_stream` `single`-mode `seek` fix — it dropped `seek` and always sampled t=0) shipped
+on-branch; V1–V6 open.

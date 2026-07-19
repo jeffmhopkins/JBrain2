@@ -128,6 +128,46 @@ async def test_non_owner_sees_no_rows_and_cannot_insert(maker: async_sessionmake
     assert owner_count == baseline + 1
 
 
+async def test_provenanced_rows_owner_only_hidden_from_gallery_but_resolvable(
+    maker: async_sessionmaker,
+) -> None:
+    """A grabbed/fetched still (migration 0139) is owner-only like any row, is EXCLUDED from
+    the gallery `list()` (it is a transient chat image, not a render the owner made), yet is
+    still resolvable by id so the in-chat tools reach it."""
+    owner = await _owner(maker)
+    repo = GeneratedImageRepo()
+
+    async with scoped_session(maker, owner) as session:
+        row = await repo.insert(
+            session,
+            blob_sha256="a1" * 32,
+            kind="generate",
+            model="web_fetch",
+            prompt="https://intellijel.com/metropolis.jpg",
+            source_sha256=None,
+            width=800,
+            height=800,
+            steps=0,
+            seed=0,
+            provenance="web_fetch",
+        )
+        image_id = str(row.id)
+
+    async with scoped_session(maker, owner) as session:
+        # Resolvable by id (what analyze_image/compare_images use)…
+        fetched = await repo.get(session, image_id)
+        assert fetched is not None and fetched.provenance == "web_fetch"
+        # …but never in the gallery listing.
+        gallery = await repo.list(session, limit=1000)
+    assert all(r.provenance is None for r in gallery)
+    assert image_id not in {str(r.id) for r in gallery}
+
+    # Owner-only: a non-owner sees nothing, provenance notwithstanding.
+    async with scoped_session(maker, NON_OWNER) as session:
+        count = (await session.execute(text("SELECT count(*) FROM app.generated_images"))).scalar()
+    assert count == 0
+
+
 async def test_rows_are_immutable_no_update_grant(maker: async_sessionmaker) -> None:
     """Rows are generation provenance: the app role has SELECT/INSERT/DELETE but NO UPDATE
     grant (migration 0077), so even the owner cannot mutate a recorded image."""

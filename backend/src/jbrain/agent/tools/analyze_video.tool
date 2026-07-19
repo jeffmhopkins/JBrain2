@@ -1,6 +1,6 @@
 ---
 name: analyze_video
-version: 1
+version: 2
 permission: web
 cost_class: expensive
 params:
@@ -9,6 +9,9 @@ params:
     source_attachment_id:
       type: string
       description: The id of a video file the owner attached this chat (the id named in the "[attached video …]" line).
+    show:
+      type: boolean
+      description: Whether to show the owner the video-analysis card (player + frame timeline + transcript). Default true. Set false when the analysis is just an intermediate step toward your answer and the card would be noise.
   required: [source_attachment_id]
 ---
 Understand a video the owner attached this chat — what it shows and what is said —
