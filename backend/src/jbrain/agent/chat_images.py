@@ -14,6 +14,8 @@ card labels the origin, not "seed 0 · web_fetch").
 from __future__ import annotations
 
 import io
+import uuid
+from typing import TYPE_CHECKING
 
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -23,10 +25,15 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.images import GeneratedImage, GeneratedImageRepo
 from jbrain.storage import BlobStore
 
+if TYPE_CHECKING:
+    from jbrain.agent.attachments import TurnAttachmentRepo
+
 # The provenance stamps (migration 0139): a frame grabbed from a video, an image
-# fetched from a URL. NULL provenance stays a real generation/edit.
+# fetched from a URL, a side-by-side built for a compare. NULL provenance stays a real
+# generation/edit.
 PROVENANCE_FRAME = "ffmpeg"
 PROVENANCE_FETCHED = "web_fetch"
+PROVENANCE_COMPARE = "compare"
 
 # Bound the DECODED image so a decompression bomb can't OOM the worker — the encoded
 # byte cap (e.g. fetch_image's 2 MB) does not bound this: a flat ~2 MB PNG decodes to
@@ -130,3 +137,80 @@ def chat_image_view(row: GeneratedImage) -> ViewPayload:
             "provenance": row.provenance,
         },
     )
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+async def resolve_source(
+    image_id: str,
+    attachment_id: str,
+    *,
+    session_ctx: SessionContext,
+    agent_session_id: str | None,
+    blobs: BlobStore,
+    repo: GeneratedImageRepo,
+    attachments: TurnAttachmentRepo,
+    maker: async_sessionmaker[AsyncSession],
+) -> tuple[bytes, str] | str:
+    """Resolve a single chat-image source — exactly one of the two ids non-empty — to
+    (bytes, sha) or a clean error string. A generated/grabbed/fetched image id is read
+    from the owner-only `generated_images` under an owner-scoped session; a chat
+    attachment id is read under the session's attachment context (RLS hides a foreign id
+    as a clean miss). A non-uuid id (a model guessing "latest") is a clean miss, never a
+    raw DB error. Hoisted here so the image-gen tools (edit_image/analyze_image) and the
+    vision-compare tool share one resolution path (invariant #3)."""
+    if image_id:
+        if not _is_uuid(image_id):
+            return "No generated image with that id is in this chat."
+        async with scoped_session(maker, session_ctx) as session:
+            row = await repo.get(session, image_id)
+        if row is None:
+            return "No generated image with that id is in this chat."
+        try:
+            return await blobs.get(row.blob_sha256), row.blob_sha256
+        except FileNotFoundError:
+            return "That source image is no longer available."
+    if agent_session_id is None or not _is_uuid(attachment_id):
+        return "No attached image with that id is in this chat."
+    att_ctx = await attachments.session_read_context(session_ctx, agent_session_id)
+    if att_ctx is None:
+        return "No attached image with that id is in this chat."
+    info = await attachments.get(att_ctx, attachment_id)
+    if info is None:
+        return "No attached image with that id is in this chat."
+    try:
+        return await blobs.get(info.sha256), info.sha256
+    except FileNotFoundError:
+        return "That source image is no longer available."
+
+
+def stitch_side_by_side(images: list[bytes], *, gap: int = 8) -> bytes:
+    """Compose images left-to-right into one PNG (normalized to the shortest height, a
+    thin gap between), so a compare renders a SINGLE artifact the owner can see and
+    verify — the transparency guarantee behind an owner-facing compare. Best-effort:
+    undecodable entries are skipped; raises UndecodableImage only if none decode."""
+    frames: list[Image.Image] = []
+    for data in images:
+        try:
+            frames.append(Image.open(io.BytesIO(data)).convert("RGB"))
+        except Exception:  # noqa: BLE001 - skip an undecodable input, don't sink the stitch
+            continue
+    if not frames:
+        raise UndecodableImage("none of the images could be read for a side-by-side")
+    height = min(f.height for f in frames)
+    scaled = [f.resize((max(1, round(f.width * height / f.height)), height)) for f in frames]
+    total = sum(f.width for f in scaled) + gap * (len(scaled) - 1)
+    canvas = Image.new("RGB", (total, height), (20, 20, 20))
+    x = 0
+    for f in scaled:
+        canvas.paste(f, (x, 0))
+        x += f.width + gap
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    return buf.getvalue()

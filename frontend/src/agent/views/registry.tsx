@@ -692,7 +692,9 @@ function GeneratedImage({ data }: ViewProps): ReactNode {
       ? "grabbed from video"
       : provenance === "web_fetch"
         ? "fetched from web"
-        : "";
+        : provenance === "compare"
+          ? "side-by-side comparison"
+          : "";
   const meta = originLabel
     ? `${width} × ${height} · ${originLabel}`
     : `${width} × ${height}${seed !== null ? ` · seed ${seed}` : ""}${model ? ` · ${model}` : ""}`;

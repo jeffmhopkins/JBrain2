@@ -1115,6 +1115,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "f788bb6f1d91402d864837b56a4708af563adffa68af060abff3d84d5e4c605e",
         ),
+        "compare_images.tool": (
+            "compare_images",
+            1,
+            "217dfd26b2e7e5c240f1e6a52e519516ece325c841b4af31f2f50cb06fb10939",
+        ),
         "query_server_metrics.tool": (
             "query_server_metrics",
             1,

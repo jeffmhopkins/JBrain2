@@ -28,6 +28,7 @@ from jbrain.agent.streamtools import build_stream_handlers
 from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
+from jbrain.agent.visiontools import build_compare_handlers
 from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
@@ -579,6 +580,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             maker,
             emit=brain_emit,
         )
+        # jerv's multi-image compare (VIDEO_IMAGE_TOOLS_PLAN.md): compare N chat images with
+        # the vision model and show the owner a side-by-side. Router-gated (a vision read
+        # needs no ComfyUI); always wired here since the router always exists.
+        compare_handlers = build_compare_handlers(
+            app.state.llm_router,
+            app.state.blob_store,
+            app.state.generated_image_repo,
+            app.state.turn_attachments,
+            maker,
+        )
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -604,6 +615,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             stream_handlers=stream_handlers,
             grab_handlers=grab_handlers,
             fetch_image_handlers=fetch_image_handlers,
+            compare_handlers=compare_handlers,
             gmail_handlers=gmail_handlers,
             external_handlers=build_external_handlers(
                 maker,

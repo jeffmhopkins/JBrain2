@@ -12,6 +12,7 @@ from jbrain.agent.chat_images import (
     UndecodableImage,
     image_dimensions,
     sniff_image_media_type,
+    stitch_side_by_side,
 )
 
 
@@ -48,3 +49,25 @@ def test_image_dimensions_rejects_a_decompression_bomb(monkeypatch: pytest.Monke
     monkeypatch.setattr(chat_images, "MAX_IMAGE_PIXELS", 100)
     with pytest.raises(ImageTooLarge):
         image_dimensions(_jpeg(64, 48))  # 3072 px > 100
+
+
+def _png(w: int, h: int) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (30, 30, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_stitch_side_by_side_composes_widths_at_shared_height() -> None:
+    # Two images at the same height stitch to (w1 + w2 + gap) × h — one PNG the owner sees.
+    out = stitch_side_by_side([_png(40, 30), _png(60, 30)], gap=8)
+    with Image.open(io.BytesIO(out)) as img:
+        assert img.format == "PNG" and img.height == 30 and img.width == 40 + 60 + 8
+
+
+def test_stitch_normalizes_mismatched_heights_and_skips_junk() -> None:
+    # Different heights normalize to the shortest; an undecodable entry is skipped, not fatal.
+    out = stitch_side_by_side([_png(40, 60), b"not an image", _png(40, 30)])
+    with Image.open(io.BytesIO(out)) as img:
+        assert img.height == 30  # normalized to the shortest real image
+    with pytest.raises(UndecodableImage):
+        stitch_side_by_side([b"junk", b"also junk"])  # none decode → clean error

@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.chat_images import resolve_source
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
-from jbrain.db.session import scoped_session
 from jbrain.image_gen.comfyui import (
     MAX_EDIT_IMAGES,
     ImageGen,
@@ -246,38 +246,20 @@ def build_image_handlers(
         image_id: str, attachment_id: str, ctx: ToolContext
     ) -> tuple[bytes, str] | str:
         """Resolve a single source — exactly one of the two ids non-empty — to (bytes, sha)
-        or a clean error string. Shared by the primary source and each reference image."""
-        if image_id:
-            # Both ids are uuid PKs; a non-uuid (e.g. the model guessing "latest") would
-            # make the lookup raise a raw DB DataError that leaks to the model — treat it
-            # as a clean miss instead, the same as an unknown id.
-            if not _is_uuid(image_id):
-                return "No generated image with that id is in this chat."
-            # generated_images is owner-only, so jerv's empty-scope owner context reads it.
-            async with scoped_session(maker, ctx.session) as session:
-                row = await repo.get(session, image_id)
-            if row is None:
-                return "No generated image with that id is in this chat."
-            try:
-                return await blob_store.get(row.blob_sha256), row.blob_sha256
-            except FileNotFoundError:
-                return "That source image is no longer available."
-        # A chat attachment is DOMAIN-scoped (stamped 'general' for a jerv session), so it
-        # is read under the attachment context (the session's scopes + that stamped domain),
-        # not jerv's empty read scopes — the same widening the chat turn uses to load
-        # attachments. RLS still hides a foreign-domain id, which reads as a clean miss.
-        if ctx.agent_session_id is None or not _is_uuid(attachment_id):
-            return "No attached image with that id is in this chat."
-        att_ctx = await attachments.session_read_context(ctx.session, ctx.agent_session_id)
-        if att_ctx is None:
-            return "No attached image with that id is in this chat."
-        info = await attachments.get(att_ctx, attachment_id)
-        if info is None:
-            return "No attached image with that id is in this chat."
-        try:
-            return await blob_store.get(info.sha256), info.sha256
-        except FileNotFoundError:
-            return "That source image is no longer available."
+        or a clean error string. Delegates to the hoisted `chat_images.resolve_source` so
+        the image-gen tools and the vision-compare tool share one RLS-scoped resolution
+        path (a generated image under the owner-only session, a chat attachment under its
+        RLS attachment context; a non-uuid/foreign id is a clean miss, never a raw error)."""
+        return await resolve_source(
+            image_id,
+            attachment_id,
+            session_ctx=ctx.session,
+            agent_session_id=ctx.agent_session_id,
+            blobs=blob_store,
+            repo=repo,
+            attachments=attachments,
+            maker=maker,
+        )
 
     async def edit_image_tool(arguments: dict, ctx: ToolContext) -> str:
         prompt = str(arguments.get("prompt", "")).strip()

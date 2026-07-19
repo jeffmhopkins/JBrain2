@@ -631,6 +631,24 @@ describe("ToolView registry", () => {
     );
     expect(fetched.getByText("800 × 800 · fetched from web")).toBeInTheDocument();
     expect(fetched.queryByText(/web_fetch/)).not.toBeInTheDocument();
+    fetched.unmount();
+    const compare = render(
+      <ToolView
+        payload={payload({
+          view: "generated_image",
+          data: {
+            image_id: "c1",
+            kind: "generate",
+            width: 148,
+            height: 40,
+            seed: 0,
+            model: "compare",
+            provenance: "compare",
+          },
+        })}
+      />,
+    );
+    expect(compare.getByText("148 × 40 · side-by-side comparison")).toBeInTheDocument();
   });
 
   it("a generate image drops the kind pill and offers a full-screen expand", () => {
