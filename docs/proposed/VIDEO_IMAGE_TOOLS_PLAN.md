@@ -16,9 +16,9 @@
 > diagnosis (§1), replaced the `kind`-overload storage cut with a `provenance`
 > column (§3), reshaped `compare_images` from an a/b object into a list contract
 > (§4), corrected the image-validation / decompression-bomb / redirect-guard
-> primitives (§5), and re-waved `fetch_bytes` + the two-image spike (§6). Open
-> decision 1 (compare contract shape) needs the owner's confirmation before
-> scheduling.
+> primitives (§5), and re-waved `fetch_bytes` + the two-image spike (§6). The
+> compare contract shape (open decision 1) was **confirmed list-based** by the
+> owner on 2026-07-19.
 
 Give jerv the ability to **look at a specific still** — from a video or the web —
 and to **compare images**, so a visual question is answered from pixels it
@@ -256,9 +256,8 @@ more" with `reference_image_ids: []` / `reference_attachment_ids: []` lists, a
   compare-framed prompt — which also answers "N-way compare" for free.
 - **Keep a `compare_images` sidecar** for discoverability (the owner asked for the
   verb), implemented as a thin wrapper over the **same** list-based handler — never
-  the a/b object. *This is the point open decision 1 asks the owner to confirm: the
-  earlier "dedicated tool" choice is preserved as a name, but the contract is a
-  list, not paired fields.*
+  the a/b object. *(Owner-confirmed list-based, 2026-07-19: the "dedicated tool"
+  choice is preserved as a name, but the contract is a list, not paired fields.)*
 - **Always emit a side-by-side artifact (corrected in v2).** The original "compare
   has no view, the owner already saw each image" reasoning breaks against §2's own
   flow, where the grabs run `show:false` — the owner would see *nothing* and get a
@@ -394,11 +393,11 @@ registered-view **copy** change (recorded in §7).
 
 ## 8. Open decisions
 
-1. **`compare_images` contract shape — needs owner confirmation.** The review shows
-   the a/b-sides object is a gpt-oss grammar-segfault shape; the recommended cut keeps
-   the `compare_images` **name** (the owner's earlier choice) but implements it as a
-   thin sidecar over a **list-based** `analyze_image` widening. Confirm that reshape,
-   or accept a distinct handler with a list param.
+1. **`compare_images` contract shape — RESOLVED (2026-07-19, owner-confirmed
+   list-based).** The a/b-sides object is a gpt-oss grammar-segfault shape; the
+   `compare_images` **name** is kept (a thin sidecar) over a **list-based**
+   `analyze_image` widening. Not an open question anymore — recorded here for
+   provenance.
 2. **Two-image VLM call vs. side-by-side stitch** (§T3) — settled by the V1 spike; if
    native multi-image fails on-box the stitch becomes the design (it is emitted
    either way for owner transparency).
