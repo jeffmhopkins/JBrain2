@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.externaltools import build_external_handlers
-from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.readtools import (
@@ -26,6 +25,7 @@ from jbrain.agent.readtools import (
     neighborhood_entities,
     neighborhood_sources,
 )
+from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
