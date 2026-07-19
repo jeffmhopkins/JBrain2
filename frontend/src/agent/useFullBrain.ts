@@ -586,11 +586,15 @@ export function useFullBrain(
     // back, and its own (pre-turn) transcript reload doesn't clobber the live render.
     turnSessionRef.current = turnSessionId;
     setActiveTurnSessionId(turnSessionId);
-    setSessionMessages(turnSessionId, (ms) => [
-      ...ms,
-      userMessage(text, attachments),
-      streamingAssistant(),
-    ]);
+    // A deferred-outcome turn is driven by a server-authored system notice, not owner
+    // input — so it appends NO user bubble (the answer stands on its own after the analysis
+    // card). Rendering the notice as an owner bubble is the "guest blurb"; the server
+    // likewise persists this turn answer-only. Every other send shows the owner's message.
+    setSessionMessages(turnSessionId, (ms) =>
+      opts?.deferredOutcome
+        ? [...ms, streamingAssistant()]
+        : [...ms, userMessage(text, attachments), streamingAssistant()],
+    );
     // Reuse the note-capture warm fix (only when capture is on and fresh) so the
     // location tool can answer from the phone's current spot.
     const coords = freshCoords();

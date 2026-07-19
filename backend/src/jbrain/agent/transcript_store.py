@@ -79,6 +79,32 @@ class AgentTranscript:
             await session.flush()
             return str(user_turn.id)
 
+    async def record_answer(
+        self,
+        ctx: SessionContext,
+        *,
+        session_id: str,
+        run_id: str | None,
+        assistant_text: str,
+        tools: Sequence[dict[str, Any]],
+        reasoning: str = "",
+    ) -> None:
+        """Append ONLY an assistant turn — no user turn — for a completion the owner didn't
+        type. The deferred-analysis auto-resume is driven by a server-authored system notice,
+        not owner input, so persisting it as a user turn would replay a pseudo-owner bubble on
+        reopen; the answer stands on its own after the analysis card."""
+        async with scoped_session(self._maker, ctx) as session:
+            session.add(
+                AgentTurn(
+                    session_id=uuid.UUID(session_id),
+                    run_id=uuid.UUID(run_id) if run_id is not None else None,
+                    role="assistant",
+                    content=assistant_text,
+                    tools=list(tools),
+                    reasoning=reasoning,
+                )
+            )
+
     async def load(self, ctx: SessionContext, session_id: str) -> list[TurnRecord]:
         async with scoped_session(self._maker, ctx) as session:
             rows = (
