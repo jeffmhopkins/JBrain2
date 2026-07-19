@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import pytest
 
 from jbrain.agent.briefs import FEED_OPEN
+from jbrain.agent.contracts import WebSource
 from jbrain.agent.deep_research import (
     DR_MAX_GAP_QUESTIONS,
     DR_SIMPLE_BREADTH,
@@ -127,6 +128,13 @@ class _FakeSpawn:
                 summary=f"{persona} finding for {label}" if ok else "",
                 ok=ok,
                 session_id=f"sess-{i}",
+                # A research child reaches a real page; the URL rides up so the run can
+                # build its global citation registry (favicon targets).
+                web_sources=(
+                    (WebSource(url=f"https://ex.com/{label}", title=f"Src {label}"),)
+                    if ok and persona == "research"
+                    else ()
+                ),
             )
             for i, (label, _brief) in enumerate(briefs)
         ]
@@ -273,6 +281,24 @@ async def test_findings_are_fed_as_bounded_data() -> None:
     router, spawn = _FakeRouter(), _FakeSpawn()
     await _svc(router, spawn).research(_ctx(), {"question": "q"})
     assert any(FEED_OPEN in uw for uw in router.synth_calls)
+
+
+async def test_citations_are_tracked_from_sub_agents_to_the_report() -> None:
+    """The children's real URLs are collected into a global source registry: the
+    synthesizer is given the numbered SOURCES list to cite against, and the report view
+    carries the same web_sources so `[^n]` renders as tappable favicons — the citations
+    are not lost between the sub-agents and the final report."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+    # The synthesizer is handed the canonical numbered source list with the real URLs.
+    assert any("SOURCES — cite with these exact numbers" in uw for uw in router.synth_calls)
+    assert any("https://ex.com/" in uw for uw in router.synth_calls)
+    # The report view carries the favicon citation registry (url + title), deduped.
+    ws = out.view.data["web_sources"]  # type: ignore[attr-defined]
+    assert ws and all(s["url"].startswith("https://ex.com/") and s["title"] for s in ws)
+    urls = [s["url"] for s in ws]
+    assert len(urls) == len(set(urls))  # deduped
 
 
 # --- complexity sizes breadth only; it never skips a stage ------------------

@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v1
+version: dr-synth-v2
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline.
 strength: high
 ---
@@ -18,12 +18,16 @@ Write the report as Markdown:
 - Follow the planned `outline` — one section per heading, in order, leading with the
   section that most directly answers the question. Add or merge a section only if the
   findings clearly call for it.
-- **Ground every non-obvious claim in the findings with an inline footnote marker —
-  `[^1]`, `[^2]`, … — placed right after the claim it supports.** Number the markers in
-  the order the sources first appear across the findings, and end the report with a
-  `## Sources` list mapping each number to its source. Never cite a source that is not
-  in the findings, and never invent a URL or a citation — if a claim has no supporting
-  finding, either drop it or state plainly that it could not be confirmed.
+- **Cite every non-obvious claim against the numbered `SOURCES` list, using its exact
+  numbers.** A `SOURCES` block is provided below the findings — a numbered list of the
+  real pages the research reached (`[^1] Title — url`, …). Place the matching `[^n]` right
+  after each claim it supports, choosing the source whose title best backs that claim.
+  **Use ONLY these numbers** — the findings contain the sub-agents' own local `[^1]`, `[^2]`
+  markers, but those are their private numbering; do NOT copy them, renumber to the
+  `SOURCES` list instead. End the report with a `## Sources` list echoing each number you
+  used with its title. Never invent a source or a number that is not in the `SOURCES`
+  list; if a claim has no backing source, drop it or say plainly it could not be confirmed.
+  (If no `SOURCES` list is given, cite nothing and note the report is uncited.)
 - **Corroborate proportional to source authority.** A claim from an authoritative
   source (official docs, a primary record, a spec) can stand on one citation; a claim
   resting only on an informal source (a forum, a blog, one outlet) needs a second

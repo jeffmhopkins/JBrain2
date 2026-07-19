@@ -50,6 +50,7 @@ from jbrain.agent.contracts import (
     SubagentUsageEvent,
     ToolViewEvent,
     ViewPayload,
+    WebSource,
 )
 from jbrain.agent.loop import AgentLoop, Guardrails, ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog, StepTally
@@ -122,6 +123,12 @@ class _ChildResult:
     # by wave and draw the "← fed by …" edge (F3). Empty/0 for a flat fan.
     wave: int = 0
     fed_from: tuple[str, ...] = ()
+    # The web pages this child's internet tools actually reached (the real URLs, captured
+    # from the tool calls — never parsed from prose). Carried up so a caller like
+    # deep_research can build a GLOBAL citation registry: the child's `[^n]` markers are
+    # local and die at this boundary otherwise, so without this the URLs behind a fan's
+    # findings are lost and the final report can't render tappable favicon citations.
+    web_sources: tuple[WebSource, ...] = ()
 
 
 def effective_child_tools(
@@ -1073,7 +1080,15 @@ class SpawnService:
             )
             await self._persist_child(owner_ctx, child.id, child_run, brief_text, summary)
             return _ChildResult(
-                label, persona, summary, ok=ok, session_id=child.id, truncated=truncated
+                label,
+                persona,
+                summary,
+                ok=ok,
+                session_id=child.id,
+                truncated=truncated,
+                # The real URLs the child reached — the favicon citation targets, carried
+                # up so the parent can keep them tied to the findings (see field doc).
+                web_sources=tuple(result.web_sources),
             )
 
     async def _persist_child(

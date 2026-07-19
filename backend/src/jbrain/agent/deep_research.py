@@ -46,7 +46,7 @@ from pathlib import Path
 import structlog
 
 from jbrain.agent.briefs import compose_feed_block, prepend_feed
-from jbrain.agent.contracts import ToolProgressEvent, ViewPayload
+from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.spawn import SpawnService, _ChildResult
 from jbrain.agent.tree import MAX_DEPTH
@@ -127,6 +127,31 @@ def _breadth_for(complexity: str, breadth: int) -> int:
     A `simple` question researches a narrow slice; everything else uses the full breadth.
     Never skips a stage — just sizes the first fan."""
     return min(DR_SIMPLE_BREADTH, breadth) if complexity == "simple" else breadth
+
+
+def _collect_sources(children: list[_ChildResult]) -> list[WebSource]:
+    """The deduped, first-seen-ordered web pages the run reached — the GLOBAL citation
+    registry. The report cites `[^n]` positionally against THIS list (see `_synthesize`),
+    so every marker in the final report resolves to a real URL / tappable favicon, instead
+    of the children's local `[^n]` markers that die at the fan boundary. Without this the
+    URLs behind the findings are lost between the sub-agents and the report."""
+    seen: set[str] = set()
+    out: list[WebSource] = []
+    for child in children:
+        for ws in child.web_sources:
+            if ws.url and ws.url not in seen:
+                seen.add(ws.url)
+                out.append(ws)
+    return out
+
+
+def _sources_block(sources: list[WebSource]) -> str:
+    """The numbered source list handed to the synthesizer: `[^1] Title — url`, one per
+    line, so it cites against a canonical global numbering the report view can map back
+    to favicons. Empty when the run reached no web source."""
+    if not sources:
+        return ""
+    return "\n".join(f"[^{i}] {ws.title or ws.url} — {ws.url}" for i, ws in enumerate(sources, 1))
 
 
 def _findings_block(results: list[_ChildResult]) -> str:
@@ -215,9 +240,17 @@ class DeepResearchService:
 
         results = gather + refill
 
+        # The global citation registry: every real URL the findings + the analyst reached,
+        # deduped and numbered once. The report cites `[^n]` against THIS list (stable
+        # across the draft and the revise), so each marker maps to a tappable favicon and
+        # the sources are never lost between the sub-agents and the report.
+        sources = _collect_sources([*gather, *([analyst] if analyst else []), *refill])
+
         # --- (6) SYNTHESIZE the report --------------------------------------------
         self._phase(ctx, 6, "Writing the report")
-        report = await self._synthesize(ctx, question, sections, results, analysis, critique="")
+        report = await self._synthesize(
+            ctx, question, sections, results, analysis, sources, critique=""
+        )
 
         # --- (7) CRITIQUE — a review sub-agent fed the draft; (8) one REVISE pass ---
         self._phase(ctx, 7, "Reviewing the draft")
@@ -227,7 +260,7 @@ class DeepResearchService:
         if critique.strip():
             self._phase(ctx, 8, "Revising from the critique")
             report = await self._synthesize(
-                ctx, question, sections, results, analysis, critique=critique
+                ctx, question, sections, results, analysis, sources, critique=critique
             )
             revised = True
 
@@ -256,6 +289,7 @@ class DeepResearchService:
                 complexity,
                 rounds,
                 roster,
+                sources,
                 analyzed,
                 coverage_limited,
                 revised,
@@ -364,6 +398,7 @@ class DeepResearchService:
         sections: list[str],
         results: list[_ChildResult],
         analysis: str,
+        sources: list[WebSource],
         *,
         critique: str,
     ) -> str:
@@ -372,6 +407,12 @@ class DeepResearchService:
             f"Outline (section headings, in order):\n{_outline_text(sections)}\n\n"
             f"Findings:\n{_findings_block(results)}"
         )
+        if sources:
+            # The canonical, pre-numbered source registry (real URLs). The synthesizer
+            # cites `[^n]` against THIS list so every marker in the report maps to a real
+            # page — the findings' own inline markers are child-local and must not be
+            # reused for numbering.
+            user_text += "\n\nSOURCES — cite with these exact numbers:\n" + _sources_block(sources)
         if analysis.strip():
             user_text += "\n\nAnalyst's cross-check (weigh conflicts + weak sourcing it flags):\n"
             user_text += compose_feed_block([("cross-check", "review", analysis)])
@@ -464,16 +505,19 @@ def _report_view(
     complexity: str,
     rounds: int,
     roster: list[_ChildResult],
+    sources: list[WebSource],
     analyzed: bool,
     coverage_limited: bool,
     revised: bool,
 ) -> ViewPayload:
     """The registered `deep_research_report` tool-view (DESIGN.md): the report Markdown
     plus a provenance strip (complexity, source count, rounds, cross-checked / revised /
-    coverage flags) and the full sub-agent roster — the research findings AND the analyst
-    + critique review children — each deep-linking to its own session on reopen. Data
-    only — the model authors none of it; the report Markdown came from the synthesizer
-    over the escaped-envelope findings, and every count is DB-run state."""
+    coverage flags), the full sub-agent roster — the research findings AND the analyst +
+    critique review children, each deep-linking to its own session on reopen — and the
+    global `web_sources` registry so the report's `[^n]` markers render as tappable
+    favicon citations (positional: `[^n]` → `web_sources[n-1]`, the same standard jerv's
+    web answers use). Data only — the report Markdown came from the synthesizer over the
+    escaped-envelope findings; the URLs came from the children's tool calls, never prose."""
     return ViewPayload(
         view="deep_research_report",
         data={
@@ -488,6 +532,9 @@ def _report_view(
             "revised": revised,
             "coverage_limited": coverage_limited,
             "truncated": any(r.truncated for r in roster),
+            # The favicon citation targets, in the SAME order the synthesizer numbered
+            # them ([^n] → web_sources[n-1]) — real URLs captured from tool calls.
+            "web_sources": [{"url": ws.url, "title": ws.title} for ws in sources],
             "children": [
                 {
                     "label": r.label,
