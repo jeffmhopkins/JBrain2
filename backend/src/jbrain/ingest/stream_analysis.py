@@ -146,9 +146,7 @@ async def sample_for_mode(
         # fade on many videos) regardless of T. `window` (below) already threads it,
         # which is why a seeked window worked while a seeked single grab did not.
         seek = positive_float(arguments.get("seek"))
-        return await window_sampler(
-            resolved, frames=1, window_s=0.0, seek_s=seek, want_audio=False
-        )
+        return await window_sampler(resolved, frames=1, window_s=0.0, seek_s=seek, want_audio=False)
     frames = clamp_frames(arguments.get("frames"), DEFAULT_WINDOW_FRAMES)
     window = clamp_window(arguments.get("window_s"))
     seek = positive_float(arguments.get("seek"))

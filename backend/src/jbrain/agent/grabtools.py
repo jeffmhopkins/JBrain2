@@ -156,9 +156,7 @@ def build_grab_frame_handlers(
         return sample.frames[0].jpeg
 
     async def _vision_read(frame: bytes, question: str) -> str:
-        image = LlmImage(
-            media_type=_sniff_media_type(frame), data=base64.b64encode(frame).decode()
-        )
+        image = LlmImage(media_type=_sniff_media_type(frame), data=base64.b64encode(frame).decode())
         try:
             result = await router.complete(
                 "agent.vision", system=_VISION_SYSTEM, user_text=question, images=[image]
