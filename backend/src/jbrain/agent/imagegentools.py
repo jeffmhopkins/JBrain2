@@ -156,6 +156,9 @@ def generated_image_view(row: GeneratedImage) -> ViewPayload:
             # The resolved seed — surfaced so the owner can see it on the card (and
             # reuse it) and so the PWA can carry it into the next turn's context.
             "seed": row.seed,
+            # NULL for a real generation/edit; set for a grabbed/fetched still so the
+            # card labels its origin honestly instead of "seed 0 · web_fetch" (V1).
+            "provenance": row.provenance,
         },
     )
 

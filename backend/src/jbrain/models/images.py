@@ -31,6 +31,11 @@ class GeneratedImage(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     blob_sha256: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(Text)  # 'generate' | 'edit'
+    # Where the pixels came from: NULL = a real generation/edit; 'ffmpeg' = a video frame
+    # grabbed at a timestamp; 'web_fetch' = an image fetched from a URL (migration 0139).
+    # Descriptive, not behaviour-bearing (that is `kind`) — the gallery hides non-NULL rows,
+    # while resolution by id ignores it so the in-chat tools reach any chat image.
+    provenance: Mapped[str | None] = mapped_column(Text, nullable=True)
     model: Mapped[str] = mapped_column(Text)
     prompt: Mapped[str] = mapped_column(Text)
     source_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -57,6 +62,7 @@ class GeneratedImageRepo:
         height: int,
         steps: int,
         seed: int,
+        provenance: str | None = None,
     ) -> GeneratedImage:
         row = GeneratedImage(
             blob_sha256=blob_sha256,
@@ -68,6 +74,7 @@ class GeneratedImageRepo:
             height=height,
             steps=steps,
             seed=seed,
+            provenance=provenance,
         )
         session.add(row)
         await session.flush()
@@ -84,11 +91,16 @@ class GeneratedImageRepo:
         ).scalar_one_or_none()
 
     async def list(self, session: AsyncSession, *, limit: int) -> list[GeneratedImage]:
-        """The owner's rows newest-first (the gallery). RLS-scoped: an owner session sees its
-        own artifacts, a non-owner session sees none (the owner-only firewall does the hiding,
-        not this query)."""
+        """The owner's GENERATED rows newest-first (the gallery). RLS-scoped: an owner session
+        sees its own artifacts, a non-owner session sees none (the owner-only firewall does the
+        hiding, not this query). Provenanced rows (a video frame, a fetched web image) are
+        excluded — they are transient chat images the owner didn't render, not gallery pieces;
+        `get(id)` still resolves them so the in-chat tools reach any chat image by id."""
         rows = await session.execute(
-            select(GeneratedImage).order_by(GeneratedImage.created_at.desc()).limit(limit)
+            select(GeneratedImage)
+            .where(GeneratedImage.provenance.is_(None))
+            .order_by(GeneratedImage.created_at.desc())
+            .limit(limit)
         )
         return list(rows.scalars().all())
 
