@@ -1355,6 +1355,7 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
   const reportMd = typeof data.report_md === "string" ? data.report_md : "";
   const subAgents = typeof data.sub_agents === "number" ? data.sub_agents : 0;
   const rounds = typeof data.rounds === "number" ? data.rounds : 1;
+  const analyzed = data.analyzed === true;
   const revised = data.revised === true;
   const coverageLimited = data.coverage_limited === true;
   const truncated = data.truncated === true;
@@ -1365,6 +1366,7 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
     complexity,
     `${subAgents} source${subAgents === 1 ? "" : "s"}`,
     `${rounds} round${rounds === 1 ? "" : "s"}`,
+    analyzed ? "cross-checked" : "",
     revised ? "revised" : "",
   ].filter(Boolean);
 

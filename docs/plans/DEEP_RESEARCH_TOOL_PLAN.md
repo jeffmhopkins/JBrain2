@@ -1,20 +1,35 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-18 · **Waves:** D1✅ D2✅ D3◻️ (code landed; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration on a follow-up branch; mock-gate sign-off pending)
 
-**Implementation status.** All three waves are **implemented on
-`claude/deep-research-tool-design-eaaxau`**: D1 (spine) + D2 (orchestration) —
-`agent/deep_research.py` (the state machine), the `deep_research` `.tool` sidecar
-(jerv-only + `NEVER_DEFAULT`), the plan/reflect/synthesize prompts, the source-quality
-clause on `research.prompt` (v7→v8), the `SpawnService.run_research_fan` fan runner, the
-`MAX_RESEARCH_ROUNDS` bound, and the jerv-registry wiring; and D3 — the
-`deep_research_report` tool-view emitted by the backend and rendered by the registered
-frontend component (`registry.tsx`, `.tv-dr-*` styles), plus the `jerv.prompt` v24→v25
-steering. Full unit suites green: `tests/unit/test_deep_research.py` (adapter fake) and
-`registry.test.tsx` (the view). **Still open before "settled":** the D3 **mock-gate
-sign-off** on the non-happy states + a reference mock (DESIGN.md marks it pending), the
-**on-box budget/wall-clock tuning** (Open decisions 2–3), and the formal per-wave
-PROCESS.md adversarial reviews before merge.
+**v2 revision (owner feedback — the tool "didn't orchestrate enough").** After the v1
+merge, a real run of "look into 2 things" classified as `comparative` and the v1 skip
+matrix stripped the coverage-check, gap-fill, and critique — so it spawned two agents and
+answered, with no visible checking or iteration. **v2 reverses the skip matrix** (settled
+decision 6 below is superseded): **complexity now only sizes the gather breadth; every
+stage runs when the tool is invoked** (the invocation IS the signal to go deep). It also
+adds two things the owner asked for:
+- **A cross-agent analyst stage** — after gather, a `review` sub-agent is *fed the
+  researchers' summaries* (the feeding-waves envelope) and cross-checks them (agreements /
+  contradictions / single-source claims / gaps) before reflect + synthesize. A genuine
+  research→analyst hand-off, not parallel-then-merge. The pipeline is now
+  **plan → gather → analyze → reflect → (refill) → synthesize → critique → revise**.
+- **Visible phase progress** — each stage emits a `ToolProgressEvent` phase line
+  (Planning → Researching → Cross-checking → Checking coverage → Filling gaps → Writing →
+  Reviewing → Revising), reusing analyze_video's multi-phase surface (no new event type,
+  no frontend-event change); the analyst + critique sub-agents also surface as live rows.
+The view gains an `analyzed` ("cross-checked") provenance chip. Everything else (the
+tree-budget reuse, the `MAX_RESEARCH_ROUNDS=2` gap bound, the sandbox/clamps) is unchanged.
+
+**Implementation status.** v1 (all three waves) is **merged to `main` (PR #887)**. The v2
+orchestration above is on a follow-up branch: `agent/deep_research.py` rewritten (breadth-
+only complexity, the analyst stage, always-on reflect/refill/critique, phase events), the
+`deep_research_report` view + component gain `analyzed`, and the unit suites updated
+(`tests/unit/test_deep_research.py`, `registry.test.tsx`) — all green. **Still open before
+"settled":** the D3 **mock-gate sign-off** on the non-happy states + a reference mock
+(DESIGN.md marks it pending), the **on-box budget/wall-clock tuning** (Open decisions 2–3;
+v2 runs more stages, so this matters more), and the formal per-wave PROCESS.md adversarial
+reviews.
 
 A **dedicated `deep_research` tool** that turns a single research question into a
 structured, cited report by orchestrating jerv's existing web-sandboxed sub-agent

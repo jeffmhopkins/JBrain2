@@ -924,6 +924,7 @@ describe("ToolView registry", () => {
               "## Overview\n\nHNSW builds a layered graph.\n\n## Sources\n[^1] example.com",
             sub_agents: 3,
             rounds: 2,
+            analyzed: true,
             revised: true,
             coverage_limited: false,
             truncated: false,
@@ -937,6 +938,7 @@ describe("ToolView registry", () => {
     expect(getByText("How does HNSW indexing work?")).toBeInTheDocument();
     expect(getByText("deep")).toBeInTheDocument();
     expect(getByText("2 rounds")).toBeInTheDocument();
+    expect(getByText("cross-checked")).toBeInTheDocument();
     expect(getByText("revised")).toBeInTheDocument();
     expect(getByText("Overview")).toBeInTheDocument();
     // The roster is collapsed until toggled.
