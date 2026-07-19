@@ -12,12 +12,12 @@ policy itself — the handler does.
 from __future__ import annotations
 
 import time
-from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 import structlog
+from cachetools import TTLCache
 
 log = structlog.get_logger()
 
@@ -49,42 +49,6 @@ class SearchHit:
     snippet: str
 
 
-@dataclass
-class _SearchCache:
-    """A tiny in-process TTL cache of (query, limit) → hits, LRU-bounded. Only successful
-    NON-EMPTY results are stored, so a transient empty/throttled response is never cached
-    and retries next time (and once the engines recover, it succeeds). `clock` is
-    injectable so tests drive expiry without sleeping."""
-
-    ttl_s: float = _CACHE_TTL_S
-    max_entries: int = _CACHE_MAX_ENTRIES
-    clock: Callable[[], float] = time.monotonic
-    _entries: OrderedDict[tuple[str, int], tuple[float, list[SearchHit]]] = field(
-        default_factory=OrderedDict
-    )
-
-    def get(self, key: tuple[str, int]) -> list[SearchHit] | None:
-        if self.ttl_s <= 0:
-            return None
-        entry = self._entries.get(key)
-        if entry is None:
-            return None
-        expires_at, hits = entry
-        if self.clock() >= expires_at:
-            del self._entries[key]  # lazily evict the expired entry
-            return None
-        self._entries.move_to_end(key)  # mark most-recently used
-        return hits
-
-    def put(self, key: tuple[str, int], hits: list[SearchHit]) -> None:
-        if self.ttl_s <= 0 or not hits:
-            return  # never cache a disabled window or an empty/throttled result
-        self._entries[key] = (self.clock() + self.ttl_s, hits)
-        self._entries.move_to_end(key)
-        while len(self._entries) > self.max_entries:
-            self._entries.popitem(last=False)  # evict the oldest
-
-
 class SearxngClient:
     """Query a pinned SearXNG instance. `transport` is injectable so tests run
     against a mock with no network (DEVELOPMENT.md "no network in tests")."""
@@ -99,16 +63,21 @@ class SearxngClient:
     ):
         self._base_url = base_url.rstrip("/")
         self._transport = transport
-        # One cache per client (the client is an app-lifetime singleton). `cache_ttl_s=0`
-        # disables it. `clock` threads through for deterministic expiry tests.
-        self._cache = _SearchCache(ttl_s=cache_ttl_s, clock=clock)
+        # One repeat-search cache per client (the client is an app-lifetime singleton),
+        # keyed on (query, limit). cachetools.TTLCache supplies the TTL + LRU eviction;
+        # `timer` threads our injectable clock for deterministic expiry tests. None when
+        # disabled (`cache_ttl_s <= 0`). Only non-empty results are stored (see `search`).
+        self._cache: TTLCache[tuple[str, int], list[SearchHit]] | None = (
+            TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
+            if cache_ttl_s > 0
+            else None
+        )
 
     async def search(self, query: str, limit: int = _DEFAULT_LIMIT) -> list[SearchHit]:
         if not self._base_url:
             raise WebSearchError("web search is not configured on this instance")
         key = (query.strip(), limit)
-        cached = self._cache.get(key)
-        if cached is not None:
+        if self._cache is not None and (cached := self._cache.get(key)) is not None:
             return cached
         params = {"q": query, "format": "json"}
         try:
@@ -143,7 +112,9 @@ class SearxngClient:
                     snippet=str(row.get("content") or "").strip(),
                 )
             )
-        # Cache only a non-empty result (put() enforces this): an empty list is often a
-        # transient throttle, not a real "no results", so we must retry it next time.
-        self._cache.put(key, hits)
+        # Cache only a non-empty result: an empty list is often a transient throttle, not
+        # a real "no results", so we must retry it next time rather than serve [] for the
+        # whole TTL.
+        if self._cache is not None and hits:
+            self._cache[key] = hits
         return hits

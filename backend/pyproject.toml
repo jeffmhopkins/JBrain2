@@ -34,6 +34,10 @@ dependencies = [
     "aiomqtt>=2.5.1",
     "geonamescache>=3.0.1",
     "yt-dlp>=2024.8",
+    # Repeat-search TTL+LRU cache in front of SearXNG (jbrain.web.search): the standard
+    # in-memory cache primitive, so a deep-research fan's identical re-queries don't
+    # re-hit the upstream engines that rate-limit the box.
+    "cachetools>=5.3",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +52,7 @@ dev = [
     "filelock>=3.12",
     "psycopg[binary]>=3.2",
     "types-pyyaml>=6.0",
+    "types-cachetools>=5.3",
 ]
 
 [build-system]
