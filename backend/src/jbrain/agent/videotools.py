@@ -66,6 +66,10 @@ def build_video_handlers(
 
     async def analyze_video_tool(arguments: dict, ctx: ToolContext) -> str:
         attachment_id = str(arguments.get("source_attachment_id", "")).strip()
+        # When false, the analysis still runs (the model reads the summary) but the
+        # scrubbing card is suppressed — for when the video read is an intermediate step
+        # toward the answer, not something the owner needs to see (VIDEO_IMAGE_TOOLS_PLAN.md).
+        show = arguments.get("show", True) is not False
         if ctx.agent_session_id is None or not _is_uuid(attachment_id):
             return _NO_VIDEO
         # A chat attachment is domain-scoped, so it is read under the session's
@@ -85,7 +89,8 @@ def build_video_handlers(
         cached = await attachments.analysis(att_ctx, attachment_id)
         if cached is not None:
             return ToolOutput(
-                _summary_line(info.filename, cached), view=_video_view(attachment_id, info, cached)
+                _summary_line(info.filename, cached),
+                view=_video_view(attachment_id, info, cached) if show else None,
             )
 
         if info.size_bytes > max_bytes:
@@ -125,7 +130,8 @@ def build_video_handlers(
         # carries the attachment id + structured analysis, never a URL — the component
         # builds the media/thumbnail srcs (invariant #9).
         return ToolOutput(
-            _summary_line(info.filename, stored), view=_video_view(attachment_id, info, stored)
+            _summary_line(info.filename, stored),
+            view=_video_view(attachment_id, info, stored) if show else None,
         )
 
     return {"analyze_video": analyze_video_tool}

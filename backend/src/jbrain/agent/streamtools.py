@@ -89,6 +89,11 @@ def build_stream_handlers(
         mode = str(arguments.get("mode", "window")).strip().lower() or "window"
         if mode not in MODES:
             return "mode must be one of: single, window, full."
+        # When false, the analysis still runs but the in-turn card is suppressed — for an
+        # intermediate step the owner needn't see (VIDEO_IMAGE_TOOLS_PLAN.md). The deferred
+        # (full / long-window) path keeps its task_status card: a minutes-long background
+        # job needs its progress affordance; `show` governs only the final in-turn card.
+        show = arguments.get("show", True) is not False
 
         # Route the expensive whole-video / long-window passes off-turn: kick a background
         # job, end the turn, and let the task_status card + auto-resume take over. Falls
@@ -137,14 +142,16 @@ def build_stream_handlers(
         if out is None:
             return f'I couldn\'t read any frames from that stream ("{resolved.title}").'
         result, frames, source = out
-        return ToolOutput(
-            summary_line(resolved.title, result),
-            view=ViewPayload(
+        view = (
+            ViewPayload(
                 view="video_analysis",
                 surface="inline",
                 data=build_stream_view_data(resolved, result, mode, frames, source),
-            ),
+            )
+            if show
+            else None
         )
+        return ToolOutput(summary_line(resolved.title, result), view=view)
 
     return {"analyze_stream": analyze_stream_tool}
 

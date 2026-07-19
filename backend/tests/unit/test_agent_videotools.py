@@ -163,6 +163,28 @@ async def test_round_trip_returns_summary_and_video_view() -> None:
     assert attachments.cache[ATT]["summary"].startswith("A walkthrough")
 
 
+async def test_show_false_suppresses_the_card_but_keeps_the_summary() -> None:
+    # The analysis runs and the model still gets the summary; only the owner-facing
+    # scrubbing card is dropped (an intermediate step), so ToolOutput carries no view.
+    blobs, attachments = _setup()
+    frames = [SampledFrame(0, b"\xff\xd8f0")]
+    handlers = _handlers(
+        blobs,
+        attachments,
+        _router(FakeLlmClient(["a frame", "a summary"])),
+        sampler=_sampler(frames),
+    )
+
+    out = await handlers["analyze_video"]({"source_attachment_id": ATT, "show": False}, CTX)
+
+    assert isinstance(out, ToolOutput) and out.view is None
+    assert out.startswith('Analysis of "clip.mp4":')  # the summary still reaches the model
+    # A re-ask WITHOUT show:false serves the cached analysis as a card (suppression is
+    # per-call, and the analysis was still persisted).
+    shown = await handlers["analyze_video"]({"source_attachment_id": ATT}, CTX)
+    assert isinstance(shown, ToolOutput) and shown.view is not None
+
+
 async def test_reanalysis_reads_the_cache_without_re_billing() -> None:
     blobs, attachments = _setup()
     frames = [SampledFrame(0, b"\xff\xd8f0"), SampledFrame(4000, b"\xff\xd8f1")]

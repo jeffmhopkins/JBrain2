@@ -293,6 +293,26 @@ async def test_single_mode_threads_seek_for_vod() -> None:
     assert window.calls == [{"frames": 1, "window_s": 0.0, "seek_s": 164.0, "want_audio": False}]
 
 
+async def test_show_false_suppresses_the_in_turn_card() -> None:
+    # The analysis still runs and the model still gets the summary; only the owner-facing
+    # card is dropped (an intermediate step), so ToolOutput carries no view.
+    blobs = FakeBlobs()
+    window = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8z")]))
+    handlers = _handlers(
+        blobs,
+        _router(FakeLlmClient(["a rack", "a summary"])),
+        resolver=_resolver(VOD),
+        window=window,
+    )
+
+    out = await handlers["analyze_stream"](
+        {"url": "u", "mode": "single", "seek": 10, "show": False}, CTX
+    )
+
+    assert isinstance(out, ToolOutput) and out.view is None
+    assert out.startswith('Analysis of "Launch Stream":')  # the summary still reaches the model
+
+
 async def test_full_mode_uses_full_sampler_with_clamped_frames() -> None:
     blobs = FakeBlobs()
     full = FakeSampler(
