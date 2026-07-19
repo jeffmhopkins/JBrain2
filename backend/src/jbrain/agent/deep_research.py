@@ -112,7 +112,8 @@ _REFLECT_SCHEMA = {
 _PLAN_MAX_TOKENS = 1500
 _REFLECT_MAX_TOKENS = 1200
 _SYNTH_MAX_TOKENS = 6000
-_LABEL_LEN = 48
+_LABEL_LEN = 96  # the child row's title wraps to two lines (title-forward layout), so it
+# can carry roughly a full sub-question, not just an opening fragment.
 
 
 def _refuse(reason: str) -> str:
@@ -122,9 +123,9 @@ def _refuse(reason: str) -> str:
 
 
 def _label(text: str, i: int) -> str:
-    """A short display label for a sub-question's child row — the first few words,
-    capped; a blank sub-question falls back to a positional label."""
-    head = " ".join(text.split()[:7]).strip()[:_LABEL_LEN].strip()
+    """A display label for a sub-question's child row — enough words to fill the row's
+    two-line title, capped; a blank sub-question falls back to a positional label."""
+    head = " ".join(text.split()[:16]).strip()[:_LABEL_LEN].strip()
     return head or f"part {i + 1}"
 
 

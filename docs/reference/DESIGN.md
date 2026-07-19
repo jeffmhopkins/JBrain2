@@ -1545,9 +1545,12 @@ N agents") of **collapsible step rows** — the same disclosure register as the
 existing `ActivityLine`/`StepRow` "Worked" foot strip. Each row carries the
 **stateful glyph** (steel bouncing dots while running → green `✓` done → **rose `✕`
 failed**; `aria-hidden`, the status word carries state, honors
-`prefers-reduced-motion`), the **label**, a neutral **persona tag**, a live
-**status word**, and a thin progress bar; tapping a row expands its **brief** and
-final **summary** (a failed row auto-expands its error like `StepRow`). A depth-2
+`prefers-reduced-motion`), the **label** (title-forward — it owns the row and wraps
+to two lines rather than sharing it with a persona pill), a live **status word**, and
+a thin progress bar; tapping a row expands its neutral **persona tag**, its **trace**
+(thinking + tool calls), and the final **summary** — rendered as rich markdown in a
+bounded scroll region so a long answer doesn't push the fan open (a failed row
+auto-expands its error like `StepRow`). A depth-2
 sub-sub-agent nests one indent deeper. **Required non-happy states:** a **Stop** on
 the group header (cascade-cancel, mirroring the image-render Stop); the
 **tree-budget meter** goes `--danger` at the ceiling (paired text value) with a

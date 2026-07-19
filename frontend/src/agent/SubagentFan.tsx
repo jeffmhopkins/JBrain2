@@ -295,7 +295,6 @@ export function SubagentFan({
     // "Open session" is gated to a SETTLED child — a still-running one has nothing
     // persisted yet, so opening it would land on a blank conversation.
     const showOpen = Boolean(onOpen) && rowSettled;
-    const hasBody = rowSettled ? Boolean(c.summary) || showOpen || hasTrace : streaming || hasTrace;
     return (
       <div className={`fb-sa-row${c.depth >= 2 ? " sub" : ""}`} key={c.childId}>
         <button
@@ -305,8 +304,10 @@ export function SubagentFan({
           aria-expanded={open}
         >
           {childGlyph(c.status, isQueued(c))}
+          {/* Title-forward: the label owns the row (wraps to two lines) instead of
+              sharing it with a persona pill that read the same on nearly every child.
+              Persona moves to the expanded detail (below). */}
           <span className="fb-sa-lbl">{c.label}</span>
-          <span className="fb-sa-ptag">{PERSONA_LABEL[c.persona] ?? c.persona}</span>
           <span className={`fb-sa-st${isFail ? " fail" : ""}${isQueued(c) ? " queued" : ""}`}>
             {statusWord(c)}
           </span>
@@ -326,8 +327,13 @@ export function SubagentFan({
         {c.fedFrom && c.fedFrom.length > 0 && (
           <div className="fb-sa-fed">← fed by {c.fedFrom.join(", ")}</div>
         )}
-        {open && hasBody && (
+        {open && (
           <div className={`fb-sa-detail${isFail ? " err" : ""}`}>
+            {/* Persona lives here now (off the collapsed row): a neutral tag naming what
+                kind of child this is — research / review / summarize. */}
+            <span className="fb-sa-ptag fb-sa-persona">
+              {PERSONA_LABEL[c.persona] ?? c.persona}
+            </span>
             {/* The child's session-in-miniature: its thinking + tool calls in one
                 collapsible trace that folds once the answer begins, then the answer
                 streaming below it. */}

@@ -8404,7 +8404,9 @@ button.small {
 }
 .fb-shell .fb-sa-line {
   display: flex;
-  align-items: center;
+  /* Top-align: the label may wrap to two lines and owns the row, so the glyph, status,
+     and caret sit against its first line rather than centring on a tall block. */
+  align-items: flex-start;
   gap: 8px;
   width: 100%;
   padding: 9px 12px;
@@ -8418,9 +8420,14 @@ button.small {
   font-size: var(--fs-secondary);
   flex: 1;
   min-width: 0;
+  /* Title-forward: wrap to at most two lines instead of a one-line ellipsis, so a long
+     research angle stays readable (the persona pill moved to the expanded detail to free
+     this room). */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .fb-shell .fb-sa-ptag {
   flex: none;
@@ -8432,6 +8439,12 @@ button.small {
   color: var(--text-2);
   border: 1px solid var(--border);
 }
+/* The persona tag in its new home — a small header chip at the top of the expanded
+   detail, off the collapsed row. */
+.fb-shell .fb-sa-persona {
+  display: inline-block;
+  margin-bottom: 8px;
+}
 .fb-shell .fb-sa-st {
   font-size: 11px;
   color: var(--text-2);
@@ -8439,6 +8452,8 @@ button.small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: none;
+  margin-top: 4px; /* align with the label's first line (row top-aligns) */
 }
 .fb-shell .fb-sa-st.fail {
   color: var(--rose);
@@ -8455,6 +8470,7 @@ button.small {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  margin-top: 4px; /* align with the label's first line (row top-aligns) */
 }
 .fb-shell .fb-sa-ctx-bar {
   width: 26px;
@@ -8485,6 +8501,7 @@ button.small {
   color: var(--text-3);
   font-size: 11px;
   flex: none;
+  margin-top: 4px; /* align with the label's first line (row top-aligns) */
 }
 /* thin per-row bar: indeterminate sweep while running, solid once settled */
 .fb-shell .fb-sa-bar {
@@ -8664,6 +8681,8 @@ button.small {
   width: 14px;
   height: 14px;
   font-size: 13px;
+  /* nudge onto the label's first line now that the row top-aligns */
+  margin-top: 3px;
 }
 .fb-shell .fb-sa-g.done {
   color: var(--green);

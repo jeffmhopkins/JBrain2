@@ -32,3 +32,29 @@ outgoing:
   max_request_timeout: 10.0
   pool_connections: 100
   pool_maxsize: 20
+
+# Spread each query across several independent-index engines so one engine's rate-limit
+# cooldown can't blank a search. SearXNG blends + de-dupes results across every enabled
+# engine, so more sources = redundancy: when DuckDuckGo/Brave hit a 429 (`suspended_time`)
+# from a deep-research fan's volume, the others still answer — THIS (enabling the spread),
+# not the weight below, is what fixes the blanked-search failure. Mojeek runs its own
+# crawler, so it is the most throttle-resistant backup. `use_default_settings: true` merges
+# this list onto the built-in engine defs BY NAME, so each entry only overrides the fields
+# below (the rest of the default definition stands). `weight: 0.6` de-emphasizes DDG's
+# results in the blended RANKING only — it does NOT reduce how often DDG is queried (it is
+# still hit every search), so DDG can still get rate-limited; the point is just that its
+# results no longer dominate now that there are five other sources.
+engines:
+  - name: duckduckgo
+    disabled: false
+    weight: 0.6
+  - name: brave
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: startpage
+    disabled: false

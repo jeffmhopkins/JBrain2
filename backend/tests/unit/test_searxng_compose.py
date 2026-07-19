@@ -11,11 +11,17 @@ from pathlib import Path
 
 import yaml
 
-_COMPOSE = Path(__file__).resolve().parents[3] / "deploy" / "docker-compose.yml"
+_DEPLOY = Path(__file__).resolve().parents[3] / "deploy"
+_COMPOSE = _DEPLOY / "docker-compose.yml"
+_SETTINGS = _DEPLOY / "searxng" / "settings.yml"
 
 
 def _spec() -> dict:
     return yaml.safe_load(_COMPOSE.read_text())
+
+
+def _settings() -> dict:
+    return yaml.safe_load(_SETTINGS.read_text())
 
 
 def test_searxng_is_in_the_stock_stack() -> None:
@@ -49,3 +55,47 @@ def test_searxng_mounts_config_dir_not_settings_file() -> None:
     assert not any(v.endswith("/etc/searxng/settings.yml") for v in volumes), (
         "a single-file settings.yml bind crash-loops when the host file is missing"
     )
+
+
+def test_search_spreads_across_several_engines() -> None:
+    # Redundancy against a single engine's rate-limit cooldown: several independent
+    # sources are enabled so one engine's 429 (suspended_time) can't blank a query.
+    settings = _settings()
+    engines = {e["name"]: e for e in settings.get("engines", [])}
+    for name in ("duckduckgo", "brave", "bing", "mojeek", "qwant", "startpage"):
+        assert name in engines, f"{name} must be enabled to spread search load"
+        assert engines[name].get("disabled") is not True, f"{name} must not be disabled"
+
+
+def test_duckduckgo_is_de_weighted_so_it_is_not_the_sole_primary() -> None:
+    # The observed failure: a deep-research fan's volume got DuckDuckGo rate-limited while
+    # it carried most results. De-weighting it makes it one source among many.
+    engines = {e["name"]: e for e in _settings().get("engines", [])}
+    ddg_weight = engines["duckduckgo"].get("weight", 1.0)
+    assert ddg_weight < 1.0, "DuckDuckGo must be de-weighted below the default 1.0"
+
+
+def test_engine_merge_relies_on_default_settings() -> None:
+    # The per-name engine merge (each entry overrides only its fields, the rest of the
+    # built-in def stands) is only valid with use_default_settings on — without it, a
+    # bare `- name: bing` is an incomplete engine def and searxng fails to start.
+    assert _settings().get("use_default_settings") is True
+
+
+# Known-valid SearXNG built-in engine ids (searx/settings.yml). A configured name that is
+# NOT one of these is an unknown engine: with use_default_settings on, the merge finds no
+# base def, so searxng fails to load it and returns 500s / crash-loops on the next deploy —
+# a failure this YAML-only test would otherwise miss (a typo like `startpge` passes every
+# other assertion). This closes that gap without booting a container; widen the set when
+# adding a genuinely new engine (verify the id against searx/settings.yml first).
+_KNOWN_SEARXNG_ENGINES = frozenset(
+    {"duckduckgo", "brave", "bing", "mojeek", "qwant", "startpage", "google", "wikipedia"}
+)
+
+
+def test_configured_engine_names_are_real_searxng_ids() -> None:
+    for engine in _settings().get("engines", []):
+        assert engine["name"] in _KNOWN_SEARXNG_ENGINES, (
+            f"{engine['name']!r} is not a known SearXNG engine id — a typo/unknown name "
+            "fails to load and crash-loops searxng, killing all of jerv's web search"
+        )
