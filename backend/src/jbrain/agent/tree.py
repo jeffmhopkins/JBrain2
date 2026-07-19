@@ -63,10 +63,10 @@ def child_steps_for(effort: str | None) -> int:
 # most SPAWN_MULTIPLIER × the root's own per-turn token cap; a fraction is reserved off
 # the top so the root can always synthesize even after a fan drains the children's
 # pool; and a fan is admitted only if each child could get a viable slice of what's
-# left. Sized generously (~3M children pool with jerv's 800k root cap) so the runtime
-# caps above — not budget exhaustion — are what stop a child, with room for a staged
-# review reserve (deep_research) on top of a full gather round.
-SPAWN_MULTIPLIER = 5.0  # tree_budget = base_max_cost_tokens × this (~4.0M for jerv)
+# left. Sized generously (~6M children pool with jerv's 800k root cap) so the runtime
+# caps above — not budget exhaustion — are what stop a child, with ample room for a staged
+# review reserve (deep_research) on top of a full multi-round gather.
+SPAWN_MULTIPLIER = 10.0  # tree_budget = base_max_cost_tokens × this (~8.0M for jerv)
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
 MIN_VIABLE_CHILD_BUDGET = 100_000  # admission floor: tokens each child must be able to get
 
@@ -154,6 +154,15 @@ class TreeState:
     def charge(self, tokens: int) -> None:
         """Charge a model call's incremental spend to the shared pool."""
         self.spent += tokens
+
+    def children_budget(self) -> int:
+        """The sub-agent budget CEILING — the children's pool (tree_budget minus the root's
+        reserve), i.e. where a child actually stops (`children_exhausted`). This is what the
+        budget meter shows as its denominator, so the bar fills as children exhaust instead
+        of leaving the root's reserve as phantom headroom the bar can never reach. Ignores
+        the transient `stage_reserve` (a within-run reservation) so the meter's ceiling is
+        stable across a run."""
+        return max(0, self.tree_budget - self.root_reserve)
 
     def children_remaining(self) -> int:
         """Tokens a fan may still draw — the pool minus the root reserve, the (staged)

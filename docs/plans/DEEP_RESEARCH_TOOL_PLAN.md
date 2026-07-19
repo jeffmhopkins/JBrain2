@@ -1,6 +1,22 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library on a follow-up branch; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix on a follow-up branch; mock-gate sign-off pending)
+
+**v5 revision (bigger budget + honest budget meter).** An observed run (eurorack-synth
+research) still starved children: one `medium`-effort gather child burned 911k over 61
+steps / 30 web calls, and with the 3.0M children pool the refill + analyst children hit
+`tree_budget_exhausted`. Two fixes (the over-search itself is addressed by v4's
+`effort="low"` research children):
+- **Budget doubled.** `SPAWN_MULTIPLIER` 5.0 → **10.0** (jerv tree 4.0M → **8.0M**,
+  children pool 3.0M → **6.0M**); the `DR_ANALYST_RESERVE`/`DR_CRITIQUE_RESERVE` scale
+  with it (450k/150k → **900k/300k**), so gather gets ~4.8M and the review children a
+  comfortable protected slice.
+- **The budget meter now shows the children's pool, not the whole tree.** It read
+  `spent / tree_budget` (e.g. 2.86M / 4.00M ≈ 72%) at the exact moment children were
+  hitting `tree_budget_exhausted` — the denominator wrongly included the root's reserved
+  synthesis slice that children can never touch. The subagent events now emit
+  `TreeState.children_budget()` (tree budget − root reserve) as the meter's ceiling, so
+  the bar fills to "budget exhausted" precisely when a child exhausts.
 
 **v4 revision (report library + follow-up recall + view polish + low-effort research).**
 Deep-research reports are now PERSISTED and recallable, closing the gap that a follow-up
@@ -261,12 +277,12 @@ retuning — but the **shape** (shared counter + root reserve + admission floor 
 wall-clock) is unchanged. Proposed changes (final numbers a build-plan task, validated
 on-box like the S2/F2 retunes were):
 
-- **Tree budget headroom.** ✅ (v3) `SPAWN_MULTIPLIER` raised 3.5 → **5.0** for every
-  root (jerv children pool 2.1M → **3.0M**) rather than a dedicated deep-research
-  multiplier — the simpler lever, and the 25% root reserve still covers the two large
-  root calls (synthesis in 5, revision in 6). On top of the pool, `deep_research` carves a
-  `DR_REVIEW_RESERVE` (`stage_reserve`) so the post-gather analyst + critique children
-  can't be starved by a greedy gather round (see v3 revision).
+- **Tree budget headroom.** ✅ `SPAWN_MULTIPLIER` raised to **10.0** for every root (v3
+  took it 3.5 → 5.0; v5 → 10.0), so jerv's children pool is **6.0M** (tree 8.0M − the 25%
+  root reserve) — the simpler lever than a dedicated deep-research multiplier, and the
+  reserve still covers the two large root calls (synthesis in 5, revision in 6). On top of
+  the pool, `deep_research` carves a `DR_REVIEW_RESERVE` (`stage_reserve`, 1.2M) so the
+  post-gather analyst + critique children can't be starved by a greedy gather round.
 - **Two-fan admission.** The admission floor (`can_admit_budget`) is checked before
   *each* fan (gather, refill) — the refill fan is skipped-loud if the pool can't seat
   its gap children, and the run synthesizes from round-1 material tagged "coverage

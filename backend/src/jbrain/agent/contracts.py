@@ -297,8 +297,10 @@ class SubagentProgressEvent(BaseModel):
     """A status tick for a running child (Wave S2). v1 children run non-streaming
     (fan-in model A), so `phase` is a coarse working word ("researching") rather than
     token deltas. `tree_spent`/`tree_budget` are the shared-pool snapshot driving the
-    in-chat budget meter (Wave S3), updated at each child lifecycle tick. Ephemeral,
-    never persisted."""
+    in-chat budget meter (Wave S3), updated at each child lifecycle tick. `tree_budget` is
+    the CHILDREN'S pool (tree budget minus the root's synthesis reserve) — the ceiling a
+    child actually stops at — so the meter fills as children exhaust, not phantom headroom.
+    Ephemeral, never persisted."""
 
     type: Literal["subagent_progress"] = "subagent_progress"
     tool_call_id: str = ""
@@ -359,8 +361,9 @@ class SubagentDoneEvent(BaseModel):
     """A child finished (Wave S2): `ok` is a clean, substantive answer; otherwise it
     errored or degraded (max_steps / empty). The accordion flips the row to green ✓ /
     rose ✕ and shows `summary` (the child's answer, or its error/truncation note) on
-    expand (Wave S3). `tree_spent`/`tree_budget` refresh the budget meter. Ephemeral,
-    never persisted — the durable record is the child run-log."""
+    expand (Wave S3). `tree_spent`/`tree_budget` refresh the budget meter (`tree_budget` is
+    the children's pool — the child ceiling — so the bar fills as children exhaust).
+    Ephemeral, never persisted — the durable record is the child run-log."""
 
     type: Literal["subagent_done"] = "subagent_done"
     tool_call_id: str = ""

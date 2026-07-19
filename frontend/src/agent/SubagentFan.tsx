@@ -173,6 +173,10 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
+// The shared sub-agent budget bar. `total` is the CHILDREN'S pool (the backend sends the
+// tree budget minus the root's synthesis reserve), so the bar fills as children exhaust —
+// it reads "budget exhausted" exactly when a child hits tree_budget_exhausted, not at some
+// fraction with phantom headroom the children can never reach.
 function BudgetMeter({ spent, total }: { spent: number; total: number }): ReactNode {
   const pct = Math.min(100, Math.round((spent / total) * 100));
   const cls = pct >= 99 ? "danger" : pct > 70 ? "warn" : "";
