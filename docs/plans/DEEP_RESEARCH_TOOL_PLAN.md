@@ -1,6 +1,6 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration on a follow-up branch; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning on a follow-up branch; mock-gate sign-off pending)
 
 **v2 revision (owner feedback — the tool "didn't orchestrate enough").** After the v1
 merge, a real run of "look into 2 things" classified as `comparative` and the v1 skip
@@ -29,6 +29,32 @@ adds two things the owner asked for:
 The view gains an `analyzed` ("cross-checked") provenance chip and the `web_sources`
 registry. Everything else (the tree-budget reuse, the structural one-gap-round bound, the
 sandbox/clamps) is unchanged.
+
+**v3 revision (on-box budget tuning — resolves Open decisions 2–3, partial).** A real
+"how many did the 1918 flu kill?" run failed the way the budget section warned it could:
+the gather round (four `medium`-effort children, one alone burning 743k tokens over 35 web
+calls) drained the shared children's pool, so the cross-agent **analyst was killed
+mid-search** with `tree_budget_exhausted` and wrote nothing — while the root reserve sat
+idle, untouchable by a child. Root cause: the analyst and gather are separate flat fans on
+one pool with **no reserve between them**, and `children_exhausted` only enforced
+`stage_reserve` at admission, never while a child spent. Three fixes, all shipped here:
+- **A real spend-time reserve.** `children_exhausted` is now exactly
+  `children_remaining() == 0`, so it honours `stage_reserve` at spend time (not just at
+  admission) — a greedy producer fan is halted **at** the reserve. `deep_research` carves
+  `DR_REVIEW_RESERVE` (analyst + critique slices) off the pool before gather and steps it
+  down (analyst's slice released once gather is done, critique's once the draft is
+  written), restored in `finally`. The analyst can no longer be starved.
+- **Pool headroom.** `SPAWN_MULTIPLIER` 3.5 → **5.0** (jerv tree 2.8M → **4.0M**, children
+  pool 2.1M → **3.0M**) so the review reserve rides on top of a full gather round rather
+  than stealing from it.
+- **Planner guard** (`dr-plan-v2`). The failed run also spawned a bogus "Create a citation
+  matrix for all sources gathered in the previous three sub-questions" angle — a meta task
+  an isolated parallel child can't satisfy; it refused in one step. The prompt now forbids
+  process/meta sub-questions and any cross-child dependence, and steers toward fewer angles.
+
+Still deferred from Open decisions 2–3: the **tree wall-clock on flat fans** (the run took
+~28 min; flat fans still ignore `deadline`) and the analyst's own over-search (19 web calls
+to "resolve conflicts") — both tracked, not addressed here.
 
 **Implementation status.** v1 (all three waves) is **merged to `main` (PR #887)**. The v2
 orchestration above is on a follow-up branch: `agent/deep_research.py` rewritten (breadth-
@@ -208,10 +234,12 @@ retuning — but the **shape** (shared counter + root reserve + admission floor 
 wall-clock) is unchanged. Proposed changes (final numbers a build-plan task, validated
 on-box like the S2/F2 retunes were):
 
-- **Tree budget headroom.** `deep_research` runs should get more than a bare fan —
-  either a higher `SPAWN_MULTIPLIER` for deep-research roots or a dedicated
-  `DEEP_RESEARCH_MULTIPLIER`. Synthesis + revise are large root-model calls, so the
-  **root reserve must cover two of them** (synthesis in 5, revision in 6), not one.
+- **Tree budget headroom.** ✅ (v3) `SPAWN_MULTIPLIER` raised 3.5 → **5.0** for every
+  root (jerv children pool 2.1M → **3.0M**) rather than a dedicated deep-research
+  multiplier — the simpler lever, and the 25% root reserve still covers the two large
+  root calls (synthesis in 5, revision in 6). On top of the pool, `deep_research` carves a
+  `DR_REVIEW_RESERVE` (`stage_reserve`) so the post-gather analyst + critique children
+  can't be starved by a greedy gather round (see v3 revision).
 - **Two-fan admission.** The admission floor (`can_admit_budget`) is checked before
   *each* fan (gather, refill) — the refill fan is skipped-loud if the pool can't seat
   its gap children, and the run synthesizes from round-1 material tagged "coverage

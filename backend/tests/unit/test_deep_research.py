@@ -13,7 +13,9 @@ import pytest
 from jbrain.agent.briefs import FEED_OPEN
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.deep_research import (
+    DR_CRITIQUE_RESERVE,
     DR_MAX_GAP_QUESTIONS,
+    DR_REVIEW_RESERVE,
     DR_SIMPLE_BREADTH,
     DeepResearchService,
 )
@@ -112,7 +114,16 @@ class _FakeSpawn:
         self, ctx, *, briefs, persona="research", effort=None, max_parallel=None
     ):  # noqa: ANN001
         briefs = list(briefs)
-        self.fans.append({"persona": persona, "briefs": briefs, "effort": effort})
+        # Snapshot the reserve carved off the pool at the instant this fan runs, so the
+        # staging (gather → analyst → critique step-down) is observable without a loop.
+        self.fans.append(
+            {
+                "persona": persona,
+                "briefs": briefs,
+                "effort": effort,
+                "stage_reserve": ctx.tree.stage_reserve if ctx.tree else None,
+            }
+        )
         first_label = briefs[0][0] if briefs else ""
         if first_label in self.refuse_labels:
             return []  # admission refused (tree total / budget) → the caller degrades
@@ -365,7 +376,55 @@ async def test_bad_complexity_defaults_to_deep_and_runs_full_pipeline() -> None:
     assert len(_review_fans(spawn)) == 2  # full orchestration
 
 
+# --- planner prompt guard ---------------------------------------------------
+
+
+def test_plan_prompt_forbids_meta_and_cross_child_subquestions() -> None:
+    """Regression guard for the planner fix (the 1918-flu 'Create a citation matrix for
+    all sources gathered in the previous three sub-questions' angle, which an isolated
+    parallel child could never satisfy): the prompt must forbid process/meta tasks and
+    any dependence on a sibling's answer, and steer toward fewer angles."""
+    from jbrain.agent.deep_research import _PLAN
+
+    body = _PLAN.body.lower()
+    assert _PLAN.version == "dr-plan-v2"
+    assert "citation matrix" in body  # the exact meta task that leaked through v1
+    assert "process or meta task" in body
+    assert "in isolation" in body  # names why cross-child briefs can't work
+    assert "fewer" in body  # the anti-over-decomposition steer
+
+
 # --- budget + degraded paths ------------------------------------------------
+
+
+async def test_review_children_get_a_reserved_budget_slice() -> None:
+    """The post-gather review children are protected from a greedy gather round: the
+    gather fan runs with the full review reserve carved off the pool, the analyst then
+    runs with only the critique's slice still reserved, and the critique runs with the
+    reserve fully released — and the reserve is restored on exit so a later fan in this
+    turn isn't gated (the 1918-flu failure: gather drained the pool, analyst was starved)."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    tree = TreeState.rooted(800_000)
+    assert tree.stage_reserve == 0
+    await _svc(router, spawn).research(_ctx(tree=tree), {"question": "q"})
+
+    gather = _research_fans(spawn)[0]
+    assert gather["stage_reserve"] == DR_REVIEW_RESERVE  # full slice held through gather
+    analyst = next(f for f in _review_fans(spawn) if f["briefs"][0][0] == "cross-check")
+    assert analyst["stage_reserve"] == DR_CRITIQUE_RESERVE  # analyst gets the rest
+    critique = next(f for f in _review_fans(spawn) if f["briefs"][0][0] == "critique")
+    assert critique["stage_reserve"] == 0  # released once the draft is written
+    assert tree.stage_reserve == 0  # restored on exit
+
+
+async def test_review_reserve_is_restored_even_when_gather_yields_nothing() -> None:
+    """The early no-findings refusal still unwinds the reserve (it runs in a `finally`),
+    so a follow-up fan in the same turn sees a clean pool."""
+    router, spawn = _FakeRouter(), _FakeSpawn(gather_ok=False)
+    tree = TreeState.rooted(800_000)
+    out = await _svc(router, spawn).research(_ctx(tree=tree), {"question": "q"})
+    assert "refused" in out.lower()
+    assert tree.stage_reserve == 0  # reserve unwound despite the early return
 
 
 async def test_orchestration_calls_charge_the_tree_budget() -> None:
