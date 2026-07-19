@@ -262,6 +262,23 @@ export function SubagentFan({
     });
   }, [fan.children]);
 
+  // Keep a passive watcher pinned to the newest activity: scroll the fan's own scroll area
+  // to the bottom as children are added AND as the live tail streams, so a freshly-spawned
+  // child (e.g. the gap-fill round) and its "Thinking…" come into view on their own instead
+  // of the user having to hunt for it. A manual scroll-up releases the pin (`stick`) so we
+  // never yank someone reading an earlier child; scrolling back to the bottom re-arms it.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const stick = useRef(true);
+  const tail = fan.children.reduce(
+    (n, c) => n + (c.liveTrace?.length ?? 0) + (c.liveText?.length ?? 0),
+    fan.children.length,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `tail` is the intentional trigger
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [tail]);
+
   const children = fan.children;
   if (children.length === 0) return null;
   const liveCount = children.filter((c) => c.status === "running").length;
@@ -279,6 +296,13 @@ export function SubagentFan({
       else next.add(id);
       return next;
     });
+  }
+
+  // Re-evaluate the bottom-pin on every manual scroll: stuck only while the viewport is
+  // within a small threshold of the bottom, so a deliberate scroll-up stops the follow.
+  function onScroll(): void {
+    const el = scrollRef.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   }
 
   // A staged (feeding-waves) fan groups its rows by wave and draws feed edges live; a
@@ -368,7 +392,7 @@ export function SubagentFan({
     : `${liveCount} sub-agent${liveCount === 1 ? "" : "s"} running`;
 
   return (
-    <div className="fb-sa">
+    <div className="fb-sa" ref={scrollRef} onScroll={onScroll}>
       {/* The status header + budget meter pin to the top of the fan's own scroll area, so
           "who's running" and the tree budget stay visible while the sub-agent list scrolls
           under them (the card scrolls internally past its max-height). */}
