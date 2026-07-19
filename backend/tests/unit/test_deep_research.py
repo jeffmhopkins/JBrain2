@@ -80,21 +80,46 @@ class _FakeRouter:
 
 
 class _FakeSpawn:
-    """Stands in for SpawnService.run_research_fan: records each fan and returns one ok
-    finding per brief (or a scripted failure), so the orchestration's fan calls are
-    observable without minting sessions or running a loop."""
+    """Stands in for SpawnService.run_research_fan: records each fan and returns one
+    finding per brief, with per-stage success/failure and a refusal switch, so the
+    orchestration's degradation paths are observable without minting sessions or a loop.
 
-    def __init__(self, *, gather_ok: bool = True, review_ok: bool = True) -> None:
+    Stage routing: a `research` fan is the gather (fan 1) then the refill (fan 2+); a
+    `review` fan is the analyst (label "cross-check") or the critique (label "critique").
+    `refuse_labels` makes a fan whose first brief carries that label return `[]` — the
+    real `run_research_fan`'s admission-refused path (tree total / budget), which the
+    default fake could never exercise."""
+
+    def __init__(
+        self,
+        *,
+        gather_ok: bool = True,
+        refill_ok: bool = True,
+        analyst_ok: bool = True,
+        critique_ok: bool = True,
+        refuse_labels: frozenset[str] = frozenset(),
+    ) -> None:
         self.fans: list[dict] = []
         self.gather_ok = gather_ok
-        self.review_ok = review_ok
+        self.refill_ok = refill_ok
+        self.analyst_ok = analyst_ok
+        self.critique_ok = critique_ok
+        self.refuse_labels = set(refuse_labels)
+        self._research_fans = 0
 
     async def run_research_fan(
         self, ctx, *, briefs, persona="research", effort=None, max_parallel=None
     ):  # noqa: ANN001
         briefs = list(briefs)
         self.fans.append({"persona": persona, "briefs": briefs, "effort": effort})
-        ok = self.review_ok if persona == "review" else self.gather_ok
+        first_label = briefs[0][0] if briefs else ""
+        if first_label in self.refuse_labels:
+            return []  # admission refused (tree total / budget) → the caller degrades
+        if persona == "review":
+            ok = self.analyst_ok if first_label == "cross-check" else self.critique_ok
+        else:
+            self._research_fans += 1
+            ok = self.gather_ok if self._research_fans == 1 else self.refill_ok
         return [
             _ChildResult(
                 label=label,
@@ -232,7 +257,13 @@ async def test_run_emits_the_report_view() -> None:
     assert d["complexity"] == "deep"
     assert d["rounds"] == 2 and d["revised"] is True and d["analyzed"] is True
     assert "REVISED REPORT" in d["report_md"]
-    assert d["sub_agents"] == len(d["children"]) >= 1
+    # `sub_agents` counts the research FINDINGS (3 gather + 1 refill); the roster ALSO
+    # carries the analyst + critique review children so the reopened report shows who ran.
+    assert d["sub_agents"] == 4
+    personas = [c["persona"] for c in d["children"]]
+    assert personas.count("research") == 4 and personas.count("review") == 2
+    labels = [c["label"] for c in d["children"]]
+    assert "cross-check" in labels and "critique" in labels
     assert all("session_id" in c for c in d["children"])
 
 
@@ -339,9 +370,36 @@ async def test_no_usable_findings_is_a_clean_refusal() -> None:
     assert not router.synth_calls  # never synthesizes over nothing
 
 
-async def test_empty_critique_skips_the_revision() -> None:
+async def test_failed_critique_skips_revision_but_keeps_the_analysis() -> None:
+    """A failed critique child skips the revision, but a successful analyst still leaves
+    the run cross-checked — the two review stages degrade independently."""
     router = _FakeRouter(complexity="deep", covered=True, gaps=())
-    spawn = _FakeSpawn(review_ok=False)  # analyst + critique children fail → empty
+    spawn = _FakeSpawn(analyst_ok=True, critique_ok=False)
     out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
     assert len(router.synth_calls) == 1  # no revision pass
     assert "revised" not in out
+    assert "cross-checked" in out  # the analyst still ran and succeeded
+
+
+async def test_analyst_refusal_degrades_to_no_cross_check() -> None:
+    """When the analyst fan is refused (admission), the run still completes — it just
+    isn't cross-checked; synthesis and critique still run."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    spawn = _FakeSpawn(refuse_labels=frozenset({"cross-check"}))
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    assert out.view is not None and out.view.data["analyzed"] is False  # type: ignore[attr-defined]
+    assert "cross-checked" not in out
+    assert router.synth_calls  # the report was still written
+    # The critique fan (a separate review fan) still ran.
+    assert any(f["briefs"][0][0] == "critique" for f in _review_fans(spawn))
+
+
+async def test_refill_that_produces_nothing_is_reported_partial_not_a_second_round() -> None:
+    """A refill that IS admitted but whose gap children all fail added no coverage: the
+    report is flagged partial and does NOT claim a second round."""
+    router = _FakeRouter(complexity="deep", covered=False, gaps=("gap one",))
+    spawn = _FakeSpawn(refill_ok=False)  # gather ok; the gap child fails
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    assert len(_research_fans(spawn)) == 2  # the refill fan DID run
+    assert "coverage may be partial" in out
+    assert out.view is not None and out.view.data["rounds"] == 1  # type: ignore[attr-defined]

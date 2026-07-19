@@ -17,6 +17,16 @@ fed the *draft*, and one `revise` pass folds it in. Each stage emits a visible p
 (a `ToolProgressEvent`) so the owner watches the orchestration, and the analyst/critique
 sub-agents surface as live rows in the fan.
 
+**The cost of "always orchestrate" — a deliberate, accepted tradeoff.** Because every
+stage runs, an invocation costs materially more than v1's skip-matrix path — on the local
+route children run serially, so a run is up to gather + analyst + refill + critique
+children plus four orchestration calls (a second synthesis when the critique lands). That
+is the point (the owner asked for the checking/iteration v1 skipped), but it means a run
+is minutes of work and pushes harder on the per-turn wall-clock; it is bounded by the tree
+budget + the per-child and turn wall-clock caps (nothing hangs), never made cheap. Reserve
+the tool for questions that deserve it — jerv's prompt steers a quick lookup to a plain
+search instead.
+
 It runs entirely on the existing substrate: the LLM adapter for the plan / reflect /
 synthesize / revise calls (CLAUDE.md rule 1), and `SpawnService.run_research_fan` for
 every gather/analyst/refill/critique fan — so the parent⊆child clamp, the `no_memory` /
@@ -66,11 +76,6 @@ DR_MAX_GAP_QUESTIONS = 2
 # critique. A malformed/injected value defaults to the broadest real tier; it can never
 # widen past the structural caps (breadth ≤ DR_MAX_BREADTH, one gap round, tree limits).
 _COMPLEXITIES = frozenset({"simple", "comparative", "deep"})
-
-# The number of nominal phases, for the progress bar's denominator. The bar is a rough
-# indicator (a skipped refill just means step 5 doesn't fire); the phase LABEL is the
-# real signal the owner reads.
-_TOTAL_PHASES = 8
 
 _PLAN_SCHEMA = {
     "type": "object",
@@ -179,7 +184,8 @@ class DeepResearchService:
         # The cross-agent handoff: an analyst reads the whole gather roster (as escaped
         # data) and cross-checks it before anything is written.
         self._phase(ctx, 3, "Cross-checking the findings")
-        analysis = await self._analyze(ctx, question, gather)
+        analyst = await self._analyze(ctx, question, gather)
+        analysis = analyst.summary if analyst and analyst.ok else ""
 
         # --- (4) REFLECT — coverage check over findings + analysis ----------------
         self._phase(ctx, 4, "Checking coverage for gaps")
@@ -197,6 +203,11 @@ class DeepResearchService:
                     briefs=[(_label(g, i), g) for i, g in enumerate(gaps)],
                     effort="medium",
                 )
+                # A refill that was admitted but produced NOTHING usable (every gap child
+                # failed) added no coverage — report it as partial, and don't count it as a
+                # second round (truthful depth, not "rounds=2" over an empty round).
+                if not any(r.ok for r in refill):
+                    coverage_limited = True
             else:
                 # The pool can't seat the gap children — synthesize from what we have and
                 # say so, rather than failing (a refused refill is not a crash).
@@ -210,7 +221,8 @@ class DeepResearchService:
 
         # --- (7) CRITIQUE — a review sub-agent fed the draft; (8) one REVISE pass ---
         self._phase(ctx, 7, "Reviewing the draft")
-        critique = await self._critique(ctx, report)
+        critic = await self._critique(ctx, report)
+        critique = critic.summary if critic and critic.ok else ""
         revised = False
         if critique.strip():
             self._phase(ctx, 8, "Revising from the critique")
@@ -220,24 +232,30 @@ class DeepResearchService:
             revised = True
 
         analyzed = bool(analysis.strip())
-        rounds = 1 + (1 if refill else 0)
+        refilled = any(r.ok for r in refill)
+        rounds = 1 + (1 if refilled else 0)
+        # The full cast that actually ran, in run order — research findings PLUS the
+        # analyst and critique review children — so the reopened report shows who ran, not
+        # just the sources. `results` (gather+refill) stays the synthesis input.
+        roster = [*gather, *([analyst] if analyst else []), *refill, *([critic] if critic else [])]
         log.info(
             "deep_research.done",
             complexity=complexity,
-            sub_agents=sum(1 for r in results if r.ok),
+            findings=sum(1 for r in results if r.ok),
+            children=len(roster),
             rounds=rounds,
             analyzed=analyzed,
             revised=revised,
             coverage_limited=coverage_limited,
         )
         return ToolOutput(
-            _frame(report, question, complexity, results, analyzed, coverage_limited, revised),
+            _frame(report, question, complexity, roster, analyzed, coverage_limited, revised),
             view=_report_view(
                 report,
                 question,
                 complexity,
                 rounds,
-                results,
+                roster,
                 analyzed,
                 coverage_limited,
                 revised,
@@ -248,12 +266,12 @@ class DeepResearchService:
         """Emit a visible phase line for the current stage. Reuses the multi-phase
         `ToolProgressEvent` channel (analyze_video's "Extracting frames…" surface): the
         loop stamps the deep_research tool-call id onto the un-anchored event and the PWA
-        renders it as a live status line, so the owner watches the run orchestrate.
-        Ephemeral (never persisted) and best-effort (no sink → no-op)."""
+        renders it as a live status line, so the owner watches the run orchestrate. `total=0`
+        so the PWA shows the phase LABEL only, with no determinate bar — the stages aren't a
+        uniform count (refill/revise are conditional), so a step/total bar would jump. `step`
+        rides along as the ordinal for logs. Ephemeral (never persisted) and best-effort."""
         if ctx.emit_event is not None:
-            ctx.emit_event(
-                ToolProgressEvent(tool_call_id="", step=step, total=_TOTAL_PHASES, label=label)
-            )
+            ctx.emit_event(ToolProgressEvent(tool_call_id="", step=step, total=0, label=label))
 
     # --- the orchestration LLM calls (each charged to the shared tree budget) ------
 
@@ -280,16 +298,19 @@ class DeepResearchService:
         sections = [s.strip() for s in data.get("sections", []) if _nonempty(s)]
         return {"complexity": complexity, "sub_questions": sub_questions, "sections": sections}
 
-    async def _analyze(self, ctx: ToolContext, question: str, gather: list[_ChildResult]) -> str:
+    async def _analyze(
+        self, ctx: ToolContext, question: str, gather: list[_ChildResult]
+    ) -> _ChildResult | None:
         """The cross-agent analyst: one `review` child fed the whole gather roster as
         escaped data (a research→analyst handoff, exactly like a feeding wave). It
         cross-checks the sources — reconciling agreements, flagging contradictions and
         single-source claims, and naming the biggest open gaps — before anything is
-        written. Returns a structured analysis the reflect + synthesize steps read; an
-        empty/failed analyst simply degrades to synthesizing from the raw findings."""
+        written. Returns the analyst child (for the roster + its summary); `None` when
+        there are no findings to analyze or the fan was refused, and a failed analyst
+        simply degrades to synthesizing from the raw findings."""
         feed = _findings_block(gather)
         if not feed:
-            return ""
+            return None
         brief = prepend_feed(
             feed,
             "Above are research findings from several sub-agents on this question: "
@@ -304,7 +325,7 @@ class DeepResearchService:
         res = await self._spawn.run_research_fan(
             ctx, briefs=[("cross-check", brief)], persona="review", effort="medium"
         )
-        return res[0].summary if res and res[0].ok else ""
+        return res[0] if res else None
 
     async def _reflect(
         self,
@@ -368,10 +389,10 @@ class DeepResearchService:
         self._charge(ctx, result)
         return result.text.strip()
 
-    async def _critique(self, ctx: ToolContext, report: str) -> str:
+    async def _critique(self, ctx: ToolContext, report: str) -> _ChildResult | None:
         """One `review` child fed the draft report as escaped data (a producer→consumer
-        hop, exactly like a feeding wave). It returns a structured critique the reviser
-        folds in; a failed/empty critique simply skips the revision."""
+        hop, exactly like a feeding wave). Returns the critique child (for the roster + its
+        summary); a failed/empty critique simply skips the revision."""
         feed = compose_feed_block([("draft report", "synthesis", report)])
         brief = prepend_feed(
             feed,
@@ -384,7 +405,7 @@ class DeepResearchService:
         res = await self._spawn.run_research_fan(
             ctx, briefs=[("critique", brief)], persona="review", effort="medium"
         )
-        return res[0].summary if res and res[0].ok else ""
+        return res[0] if res else None
 
     def _charge(self, ctx: ToolContext, result: object) -> None:
         """Charge a one-shot orchestration call's tokens to the shared tree pool, so a
@@ -408,20 +429,25 @@ def _outline_text(sections: list[str]) -> str:
     return "\n".join(f"- {s}" for s in sections)
 
 
+def _findings_count(roster: list[_ChildResult]) -> int:
+    """The number of usable research findings that back the report — the `research`
+    children only (the `review` analyst/critique are in the roster but are not sources)."""
+    return sum(1 for r in roster if r.ok and r.persona == "research")
+
+
 def _frame(
     report: str,
     question: str,
     complexity: str,
-    results: list[_ChildResult],
+    roster: list[_ChildResult],
     analyzed: bool,
     coverage_limited: bool,
     revised: bool,
 ) -> str:
     """Prefix the report with a short machine provenance line jerv can relay — how many
-    sub-agents ran, whether it was cross-checked and revised — then the report itself.
+    findings backed it, whether it was cross-checked and revised — then the report itself.
     Data only; the model authors none of the provenance."""
-    ran = sum(1 for r in results if r.ok)
-    notes = [f"complexity: {complexity}", f"{ran} sub-agent finding(s)"]
+    notes = [f"complexity: {complexity}", f"{_findings_count(roster)} sub-agent finding(s)"]
     if analyzed:
         notes.append("cross-checked")
     if revised:
@@ -437,29 +463,31 @@ def _report_view(
     question: str,
     complexity: str,
     rounds: int,
-    results: list[_ChildResult],
+    roster: list[_ChildResult],
     analyzed: bool,
     coverage_limited: bool,
     revised: bool,
 ) -> ViewPayload:
     """The registered `deep_research_report` tool-view (DESIGN.md): the report Markdown
     plus a provenance strip (complexity, source count, rounds, cross-checked / revised /
-    coverage flags) and the sub-agent roster (each row deep-links to its own session on
-    reopen). Data only — the model authors none of it; the report Markdown came from the
-    synthesizer over the escaped-envelope findings, and every count is DB-run state."""
-    ran = sum(1 for r in results if r.ok)
+    coverage flags) and the full sub-agent roster — the research findings AND the analyst
+    + critique review children — each deep-linking to its own session on reopen. Data
+    only — the model authors none of it; the report Markdown came from the synthesizer
+    over the escaped-envelope findings, and every count is DB-run state."""
     return ViewPayload(
         view="deep_research_report",
         data={
             "question": question,
             "complexity": complexity,
             "report_md": report,
-            "sub_agents": ran,
+            # `sub_agents` counts the research FINDINGS that back the report (the count
+            # the report cites); `children` is the full cast that ran (incl. the reviews).
+            "sub_agents": _findings_count(roster),
             "rounds": rounds,
             "analyzed": analyzed,
             "revised": revised,
             "coverage_limited": coverage_limited,
-            "truncated": any(r.truncated for r in results),
+            "truncated": any(r.truncated for r in roster),
             "children": [
                 {
                     "label": r.label,
@@ -468,7 +496,7 @@ def _report_view(
                     "summary": r.summary,
                     "session_id": r.session_id,
                 }
-                for r in results
+                for r in roster
             ],
         },
     )

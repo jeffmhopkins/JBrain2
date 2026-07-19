@@ -486,6 +486,7 @@ class SpawnService:
         plans: list[_ChildPlan],
         *,
         max_parallel: int,
+        emit_view: bool = True,
     ) -> list[_ChildResult]:
         """Mint, launch, and await one flat fan of pre-validated, already-admitted
         plans; return the structured results in plan order. This is the single fan
@@ -493,7 +494,13 @@ class SpawnService:
         `deep_research`'s gather/refill rounds — so the parent⊆child clamp, the
         `no_memory` / no-location sandbox, and the lineage all apply identically no
         matter who launches the fan. The caller owns validation, admission
-        (`tree.admit`), and folding the results into an observation/view."""
+        (`tree.admit`), and folding the results into an observation/view.
+
+        `emit_view=False` suppresses the per-settle `subagent_synthesis` roster view:
+        `deep_research` runs several internal fans and emits its OWN `deep_research_report`
+        view, so the fan's roster card must not persist a second, competing card (it would
+        settle to the last internal fan — the critique — and misrepresent the run). The
+        live `subagent_spawned`/`_done` rows still fire, so the agents are still visible."""
         owner_ctx = SessionContext(principal_id=ctx.session.principal_id, principal_kind="owner")
         sem = asyncio.Semaphore(max_parallel)
 
@@ -534,8 +541,9 @@ class SpawnService:
         ) -> _ChildResult:
             res = await self._run_child(ctx, owner_ctx, tree, sem, plan, child)
             collected[i] = res
-            settled = [r for r in collected if r is not None]
-            _emit(ctx, ToolViewEvent(tool_call_id="", view=_synthesis_view(settled)))
+            if emit_view:
+                settled = [r for r in collected if r is not None]
+                _emit(ctx, ToolViewEvent(tool_call_id="", view=_synthesis_view(settled)))
             return res
 
         # asyncio.gather, when this task is cancelled (a Stop / shutdown), cancels every
@@ -575,7 +583,9 @@ class SpawnService:
             return []
         tree.admit(len(plans))
         n = await self._effective_max_parallel(max_parallel)
-        return await self._execute_fan(ctx, tree, plans, max_parallel=n)
+        # emit_view=False: deep_research emits its own deep_research_report view, so the
+        # internal fans must not persist a competing subagent_synthesis roster card.
+        return await self._execute_fan(ctx, tree, plans, max_parallel=n, emit_view=False)
 
     async def _spawn_waves(self, ctx: ToolContext, args: dict) -> str:
         """Run an ordered sequence of disconnected waves, feeding each wave's summaries
