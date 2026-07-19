@@ -63,9 +63,10 @@ def child_steps_for(effort: str | None) -> int:
 # most SPAWN_MULTIPLIER × the root's own per-turn token cap; a fraction is reserved off
 # the top so the root can always synthesize even after a fan drains the children's
 # pool; and a fan is admitted only if each child could get a viable slice of what's
-# left. Sized generously (~2M with jerv's 800k root cap) so the runtime caps above —
-# not budget exhaustion — are what stop a child.
-SPAWN_MULTIPLIER = 3.5  # tree_budget = base_max_cost_tokens × this (~2.8M for jerv)
+# left. Sized generously (~3M children pool with jerv's 800k root cap) so the runtime
+# caps above — not budget exhaustion — are what stop a child, with room for a staged
+# review reserve (deep_research) on top of a full gather round.
+SPAWN_MULTIPLIER = 5.0  # tree_budget = base_max_cost_tokens × this (~4.0M for jerv)
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
 MIN_VIABLE_CHILD_BUDGET = 100_000  # admission floor: tokens each child must be able to get
 
@@ -176,6 +177,11 @@ class TreeState:
         return self.tree_budget > 0 and self.spent >= self.tree_budget
 
     def children_exhausted(self) -> bool:
-        """True once total tree spend has reached the children's pool — a child must
-        stop here, leaving the root reserve intact for synthesis."""
-        return self.tree_budget > 0 and self.spent >= self.tree_budget - self.root_reserve
+        """True once tree spend has reached the children's pool — a child must stop
+        here, leaving the root reserve (and any `stage_reserve` carved for a not-yet-run
+        review/final wave) intact. Defined as `children_remaining() == 0` so the
+        spend-time stop matches the admission gate: a greedy producer fan is halted at
+        the reserve, never allowed to eat the slice a later stage was promised (the
+        1918-flu run: gather drained the pool and the cross-check analyst was killed
+        mid-search)."""
+        return self.tree_budget > 0 and self.children_remaining() == 0

@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.plan
-version: dr-plan-v1
+version: dr-plan-v2
 description: Plans a deep-research run — rates the question's complexity and decomposes it into self-contained web-research sub-questions plus a report outline.
 strength: high
 ---
@@ -22,14 +22,24 @@ Return your plan as JSON matching the provided schema. Nothing else.
   of Y"). Full breadth, a gap round, and a critique pass all earn their keep.
 
 **Write the sub-questions** (`sub_questions`) — this is the core of the plan:
-- Each is a self-contained research brief. The sub-agent that works it sees ONLY that
-  brief — never this question, never its siblings — so restate whatever context it
-  needs. Never write "the above topic" or "compare to the other one".
-- Make them INDEPENDENT — they run at the same time, so no sub-question may depend on
-  another's answer. Cover distinct angles; don't overlap.
-- Keep the count proportional to complexity: roughly 1–2 for `simple`, one per angle
-  for `comparative`, up to the full breadth you're given for `deep`. Never exceed the
-  breadth budget stated in the request.
+- Each is a self-contained research brief that a fresh sub-agent with only web access
+  can fully answer on its own. It sees ONLY that brief — never this question, never its
+  siblings, never their findings — so restate whatever context it needs. Never write
+  "the above topic", "compare to the other one", or "the sources gathered above".
+- Make them INDEPENDENT — they run at the same time in isolation, so no sub-question may
+  depend on, reference, or operate over another sub-question's answer or sources. If a
+  brief only makes sense after the others have run, it is invalid — drop it.
+- Each must be a genuine RESEARCH angle — a question about the world, answerable from
+  the web. Never emit a process or meta task: no "create a citation matrix", "compile a
+  bibliography", "evaluate/rank the sources", "organize the findings", "summarize the
+  other sub-questions". Cross-checking sources, weighing reliability, and assembling the
+  report are the tool's own later stages — never a sub-question.
+- Prefer FEWER, sharper angles. A focused factual question ("how many died", "when did
+  X happen") is usually ONE or two sub-questions, not a decomposition — only split when
+  the angles are genuinely distinct bodies of evidence. Keep the count proportional to
+  complexity: roughly 1–2 for `simple`, one per real angle for `comparative`, up to the
+  full breadth you're given for `deep`. Never pad to the breadth budget, and never
+  exceed it.
 
 **Sketch the outline** (`sections`) — the report's section headings, in order, that
 the sub-questions' findings will fill. Lead with the section that most directly

@@ -71,6 +71,18 @@ DR_MAX_BREADTH = 5
 DR_SIMPLE_BREADTH = 2  # a `simple`-rated question researches fewer angles (breadth only)
 DR_MAX_GAP_QUESTIONS = 2
 
+# Budget carved off the children's pool (via `tree.stage_reserve`) for the post-gather
+# review children, so a greedy gather round can't drain the pool and starve them — the
+# 1918-flu run's failure mode, where gather ate the pool and the cross-check analyst was
+# killed mid-search. The reserve is stepped down as each review stage is reached: the
+# analyst's slice is released once gather is done (so the analyst gets everything except
+# the critique's protected slice), the critique's once the draft is written. Sized above
+# MIN_VIABLE_CHILD_BUDGET so a review child gets real working room, not just a viable
+# floor.
+DR_ANALYST_RESERVE = 450_000
+DR_CRITIQUE_RESERVE = 150_000
+DR_REVIEW_RESERVE = DR_ANALYST_RESERVE + DR_CRITIQUE_RESERVE
+
 # The complexity tiers the plan step assigns. In v2 complexity ONLY sizes the gather
 # breadth (below) — it never skips the analyst, the coverage check, the gap round, or the
 # critique. A malformed/injected value defaults to the broadest real tier; it can never
@@ -192,77 +204,95 @@ class DeepResearchService:
         # Complexity sizes the gather breadth ONLY — it never skips a later stage.
         sub_questions = sub_questions[: _breadth_for(complexity, breadth)]
 
-        # --- (2) GATHER — a research fan over the sub-questions --------------------
-        self._phase(ctx, 2, f"Researching {len(sub_questions)} angle(s)")
-        gather = await self._spawn.run_research_fan(
-            ctx,
-            briefs=[(_label(sq, i), sq) for i, sq in enumerate(sub_questions)],
-            effort="medium",
-        )
-        if not any(r.ok for r in gather):
-            return _refuse(
-                "deep research gathered no usable findings — the sub-agent budget for "
-                "this turn may be exhausted, or the topic returned nothing."
+        # Reserve the review children's slice off the children's pool BEFORE gather runs.
+        # `children_exhausted` honours `stage_reserve`, so a greedy gather round is stopped
+        # AT the reserve instead of draining the pool and starving the analyst/critique
+        # (the 1918-flu failure). The reserve is stepped down as each review stage is
+        # reached, and restored in `finally` so a later fan in this same turn isn't gated.
+        prior_reserve = ctx.tree.stage_reserve
+        ctx.tree.stage_reserve = DR_REVIEW_RESERVE
+        try:
+            # --- (2) GATHER — a research fan over the sub-questions ----------------
+            self._phase(ctx, 2, f"Researching {len(sub_questions)} angle(s)")
+            gather = await self._spawn.run_research_fan(
+                ctx,
+                briefs=[(_label(sq, i), sq) for i, sq in enumerate(sub_questions)],
+                effort="medium",
             )
-
-        # --- (3) ANALYZE — a review sub-agent fed the researchers' findings --------
-        # The cross-agent handoff: an analyst reads the whole gather roster (as escaped
-        # data) and cross-checks it before anything is written.
-        self._phase(ctx, 3, "Cross-checking the findings")
-        analyst = await self._analyze(ctx, question, gather)
-        analysis = analyst.summary if analyst and analyst.ok else ""
-
-        # --- (4) REFLECT — coverage check over findings + analysis ----------------
-        self._phase(ctx, 4, "Checking coverage for gaps")
-        gaps = await self._reflect(ctx, question, sections, gather, analysis)
-        gaps = gaps[:DR_MAX_GAP_QUESTIONS]
-
-        # --- (5) REFILL — one bounded gap round (skipped-loud if the pool is drained) -
-        refill: list[_ChildResult] = []
-        coverage_limited = False
-        if gaps:
-            if ctx.tree.can_admit(len(gaps)) and ctx.tree.can_admit_budget(len(gaps)):
-                self._phase(ctx, 5, f"Filling {len(gaps)} gap(s)")
-                refill = await self._spawn.run_research_fan(
-                    ctx,
-                    briefs=[(_label(g, i), g) for i, g in enumerate(gaps)],
-                    effort="medium",
+            if not any(r.ok for r in gather):
+                return _refuse(
+                    "deep research gathered no usable findings — the sub-agent budget for "
+                    "this turn may be exhausted, or the topic returned nothing."
                 )
-                # A refill that was admitted but produced NOTHING usable (every gap child
-                # failed) added no coverage — report it as partial, and don't count it as a
-                # second round (truthful depth, not "rounds=2" over an empty round).
-                if not any(r.ok for r in refill):
+
+            # Gather is done, so its children can no longer over-spend: release the
+            # analyst's slice (it may now use everything but the critique's protected
+            # slice), and keep the critique's reserved through the analyst + refill fans.
+            ctx.tree.stage_reserve = DR_CRITIQUE_RESERVE
+
+            # --- (3) ANALYZE — a review sub-agent fed the researchers' findings ----
+            # The cross-agent handoff: an analyst reads the whole gather roster (as escaped
+            # data) and cross-checks it before anything is written.
+            self._phase(ctx, 3, "Cross-checking the findings")
+            analyst = await self._analyze(ctx, question, gather)
+            analysis = analyst.summary if analyst and analyst.ok else ""
+
+            # --- (4) REFLECT — coverage check over findings + analysis ------------
+            self._phase(ctx, 4, "Checking coverage for gaps")
+            gaps = await self._reflect(ctx, question, sections, gather, analysis)
+            gaps = gaps[:DR_MAX_GAP_QUESTIONS]
+
+            # --- (5) REFILL — one bounded gap round (skipped-loud if pool is drained) -
+            refill: list[_ChildResult] = []
+            coverage_limited = False
+            if gaps:
+                if ctx.tree.can_admit(len(gaps)) and ctx.tree.can_admit_budget(len(gaps)):
+                    self._phase(ctx, 5, f"Filling {len(gaps)} gap(s)")
+                    refill = await self._spawn.run_research_fan(
+                        ctx,
+                        briefs=[(_label(g, i), g) for i, g in enumerate(gaps)],
+                        effort="medium",
+                    )
+                    # A refill that was admitted but produced NOTHING usable (every gap
+                    # child failed) added no coverage — report it as partial, and don't
+                    # count it as a second round (truthful depth, not "rounds=2").
+                    if not any(r.ok for r in refill):
+                        coverage_limited = True
+                else:
+                    # The pool can't seat the gap children — synthesize from what we have
+                    # and say so, rather than failing (a refused refill is not a crash).
                     coverage_limited = True
-            else:
-                # The pool can't seat the gap children — synthesize from what we have and
-                # say so, rather than failing (a refused refill is not a crash).
-                coverage_limited = True
 
-        results = gather + refill
+            results = gather + refill
 
-        # The global citation registry: every real URL the findings + the analyst reached,
-        # deduped and numbered once. The report cites `[^n]` against THIS list (stable
-        # across the draft and the revise), so each marker maps to a tappable favicon and
-        # the sources are never lost between the sub-agents and the report.
-        sources = _collect_sources([*gather, *([analyst] if analyst else []), *refill])
+            # The global citation registry: every real URL the findings + the analyst
+            # reached, deduped and numbered once. The report cites `[^n]` against THIS list
+            # (stable across the draft and the revise), so each marker maps to a tappable
+            # favicon and the sources are never lost between the sub-agents and the report.
+            sources = _collect_sources([*gather, *([analyst] if analyst else []), *refill])
 
-        # --- (6) SYNTHESIZE the report --------------------------------------------
-        self._phase(ctx, 6, "Writing the report")
-        report = await self._synthesize(
-            ctx, question, sections, results, analysis, sources, critique=""
-        )
-
-        # --- (7) CRITIQUE — a review sub-agent fed the draft; (8) one REVISE pass ---
-        self._phase(ctx, 7, "Reviewing the draft")
-        critic = await self._critique(ctx, report)
-        critique = critic.summary if critic and critic.ok else ""
-        revised = False
-        if critique.strip():
-            self._phase(ctx, 8, "Revising from the critique")
+            # --- (6) SYNTHESIZE the report ----------------------------------------
+            self._phase(ctx, 6, "Writing the report")
             report = await self._synthesize(
-                ctx, question, sections, results, analysis, sources, critique=critique
+                ctx, question, sections, results, analysis, sources, critique=""
             )
-            revised = True
+
+            # The draft is written — release the critique's slice for the critique child.
+            ctx.tree.stage_reserve = 0
+
+            # --- (7) CRITIQUE — a review sub-agent fed the draft; (8) one REVISE pass -
+            self._phase(ctx, 7, "Reviewing the draft")
+            critic = await self._critique(ctx, report)
+            critique = critic.summary if critic and critic.ok else ""
+            revised = False
+            if critique.strip():
+                self._phase(ctx, 8, "Revising from the critique")
+                report = await self._synthesize(
+                    ctx, question, sections, results, analysis, sources, critique=critique
+                )
+                revised = True
+        finally:
+            ctx.tree.stage_reserve = prior_reserve
 
         analyzed = bool(analysis.strip())
         refilled = any(r.ok for r in refill)
