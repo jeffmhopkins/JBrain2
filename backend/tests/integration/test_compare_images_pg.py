@@ -8,6 +8,7 @@ exercised for real."""
 
 import io
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -102,13 +103,20 @@ def _ctx(owner: SessionContext) -> ToolContext:
     return ToolContext(session=owner, scopes=(), agent_session_id=SESSION)
 
 
+def _compare_handlers(maker: async_sessionmaker, router: LlmRouter, blobs: Any, repo: Any):
+    # The fakes stand in for BlobStore / TurnAttachmentRepo (the repo test pattern); typed
+    # Any at the seam so pyright accepts the structural stand-ins.
+    atts: Any = FakeAttachments()
+    return build_compare_handlers(router, blobs, repo, atts, maker)
+
+
 async def test_compare_persists_and_shows_a_side_by_side(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     blobs, repo = FakeBlobs(), GeneratedImageRepo()
     id_a = await _store_image(maker, owner, blobs, repo, _png(60, 40, (200, 30, 30)))
     id_b = await _store_image(maker, owner, blobs, repo, _png(80, 40, (30, 30, 200)))
     fake = FakeLlmClient(["Image 1 is a Metropolis; image 2 is a Metropolix — different panels."])
-    handlers = build_compare_handlers(_router(fake), blobs, repo, FakeAttachments(), maker)
+    handlers = _compare_handlers(maker, _router(fake), blobs, repo)
 
     out = await handlers["compare_images"](
         {"prompt": "same module?", "image_ids": [id_a, id_b]}, _ctx(owner)
@@ -131,9 +139,7 @@ async def test_show_false_suppresses_the_side_by_side(maker: async_sessionmaker)
     owner = await _owner(maker)
     blobs, repo = FakeBlobs(), GeneratedImageRepo()
     ids = [await _store_image(maker, owner, blobs, repo, _png()) for _ in range(2)]
-    handlers = build_compare_handlers(
-        _router(FakeLlmClient(["similar"])), blobs, repo, FakeAttachments(), maker
-    )
+    handlers = _compare_handlers(maker, _router(FakeLlmClient(["similar"])), blobs, repo)
     out = await handlers["compare_images"](
         {"prompt": "?", "image_ids": ids, "show": False}, _ctx(owner)
     )
@@ -144,9 +150,7 @@ async def test_error_paths(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     blobs, repo = FakeBlobs(), GeneratedImageRepo()
     one = await _store_image(maker, owner, blobs, repo, _png())
-    handlers = build_compare_handlers(
-        _router(FakeLlmClient(["x"])), blobs, repo, FakeAttachments(), maker
-    )
+    handlers = _compare_handlers(maker, _router(FakeLlmClient(["x"])), blobs, repo)
 
     # Empty prompt, and fewer than two images → clean rule messages, no vision call.
     assert "needs a prompt" in await handlers["compare_images"]({"image_ids": [one]}, _ctx(owner))

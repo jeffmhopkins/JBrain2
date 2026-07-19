@@ -10,6 +10,7 @@ is unit-tested in tests/unit/test_web.py."""
 
 import io
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -83,8 +84,11 @@ async def _owner(maker: async_sessionmaker) -> SessionContext:
     return SessionContext(principal_id=str(pid), principal_kind="owner")
 
 
-def _handlers(maker: async_sessionmaker, fetcher: FakeFetcher):
-    return build_fetch_image_handlers(fetcher, FakeBlobs(), GeneratedImageRepo(), maker)
+def _handlers(maker: async_sessionmaker, fetcher: Any):
+    # The fakes stand in for WebFetcher / BlobStore (the repo test pattern); typed Any at
+    # the seam so pyright accepts the structural stand-ins.
+    blobs: Any = FakeBlobs()
+    return build_fetch_image_handlers(fetcher, blobs, GeneratedImageRepo(), maker)
 
 
 def _ctx(owner: SessionContext) -> ToolContext:

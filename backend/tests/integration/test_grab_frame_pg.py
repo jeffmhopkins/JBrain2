@@ -9,6 +9,7 @@ RLS are exercised for real, since that is the part real Postgres validates."""
 
 import io
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -151,9 +152,13 @@ def _handlers(
     raising_resolver: bool = False,
 ):
     sample = StreamSample(frames=[SampledFrame(0, frame)] if frame is not None else [])
+    # The fakes stand in for BlobStore / TurnAttachmentRepo (the repo test pattern); typed
+    # Any at the seam so pyright accepts the structural stand-ins.
+    b: Any = blobs or FakeBlobs()
+    a: Any = attachments or FakeAttachments()
     return build_grab_frame_handlers(
-        blobs or FakeBlobs(),
-        attachments or FakeAttachments(),
+        b,
+        a,
         GeneratedImageRepo(),
         maker,
         _router(fake or FakeLlmClient([])),
