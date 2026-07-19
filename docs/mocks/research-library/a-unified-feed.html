@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Research Library · A — unified feed + swipe rail</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--amber-tint);color:var(--amber);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--amber-tint);color:var(--amber);font-weight:600;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;cursor:pointer;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .sub{font-size:12px;color:var(--text-3);margin-top:1px;}
+  .bar .spacer{margin-left:auto;}
+  .bar .iconbtn{appearance:none;border:none;background:none;color:var(--text-2);padding:6px;cursor:pointer;border-radius:9px;}
+
+  /* search */
+  .search{padding:10px 14px 8px;flex:none;}
+  .searchbox{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:0 12px;height:44px;}
+  .searchbox:focus-within{border-color:var(--amber);box-shadow:0 0 0 2px var(--amber-tint);}
+  .searchbox svg{color:var(--text-3);flex:none;}
+  .searchbox input{flex:1;background:none;border:none;color:var(--text);font:inherit;font-size:16px;outline:none;}
+  .searchbox input::placeholder{color:var(--text-3);}
+  .searchbox .clr{background:none;border:none;color:var(--text-3);cursor:pointer;padding:4px;display:none;}
+  .searchbox.filled .clr{display:block;}
+
+  /* chip row */
+  .chips{display:flex;gap:8px;padding:2px 14px 10px;overflow-x:auto;flex:none;scrollbar-width:none;}
+  .chips::-webkit-scrollbar{display:none;}
+  .chip{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:13px;font-weight:500;padding:7px 13px;border-radius:999px;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:7px;flex:none;}
+  .chip .n{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .chip.on{background:var(--amber-tint);border-color:var(--amber);color:var(--amber);}
+  .chip.on .n{color:var(--amber);}
+
+  .countline{font-size:11.5px;color:var(--text-3);padding:0 16px 4px;flex:none;}
+
+  .body{flex:1;overflow-y:auto;padding:4px 14px 26px;}
+
+  /* swipe rail row */
+  .row{position:relative;margin-bottom:9px;border-radius:16px;overflow:hidden;}
+  .rail{position:absolute;inset:0 0 0 auto;width:88px;display:flex;}
+  .rail-del{width:88px;border:none;background:var(--rose-tint);color:var(--rose);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:inherit;font-size:11px;cursor:pointer;}
+  .rail-del.armed{background:var(--rose);color:#fff;}
+  .rail-del svg{width:20px;height:20px;}
+  .card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 13px;display:flex;gap:11px;align-items:flex-start;cursor:pointer;transform:translateX(0);transition:transform .22s cubic-bezier(.2,.7,.3,1);}
+  .row.open .card{transform:translateX(-88px);}
+  .disc{width:38px;height:38px;border-radius:999px;flex:none;display:flex;align-items:center;justify-content:center;}
+  .disc.report{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber);}
+  .disc.video{background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel);}
+  .disc svg{width:20px;height:20px;}
+  .main{flex:1;min-width:0;}
+  .ttl2{font-size:15px;font-weight:600;line-height:1.32;}
+  .metarow{display:flex;align-items:center;gap:7px;margin-top:5px;font-size:12px;color:var(--text-2);flex-wrap:wrap;}
+  .ddot{width:7px;height:7px;border-radius:999px;background:var(--amber);flex:none;}
+  .kind{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;}
+  .kind.report{color:var(--amber);}
+  .kind.video{color:var(--steel);}
+  .statrow{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
+  .st{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-2);background:var(--surface-2);border-radius:999px;padding:3px 9px;font-variant-numeric:tabular-nums;}
+  .st svg{width:12px;height:12px;color:var(--text-3);}
+  .st.flag-amber{background:var(--amber-tint);color:var(--amber);}
+  .st.flag-green{background:var(--green-tint);color:var(--green);}
+  .st.flag-rose{background:var(--rose-tint);color:var(--rose);}
+  .st.live{background:var(--rose-tint);color:var(--rose);font-weight:600;}
+
+  .empty{text-align:center;color:var(--text-2);font-size:14px;padding:60px 30px;line-height:1.5;}
+  .empty b{color:var(--text);font-weight:500;}
+
+  /* detail sheet */
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.2s;z-index:90;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;top:44px;background:var(--surface);border-top:1px solid var(--border);border-radius:20px 20px 0 0;transform:translateY(100%);transition:transform .26s cubic-bezier(.2,.7,.3,1);z-index:100;display:flex;flex-direction:column;}
+  .sheet.show{transform:translateY(0);}
+  .handle{width:38px;height:4px;border-radius:999px;background:var(--border);margin:8px auto 4px;flex:none;}
+  .sheet-hd{padding:6px 16px 12px;border-bottom:1px solid var(--border);flex:none;display:flex;gap:11px;align-items:flex-start;}
+  .sheet-body{flex:1;overflow-y:auto;padding:16px;}
+  .sheet-ttl{font-size:17px;font-weight:600;line-height:1.3;}
+  .sheet-meta{font-size:12.5px;color:var(--text-2);margin-top:5px;display:flex;gap:7px;align-items:center;flex-wrap:wrap;}
+  .sheet-x{background:none;border:none;color:var(--text-3);cursor:pointer;padding:4px;flex:none;}
+  .rep-h{font-size:13px;font-weight:600;margin:16px 0 7px;}
+  .rep-h:first-child{margin-top:0;}
+  .rep-p{font-size:14px;line-height:1.6;color:var(--text-2);}
+  .cite{display:inline-flex;width:15px;height:15px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-3);font-size:9px;align-items:center;justify-content:center;vertical-align:super;margin:0 1px;font-variant-numeric:tabular-nums;}
+  .vid-frame{width:100%;aspect-ratio:16/9;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--text-3);}
+  .vid-frame svg{width:34px;height:34px;}
+  .filmstrip{display:flex;gap:6px;overflow-x:auto;margin-top:10px;scrollbar-width:none;}
+  .filmstrip::-webkit-scrollbar{display:none;}
+  .fs-cell{flex:none;width:64px;}
+  .fs-thumb{width:64px;height:40px;border-radius:7px;background:var(--surface-2);border:1px solid var(--border);}
+  .fs-cell.on .fs-thumb{border-color:var(--steel);box-shadow:0 0 0 1px var(--steel);}
+  .fs-t{font-size:9.5px;color:var(--text-3);text-align:center;margin-top:3px;font-variant-numeric:tabular-nums;}
+  .sheet-foot{border-top:1px solid var(--border);padding:12px 16px calc(14px + env(safe-area-inset-bottom));display:flex;gap:9px;flex:none;}
+  .btn{flex:1;height:44px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:inherit;font-size:14px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
+  .btn svg{width:17px;height:17px;}
+  .btn.danger{background:var(--rose-tint);border-color:transparent;color:var(--rose);flex:none;width:52px;}
+  .btn.danger.armed{background:var(--rose);color:#fff;flex:1;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:120;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .undo{margin-left:auto;color:var(--steel);font-weight:600;cursor:pointer;background:none;border:none;font:inherit;font-size:13px;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Research Library · A — unified feed + swipe rail</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    <b>One chronological feed of everything jerv has researched.</b> Reports and video
+    analyses share a stream, sorted newest-first; the type disc (amber file = report,
+    steel video = analysis) tells them apart. <b>Live search</b> filters as you type;
+    <b>chips</b> narrow to a type. <b>Swipe a row left</b> for its delete rail (tap-again
+    to confirm); <b>tap</b> to view. Try swiping a card, or the search box.
+  </div>
+
+  <div class="phone" id="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span><span class="ttl">Research Library</span></span>
+      <span class="spacer"></span>
+      <button class="iconbtn" aria-label="Launcher"><svg width="21" height="21" viewBox="0 0 24 24"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg></button>
+    </div>
+
+    <div class="search">
+      <div class="searchbox" id="sbox">
+        <svg width="19" height="19" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="q" placeholder="Search reports & video analysis…" oninput="onSearch()" />
+        <button class="clr" onclick="clearSearch()" aria-label="Clear"><svg width="17" height="17" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
+    </div>
+
+    <div class="chips" id="chips"></div>
+    <div class="countline" id="countline"></div>
+    <div class="body" id="body"></div>
+
+    <div class="scrim" id="scrim" onclick="closeSheet()"></div>
+    <div class="sheet" id="sheet">
+      <div class="handle"></div>
+      <div class="sheet-hd" id="sheet-hd"></div>
+      <div class="sheet-body" id="sheet-body"></div>
+      <div class="sheet-foot" id="sheet-foot"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script src="items.js"></script>
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+
+let ITEMS=window.RL_ITEMS.map(x=>({...x}));
+let filter='all';        // all | report | video
+let query='';
+let openRow=null;        // row element with rail open
+let deleted=null;        // {item, idx} for undo
+
+const CX_LABEL={simple:'simple',comparative:'comparative',deep:'deep'};
+
+function iconReport(){return '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>';}
+function iconVideo(){return '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>';}
+function iconLink(){return '<svg viewBox="0 0 24 24"><path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 016 6l-1 1M13.5 17.5l-1 1a4 4 0 01-6-6l1-1"/></svg>';}
+function iconClock(){return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>';}
+function iconUsers(){return '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0112 0M16 6a3 3 0 010 6M21 20a6 6 0 00-4-5.6"/></svg>';}
+function iconFrames(){return '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M16 5v14"/></svg>';}
+
+function fmtDur(s){const m=Math.floor(s/60),h=Math.floor(m/60);
+  return h?`${h}:${String(m%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`:`${m}:${String(s%60).padStart(2,'0')}`;}
+
+function statsFor(it){
+  let out=[];
+  if(it.type==='report'){
+    out.push(`<span class="st">${iconUsers()}${it.sub_agents} agents</span>`);
+    out.push(`<span class="st">${it.rounds} round${it.rounds>1?'s':''}</span>`);
+    out.push(`<span class="st">${iconLink()}${it.sources} sources</span>`);
+    if(it.analyzed)out.push('<span class="st flag-green">cross-checked</span>');
+    if(it.revised)out.push('<span class="st flag-green">revised</span>');
+    if(it.coverage_limited)out.push('<span class="st flag-amber">coverage limited</span>');
+    if(it.truncated)out.push('<span class="st flag-rose">truncated</span>');
+  }else{
+    if(it.live)out.push('<span class="st live">● LIVE</span>');
+    else out.push(`<span class="st">${iconClock()}${fmtDur(it.duration_s)}</span>`);
+    out.push(`<span class="st">${it.channel}</span>`);
+    out.push(`<span class="st">${iconFrames()}${it.frames} frames</span>`);
+    out.push(`<span class="st">${it.transcript_source==='captions'?'captions':'transcribed'}</span>`);
+  }
+  return out.join('');
+}
+
+function visible(){
+  return ITEMS.filter(it=>{
+    if(filter!=='all'&&it.type!==filter)return false;
+    if(query){
+      const hay=(it.title+' '+(it.channel||'')+' '+(it.complexity||'')).toLowerCase();
+      if(!hay.includes(query))return false;
+    }
+    return true;
+  });
+}
+
+function renderChips(){
+  const nr=ITEMS.filter(i=>i.type==='report').length, nv=ITEMS.filter(i=>i.type==='video').length;
+  const defs=[['all','All',ITEMS.length],['report','Reports',nr],['video','Videos',nv]];
+  document.getElementById('chips').innerHTML=defs.map(([id,lbl,n])=>
+    `<button class="chip ${filter===id?'on':''}" onclick="setFilter('${id}')">${lbl} <span class="n">${n}</span></button>`).join('');
+}
+
+function render(){
+  renderChips();
+  const list=visible();
+  const cl=document.getElementById('countline');
+  cl.textContent=query?`${list.length} match${list.length===1?'':'es'} for “${query}”`
+    :`${list.length} item${list.length===1?'':'s'}${filter!=='all'?' · '+filter+'s':''}`;
+  const body=document.getElementById('body');
+  if(!list.length){
+    body.innerHTML=`<div class="empty">${query?`No research matches <b>“${query}”</b> — try another term.`:'<b>Nothing here yet.</b><br/>Reports and video analyses jerv saves show up here.'}</div>`;
+    return;
+  }
+  body.innerHTML=list.map(it=>`
+    <div class="row" data-id="${it.id}">
+      <div class="rail"><button class="rail-del" onclick="delArm(this,'${it.id}',event)">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>delete</button></div>
+      <div class="card" onclick="tapCard('${it.id}',event)">
+        <span class="disc ${it.type}">${it.type==='report'?iconReport():iconVideo()}</span>
+        <span class="main">
+          <span class="ttl2">${it.title}</span>
+          <span class="metarow"><span class="ddot"></span><span class="kind ${it.type}">${it.type==='report'?'REPORT':'VIDEO'}</span><span>·</span><span>${it.date}</span></span>
+          <span class="statrow">${statsFor(it)}</span>
+        </span>
+      </div>
+    </div>`).join('');
+  bindSwipe();
+}
+
+function setFilter(f){filter=f;closeRail();render();}
+function onSearch(){const el=document.getElementById('q');query=el.value.trim().toLowerCase();
+  document.getElementById('sbox').classList.toggle('filled',el.value.length>0);render();}
+function clearSearch(){document.getElementById('q').value='';query='';document.getElementById('sbox').classList.remove('filled');render();}
+
+/* swipe rail */
+function closeRail(){if(openRow){openRow.classList.remove('open');openRow.querySelector('.rail-del').classList.remove('armed');openRow=null;}}
+function openRail(row){if(openRow&&openRow!==row)closeRail();row.classList.add('open');openRow=row;}
+function bindSwipe(){
+  document.querySelectorAll('.row').forEach(row=>{
+    let sx=0,sy=0,active=false;
+    const card=row.querySelector('.card');
+    card.addEventListener('pointerdown',e=>{sx=e.clientX;sy=e.clientY;active=true;});
+    card.addEventListener('pointermove',e=>{
+      if(!active)return;const dx=e.clientX-sx,dy=e.clientY-sy;
+      if(Math.abs(dx)>Math.abs(dy)+4&&Math.abs(dx)>10){
+        if(dx<-24)openRail(row);else if(dx>24)closeRail();
+        active=false;}
+    });
+    card.addEventListener('pointerup',()=>active=false);
+  });
+}
+function tapCard(id,e){
+  if(e.target.closest('.rail'))return;
+  const row=e.currentTarget.closest('.row');
+  if(row.classList.contains('open')){closeRail();return;}
+  openSheet(id);
+}
+function delArm(btn,id,e){e.stopPropagation();
+  if(!btn.classList.contains('armed')){btn.classList.add('armed');btn.querySelector('svg').outerHTML='';btn.childNodes[btn.childNodes.length-1].textContent='confirm';
+    clearTimeout(btn._t);btn._t=setTimeout(()=>{closeRail();},2600);return;}
+  doDelete(id);
+}
+function doDelete(id){
+  const idx=ITEMS.findIndex(i=>i.id===id);if(idx<0)return;
+  deleted={item:ITEMS[idx],idx};ITEMS.splice(idx,1);closeRail();render();
+  toast(`Deleted “${trunc(deleted.item.title)}”.`,true);
+}
+function trunc(s){return s.length>32?s.slice(0,31)+'…':s;}
+function undo(){if(!deleted)return;ITEMS.splice(deleted.idx,0,deleted.item);deleted=null;render();hideToast();}
+
+/* detail sheet */
+function openSheet(id){
+  const it=ITEMS.find(i=>i.id===id);if(!it)return;
+  const hd=document.getElementById('sheet-hd'),bd=document.getElementById('sheet-body'),ft=document.getElementById('sheet-foot');
+  hd.innerHTML=`<span class="disc ${it.type}">${it.type==='report'?iconReport():iconVideo()}</span>
+    <span style="flex:1;min-width:0">
+      <span class="sheet-ttl">${it.title}</span>
+      <span class="sheet-meta"><span class="ddot"></span><span class="kind ${it.type}">${it.type==='report'?'REPORT':'VIDEO ANALYSIS'}</span><span>·</span><span>${it.date}</span></span>
+    </span>
+    <button class="sheet-x" onclick="closeSheet()"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`;
+  bd.innerHTML=it.type==='report'?reportBody(it):videoBody(it);
+  ft.innerHTML=`<button class="btn"><svg viewBox="0 0 24 24"><path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 016 6l-1 1M13.5 17.5l-1 1a4 4 0 01-6-6l1-1"/></svg>${it.type==='report'?'Copy .md':'Open source'}</button>
+    <button class="btn danger" id="sheet-del" onclick="sheetDel('${it.id}',this)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg></button>`;
+  document.getElementById('sheet').classList.add('show');
+  document.getElementById('scrim').classList.add('show');
+}
+function reportBody(it){
+  return `<div class="statrow" style="margin-bottom:14px">${statsFor(it)}</div>
+    <div class="rep-h">Summary</div>
+    <p class="rep-p">${it.body||'A synthesized, cited report jerv produced by orchestrating a sub-agent research fan across a plan → gather → reflect → synthesize state machine.'} <span class="cite">1</span><span class="cite">2</span></p>
+    <div class="rep-h">Key findings</div>
+    <p class="rep-p">Each section is written from the researchers’ summaries with attribute-at-extraction citations; informal single-source claims are flagged. <span class="cite">3</span></p>
+    <div class="rep-h">Sources · ${it.sources}</div>
+    <p class="rep-p">${it.sources} web sources reached across ${it.sub_agents} sub-agents. Tap a citation to open its favicon link.</p>`;
+}
+function videoBody(it){
+  return `<div class="vid-frame">${iconVideo()}</div>
+    <div class="filmstrip">${Array.from({length:8}).map((_,i)=>`<div class="fs-cell ${i===2?'on':''}"><div class="fs-thumb"></div><div class="fs-t">${fmtDur(Math.round(it.duration_s/8*i))}</div></div>`).join('')}</div>
+    <div class="statrow" style="margin:14px 0 4px">${statsFor(it)}</div>
+    <div class="rep-h">Summary</div>
+    <p class="rep-p">${it.body||'A frame-by-frame + transcript analysis jerv produced from the source video. The filmstrip above is the timeline — tap a frame to seek; Summary and Transcript tabs share one clock.'}</p>
+    <div class="rep-h">Transcript</div>
+    <p class="rep-p">${it.transcript_source==='captions'?'From the source’s own captions.':'Transcribed locally (Whisper).'} Tap a word to seek playback.</p>`;
+}
+function sheetDel(id,btn){
+  if(!btn.classList.contains('armed')){btn.classList.add('armed');btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Tap again to delete';
+    clearTimeout(btn._t);btn._t=setTimeout(()=>{btn.classList.remove('armed');btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>';},3000);return;}
+  closeSheet();doDelete(id);
+}
+function closeSheet(){document.getElementById('sheet').classList.remove('show');document.getElementById('scrim').classList.remove('show');}
+
+function toast(msg,withUndo){const t=document.getElementById('toast');
+  t.innerHTML=`<svg width="16" height="16" viewBox="0 0 24 24" style="color:var(--text-3)"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>${msg}${withUndo?'<button class="undo" onclick="undo()">Undo</button>':''}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>{t.classList.remove('show');deleted=null;},4000);}
+function hideToast(){document.getElementById('toast').classList.remove('show');clearTimeout(toast._t);}
+
+render();
+</script>
+</body>
+</html>

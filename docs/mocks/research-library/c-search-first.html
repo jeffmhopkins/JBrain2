@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Research Library · C — search-first + bulk select</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--amber-tint);color:var(--amber);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--amber-tint);color:var(--amber);font-weight:600;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;cursor:pointer;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .spacer{margin-left:auto;}
+  .bar .txt{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:14px;font-weight:500;padding:6px 8px;cursor:pointer;border-radius:9px;}
+  .bar .txt.on{background:var(--amber-tint);color:var(--amber);}
+
+  /* hero search */
+  .hero{padding:14px 14px 8px;flex:none;}
+  .searchbox{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:0 14px;height:50px;}
+  .searchbox:focus-within{border-color:var(--amber);box-shadow:0 0 0 2px var(--amber-tint);}
+  .searchbox svg{color:var(--amber);flex:none;}
+  .searchbox input{flex:1;background:none;border:none;color:var(--text);font:inherit;font-size:17px;outline:none;}
+  .searchbox input::placeholder{color:var(--text-3);}
+  .searchbox .clr{background:none;border:none;color:var(--text-3);cursor:pointer;padding:4px;display:none;}
+  .searchbox.filled .clr{display:block;}
+  .scope{display:flex;gap:8px;margin-top:10px;}
+  .scopebtn{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;padding:6px 12px;border-radius:999px;cursor:pointer;display:flex;align-items:center;gap:6px;}
+  .scopebtn.on{background:var(--amber-tint);border-color:var(--amber);color:var(--amber);}
+  .scopebtn .n{font-size:10.5px;color:var(--text-3);}
+  .scopebtn.on .n{color:var(--amber);}
+
+  .body{flex:1;overflow-y:auto;padding:4px 14px 26px;}
+  .grouphdr{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:600;margin:16px 4px 8px;display:flex;align-items:center;gap:8px;}
+  .grouphdr:first-child{margin-top:8px;}
+  .grouphdr .gc{font-size:11px;background:var(--surface-2);border-radius:999px;padding:2px 8px;color:var(--text-3);}
+
+  /* result row (passage-first) */
+  .res{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:9px;display:flex;gap:11px;align-items:flex-start;cursor:pointer;}
+  .chk{width:22px;height:22px;border-radius:7px;border:1.6px solid var(--border);flex:none;margin-top:1px;display:none;align-items:center;justify-content:center;color:transparent;}
+  .selecting .chk{display:flex;}
+  .res.sel .chk{background:var(--amber-tint);border-color:var(--amber);color:var(--amber);}
+  .disc{width:34px;height:34px;border-radius:999px;flex:none;display:flex;align-items:center;justify-content:center;}
+  .disc.report{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber);}
+  .disc.video{background:color-mix(in srgb,var(--steel) 16%,transparent);color:var(--steel);}
+  .disc svg{width:18px;height:18px;}
+  .selecting .disc{display:none;}
+  .rmain{flex:1;min-width:0;}
+  .rt{font-size:15px;font-weight:600;line-height:1.32;}
+  .snippet{font-size:13px;color:var(--text-2);line-height:1.5;margin-top:5px;}
+  .snippet mark{background:var(--amber-tint);color:var(--amber);border-radius:3px;padding:0 2px;}
+  .rmeta{font-size:11.5px;color:var(--text-3);margin-top:7px;display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-variant-numeric:tabular-nums;}
+  .rmeta .ddot{width:6px;height:6px;border-radius:999px;background:var(--amber);}
+  .badge{font-size:10px;padding:1px 7px;border-radius:999px;font-weight:600;}
+  .badge.semantic{background:var(--steel-tint);color:var(--steel);}
+  .badge.keyword{background:var(--surface-2);color:var(--text-3);}
+  .badge.cx{background:var(--violet-tint);color:var(--violet);text-transform:capitalize;}
+
+  .empty{text-align:center;color:var(--text-2);font-size:14px;padding:56px 30px;line-height:1.5;}
+  .empty b{color:var(--text);font-weight:500;}
+
+  /* bulk bar */
+  .bulk{position:absolute;left:14px;right:14px;bottom:18px;background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:9px 10px 9px 14px;display:flex;align-items:center;gap:10px;transform:translateY(180%);transition:transform .22s cubic-bezier(.2,.7,.3,1);z-index:80;}
+  .bulk.show{transform:translateY(0);}
+  .bulk .cnt{font-size:13px;color:var(--text-2);flex:1;}
+  .bulk .cnt b{color:var(--text);font-weight:600;}
+  .bulk button{appearance:none;border:none;font:inherit;font-size:13px;font-weight:500;padding:9px 13px;border-radius:10px;cursor:pointer;}
+  .bulk .clr{background:none;color:var(--text-2);}
+  .bulk .del{background:var(--rose-tint);color:var(--rose);display:flex;align-items:center;gap:6px;}
+  .bulk .del svg{width:15px;height:15px;}
+  .bulk .del.armed{background:var(--rose);color:#fff;}
+
+  /* detail layer */
+  .layer{position:absolute;inset:0;background:var(--bg);transform:translateY(100%);transition:transform .26s cubic-bezier(.2,.7,.3,1);z-index:110;display:flex;flex-direction:column;}
+  .layer.show{transform:translateY(0);}
+  .lhd{padding:14px 16px 13px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;flex:none;}
+  .lhd .sheet-ttl2{font-size:17px;font-weight:600;line-height:1.3;flex:1;}
+  .lhd .lmeta{font-size:12px;color:var(--text-2);margin-top:5px;display:flex;gap:7px;align-items:center;}
+  .lhd .lmeta .ddot{width:7px;height:7px;border-radius:999px;background:var(--amber);}
+  .lhd .back{background:none;border:none;color:var(--text-2);padding:4px;cursor:pointer;}
+  .layer-body{flex:1;overflow-y:auto;padding:16px;}
+  .rep-h{font-size:13px;font-weight:600;margin:16px 0 7px;}
+  .rep-h:first-child{margin-top:0;}
+  .rep-p{font-size:14px;line-height:1.6;color:var(--text-2);}
+  .cite{display:inline-flex;width:15px;height:15px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-3);font-size:9px;align-items:center;justify-content:center;vertical-align:super;margin:0 1px;}
+  .pc{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-2);background:var(--surface-2);border-radius:999px;padding:3px 9px;margin-right:6px;}
+  .vid-frame{width:100%;aspect-ratio:16/9;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--text-3);}
+  .vid-frame svg{width:34px;height:34px;}
+  .ldel{width:100%;height:44px;margin-top:22px;border-radius:12px;border:none;background:var(--rose-tint);color:var(--rose);font:inherit;font-size:14px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
+  .ldel svg{width:17px;height:17px;}
+  .ldel.armed{background:var(--rose);color:#fff;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:130;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .undo{margin-left:auto;color:var(--steel);font-weight:600;cursor:pointer;background:none;border:none;font:inherit;font-size:13px;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Research Library · C — search-first + bulk select</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    <b>A retrieval surface first.</b> The search field is the hero; results are grouped
+    under <b>REPORTS</b> and <b>VIDEO ANALYSIS</b> headers, passage-first with match
+    highlights and a <b>semantic / keyword</b> badge (reusing the Search paradigm). Empty
+    query shows everything, newest first. <b>Select</b> (top-right) turns rows into
+    checkboxes for <b>bulk delete</b> — the review-inbox pattern. Tap a result to view.
+  </div>
+
+  <div class="phone" id="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Research Library</span>
+      <span class="spacer"></span>
+      <button class="txt" id="selbtn" onclick="toggleSelect()">Select</button>
+    </div>
+
+    <div class="hero">
+      <div class="searchbox" id="sbox">
+        <svg width="20" height="20" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="q" placeholder="Search everything you've researched…" oninput="onSearch()" />
+        <button class="clr" onclick="clearSearch()" aria-label="Clear"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="scope" id="scope"></div>
+    </div>
+
+    <div class="body" id="body"></div>
+
+    <div class="bulk" id="bulk">
+      <span class="cnt" id="bulkcnt"><b>0</b> selected</span>
+      <button class="clr" onclick="clearSel()">Clear</button>
+      <button class="del" id="bulkdel" onclick="bulkDelArm(this)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Delete</button>
+    </div>
+
+    <div class="layer" id="layer">
+      <div class="lhd" id="lhd"></div>
+      <div class="layer-body" id="layer-body"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script src="items.js"></script>
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+
+let ITEMS=window.RL_ITEMS.map(x=>({...x}));
+let query='';
+let scope='all';
+let selecting=false;
+const sel=new Set();
+let deleted=null;   // array of {item,idx} for undo
+
+function iconReport(){return '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>';}
+function iconVideo(){return '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>';}
+function iconLink(){return '<svg viewBox="0 0 24 24"><path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 016 6l-1 1M13.5 17.5l-1 1a4 4 0 01-6-6l1-1"/></svg>';}
+function iconUsers(){return '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0112 0M16 6a3 3 0 010 6M21 20a6 6 0 00-4-5.6"/></svg>';}
+function tick(){return '<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>';}
+function fmtDur(s){const m=Math.floor(s/60),h=Math.floor(m/60);
+  return h?`${h}:${String(m%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`:`${m}:${String(s%60).padStart(2,'0')}`;}
+function trunc(s){return s.length>30?s.slice(0,29)+'…':s;}
+
+function matches(it){
+  if(scope!=='all'&&it.type!==scope)return false;
+  if(query){const hay=(it.title+' '+(it.channel||'')+' '+(it.body||'')+' '+(it.complexity||'')).toLowerCase();return hay.includes(query);}
+  return true;
+}
+function highlight(text){
+  if(!query)return text;
+  const i=text.toLowerCase().indexOf(query);
+  if(i<0)return text;
+  const start=Math.max(0,i-40);
+  const pre=(start>0?'…':'')+text.slice(start,i);
+  return pre+'<mark>'+text.slice(i,i+query.length)+'</mark>'+text.slice(i+query.length,i+query.length+90)+'…';
+}
+
+function resRow(it){
+  const badge=query
+    ? ((it.title+' '+(it.channel||'')).toLowerCase().includes(query)
+        ?'<span class="badge keyword">keyword</span>':'<span class="badge semantic">semantic</span>')
+    : '';
+  const meta=it.type==='report'
+    ? `<span class="badge cx">${it.complexity}</span><span class="pc" style="margin:0">${iconUsers()}${it.sub_agents}</span><span class="pc" style="margin:0">${iconLink()}${it.sources}</span>`
+    : `<span>${it.channel}</span>${it.live?'<span class="badge" style="background:var(--rose-tint);color:var(--rose)">LIVE</span>':`<span>${fmtDur(it.duration_s)}</span>`}`;
+  const snippet=query?highlight(it.body||it.title):(it.body||'');
+  return `<div class="res ${sel.has(it.id)?'sel':''}" data-id="${it.id}" onclick="rowTap('${it.id}')">
+    <span class="chk">${tick()}</span>
+    <span class="disc ${it.type}">${it.type==='report'?iconReport():iconVideo()}</span>
+    <span class="rmain">
+      <span class="rt">${it.title}</span>
+      ${snippet?`<span class="snippet">${snippet}</span>`:''}
+      <span class="rmeta"><span class="ddot"></span>${it.date} ${badge} ${meta}</span>
+    </span>
+  </div>`;
+}
+
+function renderScope(){
+  const nr=ITEMS.filter(i=>i.type==='report').length, nv=ITEMS.filter(i=>i.type==='video').length;
+  const defs=[['all','All',ITEMS.length],['report','Reports',nr],['video','Videos',nv]];
+  document.getElementById('scope').innerHTML=defs.map(([id,lbl,n])=>
+    `<button class="scopebtn ${scope===id?'on':''}" onclick="setScope('${id}')">${lbl} <span class="n">${n}</span></button>`).join('');
+}
+function render(){
+  renderScope();
+  const list=ITEMS.filter(matches);
+  const reports=list.filter(i=>i.type==='report'), videos=list.filter(i=>i.type==='video');
+  const body=document.getElementById('body');
+  if(!list.length){
+    body.innerHTML=`<div class="empty">${query?`Nothing matches <b>“${query}”</b> — try another term.`:'<b>Nothing here yet.</b>'}</div>`;
+    return;
+  }
+  let html='';
+  if(reports.length&&scope!=='video'){html+=`<div class="grouphdr">Reports<span class="gc">${reports.length}</span></div>`+reports.map(resRow).join('');}
+  if(videos.length&&scope!=='report'){html+=`<div class="grouphdr">Video analysis<span class="gc">${videos.length}</span></div>`+videos.map(resRow).join('');}
+  body.innerHTML=html;
+  document.getElementById('phone').classList.toggle('selecting',selecting);
+}
+
+function setScope(s){scope=s;render();}
+function onSearch(){const el=document.getElementById('q');query=el.value.trim().toLowerCase();
+  document.getElementById('sbox').classList.toggle('filled',el.value.length>0);render();}
+function clearSearch(){document.getElementById('q').value='';query='';document.getElementById('sbox').classList.remove('filled');render();}
+
+/* select mode */
+function toggleSelect(){selecting=!selecting;sel.clear();
+  document.getElementById('selbtn').textContent=selecting?'Done':'Select';
+  document.getElementById('selbtn').classList.toggle('on',selecting);
+  updateBulk();render();}
+function rowTap(id){
+  if(selecting){if(sel.has(id))sel.delete(id);else sel.add(id);updateBulk();render();return;}
+  openLayer(id);
+}
+function clearSel(){sel.clear();updateBulk();render();}
+function updateBulk(){
+  const b=document.getElementById('bulk');
+  b.classList.toggle('show',selecting&&sel.size>0);
+  document.getElementById('bulkcnt').innerHTML=`<b>${sel.size}</b> selected`;
+  const d=document.getElementById('bulkdel');d.classList.remove('armed');
+  d.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Delete';
+}
+function bulkDelArm(btn){
+  if(!btn.classList.contains('armed')){btn.classList.add('armed');
+    btn.innerHTML=`<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Tap again — delete ${sel.size}`;
+    clearTimeout(btn._t);btn._t=setTimeout(updateBulk,3000);return;}
+  deleted=[...sel].map(id=>{const idx=ITEMS.findIndex(i=>i.id===id);return{item:ITEMS[idx],idx};}).sort((a,b)=>a.idx-b.idx);
+  const n=sel.size;
+  [...sel].forEach(id=>{const idx=ITEMS.findIndex(i=>i.id===id);if(idx>=0)ITEMS.splice(idx,1);});
+  sel.clear();updateBulk();render();toast(`Deleted ${n} item${n>1?'s':''}.`,true);
+}
+function undo(){if(!deleted)return;deleted.forEach(d=>ITEMS.splice(d.idx,0,d.item));deleted=null;render();hideToast();}
+
+/* detail layer */
+function openLayer(id){const it=ITEMS.find(i=>i.id===id);if(!it)return;
+  document.getElementById('lhd').innerHTML=`
+    <button class="back" onclick="closeLayer()"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+    <span style="flex:1;min-width:0">
+      <span class="sheet-ttl2">${it.title}</span>
+      <span class="lmeta"><span class="ddot"></span>${it.type==='report'?'REPORT':'VIDEO ANALYSIS'} · ${it.date}</span>
+    </span>`;
+  const meta=it.type==='report'
+    ? `<span class="badge cx">${it.complexity}</span> <span class="pc">${iconUsers()}${it.sub_agents} agents</span><span class="pc">${it.rounds} round${it.rounds>1?'s':''}</span><span class="pc">${iconLink()}${it.sources} sources</span>${it.analyzed?'<span class="pc" style="background:var(--green-tint);color:var(--green)">cross-checked</span>':''}${it.coverage_limited?'<span class="pc" style="background:var(--amber-tint);color:var(--amber)">coverage limited</span>':''}${it.truncated?'<span class="pc" style="background:var(--rose-tint);color:var(--rose)">truncated</span>':''}`
+    : `<span class="pc">${it.channel}</span><span class="pc">${it.live?'live stream':fmtDur(it.duration_s)}</span><span class="pc">${it.transcript_source==='captions'?'captions':'transcribed'}</span>`;
+  document.getElementById('layer-body').innerHTML=`
+    ${it.type==='video'?`<div class="vid-frame">${iconVideo()}</div>`:''}
+    <div style="margin:${it.type==='video'?'14px 0 4px':'0 0 4px'};display:flex;gap:6px;flex-wrap:wrap;align-items:center">${meta}</div>
+    <div class="rep-h">Summary</div>
+    <p class="rep-p">${it.body} ${it.type==='report'?'<span class="cite">1</span><span class="cite">2</span>':''}</p>
+    <div class="rep-h">${it.type==='report'?'Sources · '+it.sources:'Transcript'}</div>
+    <p class="rep-p">${it.type==='report'?it.sources+' web sources across '+it.sub_agents+' sub-agents; tap a citation for its favicon link.':(it.transcript_source==='captions'?'From the source’s own captions.':'Transcribed locally (Whisper).')+' Tap a word to seek playback.'}</p>
+    <button class="ldel" id="ldel" onclick="layerDel('${it.id}',this)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Delete this ${it.type}</button>`;
+  document.getElementById('layer').classList.add('show');
+}
+function closeLayer(){document.getElementById('layer').classList.remove('show');}
+function layerDel(id,btn){
+  if(!btn.classList.contains('armed')){btn.classList.add('armed');
+    btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Tap again to delete';
+    clearTimeout(btn._t);btn._t=setTimeout(()=>{btn.classList.remove('armed');btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Delete this '+ITEMS.find(i=>i.id===id).type;},3000);return;}
+  const idx=ITEMS.findIndex(i=>i.id===id);deleted=[{item:ITEMS[idx],idx}];ITEMS.splice(idx,1);
+  closeLayer();render();toast(`Deleted “${trunc(deleted[0].item.title)}”.`,true);
+}
+
+function toast(msg,withUndo){const t=document.getElementById('toast');
+  t.innerHTML=`<svg width="16" height="16" viewBox="0 0 24 24" style="color:var(--text-3)"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>${msg}${withUndo?'<button class="undo" onclick="undo()">Undo</button>':''}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>{t.classList.remove('show');deleted=null;},4200);}
+function hideToast(){document.getElementById('toast').classList.remove('show');clearTimeout(toast._t);}
+
+render();
+</script>
+</body>
+</html>
