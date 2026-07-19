@@ -1251,12 +1251,16 @@ RAG-indexed.
 ### `deep_research_report` tool-view (build plan `docs/plans/DEEP_RESEARCH_TOOL_PLAN.md`, Wave D3 — **mock-gate sign-off pending**)
 
 jerv's `deep_research` run returns its finished report as this registered view. Data-only
-slots: `{question, complexity, report_md, sub_agents, rounds, revised, coverage_limited,
-truncated, children:[{label, persona, ok, summary, session_id}]}`. It renders a provenance
-strip (the `complexity` label, a source count, the round count, and the
-`revised`/`coverage_limited`/`truncated` flags — closed enums/booleans the theme colors,
-never a model-sent color), the report body, and a collapsible sub-agent roster whose rows
-deep-link to each child's own session on reopen (reusing the `.tv-syn-*` roster classes).
+slots: `{question, complexity, report_md, sub_agents, rounds, analyzed, revised,
+coverage_limited, truncated, children:[{label, persona, ok, summary, session_id}]}`. It
+renders a provenance strip (the `complexity` label, a source count, the round count, and
+the `analyzed` "cross-checked" / `revised` / `coverage_limited` / `truncated` flags —
+closed enums/booleans the theme colors, never a model-sent color), the report body, and a
+collapsible sub-agent roster whose rows deep-link to each child's own session on reopen
+(reusing the `.tv-syn-*` roster classes). During the run each stage streams a live
+`ToolProgressEvent` phase line (Planning → Researching → Cross-checking → Checking coverage
+→ Filling gaps → Writing → Reviewing → Revising) and the analyst + critique sub-agents
+appear as live fan rows, so the owner watches the orchestration.
 The report body is **`report_md` rendered through the shared `<Markdown>` path** — the same
 renderer an assistant turn uses — which is safe because the Markdown came from the
 synthesizer model over the escaped-envelope findings and carries no model-authored markup,

@@ -27,12 +27,10 @@ MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all de
 # legible; the total children across all waves still obey MAX_CHILDREN_PER_PARENT.
 MAX_WAVES = 2
 
-# Deep research (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md): the fixed number of GATHER
-# rounds the deep_research tool may run — a first gather and at most one gap-refill.
-# Kept at 2 for the same reason as MAX_WAVES: a bounded loop, not an adaptive "research
-# until covered" one (ASSISTANT.md "no unbounded autonomous loop"). The reflect step
-# may emit gap questions after round 1, but there is never a third round.
-MAX_RESEARCH_ROUNDS = 2
+# Deep research (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md) bounds its gather rounds the same
+# way — one gather fan and at most one gap-refill — but STRUCTURALLY (there is no loop in
+# `deep_research.py` that could run a third round), so no constant governs it; it is a
+# bounded pipeline, not an adaptive "research until covered" one.
 
 # Per-child RUNTIME bounds. The original tight caps (10 steps / 180s) were sized for a
 # PARALLEL fan on a slow single-GPU box; now the fan runs SERIALLY on a local route
