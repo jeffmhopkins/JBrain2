@@ -454,7 +454,10 @@ which jerv's prompt forbids volunteering or putting in a web query/URL; the owne
 accepted this narrow location-into-jerv flow when enabling it. The ambient date/time
 is non-personal. Search still goes through a **self-hosted SearXNG**
 instance (pinned base URL from config, query text only) — local-first like the
-on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams;
+on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams.
+A short in-process **repeat-search cache** (TTL, LRU-bounded, non-empty results only)
+sits in front of it so a deep-research fan's identical re-queries across rounds and runs
+don't re-hit those upstreams — the volume that gets the box's IP rate-limited (429/403);
 `web_fetch` is the one genuinely outbound leg, size-capped, with an **SSRF guard** —
 it resolves the host and refuses any private/loopback/link-local target (and re-checks
 every redirect hop), so a model-supplied URL can't read the box's own internal services

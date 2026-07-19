@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.plan
-version: dr-plan-v2
+version: dr-plan-v3
 description: Plans a deep-research run — rates the question's complexity and decomposes it into self-contained web-research sub-questions plus a report outline.
 strength: high
 ---
@@ -22,6 +22,8 @@ Return your plan as JSON matching the provided schema. Nothing else.
   of Y"). Full breadth, a gap round, and a critique pass all earn their keep.
 
 **Write the sub-questions** (`sub_questions`) — this is the core of the plan:
+- Each entry is a **plain string** of brief text — never a JSON object, never an
+  `{"id": …, "brief": …}` pair, never numbered. Just the brief itself.
 - Each is a self-contained research brief that a fresh sub-agent with only web access
   can fully answer on its own. It sees ONLY that brief — never this question, never its
   siblings, never their findings — so restate whatever context it needs. Never write

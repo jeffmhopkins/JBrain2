@@ -41,6 +41,7 @@ to skip a stage), and the research children corroborate proportional to source a
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import structlog
@@ -358,8 +359,10 @@ class DeepResearchService:
         # widen past the caps.
         if complexity not in _COMPLEXITIES:
             complexity = "deep"
-        sub_questions = [s.strip() for s in data.get("sub_questions", []) if _nonempty(s)][:breadth]
-        sections = [s.strip() for s in data.get("sections", []) if _nonempty(s)]
+        raw_subs = (_coerce_brief(s) for s in data.get("sub_questions", []))
+        sub_questions = [s for s in raw_subs if s][:breadth]
+        sections = [_coerce_brief(s) for s in data.get("sections", [])]
+        sections = [s for s in sections if s]
         return {"complexity": complexity, "sub_questions": sub_questions, "sections": sections}
 
     async def _analyze(
@@ -419,7 +422,7 @@ class DeepResearchService:
         data = result.parsed or {}
         if data.get("covered") is True:
             return []
-        return [g.strip() for g in data.get("gaps", []) if _nonempty(g)]
+        return [g for g in (_coerce_brief(x) for x in data.get("gaps", [])) if g]
 
     async def _synthesize(
         self,
@@ -492,6 +495,29 @@ class DeepResearchService:
 
 def _nonempty(s: object) -> bool:
     return isinstance(s, str) and bool(s.strip())
+
+
+def _coerce_brief(item: object) -> str:
+    """The bare research-brief text of a planned sub-question or gap. The schema asks for
+    plain strings, but the local planner model sometimes wraps each one in a JSON object
+    (`{"id": 1, "brief": "..."}`) anyway — which then leaks verbatim into the child's
+    brief AND its row label in the UI. Pull the text back out: accept a dict directly, or
+    a string that parses to one, reading the first of brief/question/sub_question/text;
+    otherwise use the string as-is. A normal plain-string brief is returned unchanged."""
+    if isinstance(item, str):
+        s = item.strip()
+        if not (s.startswith("{") and s.endswith("}")):
+            return s
+        try:
+            item = json.loads(s)
+        except ValueError:
+            return s  # looked like JSON but wasn't — keep the literal text
+    if isinstance(item, dict):
+        for key in ("brief", "question", "sub_question", "text"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
 
 
 def _outline_text(sections: list[str]) -> str:

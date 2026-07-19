@@ -195,7 +195,7 @@ export function FullBrainSurface({
 
         {/* The live status sits at the surface's bottom edge, just above the
             omnibox composer — replacing the old in-bubble "…". */}
-        <AgentStatusLine status={agentStatus(fb.messages)} />
+        <AgentStatusLine status={agentStatus(fb.messages, fb.active?.id)} />
       </div>
 
       <aside
@@ -294,7 +294,7 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
   // changes (below). `now` ticks once a second to advance the displayed counts.
   const timedPhase = useRef<string | null>(null);
   const phaseStartedAt = useRef(0);
-  const timedTurn = useRef<number | null>(null);
+  const timedTurn = useRef<string | null>(null);
   const turnStartedAt = useRef(0);
   const [now, setNow] = useState(() => Date.now());
 

@@ -130,6 +130,30 @@ describe("SubagentFan", () => {
     expect(screen.getByText("3 tiers")).toBeInTheDocument();
   });
 
+  it("renders the child's final answer as rich Markdown in a bounded scroll box", () => {
+    // The answer is the same rich Markdown the main reply uses (here: bold), boxed so a
+    // long report scrolls inside the row instead of pushing the whole fan open.
+    const { container } = render(
+      <SubagentFan
+        running={false}
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Mortality",
+            status: "done",
+            summary: "US deaths were **675,000** overall.",
+          }),
+        ])}
+      />,
+    );
+    fireEvent.click(screen.getByText("Mortality"));
+    const box = container.querySelector(".fb-sa-sum");
+    expect(box).toBeInTheDocument();
+    // Rich: the **675,000** rendered to a <strong>, not literal asterisks.
+    expect(box?.querySelector("strong")?.textContent).toBe("675,000");
+    expect(box?.textContent).not.toContain("**");
+  });
+
   it("shows a live step count on a running child", () => {
     render(
       <SubagentFan
