@@ -388,7 +388,11 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   card next sees the job `done` — including a reopen after it finished off-screen — and a
   single server-side claim (`media_analysis_results.resumed_at`) makes it exactly-once, so
   a job that completes while nothing is watching still resumes and a reload never
-  double-prompts. In full mode the transcript comes from the
+  double-prompts. When no card ever mounts to claim it (a headless **Task** run, or a chat
+  never reopened), a server-side backstop folds any finished-but-unclaimed analysis into
+  the next turn of that session as data-framed context, claiming it so it still lands
+  exactly once — so "read the transcript" answers from the analysis rather than re-checking
+  the channel. In full mode the transcript comes from the
   **provider's own captions** when the video carries them (`jbrain.captions` fetches +
   parses YouTube's `json3`/`vtt` over the same egress-guarded, size-capped leg) — instant,
   whole-video, and drift-free — falling back to the local whisper pass otherwise; a

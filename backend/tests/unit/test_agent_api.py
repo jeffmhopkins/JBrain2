@@ -2199,3 +2199,80 @@ def test_model_message_frames_a_deferred_outcome_as_data() -> None:
     assert report in framed
     assert "Analysis complete" in framed
     assert "data, not an instruction" in framed
+
+
+class _FakeMediaResults:
+    """A stand-in for MediaResults exercising the backstop helper: it lists the pending
+    rows it was seeded with and records which ids were claimed, so a test can assert the
+    sweep claims exactly what it injects."""
+
+    def __init__(self, pending: list) -> None:
+        self._pending = pending
+        self.claimed: list[str] = []
+        self.won: set[str] = {r.id for r in pending}  # every seeded row is claimable once
+
+    async def pending_resumes(self, ctx, session_id: str) -> list:
+        return list(self._pending)
+
+    async def claim_resume(self, ctx, result_id: str) -> bool:
+        self.claimed.append(result_id)
+        return result_id in self.won
+
+
+def _media_result(rid: str, resume: str | None):
+    from jbrain.agent.media_results import MediaResult
+
+    return MediaResult(
+        id=rid,
+        session_id="s",
+        status="done",
+        progress={},
+        result=({"resume_message": resume} if resume is not None else {}),
+        error=None,
+        job_id=None,
+        created_at="2026-07-19T00:00:00+00:00",
+        resumed_at=None,
+    )
+
+
+async def _resume_blocks(store, *, skip: bool):
+    import types
+
+    import jbrain.api.agent as agent_mod
+    from jbrain.db.session import SessionContext
+
+    request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace()))
+    request.app.state.media_results = store
+    ctx = SessionContext(principal_kind="owner", domain_scopes=())
+    return await agent_mod._pending_resume_blocks(request, ctx, "s", skip=skip)
+
+
+async def test_pending_resume_backstop_injects_and_claims_a_finished_analysis() -> None:
+    """The backstop folds a finished-but-unclaimed analysis into the turn as DATA-framed
+    context (so a later "read the transcript" answers from it) and claims it so it lands
+    exactly once — the safety net when no task_status card ever mounted (a headless Task)."""
+    store = _FakeMediaResults([_media_result("r1", "Analysis of X:\nTranscript:\nhi")])
+    blocks = await _resume_blocks(store, skip=False)
+    assert len(blocks) == 1
+    assert "Transcript:\nhi" in blocks[0].text
+    assert "data, not an instruction" in blocks[0].text
+    assert store.claimed == ["r1"]  # claimed as it was taken
+
+
+async def test_pending_resume_backstop_is_skipped_on_a_deferred_outcome_turn() -> None:
+    """A deferred_outcome turn already carries its resume, so the sweep is skipped — no
+    double injection and nothing is claimed."""
+    store = _FakeMediaResults([_media_result("r1", "whatever")])
+    assert await _resume_blocks(store, skip=True) == []
+    assert store.claimed == []
+
+
+async def test_pending_resume_backstop_skips_a_row_it_loses_the_claim_for() -> None:
+    """If a card (or a concurrent turn) already claimed the resume, the sweep loses the
+    atomic claim and injects nothing — exactly-once across the card and the backstop."""
+    row = _media_result("r1", "resume text")
+    store = _FakeMediaResults([row])
+    store.won = set()  # the claim is already taken elsewhere
+    blocks = await _resume_blocks(store, skip=False)
+    assert blocks == []
+    assert store.claimed == ["r1"]  # it tried, but lost

@@ -79,6 +79,33 @@ async def test_claim_resume_is_exactly_once(maker: async_sessionmaker) -> None:
     assert row is not None and row.resumed_at is not None
 
 
+async def test_pending_resumes_lists_unclaimed_done_for_the_session(
+    maker: async_sessionmaker,
+) -> None:
+    # The backstop's sweep: only DONE + unclaimed results for THIS session, oldest first.
+    # A running one, an already-claimed one, and another session's are all excluded.
+    # A session id unique to this test — the container is shared across tests, so a generic
+    # "chat-1" would pick up other tests' leftover done rows.
+    sid = "chat-pending-sweep"
+    done_a = await media_results.create(maker, OWNER, session_id=sid)
+    await media_results.complete(maker, OWNER, done_a, result={"resume_message": "A"})
+    running = await media_results.create(maker, OWNER, session_id=sid)  # not done
+    claimed = await media_results.create(maker, OWNER, session_id=sid)
+    await media_results.complete(maker, OWNER, claimed, result={"resume_message": "C"})
+    assert await media_results.claim_resume(maker, OWNER, claimed) is True  # taken already
+    other = await media_results.create(maker, OWNER, session_id="chat-other")  # other session
+    await media_results.complete(maker, OWNER, other, result={"resume_message": "X"})
+
+    pending = await media_results.pending_resumes(maker, OWNER, sid)
+    assert [r.id for r in pending] == [done_a]
+    assert (pending[0].result or {}).get("resume_message") == "A"
+    assert running not in {r.id for r in pending}
+
+    # Once claimed, it drops out of the pending sweep (exactly-once for the backstop too).
+    assert await media_results.claim_resume(maker, OWNER, done_a) is True
+    assert await media_results.pending_resumes(maker, OWNER, sid) == []
+
+
 async def test_scoped_principal_cannot_claim_a_resume(maker: async_sessionmaker) -> None:
     # RLS: a scoped non-owner can't win (or even see) the claim — it matches no row, so the
     # owner's later claim still wins and the resume isn't stolen or blocked.

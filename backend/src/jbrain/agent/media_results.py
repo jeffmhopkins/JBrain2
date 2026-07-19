@@ -188,6 +188,29 @@ async def claim_resume(
         return cast(CursorResult[Any], res).rowcount > 0
 
 
+async def pending_resumes(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, session_id: str
+) -> list[MediaResult]:
+    """Finished analyses in a chat session whose one auto-resume turn was never claimed
+    (`done` and `resumed_at IS NULL`), oldest first. The server-side backstop reads these
+    to feed a finished-off-screen transcript into the next turn even when no `task_status`
+    card was ever mounted to claim it — a headless Task run, or a chat never reopened."""
+    async with scoped_session(maker, ctx) as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, session_id, status, progress, result, error, job_id,"
+                    " created_at, resumed_at"
+                    " FROM app.media_analysis_results"
+                    " WHERE session_id = :sid AND status = 'done' AND resumed_at IS NULL"
+                    " ORDER BY created_at"
+                ),
+                {"sid": session_id},
+            )
+        ).all()
+    return [_row_to_result(r) for r in rows]
+
+
 async def get(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext, result_id: str
 ) -> MediaResult | None:
@@ -226,6 +249,9 @@ class MediaResults:
 
     async def claim_resume(self, ctx: SessionContext, result_id: str) -> bool:
         return await claim_resume(self._maker, ctx, result_id)
+
+    async def pending_resumes(self, ctx: SessionContext, session_id: str) -> list[MediaResult]:
+        return await pending_resumes(self._maker, ctx, session_id)
 
     async def get(self, ctx: SessionContext, result_id: str) -> MediaResult | None:
         return await get(self._maker, ctx, result_id)
