@@ -1,6 +1,6 @@
 # Watching YouTube channels into the video corpus
 
-> **Status:** Living · **Last verified:** 2026-07-18
+> **Status:** Living · **Last verified:** 2026-07-19
 
 How to set up automatic nightly ingestion of a YouTube channel's new videos into the
 external-source corpus, using a recurring **Jerv Task** (the shipped Tasks feature) — no
@@ -18,6 +18,13 @@ Three jerv tools make the corpus self-maintaining once a Task drives them:
 - **`search_external_video`** — hybrid search over everything ingested, cited to the video + timestamp.
 
 A Task is just a saved jerv prompt on a schedule; the agent loop does discovery → analysis.
+
+> **Related — seeing a specific moment.** `analyze_stream` gives a text caption of a clip; to
+> look at *one still* (e.g. "what module is on screen at 2:44?"), jerv uses **`grab_frame`** (a
+> URL or attachment + a `seek`), which returns a reusable image it can then `analyze_image` or
+> `compare_images` — the companion to the corpus tools (docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md).
+> A single-frame grab now honours `seek` (a fix for the `analyze_stream` single-mode bug that
+> always sampled t=0 and returned a black intro frame).
 
 ## Create the Task
 
