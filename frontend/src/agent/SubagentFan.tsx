@@ -369,19 +369,24 @@ export function SubagentFan({
 
   return (
     <div className="fb-sa">
-      <div className="fb-sa-head">
-        <span className="fb-sa-spark" aria-hidden="true">
-          ✦
-        </span>
-        <span className="fb-sa-h-t">{settled ? "Sub-agents" : "Researching"}</span>
-        <span className="fb-sa-h-c">{count}</span>
-        {running && !settled && onStop && (
-          <button type="button" className="fb-sa-stop" onClick={onStop}>
-            ■ Stop
-          </button>
-        )}
+      {/* The status header + budget meter pin to the top of the fan's own scroll area, so
+          "who's running" and the tree budget stay visible while the sub-agent list scrolls
+          under them (the card scrolls internally past its max-height). */}
+      <div className="fb-sa-top">
+        <div className="fb-sa-head">
+          <span className="fb-sa-spark" aria-hidden="true">
+            ✦
+          </span>
+          <span className="fb-sa-h-t">{settled ? "Sub-agents" : "Researching"}</span>
+          <span className="fb-sa-h-c">{count}</span>
+          {running && !settled && onStop && (
+            <button type="button" className="fb-sa-stop" onClick={onStop}>
+              ■ Stop
+            </button>
+          )}
+        </div>
+        {fan.treeBudget > 0 && <BudgetMeter spent={fan.treeSpent} total={fan.treeBudget} />}
       </div>
-      {fan.treeBudget > 0 && <BudgetMeter spent={fan.treeSpent} total={fan.treeBudget} />}
       {/* One persistent polite live-region for the whole fan — not N rows (avoids the
           announcement storm); it also announces the settle. The rows are silent to AT. */}
       <div aria-live="polite" className="fb-sr-only">
