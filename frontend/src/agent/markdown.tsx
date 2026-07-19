@@ -488,9 +488,11 @@ function scanEntities(text: string, key: string, ctx: Ctx): ReactNode[] {
   return out;
 }
 
-/** A web source citation: a superscript favicon that opens the page in a new tab.
- * The favicon is served on-box (`faviconUrl`); if it 404s or fails to load, the
- * chip falls back to the citation number so the link is never lost. */
+/** A web source citation: a superscript pill carrying the source-site favicon AND its
+ * footnote number, so the icon gives at-a-glance provenance while the number keeps the
+ * source nameable ("see [3]") and matchable to the roster. The favicon is served on-box
+ * (`faviconUrl`); if it 404s or fails to load, the pill keeps just the number so neither
+ * the link nor the reference is ever lost. */
 function WebCite({ n, url, title }: { n: number; url: string; title: string }): ReactNode {
   const host = useMemo(() => {
     try {
@@ -503,7 +505,7 @@ function WebCite({ n, url, title }: { n: number; url: string; title: string }): 
   return (
     <sup className="md-cite md-webcite">
       <a href={url} target="_blank" rel="noreferrer noopener" title={title || url}>
-        {host && !failed ? (
+        {host && !failed && (
           <img
             className="md-favicon"
             src={faviconUrl(host)}
@@ -511,9 +513,8 @@ function WebCite({ n, url, title }: { n: number; url: string; title: string }): 
             aria-hidden="true"
             onError={() => setFailed(true)}
           />
-        ) : (
-          n
         )}
+        <span className="md-cite-n">{n}</span>
       </a>
     </sup>
   );

@@ -200,9 +200,10 @@ describe("Markdown", () => {
     expect(out).not.toContain("【");
   });
 
-  it("renders [^n] as a tappable favicon link when the cite target is a web source", () => {
-    // jerv cites a web claim with [^n]; the target resolves to the source URL, so
-    // the marker becomes a favicon that opens the page (served on-box, not the host).
+  it("renders [^n] as a tappable favicon + number pill when the cite target is a web source", () => {
+    // jerv cites a web claim with [^n]; the target resolves to the source URL, so the
+    // marker becomes a combined pill — the favicon opens the page (served on-box, not
+    // the host) and the footnote number rides alongside it so the source stays nameable.
     const { container } = render(
       <Markdown
         text="Bluey: The Videogame released in 2023.[^1]"
@@ -215,6 +216,8 @@ describe("Markdown", () => {
     const img = link?.querySelector("img.md-favicon") as HTMLImageElement;
     // The favicon is fetched from our own API by the source host — never the host itself.
     expect(img?.getAttribute("src")).toBe("/api/agent/favicon?host=www.xbox.com");
+    // The footnote number renders alongside the favicon (no longer favicon-only).
+    expect(link?.querySelector(".md-cite-n")?.textContent).toBe("1");
   });
 
   it("keeps the numbered chip (onCite) when the cite target is a note", () => {
