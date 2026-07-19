@@ -1,6 +1,29 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning on a follow-up branch; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library on a follow-up branch; mock-gate sign-off pending)
+
+**v4 revision (report library + follow-up recall + view polish + low-effort research).**
+Deep-research reports are now PERSISTED and recallable, closing the gap that a follow-up
+turn only had jerv's summary (the report Markdown lived only in the tool-view, which the
+model never sees again). Mirrors the external-video corpus:
+- **Storage** — `app.research_reports` (migration 0140): `report_md`, a summary + embedding,
+  a generated `tsv`, the view-rebuild flags/sources, `external`-domain RLS, and a
+  `question_hash` dedup (a re-run of the same question upserts). No chunks table — a report
+  has no timeline, so search is report-level (FTS + summary embedding, RRF-fused).
+- **Writer** — `external/research_corpus.persist_report`, called best-effort at the end of a
+  run; a `ResearchReportEmbedder` fills the summary embedding off an `embed_research_report`
+  job. A DB failure never fails the rendered report.
+- **jerv tools** — `list_/search_/read_/show_/remove_research_report`, the same corpus
+  pattern as the video tools (`read_` returns the FULL text — the follow-up-recall path;
+  `show_` rebuilds the `deep_research_report` view from stored data; `remove_` stages an
+  owner-approved proposal → the `delete_research_report` executor op).
+- **View polish** — the `deep_research_report` card COLLAPSES the report body by default
+  (question + chips stay; body opens on tap) and gains copy-Markdown + download-`.md` header
+  actions.
+- **Low-effort research children** — gather + refill fans now run at `effort="low"` (a
+  gather angle is focused search-and-summarize; the lower step cap curbs the over-searching
+  that rate-limited the upstream engines); the review children (analyst, critique) stay medium.
+
 
 **v2 revision (owner feedback — the tool "didn't orchestrate enough").** After the v1
 merge, a real run of "look into 2 things" classified as `comparative` and the v1 skip

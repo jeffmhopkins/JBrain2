@@ -457,7 +457,11 @@ instance (pinned base URL from config, query text only) — local-first like the
 on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams.
 A short in-process **repeat-search cache** (TTL, LRU-bounded, non-empty results only)
 sits in front of it so a deep-research fan's identical re-queries across rounds and runs
-don't re-hit those upstreams — the volume that gets the box's IP rate-limited (429/403);
+don't re-hit those upstreams — the volume that gets the box's IP rate-limited (429/403). A
+completed **deep-research report** is persisted to a small **report library**
+(`app.research_reports`, the `external`-domain sibling of the video corpus) so a follow-up
+turn can recall its full text — jerv `list`/`search`/`read`/`show`/`remove`s reports the same
+way it does library videos, since chat history otherwise keeps only jerv's summary of a run.
 `web_fetch` is the one genuinely outbound leg, size-capped, with an **SSRF guard** —
 it resolves the host and refuses any private/loopback/link-local target (and re-checks
 every redirect hop), so a model-supplied URL can't read the box's own internal services
