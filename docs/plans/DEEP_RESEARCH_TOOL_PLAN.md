@@ -47,10 +47,14 @@ one pool with **no reserve between them**, and `children_exhausted` only enforce
 - **Pool headroom.** `SPAWN_MULTIPLIER` 3.5 → **5.0** (jerv tree 2.8M → **4.0M**, children
   pool 2.1M → **3.0M**) so the review reserve rides on top of a full gather round rather
   than stealing from it.
-- **Planner guard** (`dr-plan-v2`). The failed run also spawned a bogus "Create a citation
+- **Planner guard** (`dr-plan-v3`). The failed run also spawned a bogus "Create a citation
   matrix for all sources gathered in the previous three sub-questions" angle — a meta task
   an isolated parallel child can't satisfy; it refused in one step. The prompt now forbids
   process/meta sub-questions and any cross-child dependence, and steers toward fewer angles.
+  A follow-up (`v3`) also stopped a display leak: the local planner sometimes wrapped each
+  sub-question in a JSON object (`{"id": 1, "brief": …}`) despite the string schema, which
+  showed as raw JSON in the child row labels — `_coerce_brief` now unwraps it (and the
+  prompt states sub-questions are plain strings).
 
 Still deferred from Open decisions 2–3: the **tree wall-clock on flat fans** (the run took
 ~28 min; flat fans still ignore `deadline`) and the analyst's own over-search (19 web calls

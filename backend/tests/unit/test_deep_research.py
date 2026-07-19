@@ -18,6 +18,7 @@ from jbrain.agent.deep_research import (
     DR_REVIEW_RESERVE,
     DR_SIMPLE_BREADTH,
     DeepResearchService,
+    _coerce_brief,
 )
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.spawn import _ChildResult
@@ -387,11 +388,55 @@ def test_plan_prompt_forbids_meta_and_cross_child_subquestions() -> None:
     from jbrain.agent.deep_research import _PLAN
 
     body = _PLAN.body.lower()
-    assert _PLAN.version == "dr-plan-v2"
+    assert _PLAN.version == "dr-plan-v3"
     assert "citation matrix" in body  # the exact meta task that leaked through v1
     assert "process or meta task" in body
     assert "in isolation" in body  # names why cross-child briefs can't work
     assert "fewer" in body  # the anti-over-decomposition steer
+    assert "plain string" in body  # sub-questions are strings, not {id, brief} objects
+
+
+def test_coerce_brief_unwraps_a_json_object_the_planner_leaked() -> None:
+    """The local planner sometimes wraps a sub-question in a JSON object despite the
+    string schema; the raw `{"id": 1, "brief": "..."}` was leaking into the child brief
+    and its UI row label. `_coerce_brief` pulls the text back out, and leaves a normal
+    plain-string brief untouched."""
+    # a string that is really a JSON object → the brief field
+    assert _coerce_brief('{"id": 1, "brief": "Compile the mortality figures"}') == (
+        "Compile the mortality figures"
+    )
+    # a dict handed through directly → same
+    assert _coerce_brief({"id": 2, "question": "Identify the primary source"}) == (
+        "Identify the primary source"
+    )
+    # a plain-string brief is unchanged (the common case)
+    assert _coerce_brief("How many people died?") == "How many people died?"
+    # a brace-wrapped string that isn't valid JSON keeps its literal text
+    assert _coerce_brief("{not json}") == "{not json}"
+    # an object with no usable text field, or a non-str/dict, coerces to empty (dropped)
+    assert _coerce_brief({"id": 3}) == ""
+    assert _coerce_brief(42) == ""
+
+
+async def test_planner_object_wrapped_subquestions_reach_children_as_clean_briefs() -> None:
+    """End-to-end: when the planner returns each sub-question as a JSON object string, the
+    gather children receive the unwrapped brief text and a clean row label (no raw JSON)."""
+    router = _FakeRouter(
+        sub_questions=(
+            '{"id": 1, "brief": "Compile the major historical mortality figures"}',
+            '{"id": 2, "brief": "Identify the primary source for the 675,000 estimate"}',
+        )
+    )
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    gather_briefs = _research_fans(spawn)[0]["briefs"]
+    labels = [label for label, _brief in gather_briefs]
+    briefs = [brief for _label, brief in gather_briefs]
+    assert briefs == [
+        "Compile the major historical mortality figures",
+        "Identify the primary source for the 675,000 estimate",
+    ]
+    assert not any("{" in label or "brief" in label for label in labels)  # no JSON leak
 
 
 # --- budget + degraded paths ------------------------------------------------
