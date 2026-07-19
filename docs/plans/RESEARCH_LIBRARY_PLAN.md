@@ -1,6 +1,6 @@
 # Research Library — Build Plan
 
-> **Status:** Scheduled · **Last verified:** 2026-07-19 · **Waves:** R1◻️ R2◻️ R3◻️
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** R1✅ R2◻️ R3◻️
 
 The owner-facing **browse surface** over the two `external`-corpus artifacts jerv
 produces on its own turns — **deep-research reports** (`app.research_reports`, the
@@ -162,9 +162,14 @@ Each wave: local `ruff`+`pyright` / `biome`+`tsc` + unit tests green before merg
 independent adversarial review per task and per wave (the R1 RLS/scope surface gets a
 red-team pass); one PR per wave, CI green before merge.
 
-- **Wave R1 — Backend HTTP API (red-team gated).** `api/research_library.py` (8 endpoints),
-  the `ResearchLibrary` reader on `app.state`, `main.py` wiring, the `…Out` models, unit +
-  integration tests, the RLS full-owner-reach / non-owner-refusal assertions. No migration.
+- **Wave R1 — Backend HTTP API (red-team gated). ✅ LANDED (this branch).**
+  `api/research_library.py` (8 endpoints) + the injectable `api/research_service.ResearchLibrary`
+  reader on `app.state`, `main.py` wiring, the `…Out` models, unit
+  (`tests/unit/test_research_library_api.py`, 10 cases — owner-gating, shapes, degraded
+  pass-through, 404/204, video-`source_id` resolution, limit clamp) + integration
+  (`tests/integration/test_research_library_api_pg.py` — real-Postgres owner-gated round-trip
+  for both corpora). No migration/grant — both tables already carry the DELETE grant + the
+  `external`-domain RLS (0133/0136/0140), and a full-owner `ctx_for` reaches + deletes both.
 - **Wave R2 — Frontend list surface.** `ResearchScreen` (tabs + live search + per-type
   rows), `ResearchActionSheet`, delete + deferred-undo, `api/client.ts` methods +
   interfaces, `api/mock.ts` fixtures, the launcher tile + `App.tsx` list wiring, `.research-*`

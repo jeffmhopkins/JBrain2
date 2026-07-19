@@ -69,6 +69,7 @@ from jbrain.api import (
     owntracks,
     pairing,
     proposals,
+    research_library,
     runs,
     search,
     session_bridge,
@@ -89,6 +90,7 @@ from jbrain.api import (
     tasks as tasks_api,
 )
 from jbrain.api.debug_activity import DebugActivity
+from jbrain.api.research_service import ResearchLibrary
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.citygeocode import CityGeocoder
@@ -632,6 +634,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)
+        # The owner-facing Research Library reader: browse/search/delete over jerv's
+        # persisted deep-research reports + analysed videos (the external corpus).
+        app.state.research_library = ResearchLibrary(maker, app.state.embed_client)
         # The Automations operator surface: projects the live trigger/schedule/
         # pipeline config + the run log into the "when -> do" cards, and the action
         # registry into the Catalog. `seeded_names` is the subset mirrored into
@@ -823,6 +828,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(owntracks.router, prefix="/api")
     app.include_router(pairing.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")
+    app.include_router(research_library.router, prefix="/api")
     app.include_router(runs.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(session_bridge.router, prefix="/api")
