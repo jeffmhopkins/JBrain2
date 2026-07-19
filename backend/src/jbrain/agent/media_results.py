@@ -39,6 +39,7 @@ class MediaResult:
     error: str | None
     job_id: str | None
     created_at: str  # ISO — the card bases its elapsed timer on this, so a reopen is seamless
+    resumed_at: str | None  # ISO — when the one auto-resume turn was claimed (None until claimed)
 
 
 def _row_to_result(row: Any) -> MediaResult:
@@ -51,6 +52,7 @@ def _row_to_result(row: Any) -> MediaResult:
         error=row.error,
         job_id=str(row.job_id) if row.job_id is not None else None,
         created_at=row.created_at.isoformat() if row.created_at is not None else "",
+        resumed_at=row.resumed_at.isoformat() if row.resumed_at is not None else None,
     )
 
 
@@ -167,6 +169,48 @@ async def cancel(
         return cast(CursorResult[Any], res).rowcount > 0
 
 
+async def claim_resume(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, result_id: str
+) -> bool:
+    """Claim a finished analysis' one auto-resume turn, atomically. Sets `resumed_at` iff
+    the row is `done` and not yet claimed, and returns whether THIS caller won the claim.
+    The `resumed_at IS NULL` guard makes it exactly-once across reloads, extra tabs, and a
+    card that mounts already-done — the fix for a job that finished while nothing was
+    watching the card, so the resume (with the transcript) never reached the model."""
+    async with scoped_session(maker, ctx) as session:
+        res = await session.execute(
+            text(
+                "UPDATE app.media_analysis_results SET resumed_at = now()"
+                " WHERE id = :id AND status = 'done' AND resumed_at IS NULL"
+            ),
+            {"id": result_id},
+        )
+        return cast(CursorResult[Any], res).rowcount > 0
+
+
+async def pending_resumes(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, session_id: str
+) -> list[MediaResult]:
+    """Finished analyses in a chat session whose one auto-resume turn was never claimed
+    (`done` and `resumed_at IS NULL`), oldest first. The server-side backstop reads these
+    to feed a finished-off-screen transcript into the next turn even when no `task_status`
+    card was ever mounted to claim it — a headless Task run, or a chat never reopened."""
+    async with scoped_session(maker, ctx) as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, session_id, status, progress, result, error, job_id,"
+                    " created_at, resumed_at"
+                    " FROM app.media_analysis_results"
+                    " WHERE session_id = :sid AND status = 'done' AND resumed_at IS NULL"
+                    " ORDER BY created_at"
+                ),
+                {"sid": session_id},
+            )
+        ).all()
+    return [_row_to_result(r) for r in rows]
+
+
 async def get(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext, result_id: str
 ) -> MediaResult | None:
@@ -175,7 +219,8 @@ async def get(
         row = (
             await session.execute(
                 text(
-                    "SELECT id, session_id, status, progress, result, error, job_id, created_at"
+                    "SELECT id, session_id, status, progress, result, error, job_id,"
+                    " created_at, resumed_at"
                     " FROM app.media_analysis_results WHERE id = :id"
                 ),
                 {"id": result_id},
@@ -201,6 +246,12 @@ class MediaResults:
 
     async def cancel(self, ctx: SessionContext, result_id: str) -> bool:
         return await cancel(self._maker, ctx, result_id)
+
+    async def claim_resume(self, ctx: SessionContext, result_id: str) -> bool:
+        return await claim_resume(self._maker, ctx, result_id)
+
+    async def pending_resumes(self, ctx: SessionContext, session_id: str) -> list[MediaResult]:
+        return await pending_resumes(self._maker, ctx, session_id)
 
     async def get(self, ctx: SessionContext, result_id: str) -> MediaResult | None:
         return await get(self._maker, ctx, result_id)

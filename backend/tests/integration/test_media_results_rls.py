@@ -64,6 +64,57 @@ async def test_cancel_is_sticky_and_beats_a_late_completion(maker: async_session
     assert await media_results.cancel(maker, OWNER, rid) is False  # already finished
 
 
+async def test_claim_resume_is_exactly_once(maker: async_sessionmaker) -> None:
+    # The auto-resume claim: a running result can't be claimed, a done one claims exactly
+    # once (the guard `resumed_at IS NULL`), and the row remembers it was resumed. This is
+    # what keeps a reopen-after-finish resuming while a reload/second tab never re-prompts.
+    rid = await media_results.create(maker, OWNER, session_id="chat-1")
+    assert await media_results.claim_resume(maker, OWNER, rid) is False  # still running
+
+    await media_results.complete(maker, OWNER, rid, result={"summary": "a talk"})
+    assert await media_results.claim_resume(maker, OWNER, rid) is True  # first claim wins
+    assert await media_results.claim_resume(maker, OWNER, rid) is False  # already claimed
+
+    row = await media_results.get(maker, OWNER, rid)
+    assert row is not None and row.resumed_at is not None
+
+
+async def test_pending_resumes_lists_unclaimed_done_for_the_session(
+    maker: async_sessionmaker,
+) -> None:
+    # The backstop's sweep: only DONE + unclaimed results for THIS session, oldest first.
+    # A running one, an already-claimed one, and another session's are all excluded.
+    # A session id unique to this test — the container is shared across tests, so a generic
+    # "chat-1" would pick up other tests' leftover done rows.
+    sid = "chat-pending-sweep"
+    done_a = await media_results.create(maker, OWNER, session_id=sid)
+    await media_results.complete(maker, OWNER, done_a, result={"resume_message": "A"})
+    running = await media_results.create(maker, OWNER, session_id=sid)  # not done
+    claimed = await media_results.create(maker, OWNER, session_id=sid)
+    await media_results.complete(maker, OWNER, claimed, result={"resume_message": "C"})
+    assert await media_results.claim_resume(maker, OWNER, claimed) is True  # taken already
+    other = await media_results.create(maker, OWNER, session_id="chat-other")  # other session
+    await media_results.complete(maker, OWNER, other, result={"resume_message": "X"})
+
+    pending = await media_results.pending_resumes(maker, OWNER, sid)
+    assert [r.id for r in pending] == [done_a]
+    assert (pending[0].result or {}).get("resume_message") == "A"
+    assert running not in {r.id for r in pending}
+
+    # Once claimed, it drops out of the pending sweep (exactly-once for the backstop too).
+    assert await media_results.claim_resume(maker, OWNER, done_a) is True
+    assert await media_results.pending_resumes(maker, OWNER, sid) == []
+
+
+async def test_scoped_principal_cannot_claim_a_resume(maker: async_sessionmaker) -> None:
+    # RLS: a scoped non-owner can't win (or even see) the claim — it matches no row, so the
+    # owner's later claim still wins and the resume isn't stolen or blocked.
+    rid = await media_results.create(maker, OWNER, session_id="chat-1")
+    await media_results.complete(maker, OWNER, rid, result={"summary": "a talk"})
+    assert await media_results.claim_resume(maker, GENERAL_ONLY, rid) is False
+    assert await media_results.claim_resume(maker, OWNER, rid) is True  # owner still claims
+
+
 async def test_scoped_principal_cannot_read_a_result(maker: async_sessionmaker) -> None:
     # RLS hides the owner's result from a scoped non-owner: the row is simply invisible,
     # not an error — get() returns None even though the owner sees it.

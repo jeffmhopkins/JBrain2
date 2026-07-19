@@ -2670,6 +2670,17 @@ export const api = {
     await request(`/api/chat/deferred/${encodeURIComponent(resultId)}/cancel`, { method: "POST" });
   },
 
+  /** Claim a finished analysis' one auto-resume turn (the task_status card fires this the
+   * moment it sees `done`). Atomic and exactly-once server-side: returns `true` only for
+   * the first caller, so a job that finished while the card wasn't watching still resumes
+   * on reopen, and reloads/extra tabs never double-prompt (DEFERRED_TOOL_CALLS_PLAN P3). */
+  async claimDeferredResult(resultId: string): Promise<boolean> {
+    const response = await request(`/api/chat/deferred/${encodeURIComponent(resultId)}/claim`, {
+      method: "POST",
+    });
+    return ((await response.json()) as { claimed: boolean }).claimed;
+  },
+
   // --- Code mode (jcode), Wave J3. Owner-only; routes 404 when jcode isn't enabled. ---
 
   /** The launcher's session index (owner-only `jcode_sessions`). */
