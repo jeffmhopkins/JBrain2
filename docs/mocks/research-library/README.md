@@ -35,6 +35,7 @@ All three reuse settled paradigms — the swipe rail (A), segmented control +
 action sheet (B), and passage-first search + bulk-select bar (C) — so the review
 is about which *composition* fits the library, not new primitives.
 
-No decision is recorded yet: once the owner picks, the chosen pattern and the
-reasoning go into `docs/reference/DESIGN.md` in the same PR (the UI-development
-process, §2–3), and the rivals stay here as the record.
+**Chosen: B — segmented tabs** (locked 2026-07-19). The reasoning and the settled
+pattern live in `docs/reference/DESIGN.md` §"Research Library"; the build plan is
+`docs/plans/RESEARCH_LIBRARY_PLAN.md`. `b-segmented-tabs.html` is the **binding
+spec**; A and C stay here as the record of the review.

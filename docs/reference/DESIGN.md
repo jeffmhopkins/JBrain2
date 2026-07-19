@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-18
+> **Status:** Living · **Last verified:** 2026-07-19
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1274,6 +1274,65 @@ report's `## Sources` section maps them). Tokens-only `.tv-dr-*` classes; the fr
 the live `.tool-view`. Like every view it is **data, not instruction** (I-1) and renders no
 external resource (I-9). The non-happy states (coverage-limited / truncated / thin-sources)
 and a reference mock go through the mock gate before this is marked settled.
+
+## Research Library (settled in a three-way GUI review — binding mock: `docs/mocks/research-library/b-segmented-tabs.html`; build plan `docs/plans/RESEARCH_LIBRARY_PLAN.md`)
+
+The owner-facing browse surface over the two **`external`-corpus** artifacts jerv
+produces on its own turns — **deep-research reports** (`app.research_reports`, the
+`deep_research` tool) and **video analyses** (`external.sources`, `analyze_stream` /
+external-video ingestion). Both persist server-side and are already reachable to
+*jerv* via corpus tools (`list_/search_/read_/show_/remove_research_report`, the
+`search_external_video` family); this is the **human's** door to the same corpus — a
+card-launcher destination (a **Research** tile under KNOWLEDGE; `ResearchLibraryScreen`)
+that lets the owner **search, view, and delete** what's been researched, without going
+through a jerv turn. It rides the **amber** research accent (the read-only/research
+domain, per §Principles 4); reports carry an amber file type-disc, video analyses a steel
+video disc — the type axis, distinct from the amber domain dot.
+
+Chosen **B — segmented tabs** over A (unified feed + swipe rail) and C (search-first +
+bulk select); rivals retained as the record in `docs/mocks/research-library/`. B won for
+giving each artifact a **purpose-built list** rather than forcing two very different
+shapes into one row: a **Reports · Videos** segmented control (`.seg-row`/`.seg-on`, the
+settled Data/Locations pattern, active segment taking the amber research tint) switches the
+surface, and **search filters within the active tab**. Reports lead with the question, a
+**complexity** badge (simple `--green` / comparative `--steel` / deep `--violet`), and a
+**provenance chip row** (`sub_agents` · `rounds` · `sources`, plus the `analyzed`
+"cross-checked" / `revised` / `coverage_limited` / `truncated` flags the theme colors —
+closed booleans, never a model-sent color). Videos lead with a **thumbnail** (duration
+pill, or a rose **LIVE** badge for a stream), channel, date, `frames`, and the
+`transcript_source` (captions / whisper). A/C's single mixed stream made the report
+provenance and the video thumbnail fight for the same row; B's two lanes let each read at a
+glance. (A's swipe rail and C's bulk-select + passage-first search stay available paradigms
+for other surfaces — they lost here on fit, not quality.)
+
+- **Tap a title → a full-screen detail layer** (the settled slide-up layer; back
+  chevron + title, swipe-down climbs the tree). A report renders its `report_md` through
+  the shared `<Markdown>` path (the same renderer an assistant turn and the
+  `deep_research_report` view use — safe model-authored-over-escaped-findings Markdown,
+  I-1/I-9) with the provenance strip on top; a video renders a still + filmstrip + the
+  summary and transcript, reusing the `video_analysis` card's shape (`VideoAnalysis.tsx`).
+- **Action menu (the per-item `⋯` bottom sheet)** — the shared `Sheet` with the settled
+  `.actrow` rows, listing only what applies to that source: **Open in jerv conversation**
+  (both — deep-links the `session_id` that produced it), **Copy** (report + summary for a
+  report; summary + transcript for a video), **Download report (.md)** (reports only, the
+  view's settled header action), **Open source ↗** (videos with a URL), and **Delete**
+  (both). In the detail layer the menu opens from a header `⋯` beside an **Open in jerv**
+  primary; in the list it opens from each row's `⋯` (with a **View** row at the top).
+- **Delete is owner-initiated and direct** (not a staged Proposal — that path is jerv's).
+  It uses the **tap-again confirm** on the sheet's rose Delete row (`window.confirm` is not
+  used), spelling the consequence ("deletes this report/video"), and raises the standard
+  **undo snackbar** (steel undo link; the delete is soft-held for the toast's life, then
+  committed). The corpus rows carry no graph/notes footprint, so deletion is a plain row
+  delete under the `external` scope — no cascade, no review.
+- **States (DoD fixtures):** empty ("Nothing here yet — reports and video analyses jerv
+  saves show up here."), search-no-match (names the fix), long lists, a stream/LIVE video,
+  a truncated/coverage-limited report, and the connectivity banner on an unreachable
+  server (never an error page). Live-as-you-type search reuses the Search screen's 250ms
+  debounce + sequence-guard.
+
+Everything composes from settled paradigms (segmented control, list rows, the `Sheet`
+action menu, the slide-up detail layer, the `<Markdown>` + `video_analysis` renderers, the
+undo toast), so the review shaped the *composition*, not new primitives.
 
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
