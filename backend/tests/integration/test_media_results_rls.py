@@ -64,6 +64,30 @@ async def test_cancel_is_sticky_and_beats_a_late_completion(maker: async_session
     assert await media_results.cancel(maker, OWNER, rid) is False  # already finished
 
 
+async def test_claim_resume_is_exactly_once(maker: async_sessionmaker) -> None:
+    # The auto-resume claim: a running result can't be claimed, a done one claims exactly
+    # once (the guard `resumed_at IS NULL`), and the row remembers it was resumed. This is
+    # what keeps a reopen-after-finish resuming while a reload/second tab never re-prompts.
+    rid = await media_results.create(maker, OWNER, session_id="chat-1")
+    assert await media_results.claim_resume(maker, OWNER, rid) is False  # still running
+
+    await media_results.complete(maker, OWNER, rid, result={"summary": "a talk"})
+    assert await media_results.claim_resume(maker, OWNER, rid) is True  # first claim wins
+    assert await media_results.claim_resume(maker, OWNER, rid) is False  # already claimed
+
+    row = await media_results.get(maker, OWNER, rid)
+    assert row is not None and row.resumed_at is not None
+
+
+async def test_scoped_principal_cannot_claim_a_resume(maker: async_sessionmaker) -> None:
+    # RLS: a scoped non-owner can't win (or even see) the claim — it matches no row, so the
+    # owner's later claim still wins and the resume isn't stolen or blocked.
+    rid = await media_results.create(maker, OWNER, session_id="chat-1")
+    await media_results.complete(maker, OWNER, rid, result={"summary": "a talk"})
+    assert await media_results.claim_resume(maker, GENERAL_ONLY, rid) is False
+    assert await media_results.claim_resume(maker, OWNER, rid) is True  # owner still claims
+
+
 async def test_scoped_principal_cannot_read_a_result(maker: async_sessionmaker) -> None:
     # RLS hides the owner's result from a scoped non-owner: the row is simply invisible,
     # not an error — get() returns None even though the owner sees it.

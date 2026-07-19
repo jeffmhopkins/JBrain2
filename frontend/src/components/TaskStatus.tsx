@@ -22,10 +22,13 @@ interface TaskStatusProps {
    * video_analysis card built from the stored data. Keeps this component reusable: the
    * status chrome is generic, only the result view is per-tool. */
   renderResult: (result: Record<string, unknown>) => ReactNode;
-  /** Called ONCE when THIS card observes the job finish (running → done), with the
-   * server-authored `resume_message`, so the controller sends the auto-resume turn that
-   * prompts jerv. Not called if the card mounts already-done (a reload) — so a re-open
-   * never re-fires the follow-up (DEFERRED_TOOL_CALLS_PLAN.md P3). */
+  /** Called ONCE, when the job is done, with the server-authored `resume_message`, so the
+   * controller sends the auto-resume turn that prompts jerv. Fires whether or not this
+   * card witnessed the running→done transition — including a card that mounts already-done
+   * (a reopen after the job finished off-screen) — but only after WINNING the server-side
+   * one-shot claim, so a reload or a second tab never double-prompts. This is the reliable
+   * path that gets the transcript into the model's context even when the analysis finished
+   * while nothing was watching the card (DEFERRED_TOOL_CALLS_PLAN.md P3). */
   onComplete?: ((resumeMessage: string) => void) | undefined;
 }
 
@@ -83,10 +86,12 @@ export function TaskStatus({
   const [stopping, setStopping] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const startedAt = useRef(Date.now());
-  // Auto-resume fires exactly once, and only on a transition WE observed (running → done):
-  // a card that mounts already-done (a reload) never saw running, so it never re-prompts.
+  // Auto-resume fires exactly once. This card attempts it as soon as the job is done —
+  // whether or not it saw the transition — and a server-side atomic claim (`resumed_at`)
+  // decides the single winner, so a reopen-after-finish still resumes and a reload/second
+  // tab never double-prompts. `fired` guards against this card racing the claim with
+  // itself across ticks.
   const onCompleteRef = useRef(onComplete);
-  const sawRunning = useRef(false);
   const fired = useRef(false);
   const failures = useRef(0);
 
@@ -108,11 +113,6 @@ export function TaskStatus({
         if (!alive) return;
         failures.current = 0; // a good read clears any transient-failure streak
         setData(next);
-        if (next.status === "running") sawRunning.current = true;
-        if (next.status === "done" && next.result && sawRunning.current && !fired.current) {
-          fired.current = true;
-          onCompleteRef.current?.(resumeMessage(next.result));
-        }
       } catch {
         // A blip is not a failure — the job runs detached and is almost certainly still
         // going. Only give up after several consecutive misses (the row may have been
@@ -129,6 +129,35 @@ export function TaskStatus({
       clearInterval(id);
     };
   }, [resultId, finished]);
+
+  // The auto-resume, decoupled from the progress poll: once the job is done, claim the one
+  // follow-up turn and fire it if we win the claim. Separate because it must run even when
+  // the card MOUNTS already-done (the poll stops at a terminal state, so it can't carry
+  // this) — the case a job that finished off-screen used to miss entirely. Fires at most
+  // once (the `fired` guard + the server's atomic claim); a transient claim failure retries
+  // on the poll cadence rather than silently dropping the resume.
+  const doneWithResult = status === "done" && data?.result != null;
+  useEffect(() => {
+    if (!doneWithResult || !data?.result || fired.current) return;
+    let alive = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const message = resumeMessage(data.result);
+    const claim = async () => {
+      try {
+        const won = await api.claimDeferredResult(resultId);
+        if (!alive) return;
+        fired.current = true;
+        if (won) onCompleteRef.current?.(message);
+      } catch {
+        if (alive) retry = setTimeout(claim, POLL_MS); // a blip — the claim is idempotent
+      }
+    };
+    void claim();
+    return () => {
+      alive = false;
+      if (retry) clearTimeout(retry);
+    };
+  }, [doneWithResult, data?.result, resultId]);
 
   // A live elapsed timer while the work runs. Anchored to the server's start time once a
   // poll returns it, so reopening the chat mid-run shows the TRUE elapsed (not time since

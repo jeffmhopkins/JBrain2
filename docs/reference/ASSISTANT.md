@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-18
+> **Status:** Living · **Last verified:** 2026-07-19
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -383,7 +383,12 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   pass is minutes of work, so it **defers** — the tool kicks a background job, the turn
   **ends** behind a live `task_status` card, and the finished analysis auto-resumes into
   the chat (the first adopter of the reusable **deferred tool call** mechanism,
-  docs/archive/DEFERRED_TOOL_CALLS_PLAN.md). In full mode the transcript comes from the
+  docs/archive/DEFERRED_TOOL_CALLS_PLAN.md) with its summary + a transcript excerpt, so a
+  later "read the full transcript" answers from context. The resume fires whenever the
+  card next sees the job `done` — including a reopen after it finished off-screen — and a
+  single server-side claim (`media_analysis_results.resumed_at`) makes it exactly-once, so
+  a job that completes while nothing is watching still resumes and a reload never
+  double-prompts. In full mode the transcript comes from the
   **provider's own captions** when the video carries them (`jbrain.captions` fetches +
   parses YouTube's `json3`/`vtt` over the same egress-guarded, size-capped leg) — instant,
   whole-video, and drift-free — falling back to the local whisper pass otherwise; a

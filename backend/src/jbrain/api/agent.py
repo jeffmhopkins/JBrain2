@@ -962,6 +962,27 @@ async def cancel_deferred_result(request: Request, principal: OwnerDep, result_i
     await store.cancel(ctx_for(principal), result_id)
 
 
+class DeferredClaimOut(BaseModel):
+    """Whether THIS caller won the one-shot auto-resume claim for a finished analysis."""
+
+    claimed: bool
+
+
+@router.post("/chat/deferred/{result_id}/claim", response_model=DeferredClaimOut)
+async def claim_deferred_result(
+    request: Request, principal: OwnerDep, result_id: str
+) -> DeferredClaimOut:
+    """Claim the one auto-resume turn a finished analysis gets (the `task_status` card
+    calls this the moment it sees `done`, whether or not it witnessed the running→done
+    transition). Atomic and exactly-once: only the first caller gets `claimed: true` and
+    sends the follow-up, so a job that finished while the card wasn't mounted still
+    resumes on reopen, and reloads / extra tabs never double-prompt. Owner-only; a
+    still-running, gone, or already-claimed row returns `claimed: false`."""
+    store = cast(MediaResults, request.app.state.media_results)
+    claimed = await store.claim_resume(ctx_for(principal), result_id)
+    return DeferredClaimOut(claimed=claimed)
+
+
 @router.get("/chat/runs/{run_id}/stream")
 async def resume_chat_run(request: Request, run_id: str, after: int = 0) -> StreamingResponse:
     """Reconnect to an in-flight turn the PWA lost (the OS dropped the backgrounded

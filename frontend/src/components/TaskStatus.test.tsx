@@ -4,11 +4,17 @@ import { type DeferredResult, api } from "../api/client";
 import { TaskStatus } from "./TaskStatus";
 
 // The card polls the deferred-result endpoint; stub it so each test scripts a sequence
-// of poll outcomes (running / rejected / done) and drives them with fake timers.
+// of poll outcomes (running / rejected / done) and drives them with fake timers. The
+// auto-resume claim is stubbed too — its boolean decides whether THIS card fires.
 vi.mock("../api/client", () => ({
-  api: { deferredResult: vi.fn(), cancelDeferredResult: vi.fn(async () => {}) },
+  api: {
+    deferredResult: vi.fn(),
+    cancelDeferredResult: vi.fn(async () => {}),
+    claimDeferredResult: vi.fn(async () => true),
+  },
 }));
 const deferredResult = vi.mocked(api.deferredResult);
+const claimDeferredResult = vi.mocked(api.claimDeferredResult);
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -95,17 +101,38 @@ describe("TaskStatus", () => {
     expect(screen.getByText("Offline")).toBeInTheDocument();
   });
 
-  it("does not re-fire the auto-resume when it mounts already-done", async () => {
-    // A reload mounts the card on an already-finished job: it shows the result but must
-    // NOT prompt jerv again (no observed running→done transition).
+  it("resumes on a card that mounts already-done, once it wins the claim", async () => {
+    // The job finished while nothing was watching the card (a backgrounded/killed tab
+    // reopens minutes later, already-done). The card must still auto-resume — claim the
+    // one follow-up and, having won, prompt jerv with the transcript. This is the fix: the
+    // transcript reaches the model even without an observed running→done transition.
     vi.useFakeTimers();
     deferredResult.mockResolvedValue(done());
+    claimDeferredResult.mockResolvedValue(true);
     const onComplete = renderCard();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.getByText(/RESULT ok/)).toBeInTheDocument();
+    expect(claimDeferredResult).toHaveBeenCalledWith("r1");
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith("Done: the rocket launched.");
+  });
+
+  it("does not re-prompt when the claim was already taken (a reload / second tab)", async () => {
+    // Exactly-once is server-side: a reload or a second tab attempts the claim but loses
+    // it (the row was already resumed), so this card shows the result WITHOUT re-prompting.
+    vi.useFakeTimers();
+    deferredResult.mockResolvedValue(done());
+    claimDeferredResult.mockResolvedValue(false);
+    const onComplete = renderCard();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText(/RESULT ok/)).toBeInTheDocument();
+    expect(claimDeferredResult).toHaveBeenCalledWith("r1");
     expect(onComplete).not.toHaveBeenCalled();
   });
 });
