@@ -84,8 +84,14 @@ async def test_deferred_job_writes_the_finished_card_to_the_result_row(
     assert row.result["mode"] == "full"
     assert row.result["summary"] == "A launch stream showing the rocket."
     assert len(row.result["frames"]) == 1
-    # The auto-resume report jerv is prompted with carries the summary (P3).
-    assert "A launch stream showing the rocket." in str(row.result["resume_message"])
+    # The auto-resume NOTICE is short and tool-pointing — the title + library url + a
+    # read_external_video pointer — NOT the transcript (which the owner sees on the card and
+    # jerv fetches on demand), so the resume never pastes a wall of text into the chat.
+    resume = str(row.result["resume_message"])
+    assert "Launch Stream" in resume
+    assert "https://youtube.com/watch?v=abc" in resume
+    assert "read_external_video" in resume
+    assert "A launch stream showing the rocket." not in resume  # no summary/transcript dump
 
 
 async def test_deferred_job_uses_provider_captions_when_available(
@@ -124,8 +130,11 @@ async def test_deferred_job_uses_provider_captions_when_available(
     assert row is not None and row.status == "done" and row.result is not None
     assert row.result["transcript_source"] == "captions"
     assert row.result["transcript"]["text"] == "Captioned words."
-    # The auto-resume report carries the caption transcript so jerv can quote it.
-    assert "Captioned words." in str(row.result["resume_message"])
+    # The resume notice points jerv at the library video by url, not the transcript text.
+    resume = str(row.result["resume_message"])
+    assert "Captioned Talk" in resume
+    assert "https://youtube.com/watch?v=cc" in resume
+    assert "Captioned words." not in resume  # the transcript is fetched by tool, not pasted
 
 
 async def test_stop_mid_flight_cancels_the_analysis(

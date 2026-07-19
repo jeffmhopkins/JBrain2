@@ -77,3 +77,28 @@ async def test_transcript_persists_in_order_and_is_owner_only(maker: async_sessi
     async with scoped_session(maker, token) as session:
         assert (await session.execute(text("SELECT count(*) FROM app.agent_turns"))).scalar() == 0
     assert await store.load(token, info.id) == []
+
+
+async def test_record_answer_persists_the_answer_only(maker: async_sessionmaker) -> None:
+    # A deferred-analysis auto-resume is driven by a server-authored system notice, not owner
+    # input — so it records the ASSISTANT answer only. No user turn is written, so reopening
+    # the chat never replays a pseudo-owner "guest blurb"; the answer stands after the card.
+    owner = await _owner(maker)
+    sessions = AgentSessionRepo(maker)
+    info = await sessions.create(owner, domain_scopes=["general"], title="analysis")
+    run_id = await AgentRunLog(maker).start(owner, session_id=info.id, prompt_version="v1")
+
+    store = AgentTranscript(maker)
+    await store.record_answer(
+        owner,
+        session_id=info.id,
+        run_id=run_id,
+        assistant_text="Here's the breakdown outline:\n- Point one",
+        tools=[{"id": "c1", "name": "read_external_video", "ok": True, "sources": []}],
+    )
+
+    turns = await store.load(owner, info.id)
+    assert [(t.role, t.content) for t in turns] == [
+        ("assistant", "Here's the breakdown outline:\n- Point one"),
+    ]
+    assert turns[0].tools[0]["name"] == "read_external_video"

@@ -319,24 +319,20 @@ def summary_line(title: str, result: VideoAnalysis) -> str:
     return f'Analysis of "{title}":\n{summary}'
 
 
-# Cap the transcript excerpt carried into the auto-resume turn: enough for jerv to quote
-# and reason over, bounded so a long talk doesn't blow the context (the owner sees the
-# full transcript on the card regardless).
-_RESUME_TRANSCRIPT_CHARS = 6000
-
-
-def _resume_message(title: str, result: VideoAnalysis) -> str:
-    """The model-facing report the finished analysis auto-resumes with: the summary plus a
-    bounded transcript excerpt, so jerv acknowledges the work and can quote its content."""
-    parts = [summary_line(title, result)]
-    transcript = result.analysis.get("transcript")
-    text = (transcript or {}).get("text", "").strip() if isinstance(transcript, dict) else ""
-    if text:
-        excerpt = text[:_RESUME_TRANSCRIPT_CHARS]
-        if len(text) > _RESUME_TRANSCRIPT_CHARS:
-            excerpt += " …[transcript truncated]"
-        parts.append(f"Transcript:\n{excerpt}")
-    return "\n\n".join(parts)
+def _resume_message(title: str, url: str) -> str:
+    """The short, server-authored NOTICE a finished analysis resumes the chat with — it just
+    tells jerv the analysis is done and in the library and to carry on with the owner's
+    original request, reading the content on demand. Deliberately NOT the summary or
+    transcript: the old behaviour pasted a wall of text that rendered as a pseudo-owner
+    bubble ("guest blurb"); now the content is fetched by tool (`read_external_video`) only
+    when the request needs it, so the resume never dumps text into the conversation. Framed
+    as a system event, not owner input, by the /chat handler."""
+    return (
+        f'The video analysis you started earlier has finished: "{title}" is now in the '
+        f"owner's video library ({url}). Carry on with what the owner originally asked — "
+        "call read_external_video with that url to read its summary and transcript if you "
+        "need them to answer."
+    )
 
 
 # --- the deferred worker job ----------------------------------------------------------
@@ -456,7 +452,7 @@ class StreamAnalysisPipeline:
         # The server-authored report the finished analysis auto-resumes into the chat with
         # (P3): the summary plus a bounded transcript excerpt, so jerv can acknowledge the
         # work AND quote its content. Framed as data (not instruction) by the /chat handler.
-        data["resume_message"] = _resume_message(resolved.title, result)
+        data["resume_message"] = _resume_message(resolved.title, resolved.webpage_url or url)
         await media_results.complete(self._maker, SYSTEM_CTX, result_id, result=data)
 
     async def _drain_progress(
