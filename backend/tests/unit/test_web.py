@@ -70,6 +70,79 @@ async def test_search_forbidden_raises_web_search_error() -> None:
         await _searx(lambda r: httpx.Response(403)).search("q")
 
 
+async def test_repeat_search_is_served_from_cache_without_a_second_request() -> None:
+    # A repeat of the SAME (query, limit) inside the TTL window returns the cached hits
+    # and never touches SearXNG again — the whole point: stop re-hitting the upstream
+    # engines that rate-limit us.
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_OK)
+
+    client = _searx(handle)
+    first = await client.search("python", limit=5)
+    second = await client.search("python", limit=5)
+    assert first == second
+    assert len(calls) == 1  # the second search hit the cache, not the network
+    # A different limit is a distinct key — it must go to the network.
+    await client.search("python", limit=2)
+    assert len(calls) == 2
+
+
+async def test_cache_entry_expires_after_the_ttl() -> None:
+    calls: list[httpx.Request] = []
+    clock = [1000.0]  # a hand-cranked monotonic clock
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_OK)
+
+    client = SearxngClient(
+        "http://searxng:8080",
+        transport=httpx.MockTransport(handle),
+        cache_ttl_s=900.0,
+        clock=lambda: clock[0],
+    )
+    await client.search("python")
+    clock[0] += 899.0  # still inside the window
+    await client.search("python")
+    assert len(calls) == 1
+    clock[0] += 2.0  # now past 900s — the entry has expired
+    await client.search("python")
+    assert len(calls) == 2
+
+
+async def test_empty_result_is_not_cached_so_a_throttle_retries() -> None:
+    # An empty result is often a transient upstream throttle, not a real "no results";
+    # caching it would blank searches for the whole TTL. It must retry next time.
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"results": []})
+
+    client = _searx(handle)
+    assert await client.search("nothing") == []
+    assert await client.search("nothing") == []
+    assert len(calls) == 2  # not cached — each call reached the network
+
+
+async def test_cache_can_be_disabled_with_a_zero_ttl() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_OK)
+
+    client = SearxngClient(
+        "http://searxng:8080", transport=httpx.MockTransport(handle), cache_ttl_s=0
+    )
+    await client.search("python")
+    await client.search("python")
+    assert len(calls) == 2  # caching off — both reached the network
+
+
 # --- WebFetcher ------------------------------------------------------------
 
 _HTML = b"""<html><head><title>Hi There</title><style>x{}</style></head>
