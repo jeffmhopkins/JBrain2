@@ -1252,12 +1252,17 @@ RAG-indexed.
 
 jerv's `deep_research` run returns its finished report as this registered view. Data-only
 slots: `{question, complexity, report_md, sub_agents, rounds, analyzed, revised,
-coverage_limited, truncated, children:[{label, persona, ok, summary, session_id}]}`. It
-renders a provenance strip (the `complexity` label, a source count, the round count, and
-the `analyzed` "cross-checked" / `revised` / `coverage_limited` / `truncated` flags —
-closed enums/booleans the theme colors, never a model-sent color), the report body, and a
-collapsible sub-agent roster whose rows deep-link to each child's own session on reopen
-(reusing the `.tv-syn-*` roster classes). During the run each stage streams a live
+coverage_limited, truncated, web_sources:[{url, title}],
+children:[{label, persona, ok, summary, session_id}]}`. It renders a provenance strip (the
+`complexity` label, a source count, the round count, and the `analyzed` "cross-checked" /
+`revised` / `coverage_limited` / `truncated` flags — closed enums/booleans the theme
+colors, never a model-sent color), the report body, and a collapsible sub-agent roster
+whose rows deep-link to each child's own session on reopen (reusing the `.tv-syn-*` roster
+classes). **Citations are tracked end-to-end:** the real URLs the sub-agents reached are
+collected into `web_sources` (the global registry the synthesizer numbers against), and
+the report's `[^n]` markers render as tappable **favicon** citations — `[^n]` →
+`web_sources[n-1]`, the same on-box favicon standard jerv's own web answers use (the URLs
+came from the children's tool calls, never model prose; #9). During the run each stage streams a live
 `ToolProgressEvent` phase line (Planning → Researching → Cross-checking → Checking coverage
 → Filling gaps → Writing → Reviewing → Revising) and the analyst + critique sub-agents
 appear as live fan rows, so the owner watches the orchestration.

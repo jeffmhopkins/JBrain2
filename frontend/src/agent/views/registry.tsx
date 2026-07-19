@@ -24,7 +24,7 @@ import { TaskStatus } from "../../components/TaskStatus";
 import { TimeSeriesPlot } from "../../components/TimeSeriesPlot";
 import { VideoAnalysis, type VideoFrame } from "../../components/VideoAnalysis";
 import { serverMetricSeries } from "../../components/serverMetricSeries";
-import { Markdown } from "../markdown";
+import { type CiteTarget, Markdown } from "../markdown";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
 import {
@@ -1373,6 +1373,16 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
   const children = Array.isArray(data.children) ? data.children : [];
   const [openRoster, setOpenRoster] = useState(false);
 
+  // The report's `[^n]` markers map positionally to this global source registry, so each
+  // renders as a tappable favicon citation (the same standard jerv's web answers use).
+  // The URLs came from the sub-agents' tool calls, never model prose (invariant #9).
+  const cites: CiteTarget[] = (Array.isArray(data.web_sources) ? data.web_sources : []).map(
+    (raw): CiteTarget => {
+      const w = (raw ?? {}) as Record<string, unknown>;
+      return { kind: "web", url: String(w.url ?? ""), title: String(w.title ?? "") };
+    },
+  );
+
   const chips = [
     complexity,
     `${subAgents} source${subAgents === 1 ? "" : "s"}`,
@@ -1397,7 +1407,7 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
         {truncated && <span className="tv-dr-chip warn">truncated</span>}
       </div>
       <div className="tv-dr-report">
-        <Markdown text={reportMd} />
+        <Markdown text={reportMd} cites={cites} />
       </div>
       {children.length > 0 && (
         <div className="tv-dr-roster">

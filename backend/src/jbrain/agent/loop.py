@@ -310,6 +310,12 @@ class AgentResult:
     stop_reason: str  # end_turn | max_steps | too_many_errors | budget
     steps: int
     cost_tokens: int
+    # The web pages the run's internet tools reached (the real URLs, captured from the
+    # tool calls — never parsed from prose), accumulated across every step. The
+    # non-streaming `run()` path aggregates them here so a caller that only sees the
+    # AgentResult (a spawned sub-agent) can still recover the sources behind the answer —
+    # otherwise a child's citations die at its boundary (deep_research's global registry).
+    web_sources: tuple[WebSource, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -481,6 +487,10 @@ class AgentLoop:
         cost = 0
         consecutive_errors = 0
         idx = 0
+        # The real URLs the run's internet tools reached, accumulated across steps so the
+        # returned AgentResult carries them (a spawned child's only channel out — see the
+        # AgentResult.web_sources doc).
+        web_sources: list[WebSource] = []
 
         for step in range(self._g.max_steps):
             # Soft landing (sub-agents only): a few steps before the hard cap, ask the
@@ -513,11 +523,13 @@ class AgentLoop:
                 on_step(step + 1, cost)
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
-                return AgentResult(turn.text, "end_turn", step + 1, cost)
+                return AgentResult(turn.text, "end_turn", step + 1, cost, tuple(web_sources))
             if self._tree_exhausted(tree, depth):
-                return AgentResult(turn.text, "tree_budget_exhausted", step + 1, cost)
+                return AgentResult(
+                    turn.text, "tree_budget_exhausted", step + 1, cost, tuple(web_sources)
+                )
             if cost >= self._g.max_cost_tokens:
-                return AgentResult(turn.text, "budget", step + 1, cost)
+                return AgentResult(turn.text, "budget", step + 1, cost, tuple(web_sources))
 
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
@@ -525,6 +537,7 @@ class AgentLoop:
             for call in turn.tool_calls:
                 dispatched = await self._dispatch(call, tool_ctx, allowed)
                 results.append(dispatched.result)
+                web_sources.extend(dispatched.web_sources)
                 any_error = any_error or dispatched.result.is_error
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
@@ -538,7 +551,7 @@ class AgentLoop:
 
             consecutive_errors = consecutive_errors + 1 if any_error else 0
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
-                return AgentResult(turn.text, "too_many_errors", step + 1, cost)
+                return AgentResult(turn.text, "too_many_errors", step + 1, cost, tuple(web_sources))
 
         if force_final_answer:
             # Out of steps mid-chain. Rather than return an empty "(no answer)", make one
@@ -558,8 +571,8 @@ class AgentLoop:
             if on_usage is not None:
                 on_usage(final.usage.input_tokens, final.usage.output_tokens)
             await self._record(idx, "model", "converse", ok=True, cost_tokens=spent_final)
-            return AgentResult(final.text, "max_steps", self._g.max_steps, cost)
-        return AgentResult("", "max_steps", self._g.max_steps, cost)
+            return AgentResult(final.text, "max_steps", self._g.max_steps, cost, tuple(web_sources))
+        return AgentResult("", "max_steps", self._g.max_steps, cost, tuple(web_sources))
 
     async def run_stream(
         self,

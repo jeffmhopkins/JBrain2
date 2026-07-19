@@ -18,8 +18,17 @@ adds two things the owner asked for:
   (Planning → Researching → Cross-checking → Checking coverage → Filling gaps → Writing →
   Reviewing → Revising), reusing analyze_video's multi-phase surface (no new event type,
   no frontend-event change); the analyst + critique sub-agents also surface as live rows.
-The view gains an `analyzed` ("cross-checked") provenance chip. Everything else (the
-tree-budget reuse, the `MAX_RESEARCH_ROUNDS=2` gap bound, the sandbox/clamps) is unchanged.
+- **End-to-end citation tracking + favicons** — an on-box run confirmed the child
+  sub-agents' real URLs were being **lost** at the fan boundary (`AgentResult` didn't
+  aggregate them, so the report cited descriptions with no followable links). Fixed:
+  `AgentLoop.run` now accumulates `web_sources` into `AgentResult`; `_ChildResult` carries
+  them up; deep_research builds a **global, deduped, numbered source registry** and hands
+  it to the synthesizer to cite against (`[^n]` → `web_sources[n-1]`); and the report view
+  carries `web_sources` so the frontend renders each `[^n]` as a tappable **favicon** — the
+  same standard jerv's own web answers use.
+The view gains an `analyzed` ("cross-checked") provenance chip and the `web_sources`
+registry. Everything else (the tree-budget reuse, the structural one-gap-round bound, the
+sandbox/clamps) is unchanged.
 
 **Implementation status.** v1 (all three waves) is **merged to `main` (PR #887)**. The v2
 orchestration above is on a follow-up branch: `agent/deep_research.py` rewritten (breadth-

@@ -973,7 +973,7 @@ describe("ToolView registry", () => {
 
   it("renders a deep_research_report with provenance chips, the report body, and a roster", () => {
     expect(isKnownView("deep_research_report")).toBe(true);
-    const { getByText, queryByText } = render(
+    const { getByText, queryByText, container } = render(
       <ToolView
         payload={payload({
           view: "deep_research_report",
@@ -981,7 +981,8 @@ describe("ToolView registry", () => {
             question: "How does HNSW indexing work?",
             complexity: "deep",
             report_md:
-              "## Overview\n\nHNSW builds a layered graph.\n\n## Sources\n[^1] example.com",
+              "## Overview\n\nHNSW builds a layered graph [^1].\n\n## Sources\n[^1] HNSW paper",
+            web_sources: [{ url: "https://example.com/hnsw", title: "HNSW paper" }],
             sub_agents: 3,
             rounds: 2,
             analyzed: true,
@@ -1001,6 +1002,10 @@ describe("ToolView registry", () => {
     expect(getByText("cross-checked")).toBeInTheDocument();
     expect(getByText("revised")).toBeInTheDocument();
     expect(getByText("Overview")).toBeInTheDocument();
+    // The report's [^1] renders as a tappable favicon citation linking to the real URL
+    // (web_sources[0]) — citations tracked end-to-end, the favicon standard.
+    const cite = container.querySelector('a[href="https://example.com/hnsw"]');
+    expect(cite).not.toBeNull();
     // The roster is collapsed until toggled.
     expect(queryByText("graph structure")).toBeNull();
     fireEvent.click(getByText(/1 sub-agent/));
