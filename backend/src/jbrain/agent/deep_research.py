@@ -55,6 +55,7 @@ from jbrain.agent.tree import MAX_DEPTH
 from jbrain.external.research_corpus import persist_report
 from jbrain.llm import LlmRouter
 from jbrain.llm.promptfile import load_prompt
+from jbrain.llm.types import LlmTurn, TextChunk, UserMessage
 
 log = structlog.get_logger()
 
@@ -128,6 +129,16 @@ _REFLECT_SCHEMA = {
 _PLAN_MAX_TOKENS = 1500
 _REFLECT_MAX_TOKENS = 1200
 _SYNTH_MAX_TOKENS = 6000
+
+# The two report-writing phases are jerv's own (non-spawn) model calls — the longest in
+# the run — so they STREAM: `_synthesize` accumulates the draft and emits it into the
+# phase event's `preview`, and the PWA renders it live (the report you watch being
+# written) instead of a static spinner. Step ordinals match the checklist (see `_phase`).
+_WRITE_STEP, _WRITE_LABEL = 6, "Writing the report"
+_REVISE_STEP, _REVISE_LABEL = 8, "Revising from the critique"
+# Coalesce the stream: emit a preview at most every ~N new characters so the live report
+# updates smoothly without a per-token event storm over the SSE channel.
+_SYNTH_PREVIEW_STRIDE = 240
 _TITLE_LEN = 60  # the child row's title is a short angle label (the full research brief
 # rides in the child's brief, not its row title); capped at a word boundary so it never
 # clips mid-word in the two-line row.
@@ -325,7 +336,7 @@ class DeepResearchService:
             sources = _collect_sources([*gather, *([analyst] if analyst else []), *refill])
 
             # --- (6) SYNTHESIZE the report ----------------------------------------
-            self._phase(ctx, 6, "Writing the report")
+            self._phase(ctx, _WRITE_STEP, _WRITE_LABEL)
             report = await self._synthesize(
                 ctx, question, sections, results, analysis, sources, critique=""
             )
@@ -339,7 +350,7 @@ class DeepResearchService:
             critique = critic.summary if critic and critic.ok else ""
             revised = False
             if critique.strip():
-                self._phase(ctx, 8, "Revising from the critique")
+                self._phase(ctx, _REVISE_STEP, _REVISE_LABEL)
                 report = await self._synthesize(
                     ctx, question, sections, results, analysis, sources, critique=critique
                 )
@@ -557,14 +568,46 @@ class DeepResearchService:
             # attacker-influenced fetched text via the reviewer).
             user_text += "\n\nCritique of your earlier draft (revise accordingly):\n"
             user_text += compose_feed_block([("critique", "review", critique)])
-        result = await self._router.complete(
+        # Stream the draft so the PWA renders it being written (the longest, previously
+        # blank phase). Accumulate the text, emit it into the phase event's `preview` every
+        # ~stride chars, and take usage from the closing LlmTurn (streamed chunks carry
+        # none). The step/label match the checklist so the run reads Write / Revise.
+        revising = bool(critique.strip())
+        step = _REVISE_STEP if revising else _WRITE_STEP
+        label = _REVISE_LABEL if revising else _WRITE_LABEL
+        parts: list[str] = []
+        since = 0
+        final: LlmTurn | None = None
+        async for part in self._router.converse_stream(
             _TASK,
             system=_SYNTH.render(),
-            user_text=user_text,
+            messages=[UserMessage(text=user_text)],
             max_tokens=_SYNTH_MAX_TOKENS,
-        )
-        self._charge(ctx, result)
-        return result.text.strip()
+        ):
+            if isinstance(part, TextChunk):
+                if part.text:
+                    parts.append(part.text)
+                    since += len(part.text)
+                    if since >= _SYNTH_PREVIEW_STRIDE:
+                        since = 0
+                        self._write_preview(ctx, step, label, "".join(parts))
+            elif isinstance(part, LlmTurn):
+                final = part
+        # The closing turn carries the authoritative text; fall back to the streamed
+        # accumulation if it's empty. Flush the full report as the final preview.
+        report = (final.text if final and final.text.strip() else "".join(parts)).strip()
+        self._write_preview(ctx, step, label, report)
+        if final is not None:
+            self._charge(ctx, final)
+        return report
+
+    def _write_preview(self, ctx: ToolContext, step: int, label: str, text: str) -> None:
+        """Emit the in-progress report into the phase event's `preview` so the PWA streams
+        it live under the checklist. Ephemeral and best-effort, like `_phase`."""
+        if ctx.emit_event is not None:
+            ctx.emit_event(
+                ToolProgressEvent(tool_call_id="", step=step, total=0, label=label, preview=text)
+            )
 
     async def _critique(self, ctx: ToolContext, report: str) -> _ChildResult | None:
         """One `review` child fed the draft report as escaped data (a producer→consumer

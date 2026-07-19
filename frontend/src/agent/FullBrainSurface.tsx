@@ -637,9 +637,13 @@ function Bubble({
       {livePreviews.map((t) => (
         <GeneratingPreview key={t.id} tool={t} />
       ))}
-      {liveStatuses.map((t) => (
-        <LiveToolStatus key={t.id} tool={t} />
-      ))}
+      {liveStatuses.map((t) =>
+        t.name === "deep_research" ? (
+          <DeepResearchProgress key={t.id} tool={t} />
+        ) : (
+          <LiveToolStatus key={t.id} tool={t} />
+        ),
+      )}
       {viewsToRender.map((v, i) => (
         <ToolView
           // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
@@ -1222,6 +1226,67 @@ function LiveToolStatus({ tool }: { tool: ToolActivity }): ReactNode {
         <span className="fb-toolstatus-bar" aria-hidden="true">
           <span className="fb-toolstatus-fill" style={{ width: `${pct}%` }} />
         </span>
+      )}
+    </output>
+  );
+}
+
+// The deep_research pipeline stages, indexed by the backend `_phase` step ordinal (1-8,
+// deep_research.py). A "dark" orchestration stage (Plan / Coverage / Write / Revise spawns
+// no sub-agent row) used to show only a spinner; this checklist gives every stage a
+// visible position + what's left, and Write/Revise ALSO stream the report itself
+// (progress.preview) into a live pane, so the longest phases are watched, not blank.
+const DR_PHASES = [
+  "Plan",
+  "Research",
+  "Cross-check",
+  "Coverage",
+  "Gap-fill",
+  "Write",
+  "Critique",
+  "Revise",
+] as const;
+
+export function DeepResearchProgress({ tool }: { tool: ToolActivity }): ReactNode {
+  const p = tool.progress;
+  const step = p?.step ?? 0; // 1-based; 0 before the first phase event lands
+  const preview = p?.preview ?? "";
+  // Follow the report as it streams into the pane, unless the reader scrolled up in it.
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const stick = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `preview` is the scroll trigger
+  useEffect(() => {
+    const el = paneRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [preview]);
+  function onScroll(): void {
+    const el = paneRef.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+  }
+  return (
+    <output className="fb-drp" aria-live="polite">
+      <ol className="fb-drp-steps">
+        {DR_PHASES.map((name, i) => {
+          const ord = i + 1;
+          // Everything before the active step reads done; the active pulses; the rest wait.
+          const state = ord < step ? "done" : ord === step ? "active" : "todo";
+          return (
+            <li key={name} className={`fb-drp-step ${state}`}>
+              <span className="fb-drp-dot" aria-hidden="true">
+                {state === "done" ? "✓" : ""}
+              </span>
+              <span className="fb-drp-name">{name}</span>
+            </li>
+          );
+        })}
+      </ol>
+      {/* The active phase's live detail (e.g. "Researching 4 angle(s)"). */}
+      {p?.label && <div className="fb-drp-active">{p.label}</div>}
+      {/* Write / Revise stream the report itself — render it live in a scrollable pane. */}
+      {preview && (
+        <div className="fb-drp-report" ref={paneRef} onScroll={onScroll}>
+          <Markdown text={preview} />
+        </div>
       )}
     </output>
   );
