@@ -49,7 +49,9 @@ class _FakeRouter:
         self,
         *,
         complexity: str = "deep",
-        sub_questions: tuple[str, ...] = ("sub one", "sub two", "sub three"),
+        # A plan sub-question is a {title, brief} object; the planner also (still) emits
+        # bare strings and leaked object-strings, so the fake accepts either shape.
+        sub_questions: tuple[str | dict[str, str], ...] = ("sub one", "sub two", "sub three"),
         covered: bool = False,
         gaps: tuple[str, ...] = ("gap one", "gap two"),
     ) -> None:
