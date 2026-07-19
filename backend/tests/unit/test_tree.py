@@ -24,33 +24,35 @@ def test_child_steps_scale_with_effort() -> None:
 
 def test_rooted_sizes_budget_and_reserve_off_the_root_cap() -> None:
     tree = TreeState.rooted(800_000)
-    assert tree.tree_budget == int(800_000 * SPAWN_MULTIPLIER)  # 4_000_000
-    assert tree.root_reserve == int(tree.tree_budget * ROOT_RESERVE_FRACTION)  # 1_000_000
-    # The children's pool is the budget minus the reserve.
-    assert tree.children_remaining() == tree.tree_budget - tree.root_reserve  # 3_000_000
+    assert tree.tree_budget == int(800_000 * SPAWN_MULTIPLIER)  # 8_000_000
+    assert tree.root_reserve == int(tree.tree_budget * ROOT_RESERVE_FRACTION)  # 2_000_000
+    # The children's pool is the budget minus the reserve — what the budget meter shows.
+    assert tree.children_remaining() == tree.tree_budget - tree.root_reserve  # 6_000_000
+    assert tree.children_budget() == tree.tree_budget - tree.root_reserve  # 6_000_000
 
 
 def test_charge_draws_down_the_shared_pool() -> None:
-    tree = TreeState.rooted(800_000)  # children pool 3.0M
+    tree = TreeState.rooted(800_000)  # children pool 6.0M
     tree.charge(250_000)
     assert tree.spent == 250_000
-    assert tree.children_remaining() == 3_000_000 - 250_000
+    assert tree.children_remaining() == 6_000_000 - 250_000
+    assert tree.children_budget() == 6_000_000  # the ceiling is stable; only remaining moves
 
 
 def test_admission_floor_refuses_a_fan_that_cannot_seat_each_child() -> None:
-    tree = TreeState.rooted(800_000)  # children pool 3.0M
-    assert tree.can_admit_budget(6)  # 6 × 100k = 600k <= 3.0M
-    tree.charge(2_600_000)  # children pool now 400_000
+    tree = TreeState.rooted(800_000)  # children pool 6.0M
+    assert tree.can_admit_budget(6)  # 6 × 100k = 600k <= 6.0M
+    tree.charge(5_600_000)  # children pool now 400_000
     assert not tree.can_admit_budget(5)  # 500k > 400k
     assert tree.can_admit_budget(4)  # 400k <= 400k
     assert MIN_VIABLE_CHILD_BUDGET == 100_000  # the floor these numbers assume
 
 
 def test_children_stop_at_the_pool_but_the_root_reserve_survives() -> None:
-    tree = TreeState.rooted(800_000)  # budget 4.0M, reserve 1.0M, children pool 3.0M
-    tree.charge(3_000_000)  # children have eaten the whole children's pool
+    tree = TreeState.rooted(800_000)  # budget 8.0M, reserve 2.0M, children pool 6.0M
+    tree.charge(6_000_000)  # children have eaten the whole children's pool
     assert tree.children_exhausted()  # a child must stop here
-    assert not tree.root_exhausted()  # ...but the root still has its 1.0M reserve
+    assert not tree.root_exhausted()  # ...but the root still has its 2.0M reserve
     assert tree.tree_budget - tree.spent == tree.root_reserve
 
 
@@ -59,9 +61,9 @@ def test_children_stop_early_when_a_stage_reserve_is_carved() -> None:
     at the reserve — never allowed to eat the slice a later stage (deep_research's
     analyst/critique, or a staged final wave) was promised. Matches the admission gate:
     `children_exhausted` is exactly `children_remaining() == 0`."""
-    tree = TreeState.rooted(800_000)  # children pool 3.0M
+    tree = TreeState.rooted(800_000)  # children pool 6.0M
     tree.stage_reserve = 600_000  # carve a review slice off the pool
-    tree.charge(2_400_000)  # producers have eaten the pool DOWN TO the reserve
+    tree.charge(5_400_000)  # producers have eaten the pool DOWN TO the reserve
     assert tree.children_remaining() == 0
     assert tree.children_exhausted()  # a producer child must stop, leaving the reserve
     assert not tree.root_exhausted()  # neither reserve has been touched
@@ -72,7 +74,7 @@ def test_children_stop_early_when_a_stage_reserve_is_carved() -> None:
 
 def test_root_exhausts_only_at_the_whole_pool() -> None:
     tree = TreeState.rooted(800_000)
-    tree.charge(4_000_000)
+    tree.charge(8_000_000)
     assert tree.root_exhausted()
     assert tree.children_exhausted()
 

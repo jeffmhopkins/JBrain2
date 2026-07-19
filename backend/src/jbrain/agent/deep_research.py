@@ -82,8 +82,8 @@ DR_MAX_GAP_QUESTIONS = 2
 # the critique's protected slice), the critique's once the draft is written. Sized above
 # MIN_VIABLE_CHILD_BUDGET so a review child gets real working room, not just a viable
 # floor.
-DR_ANALYST_RESERVE = 450_000
-DR_CRITIQUE_RESERVE = 150_000
+DR_ANALYST_RESERVE = 900_000
+DR_CRITIQUE_RESERVE = 300_000
 DR_REVIEW_RESERVE = DR_ANALYST_RESERVE + DR_CRITIQUE_RESERVE
 
 # The complexity tiers the plan step assigns. In v2 complexity ONLY sizes the gather

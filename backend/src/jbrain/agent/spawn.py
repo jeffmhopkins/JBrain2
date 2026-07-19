@@ -688,7 +688,7 @@ class SpawnService:
                     summary=res.summary,
                     skip_reason=reason,
                     tree_spent=tree.spent,
-                    tree_budget=tree.tree_budget,
+                    tree_budget=tree.children_budget(),
                 ),
             )
 
@@ -861,7 +861,7 @@ class SpawnService:
                     child_id=child.id,
                     phase=_PHASE.get(persona, "working"),
                     tree_spent=tree.spent,
-                    tree_budget=tree.tree_budget,
+                    tree_budget=tree.children_budget(),
                 ),
             )
             child_run = await self._runlog.start(
@@ -900,7 +900,7 @@ class SpawnService:
                         phase=_PHASE.get(persona, "working"),
                         step=step,
                         tree_spent=tree.spent,
-                        tree_budget=tree.tree_budget,
+                        tree_budget=tree.children_budget(),
                     ),
                 )
 
@@ -1008,7 +1008,7 @@ class SpawnService:
                         stop_reason="timeout",
                         summary=f"(timed out after {secs}s — no answer)",
                         tree_spent=tree.spent,
-                        tree_budget=tree.tree_budget,
+                        tree_budget=tree.children_budget(),
                     ),
                 )
                 timeout_summary = f"(timed out after {secs}s — no answer)"
@@ -1035,7 +1035,7 @@ class SpawnService:
                         stop_reason="error",
                         summary=f"ERROR: {exc}",
                         tree_spent=tree.spent,
-                        tree_budget=tree.tree_budget,
+                        tree_budget=tree.children_budget(),
                     ),
                 )
                 await self._persist_child(
@@ -1075,7 +1075,7 @@ class SpawnService:
                     stop_reason=result.stop_reason,
                     summary=summary,
                     tree_spent=tree.spent,
-                    tree_budget=tree.tree_budget,
+                    tree_budget=tree.children_budget(),
                 ),
             )
             await self._persist_child(owner_ctx, child.id, child_run, brief_text, summary)
