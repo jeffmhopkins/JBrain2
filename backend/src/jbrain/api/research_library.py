@@ -97,6 +97,7 @@ class VideoListOut(BaseModel):
 
 
 class VideoHitOut(BaseModel):
+    video_id: str
     source_id: str
     title: str
     channel_name: str
@@ -177,9 +178,14 @@ async def get_report(request: Request, principal: OwnerDep, report_id: str) -> R
 
 @router.delete("/reports/{report_id}", status_code=204)
 async def delete_report(request: Request, principal: OwnerDep, report_id: str) -> None:
-    # Owner-initiated hard delete: the owner is the trusted executor, so this bypasses the
-    # jerv proposal/approval path. Idempotent — an already-gone report is a harmless no-op.
-    await get_library(request).delete_report(ctx_for(principal), report_id)
+    # Resolve within the owner's external read scope first — this tolerates a non-uuid id
+    # (a clean 204 no-op instead of a 500 from `cast(:id AS uuid)`) and confirms the row is
+    # in-scope before the full-owner hard delete. Owner-initiated, so it bypasses jerv's
+    # proposal/approval path; idempotent (an already-gone report is a harmless no-op).
+    lib = get_library(request)
+    record = await lib.fetch_report(principal.id, report_id)
+    if record is not None:
+        await lib.delete_report(ctx_for(principal), record.id)
 
 
 # --- videos ----------------------------------------------------------------------------

@@ -354,7 +354,7 @@ async def list_corpus(
 _LEG_LIMIT = 40
 
 _CHUNK_COLS = (
-    "SELECT c.source_id, c.t_ms, c.text AS passage, s.title, s.channel_name, s.url"
+    "SELECT c.source_id, c.t_ms, c.text AS passage, s.title, s.channel_name, s.url, s.video_id"
     " FROM app.external_source_chunks c JOIN app.external_sources s ON s.id = c.source_id"
 )
 _CHUNK_DENSE_SQL = (
@@ -366,7 +366,7 @@ _CHUNK_FTS_SQL = (
     " ORDER BY ts_rank(c.tsv, websearch_to_tsquery('english', :q)) DESC, c.id LIMIT :limit"
 )
 _SUMMARY_DENSE_SQL = (
-    "SELECT s.id AS source_id, s.title, s.channel_name, s.url, s.summary AS passage"
+    "SELECT s.id AS source_id, s.title, s.channel_name, s.url, s.video_id, s.summary AS passage"
     " FROM app.external_sources s WHERE s.summary_embedding IS NOT NULL"
     " ORDER BY s.summary_embedding <=> cast(:qvec AS vector), s.id LIMIT :limit"
 )
@@ -375,9 +375,11 @@ _SUMMARY_DENSE_SQL = (
 @dataclass(frozen=True)
 class CorpusHit:
     """One video in a search result: its best-matching passage and (for a chunk hit) the
-    real ms offset so the tool can deep-link to the moment."""
+    real ms offset so the tool can deep-link to the moment. `video_id` is the stable public
+    key the Research Library browse surface opens/deletes a hit by."""
 
     source_id: str
+    video_id: str
     title: str
     channel_name: str
     url: str
@@ -429,6 +431,7 @@ async def search_corpus(
             if sid not in display:
                 display[sid] = CorpusHit(
                     source_id=sid,
+                    video_id=r.video_id or "",
                     title=r.title or "",
                     channel_name=r.channel_name or "",
                     url=r.url,

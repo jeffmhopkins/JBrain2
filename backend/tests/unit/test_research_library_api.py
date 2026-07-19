@@ -6,9 +6,12 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from jbrain.api.deps import owner_only
 from jbrain.auth import service
+from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.external.corpus import CorpusHit, ExternalTranscript, LibraryVideo
@@ -108,6 +111,7 @@ class FakeResearchLibrary:
         return [
             CorpusHit(
                 source_id="src-1",
+                video_id="vid-1",
                 title=self._video.title,
                 channel_name=self._video.channel_name,
                 url=self._video.url,
@@ -163,6 +167,18 @@ def test_all_routes_require_owner(client: TestClient) -> None:
     assert client.delete(f"{r}/videos/vid-1").status_code == 401
 
 
+def test_owner_gate_rejects_non_owner() -> None:
+    # Every route depends on `owner_only` (proven applied by the 401 test above); this
+    # covers its 403 branch — an authenticated non-owner (a device/member cookie) is
+    # refused before any corpus read or delete runs.
+    device = PrincipalInfo(
+        id="d1", kind="device_key", label="phone", subject_id="s1", jcode_session_id=""
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(owner_only(device))
+    assert excinfo.value.status_code == 403
+
+
 def test_list_reports_shape_and_total(client: TestClient, repo: FakeAuthRepo) -> None:
     login(client, repo)
     resp = client.get("/api/research-library/reports")
@@ -209,8 +225,11 @@ def test_delete_report_204_under_owner_ctx(
     # A full-owner context (never a jerv-style narrowed scope) is the trusted executor.
     assert isinstance(ctx, SessionContext) and ctx.principal_kind == "owner"
     assert ctx.owner_scoped is False
-    # Idempotent: an already-gone report still resolves 204.
+    # A non-uuid / already-gone id resolves to None first → a clean 204 no-op, no delete
+    # attempted (never a 500 from cast(:id AS uuid)).
+    del library.calls["deleted_report"]
     assert client.delete("/api/research-library/reports/ghost").status_code == 204
+    assert "deleted_report" not in library.calls
 
 
 def test_list_videos_shape_and_total(client: TestClient, repo: FakeAuthRepo) -> None:
@@ -222,6 +241,18 @@ def test_list_videos_shape_and_total(client: TestClient, repo: FakeAuthRepo) -> 
     row = body["items"][0]
     assert row["video_id"] == "vid-1" and row["provider"] == "youtube"
     assert row["duration_s"] == 1694
+
+
+def test_search_videos_shape(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    resp = client.get("/api/research-library/videos/search", params={"q": "strix"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["degraded"] is False
+    hit = body["items"][0]
+    # A search hit carries the video_id — the key the browse surface opens/deletes it by
+    # (a source_id-only hit would be a dead end against the video_id-keyed routes).
+    assert hit["video_id"] == "vid-1" and hit["source_id"] == "src-1"
 
 
 def test_get_video_maps_windows_and_frames(client: TestClient, repo: FakeAuthRepo) -> None:
@@ -246,6 +277,7 @@ def test_delete_video_resolves_source_id(
     ctx, sid = library.calls["deleted_video"]  # type: ignore[misc]
     assert sid == "src-1"  # keyed by video_id on the wire, deleted by resolved row id
     assert isinstance(ctx, SessionContext) and ctx.principal_kind == "owner"
+    assert ctx.owner_scoped is False
     # An unknown video resolves to nothing → 204 and no delete is attempted.
     library.calls.pop("deleted_video")
     assert client.delete("/api/research-library/videos/ghost").status_code == 204

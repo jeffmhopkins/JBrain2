@@ -107,6 +107,9 @@ async def test_research_library_api_round_trip(
         assert client.delete(f"{base}/reports/{report_id}").status_code == 204
         assert client.get(f"{base}/reports/{report_id}").status_code == 404
         assert client.get(f"{base}/reports").json()["total"] == 0
+        # A non-uuid id resolves to None first → a clean 204 no-op, never a 500 from
+        # `cast(:id AS uuid)` against real Postgres (the resolve-before-delete guard).
+        assert client.delete(f"{base}/reports/not-a-uuid").status_code == 204
 
         # --- videos: list → view (keyed by video_id) → delete → 404 ---
         videos = client.get(f"{base}/videos").json()
