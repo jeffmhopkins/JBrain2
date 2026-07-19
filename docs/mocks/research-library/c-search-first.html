@@ -106,9 +106,22 @@
   .pc{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-2);background:var(--surface-2);border-radius:999px;padding:3px 9px;margin-right:6px;}
   .vid-frame{width:100%;aspect-ratio:16/9;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--text-3);}
   .vid-frame svg{width:34px;height:34px;}
-  .ldel{width:100%;height:44px;margin-top:22px;border-radius:12px;border:none;background:var(--rose-tint);color:var(--rose);font:inherit;font-size:14px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
-  .ldel svg{width:17px;height:17px;}
-  .ldel.armed{background:var(--rose);color:#fff;}
+  .lcta{width:100%;height:46px;margin-top:22px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font:inherit;font-size:14px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;}
+  .lcta svg{width:17px;height:17px;color:var(--text-2);}
+
+  /* action sheet */
+  .actscrim{position:absolute;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.2s;z-index:140;}
+  .actscrim.show{opacity:1;pointer-events:auto;}
+  .actsheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:20px 20px 0 0;transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:150;padding:8px 12px calc(14px + env(safe-area-inset-bottom));}
+  .actsheet.show{transform:translateY(0);}
+  .acttitle{font-size:13px;color:var(--text-2);margin:2px 6px 8px;line-height:1.4;}
+  .acttitle b{color:var(--text);font-weight:600;}
+  .actrow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:none;color:var(--text);font:inherit;font-size:15px;padding:13px 8px;border-top:1px solid var(--border);cursor:pointer;}
+  .actrow:first-of-type{border-top:none;}
+  .actrow svg{width:19px;height:19px;color:var(--text-2);flex:none;}
+  .actrow.del{color:var(--rose);}
+  .actrow.del svg{color:var(--rose);}
+  .actrow.del.armed{background:var(--rose-tint);border-radius:10px;}
 
   .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:130;display:flex;gap:9px;align-items:center;}
   .toast.show{transform:translateY(0);opacity:1;}
@@ -157,6 +170,13 @@
     <div class="layer" id="layer">
       <div class="lhd" id="lhd"></div>
       <div class="layer-body" id="layer-body"></div>
+    </div>
+
+    <div class="actscrim" id="actscrim" onclick="closeActs()"></div>
+    <div class="actsheet" id="actsheet">
+      <div class="handle"></div>
+      <div class="acttitle" id="acttitle"></div>
+      <div id="actlist"></div>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -280,7 +300,8 @@ function openLayer(id){const it=ITEMS.find(i=>i.id===id);if(!it)return;
     <span style="flex:1;min-width:0">
       <span class="sheet-ttl2">${it.title}</span>
       <span class="lmeta"><span class="ddot"></span>${it.type==='report'?'REPORT':'VIDEO ANALYSIS'} · ${it.date}</span>
-    </span>`;
+    </span>
+    <button class="back" onclick="openActs('${it.id}')" aria-label="Actions"><svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>`;
   const meta=it.type==='report'
     ? `<span class="badge cx">${it.complexity}</span> <span class="pc">${iconUsers()}${it.sub_agents} agents</span><span class="pc">${it.rounds} round${it.rounds>1?'s':''}</span><span class="pc">${iconLink()}${it.sources} sources</span>${it.analyzed?'<span class="pc" style="background:var(--green-tint);color:var(--green)">cross-checked</span>':''}${it.coverage_limited?'<span class="pc" style="background:var(--amber-tint);color:var(--amber)">coverage limited</span>':''}${it.truncated?'<span class="pc" style="background:var(--rose-tint);color:var(--rose)">truncated</span>':''}`
     : `<span class="pc">${it.channel}</span><span class="pc">${it.live?'live stream':fmtDur(it.duration_s)}</span><span class="pc">${it.transcript_source==='captions'?'captions':'transcribed'}</span>`;
@@ -291,16 +312,45 @@ function openLayer(id){const it=ITEMS.find(i=>i.id===id);if(!it)return;
     <p class="rep-p">${it.body} ${it.type==='report'?'<span class="cite">1</span><span class="cite">2</span>':''}</p>
     <div class="rep-h">${it.type==='report'?'Sources · '+it.sources:'Transcript'}</div>
     <p class="rep-p">${it.type==='report'?it.sources+' web sources across '+it.sub_agents+' sub-agents; tap a citation for its favicon link.':(it.transcript_source==='captions'?'From the source’s own captions.':'Transcribed locally (Whisper).')+' Tap a word to seek playback.'}</p>
-    <button class="ldel" id="ldel" onclick="layerDel('${it.id}',this)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Delete this ${it.type}</button>`;
+    <button class="lcta" onclick="actJerv('${it.id}')"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 01-8.5 8.5 8.6 8.6 0 01-3.9-.9L3 21l1.9-5.6A8.5 8.5 0 0112.5 3 8.4 8.4 0 0121 11.5z"/></svg>Open in jerv conversation</button>`;
   document.getElementById('layer').classList.add('show');
 }
 function closeLayer(){document.getElementById('layer').classList.remove('show');}
-function layerDel(id,btn){
-  if(!btn.classList.contains('armed')){btn.classList.add('armed');
-    btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Tap again to delete';
-    clearTimeout(btn._t);btn._t=setTimeout(()=>{btn.classList.remove('armed');btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Delete this '+ITEMS.find(i=>i.id===id).type;},3000);return;}
+
+/* action sheet — applicable actions per item */
+function icChat(){return '<svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 01-8.5 8.5 8.6 8.6 0 01-3.9-.9L3 21l1.9-5.6A8.5 8.5 0 0112.5 3 8.4 8.4 0 0121 11.5z"/></svg>';}
+function icCopy(){return '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg>';}
+function icDl(){return '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>';}
+function icExt(){return '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M17 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V8a1 1 0 011-1h5"/></svg>';}
+function icTrash(){return '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>';}
+const CAP={report:'Report',summary:'Summary',transcript:'Transcript'};
+function openActs(id){const it=ITEMS.find(i=>i.id===id);if(!it)return;
+  document.getElementById('acttitle').innerHTML=`<b>${it.title}</b>`;
+  let r=`<button class="actrow" onclick="actJerv('${id}')">${icChat()}Open in jerv conversation</button>`;
+  if(it.type==='report'){
+    r+=`<button class="actrow" onclick="actCopy('${id}','report')">${icCopy()}Copy report</button>`;
+    r+=`<button class="actrow" onclick="actCopy('${id}','summary')">${icCopy()}Copy summary</button>`;
+    r+=`<button class="actrow" onclick="actDownload('${id}')">${icDl()}Download report (.md)</button>`;
+  }else{
+    r+=`<button class="actrow" onclick="actCopy('${id}','summary')">${icCopy()}Copy summary</button>`;
+    r+=`<button class="actrow" onclick="actCopy('${id}','transcript')">${icCopy()}Copy transcript</button>`;
+    if(it.url)r+=`<button class="actrow" onclick="actSource('${id}')">${icExt()}Open source ↗</button>`;
+  }
+  r+=`<button class="actrow del" onclick="actDelete('${id}',this)">${icTrash()}Delete</button>`;
+  document.getElementById('actlist').innerHTML=r;
+  document.getElementById('actsheet').classList.add('show');
+  document.getElementById('actscrim').classList.add('show');
+}
+function closeActs(){document.getElementById('actsheet').classList.remove('show');document.getElementById('actscrim').classList.remove('show');}
+function actJerv(id){closeActs();toast('Opening in jerv conversation…',false);}
+function actCopy(id,what){closeActs();toast(`${CAP[what]} copied to clipboard.`,false);}
+function actDownload(id){closeActs();toast('Downloading report.md…',false);}
+function actSource(id){closeActs();toast('Opening source in a new tab…',false);}
+function actDelete(id,btn){
+  if(!btn.classList.contains('armed')){btn.classList.add('armed');btn.innerHTML=icTrash()+'Tap again to delete';
+    clearTimeout(btn._t);btn._t=setTimeout(()=>{btn.classList.remove('armed');btn.innerHTML=icTrash()+'Delete';},3000);return;}
   const idx=ITEMS.findIndex(i=>i.id===id);deleted=[{item:ITEMS[idx],idx}];ITEMS.splice(idx,1);
-  closeLayer();render();toast(`Deleted “${trunc(deleted[0].item.title)}”.`,true);
+  closeActs();closeLayer();render();toast(`Deleted “${trunc(deleted[0].item.title)}”.`,true);
 }
 
 function toast(msg,withUndo){const t=document.getElementById('toast');

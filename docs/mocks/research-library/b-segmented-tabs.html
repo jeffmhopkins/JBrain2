@@ -140,8 +140,9 @@
     <b>Two kinds, two purpose-built lists.</b> A <b>Reports / Videos</b> segmented control
     switches the surface; each list is laid out for its type — reports lead with the
     question, complexity, and provenance chips; videos lead with a thumbnail, channel, and
-    duration. Search filters within the active tab. <b>⋯</b> opens open / copy / delete
-    (tap-again to confirm). Tap a title to view it full-screen.
+    duration. Search filters within the active tab. <b>⋯</b> opens the action menu —
+    open in jerv, copy, download / open source, delete (tap-again to confirm). Tap a
+    title to view it full-screen.
   </div>
 
   <div class="phone" id="phone">
@@ -269,21 +270,45 @@ function onSearch(){const el=document.getElementById('q');query=el.value.trim().
   document.getElementById('sbox').classList.toggle('filled',el.value.length>0);render();}
 function clearSearch(noRender){document.getElementById('q').value='';query='';document.getElementById('sbox').classList.remove('filled');if(!noRender)render();}
 
-/* action sheet */
+/* action sheet — applicable actions per item */
+function icEye(){return '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';}
+function icChat(){return '<svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 01-8.5 8.5 8.6 8.6 0 01-3.9-.9L3 21l1.9-5.6A8.5 8.5 0 0112.5 3 8.4 8.4 0 0121 11.5z"/></svg>';}
+function icCopy(){return '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg>';}
+function icDl(){return '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>';}
+function icExt(){return '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M17 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V8a1 1 0 011-1h5"/></svg>';}
+function icTrash(){return '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>';}
+
+function actionRows(it){
+  let r=`<button class="actrow" onclick="actView('${it.id}')">${icEye()}View</button>`;
+  r+=`<button class="actrow" onclick="actJerv('${it.id}')">${icChat()}Open in jerv conversation</button>`;
+  if(it.type==='report'){
+    r+=`<button class="actrow" onclick="actCopy('${it.id}','report')">${icCopy()}Copy report</button>`;
+    r+=`<button class="actrow" onclick="actCopy('${it.id}','summary')">${icCopy()}Copy summary</button>`;
+    r+=`<button class="actrow" onclick="actDownload('${it.id}')">${icDl()}Download report (.md)</button>`;
+  }else{
+    r+=`<button class="actrow" onclick="actCopy('${it.id}','summary')">${icCopy()}Copy summary</button>`;
+    r+=`<button class="actrow" onclick="actCopy('${it.id}','transcript')">${icCopy()}Copy transcript</button>`;
+    if(it.url)r+=`<button class="actrow" onclick="actSource('${it.id}')">${icExt()}Open source ↗</button>`;
+  }
+  r+=`<button class="actrow del" onclick="actDelete('${it.id}',this)">${icTrash()}Delete</button>`;
+  return r;
+}
 function openSheet(id){sheetFor=id;const it=ITEMS.find(i=>i.id===id);
   document.getElementById('sheet-ttl').innerHTML=`<b>${it.title}</b>`;
-  document.getElementById('actrows').innerHTML=`
-    <button class="actrow" onclick="openLayer('${id}');closeSheet()"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>View</button>
-    <button class="actrow" onclick="afterCopy()"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg>${it.type==='report'?'Copy Markdown':'Open source ↗'}</button>
-    <button class="actrow del" id="act-del" onclick="delArm('${id}',this)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Delete</button>`;
+  document.getElementById('actrows').innerHTML=actionRows(it);
   document.getElementById('sheet').classList.add('show');document.getElementById('scrim').classList.add('show');
 }
 function closeSheet(){document.getElementById('sheet').classList.remove('show');document.getElementById('scrim').classList.remove('show');sheetFor=null;}
-function afterCopy(){closeSheet();toast('Copied to clipboard.',false);}
-function delArm(id,btn){
+const CAP={report:'Report',summary:'Summary',transcript:'Transcript'};
+function actView(id){closeSheet();openLayer(id);}
+function actJerv(id){closeSheet();toast('Opening in jerv conversation…',false);}
+function actCopy(id,what){closeSheet();toast(`${CAP[what]} copied to clipboard.`,false);}
+function actDownload(id){closeSheet();toast('Downloading report.md…',false);}
+function actSource(id){closeSheet();toast('Opening source in a new tab…',false);}
+function actDelete(id,btn){
   if(!btn.classList.contains('armed')){btn.classList.add('armed');
-    btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Tap again — deletes this '+(ITEMS.find(i=>i.id===id).type);
-    clearTimeout(btn._t);btn._t=setTimeout(()=>{btn.classList.remove('armed');btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Delete';},3000);return;}
+    btn.innerHTML=icTrash()+'Tap again — deletes this '+(ITEMS.find(i=>i.id===id).type);
+    clearTimeout(btn._t);btn._t=setTimeout(()=>{btn.classList.remove('armed');btn.innerHTML=icTrash()+'Delete';},3000);return;}
   const idx=ITEMS.findIndex(i=>i.id===id);deleted={item:ITEMS[idx],idx};ITEMS.splice(idx,1);
   closeSheet();render();toast(`Deleted “${trunc(deleted.item.title)}”.`,true);
 }

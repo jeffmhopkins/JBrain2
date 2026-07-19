@@ -116,6 +116,20 @@
   .btn.danger{background:var(--rose-tint);border-color:transparent;color:var(--rose);flex:none;width:52px;}
   .btn.danger.armed{background:var(--rose);color:#fff;flex:1;}
 
+  /* action sheet */
+  .actscrim{position:absolute;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.2s;z-index:140;}
+  .actscrim.show{opacity:1;pointer-events:auto;}
+  .actsheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:20px 20px 0 0;transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.7,.3,1);z-index:150;padding:8px 12px calc(14px + env(safe-area-inset-bottom));}
+  .actsheet.show{transform:translateY(0);}
+  .acttitle{font-size:13px;color:var(--text-2);margin:2px 6px 8px;line-height:1.4;}
+  .acttitle b{color:var(--text);font-weight:600;}
+  .actrow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:none;color:var(--text);font:inherit;font-size:15px;padding:13px 8px;border-top:1px solid var(--border);cursor:pointer;}
+  .actrow:first-of-type{border-top:none;}
+  .actrow svg{width:19px;height:19px;color:var(--text-2);flex:none;}
+  .actrow.del{color:var(--rose);}
+  .actrow.del svg{color:var(--rose);}
+  .actrow.del.armed{background:var(--rose-tint);border-radius:10px;}
+
   .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:120;display:flex;gap:9px;align-items:center;}
   .toast.show{transform:translateY(0);opacity:1;}
   .toast .undo{margin-left:auto;color:var(--steel);font-weight:600;cursor:pointer;background:none;border:none;font:inherit;font-size:13px;}
@@ -161,6 +175,13 @@
       <div class="sheet-hd" id="sheet-hd"></div>
       <div class="sheet-body" id="sheet-body"></div>
       <div class="sheet-foot" id="sheet-foot"></div>
+    </div>
+
+    <div class="actscrim" id="actscrim" onclick="closeActs()"></div>
+    <div class="actsheet" id="actsheet">
+      <div class="handle"></div>
+      <div class="acttitle" id="acttitle"></div>
+      <div id="actlist"></div>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -305,12 +326,48 @@ function openSheet(id){
       <span class="sheet-ttl">${it.title}</span>
       <span class="sheet-meta"><span class="ddot"></span><span class="kind ${it.type}">${it.type==='report'?'REPORT':'VIDEO ANALYSIS'}</span><span>·</span><span>${it.date}</span></span>
     </span>
-    <button class="sheet-x" onclick="closeSheet()"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`;
+    <button class="sheet-x" onclick="openActs('${it.id}')" aria-label="Actions"><svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+    <button class="sheet-x" onclick="closeSheet()" aria-label="Close"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`;
   bd.innerHTML=it.type==='report'?reportBody(it):videoBody(it);
-  ft.innerHTML=`<button class="btn"><svg viewBox="0 0 24 24"><path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 016 6l-1 1M13.5 17.5l-1 1a4 4 0 01-6-6l1-1"/></svg>${it.type==='report'?'Copy .md':'Open source'}</button>
-    <button class="btn danger" id="sheet-del" onclick="sheetDel('${it.id}',this)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg></button>`;
+  ft.innerHTML=`<button class="btn" onclick="actJerv('${it.id}')"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 01-8.5 8.5 8.6 8.6 0 01-3.9-.9L3 21l1.9-5.6A8.5 8.5 0 0112.5 3 8.4 8.4 0 0121 11.5z"/></svg>Open in jerv</button>
+    <button class="btn danger" style="width:auto;color:var(--text);background:var(--surface-2);flex:none;padding:0 16px" onclick="openActs('${it.id}')" aria-label="More"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>`;
   document.getElementById('sheet').classList.add('show');
   document.getElementById('scrim').classList.add('show');
+}
+
+/* action sheet — applicable actions per item */
+function icChat(){return '<svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 01-8.5 8.5 8.6 8.6 0 01-3.9-.9L3 21l1.9-5.6A8.5 8.5 0 0112.5 3 8.4 8.4 0 0121 11.5z"/></svg>';}
+function icCopy(){return '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg>';}
+function icDl(){return '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>';}
+function icExt(){return '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M17 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V8a1 1 0 011-1h5"/></svg>';}
+function icTrash(){return '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>';}
+const CAP={report:'Report',summary:'Summary',transcript:'Transcript'};
+function openActs(id){const it=ITEMS.find(i=>i.id===id);if(!it)return;
+  document.getElementById('acttitle').innerHTML=`<b>${it.title}</b>`;
+  let r=`<button class="actrow" onclick="actJerv('${id}')">${icChat()}Open in jerv conversation</button>`;
+  if(it.type==='report'){
+    r+=`<button class="actrow" onclick="actCopy('${id}','report')">${icCopy()}Copy report</button>`;
+    r+=`<button class="actrow" onclick="actCopy('${id}','summary')">${icCopy()}Copy summary</button>`;
+    r+=`<button class="actrow" onclick="actDownload('${id}')">${icDl()}Download report (.md)</button>`;
+  }else{
+    r+=`<button class="actrow" onclick="actCopy('${id}','summary')">${icCopy()}Copy summary</button>`;
+    r+=`<button class="actrow" onclick="actCopy('${id}','transcript')">${icCopy()}Copy transcript</button>`;
+    if(it.url)r+=`<button class="actrow" onclick="actSource('${id}')">${icExt()}Open source ↗</button>`;
+  }
+  r+=`<button class="actrow del" onclick="actDelete('${id}',this)">${icTrash()}Delete</button>`;
+  document.getElementById('actlist').innerHTML=r;
+  document.getElementById('actsheet').classList.add('show');
+  document.getElementById('actscrim').classList.add('show');
+}
+function closeActs(){document.getElementById('actsheet').classList.remove('show');document.getElementById('actscrim').classList.remove('show');}
+function actJerv(id){closeActs();toast('Opening in jerv conversation…',false);}
+function actCopy(id,what){closeActs();toast(`${CAP[what]} copied to clipboard.`,false);}
+function actDownload(id){closeActs();toast('Downloading report.md…',false);}
+function actSource(id){closeActs();toast('Opening source in a new tab…',false);}
+function actDelete(id,btn){
+  if(!btn.classList.contains('armed')){btn.classList.add('armed');btn.innerHTML=icTrash()+'Tap again to delete';
+    clearTimeout(btn._t);btn._t=setTimeout(()=>{btn.classList.remove('armed');btn.innerHTML=icTrash()+'Delete';},3000);return;}
+  closeActs();closeSheet();doDelete(id);
 }
 function reportBody(it){
   return `<div class="statrow" style="margin-bottom:14px">${statsFor(it)}</div>
@@ -329,11 +386,6 @@ function videoBody(it){
     <p class="rep-p">${it.body||'A frame-by-frame + transcript analysis jerv produced from the source video. The filmstrip above is the timeline — tap a frame to seek; Summary and Transcript tabs share one clock.'}</p>
     <div class="rep-h">Transcript</div>
     <p class="rep-p">${it.transcript_source==='captions'?'From the source’s own captions.':'Transcribed locally (Whisper).'} Tap a word to seek playback.</p>`;
-}
-function sheetDel(id,btn){
-  if(!btn.classList.contains('armed')){btn.classList.add('armed');btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>Tap again to delete';
-    clearTimeout(btn._t);btn._t=setTimeout(()=>{btn.classList.remove('armed');btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13"/></svg>';},3000);return;}
-  closeSheet();doDelete(id);
 }
 function closeSheet(){document.getElementById('sheet').classList.remove('show');document.getElementById('scrim').classList.remove('show');}
 

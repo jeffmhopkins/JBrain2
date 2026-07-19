@@ -12,6 +12,13 @@ research accent (read-only, per DESIGN.md §Principles 4). Reports carry an ambe
 type disc; video analyses carry a steel disc — the type axis, distinct from the
 amber domain dot.
 
+Every item carries an **action menu** with the options that apply to its source:
+**Open in jerv conversation** (both), **Copy** (report + summary for a report;
+summary + transcript for a video), **Download report (.md)** (reports only),
+**Open source ↗** (videos with a URL), and **Delete** (tap-again confirm). In A/C
+it opens from the ⋯ in the detail view (with an Open-in-jerv primary action
+alongside); in B it opens from the ⋯ on each row.
+
 Reports show their real provenance — `complexity` (simple / comparative / deep),
 `sub_agents`, `rounds`, `sources`, and the `analyzed` / `revised` /
 `coverage_limited` / `truncated` flags. Videos show `channel_name`,
