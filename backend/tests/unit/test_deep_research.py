@@ -388,12 +388,13 @@ def test_plan_prompt_forbids_meta_and_cross_child_subquestions() -> None:
     from jbrain.agent.deep_research import _PLAN
 
     body = _PLAN.body.lower()
-    assert _PLAN.version == "dr-plan-v3"
+    assert _PLAN.version == "dr-plan-v4"
     assert "citation matrix" in body  # the exact meta task that leaked through v1
     assert "process or meta task" in body
     assert "in isolation" in body  # names why cross-child briefs can't work
     assert "fewer" in body  # the anti-over-decomposition steer
-    assert "plain string" in body  # sub-questions are strings, not {id, brief} objects
+    # v4: each sub-question is a {title, brief} object — a short row label + the full brief.
+    assert "`title`" in body and "`brief`" in body
 
 
 def test_coerce_brief_unwraps_a_json_object_the_planner_leaked() -> None:
@@ -437,6 +438,50 @@ async def test_planner_object_wrapped_subquestions_reach_children_as_clean_brief
         "Identify the primary source for the 675,000 estimate",
     ]
     assert not any("{" in label or "brief" in label for label in labels)  # no JSON leak
+
+
+async def test_planner_title_becomes_the_short_row_label() -> None:
+    """The planner emits each sub-question as a `{title, brief}` object: the child row shows
+    the SHORT title (a scannable angle label), while the child still works the FULL brief —
+    so the row never shows a truncated sentence fragment of the brief (the reported UI bug)."""
+    router = _FakeRouter(
+        sub_questions=(
+            {
+                "title": "Cost per kWh",
+                "brief": (
+                    "Report the current $/kWh cost (including cell manufacturing and "
+                    "balance-of-plant) for grid-scale LFP solid-state battery systems in 2026."
+                ),
+            },
+            {"title": "Dominant manufacturers", "brief": "Identify the dominant makers."},
+        )
+    )
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    gather_briefs = _research_fans(spawn)[0]["briefs"]
+    labels = [label for label, _brief in gather_briefs]
+    briefs = [brief for _label, brief in gather_briefs]
+    assert labels == ["Cost per kWh", "Dominant manufacturers"]  # short titles, not briefs
+    assert briefs[0].startswith("Report the current $/kWh cost")  # the child works the brief
+    assert all(len(label) <= 30 for label in labels)  # a title, not a wrapped sentence
+
+
+def test_title_caps_at_a_whole_word_never_mid_word() -> None:
+    """A long title (or a title-less brief used as the fallback label) is capped at a WHOLE
+    word with an ellipsis — never clipped mid-word, the exact glitch in the report (a row
+    ending '…solid-stat' / '…sodium-io'). A short title is returned verbatim."""
+    from jbrain.agent.deep_research import _title
+
+    assert _title("Cost per kWh", 0) == "Cost per kWh"  # short → unchanged
+    long = (
+        "Report the current cost including cell manufacturing and balance of plant for "
+        "grid scale systems"
+    )
+    out = _title(long, 0)
+    assert out.endswith("…")
+    assert " " in out and not out[:-1].endswith(" ")  # trimmed at a word, ellipsis appended
+    assert long.startswith(out[:-1])  # a clean prefix — no mid-word cut
+    assert _title("   ", 2) == "part 3"  # blank → positional fallback
 
 
 # --- budget + degraded paths ------------------------------------------------

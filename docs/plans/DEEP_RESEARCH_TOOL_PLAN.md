@@ -1,6 +1,6 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix on a follow-up branch; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles; mock-gate sign-off pending)
 
 **v5 revision (bigger budget + honest budget meter).** An observed run (eurorack-synth
 research) still starved children: one `medium`-effort gather child burned 911k over 61
@@ -83,17 +83,22 @@ one pool with **no reserve between them**, and `children_exhausted` only enforce
   `DR_REVIEW_RESERVE` (analyst + critique slices) off the pool before gather and steps it
   down (analyst's slice released once gather is done, critique's once the draft is
   written), restored in `finally`. The analyst can no longer be starved.
-- **Pool headroom.** `SPAWN_MULTIPLIER` 3.5 → **5.0** (jerv tree 2.8M → **4.0M**, children
-  pool 2.1M → **3.0M**) so the review reserve rides on top of a full gather round rather
-  than stealing from it.
-- **Planner guard** (`dr-plan-v3`). The failed run also spawned a bogus "Create a citation
+- **Pool headroom.** `SPAWN_MULTIPLIER` 3.5 → 5.0 → **10.0** (v5/PR #902; jerv tree →
+  **8.0M**, children pool → **6.0M**) so the review reserve rides on top of a full gather
+  round rather than stealing from it, and the meter shows the children's pool
+  (`children_budget()`) so the bar fills to 100% exactly when children exhaust.
+- **Planner guard** (`dr-plan-v4`). The failed run also spawned a bogus "Create a citation
   matrix for all sources gathered in the previous three sub-questions" angle — a meta task
   an isolated parallel child can't satisfy; it refused in one step. The prompt now forbids
   process/meta sub-questions and any cross-child dependence, and steers toward fewer angles.
   A follow-up (`v3`) also stopped a display leak: the local planner sometimes wrapped each
   sub-question in a JSON object (`{"id": 1, "brief": …}`) despite the string schema, which
-  showed as raw JSON in the child row labels — `_coerce_brief` now unwraps it (and the
-  prompt states sub-questions are plain strings).
+  showed as raw JSON in the child row labels — `_coerce_brief` still unwraps that shape.
+- **Short row titles** (`dr-plan-v4`, v6). Each sub-question is now a `{title, brief}`
+  object: `title` is a 3–6 word angle label the child row shows, `brief` is the full
+  self-contained research instruction the child works. Earlier the row label was the first
+  ~96 chars of the brief, which wrapped and clipped mid-word (`…solid-stat`, `…sodium-io`).
+  `_title` caps a long/fallback label at a whole-word boundary; the brief is unaffected.
 
 Still deferred from Open decisions 2–3: the **tree wall-clock on flat fans** (the run took
 ~28 min; flat fans still ignore `deadline`) and the analyst's own over-search (19 web calls

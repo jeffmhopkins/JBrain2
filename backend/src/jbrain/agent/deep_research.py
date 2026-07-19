@@ -96,7 +96,21 @@ _PLAN_SCHEMA = {
     "type": "object",
     "properties": {
         "complexity": {"type": "string", "enum": ["simple", "comparative", "deep"]},
-        "sub_questions": {"type": "array", "items": {"type": "string"}},
+        # Each sub-question carries a SHORT `title` (the child row's label — a few words
+        # naming the angle) and the full `brief` (the self-contained research instruction
+        # the child actually works). Splitting them keeps the row scannable instead of
+        # showing a truncated sentence fragment of the brief.
+        "sub_questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "brief": {"type": "string"},
+                },
+                "required": ["title", "brief"],
+            },
+        },
         "sections": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["complexity", "sub_questions", "sections"],
@@ -114,8 +128,9 @@ _REFLECT_SCHEMA = {
 _PLAN_MAX_TOKENS = 1500
 _REFLECT_MAX_TOKENS = 1200
 _SYNTH_MAX_TOKENS = 6000
-_LABEL_LEN = 96  # the child row's title wraps to two lines (title-forward layout), so it
-# can carry roughly a full sub-question, not just an opening fragment.
+_TITLE_LEN = 60  # the child row's title is a short angle label (the full research brief
+# rides in the child's brief, not its row title); capped at a word boundary so it never
+# clips mid-word in the two-line row.
 
 
 def _refuse(reason: str) -> str:
@@ -124,11 +139,30 @@ def _refuse(reason: str) -> str:
     return f"Refused: {reason}"
 
 
-def _label(text: str, i: int) -> str:
-    """A display label for a sub-question's child row — enough words to fill the row's
-    two-line title, capped; a blank sub-question falls back to a positional label."""
-    head = " ".join(text.split()[:16]).strip()[:_LABEL_LEN].strip()
-    return head or f"part {i + 1}"
+def _title(text: str, i: int) -> str:
+    """A short display title for a child row — whitespace-collapsed and, if long, capped at
+    a WHOLE-word boundary (with an ellipsis) so the row never shows a half-word. A blank
+    text falls back to a positional label. Used for the planner's angle titles, and as the
+    derived label for a gap/fallback brief that carries no title of its own."""
+    words = " ".join(text.split()).strip()
+    if not words:
+        return f"part {i + 1}"
+    if len(words) <= _TITLE_LEN:
+        return words
+    clipped = words[:_TITLE_LEN].rsplit(" ", 1)[0].rstrip(" ,;:—-")
+    return f"{clipped or words[:_TITLE_LEN].strip()}…"
+
+
+def _sub_question(item: object, i: int) -> tuple[str, str] | None:
+    """One planned sub-question as a `(row title, research brief)` pair. The planner emits
+    `{title, brief}`; be robust to a bare string (an older/leaked shape) by deriving a
+    short title from the brief. Returns None for an empty brief (the caller drops it)."""
+    brief = _coerce_brief(item)
+    if not brief:
+        return None
+    raw_title = item.get("title") if isinstance(item, dict) else None
+    title = raw_title.strip() if isinstance(raw_title, str) else ""
+    return (_title(title or brief, i), brief)
 
 
 def _clamp_breadth(raw: object) -> int:
@@ -213,7 +247,9 @@ class DeepResearchService:
         plan = await self._plan(ctx, question, breadth)
         complexity = plan["complexity"]
         sections = plan["sections"]
-        sub_questions = plan["sub_questions"] or [question]
+        # Each entry is a (row title, research brief) pair. A planless fallback researches
+        # the raw question as one angle, titled off the question itself.
+        sub_questions = plan["sub_questions"] or [(_title(question, 0), question)]
         # Complexity sizes the gather breadth ONLY — it never skips a later stage.
         sub_questions = sub_questions[: _breadth_for(complexity, breadth)]
 
@@ -229,7 +265,7 @@ class DeepResearchService:
             self._phase(ctx, 2, f"Researching {len(sub_questions)} angle(s)")
             gather = await self._spawn.run_research_fan(
                 ctx,
-                briefs=[(_label(sq, i), sq) for i, sq in enumerate(sub_questions)],
+                briefs=sub_questions,
                 # Research children run at LOW reasoning: a gather angle is a focused
                 # search-and-summarize, not a hard reasoning task, and the lower step cap
                 # curbs the over-searching that hammered the upstream engines. The review
@@ -267,7 +303,7 @@ class DeepResearchService:
                     self._phase(ctx, 5, f"Filling {len(gaps)} gap(s)")
                     refill = await self._spawn.run_research_fan(
                         ctx,
-                        briefs=[(_label(g, i), g) for i, g in enumerate(gaps)],
+                        briefs=[(_title(g, i), g) for i, g in enumerate(gaps)],
                         effort="low",  # research children run at low reasoning (see gather)
                     )
                     # A refill that was admitted but produced NOTHING usable (every gap
@@ -426,7 +462,7 @@ class DeepResearchService:
         # widen past the caps.
         if complexity not in _COMPLEXITIES:
             complexity = "deep"
-        raw_subs = (_coerce_brief(s) for s in data.get("sub_questions", []))
+        raw_subs = (_sub_question(s, i) for i, s in enumerate(data.get("sub_questions", [])))
         sub_questions = [s for s in raw_subs if s][:breadth]
         sections = [_coerce_brief(s) for s in data.get("sections", [])]
         sections = [s for s in sections if s]
