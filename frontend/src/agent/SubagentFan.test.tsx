@@ -39,8 +39,10 @@ describe("SubagentFan", () => {
     expect(screen.getByText("researching")).toBeInTheDocument();
     expect(screen.getByText("failed")).toBeInTheDocument();
     expect(screen.getByText("done")).toBeInTheDocument();
-    // Persona is a neutral tag (text), never a color class.
-    expect(screen.getByText("review")).toBeInTheDocument();
+    // Persona is off the collapsed row now (title-forward) — it shows on expand.
+    expect(screen.queryByText("review")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Cross-check"));
+    expect(screen.getByText("review")).toBeInTheDocument(); // a neutral tag, never a color
     // Header counts running agents while live.
     expect(screen.getByText(/3 agents/)).toBeInTheDocument();
   });
