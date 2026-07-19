@@ -761,5 +761,7 @@ def build_registry(
         # Deep research runs its gather/refill/critique fans through the spawn service,
         # so it is wired once that exists. Same guard: no router → the ref stays unbound
         # and a deep_research call refuses cleanly.
-        deep_research_ref.service = DeepResearchService(router=router, spawn=spawn_ref.service)
+        deep_research_ref.service = DeepResearchService(
+            router=router, spawn=spawn_ref.service, maker=maker
+        )
     return registry
