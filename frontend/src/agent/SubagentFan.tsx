@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { BrainGlyph } from "./glyphs";
+import { Markdown } from "./markdown";
 import type { SubagentFan as Fan, SubagentChild, SubagentTraceItem } from "./transcript";
 
 // A friendlier label for the web tools a child runs (shown inline in its trace).
@@ -98,6 +99,23 @@ function ChildTrace({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// A child's final answer: the SAME rich Markdown the main answer renders (headings,
+// lists, bold, `[^n]` citations), boxed into a bounded scroll area like the trace so a
+// long report doesn't push the whole fan open. Auto-scrolls to the newest line while the
+// answer is still streaming, exactly like ChildTrace.
+function ChildAnswer({ text, live }: { text: string; live: boolean }): ReactNode {
+  const ref = useRef<HTMLDivElement | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `text` drives the re-scroll
+  useEffect(() => {
+    if (live && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [text, live]);
+  return (
+    <div className="fb-sa-sum" ref={ref}>
+      <Markdown text={text} streaming={live} />
     </div>
   );
 }
@@ -317,8 +335,8 @@ export function SubagentFan({
               <ChildTrace items={c.liveTrace} live={!rowSettled} answering={answering} />
             )}
             {rowSettled
-              ? c.summary && <div className="fb-sa-sum">{c.summary}</div>
-              : c.liveText && <div className="fb-sa-sum">{c.liveText}</div>}
+              ? c.summary && <ChildAnswer text={c.summary} live={false} />
+              : c.liveText && <ChildAnswer text={c.liveText} live={true} />}
             {showOpen && onOpen && (
               <button type="button" className="fb-sa-open" onClick={() => onOpen(c.childId)}>
                 Open sub-agent session →

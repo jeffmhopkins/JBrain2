@@ -8607,6 +8607,31 @@ button.small {
   white-space: nowrap;
   color: var(--text-3);
 }
+/* The child's final answer, rendered as rich Markdown and boxed into a bounded scroll
+   area (like the trace) so a long report scrolls INSIDE the row instead of pushing the
+   whole fan open. `white-space: normal` undoes the detail block's pre-wrap — the Markdown
+   lays out its own blocks — and the first/last-child margin resets keep the box tight. */
+.fb-shell .fb-sa-sum {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  white-space: normal;
+}
+.fb-shell .fb-sa-sum > :first-child {
+  margin-top: 0;
+}
+.fb-shell .fb-sa-sum > :last-child {
+  margin-bottom: 0;
+}
+/* A failed child's error text keeps the rose signal (the box color would otherwise
+   override the detail block's err colour). */
+.fb-shell .fb-sa-detail.err .fb-sa-sum {
+  color: var(--rose);
+}
 /* The "open sub-agent session" link inside an expanded child — its run persisted a
    transcript, so this opens the child's own conversation. */
 .fb-shell .fb-sa-open {
