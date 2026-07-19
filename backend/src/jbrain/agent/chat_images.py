@@ -44,6 +44,22 @@ class ImageTooLarge(ValueError):
     decompression bomb can't exhaust memory."""
 
 
+def sniff_image_media_type(data: bytes) -> str | None:
+    """The image media type implied by the leading magic bytes, or None when the bytes
+    are not one of the web image formats. A STRICT allowlist (reject-on-None) — unlike a
+    lenient sniff that defaults to png, this refuses an HTML error page or a hostile
+    payload before it is stored or handed to the vision model as "an image"."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def image_dimensions(data: bytes) -> tuple[int, int]:
     """(width, height) read from the image HEADER — no full decode, so a decompression
     bomb is rejected on its declared size, not by allocating it. Raises UndecodableImage

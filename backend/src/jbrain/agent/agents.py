@@ -96,6 +96,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # first-class chat image analyze_image/compare_images can read by id
         # (VIDEO_IMAGE_TOOLS_PLAN.md) — the "screenshot the video at this moment" step.
         "grab_frame",
+        # Fetch a web image's bytes so jerv can actually SEE it (web_fetch is text-only) —
+        # persisted as a chat image analyze_image/compare_images read by id.
+        "fetch_image",
         # Search the external-source video corpus (analysed YouTube videos). Sandboxed
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).

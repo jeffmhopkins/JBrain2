@@ -50,6 +50,11 @@ log = structlog.get_logger()
 
 _TIMEOUT = 20.0
 _MAX_BYTES = 2_000_000  # cap the download; a page beyond this is truncated
+# A larger cap for a binary image fetch (fetch_bytes) — a product photo is often a
+# few MB, well over the text page cap, but still bounded so an endless/huge body can't
+# be buffered whole. The decoded-pixel cap (agent.chat_images) is the memory bound;
+# this bounds the encoded transfer.
+_MAX_IMAGE_BYTES = 10_000_000
 _MAX_CHARS = 20_000  # cap the extracted text handed to the model
 _MAX_LINKS = 40  # cap the links surfaced for navigation; a link-heavy page is trimmed
 _MAX_REDIRECTS = 4
@@ -140,6 +145,28 @@ class WebFetcher:
             if reader is not None and reader.text.strip():
                 return reader
         return result
+
+    async def fetch_bytes(
+        self, url: str, *, max_bytes: int = _MAX_IMAGE_BYTES
+    ) -> tuple[str, bytes]:
+        """Fetch a URL's RAW bytes (a binary resource — an image) following redirects
+        through the SAME per-hop SSRF guard as `fetch` (`_get_following_safe_redirects`:
+        httpx auto-redirect is off, every hop's host is re-checked), capped at `max_bytes`.
+        Returns (content_type, body); does NOT interpret the body — the caller validates it
+        is really an image. Raises `WebFetchError` on a bad scheme/host/hop or an
+        unreachable/errored response. No reader fallback (that endpoint returns markdown,
+        not image bytes)."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+            ) as client:
+                resp = await self._get_following_safe_redirects(client, url)
+                content_type = resp.headers.get("content-type", "")
+                body = await _read_capped(resp, max_bytes=max_bytes)
+        except httpx.HTTPError as exc:
+            log.warning("web.fetch_bytes_failed", error=repr(exc))
+            raise WebFetchError("that URL could not be fetched right now") from exc
+        return content_type, body
 
     async def _fetch_direct(self, url: str) -> FetchResult:
         try:
@@ -262,18 +289,18 @@ def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
-async def _read_capped(resp: httpx.Response) -> bytes:
-    """Read a streamed response body up to `_MAX_BYTES` and stop — so an oversized
+async def _read_capped(resp: httpx.Response, *, max_bytes: int = _MAX_BYTES) -> bytes:
+    """Read a streamed response body up to `max_bytes` and stop — so an oversized
     or endless response is truncated, never buffered whole into memory (DoS guard)."""
     chunks: list[bytes] = []
     total = 0
     async for chunk in resp.aiter_bytes():
         chunks.append(chunk)
         total += len(chunk)
-        if total >= _MAX_BYTES:
+        if total >= max_bytes:
             break
     await resp.aclose()
-    return b"".join(chunks)[:_MAX_BYTES]
+    return b"".join(chunks)[:max_bytes]
 
 
 def _is_textual(content_type: str) -> bool:

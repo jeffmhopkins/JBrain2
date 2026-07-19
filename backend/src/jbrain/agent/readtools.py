@@ -86,6 +86,9 @@ OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})
 # jerv's single-frame grab (VIDEO_IMAGE_TOOLS_PLAN.md), dropped from the registry when
 # ffmpeg is absent (the URL path also needs yt-dlp, which degrades cleanly at call time).
 OPTIONAL_GRAB_TOOL = frozenset({"grab_frame"})
+# jerv's web-image fetch (VIDEO_IMAGE_TOOLS_PLAN.md), dropped when the web fetcher is
+# unconfigured — it gives jerv eyes on a web image (web_fetch is text-only).
+OPTIONAL_FETCH_IMAGE_TOOL = frozenset({"fetch_image"})
 # jerv's URL-sourced stream/video analysis sidecar, dropped from the registry when
 # ffmpeg OR yt-dlp is absent (docs/archive/STREAM_ANALYSIS_PLAN.md).
 OPTIONAL_STREAM_TOOL = frozenset({"analyze_stream"})
@@ -630,6 +633,7 @@ def build_registry(
     video_handlers: dict[str, ToolHandler] | None = None,
     stream_handlers: dict[str, ToolHandler] | None = None,
     grab_handlers: dict[str, ToolHandler] | None = None,
+    fetch_image_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
@@ -699,6 +703,10 @@ def build_registry(
             # available; otherwise its sidecar is dropped below. A grabbed still becomes a
             # first-class chat image analyze_image/compare_images can read by id.
             **(grab_handlers or {}),
+            # jerv's web-image fetch (`web`-gated): fetch a web image's bytes through the
+            # SSRF-guarded fetcher and persist it as a chat image — web_fetch is text-only,
+            # so this is jerv's only way to actually see a picture on the web.
+            **(fetch_image_handlers or {}),
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
             # general-domain corpus via a purpose-built scope (EXTERNAL_VIDEO_INGESTION_PLAN.md).
             **(external_handlers or {}),
@@ -727,6 +735,7 @@ def build_registry(
             | OPTIONAL_VIDEO_TOOL
             | OPTIONAL_STREAM_TOOL
             | OPTIONAL_GRAB_TOOL
+            | OPTIONAL_FETCH_IMAGE_TOOL
             | OPTIONAL_GMAIL_TOOLS
         ),
     )

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.brainevents import build_event_emitter, build_flag_emitter
 from jbrain.agent.externaltools import build_external_handlers
+from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.grabtools import build_grab_frame_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
@@ -348,9 +349,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tts_base = settings.brain_tts_url.rstrip("/")
         app.state.brain_tts_base_url = tts_base
         app.state.brain_tts_flag_emit = build_flag_emitter(f"{tts_base}/event" if tts_base else "")
+        web_fetcher = WebFetcher(reader_url=settings.reader_url)
         web_handlers = build_web_handlers(
             SearxngClient(settings.searxng_url),
-            WebFetcher(reader_url=settings.reader_url),
+            web_fetcher,
             emit=brain_emit,
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
@@ -565,6 +567,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 maker,
                 app.state.llm_router,
             )
+        # jerv's web-image fetch (VIDEO_IMAGE_TOOLS_PLAN.md): fetch a web image's bytes
+        # through the same SSRF-guarded fetcher web_fetch uses and persist it as a chat
+        # image (analyze_image/compare_images read it by id) — jerv's only way to see a
+        # picture on the web, since web_fetch is text-only. Always wired (the fetcher +
+        # image storage always exist); jerv reaches it by allowlist, curator never does.
+        fetch_image_handlers = build_fetch_image_handlers(
+            web_fetcher,
+            app.state.blob_store,
+            app.state.generated_image_repo,
+            maker,
+            emit=brain_emit,
+        )
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -589,6 +603,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             video_handlers=video_handlers,
             stream_handlers=stream_handlers,
             grab_handlers=grab_handlers,
+            fetch_image_handlers=fetch_image_handlers,
             gmail_handlers=gmail_handlers,
             external_handlers=build_external_handlers(
                 maker,
