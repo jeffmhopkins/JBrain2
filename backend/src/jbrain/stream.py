@@ -32,6 +32,7 @@ the event loop and hands the frames/audio to the shared caption→fuse→reduce 
 
 from __future__ import annotations
 
+import io
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -39,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from PIL import Image, ImageStat
 
 from jbrain.captions import CaptionTrack, select_caption
 from jbrain.media import (
@@ -77,6 +79,16 @@ MAX_FULL_FRAMES = 60
 MAX_FULL_AUDIO_S = 90 * 60.0
 DEFAULT_MAX_HEIGHT = 720  # cap the resolved format so ffmpeg reads bounded bytes
 AUDIO_SAMPLE_RATE = 16_000  # whisper's native rate; mono keeps the WAV small
+# A precise single grab seeks in two legs: a fast input seek to this many seconds
+# BEFORE the target (jumps to the prior keyframe cheaply), then an accurate output
+# seek that decodes the short runway up to the target — so the grabbed frame is fully
+# decoded rather than a pre-keyframe/black artifact, without ever decoding from t=0.
+_SINGLE_SEEK_PREROLL_S = 0.5
+# When a single grab lands on a near-black transitional/fade frame, retry once this
+# many seconds later so a scene cut isn't mistaken for "the video is black." Bounded
+# to one extra grab, so single-mode cost stays flat.
+_BLACK_RETRY_DELTA_S = 1.0
+_BLACK_LUMA_THRESHOLD = 12.0  # mean luma (0–255) at/under which a frame reads as black
 _RESOLVE_TIMEOUT_S = 30
 # ffmpeg gets the window plus generous slack for network + decode, then is killed —
 # a slow-loris media host cannot hang the turn.
@@ -355,6 +367,21 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
     )
 
 
+def _looks_black(frames: list[SampledFrame]) -> bool:
+    """Whether a single grab is effectively black (a fade/scene-cut artifact). Empty is
+    NOT black — a decode miss is a different failure and must not trigger a retry that
+    replaces a good frame with nothing. Best-effort: an unmeasurable JPEG reads as
+    not-black (a real frame we simply couldn't score)."""
+    if not frames:
+        return False
+    try:
+        with Image.open(io.BytesIO(frames[0].jpeg)) as img:
+            mean = ImageStat.Stat(img.convert("L")).mean[0]
+    except Exception:  # noqa: BLE001 - a measurement failure is not "black"
+        return False
+    return mean <= _BLACK_LUMA_THRESHOLD
+
+
 async def sample_stream(
     resolved: ResolvedStream,
     *,
@@ -394,6 +421,21 @@ async def sample_stream(
             longest_edge=longest_edge,
             headers=resolved.http_headers,
         )
+        # Single-grab hardening: a precise grab can land on a black fade/scene-cut frame;
+        # retry once a beat later and prefer a non-black result, so a transient artifact
+        # isn't reported as "the video is black." One extra grab at most (single mode only).
+        if frames <= 1 and _looks_black(sampled):
+            retry = await _extract_frames(
+                resolved.media_url,
+                tmpdir,
+                frames=1,
+                window=window,
+                seek=seek + _BLACK_RETRY_DELTA_S,
+                longest_edge=longest_edge,
+                headers=resolved.http_headers,
+            )
+            if retry and not _looks_black(retry):
+                sampled = retry
         deduped = dedup_frames(sampled, distance=dedup_distance)
         audio = b""
         if want_audio:
@@ -561,12 +603,25 @@ async def _extract_frames(
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-rw_timeout", str(_RW_TIMEOUT_US)]
     cmd += _input_guard_args(media_url)
     cmd += _header_args(headers)
-    if seek > 0:
-        cmd += ["-ss", f"{seek:.3f}"]  # input seek (before -i): fast, VOD only
-    cmd += ["-i", media_url]
-    if not single and window > 0:
-        cmd += ["-t", f"{window:.3f}"]
-    cmd += ["-vf", vf, "-vsync", "vfr", "-frames:v", str(frames), "-q:v", "3", str(pattern)]
+    if single:
+        # Hybrid seek (see _SINGLE_SEEK_PREROLL_S): a fast input seek to just before the
+        # target, then a short accurate output seek that decodes the runway to it — so a
+        # precise grab lands a fully-decoded frame, never a pre-keyframe/black artifact,
+        # while staying fast (it never decodes from t=0).
+        fast = max(0.0, seek - _SINGLE_SEEK_PREROLL_S)
+        if fast > 0:
+            cmd += ["-ss", f"{fast:.3f}"]  # input seek (before -i): jump to prior keyframe
+        cmd += ["-i", media_url]
+        if seek > fast:
+            cmd += ["-ss", f"{seek - fast:.3f}"]  # output seek (after -i): decode runway
+        cmd += ["-vf", vf, "-frames:v", "1", "-q:v", "3", str(pattern)]
+    else:
+        if seek > 0:
+            cmd += ["-ss", f"{seek:.3f}"]  # input seek (before -i): fast, VOD only
+        cmd += ["-i", media_url]
+        if window > 0:
+            cmd += ["-t", f"{window:.3f}"]
+        cmd += ["-vf", vf, "-vsync", "vfr", "-frames:v", str(frames), "-q:v", "3", str(pattern)]
 
     timeout = int(window + _FFMPEG_SLACK_S) if not single else _FFMPEG_SLACK_S
     try:

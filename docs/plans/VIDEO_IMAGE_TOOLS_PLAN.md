@@ -1,15 +1,12 @@
 # Video/Image Inspection Tools — Design Spec
 
-> **Status:** Proposed (icebox) · **Last verified:** 2026-07-19 · **Waves:** V0◻️ V1◻️ V2◻️ V3◻️ V4◻️ V5◻️ V6◻️
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** V0✅ V1◻️ V2◻️ V3◻️ V4◻️ V5◻️ V6◻️
 
-> **Status: proposed, not scheduled.** A forward-looking design dropped in for
-> the record; nothing here is built and it is not yet on the roadmap (the active
-> frontier is Phase 6, the wiki). When picked up it must be reconciled with the
-> root `CLAUDE.md` non-negotiables — every VLM call through the LLM adapter (rule
-> 1), every blob through the storage abstraction (rule 2), the new image rows
-> RLS-scoped with an isolation test (rule 3), and the two new outbound legs
-> (`fetch_image`, the `grab_frame` URL path) held to the jerv-sandbox egress
-> discipline (invariant #9), exactly as `analyze_stream` already is.
+> Reconciled with the root `CLAUDE.md` non-negotiables — every VLM call through
+> the LLM adapter (rule 1), every blob through the storage abstraction (rule 2),
+> the new image rows RLS-scoped with an isolation test (rule 3), and the two new
+> outbound legs (`fetch_image`, the `grab_frame` URL path) held to the
+> jerv-sandbox egress discipline (invariant #9), exactly as `analyze_stream` is.
 
 > **v2 — reconciled with a four-lens review** (codebase-accuracy, security,
 > architecture, process) on 2026-07-19. The review overturned the original B1
@@ -361,7 +358,7 @@ bumped for any sidecar/prompt added or changed.
 
 | Wave | Scope | Gate notes |
 |---|---|---|
-| **V0** | **B1** — thread `seek_s` through single-mode dispatch (`stream_analysis.py`) + the hybrid-seek/luma hardening in `stream.py`, with the `_grab_one` full-mode fast-seek preserved. Sidecar wording fix. | Regression test covers **both** `mode=single seek=T` (asserts sampled ≈T, non-black on a synthetic black-intro clip) **and** `_grab_one`; assert the `window` multi-frame path is unchanged. Pure media; no schema, no tool. Ships independently. |
+| **V0 ✅** | **B1** — threaded `seek_s` through single-mode dispatch (`stream_analysis.py`) + hybrid fast+accurate seek and a bounded near-black retry in `stream.py` (`_grab_one` full-mode path untouched, its fast seek preserved). | **Shipped on-branch.** Regression tests: a synthetic black-intro clip asserts `seek` moves the single grab off the black intro and the near-black retry reaches content (`test_stream.py`); the streamtools test asserts single mode threads `seek` (was dropped). `window`/`full` paths unchanged. The sidecar already documented single-mode `seek` (now true), so no `.tool` bump. |
 | **V1** | Shared substrate **both** V2/V3 need: the reversible `provenance` Alembic migration (pattern `0118`), hoist `_resolve_source` to module level, the **provenance-aware gallery filter + card copy**, the RLS-isolation confirmation, **and the two-image `agent.vision` on-box spike** (a bare `router.complete` probe — no new tool). | Migration reversible + single-head (`test_migrations.py`); frontend card/gallery tests. The spike decides §T3's stitch-vs-native and de-risks V4. |
 | **V2** | **`grab_frame`** (URL + the net-new attachment seek-to-T primitive) + `question`/`n`/`show` + sidecar + wiring (dropped without ffmpeg). | Reuses V0's grab, V1's storage. **Frontend viewless-render test lands here** (first `show:false` producer). Faked yt-dlp/ffmpeg. |
 | **V3** | **`fetch_image`** + the redirect-safe **`fetch_bytes`** path (moved here from v1's V1 — its only consumer) + image validation + pixel cap + `WebSource` citation + dep plumbing + sidecar + wiring. | **Security paths at 100%**: reject-on-`None` sniff, per-hop redirect re-guard, pixel-ceiling/decompression-bomb, non-image body. |

@@ -25,17 +25,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   tool, and a MusicScreen — mirroring the shipped image stack. Backend (Waves M0–M3) +
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
-- `VIDEO_IMAGE_TOOLS_PLAN.md` — give jerv eyes on a specific still: `grab_frame`
-  (extract + persist a frame from a video URL/attachment at time T, with an inline
-  `question` to grab-and-read in one hop), `fetch_image` (per-hop-SSRF-guarded,
-  validated fetch of a web image so jerv can actually see it), and a 2..N-source
-  widening of `analyze_image` (+ a `compare_images` sidecar) that always emits a
-  side-by-side the owner can verify — plus a `show: false` flag to suppress the
-  analyze-video/stream card on intermediate steps and a fix for the `single`-mode grab
-  that ignores `seek` and samples t=0. Motivated by a real session where jerv
-  fabricated an image comparison it had no way to perform. Reuses the shipped
-  `generated_images` row + card via a nullable `provenance` column; reconciled with a
-  four-lens review. Waves V0–V6.
 - `TEACHER_MODE_AGENTS_PLAN.md` — split the `teacher` persona into two agents:
   an owner **instructor** (authors/approves lessons + curricula, assigns to a
   child, reviews results) and a sandboxed non-owner **student** behind an
@@ -46,5 +35,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
-shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md` and
-`DEEP_RESEARCH_TOOL_PLAN.md` were promoted to `../plans/` and are in progress.)_
+shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
+`DEEP_RESEARCH_TOOL_PLAN.md`, and `VIDEO_IMAGE_TOOLS_PLAN.md` were promoted to
+`../plans/` and are in progress.)_

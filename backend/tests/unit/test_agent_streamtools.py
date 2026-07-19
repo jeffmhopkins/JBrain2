@@ -266,12 +266,31 @@ async def test_single_mode_grabs_one_frame_without_audio() -> None:
 
     out = await handlers["analyze_stream"]({"url": "u", "mode": "single"}, CTX)
 
-    # single → one frame, window 0, audio suppressed even though whisper is configured.
-    assert window.calls == [{"frames": 1, "window_s": 0.0, "want_audio": False}]
+    # single → one frame, window 0, audio suppressed even though whisper is configured;
+    # seek threads through (0 with none given) — it was previously dropped, so a single
+    # grab always sampled t=0 regardless of the requested moment.
+    assert window.calls == [{"frames": 1, "window_s": 0.0, "seek_s": 0.0, "want_audio": False}]
     assert whisper.calls == []
     assert isinstance(out, ToolOutput) and out.view is not None
     assert [f["t_ms"] for f in out.view.data["frames"]] == [0]
     assert out.view.data["mode"] == "single"
+
+
+async def test_single_mode_threads_seek_for_vod() -> None:
+    # Regression: `mode=single seek=T` must sample at T, not t=0. The handler passes the
+    # requested seek to the window sampler (the single grab's fast path honors it).
+    blobs = FakeBlobs()
+    window = FakeSampler(StreamSample(frames=[SampledFrame(0, b"\xff\xd8y")]))
+    handlers = _handlers(
+        blobs,
+        _router(FakeLlmClient(["a rack", "a summary"])),
+        resolver=_resolver(VOD),
+        window=window,
+    )
+
+    await handlers["analyze_stream"]({"url": "u", "mode": "single", "seek": 164}, CTX)
+
+    assert window.calls == [{"frames": 1, "window_s": 0.0, "seek_s": 164.0, "want_audio": False}]
 
 
 async def test_full_mode_uses_full_sampler_with_clamped_frames() -> None:

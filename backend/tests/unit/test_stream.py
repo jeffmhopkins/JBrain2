@@ -247,6 +247,65 @@ async def test_single_grab_returns_one_frame(tmp_path) -> None:
     assert sample.audio_wav == b""
 
 
+def _make_black_intro_clip(tmp_path, *, black_s: int = 2, content_s: int = 3) -> str:
+    """A clip that is fully BLACK for `black_s` seconds then testsrc content — the shape
+    that made a single grab at t=0 return black while a seeked grab is fine. Reproduces
+    the analyze_stream single-mode failure (a black intro/fade) offline."""
+    out = tmp_path / "intro.mp4"
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s=320x240:r=15:d={black_s}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc=size=320x240:rate=15:duration={content_s}",
+        "-filter_complex",
+        "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+        "-map",
+        "[v]",
+        "-pix_fmt",
+        "yuv420p",
+        str(out),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return str(out)
+
+
+def _mean_luma(jpeg: bytes) -> float:
+    import io
+
+    from PIL import Image, ImageStat
+
+    with Image.open(io.BytesIO(jpeg)) as img:
+        return ImageStat.Stat(img.convert("L")).mean[0]
+
+
+@pytestmark_ffmpeg
+async def test_single_grab_honors_seek_past_black_intro(tmp_path) -> None:
+    # The reported bug: single mode grabbed t=0 (a black intro), so a seek to real
+    # content still came back black. With seek honored, a grab past the intro is content.
+    r = _resolved(_make_black_intro_clip(tmp_path, black_s=2, content_s=3), duration=5.0)
+    at_start = await sample_stream(r, frames=1, window_s=0, seek_s=0.0)
+    seeked = await sample_stream(r, frames=1, window_s=0, seek_s=3.0)
+    assert at_start.frames and _mean_luma(at_start.frames[0].jpeg) <= 12.0  # intro is black
+    assert seeked.frames and _mean_luma(seeked.frames[0].jpeg) > 12.0  # seek moved off it
+
+
+@pytestmark_ffmpeg
+async def test_black_grab_retries_to_content(tmp_path) -> None:
+    # A grab landing inside the black intro retries a beat later and prefers the non-black
+    # result, so a transient fade isn't reported as "the video is black." seek=1.0 lands in
+    # the 2s black intro; the +1.0s retry reaches content at ~2s.
+    r = _resolved(_make_black_intro_clip(tmp_path, black_s=2, content_s=3), duration=5.0)
+    sample = await sample_stream(r, frames=1, window_s=0, seek_s=1.0)
+    assert sample.frames and _mean_luma(sample.frames[0].jpeg) > 12.0
+
+
 @pytestmark_ffmpeg
 async def test_window_returns_multiple_stamped_frames(tmp_path) -> None:
     r = _resolved(_make_clip(tmp_path, seconds=5))
