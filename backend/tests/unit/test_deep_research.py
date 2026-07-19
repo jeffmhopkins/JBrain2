@@ -24,6 +24,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.agent.spawn import _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.db.session import SessionContext
+from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
 
 
 @dataclass
@@ -79,10 +80,19 @@ class _FakeRouter:
             return _Result(
                 text="", usage=usage, parsed={"covered": self.covered, "gaps": self.gaps}
             )
-        # WRITER — the initial synthesis or the post-critique revision.
+        raise AssertionError(f"unexpected complete() for system: {system[:40]!r}")
+
+    async def converse_stream(self, task, *, system, messages, tools=(), **kw):  # noqa: ANN001
+        # The WRITER (synthesize / revise) streams now: yield the report in two text
+        # chunks then a closing turn carrying usage, mirroring the real adapter contract.
+        user_text = messages[0].text if messages else ""
         self.synth_calls.append(user_text)
         revising = "Critique of your earlier draft" in user_text
-        return _Result(text="REVISED REPORT" if revising else "DRAFT REPORT", usage=usage)
+        text = "REVISED REPORT" if revising else "DRAFT REPORT"
+        half = len(text) // 2
+        yield TextChunk(text=text[:half])
+        yield TextChunk(text=text[half:])
+        yield LlmTurn(text=text, tool_calls=(), stop_reason="end_turn", usage=LlmUsage(10, 20))
 
 
 class _FakeSpawn:
@@ -265,6 +275,22 @@ async def test_phases_are_emitted_for_the_owner_to_watch() -> None:
     assert any("Checking coverage" in x for x in labels)
     assert any("Writing" in x for x in labels)
     assert any("Reviewing" in x for x in labels)
+
+
+async def test_report_streams_into_the_phase_preview() -> None:
+    """The Write and Revise phases STREAM: the draft accumulates into the phase event's
+    `preview` (the live "writing" surface), so the owner watches the report being written
+    rather than a static spinner. The final preview of each carries the whole draft, tagged
+    with its step so the checklist knows which phase is streaming."""
+    events: list = []
+    router, spawn = _FakeRouter(), _FakeSpawn()  # default critique_ok → a revise pass runs
+    await _svc(router, spawn).research(_ctx(events=events), {"question": "q"})
+    ticks = [e for e in events if getattr(e, "type", "") == "tool_progress" and e.preview]
+    assert ticks  # the report streamed at least once
+    write = [e for e in ticks if e.label == "Writing the report"]
+    revise = [e for e in ticks if e.label == "Revising from the critique"]
+    assert write and write[-1].step == 6 and "DRAFT REPORT" in write[-1].preview
+    assert revise and revise[-1].step == 8 and "REVISED REPORT" in revise[-1].preview
 
 
 async def test_run_emits_the_report_view() -> None:

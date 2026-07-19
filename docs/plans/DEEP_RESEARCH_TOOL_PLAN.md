@@ -1,6 +1,17 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; mock-gate sign-off pending)
+
+**v7 revision (no dark phases).** The four orchestrator-level stages (plan, reflect,
+**synthesize**, **revise**) are jerv's own model calls — they spawn no sub-agent row, so
+they showed only a spinner while the longest one (writing the ~6k-token report) ran. Two
+fixes: (1) **streaming synthesis** — `_synthesize` now streams via `converse_stream`,
+accumulating the draft and emitting it into the phase event's `preview` every
+`_SYNTH_PREVIEW_STRIDE` chars, so the report is watched being written; usage is charged
+from the closing `LlmTurn`. (2) **phase checklist** — the PWA renders the deep_research
+live tool as an 8-stage checklist (`DeepResearchProgress`, driven by the existing `step`
+ordinal) with the active stage pulsing and prior stages checked, plus the streaming report
+pane below it. No new event types — both reuse `ToolProgressEvent` (`step` + `preview`).
 
 **v5 revision (bigger budget + honest budget meter).** An observed run (eurorack-synth
 research) still starved children: one `medium`-effort gather child burned 911k over 61
