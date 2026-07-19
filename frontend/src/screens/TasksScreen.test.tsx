@@ -80,8 +80,8 @@ function mount(tasks: Task[] = [GROUPED, UNGROUPED_TASK], groups: TaskGroup[] = 
   vi.spyOn(api, "taskRuns").mockResolvedValue([RUN]);
   const onClose = vi.fn();
   const onOpenSession = vi.fn();
-  render(<TasksScreen onClose={onClose} onOpenSession={onOpenSession} />);
-  return { onClose, onOpenSession };
+  const view = render(<TasksScreen onClose={onClose} onOpenSession={onOpenSession} />);
+  return { onClose, onOpenSession, unmount: view.unmount };
 }
 
 describe("TasksScreen", () => {
@@ -173,6 +173,43 @@ describe("TasksScreen", () => {
     expect(del).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm delete Money" }));
     await waitFor(() => expect(del).toHaveBeenCalledWith("g-money"));
+  });
+
+  it("collapses a group header to hide its cards and expands it again", async () => {
+    mount();
+    await screen.findByText("Morning brief");
+    // Collapsing Money hides its card; the Ungrouped bucket is untouched.
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Money group" }));
+    expect(screen.queryByText("Morning brief")).not.toBeInTheDocument();
+    expect(screen.getByText("Ad hoc digest")).toBeInTheDocument();
+    // The same header now offers to expand it back.
+    fireEvent.click(screen.getByRole("button", { name: "Expand Money group" }));
+    expect(screen.getByText("Morning brief")).toBeInTheDocument();
+  });
+
+  it("remembers collapsed groups across a remount (device-local)", async () => {
+    const { unmount } = mount();
+    await screen.findByText("Morning brief");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Money group" }));
+    expect(screen.queryByText("Morning brief")).not.toBeInTheDocument();
+    unmount();
+
+    // A fresh mount (new session) reads the persisted collapse state.
+    mount();
+    await screen.findByText("Ad hoc digest");
+    expect(screen.queryByText("Morning brief")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand Money group" })).toBeInTheDocument();
+  });
+
+  it("ignores collapse when filtered to a single group (no header to toggle)", async () => {
+    localStorage.setItem("jb.tasks.collapsedGroups", JSON.stringify(["g-money"]));
+    mount();
+    await screen.findByText("Ad hoc digest");
+    // Money is collapsed in the All view…
+    expect(screen.queryByText("Morning brief")).not.toBeInTheDocument();
+    // …but filtering to it shows the card regardless of the stored collapse.
+    fireEvent.click(screen.getByRole("tab", { name: /^Money/ }));
+    expect(screen.getByText("Morning brief")).toBeInTheDocument();
   });
 
   it("toggles a task through the optimistic enable endpoint", async () => {

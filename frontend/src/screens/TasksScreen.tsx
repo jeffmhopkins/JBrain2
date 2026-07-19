@@ -34,6 +34,7 @@ import {
   TrashIcon,
   XIcon,
 } from "../components/icons";
+import { loadCollapsed, writeCollapsed } from "../tasks/collapsed";
 import { isUnviewed, loadViewed, writeViewed } from "../tasks/viewed";
 
 function errorMessage(err: unknown): string {
@@ -727,6 +728,7 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   const dragId = useRef<string | null>(null);
 
   // Opening the newest run's session clears that task's "new" band on this device.
@@ -952,6 +954,18 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     }
   }
 
+  // Collapse/expand a bucket in the All view, persisting the choice on this device
+  // (keyed by group id, or UNGROUPED for the trailing catch-all).
+  function toggleCollapsed(bucketKey: string): void {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(bucketKey)) next.delete(bucketKey);
+      else next.add(bucketKey);
+      writeCollapsed(next);
+      return next;
+    });
+  }
+
   async function deleteGroup(groupId: string): Promise<void> {
     setArmedDelete(null);
     try {
@@ -967,8 +981,12 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   function renderBucket(bucket: string | null, name: string, showHeader: boolean) {
     const list = tasksInBucket(bucket);
     if (list.length === 0 && bucket === null) return null; // no empty Ungrouped header
+    const bucketKey = bucket ?? UNGROUPED;
+    // Collapse applies only to the All view (where headers show); a filtered
+    // single-group view (no header) and reorder mode always show every card.
+    const isCollapsed = showHeader && !reordering && collapsed.has(bucketKey);
     return (
-      <div key={bucket ?? UNGROUPED} className="task-bucket">
+      <div key={bucketKey} className={`task-bucket${isCollapsed ? " collapsed" : ""}`}>
         {showHeader && (
           <div className="task-grouphdr">
             {reordering && bucket !== null && renamingGroup === bucket ? (
@@ -985,8 +1003,21 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
                   if (e.key === "Escape") setRenamingGroup(null);
                 }}
               />
-            ) : (
+            ) : reordering ? (
               <h3 className="task-gname">{name}</h3>
+            ) : (
+              <button
+                type="button"
+                className="task-gtoggle"
+                aria-expanded={!isCollapsed}
+                aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${name} group`}
+                onClick={() => toggleCollapsed(bucketKey)}
+              >
+                <span className="task-gchev" aria-hidden="true">
+                  <ChevronRightIcon size={14} />
+                </span>
+                <h3 className="task-gname">{name}</h3>
+              </button>
             )}
             <span className="task-gcount">{list.length}</span>
             {reordering && bucket !== null && renamingGroup !== bucket && (
@@ -1016,25 +1047,26 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
             )}
           </div>
         )}
-        {list.map((task) => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            open={openId === task.id}
-            running={running.has(task.id)}
-            reordering={reordering}
-            unviewed={isUnviewed(task, viewed)}
-            runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}
-            onToggleOpen={() => toggleOpen(task.id)}
-            onFlip={() => void flip(task)}
-            onRun={() => void runNow(task)}
-            onEdit={() => setDraft(draftFrom(task))}
-            onMove={() => setMoveFor(task)}
-            onOpenRun={(run) => openRun(task, run)}
-            onDragStart={(e) => startDrag(task, e)}
-            onNudge={(dir) => nudge(task, dir)}
-          />
-        ))}
+        {!isCollapsed &&
+          list.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              open={openId === task.id}
+              running={running.has(task.id)}
+              reordering={reordering}
+              unviewed={isUnviewed(task, viewed)}
+              runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}
+              onToggleOpen={() => toggleOpen(task.id)}
+              onFlip={() => void flip(task)}
+              onRun={() => void runNow(task)}
+              onEdit={() => setDraft(draftFrom(task))}
+              onMove={() => setMoveFor(task)}
+              onOpenRun={(run) => openRun(task, run)}
+              onDragStart={(e) => startDrag(task, e)}
+              onNudge={(dir) => nudge(task, dir)}
+            />
+          ))}
       </div>
     );
   }

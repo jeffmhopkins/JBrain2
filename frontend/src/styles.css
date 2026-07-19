@@ -17446,6 +17446,27 @@ button.task-band:active {
 .task-bucket:first-child .task-grouphdr {
   margin-top: 8px;
 }
+.task-gtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 2px 2px 2px 0;
+  margin: -2px 0;
+  cursor: pointer;
+  color: var(--text-3);
+  font: inherit;
+}
+.task-gchev {
+  display: inline-flex;
+  /* Chevron points down when expanded, right when collapsed. */
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+.task-bucket.collapsed .task-gchev {
+  transform: rotate(0deg);
+}
 .task-gname {
   margin: 0;
   font-size: var(--fs-micro);

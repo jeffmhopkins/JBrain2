@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-18
+> **Status:** Living · **Last verified:** 2026-07-19
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1486,6 +1486,14 @@ one-gesture rivals (A's cross-group drag, C's board) and the button-only manager
   **Ungrouped** section (so existing tasks migrate untouched — grouping *augments*
   the old split rather than forcing a backfill). The Scheduled / On-demand headers
   are retired.
+- **Group headers collapse.** In the **All** view each header is a disclosure
+  toggle (a rotating chevron) that hides/reveals its cards; the count chip stays
+  visible so a collapsed bucket still reads its size. Collapse is **device-local
+  and remembered across sessions** (localStorage `jb.tasks.collapsedGroups`, the
+  same register as the per-task "viewed" markers), so the owner's folded groups
+  stay folded on that device. It applies only to the All view — a chip-filtered
+  single group and Organize mode always show every card (the header is busy with
+  rename/delete there).
 - **Filing is a `⋯ → Move to…` sheet, never a cross-screen drag** (composes the
   shared `Sheet`, mirroring `MoveDomainSheet`): the owner's groups as rows (current
   one ticked), an **Ungrouped** escape, and a **New group…** row that creates a
