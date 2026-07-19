@@ -25,6 +25,14 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   tool, and a MusicScreen — mirroring the shipped image stack. Backend (Waves M0–M3) +
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
+- `VIDEO_IMAGE_TOOLS_PLAN.md` — give jerv eyes on a specific still: `grab_frame`
+  (extract + persist a frame from a video URL/attachment at time T), `fetch_image`
+  (SSRF-guarded fetch of a web image so jerv can actually see it), and
+  `compare_images` (two image ids → one VLM comparison), plus a `show: false` flag to
+  suppress the analyze-video/stream card on intermediate steps and a fix for the
+  black-frame `single`-mode grab in `stream.py`. Motivated by a real session where
+  jerv fabricated an image comparison it had no way to perform. Reuses the shipped
+  `generated_images` row + `generated_image` card (widened `kind`); Waves V0–V6.
 - `TEACHER_MODE_AGENTS_PLAN.md` — split the `teacher` persona into two agents:
   an owner **instructor** (authors/approves lessons + curricula, assigns to a
   child, reviews results) and a sandboxed non-owner **student** behind an
