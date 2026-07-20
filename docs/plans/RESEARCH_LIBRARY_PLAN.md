@@ -1,6 +1,6 @@
 # Research Library — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** R1✅ R2✅ R3◻️ (all three waves' code landed on-branch `claude/jerv-launcher-mockups-hs1rru`; R3 marked open pending the independent frontend review gate + merge — archives on merge to `main`)
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** R1✅ R2✅ R3◻️ (all three waves' code + their independent adversarial reviews have landed on-branch `claude/jerv-launcher-mockups-hs1rru` — R1 red-team + R2/R3 frontend review, both with fixes applied; R3 stays open only pending **merge to `main`**, at which point the plan flips to Shipped and archives)
 
 The owner-facing **browse surface** over the two `external`-corpus artifacts jerv
 produces on its own turns — **deep-research reports** (`app.research_reports`, the
