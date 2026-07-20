@@ -11423,12 +11423,14 @@ button.small {
    written. */
 .fb-shell .fb-drp {
   display: block;
-  margin: 6px 0 2px;
-  padding: 12px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-card);
+  margin: 4px 0 2px;
+  /* No card chrome of its own: this HOSTS the sub-agent fan (its own bordered card) and
+     sits inside the answer bubble, so a border + fill here would frame-inside-a-frame
+     against both. The rail carries the structure. Reset the bubble's prose text flow
+     (pre-wrap / break-anywhere) so the nested fan reads exactly as it does standalone. */
   font-size: var(--fs-secondary);
+  white-space: normal;
+  overflow-wrap: normal;
 }
 /* A vertical timeline instead of a wrapping radio row: the eight stages stack down a rail
    so the pipeline never wraps or spills, and the live stage opens a slot beneath its own
@@ -11444,7 +11446,10 @@ button.small {
 }
 .fb-shell .fb-drp-step {
   display: grid;
-  grid-template-columns: 16px 1fr;
+  /* minmax(0, 1fr): a plain 1fr track floors at its content's min-width, so the wide
+     monospace fan trace would push the column — and the whole card — off the right edge.
+     minmax(0, …) lets it shrink so the fan's own overflow handling clips instead. */
+  grid-template-columns: 16px minmax(0, 1fr);
   column-gap: 9px;
   align-items: start;
   position: relative;
@@ -11487,6 +11492,7 @@ button.small {
 }
 .fb-shell .fb-drp-name {
   grid-column: 2;
+  min-width: 0;
   padding: 4px 0 5px;
   align-self: center;
 }
@@ -11521,6 +11527,11 @@ button.small {
    then the streaming report. */
 .fb-shell .fb-drp-panel {
   grid-column: 2;
+  min-width: 0;
+  /* The step carries the dim todo colour (--text-3); reset it here so the nested fan's
+     inherit-coloured elements (its header, agent labels) render bright as they do when the
+     fan stands alone, not washed out to grey. */
+  color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 8px;
