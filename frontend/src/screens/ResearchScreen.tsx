@@ -511,26 +511,25 @@ function ReportRow({
   onMenu,
 }: { row: ReportListItem; onOpen: () => void; onMenu: () => void }) {
   return (
-    <div className="rl-card">
+    <div className="rl-card rl-card-report">
       <button type="button" className="rl-card-body" onClick={onOpen}>
-        <span className="rl-disc rl-disc-report" aria-hidden="true">
-          <FileIcon size={18} />
+        <span className="rl-rglyph" aria-hidden="true">
+          <FileIcon size={17} />
         </span>
         <span className="rl-main">
           {/* The short LLM title, falling back to the raw question until it lands. */}
-          <span className="rl-title">{row.title || row.question}</span>
-          <span className="rl-badges">
-            <span className={`rl-cx rl-cx-${row.complexity}`}>{row.complexity}</span>
-          </span>
-          <span className="rl-chips">
-            <span className="rl-chip">{row.sub_agents} agents</span>
-            <span className="rl-chip">
+          <span className="rl-title rl-title-report">{row.title || row.question}</span>
+          {/* One muted meta line: complexity (coloured word) · agents · rounds · date. */}
+          <span className="rl-subline">
+            <span className={`rl-cxword rl-cxword-${row.complexity}`}>{row.complexity}</span>
+            {" · "}
+            <span>{row.sub_agents} agents</span>
+            {" · "}
+            <span>
               {row.rounds} round{row.rounds === 1 ? "" : "s"}
             </span>
-            <span className="rl-foot">
-              <span className="rl-dot" aria-hidden="true" />
-              research · {fmtDate(row.created_at)}
-            </span>
+            {" · "}
+            <span>{fmtDate(row.created_at)}</span>
           </span>
         </span>
         <ChevronRightIcon size={16} />

@@ -22,7 +22,8 @@ primitives:
 | **C — Edge-accent rail** | Complexity moves to a **3px coloured left edge**, freeing the disc's width for the title; date **right-aligns** on the title line; meta is one plain line and can afford to re-add `sources`. A different visual read. | ~+1–2 cards |
 | **D — List row** | **Maximum density** — email-style: a one-line clamped title over a muted subline, a small amber glyph, and a chevron. Most cards per screen; long questions lose their second line. | ~+3 cards |
 
-**Not yet chosen.** Once the owner picks, the winner is promoted to the binding card spec, the
-reasoning is folded into `docs/reference/DESIGN.md` §"Research Library", and the `.rl-card` /
-`.rl-title` / `.rl-*` styles + `ReportRow` in `frontend/src/screens/ResearchScreen.tsx` are
-updated to match. The losing variants stay here as the record of the review.
+**Chosen: D — List row** (locked 2026-07-20). The report card is now a compact list row —
+`ReportRow` + the `.rl-card-report` / `.rl-title-report` / `.rl-subline` / `.rl-cxword-*` styles
+in `frontend/src/screens/ResearchScreen.tsx` + `frontend/src/styles.css`. The reasoning is
+folded into `docs/reference/DESIGN.md` §"Research Library". `compare.html` stays as the record
+of the review; A/B/C are retained there as the losing variants.

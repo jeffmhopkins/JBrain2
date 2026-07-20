@@ -20703,7 +20703,7 @@ button.task-band:active {
 .rl-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .rl-card {
   display: flex;
@@ -20730,6 +20730,13 @@ button.task-band:active {
 .rl-card-video .rl-card-body {
   align-items: center;
 }
+/* Report rows are a compact list row (settled density variant D): a single-line title over a
+   muted meta subline, so more reports clear the fold. Videos keep the taller thumbnail row. */
+.rl-card-report .rl-card-body {
+  padding: 10px 11px;
+  gap: 10px;
+  align-items: center;
+}
 .rl-card-body > svg {
   flex: none;
   align-self: center;
@@ -20745,17 +20752,12 @@ button.task-band:active {
   cursor: pointer;
 }
 
-.rl-disc {
-  width: 38px;
-  height: 38px;
+/* The report row's leading type cue — a bare amber file glyph (the amber research accent),
+   replacing the 38px disc the taller card carried. */
+.rl-rglyph {
   flex: none;
-  border-radius: 999px;
   display: flex;
   align-items: center;
-  justify-content: center;
-}
-.rl-disc-report {
-  background: color-mix(in srgb, var(--amber) 16%, transparent);
   color: var(--amber);
 }
 
@@ -20798,6 +20800,9 @@ button.task-band:active {
   flex-direction: column;
   gap: 5px;
 }
+.rl-card-report .rl-main {
+  gap: 2px;
+}
 .rl-title {
   font-size: 15px;
   font-weight: 600;
@@ -20810,6 +20815,38 @@ button.task-band:active {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+/* Report titles clamp to a single line (variant D) — the full text stays in the DOM for search
+   + assistive tech; the meta subline below carries complexity, provenance, and date. */
+.rl-title-report {
+  display: block;
+  font-size: 14px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rl-subline {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Complexity as a coloured word leading the subline (no pill on the compact row). */
+.rl-cxword {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.rl-cxword-deep {
+  color: var(--violet);
+}
+.rl-cxword-comparative {
+  color: var(--steel);
+}
+.rl-cxword-simple {
+  color: var(--green);
 }
 /* Videos grouped into collapsible per-channel sections. */
 .rl-group {
@@ -20856,9 +20893,6 @@ button.task-band:active {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
-.rl-badges {
-  display: flex;
-}
 .rl-cx {
   font-size: 11px;
   font-weight: 600;
@@ -20877,12 +20911,6 @@ button.task-band:active {
 .rl-cx-simple {
   background: var(--green-tint);
   color: var(--green);
-}
-.rl-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
 }
 .rl-chip {
   padding: 3px 9px;
