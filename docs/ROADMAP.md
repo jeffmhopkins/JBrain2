@@ -285,8 +285,9 @@ budget, and the report view are otherwise unchanged, and video hits already cite
 `WebSource` chips. Explicitly **not** the deferred KB-scoped deep research (the owner's notes/wiki/entities
 stay out of scope); the video corpus is non-sensitive third-party content jerv already reads safely. DV1
 (routing + flag, migration 0141 — the `sources` param, the `research_library`/`review_library` corpus
-personas, and per-mode gather/refill/review routing) landed on-branch; DV2 (jerv steering + provenance +
-red-team) and a conditional DV3 (GUI chip) open.
+personas, and per-mode gather/refill/review routing) and DV2 (jerv steering, `source_mode` persistence via
+migration 0142, and the report-view provenance chip) landed on-branch; a conditional DV3 (owner GUI-gate
+sign-off on the trivial-reuse chip) remains.
 
 **In progress:** Video/image inspection tools (build plan: `docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md`) —
 give jerv eyes on a specific still so a visual question is answered from pixels it actually saw, not a

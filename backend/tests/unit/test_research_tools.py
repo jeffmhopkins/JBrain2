@@ -42,11 +42,14 @@ def test_report_view_data_rebuilds_the_view_shape() -> None:
         truncated=False,
         sources=[{"url": "https://e.com", "title": "E"}],
         created_at=None,
+        source_mode="library",
     )
     data = _report_view_data(rec)
     assert data["report_md"] == "## R" and data["question"] == "Q?"
     assert data["rounds"] == 2 and data["sub_agents"] == 3
     assert data["analyzed"] is True and data["coverage_limited"] is True
     assert data["web_sources"] == [{"url": "https://e.com", "title": "E"}]
+    # A re-shown library report carries its source mode so the view can badge it.
+    assert data["source_mode"] == "library"
     # The stored report has no live roster; the view treats children as optional.
     assert data["children"] == []

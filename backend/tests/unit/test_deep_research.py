@@ -723,3 +723,33 @@ async def test_library_findings_are_fed_as_escaped_data_to_the_analyst() -> None
     await _svc(router, spawn).research(_ctx(), {"question": "q", "sources": "library"})
     analyst = [f for f in spawn.fans if f["persona"] == "review_library"][0]
     assert FEED_OPEN in analyst["briefs"][0][1]  # fed as escaped data, never instruction
+
+
+# --- provenance: the report view + frame carry the source mode (DV2) --------
+
+
+async def test_view_and_frame_carry_the_source_mode() -> None:
+    """The report view always carries `source_mode` (for the frontend chip + recall), and
+    the relayed frame names a library-scoped run so jerv can say where the answer came
+    from; the default web run adds no source note."""
+    # A library run: the view records the mode and the frame calls it out.
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    out = await _svc(router, _FakeSpawn()).research(_ctx(), {"question": "q", "sources": "library"})
+    assert out.view is not None and out.view.data["source_mode"] == "library"  # type: ignore[attr-defined]
+    assert "video library only" in out
+
+    # A default web run: mode is still emitted (web) but the frame adds no source note.
+    web = await _svc(_FakeRouter(covered=True, gaps=()), _FakeSpawn()).research(
+        _ctx(), {"question": "q"}
+    )
+    assert web.view is not None and web.view.data["source_mode"] == "web"  # type: ignore[attr-defined]
+    assert "sources:" not in web
+
+
+async def test_library_first_frame_names_the_mixed_sources() -> None:
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    out = await _svc(router, _FakeSpawn()).research(
+        _ctx(), {"question": "q", "sources": "library_first"}
+    )
+    assert out.view is not None and out.view.data["source_mode"] == "library_first"  # type: ignore[attr-defined]
+    assert "video library + web" in out

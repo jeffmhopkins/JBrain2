@@ -455,9 +455,19 @@ class DeepResearchService:
             analyzed=analyzed,
             revised=revised,
             coverage_limited=coverage_limited,
+            source_mode=source_mode,
         )
         return ToolOutput(
-            _frame(report, question, complexity, roster, analyzed, coverage_limited, revised),
+            _frame(
+                report,
+                question,
+                complexity,
+                roster,
+                analyzed,
+                coverage_limited,
+                revised,
+                source_mode,
+            ),
             view=_report_view(
                 report,
                 question,
@@ -468,6 +478,7 @@ class DeepResearchService:
                 analyzed,
                 coverage_limited,
                 revised,
+                source_mode,
             ),
         )
 
@@ -484,6 +495,7 @@ class DeepResearchService:
         analyzed: bool,
         revised: bool,
         coverage_limited: bool,
+        source_mode: str = _DEFAULT_SOURCE_MODE,
     ) -> None:
         """Write the finished report into the library (best-effort). None maker (headless/test)
         or any DB error is swallowed — the report the owner already sees never depends on it."""
@@ -503,6 +515,7 @@ class DeepResearchService:
                 coverage_limited=coverage_limited,
                 truncated=any(r.truncated for r in roster),
                 sources=[{"url": ws.url, "title": ws.title} for ws in sources],
+                source_mode=source_mode,
             )
         except Exception:  # noqa: BLE001 - best-effort; the report already rendered
             log.warning("deep_research.persist_failed", exc_info=True)
@@ -755,6 +768,16 @@ def _findings_count(roster: list[_ChildResult]) -> int:
     return sum(1 for r in roster if r.ok and r.persona == "research")
 
 
+def _source_label(source_mode: str) -> str:
+    """The provenance strip's human label for a source mode. `web` (the default) is left
+    implicit — only a library-scoped run is called out, since that's the notable case."""
+    if source_mode == "library":
+        return "video library only"
+    if source_mode == "library_first":
+        return "video library + web"
+    return ""
+
+
 def _frame(
     report: str,
     question: str,
@@ -763,11 +786,14 @@ def _frame(
     analyzed: bool,
     coverage_limited: bool,
     revised: bool,
+    source_mode: str = _DEFAULT_SOURCE_MODE,
 ) -> str:
     """Prefix the report with a short machine provenance line jerv can relay — how many
     findings backed it, whether it was cross-checked and revised — then the report itself.
     Data only; the model authors none of the provenance."""
     notes = [f"complexity: {complexity}", f"{_findings_count(roster)} sub-agent finding(s)"]
+    if _source_label(source_mode):
+        notes.append(f"sources: {_source_label(source_mode)}")
     if analyzed:
         notes.append("cross-checked")
     if revised:
@@ -788,21 +814,26 @@ def _report_view(
     analyzed: bool,
     coverage_limited: bool,
     revised: bool,
+    source_mode: str = _DEFAULT_SOURCE_MODE,
 ) -> ViewPayload:
     """The registered `deep_research_report` tool-view (DESIGN.md): the report Markdown
-    plus a provenance strip (complexity, source count, rounds, cross-checked / revised /
-    coverage flags), the full sub-agent roster — the research findings AND the analyst +
-    critique review children, each deep-linking to its own session on reopen — and the
-    global `web_sources` registry so the report's `[^n]` markers render as tappable
-    favicon citations (positional: `[^n]` → `web_sources[n-1]`, the same standard jerv's
-    web answers use). Data only — the report Markdown came from the synthesizer over the
-    escaped-envelope findings; the URLs came from the children's tool calls, never prose."""
+    plus a provenance strip (complexity, source count, rounds, the source mode when it
+    isn't the default web, cross-checked / revised / coverage flags), the full sub-agent
+    roster — the research findings AND the analyst + critique review children, each
+    deep-linking to its own session on reopen — and the global `web_sources` registry so
+    the report's `[^n]` markers render as tappable favicon citations (positional: `[^n]`
+    → `web_sources[n-1]`, the same standard jerv's web answers use). Data only — the
+    report Markdown came from the synthesizer over the escaped-envelope findings; the URLs
+    came from the children's tool calls, never prose."""
     return ViewPayload(
         view="deep_research_report",
         data={
             "question": question,
             "complexity": complexity,
             "report_md": report,
+            # The source mode, so the view can badge a library-scoped run. `web` (default)
+            # is emitted too, but the frontend shows a chip only for the library modes.
+            "source_mode": source_mode,
             # `sub_agents` counts the research FINDINGS that back the report (the count
             # the report cites); `children` is the full cast that ran (incl. the reviews).
             "sub_agents": _findings_count(roster),

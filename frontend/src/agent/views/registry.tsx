@@ -1198,6 +1198,15 @@ function WeatherCard({ data }: ViewProps): ReactNode {
   );
 }
 
+/** The neutral roster tag for a child persona. The corpus twins (research_library /
+ * review_library) read as their base role — the fan already labels its source elsewhere,
+ * so the row stays scannable (DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md). */
+function personaTag(persona: string): string {
+  if (persona === "research_library") return "research";
+  if (persona === "review_library") return "review";
+  return persona;
+}
+
 /** The sub-agent fan result (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S3.2): a neutral
  * roster card — a ran/failed roll-up plus one line per child (label, neutral persona
  * tag, ✓/✕, summary). Data: `{ran, failed, children: [{label, persona, ok, summary}]}`.
@@ -1303,7 +1312,7 @@ function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
               {mark}
             </span>
             <span className="tv-syn-clbl">{r.label}</span>
-            <span className="tv-syn-ptag">{r.persona}</span>
+            <span className="tv-syn-ptag">{personaTag(r.persona)}</span>
             {r.summary && !r.skipped && (
               <span className="tv-syn-car" aria-hidden="true">
                 {isOpen ? "▾" : "▸"}
@@ -1396,6 +1405,15 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
   const revised = data.revised === true;
   const coverageLimited = data.coverage_limited === true;
   const truncated = data.truncated === true;
+  // The source the run drew from. `web` (default) is implicit — only a library-scoped run
+  // is badged (DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md).
+  const sourceMode = typeof data.source_mode === "string" ? data.source_mode : "web";
+  const sourceLabel =
+    sourceMode === "library"
+      ? "video library"
+      : sourceMode === "library_first"
+        ? "library + web"
+        : "";
   const children = Array.isArray(data.children) ? data.children : [];
   const [openRoster, setOpenRoster] = useState(false);
   // The report can be long, so it collapses by default — the question + provenance chips
@@ -1441,6 +1459,7 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
 
   const chips = [
     complexity,
+    sourceLabel,
     `${subAgents} source${subAgents === 1 ? "" : "s"}`,
     `${rounds} round${rounds === 1 ? "" : "s"}`,
     analyzed ? "cross-checked" : "",
@@ -1528,7 +1547,7 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
                         {ok ? "✓" : "✕"}
                       </span>
                       <span className="tv-syn-clbl">{label}</span>
-                      <span className="tv-syn-ptag">{persona}</span>
+                      <span className="tv-syn-ptag">{personaTag(persona)}</span>
                     </span>
                     {onOpenSession && sessionId && (
                       <button

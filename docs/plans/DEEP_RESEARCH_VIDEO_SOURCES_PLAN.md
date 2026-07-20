@@ -1,6 +1,6 @@
 # Deep Research — Video-Library Source Modes — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** DV1✅ DV2◻️ DV3◻️
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** DV1✅ DV2✅ DV3◻️
 
 A **`sources` knob** on the shipped `deep_research` tool that lets a research run
 draw from the owner's **external video library** (the `external_sources` /
@@ -149,16 +149,20 @@ question, breadth, SOURCES ─▶ (1) PLAN ── outline of sub-questions (unch
 
 ## Persistence & provenance
 
-- The run already persists to `app.research_reports` (`external/research_corpus.py`,
-  migration 0140). To recall *which* mode produced a report, the mode should ride the
-  report row. The migration already stores "view-rebuild flags/sources"; if that
-  column can't carry an enum cleanly, add a **nullable additive** `source_mode text`
-  column (default NULL = legacy `web`). **Re-derive the migration head from
-  `backend/migrations/versions/` before writing it** (no hardcoded head — R1).
-- The `deep_research_report` provenance strip (`registry.tsx`, `.tv-dr-*`) already
-  renders enum-tone flags (complexity, rounds, revised/coverage-limited). Add a
-  `sources`-mode chip reusing that pattern: `library` / `library + web` / (nothing for
-  the default `web`). **GUI-gate note below.**
+- The run persists to `app.research_reports` (`external/research_corpus.py`). Migration
+  **0142** adds a **nullable additive** `source_mode text` column (NULL = legacy `web`);
+  `persist_report` writes it, and `fetch_report` / `_report_view_data` read it back so a
+  re-shown report badges its mode. **Dedup is question-only** (`question_hash`
+  unchanged): re-running the *same question* in a different mode upserts (newest wins) —
+  the stored report is always badged with the mode that produced it, so this is honest,
+  not silent. (A per-(question, mode) history was considered and rejected: it would
+  break `fetch_report`-by-question-text, which can't know the mode.)
+- The `deep_research_report` provenance strip (`registry.tsx`, `.tv-dr-*`) renders
+  enum-tone flags (complexity, rounds, revised/coverage-limited). A `source_mode` chip
+  reuses that pattern: `video library` (`library`) / `library + web` (`library_first`) /
+  nothing for the default `web`. The sub-agent roster reads a corpus child as its base
+  role (`research_library` → "research") so the row stays scannable. **GUI-gate note
+  below.**
 
 ## Security & non-negotiables
 
@@ -196,9 +200,13 @@ The provenance-mode chip is a change to a **registered GUI surface**
 (`deep_research_report`). Per the GUI gate this is a **critical-decision interruption**:
 if the owner/`DESIGN.md` judge the chip a material surface change, Wave DV3 produces
 **three interactive mock HTML artifacts** for the owner to choose before implementation,
-and the chosen mock lands in `docs/mocks/`. If it's judged a trivial reuse of the
-existing enum-tone-flag pattern (most likely), it rides DV2 with a `DESIGN.md` registry
-note and no mock gate. **Flagged, owner decides at DV2 kickoff.**
+and the chosen mock lands in `docs/mocks/`. **Build-time judgement (DV2): trivial reuse.**
+The chip is one more entry in the `deep_research_report` strip's existing
+`.filter(Boolean)` chip array — the same closed-enum, theme-colored pattern as the
+`complexity` / `cross-checked` / `coverage limited` chips already there — so it shipped
+in DV2 with a `DESIGN.md` registry note and no new markup, styles, or layout. **DV3
+carries the owner's confirmation of that call** (see the wave note); until then the
+header keeps DV3 ◻️, exactly as `DEEP_RESEARCH_TOOL_PLAN.md`'s own D3 does.
 
 ## Testing (per `CLAUDE.md` #5 — 80% backend, security 100%, real Postgres, LLM faked)
 
@@ -216,12 +224,14 @@ note and no mock gate. **Flagged, owner decides at DV2 kickoff.**
   (modeled on the §6.2 jerv-scope test).
 - **Injection (100%):** a poisoned transcript hit in a `library` gather does not steer
   synthesis or trigger a tool call (extends the shipped transcript-injection test).
-- **Persistence:** a `library`/`library_first` run persists its `source_mode`; a
-  re-run of the same question + mode upserts (existing `question_hash` dedup).
-- **Digest pins:** `research_library.prompt` version + the bumped `deep_research.tool`
-  version + (DV2) the bumped `jerv.prompt` version.
-- **Frontend (DV2/DV3):** the report reducer + view render the `sources` chip for each
-  mode; the default `web` run shows no chip.
+- **Persistence:** a `library`/`library_first` run persists its `source_mode`, and
+  `fetch_report` reads it back (real-Postgres round-trip); a legacy row (no column)
+  reads back `web`. Re-running the same question upserts (newest wins, question-only
+  dedup).
+- **Digest pins:** `research_library.prompt` / `review_library.prompt` versions + the
+  bumped `deep_research.tool` version + the bumped `jerv.prompt` version.
+- **Frontend:** the report view renders the `source_mode` chip for each mode (none for
+  `web`), and a corpus child's roster tag reads as its base role.
 
 ## Wave split (per `docs/reference/PROCESS.md`)
 
@@ -247,19 +257,29 @@ before merge.
   symmetric `review_library` persona was added. **Deliverable:** "research a question
   against my video library only" and "…library first, web to fill gaps" both work end to
   end, returning the existing report (mode not yet shown in the view — DV2).
-- **Wave DV2 — steering + provenance + red-team gate (backend; security).**
-  `jerv.prompt` version-bump so jerv reaches for `sources=library` /`library_first`
-  on the right owner intents ("what do my videos say about X", "research this against
-  my library"); the `source_mode` persistence on `research_reports` (additive column
-  if needed — head re-derived at build time); the provenance-mode chip on the report
-  view (**GUI-gate decision at kickoff** — chip-rides-DV2 vs. DV3 mock gate); the
-  wave-level red-team over the child-holds-corpus-tool surface. `DESIGN.md` registry
-  note in the same PR.
-- **Wave DV3 — GUI mock gate (conditional).** Only if DV2's kickoff judges the
-  provenance chip a material GUI surface: three interactive mocks → owner choice →
-  `docs/mocks/` → implement. Otherwise this wave is dropped and the chip ships in DV2.
+- **Wave DV2 — steering + provenance + red-team gate (backend + the GUI chip). ✅
+  LANDED (this branch).** `jerv.prompt` v25→v26 so jerv reaches for `sources=library` /
+  `library_first` on the right owner intents ("what do my videos say about X", "research
+  this against my library") and keeps a quick "find the video where…" on the plain
+  corpus tools; migration `0142` (nullable `source_mode text`); `persist_report` +
+  `fetch_report` + `_report_view_data` thread the mode through so a live and a re-shown
+  report both carry it; `_frame`/`_report_view` surface it; the `deep_research_report`
+  view renders a `source_mode` chip (reusing the enum-tone-flag pattern) and reads a
+  corpus child's roster tag as its base role. `DESIGN.md` registry entry updated
+  (`source_mode` slot + badge). Unit tests: the view/frame carry the mode per mode;
+  real-Postgres persist→fetch round-trip of `source_mode` (+ legacy NULL → `web`);
+  frontend chip render + no-chip-for-web + roster-tag. **Red-team:** the exclusive no-web
+  guarantee, the corpus-tool RLS self-scope, and the fenced-findings injection boundary
+  all hold (see Security); the wave adds no new egress or scope surface.
+- **Wave DV3 — GUI-gate sign-off (conditional; ◻️ pending).** The `source_mode` chip was
+  implemented in DV2 as a **trivial reuse** of the registered enum-tone-flag pattern
+  (Open decision 4), so no new mock was built. What remains is the **owner's GUI-gate
+  confirmation** that a one-word provenance chip on an already-registered strip does not
+  warrant the three-mock gate — mirroring `DEEP_RESEARCH_TOOL_PLAN.md`'s own D3
+  mock-gate-sign-off-pending state. If the owner judges it a material surface, this wave
+  builds the three mocks; otherwise it closes as confirmed-trivial.
 
-DV2 depends on DV1 (the routing + returned mode). DV3 depends on DV2's GUI decision.
+DV2 depends on DV1 (the routing + returned mode). DV3 is the DV2 chip's GUI-gate sign-off.
 
 ## Open decisions for the build plan
 

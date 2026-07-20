@@ -200,6 +200,48 @@ async def test_persist_embed_search_fetch_delete_round_trip(maker) -> None:  # n
     assert await fetch_report(maker, report_id) is None
 
 
+async def test_source_mode_round_trips(maker) -> None:  # noqa: F811
+    """A library-scoped run persists its `source_mode`, and a fetch reads it back — so a
+    re-shown/recalled report can badge where it came from. A row written without a mode
+    (the legacy / default path) reads back as `web`."""
+    await _clear_reports(maker)
+    lib_id = await persist_report(
+        maker,
+        session_id=None,
+        question="what do my videos say about eurorack?",
+        report_md="## Modules\n\nThe library covers several oscillators.",
+        complexity="deep",
+        rounds=1,
+        sub_agents=2,
+        analyzed=True,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+        source_mode="library",
+    )
+    lib = await fetch_report(maker, lib_id)
+    assert lib is not None and lib.source_mode == "library"
+
+    # No mode passed → stored NULL → reads back as the legacy `web` default.
+    web_id = await persist_report(
+        maker,
+        session_id=None,
+        question="an ordinary web question",
+        report_md="## Answer\n\nFrom the open web.",
+        complexity="simple",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+    )
+    web = await fetch_report(maker, web_id)
+    assert web is not None and web.source_mode == "web"
+
+
 async def test_list_reports_counts_and_pages(maker) -> None:  # noqa: F811
     await _clear_reports(maker)
     reports, total = await list_reports(maker, limit=10)
