@@ -309,6 +309,16 @@ export function App() {
     if (item !== null) setNoteView(noteViewFromItem(item));
   }
 
+  // "Open in jerv conversation" from the Research Library: drop the detail + list card +
+  // launcher to reveal home, then seed the owner's current Research (jerv) chat — the
+  // agent that produced these artifacts — with a reference to the item.
+  function openInJerv(text: string) {
+    setResearchDetail(null);
+    setCard(null);
+    setLauncherOpen(false);
+    setCompose({ text, mode: "research" });
+  }
+
   // Editing is a full-screen layer over wherever you are; underlying
   // layers stay put and the saved body is reflected into an open note view.
   function startEditFromNoteView(
@@ -531,7 +541,10 @@ export function App() {
             )}
             {/* The Research Library list; a row/⋯-View opens the detail layer above. */}
             {card === "research" && (
-              <ResearchScreen onOpen={(kind, id) => setResearchDetail({ kind, id })} />
+              <ResearchScreen
+                onOpen={(kind, id) => setResearchDetail({ kind, id })}
+                onOpenInJerv={openInJerv}
+              />
             )}
             {/* The wiki landing: search-first rails over the article set; a row
               opens the reader layer above. */}
@@ -639,14 +652,6 @@ export function App() {
           id={researchDetail.id}
           syncStatus={notes.syncStatus}
           onClose={() => setResearchDetail(null)}
-          onOpenInJerv={(text) => {
-            // Drop the detail + list card + launcher to reveal home, then seed a new Full
-            // Brain (jerv) conversation with a reference to this item (the compose handoff).
-            setResearchDetail(null);
-            setCard(null);
-            setLauncherOpen(false);
-            setCompose({ text });
-          }}
         />
       )}
 

@@ -35,7 +35,11 @@ from jbrain.embed import (
     TeiEmbedClient,
 )
 from jbrain.external.corpus import EMBED_EXTERNAL_SOURCE_SPEC
-from jbrain.external.research_corpus import EMBED_RESEARCH_REPORT_SPEC
+from jbrain.external.report_titler import ResearchReportTitler
+from jbrain.external.research_corpus import (
+    EMBED_RESEARCH_REPORT_SPEC,
+    TITLE_RESEARCH_REPORT_SPEC,
+)
 from jbrain.gmail.provider import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC, triage_inbox_handler
 from jbrain.ingest import ocr
@@ -466,6 +470,9 @@ async def run() -> None:
         recorder=SqlUsageRecorder(maker),
         overrides_loader=lambda: worker_settings_store.llm_task_overrides(queue.SYSTEM_CTX),
     )
+    # The report display-title job (external.report_titler): one LLM one-shot per
+    # report, so it takes the router rather than the embed container.
+    research_report_titler = ResearchReportTitler(maker, router)
     # The embed client also powers entity-resolution layer 2 (similarity);
     # without it the resolver still runs layers 1/2b/3.
     analyzer = AnalysisPipeline(
@@ -497,6 +504,7 @@ async def run() -> None:
         "embed_note": embedder.embed_note,
         "embed_external_source": external_embedder.embed_external_source,
         "embed_research_report": research_report_embedder.embed_research_report,
+        "title_research_report": research_report_titler.title_research_report,
         "integrate_note": analyzer.integrate_note,
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
@@ -645,6 +653,7 @@ async def run() -> None:
             ANALYZE_STREAM_URL_SPEC,
             EMBED_EXTERNAL_SOURCE_SPEC,
             EMBED_RESEARCH_REPORT_SPEC,
+            TITLE_RESEARCH_REPORT_SPEC,
             ENTITY_HYGIENE_SPEC,
             REEMBED_SPEC,
             TAG_CONSOLIDATE_SPEC,

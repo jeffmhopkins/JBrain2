@@ -1294,16 +1294,20 @@ bulk select); rivals retained as the record in `docs/mocks/research-library/`. B
 giving each artifact a **purpose-built list** rather than forcing two very different
 shapes into one row: a **Reports · Videos** segmented control (`.seg-row`/`.seg-on`, the
 settled Data/Locations pattern, active segment taking the amber research tint) switches the
-surface, and **search filters within the active tab**. Reports lead with the question, a
-**complexity** badge (simple `--green` / comparative `--steel` / deep `--violet`), and a
-**provenance chip row** (`sub_agents` · `rounds` · `sources`, plus the `analyzed`
-"cross-checked" / `revised` / `coverage_limited` / `truncated` flags the theme colors —
-closed booleans, never a model-sent color). Videos lead with a **thumbnail** (duration
-pill, or a rose **LIVE** badge for a stream), channel, date, `frames`, and the
-`transcript_source` (captions / whisper). A/C's single mixed stream made the report
-provenance and the video thumbnail fight for the same row; B's two lanes let each read at a
-glance. (A's swipe rail and C's bulk-select + passage-first search stay available paradigms
-for other surfaces — they lost here on fit, not quality.)
+surface, and **search filters within the active tab**. Reports lead with a **short
+LLM-generated title** (the `title` column, migration 0141 — the raw `question` is often a
+whole paragraph, so it heads the card only as the fallback until the `title_research_report`
+job lands), a **complexity** badge (simple `--green` / comparative `--steel` / deep
+`--violet`), and a **provenance chip row** (`sub_agents` · `rounds` · `sources`, plus the
+`analyzed` "cross-checked" / `revised` / `coverage_limited` / `truncated` flags the theme
+colors — closed booleans, never a model-sent color). Videos are **grouped into collapsible
+per-channel sections** (a `⌄` section head with the channel name + count, sorted by channel;
+default expanded), each row leading with the provider **thumbnail** (a `i.ytimg.com` still
+for a YouTube source, falling back to the camera glyph on load failure) carrying the
+duration pill and the title + date. A/C's single mixed stream made the report provenance and
+the video thumbnail fight for the same row; B's two lanes let each read at a glance. (A's
+swipe rail and C's bulk-select + passage-first search stay available paradigms for other
+surfaces — they lost here on fit, not quality.)
 
 - **Tap a title → a full-screen detail layer** (the settled slide-up layer; back
   chevron + title, swipe-down climbs the tree). A report renders its `report_md` through
@@ -1311,13 +1315,15 @@ for other surfaces — they lost here on fit, not quality.)
   `deep_research_report` view use — safe model-authored-over-escaped-findings Markdown,
   I-1/I-9) with the provenance strip on top; a video renders a still + filmstrip + the
   summary and transcript, reusing the `video_analysis` card's shape (`VideoAnalysis.tsx`).
-- **Action menu (the per-item `⋯` bottom sheet)** — the shared `Sheet` with the settled
-  `.actrow` rows, listing only what applies to that source: **Open in jerv conversation**
-  (both — deep-links the `session_id` that produced it), **Copy** (report + summary for a
-  report; summary + transcript for a video), **Download report (.md)** (reports only, the
-  view's settled header action), **Open source ↗** (videos with a URL), and **Delete**
-  (both). In the detail layer the menu opens from a header `⋯` beside an **Open in jerv**
-  primary; in the list it opens from each row's `⋯` (with a **View** row at the top).
+  The detail layer is **pure reading** — item actions live on the list's `⋯` menu, not here.
+- **One consolidated action menu on the list (`⋯` bottom sheet)** — the shared `Sheet`
+  with the settled `.actrow` rows, opened from each row's `⋯`, listing only what applies to
+  that source: **View** (opens the detail), **Open in jerv conversation** (both — seeds the
+  owner's current Research/jerv chat, the agent that produced these artifacts, with a
+  reference to the item), **Copy** (report for a report; summary + transcript for a video),
+  **Download report (.md)** (reports only), **Open source ↗** (videos with a URL), and
+  **Delete** (both). Copy/download **fetch the full item on demand** (the listing carries no
+  body); a transient feedback toast reports the result.
 - **Delete is owner-initiated and direct** (not a staged Proposal — that path is jerv's).
   It uses the **tap-again confirm** on the sheet's rose Delete row (`window.confirm` is not
   used), spelling the consequence ("deletes this report/video"), and raises the standard

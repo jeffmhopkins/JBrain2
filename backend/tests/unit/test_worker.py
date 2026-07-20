@@ -642,6 +642,8 @@ async def test_run_registers_all_job_handlers(
         # in-code only, not in ACTION_SPECS / the app.actions seed
         # (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md).
         "embed_research_report",
+        # Its sibling: the LLM-generated report display title (migration 0141).
+        "title_research_report",
         "consolidate_predicates",
         "sync_predicates",
         # The purge sweep is now a fireable action (Phase-5 Track B).

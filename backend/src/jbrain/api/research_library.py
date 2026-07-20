@@ -46,6 +46,8 @@ def get_library(request: Request) -> ResearchLibrary:
 class ReportListOut(BaseModel):
     id: str
     question: str
+    # The short display heading (title_research_report job); None until it lands.
+    title: str | None
     complexity: str
     created_at: datetime | None
     sub_agents: int

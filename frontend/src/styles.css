@@ -20701,6 +20701,13 @@ button.task-band:active {
   align-items: center;
   justify-content: center;
   color: var(--text-3);
+  overflow: hidden;
+}
+.rl-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .rl-thumb-dur {
   position: absolute;
@@ -20726,10 +20733,58 @@ button.task-band:active {
   font-weight: 600;
   line-height: 1.32;
   color: var(--text);
+  /* Cap the heading at two lines so a long report question / video title reads as a tidy
+     title (the full text stays in the DOM for search + assistive tech). */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.rl-channel {
-  font-size: 13px;
+/* Videos grouped into collapsible per-channel sections. */
+.rl-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rl-group-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 4px 2px;
+  background: none;
+  border: none;
   color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.rl-group-chev {
+  display: inline-flex;
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+.rl-group-chev-open {
+  transform: rotate(90deg);
+}
+.rl-group-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rl-group-n {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .rl-badges {
   display: flex;
