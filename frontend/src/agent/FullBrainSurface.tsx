@@ -1375,7 +1375,7 @@ export function DeepResearchProgress({
                   {fan}
                   {preview && (
                     <div className="fb-drp-report" ref={paneRef} onScroll={onScroll}>
-                      <Markdown text={preview} />
+                      <Markdown text={preview} harmonyCitations />
                     </div>
                   )}
                 </div>

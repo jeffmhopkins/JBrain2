@@ -1,6 +1,25 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; mock-gate sign-off pending)
+
+**v9 revision (gpt-oss harmony citations render).** A report synthesized on `gpt-oss-120b`
+came back with **zero rendered citations despite ~500 collected `web_sources`**: gpt-oss
+ignores the synthesize prompt's `[^n]` instruction and cites in its native OpenAI "harmony"
+notation — `【410†L1-L8】` (fullwidth brackets, the number in Unicode superscripts, a `†`
+dagger, a line span). The frontend `stripModelCitations` treated every `【N†…】` as the
+model's private browse cursor and **deleted it** (correct for a browse turn, wrong for a
+synthesizer handed a NUMBERED sources list, where `N` *is* the source index). Fix
+(`markdown.tsx`): an opt-in `harmonyToFootnotes` rewrites `【N†…】` → `[^N]` (folding
+superscript digits to ASCII) so the existing `[^n]→web_sources[n-1]` favicon path picks them
+up; the `Markdown` `harmonyCitations` prop is set ONLY on the report render paths
+(`DeepResearchReport` view + the live `.fb-drp-report`), so a normal browse turn's cursor
+noise is still stripped. Verified against the real report: 74/74 harmony markers converted,
+~89% land in-range and become favicon chips; out-of-range numbers (gpt-oss occasionally
+emits one past the list) fail safe to a plain numbered chip, never a wrong link. The
+render fix is the safety net; the synthesize prompt (`deep_research_synthesize.prompt`,
+`dr-synth-v3`) is also reinforced to name the exact wrong form (fullwidth `【 】`, a `†`
+dagger, an `L1-L8` span, superscript digits) and demand plain ASCII `[^n]`, so a compliant
+run stores clean `[^n]` and more citations land in-range in the first place.
 
 **v8 revision (vertical timeline, fan nested in the active stage).** The v7 checklist laid
 the eight stages out as a wrapping inline row (`.fb-drp-steps` flex-wrap) with the sub-agent

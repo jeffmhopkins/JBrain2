@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { Markdown } from "./markdown";
+import { Markdown, harmonyToFootnotes } from "./markdown";
 
 function html(text: string): string {
   return render(<Markdown text={text} />).container.innerHTML;
@@ -198,6 +198,49 @@ describe("Markdown", () => {
     expect(out).not.toContain("<a");
     expect(out).not.toContain("†");
     expect(out).not.toContain("【");
+  });
+
+  it("harmonyToFootnotes rewrites gpt-oss harmony citations to [^n], superscripts and all", () => {
+    // A deep-research synthesizer on gpt-oss cites the numbered SOURCES list in its own
+    // harmony notation — fullwidth brackets, a † dagger, and the number in Unicode
+    // superscripts — instead of [^n]. The number IS the source index, so fold it back.
+    expect(harmonyToFootnotes("~62 GB 【410†L1-L8】.")).toBe("~62 GB [^410].");
+    expect(harmonyToFootnotes("~62 GB 【⁴¹⁰†L1-L8】.")).toBe("~62 GB [^410].");
+    expect(harmonyToFootnotes("drop [13†L9-L13] vs.")).toBe("drop [^13] vs.");
+    // A real [^n] the model already produced is left alone.
+    expect(harmonyToFootnotes("already cited [^7].")).toBe("already cited [^7].");
+  });
+
+  it("renders a harmony 【N†…】 citation as a favicon chip when harmonyCitations is on", () => {
+    // The deep-research report opts in: gpt-oss's 【410†L1-L8】 maps to web_sources[409],
+    // so it must become the same tappable favicon a [^n] does — not get stripped.
+    const cites = Array.from({ length: 410 }, () => ({ kind: "note" as const, noteId: "x" }));
+    cites[409] = {
+      kind: "web",
+      url: "https://huggingface.co/google/gemma-4-31b",
+      title: "Gemma 4",
+    } as never;
+    const { container } = render(
+      <Markdown text="~62 GB BF16 【⁴¹⁰†L1-L8】 dense." cites={cites} harmonyCitations />,
+    );
+    const img = container.querySelector(".md-webcite img.md-favicon") as HTMLImageElement;
+    expect(img?.getAttribute("src")).toBe("/api/agent/favicon?host=huggingface.co");
+    expect(container.querySelector(".md-webcite .md-cite-n")?.textContent).toBe("410");
+    expect(document.body.textContent).not.toContain("†");
+  });
+
+  it("leaves harmony citations stripped by default (opt-in only, browse turns unchanged)", () => {
+    // Without harmonyCitations, a 【N†…】 is still browse noise and is stripped — a normal
+    // agent turn must not start rendering the model's private cursor as a citation.
+    const { container } = render(
+      <Markdown
+        text="~62 GB 【410†L1-L8】 dense."
+        cites={[{ kind: "web", url: "https://example.com", title: "x" }]}
+      />,
+    );
+    expect(container.querySelector(".md-webcite")).toBeNull();
+    expect(document.body.textContent).not.toContain("†");
+    expect(document.body.textContent).not.toContain("410");
   });
 
   it("renders [^n] as a tappable favicon + number pill when the cite target is a web source", () => {

@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v2
+version: dr-synth-v3
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline.
 strength: high
 ---
@@ -22,6 +22,10 @@ Write the report as Markdown:
   numbers.** A `SOURCES` block is provided below the findings — a numbered list of the
   real pages the research reached (`[^1] Title — url`, …). Place the matching `[^n]` right
   after each claim it supports, choosing the source whose title best backs that claim.
+  **Write every marker as plain ASCII `[^n]` and nothing else** — an open bracket, a caret,
+  the digits, a close bracket (e.g. `[^12]`). Do NOT use fullwidth brackets `【 】`, a `†`
+  dagger, a line span (`†L1-L8`), or superscript digits — `【¹²†L1-L8】` is WRONG and the app
+  cannot render it. Just `[^12]`.
   **Use ONLY these numbers** — the findings contain the sub-agents' own local `[^1]`, `[^2]`
   markers, but those are their private numbering; do NOT copy them, renumber to the
   `SOURCES` list instead. End the report with a `## Sources` list echoing each number you
