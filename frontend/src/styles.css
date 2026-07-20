@@ -16861,22 +16861,16 @@ button.auto-sect[aria-expanded="true"] > svg {
   padding: 0;
   background: none;
 }
-/* The analysis cards bring their own frame (border/radius/surface); drop BOTH the generic
-   tool-view wrapper's frame (like .tv-task / .atx) AND — when the card is the turn's only
-   content (no prose) — the answer bubble's own chrome, so the card stands alone in the
-   conversation, native and flush, instead of nested two or three frames deep. Guarded on
-   `:not(:has(> .md))` so a card that accompanies prose keeps the bubble frame. Mirrors the
-   image-media treatment (.bubble.ai.bubble-media). */
+/* The analysis cards bring their own frame (border/radius/surface); drop the generic
+   tool-view wrapper's frame (like .tv-task / .atx) so the card's own rounded frame stands
+   alone instead of nested inside a second one. The card itself rides a frameless
+   `.bubble.ai.bubble-media` bubble (FullBrainSurface splits it out, the same as an image),
+   so the answer bubble's chrome is gone too — while the turn's "Thinking / Worked" foot
+   keeps its own normal bubble, where its disclosure renders correctly. */
 .fb-shell .tool-view:has(.tv-vid) {
   border: 0;
   padding: 0;
   background: none;
-}
-.fb-shell .bubble.ai:has(> .tool-view > .tv-task):not(:has(> .md)),
-.fb-shell .bubble.ai:has(> .tool-view > .tv-vid):not(:has(> .md)) {
-  padding: 0;
-  border: none;
-  background: transparent;
 }
 .tv-task {
   display: flex;
