@@ -24,6 +24,7 @@ import type {
   PetState,
   Principal,
   ReasoningEffort,
+  ReportDetail,
   ReviewItem,
   RunDetail,
   RunSummary,
@@ -31,6 +32,7 @@ import type {
   SearchMatch,
   SearchResult,
   SweepTrigger,
+  VideoDetail,
   WikiArticleOut,
   WikiLandingOut,
   WikiSearchResult,
@@ -2935,11 +2937,191 @@ function applyMockPetCommand(command: PetCommand): void {
   mockPet.mood = mockPet.asleep ? "sleepy" : "playful";
 }
 
+// ===== Research Library fixtures (docs/plans/RESEARCH_LIBRARY_PLAN.md) — a varied
+// spread (deep/comparative, revised, coverage-limited, truncated; captions/whisper) so
+// the browse surface, provenance chips, and detail render have real content. Mutable so a
+// mock DELETE actually drops the row. =====
+let MOCK_REPORTS: ReportDetail[] = [
+  {
+    id: "rep-flu",
+    question: "How was the 1918 flu pandemic's death toll estimated?",
+    report_md:
+      "## Summary\n\nEstimates of the 1918 “Spanish flu” toll range from **17M to 100M**; the widely-cited 50M figure comes from Johnson & Mueller (2002), who re-worked contemporary excess-mortality data country by country.\n\n## Key findings\n\n- Early estimates (~21M) undercounted the developing world.\n- Excess-mortality methods lifted the total sharply.\n\n## Sources\n\n1. Johnson & Mueller, 2002.\n2. Patterson & Pyle, 1991.",
+    complexity: "deep",
+    rounds: 2,
+    sub_agents: 6,
+    analyzed: true,
+    revised: true,
+    coverage_limited: false,
+    truncated: false,
+    sources: [
+      { url: "https://example.org/jm2002", title: "Johnson & Mueller 2002" },
+      { url: "https://example.org/pp1991", title: "Patterson & Pyle 1991" },
+    ],
+    created_at: "2026-07-18T14:02:00Z",
+  },
+  {
+    id: "rep-eurorack",
+    question: "Best Eurorack modules for a beginner ambient rig",
+    report_md:
+      "## Summary\n\nFor an ambient-first starter case, corroborated picks cluster around a stable VCO, a wavetable/complex oscillator, a good reverb/delay, and a flexible envelope+LFO utility.\n\n## Coverage\n\nOnly one gather round ran (budget), so pricing is indicative.",
+    complexity: "comparative",
+    rounds: 1,
+    sub_agents: 4,
+    analyzed: true,
+    revised: false,
+    coverage_limited: true,
+    truncated: false,
+    sources: [{ url: "https://example.org/modulargrid", title: "ModularGrid" }],
+    created_at: "2026-07-15T09:20:00Z",
+  },
+  {
+    id: "rep-strix",
+    question: "Strix Halo local LLM setup — memory bandwidth trade-offs",
+    report_md:
+      "## Summary\n\nUnified LPDDR5X bandwidth is the binding constraint for token throughput; quantization and model choice matter more than raw core count for on-box inference.",
+    complexity: "deep",
+    rounds: 2,
+    sub_agents: 6,
+    analyzed: true,
+    revised: false,
+    coverage_limited: false,
+    truncated: true,
+    sources: [{ url: "https://example.org/strix", title: "AMD Strix Halo" }],
+    created_at: "2026-06-28T11:00:00Z",
+  },
+];
+
+let MOCK_VIDEOS: VideoDetail[] = [
+  {
+    source_id: "src-strix",
+    video_id: "strix-deep-research",
+    provider: "youtube",
+    title: "Deep Research Agent locally on Strix Halo",
+    channel_name: "Donato Capitella",
+    url: "https://www.youtube.com/watch?v=strix-deep-research",
+    transcript_source: "captions",
+    summary:
+      "Walks through running a local-model deep-research agent on AMD Strix Halo — the orchestrator holds no web tools; searcher/analyzer children pre-process so the planner context stays lean.",
+    duration_s: 1694,
+    duration_ms: 1694000,
+    published_at: "2026-07-17T00:00:00Z",
+    windows: [
+      { t_ms: 0, text: "Today we're running a deep research agent fully locally." },
+      { t_ms: 42000, text: "The orchestrator holds no web tools — that's the key idea." },
+      { t_ms: 96000, text: "Searchers pre-process so the planner context stays small." },
+    ],
+    frames: [
+      { t_ms: 0, caption: "title card" },
+      { t_ms: 42000, caption: "orchestrator diagram" },
+    ],
+    cued_transcript: null,
+  },
+  {
+    source_id: "src-sodium",
+    video_id: "sodium-ion-explained",
+    provider: "youtube",
+    title: "How Sodium-Ion Batteries Actually Work",
+    channel_name: "Undecided w/ Matt Ferrell",
+    url: "https://www.youtube.com/watch?v=sodium-ion-explained",
+    transcript_source: "whisper",
+    summary:
+      "Compares sodium-ion chemistry to lithium-ion on cost, abundance, cold performance, and energy density; frames the trade-offs for home and grid storage.",
+    duration_s: 962,
+    duration_ms: 962000,
+    published_at: "2026-07-12T00:00:00Z",
+    windows: [
+      { t_ms: 0, text: "Sodium is a thousand times more abundant than lithium." },
+      { t_ms: 30000, text: "The trade-off is energy density — you get less per kilogram." },
+    ],
+    frames: [{ t_ms: 0, caption: "intro" }],
+    cued_transcript: null,
+  },
+];
+
+function reportListItem(r: ReportDetail) {
+  return {
+    id: r.id,
+    question: r.question,
+    complexity: r.complexity,
+    created_at: r.created_at,
+    sub_agents: r.sub_agents,
+    rounds: r.rounds,
+  };
+}
+function reportExcerpt(r: ReportDetail): string {
+  return r.report_md
+    .replace(/[#*`>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 140);
+}
+function videoListItem(v: VideoDetail) {
+  return {
+    video_id: v.video_id,
+    provider: v.provider,
+    title: v.title,
+    channel_name: v.channel_name,
+    url: v.url,
+    published_at: v.published_at,
+    duration_s: v.duration_s,
+  };
+}
+
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
   const path = url.pathname;
   const method = (init?.method ?? "GET").toUpperCase();
+
+  // --- Research Library (owner browse over jerv's external corpus). Exact /reports and
+  // /reports/search win before the /reports/{id} prefix; same for videos. ---
+  if (path === "/api/research-library/reports" && method === "GET")
+    return json({ items: MOCK_REPORTS.map(reportListItem), total: MOCK_REPORTS.length });
+  if (path === "/api/research-library/reports/search" && method === "GET") {
+    const q = (url.searchParams.get("q") ?? "").toLowerCase();
+    const items = MOCK_REPORTS.filter((r) =>
+      `${r.question} ${r.report_md}`.toLowerCase().includes(q),
+    ).map((r) => ({ id: r.id, question: r.question, excerpt: reportExcerpt(r) }));
+    return json({ items, degraded: false });
+  }
+  if (path.startsWith("/api/research-library/reports/") && method === "GET") {
+    const id = decodeURIComponent(path.slice("/api/research-library/reports/".length));
+    const r = MOCK_REPORTS.find((x) => x.id === id);
+    return r ? json(r) : json({ detail: "no report with that id" }, 404);
+  }
+  if (path.startsWith("/api/research-library/reports/") && method === "DELETE") {
+    const id = decodeURIComponent(path.slice("/api/research-library/reports/".length));
+    MOCK_REPORTS = MOCK_REPORTS.filter((x) => x.id !== id);
+    return new Response(null, { status: 204 });
+  }
+  if (path === "/api/research-library/videos" && method === "GET")
+    return json({ items: MOCK_VIDEOS.map(videoListItem), total: MOCK_VIDEOS.length });
+  if (path === "/api/research-library/videos/search" && method === "GET") {
+    const q = (url.searchParams.get("q") ?? "").toLowerCase();
+    const items = MOCK_VIDEOS.filter((v) =>
+      `${v.title} ${v.channel_name} ${v.summary}`.toLowerCase().includes(q),
+    ).map((v) => ({
+      video_id: v.video_id,
+      source_id: v.source_id,
+      title: v.title,
+      channel_name: v.channel_name,
+      url: v.url,
+      passage: v.summary.slice(0, 140),
+      t_ms: null,
+    }));
+    return json({ items, degraded: false });
+  }
+  if (path.startsWith("/api/research-library/videos/") && method === "GET") {
+    const vid = decodeURIComponent(path.slice("/api/research-library/videos/".length));
+    const v = MOCK_VIDEOS.find((x) => x.video_id === vid);
+    return v ? json(v) : json({ detail: "no analysed video with that id" }, 404);
+  }
+  if (path.startsWith("/api/research-library/videos/") && method === "DELETE") {
+    const vid = decodeURIComponent(path.slice("/api/research-library/videos/".length));
+    MOCK_VIDEOS = MOCK_VIDEOS.filter((x) => x.video_id !== vid);
+    return new Response(null, { status: 204 });
+  }
 
   if (path === "/api/auth/session") return new Response(null, { status: 204 });
   if (path === "/api/auth/me") return json(PRINCIPAL);

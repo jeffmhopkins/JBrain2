@@ -31,6 +31,8 @@ import {
   noteViewFromSearch,
 } from "./screens/NoteScreen";
 import { OpsScreen } from "./screens/OpsScreen";
+import { ResearchDetailScreen } from "./screens/ResearchDetailScreen";
+import { type ResearchKind, ResearchScreen } from "./screens/ResearchScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
 import { RunsScreen } from "./screens/RunsScreen";
 import { SearchScreen } from "./screens/SearchScreen";
@@ -54,6 +56,7 @@ type Card =
   | "settings"
   | "llm-settings"
   | "search"
+  | "research"
   | "review"
   | "entities"
   | "lists"
@@ -78,6 +81,7 @@ const SCREEN_TITLES: Record<
   settings: "Settings",
   "llm-settings": "LLM Settings",
   search: "Search",
+  research: "Research Library",
   review: "Review",
   entities: "Entities",
   lists: "Lists",
@@ -125,6 +129,11 @@ export function App() {
   const [wikiArticle, setWikiArticle] = useState<string | null>(null);
   const [talkArticle, setTalkArticle] = useState<string | null>(null);
   const [wikiClosing, setWikiClosing] = useState(false);
+  // The Research Library detail (a report or a video) stacks one layer above the
+  // Research list card, like the wiki reader over its landing.
+  const [researchDetail, setResearchDetail] = useState<{ kind: ResearchKind; id: string } | null>(
+    null,
+  );
 
   // The bare home stream is on screen only when no card, launcher, or stacked
   // reading layer covers it; while it's buried behind one there's no reason to
@@ -137,6 +146,7 @@ export function App() {
     wikiArticle === null &&
     talkArticle === null &&
     listView === null &&
+    researchDetail === null &&
     !runsOpen;
 
   // Lives at the app level so its state (and the outbox) survives every
@@ -192,6 +202,8 @@ export function App() {
     setEntityView(null);
     setListView(null);
     setWikiArticle(null);
+    setTalkArticle(null);
+    setResearchDetail(null);
     setSession({ status: "anonymous" });
   }
 
@@ -398,6 +410,7 @@ export function App() {
     (entityView !== null ? 1 : 0) +
     (noteView !== null ? 1 : 0) +
     (listView !== null ? 1 : 0) +
+    (researchDetail !== null ? 1 : 0) +
     (runsOpen ? 1 : 0) +
     (card !== null ? 1 : 0) +
     (launcherOpen ? 1 : 0) +
@@ -420,6 +433,8 @@ export function App() {
       setListsKey((k) => k + 1);
       return;
     }
+    // The Research detail stacks above the Research list card, so it climbs off first.
+    if (researchDetail !== null) return setResearchDetail(null);
     // Runs stacks above Automations, so it climbs off first.
     if (runsOpen) return setRunsOpen(false);
     if (card === "automations") return closeAutomations();
@@ -514,6 +529,10 @@ export function App() {
             {card === "search" && (
               <SearchScreen onOpenResult={openNoteFromSearch} onOpenWiki={setWikiArticle} />
             )}
+            {/* The Research Library list; a row/⋯-View opens the detail layer above. */}
+            {card === "research" && (
+              <ResearchScreen onOpen={(kind, id) => setResearchDetail({ kind, id })} />
+            )}
             {/* The wiki landing: search-first rails over the article set; a row
               opens the reader layer above. */}
             {card === "wiki" && <WikiLandingScreen onOpenArticle={setWikiArticle} />}
@@ -607,6 +626,26 @@ export function App() {
           onClose={() => {
             setListView(null);
             setListsKey((k) => k + 1);
+          }}
+        />
+      )}
+
+      {/* The Research Library detail (report/video) — its own subscreen + TopBar, stacked
+          above the Research list card like the wiki reader over its landing. */}
+      {researchDetail !== null && (
+        <ResearchDetailScreen
+          key={`${researchDetail.kind}-${researchDetail.id}`}
+          kind={researchDetail.kind}
+          id={researchDetail.id}
+          syncStatus={notes.syncStatus}
+          onClose={() => setResearchDetail(null)}
+          onOpenInJerv={(text) => {
+            // Drop the detail + list card + launcher to reveal home, then seed a new Full
+            // Brain (jerv) conversation with a reference to this item (the compose handoff).
+            setResearchDetail(null);
+            setCard(null);
+            setLauncherOpen(false);
+            setCompose({ text });
           }}
         />
       )}
