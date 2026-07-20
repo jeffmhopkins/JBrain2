@@ -1,6 +1,20 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; mock-gate sign-off pending)
+
+**v8 revision (vertical timeline, fan nested in the active stage).** The v7 checklist laid
+the eight stages out as a wrapping inline row (`.fb-drp-steps` flex-wrap) with the sub-agent
+fan and report stacked below it, and the whole `<SubagentFan>` rendered as a loose block
+*under* the bubble — on a phone the stage row wrapped to two cramped lines and the "where am
+I" read got lost between the wrap, the budget bar, and the expanding traces. `DeepResearchProgress`
+is now a **vertical timeline**: the stages stack down a rail (done = steel spine + ✓, active
+pulses, todo dim), and the **active stage opens a slot** that hosts its live detail line, the
+`<SubagentFan>` it spawned, and (Write / Revise) the streaming report — so the roster and
+budget read as part of the stage that's spending them, and nothing wraps sideways. The fan
+component itself is **unchanged**; `FullBrainSurface` threads the live `fanBlocks` into
+`DeepResearchProgress` for a deep_research turn (`nestFanInDr`) and suppresses the standalone
+below-bubble block for that turn only — other spawn turns keep the fan as their own block. No
+event or data changes; still driven by the existing `step` + `preview` `ToolProgressEvent`.
 
 **v7 revision (no dark phases).** The four orchestrator-level stages (plan, reflect,
 **synthesize**, **revise**) are jerv's own model calls — they spawn no sub-agent row, so

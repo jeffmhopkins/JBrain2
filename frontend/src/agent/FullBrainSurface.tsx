@@ -617,6 +617,12 @@ function Bubble({
         />
       ),
   );
+  // A deep_research turn owns BOTH the phase checklist and the fan it spawns: nest the fan
+  // inside the active stage's slot (DeepResearchProgress) instead of dropping it below the
+  // bubble, so the roster reads as part of the stage that's spending the budget. Other spawn
+  // turns (no deep_research tool) keep the fan as its own block under the answer.
+  const nestFanInDr = fanBlocks.length > 0 && liveStatuses.some((t) => t.name === "deep_research");
+  const standaloneFanBlocks = nestFanInDr ? null : fanBlocks;
 
   // The answer side: the prose, any tool-result views, and the proposal affordance.
   const answer = (
@@ -639,7 +645,7 @@ function Bubble({
       ))}
       {liveStatuses.map((t) =>
         t.name === "deep_research" ? (
-          <DeepResearchProgress key={t.id} tool={t} />
+          <DeepResearchProgress key={t.id} tool={t} fan={nestFanInDr ? fanBlocks : undefined} />
         ) : (
           <LiveToolStatus key={t.id} tool={t} />
         ),
@@ -773,7 +779,7 @@ function Bubble({
             {activityLine}
           </div>
         )}
-        {fanBlocks}
+        {standaloneFanBlocks}
       </>
     );
   }
@@ -837,7 +843,7 @@ function Bubble({
             {activityLine}
           </div>
         )}
-        {fanBlocks}
+        {standaloneFanBlocks}
       </>
     );
   }
@@ -855,7 +861,7 @@ function Bubble({
         {generalKnowledge && <GeneralKnowledgeNote />}
         {activityLine}
       </div>
-      {fanBlocks}
+      {standaloneFanBlocks}
     </>
   );
 }
@@ -1318,10 +1324,22 @@ const DR_PHASES = [
   "Revise",
 ] as const;
 
-export function DeepResearchProgress({ tool }: { tool: ToolActivity }): ReactNode {
+export function DeepResearchProgress({
+  tool,
+  fan,
+}: {
+  tool: ToolActivity;
+  /** The turn's live sub-agent fan (`<SubagentFan>`, unchanged). It mounts in the ACTIVE
+   * stage's slot so the roster + budget read as part of the stage that spawned them,
+   * rather than a loose block below the whole checklist. */
+  fan?: ReactNode;
+}): ReactNode {
   const p = tool.progress;
   const step = p?.step ?? 0; // 1-based; 0 before the first phase event lands
   const preview = p?.preview ?? "";
+  // The stage whose slot the detail/fan/report hang under: the live ordinal, or Plan while
+  // we wait for the first phase event (so a fan that spawned pre-phase still has a home).
+  const active = step > 0 ? step : 1;
   // Follow the report as it streams into the pane, unless the reader scrolled up in it.
   const paneRef = useRef<HTMLDivElement | null>(null);
   const stick = useRef(true);
@@ -1339,26 +1357,33 @@ export function DeepResearchProgress({ tool }: { tool: ToolActivity }): ReactNod
       <ol className="fb-drp-steps">
         {DR_PHASES.map((name, i) => {
           const ord = i + 1;
-          // Everything before the active step reads done; the active pulses; the rest wait.
-          const state = ord < step ? "done" : ord === step ? "active" : "todo";
+          // A vertical timeline: everything before the live step reads done, the live step
+          // opens its slot, the rest wait — one scannable column that never wraps.
+          const state = ord < step ? "done" : ord === active ? "active" : "todo";
+          const isActive = state === "active";
           return (
             <li key={name} className={`fb-drp-step ${state}`}>
               <span className="fb-drp-dot" aria-hidden="true">
                 {state === "done" ? "✓" : ""}
               </span>
               <span className="fb-drp-name">{name}</span>
+              {/* The active stage's slot: its live detail, the sub-agent fan it spawned, and
+                  (Write / Revise) the report streaming in — all indented under the stage. */}
+              {isActive && (p?.label || fan || preview) && (
+                <div className="fb-drp-panel">
+                  {p?.label && <div className="fb-drp-active">{p.label}</div>}
+                  {fan}
+                  {preview && (
+                    <div className="fb-drp-report" ref={paneRef} onScroll={onScroll}>
+                      <Markdown text={preview} />
+                    </div>
+                  )}
+                </div>
+              )}
             </li>
           );
         })}
       </ol>
-      {/* The active phase's live detail (e.g. "Researching 4 angle(s)"). */}
-      {p?.label && <div className="fb-drp-active">{p.label}</div>}
-      {/* Write / Revise stream the report itself — render it live in a scrollable pane. */}
-      {preview && (
-        <div className="fb-drp-report" ref={paneRef} onScroll={onScroll}>
-          <Markdown text={preview} />
-        </div>
-      )}
     </output>
   );
 }

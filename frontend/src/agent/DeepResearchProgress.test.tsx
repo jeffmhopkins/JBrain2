@@ -58,4 +58,34 @@ describe("DeepResearchProgress", () => {
     expect(container.querySelectorAll(".fb-drp-step.done")).toHaveLength(1);
     expect(container.querySelectorAll(".fb-drp-step.active")).toHaveLength(1);
   });
+
+  it("mounts the sub-agent fan inside the active stage's slot, not below the checklist", () => {
+    const { container } = render(
+      <DeepResearchProgress
+        tool={tool({ step: 2, total: 0, label: "Researching 4 angle(s)" })}
+        fan={<div data-testid="fan">roster</div>}
+      />,
+    );
+    // The fan lives inside the ACTIVE step's panel — the seam the redesign hinges on.
+    const activePanel = container.querySelector(".fb-drp-step.active .fb-drp-panel");
+    expect(activePanel).toBeInTheDocument();
+    expect(activePanel?.querySelector('[data-testid="fan"]')).toBeInTheDocument();
+    // And it hangs under exactly one stage (the live one), never duplicated per row.
+    expect(container.querySelectorAll('[data-testid="fan"]')).toHaveLength(1);
+    expect(container.querySelectorAll(".fb-drp-panel")).toHaveLength(1);
+  });
+
+  it("keeps a home for a fan that spawned before the first phase event (step 0)", () => {
+    const { container } = render(
+      <DeepResearchProgress
+        tool={tool({ step: 0, total: 0 })}
+        fan={<div data-testid="fan">roster</div>}
+      />,
+    );
+    // Before any phase lands, Plan is the active host so the fan is never orphaned.
+    expect(container.querySelectorAll(".fb-drp-step.done")).toHaveLength(0);
+    const active = container.querySelector(".fb-drp-step.active");
+    expect(active?.querySelector(".fb-drp-name")?.textContent).toBe("Plan");
+    expect(active?.querySelector('[data-testid="fan"]')).toBeInTheDocument();
+  });
 });
