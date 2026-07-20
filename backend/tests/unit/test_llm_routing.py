@@ -17,6 +17,7 @@ EXPECTED_TASKS = {
     "agent.vision",
     "video.summarize",
     "session.title",
+    "research.title",
     "integrate.note",
     "intake.materialize",
     "wiki.rewrite",
