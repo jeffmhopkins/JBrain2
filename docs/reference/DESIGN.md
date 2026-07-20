@@ -1298,7 +1298,7 @@ giving each artifact a **purpose-built list** rather than forcing two very diffe
 shapes into one row: a **Reports · Videos** segmented control (`.seg-row`/`.seg-on`, the
 settled Data/Locations pattern, active segment taking the amber research tint) switches the
 surface, and **search filters within the active tab**. Reports lead with a **short
-LLM-generated title** (the `title` column, migration 0141 — the raw `question` is often a
+LLM-generated title** (the `title` column, migration 0143 — the raw `question` is often a
 whole paragraph, so it heads the card only as the fallback until the `title_research_report`
 job lands), a **complexity** badge (simple `--green` / comparative `--steel` / deep
 `--violet`), and a **provenance chip row** (`sub_agents` · `rounds` · `sources`, plus the
