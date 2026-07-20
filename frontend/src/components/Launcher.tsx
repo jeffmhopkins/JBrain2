@@ -13,6 +13,7 @@ import {
   CheckSquareIcon,
   CodeIcon,
   DatabaseIcon,
+  FlaskIcon,
   GaugeIcon,
   GlobeIcon,
   GraphIcon,
@@ -33,6 +34,7 @@ export type LauncherTarget =
   | "settings"
   | "llm-settings"
   | "search"
+  | "research"
   | "review"
   | "entities"
   | "lists"
@@ -64,6 +66,7 @@ const SECTIONS: Section[] = [
     header: "Knowledge",
     tiles: [
       { title: "Search", icon: <SearchIcon size={24} />, target: "search" },
+      { title: "Research", icon: <FlaskIcon size={24} />, target: "research" },
       { title: "Wiki", icon: <BookIcon size={24} />, target: "wiki" },
       { title: "Calendar", icon: <CalendarIcon size={24} />, target: "calendar" },
       { title: "Lists", icon: <ListIcon size={24} />, target: "lists" },

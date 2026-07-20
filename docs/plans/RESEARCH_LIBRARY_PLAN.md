@@ -1,6 +1,6 @@
 # Research Library — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** R1✅ R2◻️ R3◻️
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** R1✅ R2✅ R3◻️
 
 The owner-facing **browse surface** over the two `external`-corpus artifacts jerv
 produces on its own turns — **deep-research reports** (`app.research_reports`, the
@@ -170,14 +170,21 @@ red-team pass); one PR per wave, CI green before merge.
   (`tests/integration/test_research_library_api_pg.py` — real-Postgres owner-gated round-trip
   for both corpora). No migration/grant — both tables already carry the DELETE grant + the
   `external`-domain RLS (0133/0136/0140), and a full-owner `ctx_for` reaches + deletes both.
-- **Wave R2 — Frontend list surface.** `ResearchScreen` (tabs + live search + per-type
-  rows), `ResearchActionSheet`, delete + deferred-undo, `api/client.ts` methods +
-  interfaces, `api/mock.ts` fixtures, the launcher tile + `App.tsx` list wiring, `.research-*`
-  styles, tests. Depends on R1.
-- **Wave R3 — Frontend detail layer + item actions.** `ResearchDetailScreen` (report via
-  Markdown, video via `VideoAnalysis`), the App-level stacked-layer wiring, copy/download +
-  "Open in jerv conversation", tests. Depends on R1 (detail endpoints) and R2 (screen shell +
-  open callback).
+- **Wave R2 — Frontend browse + view + delete. ✅ LANDED (this branch).** `ResearchScreen`
+  (`.seg-row` Reports/Videos tabs + as-you-type filter + per-type rows + the `⋯` action
+  sheet with View + tap-again Delete), the deferred-commit undo, `ResearchDetailScreen` (the
+  App-level stacked layer: a report via the shared `<Markdown>` + a provenance strip, a video
+  via `<VideoAnalysis>`), the `api/client.ts` methods + interfaces, `api/mock.ts` fixtures,
+  the launcher **Research** tile (`FlaskIcon`) + the `App.tsx` card/title/nav + stacked-layer
+  wiring, the `.rl-*` styles (amber research accent), and Vitest coverage
+  (`ResearchScreen.test.tsx`, `ResearchDetailScreen.test.tsx`). Verified end-to-end in mock
+  mode (launcher → Research → tabs → detail). **Boundary note (scope deviation, PROCESS §):**
+  the detail *view* landed here with the list (a coherent browse+view+delete commit) rather
+  than in R3; the action sheet ships View + Delete, and R3 adds the remaining item actions.
+- **Wave R3 — Item actions.** Add **Open in jerv conversation**, **Copy** (report / summary /
+  transcript), **Download report (.md)**, and **Open source ↗** to the action sheet + detail,
+  each shown only when applicable to the source; tests. Depends on R1 (detail endpoints) + R2
+  (screen + detail).
 
 R2 depends on R1; R3 depends on R1 + R2. Within R1 the reports and videos endpoint sets are
 parallelizable; within R2/R3 the two type-lanes are parallelizable.
