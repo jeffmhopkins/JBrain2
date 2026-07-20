@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Research card — density variants</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px 12px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .head{max-width:900px;width:100%;padding:0 6px;}
+  .head h1{font-size:19px;font-weight:600;margin-bottom:6px;}
+  .head p{color:var(--text-2);font-size:13px;line-height:1.55;max-width:720px;}
+  .head p b{color:var(--text);font-weight:500;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-top:10px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:12px;padding:5px 13px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--amber-tint);color:var(--amber);font-weight:600;}
+
+  .grid{display:flex;flex-wrap:wrap;gap:22px;justify-content:center;align-items:flex-start;max-width:1500px;}
+  .col{width:352px;max-width:94vw;display:flex;flex-direction:column;gap:10px;}
+  .col .label{display:flex;align-items:baseline;gap:8px;padding:0 2px;}
+  .col .label .k{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);}
+  .col .label .name{font-size:14px;font-weight:600;color:var(--text);}
+  .col .blurb{font-size:11.5px;color:var(--text-2);line-height:1.5;padding:0 2px;min-height:48px;}
+  .col .fit{font-size:11px;color:var(--text-3);padding:0 2px;font-variant-numeric:tabular-nums;}
+  .col .fit b{color:var(--green);font-weight:600;}
+
+  /* phone frame with a fold marker so vertical density is honestly comparable */
+  .phone{width:100%;height:560px;background:var(--bg);border:1px solid #2a2c30;border-radius:26px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .pbar{height:46px;display:flex;align-items:center;gap:9px;padding:0 13px;border-bottom:1px solid var(--border);flex:none;}
+  .pbar .ttl{font-size:15px;font-weight:600;}
+  .pbar .n{margin-left:auto;font-size:11px;color:var(--text-3);}
+  .plist{flex:1;overflow-y:auto;padding:10px 12px 30px;scrollbar-width:thin;}
+  .fold{position:absolute;left:0;right:0;top:calc(46px + 430px);border-top:1px dashed color-mix(in srgb,var(--amber) 55%, transparent);pointer-events:none;z-index:5;}
+  .fold::after{content:"typical fold";position:absolute;right:8px;top:3px;font-size:9px;color:var(--amber);letter-spacing:.04em;}
+
+  /* ---------- shared atoms ---------- */
+  .kebab{flex:none;background:none;border:none;color:var(--text-3);padding:2px 3px;cursor:pointer;}
+  .chev{flex:none;color:var(--text-3);align-self:center;}
+  .cxdot{width:8px;height:8px;border-radius:999px;flex:none;}
+  .cxdot.deep{background:var(--violet);} .cxdot.comparative{background:var(--steel);} .cxdot.simple{background:var(--green);}
+  .cxword.deep{color:var(--violet);} .cxword.comparative{color:var(--steel);} .cxword.simple{color:var(--green);}
+  .cxpill{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;text-transform:capitalize;flex:none;}
+  .cxpill.deep{background:var(--violet-tint);color:var(--violet);} .cxpill.comparative{background:var(--steel-tint);color:var(--steel);} .cxpill.simple{background:var(--green-tint);color:var(--green);}
+  .disc{width:30px;height:30px;flex:none;border-radius:999px;display:flex;align-items:center;justify-content:center;background:var(--amber-tint);color:var(--amber);}
+  .disc svg{width:15px;height:15px;}
+  .clamp1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .clamp2{display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+  /* ===== A — Tightened current (disc + pills, collapsed to two bands) ===== */
+  .a-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:11px;margin-bottom:9px;display:flex;gap:10px;align-items:flex-start;}
+  .a-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px;}
+  .a-title{font-size:14px;font-weight:600;line-height:1.3;}
+  .a-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+  .a-chip{font-size:10.5px;color:var(--text-2);background:var(--surface-2);border-radius:999px;padding:2px 8px;font-variant-numeric:tabular-nums;}
+  .a-date{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+
+  /* ===== B — Text-meta (no pills; one dotted plain-text meta line) ===== */
+  .b-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:10px 11px;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start;}
+  .b-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+  .b-title{font-size:13.5px;font-weight:600;line-height:1.3;}
+  .b-meta{font-size:11.5px;color:var(--text-3);line-height:1.35;font-variant-numeric:tabular-nums;}
+  .b-meta .w{font-weight:600;}
+  .b-sep{color:var(--text-3);opacity:.5;margin:0 5px;}
+
+  /* ===== C — Edge-accent rail (complexity as left bar, no disc, date right) ===== */
+  .c-card{background:var(--surface);border:1px solid var(--border);border-left-width:3px;border-radius:12px;padding:10px 11px 10px 12px;margin-bottom:8px;display:flex;gap:8px;align-items:flex-start;}
+  .c-card.deep{border-left-color:var(--violet);} .c-card.comparative{border-left-color:var(--steel);} .c-card.simple{border-left-color:var(--green);}
+  .c-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
+  .c-top{display:flex;gap:8px;align-items:baseline;}
+  .c-title{flex:1;min-width:0;font-size:13.5px;font-weight:600;line-height:1.3;}
+  .c-date{flex:none;font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .c-meta{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:7px;font-variant-numeric:tabular-nums;}
+
+  /* ===== D — List row (email density: 1-line title + muted subline) ===== */
+  .d-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:9px 6px 9px 11px;margin-bottom:7px;display:flex;gap:10px;align-items:center;}
+  .d-glyph{flex:none;color:var(--amber);display:flex;}
+  .d-glyph svg{width:17px;height:17px;}
+  .d-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .d-title{font-size:13.5px;font-weight:600;line-height:1.25;}
+  .d-sub{font-size:11px;color:var(--text-3);line-height:1.3;font-variant-numeric:tabular-nums;}
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>Research Library — report card density</h1>
+    <p>The current card stacks <b>four bands</b> (disc + 2-line title · complexity badge · chip row · footer), so only
+      ~4 clear the fold. Four reimagined variants below, densest-to-lightest, all holding the settled paradigm —
+      <b>amber research accent</b>, complexity colour (deep&nbsp;violet / comparative&nbsp;steel / simple&nbsp;green),
+      the per-row&nbsp;<b>⋯</b> menu, tap-title-to-open, ≥44px targets. Same seven reports render in each frame; the
+      dashed line marks a typical phone fold. Pick one — it gets promoted to the binding mock and folded into DESIGN.md.</p>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+
+const REPORTS=[
+  {id:'r1',title:'What details are known about the Falcon 9 launch abort that scrubbed the crew rotation flight?',complexity:'deep',sub_agents:6,rounds:2,sources:23,date:'Jul 20'},
+  {id:'r2',title:'What are the specifics of SpaceX flight 13, including launch date, payload, and outcome?',complexity:'comparative',sub_agents:6,rounds:2,sources:17,date:'Jul 20'},
+  {id:'r3',title:'What AI model releases and news in 2026 focus on models that can run on consumer hardware?',complexity:'deep',sub_agents:6,rounds:2,sources:21,date:'Jul 20'},
+  {id:'r4',title:'How was the 1918 flu pandemic’s death toll estimated?',complexity:'deep',sub_agents:6,rounds:2,sources:23,date:'Jul 18'},
+  {id:'r5',title:'Best Eurorack modules for a beginner ambient rig',complexity:'comparative',sub_agents:4,rounds:1,sources:14,date:'Jul 15'},
+  {id:'r6',title:'Current consensus on creatine for cognition',complexity:'comparative',sub_agents:4,rounds:1,sources:11,date:'Jul 4'},
+  {id:'r7',title:'Strix Halo local LLM setup — memory bandwidth trade-offs',complexity:'deep',sub_agents:6,rounds:2,sources:21,date:'Jun 28'},
+];
+
+const fileGlyph='<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/></svg>';
+const kebab='<button class="kebab" aria-label="Report actions"><svg width="17" height="17" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>';
+const chev='<svg class="chev" width="15" height="15" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+const cap=s=>s[0].toUpperCase()+s.slice(1);
+const rounds=n=>`${n} round${n>1?'s':''}`;
+
+// A — Tightened current: disc + pill + text chips, two bands
+function cardA(it){return `<div class="a-card">
+  <span class="disc">${fileGlyph}</span>
+  <div class="a-main">
+    <div class="a-title clamp2">${it.title}</div>
+    <div class="a-meta">
+      <span class="cxpill ${it.complexity}">${it.complexity}</span>
+      <span class="a-chip">${it.sub_agents} agents</span>
+      <span class="a-chip">${rounds(it.rounds)}</span>
+      <span class="a-date">· ${it.date}</span>
+    </div>
+  </div>${kebab}</div>`;}
+
+// B — Text-meta: no disc pill row; complexity is a coloured word in one plain meta line
+function cardB(it){return `<div class="b-card">
+  <span class="disc">${fileGlyph}</span>
+  <div class="b-main">
+    <div class="b-title clamp2">${it.title}</div>
+    <div class="b-meta"><span class="w cxword ${it.complexity}">${cap(it.complexity)}</span><span class="b-sep">·</span>${it.sub_agents} agents<span class="b-sep">·</span>${rounds(it.rounds)}<span class="b-sep">·</span>${it.date}</div>
+  </div>${kebab}</div>`;}
+
+// C — Edge-accent rail: complexity as left border, title + right-aligned date, one meta line
+function cardC(it){return `<div class="c-card ${it.complexity}">
+  <div class="c-main">
+    <div class="c-top">
+      <span class="c-title clamp2">${it.title}</span>
+      <span class="c-date">${it.date}</span>
+    </div>
+    <div class="c-meta"><span class="cxdot ${it.complexity}"></span>${cap(it.complexity)} · ${it.sub_agents} agents · ${rounds(it.rounds)} · ${it.sources} sources</div>
+  </div>${kebab}</div>`;}
+
+// D — List row: email density, single-line title + muted subline
+function cardD(it){return `<div class="d-card">
+  <span class="d-glyph">${fileGlyph}</span>
+  <div class="d-main">
+    <div class="d-title clamp1">${it.title}</div>
+    <div class="d-sub"><span class="cxword ${it.complexity}" style="font-weight:600">${cap(it.complexity)}</span> · ${it.sub_agents} agents · ${rounds(it.rounds)} · ${it.date}</div>
+  </div>${chev}${kebab}</div>`;}
+
+const VARIANTS=[
+  {k:'A',name:'Tightened current',blurb:'Smallest change: keeps the amber disc and pill chips, but collapses badge + chips + footer into one meta band and trims the type to 14px. Most familiar; least risky.',build:cardA},
+  {k:'B',name:'Text-meta',blurb:'Drops the pill chrome entirely — complexity becomes a coloured word leading a single dotted plain-text line. Disc kept for the type cue. Much quieter, noticeably shorter.',build:cardB},
+  {k:'C',name:'Edge-accent rail',blurb:'Complexity moves to a 3px coloured left edge, freeing the disc’s width for the title; date right-aligns on the title line, meta reads as one plain line (adds sources).',build:cardC},
+  {k:'D',name:'List row',blurb:'Maximum density — email-style row: one-line clamped title over a muted subline, a small amber glyph, and a chevron affordance. Most cards per screen; least breathing room.',build:cardD},
+];
+
+const grid=document.getElementById('grid');
+grid.innerHTML=VARIANTS.map(v=>{
+  const cards=REPORTS.map(v.build).join('');
+  return `<div class="col">
+    <div class="label"><span class="k">Variant ${v.k}</span><span class="name">${v.name}</span></div>
+    <div class="blurb">${v.blurb}</div>
+    <div class="phone">
+      <div class="pbar"><span class="ttl">Reports</span><span class="n">7</span></div>
+      <div class="plist">${cards}</div>
+      <div class="fold"></div>
+    </div>
+  </div>`;
+}).join('');
+</script>
+</body>
+</html>
