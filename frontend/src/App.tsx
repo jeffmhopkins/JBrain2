@@ -637,6 +637,14 @@ export function App() {
           id={researchDetail.id}
           syncStatus={notes.syncStatus}
           onClose={() => setResearchDetail(null)}
+          onOpenInJerv={(text) => {
+            // Drop the detail + list card + launcher to reveal home, then seed a new Full
+            // Brain (jerv) conversation with a reference to this item (the compose handoff).
+            setResearchDetail(null);
+            setCard(null);
+            setLauncherOpen(false);
+            setCompose({ text });
+          }}
         />
       )}
 

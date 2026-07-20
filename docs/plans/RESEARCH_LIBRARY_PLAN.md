@@ -1,6 +1,6 @@
 # Research Library — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** R1✅ R2✅ R3◻️
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** R1✅ R2✅ R3◻️ (all three waves' code landed on-branch `claude/jerv-launcher-mockups-hs1rru`; R3 marked open pending the independent frontend review gate + merge — archives on merge to `main`)
 
 The owner-facing **browse surface** over the two `external`-corpus artifacts jerv
 produces on its own turns — **deep-research reports** (`app.research_reports`, the
@@ -181,10 +181,17 @@ red-team pass); one PR per wave, CI green before merge.
   mode (launcher → Research → tabs → detail). **Boundary note (scope deviation, PROCESS §):**
   the detail *view* landed here with the list (a coherent browse+view+delete commit) rather
   than in R3; the action sheet ships View + Delete, and R3 adds the remaining item actions.
-- **Wave R3 — Item actions.** Add **Open in jerv conversation**, **Copy** (report / summary /
-  transcript), **Download report (.md)**, and **Open source ↗** to the action sheet + detail,
-  each shown only when applicable to the source; tests. Depends on R1 (detail endpoints) + R2
-  (screen + detail).
+- **Wave R3 — Item actions. ✅ LANDED (this branch).** The per-item action sheet in the
+  detail's `⋯` (where the full item data is loaded): **Open in jerv conversation** (both —
+  seeds a new Full Brain conversation with a reference to the item via the compose handoff),
+  **Copy report** + **Download report (.md)** (reports), **Copy summary** / **Copy
+  transcript** / **Open source ↗** (videos), each shown only when applicable. `App.tsx` wires
+  `onOpenInJerv`. Vitest covers the per-type action set, the clipboard copy, and the
+  open-in-jerv handoff. **Deviation (Open decision 2):** deep-linking to a report's
+  originating `session_id` is not wired — `fetch_report` doesn't return it and videos have
+  none — so open-in-jerv always seeds a fresh conversation (the plan's stated fallback).
+  **Placement:** these actions live in the detail's `⋯` (not the list row's, which stays
+  View + Delete) because copy/download need the full body/transcript the list item omits.
 
 R2 depends on R1; R3 depends on R1 + R2. Within R1 the reports and videos endpoint sets are
 parallelizable; within R2/R3 the two type-lanes are parallelizable.

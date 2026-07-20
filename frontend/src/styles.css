@@ -20815,3 +20815,15 @@ button.task-band:active {
   line-height: 1.6;
   color: var(--text);
 }
+
+/* Research Library — the detail's ⋯ action bar (Wave R3). */
+.rl-detail-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px -4px 4px 0;
+}
+.rl-detail-kebab {
+  border-left: none;
+  padding: 4px 8px;
+  border-radius: 10px;
+}
