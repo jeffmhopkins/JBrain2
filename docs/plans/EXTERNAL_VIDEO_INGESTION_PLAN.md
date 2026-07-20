@@ -1,6 +1,6 @@
 # External Video Ingestion (YouTube corpus) — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-18 · **Waves:** A✅ B✅ C◻️
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** A✅ B✅ C◻️
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): shaped, **hardened by a five-focus adversarial
 review**, and **re-sequenced around agent tools + the shipped Tasks feature** (owner decision) rather than
@@ -360,7 +360,9 @@ No new runtime dependency; `dev-setup.sh` unchanged.
 
 Captions-first removes whisper, but **frame captioning is the dominant per-video cost**: `caption_frames`
 issues **one vision LLM call per frame in a serial loop** (`video.py:225`), 16 (`DEFAULT_FULL_FRAMES`) up to
-60 (`MAX_FULL_FRAMES`) per video, + fuse + reduce. In the Task approach cost is bounded cleanly by the
+500 (`MAX_FULL_FRAMES`) per video, + fuse + reduce. That ceiling is high so an explicit fine density
+(a frame every 2 s of a 15-min video ≈ 448) is honoured rather than coarsened; a dense request is
+therefore proportionally more serial vision work, run off-turn. In the Task approach cost is bounded cleanly by the
 **per-run cap N** in the prompt (no window-clipping guesswork): pick N from (frames/video × per-call latency)
 so a run fits your intended nightly budget. Frame density (§16) is the primary lever; a captions-only corpus
 (frames off) would be near-free and still text-searchable ("what was said") — frames buy "what was shown" +

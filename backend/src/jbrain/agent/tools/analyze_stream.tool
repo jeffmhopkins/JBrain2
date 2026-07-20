@@ -1,6 +1,6 @@
 ---
 name: analyze_stream
-version: 6
+version: 7
 permission: web
 cost_class: expensive
 # NOTE: `mode` and `captions` intentionally carry NO JSON-Schema `enum`. gpt-oss's
@@ -25,7 +25,7 @@ params:
       description: How many frames to sample in window or full mode (1–24). Full mode spreads them across the whole video; defaults to a sensible number. Ignored in full mode when `interval_s` is set (which controls density instead).
     interval_s:
       type: number
-      description: "Full mode only: sample one frame every this many seconds — a density / frames-per-minute — instead of a flat total, so a long video gets proportional coverage. E.g. 30 = one frame every 30 s (2 per minute); 60 = one per minute. Up to ~60 frames total. Use this when the owner wants dense or rate-based sampling (“a frame every N seconds”, “N frames per minute”); omit for the default spread."
+      description: "Full mode only: sample one frame every this many seconds — a density / frames-per-minute — instead of a flat total, so a long video gets proportional coverage. E.g. 30 = one frame every 30 s (2 per minute); 60 = one per minute; 2 = one every 2 s (a fine, near-continuous sweep). A fine density on a normal-length video is honoured (a frame every 2 s of a 15-min video ≈ 448 frames), up to a high ceiling of ~500 frames total. Denser sampling means proportionally more (off-turn) vision work, so pass the density the owner actually asked for rather than over-sampling. Use this when the owner wants dense or rate-based sampling (“a frame every N seconds”, “N frames per minute”); omit for the default spread."
     window_s:
       type: number
       description: In window mode, the length in seconds of the slice to sample (up to 120). Defaults to ~10. Ignored in full mode (which covers the whole video).

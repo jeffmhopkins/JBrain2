@@ -31,7 +31,10 @@ def test_full_frame_count_uses_interval_density_when_given() -> None:
     # bounded by MAX_FULL_FRAMES; a frame every 30 s of a 600 s video = 20.
     assert _full_frame_count(frames=16, interval_s=30.0, duration=600.0) == 20
     assert _full_frame_count(frames=16, interval_s=60.0, duration=600.0) == 10
-    # A dense interval on a long video is capped, not unbounded (cost stays bounded).
+    # A fine density on a normal-length video is HONOURED, not silently coarsened to a
+    # flat 60: a frame every 2 s of a ~15-min video is ~448, under the raised ceiling.
+    assert _full_frame_count(frames=16, interval_s=2.0, duration=896.0) == 448
+    # A dense interval on a very long video still clamps, so cost stays bounded.
     assert _full_frame_count(frames=16, interval_s=1.0, duration=100000.0) == MAX_FULL_FRAMES
     assert _full_frame_count(frames=16, interval_s=99999.0, duration=600.0) == 1  # ≥1 always
 

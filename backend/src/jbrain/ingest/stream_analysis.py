@@ -334,9 +334,11 @@ def _resume_message(title: str, url: str) -> str:
     as a system event, not owner input, by the /chat handler."""
     return (
         f'The video analysis you started earlier has finished: "{title}" is now in the '
-        f"owner's video library ({url}). Carry on with what the owner originally asked — "
-        "call read_external_video with that url to read its summary and transcript if you "
-        "need them to answer."
+        f"owner's video library ({url}), and the owner already sees its frames and "
+        "transcript on the analysis card above. That finished analysis IS what the owner "
+        "asked for (the frame sampling and transcription) — do NOT analyze this video "
+        "again. If answering needs its content, call read_external_video with that url to "
+        "read the summary and transcript, then reply."
     )
 
 

@@ -1,6 +1,6 @@
 # Video/Image Inspection Tools — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-07-19 · **Waves:** V0✅ V1✅ V2✅ V3✅ V4✅ V5✅ V6◻️ (all code + steering docs shipped on-branch; on-box end-to-end sign-off against the live VL/ffmpeg/ComfyUI models pending — CI covers the logic via fakes + real-Postgres testcontainers)
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** V0✅ V1✅ V2✅ V3✅ V4✅ V5✅ V6◻️ (all code + steering docs shipped on-branch; on-box end-to-end sign-off against the live VL/ffmpeg/ComfyUI models pending — CI covers the logic via fakes + real-Postgres testcontainers)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — every VLM call through
 > the LLM adapter (rule 1), every blob through the storage abstraction (rule 2),
@@ -310,9 +310,9 @@ card (a long job needs its progress affordance); `show` governs only the **final
   **exactly once** a beat later, so a genuinely black scene is distinguished from a
   decode artifact without doubling cost.
 - **Blast-radius guards (from the design review):** `_grab_one` is also used by
-  `sample_stream_full` up to `MAX_FULL_FRAMES = 60` per call — the hybrid seek must
-  **preserve fast seeking** there (never decode-from-zero ×60, which would
-  timeout-storm), and the multi-frame `window` fps path must be proven
+  `sample_stream_full` up to `MAX_FULL_FRAMES` (500) per call — the hybrid seek must
+  **preserve fast seeking** there (never decode-from-zero per frame, which would
+  timeout-storm at that count), and the multi-frame `window` fps path must be proven
   byte-for-byte unchanged. The luma retry is bounded to once so full mode's budget
   isn't 2×'d.
 - Also update the `analyze_stream.tool` sidecar if any wording implies single-mode
