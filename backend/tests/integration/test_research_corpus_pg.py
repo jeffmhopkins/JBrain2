@@ -275,7 +275,9 @@ async def test_persist_enqueues_title_job_and_titler_fills_it(maker) -> None:  #
     assert {"embed_research_report", "title_research_report"} <= kinds
 
     router = _FakeTitleRouter('  "1918 Flu Death-Toll Estimates"  ')
-    await ResearchReportTitler(maker, router).title_research_report({"report_id": report_id})
+    await ResearchReportTitler(maker, router).title_research_report(  # type: ignore[arg-type]
+        {"report_id": report_id}
+    )
     # The raw question (and the stored excerpt) were fed to the model.
     assert "1918 flu" in router.calls[0]["user_text"]
     # The reply is cleaned (quotes + whitespace stripped) and surfaces in the listing.
@@ -284,7 +286,9 @@ async def test_persist_enqueues_title_job_and_titler_fills_it(maker) -> None:  #
 
     # Idempotent: a second run sees title IS NOT NULL and never calls the model again.
     router2 = _FakeTitleRouter("A Different Title")
-    await ResearchReportTitler(maker, router2).title_research_report({"report_id": report_id})
+    await ResearchReportTitler(maker, router2).title_research_report(  # type: ignore[arg-type]
+        {"report_id": report_id}
+    )
     assert router2.calls == []
     reports2, _ = await list_reports(maker, limit=10)
     assert reports2[0].title == "1918 Flu Death-Toll Estimates"
