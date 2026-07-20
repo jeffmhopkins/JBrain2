@@ -1,6 +1,10 @@
 # Research Library — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** R1✅ R2✅ R3◻️ (all three waves' code + their independent adversarial reviews have landed on-branch `claude/jerv-launcher-mockups-hs1rru` — R1 red-team + R2/R3 frontend review, both with fixes applied; R3 stays open only pending **merge to `main`**, at which point the plan flips to Shipped and archives)
+> **Status:** Shipped 2026-07 · no migration · **Superseded-by:** — · **Waves:** R1✅ R2✅ R3✅
+
+Merged to `main` in PR #907 (squash `3041e7b`). Both independent review gates passed on-branch
+(R1 backend red-team, R2/R3 frontend review), CI green. Residual/deferred items are carried into
+`ROADMAP.md`. Kept as the build record.
 
 The owner-facing **browse surface** over the two `external`-corpus artifacts jerv
 produces on its own turns — **deep-research reports** (`app.research_reports`, the

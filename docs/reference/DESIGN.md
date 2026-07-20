@@ -1275,7 +1275,7 @@ the live `.tool-view`. Like every view it is **data, not instruction** (I-1) and
 external resource (I-9). The non-happy states (coverage-limited / truncated / thin-sources)
 and a reference mock go through the mock gate before this is marked settled.
 
-## Research Library (settled in a three-way GUI review — binding mock: `docs/mocks/research-library/b-segmented-tabs.html`; build plan `docs/plans/RESEARCH_LIBRARY_PLAN.md`)
+## Research Library (settled in a three-way GUI review — binding mock: `docs/mocks/research-library/b-segmented-tabs.html`; build plan `docs/archive/RESEARCH_LIBRARY_PLAN.md`)
 
 The owner-facing browse surface over the two **`external`-corpus** artifacts jerv
 produces on its own turns — **deep-research reports** (`app.research_reports`, the

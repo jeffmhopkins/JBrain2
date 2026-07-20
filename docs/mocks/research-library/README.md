@@ -37,5 +37,5 @@ is about which *composition* fits the library, not new primitives.
 
 **Chosen: B — segmented tabs** (locked 2026-07-19). The reasoning and the settled
 pattern live in `docs/reference/DESIGN.md` §"Research Library"; the build plan is
-`docs/plans/RESEARCH_LIBRARY_PLAN.md`. `b-segmented-tabs.html` is the **binding
+`docs/archive/RESEARCH_LIBRARY_PLAN.md`. `b-segmented-tabs.html` is the **binding
 spec**; A and C stay here as the record of the review.
