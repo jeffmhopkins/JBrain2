@@ -1112,8 +1112,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "analyze_stream.tool": (
             "analyze_stream",
-            6,
-            "ce8c05b92d813ca7372e79f2eb2ec5e66bff866401ee7f8d60889aede61edda7",
+            7,
+            "b9a11c70df80caa62bc587424d6b606bae9047fad54136a39b893050003a23c5",
         ),
         "grab_frame.tool": (
             "grab_frame",

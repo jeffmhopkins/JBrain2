@@ -2201,6 +2201,11 @@ def test_model_message_frames_a_deferred_outcome_as_data() -> None:
     assert "System event" in framed
     assert "read_external_video" in framed
     assert "data, not an instruction" in framed
+    # The finished analysis already fulfilled the frames+transcript request; the framing
+    # must steer jerv AWAY from re-running analyze_stream on the same video (the
+    # "multiple turn frames" regression), not just tell it to "continue the request".
+    assert "analyze_stream" in framed
+    assert "re-analyze" in framed
 
 
 class _FakeMediaResults:

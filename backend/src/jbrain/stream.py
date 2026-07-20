@@ -69,7 +69,12 @@ DEFAULT_FULL_FRAMES = 16  # frames spread across a whole VOD in full mode
 # rate-controlled). Bounded by this higher cap: each frame is one vision caption, so
 # cost scales with count, but the full-mode job runs off-turn where a heavier budget is
 # acceptable. Without an interval the flat `frames` total (≤ MAX_FRAMES) still applies.
-MAX_FULL_FRAMES = 60
+# Sized so an explicit fine density is HONOURED, not silently coarsened: a frame every
+# 2 s of a ~16-min video is ~480, so the owner who asks for "frames every 2s" gets them
+# (captioning is sequential, so this is minutes of off-turn vision work — the accepted
+# cost). Still a ceiling: an extreme ask (a multi-hour VOD at a few seconds) clamps here
+# rather than queuing thousands of captions.
+MAX_FULL_FRAMES = 500
 # In full (whole-VOD) mode we transcribe the audio track up to this length — the whisper
 # FALLBACK ceiling only (a captioned video is uncapped: provider captions cover the whole
 # video with no transcription, #879). Whisper is chunked (transcribe_audio_chunked), so a
@@ -448,8 +453,10 @@ async def sample_stream(
 def _full_frame_count(frames: int, interval_s: float, duration: float) -> int:
     """How many stills to grab across a whole VOD. With `interval_s` (> 0) the owner asked
     for a DENSITY — one frame every `interval_s` seconds — so the count scales with the
-    video's length (a frame every 30 s of a 20-min video ≈ 40), bounded by MAX_FULL_FRAMES.
-    Without it, the flat `frames` total applies (bounded by MAX_FRAMES)."""
+    video's length (a frame every 30 s of a 20-min video ≈ 40; a frame every 2 s of a
+    15-min video ≈ 448), bounded by MAX_FULL_FRAMES so a fine density is honoured on a
+    normal-length video rather than silently coarsened. Without it, the flat `frames`
+    total applies (bounded by MAX_FRAMES)."""
     if interval_s > 0:
         return max(1, min(round(duration / interval_s), MAX_FULL_FRAMES))
     return max(1, min(frames, MAX_FRAMES))
