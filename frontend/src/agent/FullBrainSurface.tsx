@@ -778,6 +778,70 @@ function Bubble({
     );
   }
 
+  // A self-contained analysis card (video_analysis / task_status) is full-bleed and brings
+  // its own frame, so — like an image turn — it stands as its own frameless media bubble,
+  // flush in the conversation, and the turn's prose, proposal, and "Thinking / Worked" foot
+  // ride SEPARATE normal bubbles around it. Keeping the foot in a real (inset) bubble is
+  // what lets its thinking + tool-use disclosure render correctly; the old CSS-only flatten
+  // stripped the shared bubble's chrome and orphaned the foot, colliding the strips.
+  const analysisViews = viewsToRender.filter((v) => ANALYSIS_VIEWS.has(v.view));
+  if (analysisViews.length > 0) {
+    const otherViews = viewsToRender.filter((v) => !ANALYSIS_VIEWS.has(v.view));
+    const hasReply =
+      otherViews.length > 0 ||
+      staged !== undefined ||
+      interruptedSpawn ||
+      generalKnowledge ||
+      activityLine !== null;
+    return (
+      <>
+        {message.text.trim() !== "" && (
+          <div className="bubble ai">
+            <Markdown
+              text={shownText}
+              onCite={onCite}
+              cites={citeTargets}
+              entities={entities}
+              onEntity={onOpenEntity}
+              flags={flags}
+              onFlag={(id) => setOpenFlag((cur) => (cur === id ? null : id))}
+              openFlag={openFlag}
+              streaming={message.streaming}
+            />
+          </div>
+        )}
+        {analysisViews.map((v, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
+          <div className="bubble ai bubble-media" key={`av-${i}`}>
+            <ToolView
+              payload={v}
+              onOpenSession={onOpenSession}
+              onDeferredComplete={onDeferredComplete}
+            />
+          </div>
+        ))}
+        {hasReply && (
+          <div className="bubble ai">
+            {otherViews.map((v, i) => (
+              <ToolView
+                // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
+                key={i}
+                payload={v}
+                onOpenSession={onOpenSession}
+                onDeferredComplete={onDeferredComplete}
+              />
+            ))}
+            {stagedAffordance}
+            {interruptedSpawn && <InterruptedSubagentsNote />}
+            {generalKnowledge && <GeneralKnowledgeNote />}
+            {activityLine}
+          </div>
+        )}
+        {fanBlocks}
+      </>
+    );
+  }
+
   // The live sub-agent fan renders as its own bordered block below the answer bubble
   // (the accordion reads the parent turn's `subagent_*` events folded onto the spawn
   // call) ONLY while the turn streams (`fanBlocks`, computed above). On settle it stands
@@ -1210,6 +1274,13 @@ function InterruptedSubagentsNote(): ReactNode {
 // The two image-gen tools, by name — the only tools that drive a live preview
 // surface (so an in-flight render shows the sharpening frame, not a Worked step).
 const IMAGE_TOOL_NAMES = new Set(["generate_image", "edit_image"]);
+
+// Self-framed, full-bleed tool-view cards that stand alone as their own media message
+// (the same treatment a generated image gets): the card in a frameless bubble, and the
+// turn's "Thinking / Worked" foot on a SEPARATE normal bubble below — so the disclosure
+// keeps a real inset bubble to live in. video_analysis is the final analysis card;
+// task_status is its deferred "analyzing…" placeholder that later swaps to it.
+const ANALYSIS_VIEWS = new Set(["video_analysis", "task_status"]);
 
 // A live status line for a multi-phase non-image tool (analyze_video): its streamed
 // phase label, with a thin determinate bar while a counted phase (frame i/N) advances.

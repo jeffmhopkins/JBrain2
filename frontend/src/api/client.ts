@@ -975,6 +975,96 @@ export interface RunStats {
 }
 
 /** The server-side filters the Runs surface drives (GET /api/runs). */
+// ===== The Research Library (docs/plans/RESEARCH_LIBRARY_PLAN.md; DESIGN.md "Research
+// Library") — owner browse over jerv's persisted deep-research reports + analysed videos
+// (the external corpus). Reports key on their uuid; videos key on video_id. =====
+
+export interface ReportListItem {
+  id: string;
+  question: string;
+  complexity: string;
+  created_at: string | null;
+  sub_agents: number;
+  rounds: number;
+}
+export interface ReportHit {
+  id: string;
+  question: string;
+  excerpt: string;
+}
+export interface ReportDetail {
+  id: string;
+  question: string;
+  report_md: string;
+  complexity: string;
+  rounds: number;
+  sub_agents: number;
+  analyzed: boolean;
+  revised: boolean;
+  coverage_limited: boolean;
+  truncated: boolean;
+  sources: { url?: string; title?: string }[];
+  created_at: string | null;
+}
+export interface VideoListItem {
+  video_id: string;
+  provider: string;
+  title: string;
+  channel_name: string;
+  url: string;
+  published_at: string | null;
+  duration_s: number | null;
+}
+export interface VideoHit {
+  /** The stable public key the browse surface opens/deletes a hit by (matches the row + detail). */
+  video_id: string;
+  source_id: string;
+  title: string;
+  channel_name: string;
+  url: string;
+  passage: string;
+  t_ms: number | null;
+}
+export interface TranscriptWindow {
+  t_ms: number;
+  text: string;
+}
+export interface VideoDetail {
+  source_id: string;
+  video_id: string;
+  provider: string;
+  title: string;
+  channel_name: string;
+  url: string;
+  transcript_source: string;
+  summary: string;
+  duration_s: number | null;
+  duration_ms: number | null;
+  published_at: string | null;
+  windows: TranscriptWindow[];
+  frames: { t_ms?: number; caption?: string; thumb_id?: string }[];
+  cued_transcript: {
+    text?: string;
+    words?: { text: string; start_ms: number; end_ms: number }[];
+  } | null;
+}
+export interface ReportListResponse {
+  items: ReportListItem[];
+  total: number;
+}
+export interface ReportSearchResponse {
+  items: ReportHit[];
+  degraded: boolean;
+}
+export interface VideoListResponse {
+  items: VideoListItem[];
+  total: number;
+}
+export interface VideoSearchResponse {
+  items: VideoHit[];
+  degraded: boolean;
+}
+
 export interface RunListParams {
   /** The enabled chip kinds to include (agent expands to agent+subagent); omit for all. */
   kinds?: string[];
@@ -2440,6 +2530,52 @@ export const api = {
   // endpoint). Idempotent on the server; the new run shows up in `runs()`.
   async runTrigger(triggerId: string): Promise<void> {
     await request(`/api/ops/triggers/${encodeURIComponent(triggerId)}/run`, { method: "POST" });
+  },
+
+  // ===== The Research Library (owner browse over jerv's external corpus) =====
+  // Reports key on their uuid; videos key on video_id (delete resolves the row id
+  // server-side). Search returns `degraded` when the embed container is down (keyword-only).
+
+  async researchReports(limit = 50): Promise<ReportListResponse> {
+    const response = await request(`/api/research-library/reports?limit=${limit}`);
+    return (await response.json()) as ReportListResponse;
+  },
+
+  async searchResearchReports(query: string, limit = 30): Promise<ReportSearchResponse> {
+    const q = new URLSearchParams({ q: query, limit: String(limit) });
+    const response = await request(`/api/research-library/reports/search?${q}`);
+    return (await response.json()) as ReportSearchResponse;
+  },
+
+  async researchReport(id: string): Promise<ReportDetail> {
+    const response = await request(`/api/research-library/reports/${encodeURIComponent(id)}`);
+    return (await response.json()) as ReportDetail;
+  },
+
+  async deleteResearchReport(id: string): Promise<void> {
+    await request(`/api/research-library/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  async researchVideos(limit = 50): Promise<VideoListResponse> {
+    const response = await request(`/api/research-library/videos?limit=${limit}`);
+    return (await response.json()) as VideoListResponse;
+  },
+
+  async searchResearchVideos(query: string, limit = 30): Promise<VideoSearchResponse> {
+    const q = new URLSearchParams({ q: query, limit: String(limit) });
+    const response = await request(`/api/research-library/videos/search?${q}`);
+    return (await response.json()) as VideoSearchResponse;
+  },
+
+  async researchVideo(videoId: string): Promise<VideoDetail> {
+    const response = await request(`/api/research-library/videos/${encodeURIComponent(videoId)}`);
+    return (await response.json()) as VideoDetail;
+  },
+
+  async deleteResearchVideo(videoId: string): Promise<void> {
+    await request(`/api/research-library/videos/${encodeURIComponent(videoId)}`, {
+      method: "DELETE",
+    });
   },
 
   // ===== The Automations operator surface (the Ops "Workflow" screen) =====

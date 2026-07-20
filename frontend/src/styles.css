@@ -16861,22 +16861,16 @@ button.auto-sect[aria-expanded="true"] > svg {
   padding: 0;
   background: none;
 }
-/* The analysis cards bring their own frame (border/radius/surface); drop BOTH the generic
-   tool-view wrapper's frame (like .tv-task / .atx) AND — when the card is the turn's only
-   content (no prose) — the answer bubble's own chrome, so the card stands alone in the
-   conversation, native and flush, instead of nested two or three frames deep. Guarded on
-   `:not(:has(> .md))` so a card that accompanies prose keeps the bubble frame. Mirrors the
-   image-media treatment (.bubble.ai.bubble-media). */
+/* The analysis cards bring their own frame (border/radius/surface); drop the generic
+   tool-view wrapper's frame (like .tv-task / .atx) so the card's own rounded frame stands
+   alone instead of nested inside a second one. The card itself rides a frameless
+   `.bubble.ai.bubble-media` bubble (FullBrainSurface splits it out, the same as an image),
+   so the answer bubble's chrome is gone too — while the turn's "Thinking / Worked" foot
+   keeps its own normal bubble, where its disclosure renders correctly. */
 .fb-shell .tool-view:has(.tv-vid) {
   border: 0;
   padding: 0;
   background: none;
-}
-.fb-shell .bubble.ai:has(> .tool-view > .tv-task):not(:has(> .md)),
-.fb-shell .bubble.ai:has(> .tool-view > .tv-vid):not(:has(> .md)) {
-  padding: 0;
-  border: none;
-  background: transparent;
 }
 .tv-task {
   display: flex;
@@ -20577,4 +20571,336 @@ button.task-band:active {
   font-size: 11px;
   color: var(--text-3);
   margin-top: 2px;
+}
+
+/* ===== Research Library (docs/reference/DESIGN.md "Research Library"; binding mock
+   docs/mocks/research-library/b-segmented-tabs.html). Amber research accent. ===== */
+.rl-screen {
+  --mode: var(--amber);
+  --mode-tint: var(--amber-tint);
+}
+.rl-seg {
+  margin-bottom: 10px;
+}
+.rl-seg .seg-on {
+  color: var(--amber);
+}
+.rl-seg-n {
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.rl-seg .seg-on .rl-seg-n {
+  color: var(--amber);
+}
+
+.rl-searchbar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 44px;
+  padding: 0 12px;
+  margin-bottom: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-3);
+}
+.rl-searchbar:focus-within {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 2px var(--amber-tint);
+}
+.rl-searchbar input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+.rl-searchbar input::placeholder {
+  color: var(--text-3);
+}
+
+.rl-empty {
+  padding: 40px 8px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.rl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rl-card {
+  display: flex;
+  align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.rl-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 13px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.rl-card-video .rl-card-body {
+  align-items: center;
+}
+.rl-card-body > svg {
+  flex: none;
+  align-self: center;
+  color: var(--text-3);
+}
+.rl-kebab {
+  flex: none;
+  padding: 0 12px;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.rl-disc {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rl-disc-report {
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  color: var(--amber);
+}
+
+.rl-thumb {
+  position: relative;
+  width: 104px;
+  height: 66px;
+  flex: none;
+  border-radius: 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+.rl-thumb-dur {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.rl-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.32;
+  color: var(--text);
+}
+.rl-channel {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.rl-badges {
+  display: flex;
+}
+.rl-cx {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  text-transform: capitalize;
+}
+.rl-cx-deep {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.rl-cx-comparative {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.rl-cx-simple {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.rl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.rl-chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.rl-foot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+.rl-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--amber);
+}
+
+.rl-actions {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 8px;
+}
+.rl-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 6px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+.rl-action:first-child {
+  border-top: none;
+}
+.rl-action > svg {
+  flex: none;
+  color: var(--text-2);
+}
+.rl-action-del {
+  color: var(--rose);
+}
+.rl-action-del > svg {
+  color: var(--rose);
+}
+.rl-action-armed {
+  background: var(--rose-tint);
+  border-radius: 10px;
+}
+
+.rl-toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  max-width: 398px;
+  margin: 0 auto;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+.rl-toast > svg {
+  flex: none;
+  color: var(--text-3);
+}
+.rl-toast-msg {
+  flex: 1;
+  min-width: 0;
+}
+.rl-toast-undo {
+  background: none;
+  border: none;
+  color: var(--steel);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rl-report-q {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+.rl-prov {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.rl-flag {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.rl-flag-ok {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.rl-flag-warn {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.rl-flag-danger {
+  background: var(--rose-tint);
+  color: var(--rose);
+}
+.rl-md {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+/* Research Library — the detail's ⋯ action bar (Wave R3). */
+.rl-detail-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px -4px 4px 0;
+}
+.rl-detail-kebab {
+  border-left: none;
+  padding: 4px 8px;
+  border-radius: 10px;
 }

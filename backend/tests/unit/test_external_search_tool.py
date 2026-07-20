@@ -29,6 +29,7 @@ async def test_formats_hits_with_timestamp_deep_links_and_fence(monkeypatch) -> 
     hits = [
         CorpusHit(
             source_id="s1",
+            video_id="abc",
             title="Starship Update",
             channel_name="NSF",
             url="https://www.youtube.com/watch?v=abc",
@@ -52,6 +53,7 @@ async def test_summary_only_hit_has_no_timestamp(monkeypatch) -> None:
     hits = [
         CorpusHit(
             source_id="s2",
+            video_id="xyz",
             title="Weekly Recap",
             channel_name="",
             url="https://youtu.be/xyz",
@@ -67,7 +69,7 @@ async def test_summary_only_hit_has_no_timestamp(monkeypatch) -> None:
 
 
 async def test_degraded_note_when_embed_down(monkeypatch) -> None:
-    hits = [CorpusHit("s3", "T", "C", "https://youtu.be/q", "p", 1000)]
+    hits = [CorpusHit("s3", "vid3", "T", "C", "https://youtu.be/q", "p", 1000)]
     out = await _run(monkeypatch, hits, True, {"query": "x"})
     assert "keyword-only" in out
 
