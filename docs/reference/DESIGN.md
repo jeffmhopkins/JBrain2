@@ -1328,7 +1328,7 @@ surfaces — they lost here on fit, not quality.)
   amber type-disc beside a two-line title, a complexity pill, a provenance chip row, a
   `research · date` footer) and read too tall — only ~4 cleared the phone fold. Chosen **D —
   list row** over three lighter rivals (A tightened-current / B text-meta / C edge-accent rail):
-  a **single-line** clamped title (the full text stays in the DOM for search + assistive tech)
+  a **two-line** clamped 13px title (the full text stays in the DOM for search + assistive tech)
   over **one muted meta subline** — complexity as a colour-coded word (deep `--violet` /
   comparative `--steel` / simple `--green`), then `sub_agents` · `rounds` · date — led by a
   small **amber** file glyph, with the row's chevron and `⋯` kept. ~7 reports now clear the

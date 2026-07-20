@@ -20816,14 +20816,12 @@ button.task-band:active {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-/* Report titles clamp to a single line (variant D) — the full text stays in the DOM for search
-   + assistive tech; the meta subline below carries complexity, provenance, and date. */
+/* Report titles clamp to two lines (variant D), inheriting the base two-line clamp — the full
+   text stays in the DOM for search + assistive tech; the meta subline below carries complexity,
+   provenance, and date. */
 .rl-title-report {
-  display: block;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.3;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .rl-subline {
   font-size: 11.5px;

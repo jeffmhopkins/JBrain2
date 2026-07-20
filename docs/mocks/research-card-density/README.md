@@ -20,7 +20,7 @@ primitives:
 | **A — Tightened current** | Keeps the amber disc + pill chips, but collapses badge/chips/footer into **one meta band** and trims the title to 14px. Most familiar, least risky. On long titles the pill+chips meta can wrap, softening the gain. | ~+1 card |
 | **B — Text-meta** | Drops the pill chrome — complexity becomes a **coloured word** leading a single dotted plain-text meta line; the disc stays as the type cue. Quieter, reliably shorter (meta never wraps). | ~+1–2 cards |
 | **C — Edge-accent rail** | Complexity moves to a **3px coloured left edge**, freeing the disc's width for the title; date **right-aligns** on the title line; meta is one plain line and can afford to re-add `sources`. A different visual read. | ~+1–2 cards |
-| **D — List row** | **Maximum density** — email-style: a one-line clamped title over a muted subline, a small amber glyph, and a chevron. Most cards per screen; long questions lose their second line. | ~+3 cards |
+| **D — List row** | **Maximum density** — email-style: a clamped title (shipped at 13px / two lines) over a muted subline, a small amber glyph, and a chevron. Most cards per screen. | ~+3 cards |
 
 **Chosen: D — List row** (locked 2026-07-20). The report card is now a compact list row —
 `ReportRow` + the `.rl-card-report` / `.rl-title-report` / `.rl-subline` / `.rl-cxword-*` styles
