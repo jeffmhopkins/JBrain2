@@ -2065,6 +2065,10 @@ h3 {
 .cal-step svg {
   width: 18px;
   height: 18px;
+  /* The chevron is the button's only flex child; without flex:none Chromium
+     collapses a viewBox-only <svg> flex item to 0 width (height is honored),
+     leaving the prev/next arrows invisible so the calendar reads as locked. */
+  flex: none;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
