@@ -9,6 +9,7 @@ bare media URL) is skipped — there is nothing to dedup or deep-link back to.
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -23,8 +24,10 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.embed import EmbedClient, vector_literal
 from jbrain.external.window import window_timeline
 from jbrain.ingest.video import VideoAnalysis
+from jbrain.media import jpeg_thumbnail
 from jbrain.queue import SYSTEM_CTX, enqueue
 from jbrain.search.service import rrf_scores
+from jbrain.storage import BlobStore
 from jbrain.stream import ResolvedStream
 from jbrain.workflow.registry import ActionSpec
 
@@ -283,6 +286,31 @@ async def fetch_transcript(
         frames=list(row.frames or []),
         cued_transcript=row.transcript if isinstance(row.transcript, dict) else None,
     )
+
+
+async def resolve_frame_thumbnails(raw_frames: list[dict], blobs: BlobStore | None) -> list[dict]:
+    """Each stored `{t_ms, caption, thumb_id}` frame as a card-ready view, redeeming its
+    `thumb_id` into an inline `thumb_data_uri` from the persisted blob when a store is
+    available (the same still the live analyze card shows). Best-effort per frame: a
+    purged/missing blob just falls back to a bare marker, never a failure. Shared by the jerv
+    `show_external_video` card and the owner Research Library detail so both render identical
+    frame stills."""
+    frames: list[dict] = []
+    for f in raw_frames:
+        if not isinstance(f, dict):
+            continue
+        frame = {"t_ms": int(f.get("t_ms", 0)), "caption": str(f.get("caption", ""))}
+        thumb_id = f.get("thumb_id")
+        if blobs is not None and isinstance(thumb_id, str) and thumb_id:
+            try:
+                thumb = jpeg_thumbnail(await blobs.get(thumb_id))
+                frame["thumb_data_uri"] = (
+                    "data:image/jpeg;base64," + base64.b64encode(thumb).decode()
+                )
+            except Exception:  # noqa: BLE001 - a missing/purged blob degrades to a marker, not an error
+                pass
+        frames.append(frame)
+    return frames
 
 
 @dataclass(frozen=True)

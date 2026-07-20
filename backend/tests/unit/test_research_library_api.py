@@ -124,6 +124,17 @@ class FakeResearchLibrary:
     async def fetch_video(self, principal_id: str, video_id: str) -> ExternalTranscript | None:
         return self._video if video_id == "vid-1" else None
 
+    async def resolve_frames(self, frames: list[dict]) -> list[dict]:
+        # Mirrors corpus.resolve_frame_thumbnails: a frame's thumb_id is redeemed into an
+        # inline thumb_data_uri (the router hands the resolved views to the client).
+        out: list[dict] = []
+        for f in frames:
+            view = {"t_ms": f.get("t_ms", 0), "caption": f.get("caption", "")}
+            if f.get("thumb_id"):
+                view["thumb_data_uri"] = "data:image/jpeg;base64,ZmFrZQ=="
+            out.append(view)
+        return out
+
     async def delete_video(self, ctx: SessionContext, source_id: str) -> bool:
         self.calls["deleted_video"] = (ctx, source_id)
         return source_id == "src-1"
@@ -269,7 +280,10 @@ def test_get_video_maps_windows_and_frames(client: TestClient, repo: FakeAuthRep
         {"t_ms": 0, "text": "intro"},
         {"t_ms": 5000, "text": "the orchestrator holds no web tools"},
     ]
-    assert body["frames"][0]["thumb_id"] == "t0"
+    # The stored thumb_id is redeemed server-side into an inline still the filmstrip renders;
+    # the raw blob sha never rides the response.
+    assert body["frames"][0]["thumb_data_uri"].startswith("data:image/jpeg;base64,")
+    assert "thumb_id" not in body["frames"][0]
     assert client.get("/api/research-library/videos/ghost").status_code == 404
 
 

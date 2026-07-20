@@ -15,12 +15,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.db.session import SessionContext
 from jbrain.embed import EmbedClient
 from jbrain.external import corpus, research_corpus
+from jbrain.storage import BlobStore
 
 
 class ResearchLibrary:
-    def __init__(self, maker: async_sessionmaker[AsyncSession], embedder: EmbedClient) -> None:
+    def __init__(
+        self,
+        maker: async_sessionmaker[AsyncSession],
+        embedder: EmbedClient,
+        blobs: BlobStore | None = None,
+    ) -> None:
         self._maker = maker
         self._embedder = embedder
+        # The blob store backs frame-thumbnail redemption for the video detail; None (e.g. a
+        # store-less test) degrades every frame to a bare marker instead of failing.
+        self._blobs = blobs
 
     # --- reports ---
     async def list_reports(
@@ -64,6 +73,11 @@ class ResearchLibrary:
         self, principal_id: str, video_id: str
     ) -> corpus.ExternalTranscript | None:
         return await corpus.fetch_transcript(self._maker, video_id, principal_id=principal_id)
+
+    async def resolve_frames(self, frames: list[dict]) -> list[dict]:
+        """The video detail's stored frames as card-ready views — each `thumb_id` redeemed into
+        an inline `thumb_data_uri` from its blob so the filmstrip renders stills, not markers."""
+        return await corpus.resolve_frame_thumbnails(frames, self._blobs)
 
     async def delete_video(self, ctx: SessionContext, source_id: str) -> bool:
         return await corpus.delete_external_video(self._maker, ctx, source_id)

@@ -1305,7 +1305,8 @@ job lands), a **complexity** badge (simple `--green` / comparative `--steel` / d
 `analyzed` "cross-checked" / `revised` / `coverage_limited` / `truncated` flags the theme
 colors — closed booleans, never a model-sent color). Videos are **grouped into collapsible
 per-channel sections** (a `⌄` section head with the channel name + count, sorted by channel;
-default expanded), each row leading with the provider **thumbnail** (a `i.ytimg.com` still
+default expanded; rows within a section run **newest-published first**, so a channel reads as
+a timeline rather than in analysis order), each row leading with the provider **thumbnail** (a `i.ytimg.com` still
 for a YouTube source, falling back to the camera glyph on load failure) carrying the
 duration pill and the title + date. A/C's single mixed stream made the report provenance and
 the video thumbnail fight for the same row; B's two lanes let each read at a glance. (A's

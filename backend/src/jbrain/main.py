@@ -636,7 +636,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.run_reader = RunLogReader(maker)
         # The owner-facing Research Library reader: browse/search/delete over jerv's
         # persisted deep-research reports + analysed videos (the external corpus).
-        app.state.research_library = ResearchLibrary(maker, app.state.embed_client)
+        app.state.research_library = ResearchLibrary(
+            maker, app.state.embed_client, app.state.blob_store
+        )
         # The Automations operator surface: projects the live trigger/schedule/
         # pipeline config + the run log into the "when -> do" cards, and the action
         # registry into the Catalog. `seeded_names` is the subset mirrored into

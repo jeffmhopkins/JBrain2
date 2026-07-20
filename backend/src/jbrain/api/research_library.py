@@ -221,7 +221,8 @@ async def search_videos(
 
 @router.get("/videos/{video_id}")
 async def get_video(request: Request, principal: OwnerDep, video_id: str) -> VideoDetailOut:
-    record = await get_library(request).fetch_video(principal.id, video_id)
+    lib = get_library(request)
+    record = await lib.fetch_video(principal.id, video_id)
     if record is None:
         raise HTTPException(status_code=404, detail="no analysed video with that id in scope")
     return VideoDetailOut(
@@ -237,7 +238,9 @@ async def get_video(request: Request, principal: OwnerDep, video_id: str) -> Vid
         duration_ms=record.duration_ms,
         published_at=record.published_at,
         windows=[TranscriptWindowOut(t_ms=t, text=txt) for t, txt in record.windows],
-        frames=list(record.frames),
+        # Redeem each frame's stored thumb_id into an inline thumbnail so the detail's
+        # filmstrip renders the same stills the in-chat analyze card shows.
+        frames=await lib.resolve_frames(list(record.frames)),
         cued_transcript=record.cued_transcript,
     )
 
