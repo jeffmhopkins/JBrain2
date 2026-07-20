@@ -286,11 +286,16 @@ fabricated an image comparison it had no way to perform; reconciled with a four-
 `analyze_stream` `single`-mode `seek` fix — it dropped `seek` and always sampled t=0) shipped
 on-branch; V1–V6 open.
 
-**Scheduled:** Research Library (build plan: `docs/plans/RESEARCH_LIBRARY_PLAN.md`) — the owner's
-browse door to the two `external`-corpus artifacts jerv produces on its own turns: deep-research
-reports (`research_reports`) and video analyses (`external_sources`). A card-launcher
-`ResearchLibraryScreen` (GUI variant B — segmented Reports/Videos tabs, locked;
-`docs/mocks/research-library/`) to search, view, and delete them, over a net-new owner-gated HTTP
-API that reuses the existing corpus read/search/fetch/delete callables (no migration, no new grant —
-both tables already carry the DELETE grant + domain RLS). Waves R1 (backend API), R2 (list surface),
-R3 (detail layer + item actions), all open.
+**Shipped:** Research Library (build record: `docs/archive/RESEARCH_LIBRARY_PLAN.md`, PR #907) — the
+owner's card-launcher browse door to the two `external`-corpus artifacts jerv produces on its own
+turns: deep-research reports (`research_reports`) and video analyses (`external_sources`). A
+`ResearchScreen` (GUI variant B — segmented Reports/Videos tabs) to search, view, and delete them
+over an owner-gated `/api/research-library` HTTP API that reuses the existing corpus
+read/search/fetch/delete callables (no migration, no new grant — both tables already carry the DELETE
+grant + `external`-domain RLS), plus a detail layer (report via `<Markdown>`, video via
+`<VideoAnalysis>`) and per-item actions (open-in-jerv / copy / download / open-source). **Carried
+deferrals:** the browse filter is an instant client-side filter over the loaded page — the hybrid
+**server** search endpoints ship + are tested but are not yet wired to a *whole-library* search
+affordance; **"Open in jerv" seeds a fresh conversation** rather than deep-linking a report's
+originating `session_id` (not exposed by the fetch); and a **served-thumbnail route** for external-video
+frames, **bulk-delete/select mode**, and **re-run-analysis from the library** remain follow-ons.
