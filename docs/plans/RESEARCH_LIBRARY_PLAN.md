@@ -181,6 +181,11 @@ red-team pass); one PR per wave, CI green before merge.
   mode (launcher → Research → tabs → detail). **Boundary note (scope deviation, PROCESS §):**
   the detail *view* landed here with the list (a coherent browse+view+delete commit) rather
   than in R3; the action sheet ships View + Delete, and R3 adds the remaining item actions.
+  **Search rescope [decided, DESIGN §]:** the as-you-type filter is an **instant client-side
+  filter over the loaded rows** of the active tab (matching the binding mock + keeping the
+  rich rows), not the plan's original server-side debounced search. The server search
+  endpoints remain the tested API for a future whole-library search; they are not wired into
+  the browse filter.
 - **Wave R3 — Item actions. ✅ LANDED (this branch).** The per-item action sheet in the
   detail's `⋯` (where the full item data is loaded): **Open in jerv conversation** (both —
   seeds a new Full Brain conversation with a reference to the item via the compose handoff),

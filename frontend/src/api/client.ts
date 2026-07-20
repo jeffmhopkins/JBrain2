@@ -1016,6 +1016,8 @@ export interface VideoListItem {
   duration_s: number | null;
 }
 export interface VideoHit {
+  /** The stable public key the browse surface opens/deletes a hit by (matches the row + detail). */
+  video_id: string;
   source_id: string;
   title: string;
   channel_name: string;

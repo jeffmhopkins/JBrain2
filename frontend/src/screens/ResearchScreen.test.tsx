@@ -105,7 +105,7 @@ describe("ResearchScreen", () => {
     expect(del).not.toHaveBeenCalled(); // undo cancelled the deferred commit
   });
 
-  it("commits the delete once the undo window closes", async () => {
+  it("commits the delete once the undo window closes, then retires the snackbar", async () => {
     stub();
     const del = vi.spyOn(api, "deleteResearchReport").mockResolvedValue();
     render(<ResearchScreen onOpen={() => {}} undoMs={20} />);
@@ -115,6 +115,27 @@ describe("ResearchScreen", () => {
     fireEvent.click(within(sheet).getByText("Delete"));
     fireEvent.click(within(sheet).getByText(/Tap again/));
     await waitFor(() => expect(del).toHaveBeenCalledWith("r1"));
+    // The snackbar's lifetime tracks the undo window — it dismisses when the delete commits.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("an Undo tap after the commit is inert (never resurrects a deleted row)", async () => {
+    stub();
+    const del = vi.spyOn(api, "deleteResearchReport").mockResolvedValue();
+    render(<ResearchScreen onOpen={() => {}} undoMs={20} />);
+    await screen.findByText("How was the 1918 flu toll estimated?");
+    fireEvent.click(screen.getAllByRole("button", { name: "Report actions" })[0] as HTMLElement);
+    const sheet = await screen.findByRole("dialog");
+    fireEvent.click(within(sheet).getByText("Delete"));
+    fireEvent.click(within(sheet).getByText(/Tap again/));
+    // Grab the Undo button synchronously (before the 20ms commit) so the node survives, then
+    // let the commit fire and click the now-stale button — it must NOT restore the row.
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    await waitFor(() => expect(del).toHaveBeenCalled());
+    fireEvent.click(undo);
+    expect(screen.queryByText("How was the 1918 flu toll estimated?")).not.toBeInTheDocument();
   });
 
   it("shows an error state when the list fails to load", async () => {

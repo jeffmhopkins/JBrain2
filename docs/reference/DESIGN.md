@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-19
+> **Status:** Living · **Last verified:** 2026-07-20
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1324,11 +1324,17 @@ for other surfaces — they lost here on fit, not quality.)
   **undo snackbar** (steel undo link; the delete is soft-held for the toast's life, then
   committed). The corpus rows carry no graph/notes footprint, so deletion is a plain row
   delete under the `external` scope — no cascade, no review.
+- **Search is an instant in-tab client filter [decided].** For a personal-scale corpus the
+  as-you-type filter narrows the *already-loaded* rows of the active tab client-side (matching
+  the binding mock, keeping the rich browse rows, no debounce/spinner) over the title/question
+  + channel fields. The owner-gated **server** search endpoints (`GET
+  /research-library/{reports,videos}/search`, hybrid FTS + embedding, `degraded` signal) are
+  the tested API for a future *whole-library* search affordance (matching in `report_md` /
+  summary / transcript beyond the loaded page) — not wired into the browse filter today.
 - **States (DoD fixtures):** empty ("Nothing here yet — reports and video analyses jerv
-  saves show up here."), search-no-match (names the fix), long lists, a stream/LIVE video,
-  a truncated/coverage-limited report, and the connectivity banner on an unreachable
-  server (never an error page). Live-as-you-type search reuses the Search screen's 250ms
-  debounce + sequence-guard.
+  saves show up here."), filter-no-match (names the fix), long lists, a stream/LIVE video,
+  a truncated/coverage-limited report, and an error line on an unreachable server (never an
+  error page).
 
 Everything composes from settled paradigms (segmented control, list rows, the `Sheet`
 action menu, the slide-up detail layer, the `<Markdown>` + `video_analysis` renderers, the

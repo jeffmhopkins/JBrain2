@@ -58,6 +58,14 @@ function downloadText(name: string, text: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** The video's transcript as plain text — the word-level cues when present (what the card
+ * renders), else the ordered passage windows — so Copy transcript matches what's shown. */
+function videoTranscript(video: VideoDetail): string {
+  const cued = video.cued_transcript?.words;
+  if (cued && cued.length > 0) return cued.map((w) => w.text).join(" ");
+  return video.windows.map((w) => w.text).join("\n");
+}
+
 /** A filesystem-safe short slug from a title, for the download filename. */
 function slug(s: string): string {
   return (
@@ -222,9 +230,7 @@ export function ResearchDetailScreen({
             <button
               type="button"
               className="rl-action"
-              onClick={() =>
-                void copyAction("Transcript", state.video.windows.map((w) => w.text).join("\n"))
-              }
+              onClick={() => void copyAction("Transcript", videoTranscript(state.video))}
             >
               <ClipIcon size={19} /> Copy transcript
             </button>

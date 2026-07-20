@@ -202,6 +202,8 @@ export function App() {
     setEntityView(null);
     setListView(null);
     setWikiArticle(null);
+    setTalkArticle(null);
+    setResearchDetail(null);
     setSession({ status: "anonymous" });
   }
 

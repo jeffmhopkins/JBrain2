@@ -68,14 +68,17 @@ export function ResearchScreen({ onOpen, undoMs = UNDO_MS }: ResearchScreenProps
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [menuFor, setMenuFor] = useState<Item | null>(null);
-  const [toast, setToast] = useState<{ msg: string; undo?: () => void } | null>(null);
+  // The undo snackbar is stamped with the pending delete's id so its lifetime tracks the
+  // undo window (dismissed exactly when that delete commits) and overlapping deletes never
+  // clear each other's toast.
+  const [toast, setToast] = useState<{ id: string; msg: string } | null>(null);
 
-  // Deferred-commit deletes: id → the pending row + its server commit timer. On undo we
-  // cancel the timer and restore the row; on unmount we flush (commit) so nothing silently
-  // resurrects. The map is a ref so it survives re-renders without re-arming effects.
-  const pending = useRef<Map<string, { item: Item; timer: ReturnType<typeof setTimeout> }>>(
-    new Map(),
-  );
+  // Deferred-commit deletes: id → the pending row, its original index, and its server commit
+  // timer. On undo we cancel the timer and restore the row at its index; on unmount we flush
+  // (commit) so nothing silently resurrects. A ref so it survives re-renders.
+  const pending = useRef<
+    Map<string, { item: Item; index: number; timer: ReturnType<typeof setTimeout> }>
+  >(new Map());
 
   const load = useCallback(() => {
     setError(null);
@@ -104,6 +107,17 @@ export function ResearchScreen({ onOpen, undoMs = UNDO_MS }: ResearchScreenProps
       map.clear();
     };
   }, []);
+
+  // Undo a still-pending delete: inert once the delete has committed (the entry is gone), so
+  // a lingering tap can never resurrect an already-deleted row.
+  function undoDelete(id: string) {
+    const p = pending.current.get(id);
+    if (!p) return;
+    clearTimeout(p.timer);
+    pending.current.delete(id);
+    restoreLocally(p.item, p.index);
+    setToast((t) => (t?.id === id ? null : t));
+  }
 
   function commitDelete(item: Item) {
     const done =
@@ -137,18 +151,11 @@ export function ResearchScreen({ onOpen, undoMs = UNDO_MS }: ResearchScreenProps
     const timer = setTimeout(() => {
       pending.current.delete(id);
       commitDelete(item);
+      // Retire the snackbar when its own delete commits — undo is no longer possible.
+      setToast((t) => (t?.id === id ? null : t));
     }, undoMs);
-    pending.current.set(id, { item, timer });
-    setToast({
-      msg: `Deleted “${clip(itemTitle(item))}”.`,
-      undo: () => {
-        const p = pending.current.get(id);
-        if (p) clearTimeout(p.timer);
-        pending.current.delete(id);
-        restoreLocally(item, index < 0 ? 0 : index);
-        setToast(null);
-      },
-    });
+    pending.current.set(id, { item, index: index < 0 ? 0 : index, timer });
+    setToast({ id, msg: `Deleted “${clip(itemTitle(item))}”.` });
   }
 
   const activeList = tab === "report" ? reports : videos;
@@ -259,11 +266,9 @@ export function ResearchScreen({ onOpen, undoMs = UNDO_MS }: ResearchScreenProps
         <output className="rl-toast">
           <TrashIcon size={15} />
           <span className="rl-toast-msg">{toast.msg}</span>
-          {toast.undo && (
-            <button type="button" className="rl-toast-undo" onClick={toast.undo}>
-              Undo
-            </button>
-          )}
+          <button type="button" className="rl-toast-undo" onClick={() => undoDelete(toast.id)}>
+            Undo
+          </button>
         </output>
       )}
     </main>
