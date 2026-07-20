@@ -1265,7 +1265,11 @@ classes). **Citations are tracked end-to-end:** the real URLs the sub-agents rea
 collected into `web_sources` (the global registry the synthesizer numbers against), and
 the report's `[^n]` markers render as tappable **favicon** citations — `[^n]` →
 `web_sources[n-1]`, the same on-box favicon standard jerv's own web answers use (the URLs
-came from the children's tool calls, never model prose; #9). During the run each stage streams a live
+came from the children's tool calls, never model prose; #9). A synthesizer on **gpt-oss**
+cites in its native harmony notation (`【410†L1-L8】`) instead of `[^n]`; the report render
+path opts into `harmonyToFootnotes` (`Markdown harmonyCitations`), which rewrites `【N†…】` →
+`[^N]` so those land on the same favicon path — a browse turn, where `【N†…】` is the model's
+private cursor, still strips it. During the run each stage streams a live
 `ToolProgressEvent` phase line (Planning → Researching → Cross-checking → Checking coverage
 → Filling gaps → Writing → Reviewing → Revising), rendered by `DeepResearchProgress` as a
 **vertical timeline** (`.fb-drp` — the eight stages stack down a rail; done reads steel spine

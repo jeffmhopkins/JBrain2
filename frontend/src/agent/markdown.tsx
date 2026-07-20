@@ -73,6 +73,37 @@ export function stripModelCitations(text: string): string {
   return text.replace(MODEL_CITATION, "").replace(SOURCE_PROSE, "");
 }
 
+// gpt-oss writes its cursor number in Unicode superscripts (【⁴¹⁰†L1-L8】), so fold them
+// back to ASCII before parsing the number.
+const SUPERDIGIT: Record<string, string> = {
+  "⁰": "0",
+  "¹": "1",
+  "²": "2",
+  "³": "3",
+  "⁴": "4",
+  "⁵": "5",
+  "⁶": "6",
+  "⁷": "7",
+  "⁸": "8",
+  "⁹": "9",
+};
+// A harmony citation whose cursor is NUMERIC — 【N†…】 or [N†…], N ascii or superscript.
+// Unlike a browse turn (where N is the model's private browse cursor, stripped above), a
+// deep-research synthesizer is handed a NUMBERED sources list, so N *is* the source index.
+const HARMONY_NUM_CITE =
+  /【\s*([\d⁰¹²³⁴⁵⁶⁷⁸⁹]+)\s*†[^】\n]*】|\[\s*([\d⁰¹²³⁴⁵⁶⁷⁸⁹]+)\s*†[^\]\n]*\]/g;
+
+/** Rewrite gpt-oss's harmony citations (【N†L1-L8】) to the `[^N]` footnotes the renderer
+ * maps to `web_sources[N-1]`. Opt-in — used ONLY where N indexes a real numbered sources
+ * list (a deep-research report), never on a browse turn where the cursor is meaningless. */
+export function harmonyToFootnotes(text: string): string {
+  return text.replace(HARMONY_NUM_CITE, (_m, curly?: string, square?: string) => {
+    const raw = curly ?? square ?? "";
+    const ascii = [...raw].map((c) => SUPERDIGIT[c] ?? c).join("");
+    return `[^${ascii}]`;
+  });
+}
+
 // Typeset a LaTeX fragment to KaTeX's own span markup, or null when it isn't valid
 // (yet). `throwOnError: true` makes KaTeX throw on a parse/build error instead of
 // emitting a bright-red error span — so a half-streamed formula ("\frac{a}{") reads
@@ -934,6 +965,7 @@ export function Markdown({
   onFlag,
   openFlag,
   streaming = false,
+  harmonyCitations = false,
 }: {
   text: string;
   /** Tap handler for a `[^n]` source citation. */
@@ -955,8 +987,15 @@ export function Markdown({
   /** The turn is still streaming — a not-yet-complete formula shows a "building
    * math render…" placeholder instead of its raw source. */
   streaming?: boolean;
+  /** This text's citations index a numbered sources list (a deep-research report), so a
+   * gpt-oss harmony citation (【N†…】) is a REAL source ref — convert it to `[^N]` instead
+   * of stripping it as browse noise. Off everywhere else. */
+  harmonyCitations?: boolean;
 }): ReactNode {
-  const blocks = useMemo(() => parseBlocks(stripModelCitations(text)), [text]);
+  const blocks = useMemo(
+    () => parseBlocks(stripModelCitations(harmonyCitations ? harmonyToFootnotes(text) : text)),
+    [text, harmonyCitations],
+  );
   const index = useMemo(() => buildIndex(entities), [entities]);
   // Fresh per render: `placed` is mutated as the blocks scan, then read below to
   // decide which flags need an end-of-bubble fallback.

@@ -1516,7 +1516,7 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
           </button>
           {openReport && (
             <div className="tv-dr-report">
-              <Markdown text={reportMd} cites={cites} />
+              <Markdown text={reportMd} cites={cites} harmonyCitations />
             </div>
           )}
         </>
