@@ -12,7 +12,7 @@ code (a future fourth mode should not need a migration to store).
 from alembic import op
 
 revision = "0142"
-down_revision = "0141"
+down_revision = "0140"
 branch_labels = None
 depends_on = None
 

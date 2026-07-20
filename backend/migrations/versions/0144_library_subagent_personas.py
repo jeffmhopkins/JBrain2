@@ -9,16 +9,17 @@ child INSERT would fail outright (exactly the widening 0105 did for the web pers
 The `app.tasks` CHECK is kept in lockstep (the two constraints have moved together
 since 0095), though these personas are spawn-only and never owner-selected as a Task.
 
-Numbered 0143 (originally 0141): PR #910 landed its own 0141 (`research_report_title`)
-in the same merge window as this feature's original 0141/0142, so this migration is
-re-sequenced onto the tail of the chain — 0140 → 0141 (title) → 0142 (source_mode) →
-0143 (this) — to resolve the duplicate-revision collision on main.
+Numbered 0144 (originally 0141): three migrations off 0140 landed in the same window —
+`research_report_title` (#910), `research_report_source_mode`, and this one — and the
+concurrent renumbers left main with a dangling `0141` reference and a duplicate `0143`.
+This re-sequences the chain to a single linear head: 0140 → 0142 (source_mode) → 0143
+(title) → 0144 (this).
 """
 
 from alembic import op
 
-revision = "0143"
-down_revision = "0142"
+revision = "0144"
+down_revision = "0143"
 branch_labels = None
 depends_on = None
 
