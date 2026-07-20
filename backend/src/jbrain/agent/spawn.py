@@ -80,7 +80,13 @@ _TITLE_LEN = 120  # a child session title is a short label; longer is clamped
 _CHILD_TASK = "agent.turn"
 # The working word each persona shows while running (the live status word; a neutral
 # tag carries the persona itself — see DESIGN.md "Sub-agent spawning surfaces").
-_PHASE = {"research": "researching", "review": "reviewing", "summarize": "summarizing"}
+_PHASE = {
+    "research": "researching",
+    "review": "reviewing",
+    "summarize": "summarizing",
+    "research_library": "researching",
+    "review_library": "reviewing",
+}
 
 
 def _emit(ctx: ToolContext, event: ChatEvent) -> None:

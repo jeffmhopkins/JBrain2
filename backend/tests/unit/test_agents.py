@@ -30,7 +30,7 @@ from jbrain.agent.agents import (
 )
 
 
-def test_eight_agents_are_defined() -> None:
+def test_ten_agents_are_defined() -> None:
     assert (
         frozenset(
             {
@@ -42,6 +42,8 @@ def test_eight_agents_are_defined() -> None:
                 "review",
                 "summarize",
                 "intake",
+                "research_library",
+                "review_library",
             }
         )
         == AGENT_NAMES
@@ -182,11 +184,38 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
         assert SPAWN_TOOL not in (p.tools or frozenset())
 
 
+def test_library_subagent_personas_are_corpus_sandboxed_and_kb_less() -> None:
+    """research_library/review_library are the corpus twins of research/review: their
+    tools are the video-library reads (NO web), they read no knowledge base, hold no
+    location, and cannot spawn — leaves, exactly like the web children."""
+    from jbrain.agent.agents import RESEARCH_LIBRARY_TOOLS, REVIEW_LIBRARY_TOOLS
+
+    research_lib, review_lib = (AGENTS["research_library"], AGENTS["review_library"])
+    assert (
+        research_lib.tools
+        == RESEARCH_LIBRARY_TOOLS
+        == frozenset({"search_external_video", "read_external_video", "current_time"})
+    )
+    assert review_lib.tools == REVIEW_LIBRARY_TOOLS == RESEARCH_LIBRARY_TOOLS
+    for p in (research_lib, review_lib):
+        assert p.reads_knowledge_base is False
+        # No web egress: the library personas never hold web_search/web_fetch.
+        assert not ({"web_search", "web_fetch"} & (p.tools or frozenset()))
+        assert "current_location" not in (p.tools or frozenset())
+        assert SPAWN_TOOL not in (p.tools or frozenset())
+        # jerv (the only spawner) holds every corpus tool, so the parent⊆child clamp
+        # keeps them — a library child is never stripped to nothing.
+        assert (p.tools or frozenset()) <= (AGENTS["jerv"].tools or frozenset())
+
+
 def test_spawn_set_matches_the_subagent_personas() -> None:
-    """The closed spawn set is exactly the three child personas — `spawn_subagent`
+    """The closed spawn set is exactly the five child personas — `spawn_subagent`
     validates against it BEFORE agent_for (which would otherwise resolve an unknown
     name to the KB-capable curator)."""
-    assert frozenset({"research", "review", "summarize"}) == SUBAGENT_PERSONAS
+    assert (
+        frozenset({"research", "review", "summarize", "research_library", "review_library"})
+        == SUBAGENT_PERSONAS
+    )
     assert SUBAGENT_PERSONAS <= AGENT_NAMES
     # The spawnable personas are all KB-less sandboxes — never the curator.
     assert "curator" not in SUBAGENT_PERSONAS
@@ -274,6 +303,14 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "intake": (
             "agent-intake-v1",
             "fb03cdd6ff8198855e006cf0ee22de93d2384457cd23fe4f25607ef207f31c38",
+        ),
+        "research_library": (
+            "agent-research-library-v1",
+            "425c7857526130dc25873a7fd9cb8b8652074b45a4fa157087333ad87d3212d3",
+        ),
+        "review_library": (
+            "agent-review-library-v1",
+            "dfe6a297ac32de73ffafbb2f3910e47698698268d64787b8d744cb44c56a010c",
         ),
     }
     assert set(pins) == AGENT_NAMES

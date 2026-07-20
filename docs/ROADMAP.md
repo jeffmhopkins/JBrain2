@@ -274,7 +274,7 @@ on-branch (D1 spine, D2 refill round + critique, D3 the `deep_research_report` t
 steering) with full backend + frontend unit suites; the D3 mock-gate sign-off and on-box budget /
 wall-clock tuning remain before it is marked settled.
 
-**Scheduled:** Deep research — video-library source modes (build plan:
+**In progress:** Deep research — video-library source modes (build plan:
 `docs/plans/DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md`) — a `sources` knob on the shipped `deep_research` tool so
 a run can draw from the owner's external video library (`external_sources`/`external_source_chunks`) instead
 of, or ahead of, the open web: `web` (default, unchanged), `library` (exclusive to the video corpus), and
@@ -284,7 +284,9 @@ corpus-searching `research_library`); the plan→gather→reflect→refill→syn
 budget, and the report view are otherwise unchanged, and video hits already cite as timestamped `[^n]`
 `WebSource` chips. Explicitly **not** the deferred KB-scoped deep research (the owner's notes/wiki/entities
 stay out of scope); the video corpus is non-sensitive third-party content jerv already reads safely. DV1
-(routing + flag), DV2 (jerv steering + provenance + red-team), and a conditional DV3 (GUI mock gate) open.
+(routing + flag, migration 0141 — the `sources` param, the `research_library`/`review_library` corpus
+personas, and per-mode gather/refill/review routing) landed on-branch; DV2 (jerv steering + provenance +
+red-team) and a conditional DV3 (GUI chip) open.
 
 **In progress:** Video/image inspection tools (build plan: `docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md`) —
 give jerv eyes on a specific still so a visual question is answered from pixels it actually saw, not a

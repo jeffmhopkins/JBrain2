@@ -1,6 +1,6 @@
 # Deep Research — Video-Library Source Modes — Build Plan
 
-> **Status:** Scheduled · **Last verified:** 2026-07-20 · **Waves:** DV1◻️ DV2◻️ DV3◻️
+> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** DV1✅ DV2◻️ DV3◻️
 
 A **`sources` knob** on the shipped `deep_research` tool that lets a research run
 draw from the owner's **external video library** (the `external_sources` /
@@ -229,15 +229,24 @@ Each wave: parallel-task worktrees off a `wave-DVn` branch, per-task **and** wav
 adversarial review (security/red-team for the boundary/scope surface), one PR, CI green
 before merge.
 
-- **Wave DV1 — the `sources` flag + per-round routing (backend).** The `sources` enum
-  param on `deep_research.tool` (bumped version); `RESEARCH_LIBRARY_TOOLS` + the
-  `research_library` persona in `SUBAGENT_PERSONAS`/`AGENTS`; the
-  `research_library.prompt` (digest-pinned); `gather_persona`/`refill_persona`
-  selection from `sources` in `DeepResearchService.research`; the exclusive-mode
-  no-web guarantee + the reworded empty-library refusal. Full routing +
-  exclusive-guarantee + injection + RLS-isolation tests. **Deliverable:** "research a
-  question against my video library only" and "…library first, web to fill gaps" both
-  work end to end, returning the existing report (mode not yet shown in the view).
+- **Wave DV1 — the `sources` flag + per-round routing (backend). ✅ LANDED (this
+  branch).** The `sources` enum param on `deep_research.tool` (v1→v2); the
+  `RESEARCH_LIBRARY_TOOLS`/`REVIEW_LIBRARY_TOOLS` sets and the `research_library` +
+  `review_library` personas in `SUBAGENT_PERSONAS`/`AGENTS` (digest-pinned
+  `research_library.prompt` / `review_library.prompt`); migration `0141` widening the
+  `agent_sessions`/`tasks` agent CHECK for the two spawn-only personas;
+  `_personas_for(sources)` selecting the gather / refill / review (analyst + critique)
+  personas per mode in `DeepResearchService.research`; the exclusive-mode no-web
+  guarantee, the `library_first` dry-library fallback to a web refill over the outline,
+  and the reworded empty-library refusal. Unit tests: routing per mode, the
+  exclusive-guarantee (no web persona ever runs in `library`), the dry-library
+  fallback, the unknown-mode refusal, and the injection-boundary (findings fed as
+  escaped data). **Deviation from the plan (accepted):** the plan budgeted one
+  `research_library` persona; the exclusive-mode "zero web on ALL rounds" guarantee
+  (Settled decision 3) also requires the analyst + critique to hold no web tool, so a
+  symmetric `review_library` persona was added. **Deliverable:** "research a question
+  against my video library only" and "…library first, web to fill gaps" both work end to
+  end, returning the existing report (mode not yet shown in the view — DV2).
 - **Wave DV2 — steering + provenance + red-team gate (backend; security).**
   `jerv.prompt` version-bump so jerv reaches for `sources=library` /`library_first`
   on the right owner intents ("what do my videos say about X", "research this against

@@ -140,7 +140,11 @@ class _FakeSpawn:
         first_label = briefs[0][0] if briefs else ""
         if first_label in self.refuse_labels:
             return []  # admission refused (tree total / budget) → the caller degrades
-        if persona == "review":
+        # Personas come in web/library families: research|research_library are the
+        # gather/refill producers; review|review_library are the analyst/critique.
+        is_review = persona in ("review", "review_library")
+        is_research = persona in ("research", "research_library")
+        if is_review:
             ok = self.analyst_ok if first_label == "cross-check" else self.critique_ok
         else:
             self._research_fans += 1
@@ -152,11 +156,12 @@ class _FakeSpawn:
                 summary=f"{persona} finding for {label}" if ok else "",
                 ok=ok,
                 session_id=f"sess-{i}",
-                # A research child reaches a real page; the URL rides up so the run can
-                # build its global citation registry (favicon targets).
+                # A research child (web OR library) reaches a real source; the URL rides up
+                # so the run can build its global citation registry (favicon targets). The
+                # corpus tools emit the same WebSource chips as web_search.
                 web_sources=(
                     (WebSource(url=f"https://ex.com/{label}", title=f"Src {label}"),)
-                    if ok and persona == "research"
+                    if ok and is_research
                     else ()
                 ),
             )
@@ -606,3 +611,115 @@ async def test_refill_that_produces_nothing_is_reported_partial_not_a_second_rou
     assert len(_research_fans(spawn)) == 2  # the refill fan DID run
     assert "coverage may be partial" in out
     assert out.view is not None and out.view.data["rounds"] == 1  # type: ignore[attr-defined]
+
+
+# --- source modes: video-library routing (DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md) ----
+#
+# `sources` picks the persona each child fan runs; the pipeline is otherwise identical.
+# The library personas hold ONLY the corpus tools (no web) — asserted in test_agents —
+# so routing a fan to a library persona IS the structural "no web" guarantee.
+
+
+def _fan_personas(spawn: _FakeSpawn) -> list[str]:
+    return [f["persona"] for f in spawn.fans]
+
+
+async def test_default_sources_is_web() -> None:
+    """Omitting `sources` runs every fan on the web personas — the original behaviour is
+    byte-for-byte the default."""
+    router, spawn = _FakeRouter(covered=False, gaps=("g",)), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+    assert set(_fan_personas(spawn)) == {"research", "review"}
+    assert not any(p.endswith("_library") for p in _fan_personas(spawn))
+
+
+async def test_library_mode_routes_every_fan_to_the_corpus_personas() -> None:
+    """`sources=library`: gather + refill run `research_library`, analyst + critique run
+    `review_library`; NO fan touches a web persona (the exclusive guarantee)."""
+    router = _FakeRouter(complexity="deep", covered=False, gaps=("gap one",))
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(
+        _ctx(), {"question": "what do my videos say about X?", "sources": "library"}
+    )
+    research = [f for f in spawn.fans if f["persona"] == "research_library"]
+    review = [f for f in spawn.fans if f["persona"] == "review_library"]
+    assert len(research) == 2  # gather + one refill, both on the corpus
+    assert len(review) == 2  # analyst + critique, both on the corpus
+    # The exclusive guarantee: not a single fan ran on a web persona.
+    assert not ({"research", "review"} & set(_fan_personas(spawn)))
+    assert "REVISED REPORT" in out  # the run still produced a report
+
+
+async def test_library_first_gathers_from_corpus_then_refills_on_the_web() -> None:
+    """`sources=library_first`: the gather is `research_library` (primary pass), but the
+    refill runs `research` (web supplement) and the review children run on the web too."""
+    router = _FakeRouter(complexity="deep", covered=False, gaps=("gap one",))
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(
+        _ctx(), {"question": "research this against my library first", "sources": "library_first"}
+    )
+    research_fans = [f for f in spawn.fans if f["persona"] in ("research", "research_library")]
+    assert research_fans[0]["persona"] == "research_library"  # gather = the library
+    assert research_fans[1]["persona"] == "research"  # refill = the web (the supplement)
+    # The analyst + critique may reach the web in library_first (web is allowed here).
+    assert all(f["persona"] == "review" for f in _review_fans(spawn))
+
+
+async def test_library_mode_analyst_may_search_only_the_library() -> None:
+    """In exclusive mode the analyst/critique brief points them at the library, not the
+    web (they hold no web tool) — the brief stays honest about the tools in hand."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q", "sources": "library"})
+    analyst = [f for f in spawn.fans if f["persona"] == "review_library"][0]
+    assert "video library" in analyst["briefs"][0][1]
+    assert "search the web" not in analyst["briefs"][0][1]
+
+
+async def test_empty_library_gather_refuses_without_touching_the_web() -> None:
+    """`sources=library` with a dry library refuses honestly (an empty library, not a
+    failed web run) and NEVER falls back to the web — no web fan, no report."""
+    router = _FakeRouter()
+    spawn = _FakeSpawn(gather_ok=False)
+    out = await _svc(router, spawn).research(
+        _ctx(), {"question": "obscure topic", "sources": "library"}
+    )
+    assert "refused" in out.lower() and "video library" in out.lower()
+    # Only the gather fan ran, on the corpus; nothing web, and no report was written.
+    assert _fan_personas(spawn) == ["research_library"]
+    assert not router.synth_calls
+
+
+async def test_library_first_empty_gather_falls_back_to_the_web_over_the_outline() -> None:
+    """`sources=library_first` with a dry library does NOT refuse: the whole planned
+    outline is handed to the web refill, so an empty library degrades to a plain web run."""
+    # covered=True, gaps=() so reflect yields no gaps — the dry-library fallback must be
+    # what puts the outline into the web refill.
+    router = _FakeRouter(
+        complexity="deep", sub_questions=("sub one", "sub two"), covered=True, gaps=()
+    )
+    spawn = _FakeSpawn(gather_ok=False)
+    out = await _svc(router, spawn).research(
+        _ctx(), {"question": "obscure topic", "sources": "library_first"}
+    )
+    assert "refused" not in out.lower()  # not fatal — it fell back
+    web_refill = [f for f in spawn.fans if f["persona"] == "research"]
+    assert web_refill, "the web refill must run when the library is dry"
+    # The refill worked the planned outline (the fallback), not an empty gap list.
+    assert [b[1] for b in web_refill[0]["briefs"]] == ["sub one", "sub two"]
+    assert router.synth_calls  # a report was written from the web findings
+
+
+async def test_unknown_sources_mode_refuses_before_any_work() -> None:
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q", "sources": "everything"})
+    assert "refused" in out.lower()
+    assert not spawn.fans and not router.calls
+
+
+async def test_library_findings_are_fed_as_escaped_data_to_the_analyst() -> None:
+    """The injection boundary holds in library mode: attacker-authorable transcript
+    findings re-enter the analyst as boundary-wrapped DATA, exactly like the web path."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q", "sources": "library"})
+    analyst = [f for f in spawn.fans if f["persona"] == "review_library"][0]
+    assert FEED_OPEN in analyst["briefs"][0][1]  # fed as escaped data, never instruction
