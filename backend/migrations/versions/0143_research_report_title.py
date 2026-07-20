@@ -11,15 +11,15 @@ falls back to the question until the title lands.
 Existing rows are backfilled by enqueuing one title job per titleless report: the job
 is idempotent (it re-checks `title IS NULL`), so a re-run is a harmless no-op.
 
-Revision ID: 0141
-Revises: 0140
+Revision ID: 0143
+Revises: 0142
 Create Date: 2026-07-20
 """
 
 from alembic import op
 
-revision = "0141"
-down_revision = "0140"
+revision = "0143"
+down_revision = "0142"
 branch_labels = None
 depends_on = None
 
