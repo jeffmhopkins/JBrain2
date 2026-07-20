@@ -1267,8 +1267,14 @@ the report's `[^n]` markers render as tappable **favicon** citations — `[^n]` 
 `web_sources[n-1]`, the same on-box favicon standard jerv's own web answers use (the URLs
 came from the children's tool calls, never model prose; #9). During the run each stage streams a live
 `ToolProgressEvent` phase line (Planning → Researching → Cross-checking → Checking coverage
-→ Filling gaps → Writing → Reviewing → Revising) and the analyst + critique sub-agents
-appear as live fan rows, so the owner watches the orchestration.
+→ Filling gaps → Writing → Reviewing → Revising), rendered by `DeepResearchProgress` as a
+**vertical timeline** (`.fb-drp` — the eight stages stack down a rail; done reads steel spine
++ ✓, the live stage pulses, the rest stay dim, so the pipeline never wraps or spills on a
+narrow bubble). The **active stage opens a slot** that hosts its detail line, the
+`<SubagentFan>` it spawned (the roster + budget meter nest inside the stage, not as a loose
+block below the bubble), and — at Write / Revise — the report streaming into `.fb-drp-report`,
+so the owner watches the orchestration in one scannable column
+(`docs/plans/DEEP_RESEARCH_TOOL_PLAN.md` v8).
 The report body is **`report_md` rendered through the shared `<Markdown>` path** — the same
 renderer an assistant turn uses — which is safe because the Markdown came from the
 synthesizer model over the escaped-envelope findings and carries no model-authored markup,
