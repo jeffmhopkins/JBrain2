@@ -7,7 +7,7 @@ import { ResearchDetailScreen } from "./ResearchDetailScreen";
 const REPORT: ReportDetail = {
   id: "r1",
   question: "How was the 1918 flu toll estimated?",
-  report_md: "## Summary\n\nEstimates range 17M to 100M.",
+  report_md: "## Summary\n\nEstimates range 17M to 100M.[^1]",
   complexity: "deep",
   rounds: 2,
   sub_agents: 6,
@@ -62,6 +62,20 @@ describe("ResearchDetailScreen", () => {
     expect(screen.getByText("coverage limited")).toBeInTheDocument();
     // The report_md renders through the shared Markdown path.
     expect(screen.getByText(/Estimates range 17M to 100M/)).toBeInTheDocument();
+  });
+
+  it("renders [^n] markers as favicon web citations, matching the tool-view", async () => {
+    vi.spyOn(api, "researchReport").mockResolvedValue(REPORT);
+    const { container } = render(
+      <ResearchDetailScreen kind="report" id="r1" syncStatus="synced" onClose={noop} />,
+    );
+    await screen.findByText(/Estimates range 17M to 100M/);
+    // The stored `sources` list is passed as positional cites, so [^1] resolves to a web
+    // target — a tappable favicon link that opens the source — rather than a bare chip.
+    const cite = container.querySelector<HTMLAnchorElement>(".md-webcite a");
+    expect(cite).not.toBeNull();
+    expect(cite?.getAttribute("href")).toBe("https://example.org");
+    expect(container.querySelector(".md-cite button")).toBeNull();
   });
 
   it("renders a video via the VideoAnalysis card", async () => {
