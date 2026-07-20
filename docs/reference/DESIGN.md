@@ -1323,6 +1323,18 @@ the video thumbnail fight for the same row; B's two lanes let each read at a gla
 swipe rail and C's bulk-select + passage-first search stay available paradigms for other
 surfaces — they lost here on fit, not quality.)
 
+- **The report row is a compact list row [decided 2026-07-20 — variant round
+  `docs/mocks/research-card-density/`].** The first card stacked four vertical bands (a 38px
+  amber type-disc beside a two-line title, a complexity pill, a provenance chip row, a
+  `research · date` footer) and read too tall — only ~4 cleared the phone fold. Chosen **D —
+  list row** over three lighter rivals (A tightened-current / B text-meta / C edge-accent rail):
+  a **two-line** clamped 13px title (the full text stays in the DOM for search + assistive tech)
+  over **one muted meta subline** — complexity as a colour-coded word (deep `--violet` /
+  comparative `--steel` / simple `--green`), then `sub_agents` · `rounds` · date — led by a
+  small **amber** file glyph, with the row's chevron and `⋯` kept. ~7 reports now clear the
+  fold. The full provenance chip row (`sources` plus the `analyzed` / `revised` /
+  `coverage_limited` / `truncated` flags) lives on the **detail** screen, not the list. Videos
+  keep their taller thumbnail-led row (the thumbnail needs the height).
 - **Tap a title → a full-screen detail layer** (the settled slide-up layer; back
   chevron + title, swipe-down climbs the tree). A report renders its `report_md` through
   the shared `<Markdown>` path (the same renderer an assistant turn and the
