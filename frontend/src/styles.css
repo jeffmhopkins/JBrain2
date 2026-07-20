@@ -8554,8 +8554,11 @@ button.small {
     margin-left: 100%;
   }
 }
+/* The expanded detail (persona tag, thinking trace, results) sits flush with the row's own
+   left padding rather than tabbed in under the label — a deep indent only steals width from
+   the monospace trace, more so once the fan is nested in the research timeline. */
 .fb-shell .fb-sa-detail {
-  padding: 0 12px 10px 34px;
+  padding: 0 12px 10px 12px;
   font-size: 12px;
   color: var(--text-2);
   line-height: 1.5;
@@ -11540,6 +11543,12 @@ button.small {
 /* The fan is nested, not a loose sibling — the panel's flex gap owns its spacing. */
 .fb-shell .fb-drp-panel .fb-sa {
   margin: 0;
+}
+/* Every child in a deep_research fan is a research agent under the "Research" stage — the
+   per-row persona pill just repeats what the stage row and fan header ("Researching")
+   already say, so drop it in this nested context (the standalone fan keeps it). */
+.fb-shell .fb-drp-panel .fb-sa-persona {
+  display: none;
 }
 .fb-shell .fb-drp-active {
   color: var(--text-2);
