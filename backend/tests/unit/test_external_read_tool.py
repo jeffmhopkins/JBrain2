@@ -65,6 +65,43 @@ async def test_renders_full_timestamped_transcript_with_fence(monkeypatch) -> No
     assert out.web_sources[0].url == "https://www.youtube.com/watch?v=X9dRCy1HuAQ"
 
 
+async def test_renders_uploader_description_separately_from_summary(monkeypatch) -> None:
+    t = ExternalTranscript(
+        source_id="s1",
+        title="Starship Recap",
+        channel_name="NSF",
+        url="https://youtu.be/X9dRCy1HuAQ",
+        transcript_source="captions:auto",
+        summary="A machine recap of the week.",
+        duration_s=600,
+        published_at=None,
+        windows=[(0, "Opening remarks.")],
+        description="Chapters:\n0:00 intro\n3:05 booster rollout. Follow us at example.com",
+    )
+    out, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/X9dRCy1HuAQ"})
+    # The uploader's own blurb comes through, distinct from the machine summary.
+    assert "Uploader's description:" in out
+    assert "3:05 booster rollout" in out
+    assert "Summary: A machine recap of the week." in out
+
+
+async def test_caps_a_very_long_description(monkeypatch) -> None:
+    t = ExternalTranscript(
+        "s2",
+        "Long desc",
+        "",
+        "https://youtu.be/x",
+        "whisper",
+        "S",
+        600,
+        None,
+        [(0, "hi")],
+        description="x" * 9000,  # well over the description cap
+    )
+    out, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x"})
+    assert "description truncated" in out
+
+
 async def test_truncates_a_very_long_transcript(monkeypatch) -> None:
     windows = [(i * 1000, "word " * 200) for i in range(400)]  # well over the char cap
     t = ExternalTranscript(

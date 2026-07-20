@@ -47,7 +47,8 @@ link), and jerv can search *what was said and shown* across the corpus, cited ba
   (reuses the analysis already produced — zero extra cost); the **`search_external_video`** tool for jerv,
   reading via a purpose-built external scope, with **untrusted-content fencing**; the sibling
   **`read_external_video`** tool that returns one library video's full timestamped transcript + summary +
-  length + publish date (the `search_external_video` -> `read_external_video` = `web_search` -> `web_fetch`
+  the uploader's own description (0145) + length + publish date (the `search_external_video` ->
+  `read_external_video` = `web_search` -> `web_fetch`
   pattern); and **`show_external_video`**, which rebuilds the **`video_analysis` card** (embed + frame
   timeline + tabs) from stored corpus rows so jerv can SHOW a library video, reusing the frontend
   component verbatim — **full fidelity**: frame thumbnails are re-inlined from the persisted blobs
@@ -179,6 +180,8 @@ CREATE TABLE app.external_sources (
     duration_ms       integer,
     summary           text,                                 -- reduce-step summary
     summary_embedding vector(384),                          -- the ONLY summary vector (no summary chunk; §5)
+    description         text,                                -- uploader's own channel-authored description (yt-dlp; 0145)
+    description_embedding vector(384),                       -- source-level dense leg so the description is searchable (0145)
     embedding_model   text,
     transcript_source text,                                 -- 'captions:manual'|'captions:auto'|'whisper'|'' (resolved.caption.kind)
     frames            jsonb,                                -- [{t_ms, caption, thumb_id}] for thumbnails (NOT the per-word transcript; §5)
@@ -197,6 +200,8 @@ CREATE INDEX external_sources_status_idx  ON app.external_sources (status, creat
 CREATE INDEX external_sources_channel_idx ON app.external_sources (channel_id, published_at DESC);
 CREATE INDEX external_sources_summary_embedding_idx
     ON app.external_sources USING hnsw (summary_embedding vector_cosine_ops);
+CREATE INDEX external_sources_description_embedding_idx                          -- 0145
+    ON app.external_sources USING hnsw (description_embedding vector_cosine_ops);
 -- ENABLE+FORCE RLS; POLICY has_domain_scope(domain_code) USING+WITH CHECK; GRANT …DELETE TO jbrain_app.
 ```
 
@@ -244,9 +249,12 @@ markers pollute FTS + vectors). Instead:
   entry's real offset and `text` is **clean, marker-free prose**. Single counter → `seq` unique, one
   granularity.
 - **One summary vector.** The summary is embedded once into `external_sources.summary_embedding` (coarse
-  "which video"). **No summary chunk** — avoids double/triple-counting it in RRF.
-- **Search legs (three, non-overlapping)**, fused by `rrf_scores` with a **`best_per_source`** grouping
-  (one hit/video; `_fuse` is note-keyed, so re-implement the grouping): chunk-dense, chunk-FTS, summary-dense.
+  "which video"). **No summary chunk** — avoids double/triple-counting it in RRF. The uploader's
+  **description** is embedded the same way into `description_embedding` (0145) — a second coarse
+  source-level leg, so the channel's own text is a hit target too.
+- **Search legs (four, non-overlapping)**, fused by `rrf_scores` with a **`best_per_source`** grouping
+  (one hit/video; `_fuse` is note-keyed, so re-implement the grouping): chunk-dense, chunk-FTS,
+  summary-dense, description-dense (0145).
 
 ---
 
@@ -257,7 +265,8 @@ markers pollute FTS + vectors). Instead:
 On **deferred full-mode** completion, the analysis (already produced) is written through to the corpus:
 resolve keeps the new `ResolvedStream` metadata (§8); `run_stream_pipeline("full", {"captions":"auto"}, …)`
 yields the tuple; the persist step upserts the `external_sources` row (`status='done'`,
-`transcript_source` from `resolved.caption.kind`, summary, `frames`, metadata), rebuilds chunks via
+`transcript_source` from `resolved.caption.kind`, summary, the uploader's `description` (0145),
+`frames`, metadata), rebuilds chunks via
 `window_timeline` (§5), and enqueues `embed_external_source`. **Zero extra vision/whisper cost** — it reuses
 the completed analysis. `ON CONFLICT (provider, video_id) DO NOTHING` means a repeat analysis is a no-op.
 Interactive `single`/`window` modes (partial, non-VOD) are **not** written through. `origin` is `adhoc` for
@@ -374,6 +383,7 @@ thumbnails.
 
 1. `0133_external_sources` — source table + summary HNSW + RLS quartet. **Built (Wave A).**
 2. `0134_external_source_chunks` — chunk table + tsv GIN + embedding HNSW + RLS quartet. **Built (Wave A).**
+3. `0145_external_source_description` — uploader-description column + its own HNSW dense leg (searchable). **Built.**
 
 (No seed migration — scheduling is a runtime Task. No watchlist migration in v1. Numbers are a
 snapshot as of `Last verified`; the source of truth is `backend/migrations/versions/`.)

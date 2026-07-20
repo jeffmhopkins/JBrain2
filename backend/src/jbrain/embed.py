@@ -139,6 +139,16 @@ class ExternalSourceEmbedder:
                     {"sid": source_id},
                 )
             ).first()
+            description_row = (
+                await session.execute(
+                    text(
+                        "SELECT description FROM app.external_sources"
+                        " WHERE id = :sid AND description_embedding IS NULL"
+                        " AND description IS NOT NULL"
+                    ),
+                    {"sid": source_id},
+                )
+            ).first()
 
         if chunks:
             vectors = await self._client.embed([r.text for r in chunks])
@@ -165,11 +175,28 @@ class ExternalSourceEmbedder:
                     ),
                     {"sid": source_id, "emb": vector_literal(summary_vec), "model": self._model},
                 )
+        if description_row is not None:
+            (description_vec,) = await self._client.embed([description_row.description])
+            async with scoped_session(self._maker, SYSTEM_CTX) as session:
+                await session.execute(
+                    text(
+                        "UPDATE app.external_sources"
+                        " SET description_embedding = cast(:emb AS vector),"
+                        " embedding_model = :model"
+                        " WHERE id = :sid AND description_embedding IS NULL"
+                    ),
+                    {
+                        "sid": source_id,
+                        "emb": vector_literal(description_vec),
+                        "model": self._model,
+                    },
+                )
         log.info(
             "embed.external_source.done",
             source_id=source_id,
             chunks=len(chunks),
             summary=summary_row is not None,
+            description=description_row is not None,
         )
 
 
