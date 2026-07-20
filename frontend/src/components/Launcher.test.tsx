@@ -49,10 +49,12 @@ describe("Launcher tile navigation", () => {
 describe("Launcher image tile gating", () => {
   beforeEach(() => {
     vi.resetModules();
+    localStorage.clear();
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+    localStorage.clear();
   });
 
   function stubImageSettings(enabled: boolean): void {
@@ -79,6 +81,23 @@ describe("Launcher image tile gating", () => {
     const { Launcher: Fresh } = await import("./Launcher");
     render(<Fresh open onClose={() => {}} onNavigate={() => {}} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Image" })).toBeInTheDocument());
+  });
+
+  // Regression: the icon count must not jump on open. When a prior session recorded
+  // that image hosting is enabled, the tile is present on the VERY FIRST paint —
+  // hydrated synchronously from localStorage, before the async settings fetch runs —
+  // so swiping the launcher up never shows a grid that then grows by one tile.
+  it("renders the Image tile on the first paint from the cached enablement (no flash)", async () => {
+    localStorage.setItem("jb.image.enabled", "true");
+    // A never-resolving fetch proves the tile is not waiting on the network.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    const { Launcher: Fresh } = await import("./Launcher");
+    render(<Fresh open onClose={() => {}} onNavigate={() => {}} />);
+    // No waitFor: it must already be in the document synchronously.
+    expect(screen.getByRole("button", { name: "Image" })).toBeInTheDocument();
   });
 
   it("hides the Image tile when image hosting is disabled", async () => {
