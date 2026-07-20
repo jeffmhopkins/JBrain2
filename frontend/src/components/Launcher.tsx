@@ -105,6 +105,33 @@ const EXIT_MS = 150;
 // unless `getImageSettings().enabled` is true. Fetched ONCE per session and cached in
 // a module-level promise so reopening the launcher never refetches or flashes; a fetch
 // failure resolves to false (tile hidden), never throwing.
+//
+// The result is also mirrored to localStorage (device-local, like the tasks/viewed
+// markers). Enablement is stable per box, so the last-known value hydrates the tile
+// state SYNCHRONOUSLY on mount — without it, every fresh page load painted the grid
+// without Image, then popped it in a tick later when this async fetch resolved, so the
+// icon count visibly jumped N→N+1 on the first open. The fetch still runs to pick up a
+// genuine change; it just no longer decides the count from scratch each load.
+const IMAGE_ENABLED_KEY = "jb.image.enabled";
+
+/** Last-known image enablement, or null when this device has never resolved it. */
+function loadImageEnabledCached(): boolean | null {
+  try {
+    const raw = localStorage.getItem(IMAGE_ENABLED_KEY);
+    return raw === null ? null : raw === "true";
+  } catch {
+    return null;
+  }
+}
+
+function saveImageEnabledCached(enabled: boolean): void {
+  try {
+    localStorage.setItem(IMAGE_ENABLED_KEY, enabled ? "true" : "false");
+  } catch {
+    // best-effort; a dropped marker just re-flashes the tile once on the next load
+  }
+}
+
 let imageEnabledPromise: Promise<boolean> | null = null;
 function fetchImageEnabled(): Promise<boolean> {
   imageEnabledPromise ??= api
@@ -141,9 +168,11 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   // (the same device-local "unviewed" state that drives each card's NEW band), not
   // merely runs since Tasks was last opened — opening the screen no longer clears it.
   const [taskCount, setTaskCount] = useState<number | null>(null);
-  // Config gate for the Image tile (cached once per session). Null until resolved,
-  // so the tile only appears when image hosting is confirmed enabled.
-  const [imageEnabled, setImageEnabled] = useState<boolean | null>(null);
+  // Config gate for the Image tile. Hydrated synchronously from the last-known
+  // device-local value so the tile set is stable from the first paint (no N→N+1
+  // count jump on open); null only on a device that has never resolved it, where
+  // the tile stays hidden until the fetch below confirms enablement.
+  const [imageEnabled, setImageEnabled] = useState<boolean | null>(loadImageEnabledCached);
   // Two gates quiet the poll: a backgrounded PWA, and a launcher buried under a
   // card. Returning to either re-runs this effect — an immediate refetch, then
   // re-arm — so the badge is current the moment the menu is back on screen.
@@ -157,6 +186,7 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
     if (!open || !active || !foreground) return;
     let stale = false;
     fetchImageEnabled().then((on) => {
+      saveImageEnabledCached(on);
       if (!stale) setImageEnabled(on);
     });
     return () => {
