@@ -108,6 +108,7 @@ async def persist_report(
     coverage_limited: bool,
     truncated: bool,
     sources: list[dict[str, Any]],
+    source_mode: str | None = None,
     tool: str | None = None,
 ) -> str:
     """Upsert the library row for one completed report and enqueue its summary embedding. Keyed on
@@ -127,6 +128,7 @@ async def persist_report(
         "coverage_limited": coverage_limited,
         "truncated": truncated,
         "sources": json.dumps(sources or []),
+        "source_mode": source_mode,
         "tool": tool,
     }
     async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -136,10 +138,11 @@ async def persist_report(
                     "INSERT INTO app.research_reports"
                     " (session_id, question, question_hash, report_md, summary, complexity,"
                     "  rounds, sub_agents, analyzed, revised, coverage_limited, truncated,"
-                    "  sources, tool, status)"
+                    "  sources, source_mode, tool, status)"
                     " VALUES (cast(:session_id AS uuid), :question, :question_hash, :report_md,"
                     "  :summary, :complexity, :rounds, :sub_agents, :analyzed, :revised,"
-                    "  :coverage_limited, :truncated, cast(:sources AS jsonb), :tool, 'done')"
+                    "  :coverage_limited, :truncated, cast(:sources AS jsonb), :source_mode,"
+                    "  :tool, 'done')"
                     " ON CONFLICT (question_hash) DO UPDATE SET"
                     "  session_id = EXCLUDED.session_id, question = EXCLUDED.question,"
                     "  report_md = EXCLUDED.report_md, summary = EXCLUDED.summary,"
@@ -147,6 +150,7 @@ async def persist_report(
                     "  sub_agents = EXCLUDED.sub_agents, analyzed = EXCLUDED.analyzed,"
                     "  revised = EXCLUDED.revised, coverage_limited = EXCLUDED.coverage_limited,"
                     "  truncated = EXCLUDED.truncated, sources = EXCLUDED.sources,"
+                    "  source_mode = EXCLUDED.source_mode,"
                     "  tool = EXCLUDED.tool, status = 'done', created_at = now(),"
                     # NULL the derived slots on a re-run so the follow-up jobs re-fill
                     # them against the newest report (title tracks the question, which
@@ -309,11 +313,14 @@ class ReportRecord:
     truncated: bool
     sources: list[dict[str, Any]]
     created_at: datetime | None
+    # The source mode the run used (`web` | `library` | `library_first`). NULL for a row
+    # written before 0142 → the legacy `web` default, so `show_` badges it correctly.
+    source_mode: str = "web"
 
 
 _SELECT_RECORD = (
     "SELECT id, question, report_md, complexity, rounds, sub_agents, analyzed, revised,"
-    " coverage_limited, truncated, sources, created_at FROM app.research_reports"
+    " coverage_limited, truncated, sources, source_mode, created_at FROM app.research_reports"
 )
 
 
@@ -331,6 +338,7 @@ def _row_to_record(row: Any) -> ReportRecord:
         truncated=bool(row.truncated),
         sources=list(row.sources or []),
         created_at=row.created_at,
+        source_mode=row.source_mode or "web",
     )
 
 

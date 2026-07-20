@@ -1046,6 +1046,73 @@ describe("ToolView registry", () => {
     expect(onOpenSession).toHaveBeenCalledWith("s9");
   });
 
+  it("badges a library-scoped run and reads its corpus children as their base role", () => {
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "deep_research_report",
+          data: {
+            question: "What do my videos say about eurorack?",
+            complexity: "deep",
+            report_md: "A report.",
+            sub_agents: 2,
+            rounds: 1,
+            source_mode: "library",
+            children: [
+              { label: "oscillators", persona: "research_library", ok: true, session_id: "s1" },
+            ],
+          },
+        })}
+      />,
+    );
+    // The provenance strip badges the library source (the default web run shows none).
+    expect(getByText("video library")).toBeInTheDocument();
+    // The corpus child reads as its base role in the roster, not "research_library".
+    fireEvent.click(getByText(/1 sub-agent/));
+    expect(getByText("research")).toBeInTheDocument();
+  });
+
+  it("badges a library_first run as mixed sources", () => {
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "deep_research_report",
+          data: {
+            question: "Q",
+            complexity: "deep",
+            report_md: "A report.",
+            sub_agents: 2,
+            rounds: 2,
+            source_mode: "library_first",
+            children: [],
+          },
+        })}
+      />,
+    );
+    expect(getByText("library + web")).toBeInTheDocument();
+  });
+
+  it("shows no source badge for a default web run", () => {
+    const { queryByText } = render(
+      <ToolView
+        payload={payload({
+          view: "deep_research_report",
+          data: {
+            question: "Q",
+            complexity: "deep",
+            report_md: "A report.",
+            sub_agents: 1,
+            rounds: 1,
+            source_mode: "web",
+            children: [],
+          },
+        })}
+      />,
+    );
+    expect(queryByText("video library")).toBeNull();
+    expect(queryByText("library + web")).toBeNull();
+  });
+
   it("groups a staged feeding-waves roster by wave, with feed edges and a distinct skip", () => {
     const { getByText, getAllByText } = render(
       <ToolView

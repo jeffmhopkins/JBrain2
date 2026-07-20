@@ -1252,11 +1252,14 @@ RAG-indexed.
 
 jerv's `deep_research` run returns its finished report as this registered view. Data-only
 slots: `{question, complexity, report_md, sub_agents, rounds, analyzed, revised,
-coverage_limited, truncated, web_sources:[{url, title}],
+coverage_limited, truncated, source_mode, web_sources:[{url, title}],
 children:[{label, persona, ok, summary, session_id}]}`. It renders a provenance strip (the
-`complexity` label, a source count, the round count, and the `analyzed` "cross-checked" /
-`revised` / `coverage_limited` / `truncated` flags — closed enums/booleans the theme
-colors, never a model-sent color), the report body, and a collapsible sub-agent roster
+`complexity` label, a source count, the round count, a **`source_mode`** badge for a
+library-scoped run (`library` → "video library", `library_first` → "library + web"; the
+default `web` shows none — DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md), and the `analyzed`
+"cross-checked" / `revised` / `coverage_limited` / `truncated` flags — closed
+enums/booleans the theme colors, never a model-sent color), the report body, and a
+collapsible sub-agent roster
 whose rows deep-link to each child's own session on reopen (reusing the `.tv-syn-*` roster
 classes). **Citations are tracked end-to-end:** the real URLs the sub-agents reached are
 collected into `web_sources` (the global registry the synthesizer numbers against), and

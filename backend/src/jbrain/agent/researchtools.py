@@ -62,6 +62,7 @@ def _report_view_data(rec: ReportRecord) -> dict:
         "revised": rec.revised,
         "coverage_limited": rec.coverage_limited,
         "truncated": rec.truncated,
+        "source_mode": rec.source_mode,
         "web_sources": rec.sources,
         "children": [],
     }

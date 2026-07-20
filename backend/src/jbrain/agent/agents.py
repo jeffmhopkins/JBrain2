@@ -175,7 +175,9 @@ ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 # persona against this set BEFORE calling `agent_for` — which falls back to the
 # KB-capable curator on an unknown name — so a malformed or injected persona is
 # refused, never resolved to a knowledge agent.
-SUBAGENT_PERSONAS = frozenset({"research", "review", "summarize"})
+SUBAGENT_PERSONAS = frozenset(
+    {"research", "review", "summarize", "research_library", "review_library"}
+)
 
 # research / review children: the internet tools and the dataless clock — and NO
 # `spawn_subagent`. A child is always a leaf: child-initiated nesting was removed
@@ -186,6 +188,16 @@ SUBAGENT_PERSONAS = frozenset({"research", "review", "summarize"})
 # parent's at dispatch.
 RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time"})
 REVIEW_TOOLS = RESEARCH_TOOLS
+# research_library / review_library children: the video-library corpus tools and the
+# dataless clock, and NO web tools — `deep_research`'s `sources=library` /
+# `library_first` gather/refill/analyst fans run these so a corpus-scoped run touches
+# the open web only where the mode explicitly allows it (DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md).
+# `search_external_video`/`read_external_video` self-scope their own `external`-domain
+# read, so a child holding them reaches the corpus and nothing owner-authored. Like the
+# web children they are leaves (no `spawn_subagent`) and KB-less. jerv holds both corpus
+# tools, so the parent⊆child clamp keeps them.
+RESEARCH_LIBRARY_TOOLS = frozenset({"search_external_video", "read_external_video", "current_time"})
+REVIEW_LIBRARY_TOOLS = RESEARCH_LIBRARY_TOOLS
 # summarize: a pure transform — no tools at all, so it cannot reach the web and
 # cannot spawn.
 SUMMARIZE_TOOLS: frozenset[str] = frozenset()
@@ -295,6 +307,23 @@ AGENTS: dict[str, AgentProfile] = {
         tools=SUMMARIZE_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=1,
+    ),
+    # The corpus twins of research/review: same sandbox, same budget, but their tools
+    # are the video-library corpus reads instead of the web. deep_research routes the
+    # gather/refill/analyst fans here for its library source modes.
+    "research_library": _profile(
+        "research_library",
+        "research_library.prompt",
+        tools=RESEARCH_LIBRARY_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
+    "review_library": _profile(
+        "review_library",
+        "review_library.prompt",
+        tools=REVIEW_LIBRARY_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
     ),
     # The guided-intake interviewer (docs/archive/GUIDED_INTAKE_PLAN.md). A closed, capture-only
     # persona a non-owner stranger runs: empty tool allowlist, no knowledge base, and a 1x
