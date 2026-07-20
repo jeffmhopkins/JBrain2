@@ -479,8 +479,10 @@ function clip(s: string): string {
   return s.length > 34 ? `${s.slice(0, 33)}…` : s;
 }
 
-/** Group videos into per-channel sections sorted by channel name (case-insensitive); rows
- * keep the server's newest-first order within a section. */
+/** Group videos into per-channel sections sorted by channel name (case-insensitive); within
+ * a section rows are ordered newest-published first (reverse chronological), so a channel's
+ * videos read as a timeline rather than in the order they happened to be analysed. A row with
+ * no publish date sorts to the bottom of its section. */
 function groupByChannel(videos: VideoListItem[]): { channel: string; videos: VideoListItem[] }[] {
   const map = new Map<string, VideoListItem[]>();
   for (const v of videos) {
@@ -490,8 +492,17 @@ function groupByChannel(videos: VideoListItem[]): { channel: string; videos: Vid
     else map.set(channel, [v]);
   }
   return [...map.entries()]
-    .map(([channel, vids]) => ({ channel, videos: vids }))
+    .map(([channel, vids]) => ({ channel, videos: [...vids].sort(byPublishedDesc) }))
     .sort((a, b) => a.channel.localeCompare(b.channel, undefined, { sensitivity: "base" }));
+}
+
+/** Newest-published first; a missing/unparseable publish date sorts last (treated as -∞). */
+function byPublishedDesc(a: VideoListItem, b: VideoListItem): number {
+  return publishedMs(b) - publishedMs(a);
+}
+function publishedMs(v: VideoListItem): number {
+  const t = v.published_at ? new Date(v.published_at).getTime() : Number.NaN;
+  return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
 }
 
 function ReportRow({

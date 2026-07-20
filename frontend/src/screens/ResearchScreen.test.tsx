@@ -122,6 +122,49 @@ describe("ResearchScreen", () => {
     expect(screen.getByText("Strix Halo deep research")).toBeInTheDocument();
   });
 
+  it("orders a channel's videos newest-published first, regardless of analysis order", async () => {
+    // Three videos in one channel, arriving in a jumbled (analysis) order; the section must
+    // render them reverse-chronologically by publish date.
+    vi.spyOn(api, "researchReports").mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(api, "researchVideos").mockResolvedValue({
+      items: [
+        {
+          video_id: "a",
+          provider: "youtube",
+          title: "Jul 3 video",
+          channel_name: "NASASpaceflight",
+          url: "https://youtu.be/a",
+          published_at: "2026-07-03T00:00:00Z",
+          duration_s: 100,
+        },
+        {
+          video_id: "b",
+          provider: "youtube",
+          title: "Jul 18 video",
+          channel_name: "NASASpaceflight",
+          url: "https://youtu.be/b",
+          published_at: "2026-07-18T00:00:00Z",
+          duration_s: 100,
+        },
+        {
+          video_id: "c",
+          provider: "youtube",
+          title: "Jul 10 video",
+          channel_name: "NASASpaceflight",
+          url: "https://youtu.be/c",
+          published_at: "2026-07-10T00:00:00Z",
+          duration_s: 100,
+        },
+      ],
+      total: 3,
+    });
+    const { container } = render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);
+    fireEvent.click(screen.getByRole("button", { name: /Videos/ }));
+    await screen.findByText("Jul 18 video");
+    const titles = [...container.querySelectorAll(".rl-title-video")].map((n) => n.textContent);
+    expect(titles).toEqual(["Jul 18 video", "Jul 10 video", "Jul 3 video"]);
+  });
+
   it("filters the active tab as you type", async () => {
     stub();
     render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);

@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Markdown } from "../agent/markdown";
 import { type ReportDetail, type VideoDetail, api } from "../api/client";
+import { transcriptWords } from "../components/AudioTranscript";
 import { TopBar } from "../components/TopBar";
 import { VideoAnalysis } from "../components/VideoAnalysis";
 import type { SyncStatus } from "../notes/useNotes";
@@ -118,15 +119,11 @@ function ReportDetailBody({ report }: { report: ReportDetail }) {
 }
 
 function VideoDetailBody({ video }: { video: VideoDetail }) {
+  // Reuse the shared word mapper so the transcript tints on real per-word confidence (the
+  // rose→amber→green gradient), the same as jerv's in-chat analyze card — not a flat colour.
+  const words = transcriptWords(video.cued_transcript?.words);
   // Build the transcript text from the ordered windows when there's no word-level cue data;
   // the card renders the plain reader in that case. YouTube sources embed by video_id.
-  const words =
-    video.cued_transcript?.words?.map((w) => ({
-      text: w.text,
-      startMs: w.start_ms,
-      endMs: w.end_ms,
-      confidence: 1,
-    })) ?? [];
   const transcriptText =
     words.length === 0 ? video.windows.map((w) => w.text).join("\n") : undefined;
   return (
@@ -135,7 +132,13 @@ function VideoDetailBody({ video }: { video: VideoDetail }) {
       sourceUrl={video.url}
       filename={video.title}
       summary={video.summary}
-      frames={video.frames.map((f) => ({ tMs: f.t_ms ?? 0, caption: f.caption ?? "" }))}
+      // Carry each frame's inline still (thumb_data_uri) as its thumbUrl so the filmstrip
+      // renders thumbnails; a frame whose blob was purged has none and shows a marker.
+      frames={video.frames.map((f) => ({
+        tMs: f.t_ms ?? 0,
+        caption: f.caption ?? "",
+        thumbUrl: f.thumb_data_uri,
+      }))}
       words={words}
       transcriptText={transcriptText}
       transcriptSource={video.transcript_source}

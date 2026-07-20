@@ -1045,10 +1045,12 @@ export interface VideoDetail {
   duration_ms: number | null;
   published_at: string | null;
   windows: TranscriptWindow[];
-  frames: { t_ms?: number; caption?: string; thumb_id?: string }[];
+  // `thumb_data_uri` is the inline frame still the server redeems from the stored thumb_id
+  // (absent when its blob was purged — the frame then renders as a bare marker).
+  frames: { t_ms?: number; caption?: string; thumb_id?: string; thumb_data_uri?: string }[];
   cued_transcript: {
     text?: string;
-    words?: { text: string; start_ms: number; end_ms: number }[];
+    words?: { text: string; start_ms: number; end_ms: number; confidence?: number }[];
   } | null;
 }
 export interface ReportListResponse {

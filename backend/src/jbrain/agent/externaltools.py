@@ -14,7 +14,6 @@ the video + timestamp — the same [^n] footnote model the web tools use.
 """
 
 import asyncio
-import base64
 import re
 import uuid
 
@@ -31,9 +30,9 @@ from jbrain.external.corpus import (
     fetch_transcript,
     filter_new_video_ids,
     list_corpus,
+    resolve_frame_thumbnails,
     search_corpus,
 )
-from jbrain.media import jpeg_thumbnail
 from jbrain.storage import BlobStore
 from jbrain.stream import ChannelLister, StreamError, list_channel_uploads, valid_channel_id
 
@@ -107,26 +106,11 @@ def _render_transcript(t: ExternalTranscript) -> str:
 
 
 async def _frame_views(raw_frames: list[dict], blobs: BlobStore | None) -> list[dict]:
-    """The card's frame list from the stored `{t_ms, caption, thumb_id}` rows. When a blob store
-    is available we redeem each `thumb_id` into an inline `thumb_data_uri` (the same still the live
-    card shows, rebuilt from the persisted blob) so frames render as thumbnails, not bare markers.
-    Best-effort per frame: a purged/missing blob just falls back to a marker, never a failure."""
-    frames: list[dict] = []
-    for f in raw_frames:
-        if not isinstance(f, dict):
-            continue
-        frame = {"t_ms": int(f.get("t_ms", 0)), "caption": str(f.get("caption", ""))}
-        thumb_id = f.get("thumb_id")
-        if blobs is not None and isinstance(thumb_id, str) and thumb_id:
-            try:
-                thumb = jpeg_thumbnail(await blobs.get(thumb_id))
-                frame["thumb_data_uri"] = (
-                    "data:image/jpeg;base64," + base64.b64encode(thumb).decode()
-                )
-            except Exception:  # noqa: BLE001 - a missing/purged blob degrades to a marker, not an error
-                pass
-        frames.append(frame)
-    return frames
+    """The card's frame list from the stored `{t_ms, caption, thumb_id}` rows, with each
+    `thumb_id` redeemed into an inline `thumb_data_uri` when a blob store is available — the
+    shared corpus resolver the owner Research Library detail also uses, so both render the
+    identical frame stills."""
+    return await resolve_frame_thumbnails(raw_frames, blobs)
 
 
 def _card_data(t: ExternalTranscript, frames: list[dict]) -> dict:
