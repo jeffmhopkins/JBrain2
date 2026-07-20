@@ -7,7 +7,7 @@
 // the list's consolidated ⋯ menu (ResearchScreen), not here — this layer is pure reading.
 
 import { useEffect, useRef, useState } from "react";
-import { Markdown } from "../agent/markdown";
+import { type CiteTarget, Markdown } from "../agent/markdown";
 import { type ReportDetail, type VideoDetail, api } from "../api/client";
 import { transcriptWords } from "../components/AudioTranscript";
 import { TopBar } from "../components/TopBar";
@@ -94,6 +94,15 @@ export function ResearchDetailScreen({ kind, id, syncStatus, onClose }: Research
 }
 
 function ReportDetailBody({ report }: { report: ReportDetail }) {
+  // The report's `[^n]` markers map positionally to its stored source registry, so each
+  // renders as a tappable favicon citation — the same rendering the deep_research_report
+  // tool-view uses (registry.tsx builds these from the identical `sources` list), not a
+  // bare numbered chip.
+  const cites: CiteTarget[] = report.sources.map((s) => ({
+    kind: "web",
+    url: String(s.url ?? ""),
+    title: String(s.title ?? ""),
+  }));
   return (
     <article className="rl-report">
       <h2 className="rl-report-q">{report.question}</h2>
@@ -112,7 +121,7 @@ function ReportDetailBody({ report }: { report: ReportDetail }) {
         {report.truncated && <span className="rl-flag rl-flag-danger">truncated</span>}
       </div>
       <div className="rl-md">
-        <Markdown text={report.report_md} />
+        <Markdown text={report.report_md} cites={cites} />
       </div>
     </article>
   );
