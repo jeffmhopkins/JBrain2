@@ -204,9 +204,9 @@ and the chosen mock lands in `docs/mocks/`. **Build-time judgement (DV2): trivia
 The chip is one more entry in the `deep_research_report` strip's existing
 `.filter(Boolean)` chip array — the same closed-enum, theme-colored pattern as the
 `complexity` / `cross-checked` / `coverage limited` chips already there — so it shipped
-in DV2 with a `DESIGN.md` registry note and no new markup, styles, or layout. **DV3
-carries the owner's confirmation of that call** (see the wave note); until then the
-header keeps DV3 ◻️, exactly as `DEEP_RESEARCH_TOOL_PLAN.md`'s own D3 does.
+in DV2 with a `DESIGN.md` registry note and no new markup, styles, or layout. **The owner
+confirmed this trivial-reuse call on 2026-07-20** (no three-mock gate); DV3's remaining ◻️
+is only the merge to `main`.
 
 ## Testing (per `CLAUDE.md` #5 — 80% backend, security 100%, real Postgres, LLM faked)
 
@@ -271,15 +271,17 @@ before merge.
   frontend chip render + no-chip-for-web + roster-tag. **Red-team:** the exclusive no-web
   guarantee, the corpus-tool RLS self-scope, and the fenced-findings injection boundary
   all hold (see Security); the wave adds no new egress or scope surface.
-- **Wave DV3 — GUI-gate sign-off (conditional; ◻️ pending).** The `source_mode` chip was
-  implemented in DV2 as a **trivial reuse** of the registered enum-tone-flag pattern
-  (Open decision 4), so no new mock was built. What remains is the **owner's GUI-gate
-  confirmation** that a one-word provenance chip on an already-registered strip does not
-  warrant the three-mock gate — mirroring `DEEP_RESEARCH_TOOL_PLAN.md`'s own D3
-  mock-gate-sign-off-pending state. If the owner judges it a material surface, this wave
-  builds the three mocks; otherwise it closes as confirmed-trivial.
+- **Wave DV3 — GUI-gate sign-off. ✅ Owner-confirmed trivial reuse (2026-07-20); only the
+  merge remains (◻️).** The `source_mode` chip was implemented in DV2 as a **trivial
+  reuse** of the registered enum-tone-flag pattern (Open decision 4) — one more entry in
+  the `deep_research_report` strip's existing chip array, no new markup/styles/layout.
+  The **owner signed off** that this does not warrant the three-mock gate, so no mocks
+  were built. Nothing further to build; the ◻️ marks only the outstanding **merge to
+  `main`**, at which point the plan flips to `Shipped` and archives (the repo's
+  archive-on-merge rule, `DOC_LIFECYCLE.md` R4).
 
-DV2 depends on DV1 (the routing + returned mode). DV3 is the DV2 chip's GUI-gate sign-off.
+DV2 depends on DV1 (the routing + returned mode). DV3 is the DV2 chip's GUI-gate sign-off
+(owner-confirmed trivial; no build).
 
 ## Open decisions for the build plan
 
