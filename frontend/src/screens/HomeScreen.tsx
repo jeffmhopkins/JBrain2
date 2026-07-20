@@ -13,11 +13,15 @@ import type { NotesController, StreamItem } from "../notes/useNotes";
 
 const TOAST_MS = 4000;
 
-/** A calendar → Full Brain handoff: the prose that seeds the composer plus the
- * appointment it's about (the agent resolves the id; the owner sees the pill). */
+/** A handoff into a conversation surface: the prose that seeds the composer, the
+ * appointment it's about (the calendar path; the agent resolves the id, the owner sees
+ * the pill), and which surface to land on — Full Brain/Curator (the calendar default) or
+ * Research/jerv (the Research Library's "Open in jerv conversation"). */
 export interface ComposeHandoff {
   text: string;
   appt?: AppointmentRef;
+  /** The conversation tab to open into; defaults to Full Brain (the calendar handoff). */
+  mode?: "research" | "fullbrain";
 }
 
 interface HomeScreenProps {
@@ -80,7 +84,9 @@ export function HomeScreen({
   // surface auto-opens (or starts) a Curator chat to send into.
   useEffect(() => {
     if (compose) {
-      setSeg({ row: "main", mode: "fullbrain" });
+      // Land on the requested surface — Research (jerv) opens the owner's current jerv
+      // chat, Full Brain (the default) opens the Curator — and seed its composer.
+      setSeg({ row: "main", mode: compose.mode ?? "fullbrain" });
       setPendingDraft(compose.text);
       setPendingAppt(compose.appt ?? null);
       onComposeConsumed?.();

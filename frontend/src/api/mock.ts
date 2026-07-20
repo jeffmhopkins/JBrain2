@@ -2941,9 +2941,12 @@ function applyMockPetCommand(command: PetCommand): void {
 // spread (deep/comparative, revised, coverage-limited, truncated; captions/whisper) so
 // the browse surface, provenance chips, and detail render have real content. Mutable so a
 // mock DELETE actually drops the row. =====
-let MOCK_REPORTS: ReportDetail[] = [
+// The extra `title` mirrors the server's short LLM-generated heading (migration 0141);
+// the detail endpoint ignores it, the list endpoint surfaces it.
+let MOCK_REPORTS: (ReportDetail & { title: string | null })[] = [
   {
     id: "rep-flu",
+    title: "1918 Flu Death-Toll Estimates",
     question: "How was the 1918 flu pandemic's death toll estimated?",
     report_md:
       "## Summary\n\nEstimates of the 1918 “Spanish flu” toll range from **17M to 100M**; the widely-cited 50M figure comes from Johnson & Mueller (2002), who re-worked contemporary excess-mortality data country by country.\n\n## Key findings\n\n- Early estimates (~21M) undercounted the developing world.\n- Excess-mortality methods lifted the total sharply.\n\n## Sources\n\n1. Johnson & Mueller, 2002.\n2. Patterson & Pyle, 1991.",
@@ -2962,6 +2965,7 @@ let MOCK_REPORTS: ReportDetail[] = [
   },
   {
     id: "rep-eurorack",
+    title: "Beginner Ambient Eurorack Picks",
     question: "Best Eurorack modules for a beginner ambient rig",
     report_md:
       "## Summary\n\nFor an ambient-first starter case, corroborated picks cluster around a stable VCO, a wavetable/complex oscillator, a good reverb/delay, and a flexible envelope+LFO utility.\n\n## Coverage\n\nOnly one gather round ran (budget), so pricing is indicative.",
@@ -2977,6 +2981,8 @@ let MOCK_REPORTS: ReportDetail[] = [
   },
   {
     id: "rep-strix",
+    // Left untitled to exercise the client's question fallback (title job not yet run).
+    title: null,
     question: "Strix Halo local LLM setup — memory bandwidth trade-offs",
     report_md:
       "## Summary\n\nUnified LPDDR5X bandwidth is the binding constraint for token throughput; quantization and model choice matter more than raw core count for on-box inference.",
@@ -3039,10 +3045,11 @@ let MOCK_VIDEOS: VideoDetail[] = [
   },
 ];
 
-function reportListItem(r: ReportDetail) {
+function reportListItem(r: ReportDetail & { title?: string | null }) {
   return {
     id: r.id,
     question: r.question,
+    title: r.title ?? null,
     complexity: r.complexity,
     created_at: r.created_at,
     sub_agents: r.sub_agents,

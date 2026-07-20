@@ -6,6 +6,7 @@ Embedding vectors are deterministic fakes (the embed container never runs in tes
 
 import uuid
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -20,6 +21,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.embed import ResearchReportEmbedder
+from jbrain.external.report_titler import ResearchReportTitler
 from jbrain.external.research_corpus import (
     delete_report,
     fetch_report,
@@ -226,3 +228,67 @@ async def test_list_reports_counts_and_pages(maker) -> None:  # noqa: F811
     assert len(page2) == 1
     # Every report is enumerated exactly once across the pages.
     assert {r.question for r in page1 + page2} == {f"question number {i}" for i in range(3)}
+    # The display title is None until the title_research_report job fills it.
+    assert all(r.title is None for r in page1 + page2)
+
+
+class _FakeTitleRouter:
+    """A one-shot completion router that returns a scripted title and records each call —
+    the only LLM a test may call (the real router never runs in tests)."""
+
+    def __init__(self, reply: str):
+        self._reply = reply
+        self.calls: list[dict] = []
+
+    async def complete(self, task, *, system, user_text, max_tokens, **_):  # noqa: ANN001
+        self.calls.append({"task": task, "user_text": user_text})
+        return SimpleNamespace(text=self._reply, parsed=None)
+
+
+async def test_persist_enqueues_title_job_and_titler_fills_it(maker) -> None:  # noqa: F811
+    await _clear_reports(maker)
+    report_id = await persist_report(
+        maker,
+        session_id=None,
+        question="How was the 1918 flu pandemic's death toll estimated?",
+        report_md="## Toll\n\nEstimates rest on excess-mortality models.",
+        complexity="deep",
+        rounds=1,
+        sub_agents=2,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+    )
+
+    # persist_report kicks BOTH follow-up jobs for the row (embed + title).
+    async with scoped_session(maker, OWNER) as s:
+        kinds = set(
+            (
+                await s.execute(
+                    text("SELECT kind FROM app.jobs WHERE payload->>'report_id' = :r"),
+                    {"r": report_id},
+                )
+            ).scalars()
+        )
+    assert {"embed_research_report", "title_research_report"} <= kinds
+
+    router = _FakeTitleRouter('  "1918 Flu Death-Toll Estimates"  ')
+    await ResearchReportTitler(maker, router).title_research_report(  # type: ignore[arg-type]
+        {"report_id": report_id}
+    )
+    # The raw question (and the stored excerpt) were fed to the model.
+    assert "1918 flu" in router.calls[0]["user_text"]
+    # The reply is cleaned (quotes + whitespace stripped) and surfaces in the listing.
+    reports, _ = await list_reports(maker, limit=10)
+    assert reports[0].title == "1918 Flu Death-Toll Estimates"
+
+    # Idempotent: a second run sees title IS NOT NULL and never calls the model again.
+    router2 = _FakeTitleRouter("A Different Title")
+    await ResearchReportTitler(maker, router2).title_research_report(  # type: ignore[arg-type]
+        {"report_id": report_id}
+    )
+    assert router2.calls == []
+    reports2, _ = await list_reports(maker, limit=10)
+    assert reports2[0].title == "1918 Flu Death-Toll Estimates"

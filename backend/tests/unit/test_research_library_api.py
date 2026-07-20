@@ -68,6 +68,7 @@ class FakeResearchLibrary:
             LibraryReport(
                 id="rep-1",
                 question=self._report.question,
+                title="1918 Flu Death-Toll Estimates",
                 complexity="deep",
                 created_at=WHEN,
                 sub_agents=6,
@@ -188,6 +189,9 @@ def test_list_reports_shape_and_total(client: TestClient, repo: FakeAuthRepo) ->
     assert [r["id"] for r in body["items"]] == ["rep-1"]
     row = body["items"][0]
     assert row["complexity"] == "deep" and row["sub_agents"] == 6 and row["rounds"] == 2
+    # The short display title rides the listing (the client falls back to the question
+    # when it's still None).
+    assert row["title"] == "1918 Flu Death-Toll Estimates"
     # The listing carries no body — that's the detail read's job.
     assert "report_md" not in row
 

@@ -75,6 +75,10 @@ TASK_DEFAULTS: dict[str, str] = {
     # tokens for the thinking trace, not just the title). This default is just the
     # operator-override hook.
     "session.title": "xai:grok-4.3",
+    # The report sibling of session.title (external.report_titler): distill a
+    # deep-research report's raw question into a short Research Library heading. A
+    # cheap one-shot; individually routable so an on-box operator can point it local.
+    "research.title": "xai:grok-4.3",
     # The Phase-6 wiki builder (docs/plans/PHASE6_WIKI_PLAN.md): `wiki.rewrite` drafts a
     # type-guided article from an entity's cited facts; `wiki.ground` is the strict
     # grounding verifier (the entity graph wins on conflict). Without these the
@@ -130,6 +134,7 @@ TASK_REASONING_BUCKET: dict[str, str] = {
     # Low reasoning
     "entity.disambiguate": "low",
     "session.title": "low",
+    "research.title": "low",
     "triage.classify": "low",
     "pet.turn": "low",
     "pet.thought": "low",

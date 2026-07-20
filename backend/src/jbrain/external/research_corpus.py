@@ -33,6 +33,7 @@ from jbrain.workflow.registry import ActionSpec
 log = structlog.get_logger()
 
 KIND_EMBED_RESEARCH_REPORT = "embed_research_report"
+KIND_TITLE_RESEARCH_REPORT = "title_research_report"
 
 # In-code only (dispatch-only, no Ops trigger, like embed_external_source): the report sibling of
 # embed_note, kicked as a follow-up by persist_report. The worker adds it to its build_registry
@@ -45,6 +46,20 @@ EMBED_RESEARCH_REPORT_SPEC = ActionSpec(
     mutating=True,  # writes the summary embedding
     cost_class="standard",  # local embed container, no LLM router
     description="Fill the NULL summary embedding for one research report.",
+    category="maintenance",
+)
+
+# The report-title sibling: an LLM one-shot (external.report_titler) that distills the
+# raw question into a short display title, also kicked as a persist_report follow-up.
+# An LLM call (cost_class "expensive"), unlike the local-container embed job.
+TITLE_RESEARCH_REPORT_SPEC = ActionSpec(
+    name=KIND_TITLE_RESEARCH_REPORT,
+    version=1,
+    handler=KIND_TITLE_RESEARCH_REPORT,
+    domain_optional=True,
+    mutating=True,  # writes the display title
+    cost_class="expensive",  # a small LLM completion via the router
+    description="Generate the short display title for one research report.",
     category="maintenance",
 )
 
@@ -133,7 +148,10 @@ async def persist_report(
                     "  revised = EXCLUDED.revised, coverage_limited = EXCLUDED.coverage_limited,"
                     "  truncated = EXCLUDED.truncated, sources = EXCLUDED.sources,"
                     "  tool = EXCLUDED.tool, status = 'done', created_at = now(),"
-                    "  summary_embedding = NULL, embedding_model = NULL"
+                    # NULL the derived slots on a re-run so the follow-up jobs re-fill
+                    # them against the newest report (title tracks the question, which
+                    # is stable, but the report body changed).
+                    "  summary_embedding = NULL, embedding_model = NULL, title = NULL"
                     " RETURNING id"
                 ),
                 params,
@@ -141,6 +159,7 @@ async def persist_report(
         ).scalar_one()
     report_id = str(report_id)
     await enqueue(maker, SYSTEM_CTX, KIND_EMBED_RESEARCH_REPORT, {"report_id": report_id})
+    await enqueue(maker, SYSTEM_CTX, KIND_TITLE_RESEARCH_REPORT, {"report_id": report_id})
     log.info("research_report.persisted", report_id=report_id, question=question[:80])
     return report_id
 
@@ -151,6 +170,9 @@ class LibraryReport:
 
     id: str
     question: str
+    # The short display heading (title_research_report job); None until it lands, so the
+    # client falls back to the question.
+    title: str | None
     complexity: str
     created_at: datetime | None
     sub_agents: int
@@ -178,7 +200,7 @@ async def list_reports(
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, complexity, created_at, sub_agents, rounds"
+                    "SELECT id, question, title, complexity, created_at, sub_agents, rounds"
                     " FROM app.research_reports WHERE status = 'done'"
                     " ORDER BY created_at DESC, id LIMIT :limit OFFSET :offset"
                 ),
@@ -189,6 +211,7 @@ async def list_reports(
         LibraryReport(
             id=str(r.id),
             question=r.question or "",
+            title=(r.title or None),
             complexity=r.complexity or "",
             created_at=r.created_at,
             sub_agents=int(r.sub_agents or 0),

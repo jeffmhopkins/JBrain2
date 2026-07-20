@@ -982,6 +982,9 @@ export interface RunStats {
 export interface ReportListItem {
   id: string;
   question: string;
+  /** The short LLM-generated display heading; null until the title job lands (fall back
+   * to the question). */
+  title: string | null;
   complexity: string;
   created_at: string | null;
   sub_agents: number;
