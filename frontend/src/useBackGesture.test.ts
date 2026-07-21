@@ -104,4 +104,40 @@ describe("useBackGesture", () => {
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledTimes(1);
   });
+
+  it("publishes a __jbrainBack bridge that closes a layer and reports whether it did", () => {
+    const onBack = vi.fn();
+    const { rerender, unmount } = renderHook(({ d }) => useBackGesture(d, onBack), {
+      initialProps: { d: 1 },
+    });
+    // A layer is open → back closes it and reports true.
+    expect(window.__jbrainBack?.()).toBe(true);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    // Nothing open → reports false (the native host backgrounds the app instead of exiting).
+    rerender({ d: 0 });
+    expect(window.__jbrainBack?.()).toBe(false);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(window.__jbrainBack).toBeUndefined();
+  });
+
+  describe("inside the native owner WebView", () => {
+    beforeEach(() => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(
+        "Mozilla/5.0 (Linux; Android 14) AppleWebKit JBrainOwner/1",
+      );
+    });
+
+    it("skips the History API trap — the native host owns the back button", () => {
+      const onBack = vi.fn();
+      renderHook(() => useBackGesture(1, onBack));
+      // No history entries armed; back is driven through the bridge, not popstate.
+      expect(push).not.toHaveBeenCalled();
+      pop();
+      expect(onBack).not.toHaveBeenCalled();
+      // The bridge still works and reflects the open layer.
+      expect(window.__jbrainBack?.()).toBe(true);
+      expect(onBack).toHaveBeenCalledTimes(1);
+    });
+  });
 });
