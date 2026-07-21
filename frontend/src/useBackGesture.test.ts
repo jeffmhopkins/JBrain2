@@ -2,16 +2,15 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useBackGesture } from "./useBackGesture";
 
-// The hook mirrors the layer stack into history: a trap entry while anything is
-// open, consumed by the OS back to close the top layer. We drive depth changes
-// and synthesize the platform's popstate to assert the wiring without a device.
+// The hook keeps ONE trap entry permanently at the top of history: every platform back
+// consumes it, the hook re-arms it and climbs one on-screen layer, and at the root it
+// simply stays put — the gesture never exits the app. We drive depth and synthesize the
+// platform's popstate to assert the wiring without a device.
 describe("useBackGesture", () => {
   let push: ReturnType<typeof vi.spyOn>;
-  let back: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     push = vi.spyOn(window.history, "pushState");
-    back = vi.spyOn(window.history, "back").mockImplementation(() => {});
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -19,62 +18,54 @@ describe("useBackGesture", () => {
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
   }
 
-  it("arms a single history trap when the first layer opens", () => {
-    const onBack = vi.fn();
-    const { rerender } = renderHook(({ d }) => useBackGesture(d, onBack), {
-      initialProps: { d: 0 },
-    });
-    expect(push).not.toHaveBeenCalled();
-
-    rerender({ d: 1 });
-    expect(push).toHaveBeenCalledTimes(1);
-    // A second layer rides the same trap — no extra entry stacks up.
-    rerender({ d: 2 });
+  it("arms the permanent trap once on mount", () => {
+    renderHook(() => useBackGesture(0, vi.fn()));
     expect(push).toHaveBeenCalledTimes(1);
   });
 
-  it("closes the top layer on the platform back gesture", () => {
+  it("re-arms the trap and closes a layer on each platform back", () => {
     const onBack = vi.fn();
     renderHook(() => useBackGesture(1, onBack));
-    pop();
-    expect(onBack).toHaveBeenCalledTimes(1);
-  });
-
-  it("re-arms the trap while deeper layers remain, so each back pops one", () => {
-    const onBack = vi.fn();
-    renderHook(() => useBackGesture(2, onBack));
     push.mockClear();
     pop();
-    expect(onBack).toHaveBeenCalledTimes(1);
-    // Deeper layer still open → a fresh trap is pushed for the next back.
+    // The consumed trap is replaced so the next back is caught too, and the top layer closes.
     expect(push).toHaveBeenCalledTimes(1);
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it("drops the trap (not the layer) when the UI closes the last layer", () => {
-    const onBack = vi.fn();
-    const { rerender } = renderHook(({ d }) => useBackGesture(d, onBack), {
-      initialProps: { d: 1 },
-    });
-    rerender({ d: 0 });
-    // History is unwound to match the UI close; onBack is the OS-back path only.
-    expect(back).toHaveBeenCalledTimes(1);
-    expect(onBack).not.toHaveBeenCalled();
-  });
-
-  it("ignores the popstate it raises while unwinding a UI close", () => {
-    const onBack = vi.fn();
-    const { rerender } = renderHook(({ d }) => useBackGesture(d, onBack), {
-      initialProps: { d: 1 },
-    });
-    rerender({ d: 0 }); // UI close → history.back() → its popstate must be muted
-    pop();
-    expect(onBack).not.toHaveBeenCalled();
-  });
-
-  it("does nothing on a stray popstate when no layers are open", () => {
+  it("re-arms but does NOT climb when nothing is open — back stays in the app", () => {
     const onBack = vi.fn();
     renderHook(() => useBackGesture(0, onBack));
+    push.mockClear();
     pop();
+    // Trap re-armed (so the app can't be backed out of), but there's no layer to close.
+    expect(push).toHaveBeenCalledTimes(1);
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("closes one layer per back regardless of whether depth strictly decreases", () => {
+    // A close that swaps one layer for another (Tasks' return-to-card) keeps depth
+    // constant; the permanent trap means the next back still fires onBack.
+    const onBack = vi.fn();
+    const { rerender } = renderHook(({ d }) => useBackGesture(d, onBack), {
+      initialProps: { d: 1 },
+    });
+    pop();
+    expect(onBack).toHaveBeenCalledTimes(1);
+    rerender({ d: 1 }); // depth unchanged after the swap
+    pop();
+    expect(onBack).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads the latest depth and callback without re-subscribing", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = renderHook(({ cb, d }) => useBackGesture(d, cb), {
+      initialProps: { cb: first, d: 1 },
+    });
+    rerender({ cb: second, d: 1 });
+    pop();
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
   });
 });

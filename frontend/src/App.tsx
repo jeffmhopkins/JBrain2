@@ -6,6 +6,7 @@ import { Launcher, type LauncherTarget } from "./components/Launcher";
 import { MoveDomainSheet } from "./components/MoveDomainSheet";
 import { PresenceToast } from "./components/PresenceToast";
 import { TopBar } from "./components/TopBar";
+import { closeHomeBackLayer, useHomeBackDepth } from "./homeBack";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
 import { AutomationsScreen } from "./screens/AutomationsScreen";
@@ -412,8 +413,12 @@ export function App() {
   // the move sheet is one of them. The edit layer is a full screen, so it stays
   // an explicit term here.
   const modalDepth = useModalLayerCount();
+  // The home surface's own open layers (Full Brain Sessions/Proposals panel, an open
+  // Proposal) — counted so the back gesture climbs them before it reaches the bare chat.
+  const homeDepth = useHomeBackDepth();
   const overlayDepth =
     modalDepth +
+    homeDepth +
     (actions.editing !== null ? 1 : 0) +
     (talkArticle !== null ? 1 : 0) +
     (wikiArticle !== null ? 1 : 0) +
@@ -456,6 +461,10 @@ export function App() {
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
+    // The home conversation surface is beneath everything above, so its own layers (an
+    // open Proposal, then the Sessions/Proposals panel) climb off only once nothing
+    // higher remains — and before the Tasks return, since they sit atop that chat.
+    if (closeHomeBackLayer()) return;
     // A session opened from Tasks dropped its card to reveal the chat — climb back
     // to that card rather than letting the platform back gesture exit the app.
     if (sessionBackTo !== null) {

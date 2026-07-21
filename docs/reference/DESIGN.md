@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-20
+> **Status:** Living · **Last verified:** 2026-07-21
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -808,6 +808,13 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   sinking back down to reveal it (150ms ease-out, disabled under reduced
   motion). Each card carries its own top bar (chevron + title); the bolt on
   a card climbs one level, like the down-swipe.
+- **The platform back gesture climbs one level too** (`useBackGesture`), exactly
+  like swipe-down — closing the topmost layer in z-order (sheets, then reading
+  layers, then card/launcher, then the Full Brain Proposal/panel and the Tasks
+  return-to-card). It **never exits the app**: a single history "trap" entry is kept
+  permanently armed, so back at the bare chat is a no-op (exit is via the home
+  button / app switcher). The bare home stream and the Full Brain conversation are
+  both "the main screen" — back always reaches one of them before it stops.
 - Tiles for phases not yet built render disabled with their phase label.
 
 ### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
