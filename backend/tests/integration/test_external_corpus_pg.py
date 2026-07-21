@@ -165,6 +165,7 @@ def _synthetic() -> tuple[ResolvedStream, VideoAnalysis]:
         video_id="vid1",
         channel_name="NSF",
         upload_date="20260715",
+        description="Chapters and links from the uploader about the Starbase rollout.",
     )
     analysis = {
         "duration_ms": 20_000,
@@ -243,6 +244,8 @@ async def test_persist_embed_search_round_trip(maker) -> None:  # noqa: F811
     assert t is not None
     assert t.title == "Booster Rollout" and t.channel_name == "NSF"
     assert t.duration_s == 20 and t.summary == "A booster rollout at the pad."
+    # The uploader's own description round-trips for read_external_video to surface.
+    assert t.description == "Chapters and links from the uploader about the Starbase rollout."
     assert t.published_at is not None and t.published_at.year == 2026  # upload_date "20260715"
     # The video-analysis card fields (show_external_video) round-trip too.
     assert t.video_id == "vid1" and t.provider == "youtube"
@@ -253,6 +256,48 @@ async def test_persist_embed_search_round_trip(maker) -> None:  # noqa: F811
     assert [w[1] for w in t.windows]  # passage windows came back, ordered by seq
     assert t.windows == sorted(t.windows)  # ascending by t_ms
     assert await fetch_transcript(maker, "nope") is None  # unknown id → None
+
+
+async def test_search_finds_video_by_description_alone(maker) -> None:  # noqa: F811
+    """A source with no summary and no transcript passages is still findable by its uploader
+    description — the description-dense leg makes the channel-authored text searchable."""
+    await _clear_sources(maker)
+    async with scoped_session(maker, OWNER) as s:
+        source_id = str(
+            (
+                await s.execute(
+                    text(
+                        "INSERT INTO app.external_sources"
+                        " (provider, video_id, url, description, status)"
+                        " VALUES ('youtube', 'descvid', 'https://y/descvid',"
+                        " 'A deep dive on grid fin actuator qualification.', 'done')"
+                        " RETURNING id"
+                    )
+                )
+            ).scalar_one()
+        )
+
+    embed = StaticEmbed()
+    await ExternalSourceEmbedder(maker, embed, "test-model").embed_external_source(
+        {"source_id": source_id}
+    )
+    # The description embedding was filled (there was no summary and no chunk to embed).
+    async with scoped_session(maker, EXTERNAL_ONLY) as s:
+        assert (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.external_sources"
+                    " WHERE id = :s AND description_embedding IS NOT NULL"
+                ),
+                {"s": source_id},
+            )
+        ).scalar_one() == 1
+
+    # No summary, no passages → only the description leg can surface it.
+    hits, degraded = await search_corpus(maker, embed, "grid fin actuator", 6)
+    assert not degraded
+    assert [h.source_id for h in hits] == [source_id]
+    assert hits[0].passage == "A deep dive on grid fin actuator qualification."
 
 
 async def _clear_sources(maker) -> None:

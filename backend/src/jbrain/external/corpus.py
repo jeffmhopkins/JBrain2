@@ -98,6 +98,10 @@ async def persist_analysis(
         "duration_s": int(resolved.duration_s) if resolved.duration_s else None,
         "duration_ms": analysis.get("duration_ms"),
         "summary": result.summary or None,
+        # The uploader's own channel-authored description (yt-dlp), stored verbatim so a
+        # library video carries what its channel said about itself; embedded separately so
+        # it is searchable. NULL when the provider omitted one.
+        "description": resolved.description or None,
         "transcript_source": _transcript_source_label(transcript_source, resolved),
         "frames": json.dumps(frames),
         # The full {text, words:[{text, start_ms, end_ms}]} for the card's synced-transcript tab
@@ -115,22 +119,24 @@ async def persist_analysis(
                 text(
                     "INSERT INTO app.external_sources"
                     " (provider, video_id, url, title, channel_id, channel_name, published_at,"
-                    "  duration_s, duration_ms, summary, transcript_source, frames, transcript,"
-                    "  tool, origin, status, analyzed_at)"
+                    "  duration_s, duration_ms, summary, description, transcript_source, frames,"
+                    "  transcript, tool, origin, status, analyzed_at)"
                     " VALUES (:provider, :video_id, :url, :title, :channel_id, :channel_name,"
-                    "  :published_at, :duration_s, :duration_ms, :summary, :transcript_source,"
-                    "  cast(:frames AS jsonb), cast(:transcript AS jsonb),"
+                    "  :published_at, :duration_s, :duration_ms, :summary, :description,"
+                    "  :transcript_source, cast(:frames AS jsonb), cast(:transcript AS jsonb),"
                     "  :tool, :origin, 'done', now())"
                     " ON CONFLICT (provider, video_id) DO UPDATE SET"
                     "  url = EXCLUDED.url, title = EXCLUDED.title,"
                     "  channel_id = EXCLUDED.channel_id, channel_name = EXCLUDED.channel_name,"
                     "  published_at = EXCLUDED.published_at, duration_s = EXCLUDED.duration_s,"
                     "  duration_ms = EXCLUDED.duration_ms, summary = EXCLUDED.summary,"
+                    "  description = EXCLUDED.description,"
                     "  transcript_source = EXCLUDED.transcript_source, frames = EXCLUDED.frames,"
                     "  transcript = EXCLUDED.transcript,"
                     "  tool = EXCLUDED.tool, status = 'done', last_error = NULL,"
                     "  analyzed_at = now(),"
-                    "  summary_embedding = NULL, embedding_model = NULL"
+                    "  summary_embedding = NULL, description_embedding = NULL,"
+                    "  embedding_model = NULL"
                     " RETURNING id"
                 ),
                 params,
@@ -224,6 +230,9 @@ class ExternalTranscript:
     duration_s: int | None
     published_at: datetime | None
     windows: list[tuple[int, str]]  # (t_ms, text), ordered by seq
+    # The uploader's own channel-authored description (yt-dlp), "" when none was stored — an
+    # optional trailing field so the read tool's positional constructors stay valid.
+    description: str = ""
     # Extra fields the video-analysis card (show_external_video) needs; the text read tool
     # (read_external_video) ignores them, so they default and stay out of its call sites.
     video_id: str = ""
@@ -251,8 +260,8 @@ async def fetch_transcript(
             await session.execute(
                 text(
                     "SELECT id, title, channel_name, url, transcript_source, summary,"
-                    " duration_s, published_at, video_id, provider, duration_ms, frames,"
-                    " transcript"
+                    " description, duration_s, published_at, video_id, provider, duration_ms,"
+                    " frames, transcript"
                     " FROM app.external_sources WHERE video_id = :vid"
                     " ORDER BY analyzed_at DESC NULLS LAST LIMIT 1"
                 ),
@@ -277,6 +286,7 @@ async def fetch_transcript(
         url=row.url,
         transcript_source=row.transcript_source or "",
         summary=row.summary or "",
+        description=row.description or "",
         duration_s=int(row.duration_s) if row.duration_s is not None else None,
         published_at=row.published_at,
         windows=[(int(c.t_ms), (c.text or "").strip()) for c in chunks if (c.text or "").strip()],
@@ -398,6 +408,14 @@ _SUMMARY_DENSE_SQL = (
     " FROM app.external_sources s WHERE s.summary_embedding IS NOT NULL"
     " ORDER BY s.summary_embedding <=> cast(:qvec AS vector), s.id LIMIT :limit"
 )
+# The uploader's own description as a source-level dense leg, twin to the summary leg: a
+# coarse fallback that surfaces a video whose channel text matches even when no passage did.
+_DESCRIPTION_DENSE_SQL = (
+    "SELECT s.id AS source_id, s.title, s.channel_name, s.url, s.video_id,"
+    " s.description AS passage"
+    " FROM app.external_sources s WHERE s.description_embedding IS NOT NULL"
+    " ORDER BY s.description_embedding <=> cast(:qvec AS vector), s.id LIMIT :limit"
+)
 
 
 @dataclass(frozen=True)
@@ -485,6 +503,13 @@ async def search_corpus(
             # Summary hits are a coarse fallback: only add a source the passage legs missed
             # (never overwrite a chunk hit's precise t_ms + passage).
             rankings.append(ingest_rows(summ, is_chunk=False))
+            desc = (
+                await session.execute(
+                    text(_DESCRIPTION_DENSE_SQL), {"qvec": vec, "limit": _LEG_LIMIT}
+                )
+            ).all()
+            # The uploader's description, same coarse-fallback role as the summary leg.
+            rankings.append(ingest_rows(desc, is_chunk=False))
 
     scores = rrf_scores(*rankings)
     ranked = sorted(scores, key=lambda s: (scores[s], s), reverse=True)[:limit]

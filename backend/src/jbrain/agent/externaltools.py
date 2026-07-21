@@ -46,6 +46,9 @@ _LIST_DEFAULT = 20
 # ~60k chars ≈ 15k tokens — enough for a long episode; longer is truncated with a pointer to
 # search_external_video for jumping to a specific moment.
 _TRANSCRIPT_MAX_CHARS = 60_000
+# The uploader's description is usually a few paragraphs but can be a long wall of links and
+# boilerplate; cap it on its own so it informs the read without crowding out the transcript.
+_DESCRIPTION_MAX_CHARS = 4_000
 
 # Pull the video id out of a watch/short/live/embed URL (or accept a bare id the search tool
 # echoed back). Non-URL, non-YouTube refs pass through as-is for a direct video_id match.
@@ -82,9 +85,10 @@ def _hms(ms: int) -> str:
 
 def _render_transcript(t: ExternalTranscript) -> str:
     """The fenced full read of one library video: a header (title/channel/length/source), the
-    whole summary, then the timestamped transcript windows (or just the summary when a source has
-    no passage rows). The transcript is truncated at the char cap with a pointer; the summary and
-    metadata always come through in full."""
+    uploader's own description, the whole summary, then the timestamped transcript windows (or
+    just the summary when a source has no passage rows). The transcript is truncated at the char
+    cap with a pointer; the description is capped on its own; metadata + summary come through in
+    full."""
     text = "\n".join(f"[{_hms(ms)}] {passage}" for ms, passage in t.windows)
     truncated = len(text) > _TRANSCRIPT_MAX_CHARS
     if truncated:
@@ -96,10 +100,18 @@ def _render_transcript(t: ExternalTranscript) -> str:
     if t.published_at is not None:
         meta = f"published: {t.published_at:%Y-%m-%d %H:%M UTC} · " + meta
     header = f"{_FENCE}\n\nFull transcript — {t.title}{channel}\n{meta} · {t.url}"
+    # The uploader's own channel-authored blurb — separate from the machine summary, and its own
+    # (attacker-authorable) third-party data. Capped so a link-and-boilerplate wall can't swamp
+    # the read; the fence already frames the whole body as data, not instructions.
+    desc_truncated = len(t.description) > _DESCRIPTION_MAX_CHARS
+    desc_text = t.description[:_DESCRIPTION_MAX_CHARS] if desc_truncated else t.description
+    description = f"\n\nUploader's description:\n{desc_text}" if desc_text.strip() else ""
+    if desc_truncated:
+        description += "\n[description truncated]"
     summary = f"\n\nSummary: {t.summary}" if t.summary else ""
     # No passage rows (e.g. a captionless source with only a summary): the summary is the read.
     transcript = f"\n\nTranscript:\n{text}" if text else "\n\n(No timestamped transcript stored.)"
-    body = f"{header}{summary}{transcript}"
+    body = f"{header}{description}{summary}{transcript}"
     if truncated:
         body += "\n\n[transcript truncated — use search_external_video to jump to a moment]"
     return body
