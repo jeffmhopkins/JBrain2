@@ -30,8 +30,13 @@ def _handler(uploads, *, raise_exc=None, metas=None):
     def resolver(video_id, *, skip_guard=False):
         return (metas or {}).get(video_id)
 
-    return build_external_handlers(  # type: ignore[arg-type]
-        object(), object(), lister, meta_resolver=resolver
+    # object() stands in for the maker/embedder — check_channel touches neither (dedup + resolver
+    # are stubbed), so the fakes never get used; the per-arg ignores stay put under ruff wrapping.
+    return build_external_handlers(
+        object(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        lister,
+        meta_resolver=resolver,
     )["check_channel"]
 
 
