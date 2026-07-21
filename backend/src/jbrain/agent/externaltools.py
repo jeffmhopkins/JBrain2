@@ -119,11 +119,12 @@ def _looks_short(meta: VideoMeta) -> bool:
     return meta.duration_s is None or meta.duration_s <= _SHORT_MAX_S
 
 
-def _listing_line(title: str, url: str, meta: VideoMeta | None) -> str:
-    """One channel-listing entry: title + (published · length · format tags) + a one-line
-    description teaser. Missing metadata just drops its bit — a resolve that failed still shows
-    title + url so the model can judge from the title alone rather than the upload vanishing.
-    `was live` marks a finished-livestream re-upload; `Short?` a vertical short-form clip."""
+def _listing_line(title: str, url: str, meta: VideoMeta | None, *, full_description: bool) -> str:
+    """One channel-listing entry: title + (published · length · format tags) + the uploader's
+    description. Missing metadata just drops its bit — a resolve that failed still shows title +
+    url so the model can judge from the title alone rather than the upload vanishing. `was live`
+    marks a finished-livestream re-upload; `Short?` a vertical short-form clip. The description is
+    a one-line teaser by default; `full_description` returns the whole blurb, indented, uncut."""
     bits: list[str] = []
     if meta and meta.published_at is not None:
         bits.append(f"published {meta.published_at:%Y-%m-%d}")
@@ -136,10 +137,14 @@ def _listing_line(title: str, url: str, meta: VideoMeta | None) -> str:
     meta_bit = f" ({' · '.join(bits)})" if bits else ""
     line = f"- {title}{meta_bit}\n  {url}"
     if meta and meta.description.strip():
-        teaser = " ".join(meta.description.split())
-        if len(teaser) > _LISTING_DESC_SNIPPET:
-            teaser = teaser[:_LISTING_DESC_SNIPPET].rstrip() + "…"
-        line += f"\n  {teaser}"
+        if full_description:
+            # The complete blurb, each line indented to stay grouped under the entry.
+            desc = meta.description.strip().replace("\n", "\n  ")
+        else:
+            desc = " ".join(meta.description.split())
+            if len(desc) > _LISTING_DESC_SNIPPET:
+                desc = desc[:_LISTING_DESC_SNIPPET].rstrip() + "…"
+        line += f"\n  {desc}"
     return line
 
 
@@ -311,6 +316,7 @@ def build_external_handlers(
         limit = max(1, min(int(arguments.get("limit", 10) or 10), _CHANNEL_MAX))
         within = arguments.get("published_within_days")
         within_days = int(within) if within not in (None, "") else None
+        full_desc = bool(arguments.get("full_descriptions"))
 
         try:
             uploads = await asyncio.to_thread(lister, channel_id, limit=limit)
@@ -356,7 +362,7 @@ def build_external_handlers(
                     f" {within_days} day(s)."
                 )
 
-        lines = [_listing_line(u.title, u.url, m) for u, m in pairs]
+        lines = [_listing_line(u.title, u.url, m, full_description=full_desc) for u, m in pairs]
         # Titles and uploader descriptions are attacker-authorable third-party text, so fence
         # the listing as data to judge — never as instructions (the same posture the search and
         # list tools take). The model decides which fit; a channel's uploads mix styles.

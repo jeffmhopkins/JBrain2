@@ -131,6 +131,17 @@ async def test_description_teaser_is_capped(monkeypatch) -> None:
     assert "…" in out and "x" * 500 not in out
 
 
+async def test_full_descriptions_returns_the_whole_blurb(monkeypatch) -> None:
+    await _fresh(monkeypatch, {"v1"})
+    blurb = "Line one about the launch.\n" + "y" * 1000  # multi-line + over the teaser cap
+    meta = VideoMeta(description=blurb)
+    out = await _handler(_uploads(("v1", "Long blurb")), metas={"v1": meta})(
+        {"channel_id": "UCabc", "full_descriptions": True}, _CTX
+    )
+    assert "y" * 1000 in out and "…" not in out  # uncut, no truncation marker
+    assert "Line one about the launch." in out
+
+
 async def test_published_within_days_drops_old_uploads(monkeypatch) -> None:
     await _fresh(monkeypatch, {"recent", "old"})
     now = datetime.now(UTC)
