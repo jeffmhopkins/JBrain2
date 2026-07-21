@@ -35,6 +35,24 @@
         <activity
             android:name=".PairingActivity"
             android:exported="false" />
+        <!-- The owner app: same APK, its own launcher icon. It hosts the owner SPA (server
+             root) in a WebView so the system back gesture is a native callback we control
+             (background-not-exit + the page's window.__jbrainBack bridge), which the PWA
+             can't guarantee on Android. enableOnBackInvokedCallback opts this activity into
+             the predictive-back callback on Android 13+. -->
+        <activity
+            android:name=".OwnerActivity"
+            android:label="@string/owner_app_name"
+            android:enableOnBackInvokedCallback="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".OwnerSetupActivity"
+            android:exported="false" />
         <service
             android:name=".LocationService"
             android:exported="false"

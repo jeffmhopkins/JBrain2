@@ -820,6 +820,13 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
   Android's gesture/predictive back can't race it into an exit. The bare home stream
   and the Full Brain conversation are both "the main screen" — back always reaches one
   of them before it stops.
+- **Native host path.** Inside the owner Android app (a WebView; `OwnerActivity`), the
+  system back button is a native callback, not the History API — so `useBackGesture`
+  detects that host (a `JBrainOwner/` UA marker), skips the history trap entirely, and
+  publishes `window.__jbrainBack()` (closes the top layer, returns whether it did). The
+  activity calls it on back and **backgrounds** the app (`moveTaskToBack`) when nothing
+  was open, so back is deterministic where the web trap can't be. Same layer logic, one
+  source of truth — the native side only routes the button.
 - Tiles for phases not yet built render disabled with their phase label.
 
 ### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
