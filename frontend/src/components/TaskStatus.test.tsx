@@ -49,6 +49,22 @@ function renderCard(onComplete = vi.fn()) {
 }
 
 describe("TaskStatus", () => {
+  it("maps 'Reading captions…' to the open stage, not frame analysis", async () => {
+    // The caption fetch runs before frames (captions-first), so its label must light the
+    // "Open the stream" step — not "Analyze the frames" (the old `caption` match bug, which
+    // showed frames active while the label still said "Reading captions…").
+    vi.useFakeTimers();
+    deferredResult.mockResolvedValue(running("Reading captions…"));
+    renderCard();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const open = screen.getByText(/Open the stream/).closest("li");
+    const frames = screen.getByText(/Analyze the frames/).closest("li");
+    expect(open?.className).toContain("is-active");
+    expect(frames?.className).not.toContain("is-active");
+  });
+
   it("rides out a transient poll failure and still reaches the result", async () => {
     // A single failed poll between good reads is a blip, not a failure: the card keeps
     // polling and reaches the finished result (the exact production bug — a 7-min job's

@@ -497,12 +497,11 @@ describe("FullBrainSurface", () => {
     expect(screen.getByRole("button", { name: /Worked/ })).toHaveTextContent("1 step");
   });
 
-  it("stands an analysis card alone in a media bubble, with the Thinking/Worked foot on its own bubble", async () => {
-    // Regression: a video_analysis (or task_status) card is self-framed and full-bleed, so
-    // like an image it gets its own frameless media bubble — and, crucially, the turn's
-    // thinking + tool-use disclosure rides a SEPARATE normal bubble below it. Folding the
-    // card and its foot into one flattened bubble (the old CSS-only flatten) orphaned the
-    // foot, colliding the "Thought / Worked" strips.
+  it("tucks the Thinking/Worked foot inside the analysis card as one unified component", async () => {
+    // A video_analysis (or task_status) card is self-framed and full-bleed, so like an image
+    // it gets its own frameless media bubble — and the turn's thinking + tool-use disclosure
+    // is tucked INSIDE that card's frame (`.fb-analysis-card` wraps card + foot) so the whole
+    // analysis reads as ONE component, not a card with a separate box floating beneath it.
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "reasoning_delta", text: "let me analyze the stream" };
       yield { type: "tool_call", id: "v1", name: "analyze_stream", arguments: { url: "y" } };
@@ -531,16 +530,16 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "send" }));
     await screen.findByRole("button", { name: /Worked/ });
 
-    // The card stands alone in its own frameless media bubble — no thinking/tool-use foot
-    // inside it (so its own frame is the only one; the flattened bubble no longer wraps it).
+    // The card rides its own frameless media bubble, and the "Thinking / Worked" foot is
+    // tucked inside the SAME card frame (the `.fb-analysis-card` wrapper) — one unified unit.
     const media = container.querySelector(".bubble.ai.bubble-media");
     expect(media?.querySelector(".tv-vid")).not.toBeNull();
-    expect(media?.querySelector(".fb-act-foot")).toBeNull();
-    // …and the "Thinking / Worked" foot rides a SEPARATE normal (framed) bubble — not the
-    // media one — where its disclosure renders correctly.
+    const unified = media?.querySelector(".fb-analysis-card");
+    expect(unified?.querySelector(".tv-vid")).not.toBeNull();
+    expect(unified?.querySelector(".fb-act-foot")).not.toBeNull();
+    // The foot lives inside the media bubble now (not a separate one below it).
     const foot = container.querySelector(".fb-act-foot");
-    expect(foot).not.toBeNull();
-    expect(foot?.closest(".bubble.ai.bubble-media")).toBeNull();
+    expect(foot?.closest(".bubble.ai.bubble-media")).not.toBeNull();
     expect(screen.getByRole("button", { name: /Worked/ })).toHaveTextContent("1 step");
     expect(screen.getByRole("button", { name: /Thought/ })).toBeInTheDocument();
   });
