@@ -38,6 +38,12 @@ _CAPTION_CONF = 0.9
 _EXT_RANK = {"json3": 0, "srv3": 1, "srv2": 2, "srv1": 3, "vtt": 4, "ttml": 5}
 _MAX_CAPTION_BYTES = 8_000_000  # a whole-video caption file is small; cap a pathological one
 _CAPTION_TIMEOUT_S = 15.0
+# YouTube exposes the live-chat replay as a `subtitles` track keyed `live_chat`. It is NOT
+# speech captions — it's chat-message JSON, and its endpoint streams unboundedly, so fetching
+# it slow-loris-hangs the whole analysis (each trickled chunk resets the read timeout; the GPU
+# sits idle at "Reading captions…" forever). Since it's the only "manual" track on many VODs it
+# would otherwise win selection, so it is never a caption candidate.
+_NON_CAPTION_LANGS = frozenset({"live_chat"})
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,8 @@ def _pick_lang_track(tracks: Any, prefer_langs: tuple[str, ...]) -> tuple[str, d
         return len(prefer_langs)
 
     for lang in sorted(tracks.keys(), key=lang_rank):
+        if lang.lower() in _NON_CAPTION_LANGS:
+            continue  # a pseudo-track (YouTube live-chat replay), never real captions
         fmts = tracks.get(lang)
         if not isinstance(fmts, list):
             continue
