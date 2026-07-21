@@ -1237,8 +1237,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "check_channel.tool": (
             "check_channel",
-            1,
-            "4cbeee5e1cb151d0fba1a8274aa52e9dbf7e1359db96f14d5ec42a888ac83398",
+            2,
+            "01352a1c959f99c62f19fac494d2a48380389c5e76041e5542cf370c5ecfd120",
         ),
         "deep_research.tool": (
             "deep_research",

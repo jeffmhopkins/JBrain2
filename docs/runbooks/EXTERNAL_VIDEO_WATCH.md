@@ -1,6 +1,6 @@
 # Watching YouTube channels into the video corpus
 
-> **Status:** Living · **Last verified:** 2026-07-19
+> **Status:** Living · **Last verified:** 2026-07-21
 
 How to set up automatic nightly ingestion of a YouTube channel's new videos into the
 external-source corpus, using a recurring **Jerv Task** (the shipped Tasks feature) — no
@@ -10,8 +10,12 @@ backend change, no deploy. Background: `../plans/EXTERNAL_VIDEO_INGESTION_PLAN.m
 
 Three jerv tools make the corpus self-maintaining once a Task drives them:
 
-- **`check_channel`** — lists a channel's recent uploads (optionally filtered by a title
-  substring) and returns only the ones **not already in the corpus**.
+- **`check_channel`** — lists a channel's recent uploads (title · length · publish date · a
+  one-line description teaser) and returns only the ones **not already in the corpus**. jerv
+  reads that metadata and **decides which are worth analysing** (e.g. news/update-style, not
+  Shorts). Optional narrowing: `title_include` (keep titles containing ANY of several phrases)
+  and `published_within_days` (a recency window like the last 7 days). The metadata comes from
+  a cheap per-video resolve on the new uploads only — no download, far cheaper than an analysis.
 - **`analyze_stream`** (full mode) — analyses a video and, on completion, **writes it through**
   to the corpus (summary + timeline passages + embeddings). Reuses the analysis it produces,
   so there is no extra cost, and a repeat is a no-op (`ON CONFLICT`).
@@ -31,14 +35,17 @@ A Task is just a saved jerv prompt on a schedule; the agent loop does discovery 
 In the Tasks UI (or `POST /api/tasks`): persona **jerv**, a **repeat** schedule (e.g. daily at
 02:00 in your timezone), and a prompt naming the channels + filters and a per-run cap. Example:
 
-> For each of my watched channels below, call `check_channel`; for each NEW video it returns,
-> call `analyze_stream` on the video URL in **full** mode to add it to my video library. Analyse
-> at most **5** new videos this run — if there are more, they'll be caught next run. Don't
-> re-analyse anything; `check_channel` already excludes what's in the library.
+> For each of my watched channels below, call `check_channel` (pass `published_within_days: 7` so
+> you only see the last week). It returns each new upload with its length, publish date, and a
+> description teaser — use that to pick the ones that are clear **news or update-style** episodes
+> and **skip** Shorts, clips, and off-topic uploads. For each you pick, call `analyze_stream` on
+> the URL in **full** mode to add it to my library. Analyse at most **5** this run; the rest are
+> caught next run. Don't re-analyse anything — `check_channel` already excludes what's in the library.
 >
 > Watched channels:
-> - NASASpaceflight (`@NASASpaceflight`) — titles containing "Starship"
-> - (add more as `channel-id-or-@handle` — optional title filter)
+> - NASASpaceflight (`@NASASpaceflight`) — no title filter needed; judge from the metadata. (To
+>   force a narrow instead, pass `title_include: ["Starship", "Starbase"]`.)
+> - (add more as `channel-id-or-@handle`)
 
 Notes:
 - **Channel identifier:** a `UC…` channel id or an `@handle` (not a URL). `check_channel`

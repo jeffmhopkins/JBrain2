@@ -36,6 +36,7 @@ import io
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -316,6 +317,76 @@ def list_channel_uploads(
         if len(out) >= limit:
             break
     return out
+
+
+@dataclass(frozen=True)
+class VideoMeta:
+    """One upload's listing metadata — enough to judge whether it's worth analysing (style,
+    length, recency) WITHOUT resolving media formats or downloading anything. Every field is
+    best-effort: a captionless/private/geoblocked upload may resolve none of them."""
+
+    duration_s: int | None = None
+    published_at: datetime | None = None
+    description: str = ""
+
+
+# The per-video metadata resolver, injectable so `check_channel` is testable without yt-dlp
+# or a real network (a fake maps a video id to a canned VideoMeta or None).
+VideoMetaResolver = Callable[..., "VideoMeta | None"]
+
+
+def _video_published(info: Any) -> datetime | None:
+    """A tz-aware UTC publish time from yt-dlp's `timestamp` (unix, precise) or, failing that,
+    its date-only `upload_date` (YYYYMMDD). None when neither is present."""
+    ts = info.get("timestamp")
+    if isinstance(ts, (int, float)) and ts > 0:
+        return datetime.fromtimestamp(float(ts), UTC)
+    ud = str(info.get("upload_date") or "")
+    if len(ud) == 8 and ud.isdigit():
+        return datetime(int(ud[:4]), int(ud[4:6]), int(ud[6:8]), tzinfo=UTC)
+    return None
+
+
+def resolve_channel_video_meta(video_id: str, *, skip_guard: bool = False) -> VideoMeta | None:
+    """Resolve ONE upload's duration/publish-time/description via yt-dlp, without selecting a
+    media format (metadata only — far cheaper than a full `resolve_stream`, no download). The
+    constructed watch URL is SSRF-guarded like every other outbound leg. Best-effort: returns
+    None if the video can't be resolved, so one bad upload never sinks a whole channel listing.
+    Blocking (yt-dlp does network I/O) — the caller runs it off the event loop."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        guard_public_host_or_stream(url, skip_dns=skip_guard)
+    except StreamError:
+        return None
+    try:
+        import yt_dlp
+    except ImportError:  # pragma: no cover - env without the dep
+        return None
+
+    opts: Any = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "skip_download": True,
+        "socket_timeout": _RESOLVE_TIMEOUT_S,
+        "retries": 1,
+        "extractor_retries": 1,
+        "cachedir": False,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:  # noqa: BLE001 - yt-dlp raises a wide, unstable set
+        log.warning("stream.video_meta_failed", video_id=video_id, error=repr(exc))
+        return None
+    if not info:
+        return None
+    dur = info.get("duration")
+    return VideoMeta(
+        duration_s=int(dur) if isinstance(dur, (int, float)) and dur > 0 else None,
+        published_at=_video_published(info),
+        description=str(info.get("description") or ""),
+    )
 
 
 def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:

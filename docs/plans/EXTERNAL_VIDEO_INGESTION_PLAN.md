@@ -299,6 +299,12 @@ a chat-initiated analysis, `task` when the Task runs it (both persist identicall
   already in `external_sources` (read via the same purpose-built external scope as §6.2). Returns the fresh
   matches as `{video_id, title, url}` list text so the agent can decide what to analyse. Added to
   `JERV_TOOLS`. `channel_id` is validated as an id, not an arbitrary URL (§9 egress).
+  - **Follow-on shipped (tool v2, `check_channel.tool`).** So the model can judge *style/recency*
+    rather than only match a title, the handler now **enriches the NEW uploads** with a cheap
+    per-video metadata resolve (`stream.resolve_channel_video_meta`: duration · publish time ·
+    description teaser — no download) and renders them fenced as untrusted third-party data.
+    `title_include` accepts a **list** (OR-match) and a new `published_within_days` gives a
+    recency window (fail-open on an unresolved date). Resolves run only on post-dedup uploads.
 
 ---
 
@@ -446,7 +452,8 @@ CONFLICT` poll race, `pending_vod` promotion) by not building that machinery.
 1. **`captions: auto` vs `only`** in the Task — `auto` (whisper fallback, fuller) vs `only` (predictable, no
    whisper; uncaptioned videos get frames+summary, no speech). Recommend `auto`.
 2. **Per-run cap N** and Task cadence (frames density is the cost lever, §10).
-3. **`title_include`** substring (now) vs regex (follow-on).
+3. **`title_include`** — now a list of OR-matched substrings, joined by per-upload metadata the
+   model judges on (tool v2); regex still a possible follow-on.
 4. **Frame density / captions-only** per the cost tradeoff (§10) — full multimodal, or captions-only default
    with frames opt-in?
 5. **`check_channel` discovery depth** (`limit`) — bounds per-run listing cost.

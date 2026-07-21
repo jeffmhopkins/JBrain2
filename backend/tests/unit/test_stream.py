@@ -5,6 +5,7 @@ network, no real yt-dlp resolve) and skip when ffmpeg isn't on PATH; the
 selection/guard tests are pure and always run."""
 
 import subprocess
+from datetime import UTC, datetime
 
 import pytest
 
@@ -18,12 +19,27 @@ from jbrain.stream import (
     _header_args,
     _input_guard_args,
     _select_media,
+    _video_published,
     guard_public_host_or_stream,
     resolve_stream,
     sample_stream,
     sample_stream_full,
     ytdlp_available,
 )
+
+
+def test_video_published_prefers_unix_timestamp() -> None:
+    dt = _video_published({"timestamp": 1_753_000_000, "upload_date": "20200101"})
+    assert dt == datetime.fromtimestamp(1_753_000_000, UTC)
+
+
+def test_video_published_falls_back_to_upload_date() -> None:
+    assert _video_published({"upload_date": "20260720"}) == datetime(2026, 7, 20, tzinfo=UTC)
+
+
+def test_video_published_none_when_absent_or_malformed() -> None:
+    assert _video_published({}) is None
+    assert _video_published({"timestamp": 0, "upload_date": "nope"}) is None
 
 
 def test_full_frame_count_uses_interval_density_when_given() -> None:
