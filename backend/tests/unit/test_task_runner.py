@@ -9,6 +9,7 @@ import pytest
 from jbrain.agent.loop import AgentResult
 from jbrain.agent.session import AgentSessionInfo
 from jbrain.db.session import SessionContext
+from jbrain.notify import NotifyBus
 from jbrain.tasks.repo import TaskInfo
 from jbrain.tasks.runner import ExecutedTurn, TaskRunner
 
@@ -134,7 +135,15 @@ class FakePush:
 
 
 def _runner(  # type: ignore[no-untyped-def]
-    *, sessions=None, runlog=None, transcript=None, runs=None, executor=None, push=None, tokens=()
+    *,
+    sessions=None,
+    runlog=None,
+    transcript=None,
+    runs=None,
+    executor=None,
+    push=None,
+    tokens=(),
+    notify=None,
 ) -> TaskRunner:
     return TaskRunner(
         sessions=sessions or FakeSessions(),  # type: ignore[arg-type]
@@ -144,6 +153,7 @@ def _runner(  # type: ignore[no-untyped-def]
         executor=executor or FakeExecutor(),
         push=push,
         push_tokens=tokens,
+        notify=notify,
     )
 
 
@@ -213,3 +223,36 @@ async def test_push_pokes_only_when_enabled_with_tokens() -> None:
     runner2 = _runner(push=push2, tokens=("tok-a",))
     await runner2.run(OWNER, _task(notify_push=False), trigger="schedule")
     assert push2.pokes == []
+
+
+@pytest.mark.asyncio
+async def test_notify_publishes_task_ready_when_enabled() -> None:
+    bus = NotifyBus()
+    q = bus.subscribe()
+    runner = _runner(notify=bus)
+    await runner.run(OWNER, _task(name="Morning brief", notify_push=True), trigger="schedule")
+    note = q.get_nowait()
+    assert note.kind == "task_run"
+    assert note.title == "Task ready: Morning brief"
+    assert note.body == "Here is the news."
+    assert note.ref == "sess-1"
+
+
+@pytest.mark.asyncio
+async def test_notify_silent_when_disabled() -> None:
+    bus = NotifyBus()
+    q = bus.subscribe()
+    runner = _runner(notify=bus)
+    await runner.run(OWNER, _task(notify_push=False), trigger="schedule")
+    assert q.empty()
+
+
+@pytest.mark.asyncio
+async def test_notify_reports_a_failed_run() -> None:
+    bus = NotifyBus()
+    q = bus.subscribe()
+    runner = _runner(notify=bus, executor=FakeExecutor(boom=True))
+    await runner.run(OWNER, _task(name="Morning brief", notify_push=True), trigger="schedule")
+    note = q.get_nowait()
+    assert note.kind == "task_run"
+    assert "model exploded" in note.body

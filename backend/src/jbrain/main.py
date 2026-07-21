@@ -65,6 +65,7 @@ from jbrain.api import (
     member,
     mqtt,
     notes,
+    notifications,
     ops,
     owntracks,
     pairing,
@@ -127,6 +128,7 @@ from jbrain.locations.viewscope import SqlViewScopeRepo
 from jbrain.media import ffmpeg_available
 from jbrain.models.images import GeneratedImageRepo
 from jbrain.notes.repo import SqlNotesRepo
+from jbrain.notify import NotifyBus
 from jbrain.push import SqlFcmTokenRepo
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
 from jbrain.search.repo import SqlSearchRepo
@@ -219,6 +221,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # token provider are wired at deploy / with the Android receiver); a None
         # notifier makes every crossing's poke a no-op.
         app.state.push_notifier = None
+        # Self-hosted owner notifications: the native app streams these over SSE and posts
+        # them locally (task-ready, ...). Always on — it's in-process, no external service.
+        app.state.notify_bus = NotifyBus()
         # Anti-brute-force on the unauthenticated redeem endpoint: ~10 attempts
         # burst per source IP, refilling 1 every 10s.
         app.state.pairing_rate_limiter = TokenBucket(capacity=10, refill_per_sec=0.1)
@@ -663,6 +668,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             runs=app.state.task_runs,
             executor=LoopTurnExecutor(app.state.llm_router, app.state.agent_registry),
             push=app.state.push_notifier,
+            notify=app.state.notify_bus,
         )
         tasks_loop_task = asyncio.create_task(
             run_tasks_loop(maker, app.state.task_repo, app.state.task_runner)
@@ -826,6 +832,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # network only; read-only; safe 'general' domain) — never off-box via Caddy.
     app.include_router(pet_api.internal_router, prefix="/internal")
     app.include_router(notes.router, prefix="/api")
+    app.include_router(notifications.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(owntracks.router, prefix="/api")
     app.include_router(pairing.router, prefix="/api")

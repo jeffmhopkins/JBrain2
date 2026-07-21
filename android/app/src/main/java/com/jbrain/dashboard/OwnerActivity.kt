@@ -1,14 +1,17 @@
 package com.jbrain.dashboard
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.window.OnBackInvokedDispatcher
+import androidx.core.content.ContextCompat
 
 /** Hosts the OWNER app (the SPA at the server root) in a WebView, so the system back
  * gesture is a native callback we control rather than the browser's — the reliability the
@@ -66,6 +69,20 @@ class OwnerActivity : Activity() {
         val url = OwnerConfig.ownerUrl(base)
         web.webViewClient = OwnerWebViewClient(url) { onLoadFailed() }
         web.loadUrl(url)
+        startNotificationRelay()
+    }
+
+    /** Start the SSE relay that turns server notifications into local ones. On Android 13+
+     * ask for POST_NOTIFICATIONS first so they're visible; the relay runs either way (it
+     * reconnects until the owner has signed in and a session cookie exists). */
+    private fun startNotificationRelay() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
+        }
+        startForegroundService(Intent(this, NotificationRelayService::class.java))
     }
 
     private fun onLoadFailed() {
@@ -103,5 +120,6 @@ class OwnerActivity : Activity() {
 
     private companion object {
         const val REQ_SETUP = 1
+        const val REQ_NOTIF = 2
     }
 }

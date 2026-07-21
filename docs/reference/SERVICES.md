@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-16
+> **Status:** Living · **Last verified:** 2026-07-21
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -134,6 +134,24 @@ payload.
   this client is discrete HTTPS requests. Pairing redeems a code at
   `/api/pairing/redeem`; the WebView session is minted at `/api/session/mint`.
   The key lives in Keystore-backed `EncryptedSharedPreferences`.
+
+### JBrain — the Android owner app (`android/`, `OwnerActivity`)
+
+A second launcher activity in the same APK (label "JBrain") that hosts the **owner
+SPA** (the server root) in a WebView — distinct from the location-only dashboard
+above. Its reason to exist is **deterministic back**: the system back button is a
+native callback (predictive-back on 13+), so it climbs the page's own layer stack via
+a `window.__jbrainBack()` bridge and **backgrounds** the app (`moveTaskToBack`) when
+nothing is open, never exiting — which the PWA's History-API trap can't guarantee on
+Android's gesture back. The owner signs in through the web page (owner key), so there
+is **no native key/cookie mint** here; setup only captures the server URL, and
+off-origin links open in the system browser.
+
+- **Notifications relay** (`NotificationRelayService`, a `dataSync` foreground
+  service): holds one authenticated **SSE** connection to `/api/notifications/stream`
+  (auth = the WebView session cookie) and posts each event as a local Android
+  notification. Self-hosted end to end — **no Firebase/FCM**, content flows straight
+  from the owner's own server to the owner's own device; it reconnects with backoff.
 
 ## Functions baked into the box
 

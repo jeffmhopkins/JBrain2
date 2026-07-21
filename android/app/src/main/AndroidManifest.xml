@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- The owner app's notification relay holds a long-lived SSE connection as a
+         data-sync foreground service so server notifications arrive while backgrounded. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Background survival: restart tracking after a reboot, run a doze-piercing
          watchdog alarm, and ask to be exempt from battery optimization so the OS
@@ -57,6 +60,11 @@
             android:name=".LocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- The owner app's self-hosted notification relay (SSE → local notifications). -->
+        <service
+            android:name=".NotificationRelayService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <!-- Revival point for the watchdog alarm and the boot broadcast. Exported so
              the system can deliver BOOT_COMPLETED; the alarm targets it by explicit
              component, needing no extra intent-filter. -->
