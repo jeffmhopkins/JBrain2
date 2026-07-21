@@ -8478,39 +8478,25 @@ button.small {
   font-style: italic;
   color: var(--text-3);
 }
-/* Per-child context-fill meter: a compact bar + token count, tinting amber→rose as the
+/* Per-child context-fill meter: a numeric token count, tinting amber→rose as the
    child's window fills. The label (flex:1) ellipsizes first, so this stays intact. */
 .fb-shell .fb-sa-ctx {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   margin-top: 4px; /* align with the label's first line (row top-aligns) */
-}
-.fb-shell .fb-sa-ctx-bar {
-  width: 26px;
-  height: 3px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.fb-shell .fb-sa-ctx-bar i {
-  display: block;
-  height: 100%;
-  background: var(--steel);
-  transition: width 0.3s ease;
-}
-.fb-shell .fb-sa-ctx.mid .fb-sa-ctx-bar i {
-  background: var(--amber);
-}
-.fb-shell .fb-sa-ctx.high .fb-sa-ctx-bar i {
-  background: var(--rose);
 }
 .fb-shell .fb-sa-ctx-txt {
   font-size: 10px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.fb-shell .fb-sa-ctx.mid .fb-sa-ctx-txt {
+  color: var(--amber);
+}
+.fb-shell .fb-sa-ctx.high .fb-sa-ctx-txt {
+  color: var(--rose);
 }
 .fb-shell .fb-sa-car {
   color: var(--text-3);

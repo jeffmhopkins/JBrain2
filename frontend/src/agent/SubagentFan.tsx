@@ -211,9 +211,6 @@ function ChildContextMeter({ used, window }: { used: number; window: number }): 
       className={`fb-sa-ctx${cls ? ` ${cls}` : ""}`}
       title={`context: ${used.toLocaleString()} / ${window.toLocaleString()} tokens (${pct}%)`}
     >
-      <span className="fb-sa-ctx-bar" aria-hidden="true">
-        <i style={{ width: `${pct}%` }} />
-      </span>
       <span className="fb-sa-ctx-txt">
         {fmtTokens(used)}/{fmtTokens(window)}
       </span>
