@@ -3,8 +3,10 @@
 // grouping is a *filter* (a chip row switches buckets), filing a task is a deliberate
 // ⋯ → Move-to sheet (never a drag across the screen), and an Organize toggle arms a
 // lightweight reorder *within the current view* (drag the grip, or arrow-key it) plus
-// inline rename / delete of the owner's groups. Cards still read "agent · schedule"
-// with an enable toggle + next/last-run meta and the docked "latest result" band.
+// inline rename / delete of the owner's groups. In the "All" view each category
+// header folds its cards away — a device-local, persisted collapse (see tasks/collapsed).
+// Cards still read "agent · schedule" with an enable toggle + next/last-run meta and
+// the docked "latest result" band.
 // Reflects live state — cards come from /api/tasks, buckets from /api/task-groups.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -35,6 +37,7 @@ import {
   TrashIcon,
   XIcon,
 } from "../components/icons";
+import { UNGROUPED_KEY, loadCollapsed, writeCollapsed } from "../tasks/collapsed";
 import { isUnviewed, loadViewed, writeViewed } from "../tasks/viewed";
 
 function errorMessage(err: unknown): string {
@@ -728,6 +731,7 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [viewed, setViewed] = useState<Record<string, string>>(loadViewed);
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   const [moveFor, setMoveFor] = useState<Task | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
@@ -969,31 +973,67 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     }
   }
 
+  // Fold/unfold a category, persisting the choice on this device. Keyed by the bucket
+  // (a group id, or the Ungrouped sentinel). Reordering force-expands, so this only
+  // fires from the settled "All" view header.
+  function toggleCollapse(bucket: string | null): void {
+    const key = bucket ?? UNGROUPED_KEY;
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      writeCollapsed(next);
+      return next;
+    });
+  }
+
   function renderBucket(bucket: string | null, name: string, showHeader: boolean) {
     const list = tasksInBucket(bucket);
     if (list.length === 0 && bucket === null) return null; // no empty Ungrouped header
+    // Collapse applies only where headers show (the "All" view) and never mid-reorder,
+    // so a folded category can't hide the cards you're dragging.
+    const isCollapsed = showHeader && !reordering && collapsed.has(bucket ?? UNGROUPED_KEY);
     return (
       <div key={bucket ?? UNGROUPED} className="task-bucket">
         {showHeader && (
           <div className="task-grouphdr">
             {reordering && bucket !== null && renamingGroup === bucket ? (
-              <input
-                className="task-grename"
-                // biome-ignore lint/a11y/noAutofocus: the header morphed into an input on the user's tap.
-                autoFocus
-                aria-label="Rename group"
-                value={renameText}
-                onChange={(e) => setRenameText(e.target.value)}
-                onBlur={() => void commitRename(bucket)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void commitRename(bucket);
-                  if (e.key === "Escape") setRenamingGroup(null);
-                }}
-              />
+              <>
+                <input
+                  className="task-grename"
+                  // biome-ignore lint/a11y/noAutofocus: the header morphed into an input on the user's tap.
+                  autoFocus
+                  aria-label="Rename group"
+                  value={renameText}
+                  onChange={(e) => setRenameText(e.target.value)}
+                  onBlur={() => void commitRename(bucket)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void commitRename(bucket);
+                    if (e.key === "Escape") setRenamingGroup(null);
+                  }}
+                />
+                <span className="task-gcount">{list.length}</span>
+              </>
+            ) : reordering ? (
+              <>
+                <h3 className="task-gname">{name}</h3>
+                <span className="task-gcount">{list.length}</span>
+              </>
             ) : (
-              <h3 className="task-gname">{name}</h3>
+              <button
+                type="button"
+                className="task-gtoggle"
+                aria-expanded={!isCollapsed}
+                aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${name}`}
+                onClick={() => toggleCollapse(bucket)}
+              >
+                <span className={`task-gchev${isCollapsed ? "" : " open"}`}>
+                  <ChevronRightIcon size={14} />
+                </span>
+                <h3 className="task-gname">{name}</h3>
+                <span className="task-gcount">{list.length}</span>
+              </button>
             )}
-            <span className="task-gcount">{list.length}</span>
             {reordering && bucket !== null && renamingGroup !== bucket && (
               <span className="task-gacts">
                 <button
@@ -1021,25 +1061,26 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
             )}
           </div>
         )}
-        {list.map((task) => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            open={openId === task.id}
-            running={running.has(task.id)}
-            reordering={reordering}
-            unviewed={isUnviewed(task, viewed)}
-            runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}
-            onToggleOpen={() => toggleOpen(task.id)}
-            onFlip={() => void flip(task)}
-            onRun={() => void runNow(task)}
-            onEdit={() => setDraft(draftFrom(task))}
-            onMove={() => setMoveFor(task)}
-            onOpenRun={(run) => openRun(task, run)}
-            onDragStart={(e) => startDrag(task, e)}
-            onNudge={(dir) => nudge(task, dir)}
-          />
-        ))}
+        {!isCollapsed &&
+          list.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              open={openId === task.id}
+              running={running.has(task.id)}
+              reordering={reordering}
+              unviewed={isUnviewed(task, viewed)}
+              runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}
+              onToggleOpen={() => toggleOpen(task.id)}
+              onFlip={() => void flip(task)}
+              onRun={() => void runNow(task)}
+              onEdit={() => setDraft(draftFrom(task))}
+              onMove={() => setMoveFor(task)}
+              onOpenRun={(run) => openRun(task, run)}
+              onDragStart={(e) => startDrag(task, e)}
+              onNudge={(dir) => nudge(task, dir)}
+            />
+          ))}
       </div>
     );
   }

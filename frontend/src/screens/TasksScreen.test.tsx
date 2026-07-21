@@ -80,8 +80,8 @@ function mount(tasks: Task[] = [GROUPED, UNGROUPED_TASK], groups: TaskGroup[] = 
   vi.spyOn(api, "taskRuns").mockResolvedValue([RUN]);
   const onClose = vi.fn();
   const onOpenSession = vi.fn();
-  render(<TasksScreen onClose={onClose} onOpenSession={onOpenSession} />);
-  return { onClose, onOpenSession };
+  const { unmount } = render(<TasksScreen onClose={onClose} onOpenSession={onOpenSession} />);
+  return { onClose, onOpenSession, unmount };
 }
 
 describe("TasksScreen", () => {
@@ -94,6 +94,32 @@ describe("TasksScreen", () => {
     expect(screen.getByRole("heading", { name: "Money" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Ungrouped" })).toBeInTheDocument();
     expect(screen.getByText("Ad hoc digest")).toBeInTheDocument();
+  });
+
+  it("collapses a category from its header and folds away its cards", async () => {
+    mount();
+    await screen.findByText("Morning brief");
+    // Collapsing Money hides its task but leaves the other category alone.
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Money" }));
+    expect(screen.queryByText("Morning brief")).not.toBeInTheDocument();
+    expect(screen.getByText("Ad hoc digest")).toBeInTheDocument();
+    // The header stays, now offering to expand again.
+    fireEvent.click(screen.getByRole("button", { name: "Expand Money" }));
+    expect(screen.getByText("Morning brief")).toBeInTheDocument();
+  });
+
+  it("persists a collapsed category across a remount", async () => {
+    const first = mount();
+    await screen.findByText("Morning brief");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Money" }));
+    expect(screen.queryByText("Morning brief")).not.toBeInTheDocument();
+    first.unmount();
+
+    // A fresh screen reads the device-local marker and comes up folded.
+    render(<TasksScreen onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    await screen.findByText("Ad hoc digest");
+    expect(screen.queryByText("Morning brief")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand Money" })).toBeInTheDocument();
   });
 
   it("filters to one group via the chip row", async () => {
