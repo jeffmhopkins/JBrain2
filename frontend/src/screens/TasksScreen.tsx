@@ -19,6 +19,7 @@ import {
   type TaskRun,
   api,
 } from "../api/client";
+import { useBackLayer } from "../backLayers";
 import { MoveTaskSheet } from "../components/MoveTaskSheet";
 import {
   CheckIcon,
@@ -448,6 +449,10 @@ interface EditorProps {
 }
 
 function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
+  // The editor is a full-screen layer over the task list; the back gesture closes it
+  // back to the list (not the whole Tasks card). It mounts only while editing, so the
+  // registration tracks its own visibility — like the shared Sheet.
+  useBackLayer(onClose);
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
   const preset = presetForScopes(draft.scopes);
   const canSave = draft.prompt.trim().length > 0 && !saving;

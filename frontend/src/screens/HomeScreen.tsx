@@ -7,6 +7,7 @@ import { AgentModelSheet } from "../components/AgentModelSheet";
 import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
+import { useRegisterHomeBack } from "../homeBack";
 import type { SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController, StreamItem } from "../notes/useNotes";
@@ -101,6 +102,23 @@ export function HomeScreen({
   // a fresh one) on entry.
   const convMode = seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : null;
   const fb = useFullBrain(convMode, fbDeps, true);
+
+  // Let the app-level back gesture climb the conversation surface's own layers before it
+  // reaches the bare chat: an open Proposal (ProposalTree) sits atop the Proposals panel,
+  // which sits atop the chat — so back closes the proposal, then the panel, then stops.
+  const proposalOpen = fb.panel === "proposals" && fb.openProposal !== null;
+  const panelOpen = fb.panel !== "none";
+  useRegisterHomeBack((panelOpen ? 1 : 0) + (proposalOpen ? 1 : 0), () => {
+    if (proposalOpen) {
+      fb.setOpenProposal(null);
+      return true;
+    }
+    if (panelOpen) {
+      fb.setPanel("none");
+      return true;
+    }
+    return false;
+  });
 
   // Local read-aloud: when the owner has enabled read-aloud, each settled answer in the
   // transcript gets a three-state play control (beside its copy button) that speaks that
