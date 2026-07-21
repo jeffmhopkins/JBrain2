@@ -811,10 +811,15 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
 - **The platform back gesture climbs one level too** (`useBackGesture`), exactly
   like swipe-down — closing the topmost layer in z-order (sheets, then reading
   layers, then card/launcher, then the Full Brain Proposal/panel and the Tasks
-  return-to-card). It **never exits the app**: a single history "trap" entry is kept
-  permanently armed, so back at the bare chat is a no-op (exit is via the home
-  button / app switcher). The bare home stream and the Full Brain conversation are
-  both "the main screen" — back always reaches one of them before it stops.
+  return-to-card). It **never exits the app**: the open-layer stack is mirrored into
+  the History API with one real entry per layer plus a permanent "root trap" beneath
+  them, so backing out of any layer is a native history pop that lands on another of
+  our entries — never the app's base entry — and a back at the bare chat only reaches
+  the root trap, which re-arms (exit is via the home button / app switcher). One entry
+  per layer (not a lone trap) is what keeps a layer-back a full step above the base, so
+  Android's gesture/predictive back can't race it into an exit. The bare home stream
+  and the Full Brain conversation are both "the main screen" — back always reaches one
+  of them before it stops.
 - Tiles for phases not yet built render disabled with their phase label.
 
 ### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
