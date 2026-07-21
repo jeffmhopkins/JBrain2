@@ -69,7 +69,10 @@ export function HomeScreen({
   onOpenSessionConsumed,
   fbDeps,
 }: HomeScreenProps) {
-  const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
+  // The app lands on the Research (jerv) conversation surface, not note entry — the
+  // omnibox opens ready to ask, and Entry is one tap left. autoStart (below) opens the
+  // owner's latest jerv chat or spins up a fresh one.
+  const [seg, setSeg] = useState<SegState>({ row: "main", mode: "research" });
   const [pendingDraft, setPendingDraft] = useState("");
   // The appointment a calendar handoff is about — shown as a composer pill and
   // sent with the next turn so the agent resolves it (not by title).

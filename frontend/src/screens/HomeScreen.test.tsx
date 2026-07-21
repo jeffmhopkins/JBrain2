@@ -236,14 +236,15 @@ function streamItem() {
 describe("HomeScreen mode scoping", () => {
   it("Entry shows the note stream", () => {
     setup();
+    // Research is the landing mode now, so step left to Entry for the note stream.
+    fireEvent.click(screen.getByRole("tab", { name: "Entry" }));
     expect(
       screen.getByText("Nothing captured yet — write your first entry below."),
     ).toBeInTheDocument();
   });
 
-  it("Research opens the live conversation surface (no more Phase 4 stub)", async () => {
+  it("Research is the default surface — the live conversation, not the Phase 4 stub", async () => {
     setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
     expect(
       screen.queryByText("conversations arrive in Phase 4 — typing starts one then"),
@@ -354,8 +355,8 @@ describe("HomeScreen mode scoping", () => {
         fbDeps={deps}
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
-    // The research slot now reads "Teacher" — no plain "Research" tab remains.
+    // Research is the landing mode, so the surface auto-opens the Teacher chat on
+    // mount and the research slot reads "Teacher" — no plain "Research" tab remains.
     await waitFor(() => expect(screen.getByRole("tab", { name: "Teacher" })).toBeInTheDocument());
     expect(screen.queryByRole("tab", { name: "Research" })).not.toBeInTheDocument();
   });
@@ -363,6 +364,8 @@ describe("HomeScreen mode scoping", () => {
   it("swipe-Hide hides the note and an undo toast restores it", () => {
     const notes = { ...fakeController(), items: [streamItem()] };
     setup(notes);
+    // Research is the landing mode; step to Entry for the note stream.
+    fireEvent.click(screen.getByRole("tab", { name: "Entry" }));
     const bubble = screen.getByRole("button", { name: /hide me/ });
     fireEvent.touchStart(bubble, { touches: [{ clientX: 250, clientY: 50 }] });
     fireEvent.touchMove(bubble, { touches: [{ clientX: 60, clientY: 52 }] });
@@ -378,7 +381,9 @@ describe("HomeScreen mode scoping", () => {
 
   it("Full Brain renders the live conversation surface inline; Entry sub-modes keep the stream", async () => {
     setup();
-    // Entry mode shows the wordmark; no session has taken the top bar yet.
+    // Research is the landing mode; step to Entry for the wordmark baseline (no session
+    // has taken the top bar in a capture mode).
+    fireEvent.click(screen.getByRole("tab", { name: "Entry" }));
     expect(document.querySelector(".session-title")).not.toBeInTheDocument();
     expect(document.querySelector(".wordmark")).toBeInTheDocument();
 
