@@ -1,6 +1,21 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-21 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 per-stage sub-agent nesting + auto-collapse; mock-gate sign-off pending)
+
+**v10 revision (each stage keeps its own agents).** v8 nested the whole `<SubagentFan>` in
+whichever stage was *live*, so every stage's children piled under the active bullet — while
+Gap-fill ran, the Research and Cross-check agents that had already finished still showed
+under Gap-fill. Now each child is stamped at spawn with the pipeline stage that launched it
+(`dr_stage`: 2=Research, 3=Cross-check, 5=Gap-fill, 7=Critique), threaded
+`deep_research.run_research_fan` → `SpawnService._execute_fan` → `SubagentSpawnedEvent`
+(default 0 for a plain `spawn_subagent` fan) → `SubagentChild.drStage`. `DeepResearchProgress`
+partitions `fan.children` by `drStage` and renders each subset under its OWN checklist bullet:
+a new `section` mode on `SubagentFan` renders a compact "{stage} · N agents" group that
+**auto-collapses the instant its children settle** (folding to the one-line count, tap to
+re-open — the row-level auto-collapse pattern one level up); the live stage stays expanded.
+The tree budget + cascade Stop move to a single `.fb-drp-bar` above the checklist so they
+stay visible on the fan-less Write/Revise stages too. A `drStage`-less child (pre-first-phase
+spawn or older backend) still homes under the live stage, so nothing is orphaned.
 
 **v9 revision (gpt-oss harmony citations render).** A report synthesized on `gpt-oss-120b`
 came back with **zero rendered citations despite ~500 collected `web_sources`**: gpt-oss

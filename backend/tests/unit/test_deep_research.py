@@ -124,16 +124,18 @@ class _FakeSpawn:
         self._research_fans = 0
 
     async def run_research_fan(
-        self, ctx, *, briefs, persona="research", effort=None, max_parallel=None
+        self, ctx, *, briefs, persona="research", effort=None, max_parallel=None, dr_stage=0
     ):  # noqa: ANN001
         briefs = list(briefs)
         # Snapshot the reserve carved off the pool at the instant this fan runs, so the
         # staging (gather → analyst → critique step-down) is observable without a loop.
+        # `dr_stage` records which checklist stage stamped this fan's children.
         self.fans.append(
             {
                 "persona": persona,
                 "briefs": briefs,
                 "effort": effort,
+                "dr_stage": dr_stage,
                 "stage_reserve": ctx.tree.stage_reserve if ctx.tree else None,
             }
         )
@@ -256,6 +258,22 @@ async def test_full_run_orchestrates_every_stage() -> None:
     assert len(router.synth_calls) == 2  # draft + revise
     assert "REVISED REPORT" in out
     assert "cross-checked" in out and "revised after critique" in out
+
+
+async def test_each_fan_is_stamped_with_its_pipeline_stage() -> None:
+    """Every fan carries the checklist ordinal of the stage that launched it, so the PWA
+    nests each child under the stage it ran in — gather=2 (Research), analyst=3
+    (Cross-check), refill=5 (Gap-fill), critique=7 (Critique)."""
+    router = _FakeRouter(complexity="deep", covered=False, gaps=("gap one",))
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+
+    stage_of = {f["briefs"][0][0]: f["dr_stage"] for f in spawn.fans}
+    research = _research_fans(spawn)
+    assert research[0]["dr_stage"] == 2  # gather → Research
+    assert research[1]["dr_stage"] == 5  # refill → Gap-fill
+    assert stage_of["cross-check"] == 3  # analyst → Cross-check
+    assert stage_of["critique"] == 7  # critique → Critique
 
 
 async def test_analyst_is_fed_the_gather_findings_before_synthesis() -> None:

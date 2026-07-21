@@ -513,9 +513,31 @@ async def test_fan_emits_subagent_lifecycle_events(service: SpawnService) -> Non
     spawned, progress, done, view = captured
     assert (spawned.persona, spawned.label, spawned.depth) == ("research", "L", 1)
     assert spawned.child_id == "sess-1"
+    assert spawned.dr_stage == 0  # a plain spawn_subagent fan carries no pipeline stage
     assert progress.phase == "researching"
     assert done.ok is True and done.child_id == "sess-1"
     assert view.view.view == "subagent_synthesis" and view.tool_call_id == ""
+
+
+async def test_research_fan_stamps_each_child_with_the_pipeline_stage(
+    service: SpawnService,
+) -> None:
+    """`deep_research` passes the checklist ordinal of the launching stage; the fan stamps
+    it onto every child's spawned event so the PWA nests the child under that stage."""
+    captured: list = []
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+    await service.run_research_fan(ctx, briefs=[("Gap one", "x")], dr_stage=5)
+    spawned = next(e for e in captured if e.type == "subagent_spawned")
+    assert spawned.dr_stage == 5
 
 
 async def test_fan_emits_incremental_synthesis_view_as_each_child_settles(

@@ -500,6 +500,7 @@ class SpawnService:
         *,
         max_parallel: int,
         emit_view: bool = True,
+        dr_stage: int = 0,
     ) -> list[_ChildResult]:
         """Mint, launch, and await one flat fan of pre-validated, already-admitted
         plans; return the structured results in plan order. This is the single fan
@@ -513,7 +514,11 @@ class SpawnService:
         `deep_research` runs several internal fans and emits its OWN `deep_research_report`
         view, so the fan's roster card must not persist a second, competing card (it would
         settle to the last internal fan — the critique — and misrepresent the run). The
-        live `subagent_spawned`/`_done` rows still fire, so the agents are still visible."""
+        live `subagent_spawned`/`_done` rows still fire, so the agents are still visible.
+
+        `dr_stage` stamps each spawned row with the deep_research pipeline stage that
+        launched it (0 for a plain fan), so the checklist nests a child under the stage it
+        ran in rather than under whichever stage is live when it finishes."""
         owner_ctx = SessionContext(principal_id=ctx.session.principal_id, principal_kind="owner")
         sem = asyncio.Semaphore(max_parallel)
 
@@ -535,7 +540,11 @@ class SpawnService:
             _emit(
                 ctx,
                 SubagentSpawnedEvent(
-                    child_id=child.id, persona=plan.persona, label=plan.label, depth=ctx.depth + 1
+                    child_id=child.id,
+                    persona=plan.persona,
+                    label=plan.label,
+                    depth=ctx.depth + 1,
+                    dr_stage=dr_stage,
                 ),
             )
             minted.append((plan, child))
@@ -577,10 +586,13 @@ class SpawnService:
         persona: str = "research",
         effort: str | None = None,
         max_parallel: int | None = None,
+        dr_stage: int = 0,
     ) -> list[_ChildResult]:
         """Run one flat fan of `persona` children for `deep_research`'s gather/refill
         rounds and return the structured results (no observation/view fold — the caller
-        composes the report). `briefs` is `(label, brief_text)` per child.
+        composes the report). `briefs` is `(label, brief_text)` per child. `dr_stage` is the
+        pipeline stage that launched this fan, stamped onto each child's spawn row so the
+        checklist nests it under that stage.
 
         Enforces the SAME admission and sandbox as the `spawn_subagent` flat fan by
         going through `_execute_fan`; the caller (`deep_research`) is responsible for
@@ -598,7 +610,9 @@ class SpawnService:
         n = await self._effective_max_parallel(max_parallel)
         # emit_view=False: deep_research emits its own deep_research_report view, so the
         # internal fans must not persist a competing subagent_synthesis roster card.
-        return await self._execute_fan(ctx, tree, plans, max_parallel=n, emit_view=False)
+        return await self._execute_fan(
+            ctx, tree, plans, max_parallel=n, emit_view=False, dr_stage=dr_stage
+        )
 
     async def _spawn_waves(self, ctx: ToolContext, args: dict) -> str:
         """Run an ordered sequence of disconnected waves, feeding each wave's summaries

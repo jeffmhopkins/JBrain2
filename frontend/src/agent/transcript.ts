@@ -54,6 +54,11 @@ export interface SubagentChild {
    * wave and draws the "← fed by …" edge as it runs, not only in the final synthesis card. */
   wave?: number;
   fedFrom?: string[];
+  /** The deep_research pipeline stage that spawned this child (1-based checklist ordinal:
+   * 2=Research, 3=Cross-check, 5=Gap-fill, 7=Critique; 0/undefined for a plain fan). The
+   * checklist nests each child under the stage it ran in, rather than piling every stage's
+   * children under whichever stage is currently live. */
+  drStage?: number;
 }
 
 /** One tool step a child took (web_search/web_fetch), shown in the child's frame. */
@@ -376,6 +381,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         phase: c.step ? c.phase : "queued",
         wave: event.wave ?? 0,
         fedFrom: event.fed_from ?? [],
+        drStage: event.dr_stage ?? 0,
       }));
       break;
     case "subagent_progress":

@@ -291,6 +291,11 @@ class SubagentSpawnedEvent(BaseModel):
     # For a wave-2 consumer, the labels of the earlier-wave producers whose summaries
     # were fed into its brief — renders the "← fed by …" edge. Empty for a producer.
     fed_from: list[str] = Field(default_factory=list)
+    # The deep_research pipeline stage (1-based `_phase` ordinal — 2=Research, 3=Cross-check,
+    # 5=Gap-fill, 7=Critique) that spawned this child, so the checklist can nest each child
+    # under the stage it ran in instead of piling every stage's children under whichever
+    # stage is currently live. 0 for a plain `spawn_subagent` fan (no deep_research stage).
+    dr_stage: int = 0
 
 
 class SubagentProgressEvent(BaseModel):

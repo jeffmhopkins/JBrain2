@@ -11534,9 +11534,9 @@ button.small {
 .fb-shell .fb-drp-panel .fb-sa {
   margin: 0;
 }
-/* Every child in a deep_research fan is a research agent under the "Research" stage — the
-   per-row persona pill just repeats what the stage row and fan header ("Researching")
-   already say, so drop it in this nested context (the standalone fan keeps it). */
+/* A deep_research child's persona pill just repeats what its stage row already says
+   (a Research-stage child is a research agent), so drop it in this nested context (the
+   standalone fan keeps it). */
 .fb-shell .fb-drp-panel .fb-sa-persona {
   display: none;
 }
@@ -11554,6 +11554,70 @@ button.small {
   border: 1px solid var(--border);
   background: var(--surface-2);
   border-radius: 12px;
+}
+/* The tree budget + cascade Stop, pinned once above the checklist so they stay in view
+   whichever stage is live (the per-stage sections carry no chrome of their own). */
+.fb-shell .fb-drp-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.fb-shell .fb-drp-bar .fb-sa-budget {
+  flex: 1;
+  padding: 0;
+  border-bottom: none;
+}
+/* A stage's sub-agent roster, nested under its checklist bullet: no card chrome of its
+   own (the rail + bullet carry the structure), unlike the standalone fan card. */
+.fb-shell .fb-drp-panel .fb-sa-sec {
+  border: none;
+  background: none;
+  border-radius: 0;
+  overflow: visible;
+  max-height: none;
+  margin: 0;
+}
+/* The collapsible header: "{stage} · N agents", tap-to-fold. It reads as a quiet label,
+   not a button — the caret and the whole-row hit target carry the affordance. */
+.fb-shell .fb-sa-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 12px;
+  text-align: left;
+}
+.fb-shell .fb-sa-sec-g {
+  color: var(--green);
+  font-size: 11px;
+}
+.fb-shell .fb-sa-sec-g.fail {
+  color: var(--rose);
+}
+/* Live (not yet settled): the glyph is a dim placeholder, not a green check. */
+.fb-shell .fb-sa-sec:not(.done) .fb-sa-sec-g {
+  color: var(--text-3);
+}
+.fb-shell .fb-sa-sec-name {
+  font-weight: 500;
+}
+.fb-shell .fb-sa-sec-c {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.fb-shell .fb-sa-sec-h .fb-sa-car {
+  margin-left: auto;
+}
+.fb-shell .fb-sa-sec-body {
+  margin-top: 2px;
 }
 .fb-shell .fb-genprev-frame {
   position: relative;

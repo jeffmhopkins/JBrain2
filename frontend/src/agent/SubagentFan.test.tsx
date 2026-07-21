@@ -427,4 +427,82 @@ describe("SubagentFan", () => {
     fireEvent.click(screen.getByText("show 4 more"));
     expect(screen.getByText("Child 11")).toBeInTheDocument();
   });
+
+  describe("section mode (deep-research stage group)", () => {
+    it("renders a stage header with the agent count and drops the fan chrome", () => {
+      const { container } = render(
+        <SubagentFan
+          running
+          section={{ name: "Research" }}
+          fan={fan([
+            child({ childId: "k1", label: "Angle A", status: "running", phase: "researching" }),
+            child({ childId: "k2", label: "Angle B", status: "running", phase: "researching" }),
+          ])}
+        />,
+      );
+      expect(screen.getByText("Research")).toBeInTheDocument();
+      expect(screen.getByText(/2 agents/)).toBeInTheDocument();
+      // No standalone-card chrome (spark header / cascade Stop) in a nested section.
+      expect(container.querySelector(".fb-sa-top")).not.toBeInTheDocument();
+      expect(screen.queryByText("■ Stop")).not.toBeInTheDocument();
+    });
+
+    it("stays expanded while any child runs, folding its detail rows only on settle", () => {
+      const { rerender } = render(
+        <SubagentFan
+          running
+          section={{ name: "Research" }}
+          fan={fan([
+            child({ childId: "k1", label: "Angle A", status: "running", phase: "researching" }),
+          ])}
+        />,
+      );
+      // Live: the roster rows are visible.
+      expect(screen.getByText("Angle A")).toBeInTheDocument();
+      // The child settles → the section auto-collapses to its one-line count.
+      rerender(
+        <SubagentFan
+          running={false}
+          section={{ name: "Research" }}
+          fan={fan([
+            child({ childId: "k1", label: "Angle A", status: "done", stopReason: "end_turn" }),
+          ])}
+        />,
+      );
+      expect(screen.queryByText("Angle A")).not.toBeInTheDocument();
+      expect(screen.getByText(/1 agent\b/)).toBeInTheDocument();
+    });
+
+    it("mounts already-collapsed when it opens with every child settled", () => {
+      render(
+        <SubagentFan
+          running={false}
+          section={{ name: "Cross-check" }}
+          fan={fan([
+            child({ childId: "k1", label: "cross-check", status: "done", stopReason: "end_turn" }),
+          ])}
+        />,
+      );
+      // A stage that finished before this row mounted (e.g. Cross-check while Gap-fill is
+      // live) shows folded from the first render.
+      expect(screen.queryByText("cross-check")).not.toBeInTheDocument();
+      // Re-opening by hand reveals it and sticks.
+      fireEvent.click(screen.getByText("Cross-check"));
+      expect(screen.getByText("cross-check")).toBeInTheDocument();
+    });
+
+    it("flags a failed agent in the collapsed count", () => {
+      render(
+        <SubagentFan
+          running={false}
+          section={{ name: "Research" }}
+          fan={fan([
+            child({ childId: "k1", label: "ok", status: "done", stopReason: "end_turn" }),
+            child({ childId: "k2", label: "bad", status: "failed", phase: "error" }),
+          ])}
+        />,
+      );
+      expect(screen.getByText(/2 agents · 1 failed/)).toBeInTheDocument();
+    });
+  });
 });

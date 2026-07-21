@@ -17,13 +17,18 @@ import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
-import { SubagentFan } from "./SubagentFan";
+import { BudgetMeter, SubagentFan } from "./SubagentFan";
 import { attachmentKind } from "./attachmentKind";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
-import type { ToolActivity, TranscriptMessage } from "./transcript";
+import type {
+  SubagentFan as Fan,
+  SubagentChild,
+  ToolActivity,
+  TranscriptMessage,
+} from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
@@ -617,10 +622,10 @@ function Bubble({
         />
       ),
   );
-  // A deep_research turn owns BOTH the phase checklist and the fan it spawns: nest the fan
-  // inside the active stage's slot (DeepResearchProgress) instead of dropping it below the
-  // bubble, so the roster reads as part of the stage that's spending the budget. Other spawn
-  // turns (no deep_research tool) keep the fan as its own block under the answer.
+  // A deep_research turn owns BOTH the phase checklist and the fan it spawns: hand the raw
+  // fan to DeepResearchProgress (which nests each child under the pipeline stage it ran in)
+  // instead of dropping the whole roster below the bubble, and suppress the standalone block
+  // for that turn. Other spawn turns (no deep_research tool) keep the fan as their own block.
   const nestFanInDr = fanBlocks.length > 0 && liveStatuses.some((t) => t.name === "deep_research");
   const standaloneFanBlocks = nestFanInDr ? null : fanBlocks;
 
@@ -645,7 +650,14 @@ function Bubble({
       ))}
       {liveStatuses.map((t) =>
         t.name === "deep_research" ? (
-          <DeepResearchProgress key={t.id} tool={t} fan={nestFanInDr ? fanBlocks : undefined} />
+          <DeepResearchProgress
+            key={t.id}
+            tool={t}
+            fan={nestFanInDr ? t.fan : undefined}
+            running={message.streaming}
+            onStop={onStop}
+            onOpen={onOpenSession}
+          />
         ) : (
           <LiveToolStatus key={t.id} tool={t} />
         ),
@@ -1331,18 +1343,26 @@ const DR_PHASES = [
 export function DeepResearchProgress({
   tool,
   fan,
+  running,
+  onStop,
+  onOpen,
 }: {
   tool: ToolActivity;
-  /** The turn's live sub-agent fan (`<SubagentFan>`, unchanged). It mounts in the ACTIVE
-   * stage's slot so the roster + budget read as part of the stage that spawned them,
-   * rather than a loose block below the whole checklist. */
-  fan?: ReactNode;
+  /** The turn's live sub-agent fan (`t.fan`). Its children each carry a `drStage`, so the
+   * checklist nests each one under the pipeline stage it ran in — a completed stage keeps
+   * its own agents (collapsed to a count) instead of every stage's children piling under
+   * whichever stage is currently live. */
+  fan?: Fan | undefined;
+  /** The parent turn is still streaming — gates the tree-budget bar + cascade Stop. */
+  running?: boolean | undefined;
+  onStop?: (() => void) | undefined;
+  /** Open a settled child's own session by id. */
+  onOpen?: ((sessionId: string) => void) | undefined;
 }): ReactNode {
   const p = tool.progress;
   const step = p?.step ?? 0; // 1-based; 0 before the first phase event lands
   const preview = p?.preview ?? "";
-  // The stage whose slot the detail/fan/report hang under: the live ordinal, or Plan while
-  // we wait for the first phase event (so a fan that spawned pre-phase still has a home).
+  // The live stage: the reported ordinal, or Plan while we wait for the first phase event.
   const active = step > 0 ? step : 1;
   // Follow the report as it streams into the pane, unless the reader scrolled up in it.
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -1356,8 +1376,32 @@ export function DeepResearchProgress({
     const el = paneRef.current;
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
   }
+
+  const children = fan?.children ?? [];
+  // A child spawned before any phase landed (or by an older backend without `drStage`) has
+  // no stage of its own — home it under the live stage so it is never orphaned.
+  const unstamped = children.filter((c) => !c.drStage);
+  const stageChildren = (ord: number): SubagentChild[] => {
+    const own = children.filter((c) => c.drStage === ord);
+    return ord === active ? [...own, ...unstamped] : own;
+  };
+  const liveCount = children.filter((c) => c.status === "running").length;
+
   return (
     <output className="fb-drp" aria-live="polite">
+      {/* The tree budget + cascade Stop ride once at the top of the checklist (not per
+          stage), so they stay visible whichever stage is live — including Write/Revise,
+          which spawn no fan of their own. */}
+      {fan && running && liveCount > 0 && (fan.treeBudget > 0 || onStop) && (
+        <div className="fb-drp-bar">
+          {fan.treeBudget > 0 && <BudgetMeter spent={fan.treeSpent} total={fan.treeBudget} />}
+          {onStop && (
+            <button type="button" className="fb-sa-stop" onClick={onStop}>
+              ■ Stop
+            </button>
+          )}
+        </div>
+      )}
       <ol className="fb-drp-steps">
         {DR_PHASES.map((name, i) => {
           const ord = i + 1;
@@ -1365,19 +1409,32 @@ export function DeepResearchProgress({
           // opens its slot, the rest wait — one scannable column that never wraps.
           const state = ord < step ? "done" : ord === active ? "active" : "todo";
           const isActive = state === "active";
+          const kids = stageChildren(ord);
+          const subFan: Fan | null = kids.length
+            ? { children: kids, treeSpent: fan?.treeSpent ?? 0, treeBudget: fan?.treeBudget ?? 0 }
+            : null;
+          // The live stage opens its slot (detail line + its live agents + the streaming
+          // report); a completed stage opens one only to host the agents it ran (folded to
+          // a count). A stage with neither stays a bare rail entry.
+          const showPanel = isActive ? Boolean(p?.label || subFan || preview) : Boolean(subFan);
           return (
             <li key={name} className={`fb-drp-step ${state}`}>
               <span className="fb-drp-dot" aria-hidden="true">
                 {state === "done" ? "✓" : ""}
               </span>
               <span className="fb-drp-name">{name}</span>
-              {/* The active stage's slot: its live detail, the sub-agent fan it spawned, and
-                  (Write / Revise) the report streaming in — all indented under the stage. */}
-              {isActive && (p?.label || fan || preview) && (
+              {showPanel && (
                 <div className="fb-drp-panel">
-                  {p?.label && <div className="fb-drp-active">{p.label}</div>}
-                  {fan}
-                  {preview && (
+                  {isActive && p?.label && <div className="fb-drp-active">{p.label}</div>}
+                  {subFan && (
+                    <SubagentFan
+                      fan={subFan}
+                      running={running ?? false}
+                      onOpen={onOpen}
+                      section={{ name }}
+                    />
+                  )}
+                  {isActive && preview && (
                     <div className="fb-drp-report" ref={paneRef} onScroll={onScroll}>
                       <Markdown text={preview} harmonyCitations />
                     </div>

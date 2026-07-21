@@ -177,7 +177,7 @@ function fmtTokens(n: number): string {
 // tree budget minus the root's synthesis reserve), so the bar fills as children exhaust —
 // it reads "budget exhausted" exactly when a child hits tree_budget_exhausted, not at some
 // fraction with phantom headroom the children can never reach.
-function BudgetMeter({ spent, total }: { spent: number; total: number }): ReactNode {
+export function BudgetMeter({ spent, total }: { spent: number; total: number }): ReactNode {
   const pct = Math.min(100, Math.round((spent / total) * 100));
   const cls = pct >= 99 ? "danger" : pct > 70 ? "warn" : "";
   const txt = cls === "danger" ? "budget exhausted" : `${fmtTokens(spent)} / ${fmtTokens(total)}`;
@@ -229,6 +229,7 @@ export function SubagentFan({
   running,
   onStop,
   onOpen,
+  section,
 }: {
   fan: Fan;
   /** The parent turn is still streaming — the header shows a cascade Stop. */
@@ -236,9 +237,28 @@ export function SubagentFan({
   onStop?: (() => void) | undefined;
   /** Open a child's own session by id (its `childId` IS the session id). */
   onOpen?: ((sessionId: string) => void) | undefined;
+  /** Render as a compact, collapsible STAGE section (the deep_research checklist nests
+   * one per pipeline stage under its own bullet) instead of the standalone fan card: a
+   * "{name} · N agents" header that AUTO-COLLAPSES the moment every child settles, folding
+   * the roster to a one-line count. The tree budget + cascade Stop live in the checklist's
+   * own bar, so a section drops that chrome. Absent → the standalone card (unchanged). */
+  section?: { name: string } | undefined;
 }): ReactNode {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
+  // A stage section folds itself the instant all its children settle: expanded while the
+  // stage works (you watch it), collapsed to a one-line count once done. Done once (a ref,
+  // not a re-trigger) so re-opening a settled section by hand sticks — the row-level
+  // auto-collapse pattern, one level up.
+  const secSettled = fan.children.length > 0 && fan.children.every((c) => c.status !== "running");
+  const [secOpen, setSecOpen] = useState(!secSettled);
+  const secAutoCollapsed = useRef(false);
+  useEffect(() => {
+    if (secSettled && !secAutoCollapsed.current) {
+      secAutoCollapsed.current = true;
+      setSecOpen(false);
+    }
+  }, [secSettled]);
   // Auto-collapse a child the moment it SETTLES: while it streams it auto-expands so you
   // watch it work, but a finished child folds back to a one-line row so a long fan of done
   // children isn't a wall of transcripts. Done once per child (a ref, not a re-trigger) so
@@ -379,6 +399,68 @@ export function SubagentFan({
     );
   }
 
+  // The child rows themselves — a staged fan groups by wave, a flat fan is one capped
+  // list. Shared by the standalone card and the stage-section body so a row reads
+  // identically in either host.
+  const rows = (
+    <>
+      {staged
+        ? Array.from({ length: maxWave + 1 }, (_unused, w) => {
+            const wchildren = children.filter((c) => (c.wave ?? 0) === w);
+            if (wchildren.length === 0) return null;
+            const personas = [
+              ...new Set(wchildren.map((c) => PERSONA_LABEL[c.persona] ?? c.persona)),
+            ].join(", ");
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: waves render in stable order
+              <div className="fb-sa-wave" key={w}>
+                <div className="fb-sa-wh">
+                  Wave {w + 1} · {personas}
+                  {w > 0 ? ` — fed by wave ${w}` : ""}
+                </div>
+                {wchildren.map(renderChild)}
+              </div>
+            );
+          })
+        : shown.map(renderChild)}
+      {!staged && hidden > 0 && (
+        <button type="button" className="fb-sa-more" onClick={() => setShowAll(true)}>
+          show {hidden} more
+        </button>
+      )}
+    </>
+  );
+
+  // Stage-section mode: a compact collapsible group nested under a checklist bullet. The
+  // header carries the stage name + agent count and folds to that one line once settled;
+  // the budget meter + Stop live in the checklist bar, so this drops the fan chrome.
+  if (section) {
+    const s = total === 1 ? "" : "s";
+    return (
+      <div className={`fb-sa fb-sa-sec${secSettled ? " done" : ""}`}>
+        <button
+          type="button"
+          className="fb-sa-sec-h"
+          onClick={() => setSecOpen((o) => !o)}
+          aria-expanded={secOpen}
+        >
+          <span className={`fb-sa-sec-g${failed ? " fail" : ""}`} aria-hidden="true">
+            {secSettled ? (failed ? "✕" : "✓") : "…"}
+          </span>
+          <span className="fb-sa-sec-name">{section.name}</span>
+          <span className="fb-sa-sec-c">
+            · {total} agent{s}
+            {failed ? ` · ${failed} failed` : ""}
+          </span>
+          <span className="fb-sa-car" aria-hidden="true">
+            {secOpen ? "▾" : "▸"}
+          </span>
+        </button>
+        {secOpen && <div className="fb-sa-sec-body">{rows}</div>}
+      </div>
+    );
+  }
+
   // One denominator for both states (all depths), so "· N agents" while live and
   // "done · N ran" once settled never disagree.
   const count = settled
@@ -413,30 +495,7 @@ export function SubagentFan({
       <div aria-live="polite" className="fb-sr-only">
         {liveLabel}
       </div>
-      {staged
-        ? Array.from({ length: maxWave + 1 }, (_unused, w) => {
-            const wchildren = children.filter((c) => (c.wave ?? 0) === w);
-            if (wchildren.length === 0) return null;
-            const personas = [
-              ...new Set(wchildren.map((c) => PERSONA_LABEL[c.persona] ?? c.persona)),
-            ].join(", ");
-            return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: waves render in stable order
-              <div className="fb-sa-wave" key={w}>
-                <div className="fb-sa-wh">
-                  Wave {w + 1} · {personas}
-                  {w > 0 ? ` — fed by wave ${w}` : ""}
-                </div>
-                {wchildren.map(renderChild)}
-              </div>
-            );
-          })
-        : shown.map(renderChild)}
-      {!staged && hidden > 0 && (
-        <button type="button" className="fb-sa-more" onClick={() => setShowAll(true)}>
-          show {hidden} more
-        </button>
-      )}
+      {rows}
     </div>
   );
 }

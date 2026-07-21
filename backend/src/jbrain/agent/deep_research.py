@@ -178,6 +178,15 @@ _PLAN_MAX_TOKENS = 1500
 _REFLECT_MAX_TOKENS = 1200
 _SYNTH_MAX_TOKENS = 6000
 
+# The pipeline stage ordinals (1-based), single-sourced here so the phase line and the
+# `dr_stage` stamped on each fan's children agree. They index the frontend checklist
+# (Plan=1 … Revise=8); the sub-agent-spawning stages carry their fan's children so the
+# checklist can nest each child under the stage it ran in. Plan/Coverage spawn no fan.
+_RESEARCH_STEP = 2
+_CROSSCHECK_STEP = 3
+_GAPFILL_STEP = 5
+_CRITIQUE_STEP = 7
+
 # The two report-writing phases are jerv's own (non-spawn) model calls — the longest in
 # the run — so they STREAM: `_synthesize` accumulates the draft and emits it into the
 # phase event's `preview`, and the PWA renders it live (the report you watch being
@@ -329,7 +338,7 @@ class DeepResearchService:
         ctx.tree.stage_reserve = DR_REVIEW_RESERVE
         try:
             # --- (2) GATHER — a research fan over the sub-questions ----------------
-            self._phase(ctx, 2, f"Researching {len(sub_questions)} angle(s)")
+            self._phase(ctx, _RESEARCH_STEP, f"Researching {len(sub_questions)} angle(s)")
             gather = await self._spawn.run_research_fan(
                 ctx,
                 briefs=sub_questions,
@@ -339,6 +348,7 @@ class DeepResearchService:
                 # curbs the over-searching that hammered the upstream engines. The review
                 # children (analyst, critique) keep medium — that's where the thinking is.
                 effort="low",
+                dr_stage=_RESEARCH_STEP,
             )
             gather_ok = any(r.ok for r in gather)
             # An empty gather is fatal for `web`/`library` (there is nothing to synthesize
@@ -356,12 +366,12 @@ class DeepResearchService:
             # --- (3) ANALYZE — a review sub-agent fed the researchers' findings ----
             # The cross-agent handoff: an analyst reads the whole gather roster (as escaped
             # data) and cross-checks it before anything is written.
-            self._phase(ctx, 3, "Cross-checking the findings")
+            self._phase(ctx, _CROSSCHECK_STEP, "Cross-checking the findings")
             analyst = await self._analyze(ctx, question, gather, review_persona, source_mode)
             analysis = analyst.summary if analyst and analyst.ok else ""
 
             # --- (4) REFLECT — coverage check over findings + analysis ------------
-            self._phase(ctx, 4, "Checking coverage for gaps")
+            self._phase(ctx, 4, "Checking coverage for gaps")  # Coverage spawns no fan
             gaps = await self._reflect(ctx, question, sections, gather, analysis)
             gaps = gaps[:DR_MAX_GAP_QUESTIONS]
             # `library_first` with a dry library: there were no findings to reflect on, so
@@ -375,12 +385,13 @@ class DeepResearchService:
             coverage_limited = False
             if gaps:
                 if ctx.tree.can_admit(len(gaps)) and ctx.tree.can_admit_budget(len(gaps)):
-                    self._phase(ctx, 5, f"Filling {len(gaps)} gap(s)")
+                    self._phase(ctx, _GAPFILL_STEP, f"Filling {len(gaps)} gap(s)")
                     refill = await self._spawn.run_research_fan(
                         ctx,
                         briefs=[(_title(g, i), g) for i, g in enumerate(gaps)],
                         persona=refill_persona,
                         effort="low",  # research children run at low reasoning (see gather)
+                        dr_stage=_GAPFILL_STEP,
                     )
                     # A refill that was admitted but produced NOTHING usable (every gap
                     # child failed) added no coverage — report it as partial, and don't
@@ -410,7 +421,7 @@ class DeepResearchService:
             ctx.tree.stage_reserve = 0
 
             # --- (7) CRITIQUE — a review sub-agent fed the draft; (8) one REVISE pass -
-            self._phase(ctx, 7, "Reviewing the draft")
+            self._phase(ctx, _CRITIQUE_STEP, "Reviewing the draft")
             critic = await self._critique(ctx, report, review_persona, source_mode)
             critique = critic.summary if critic and critic.ok else ""
             revised = False
@@ -588,7 +599,11 @@ class DeepResearchService:
             "rewrite and not a final answer.",
         )
         res = await self._spawn.run_research_fan(
-            ctx, briefs=[("cross-check", brief)], persona=persona, effort="medium"
+            ctx,
+            briefs=[("cross-check", brief)],
+            persona=persona,
+            effort="medium",
+            dr_stage=_CROSSCHECK_STEP,
         )
         return res[0] if res else None
 
@@ -713,7 +728,11 @@ class DeepResearchService:
             "Return a short, specific critique — the concrete problems to fix — not a rewrite.",
         )
         res = await self._spawn.run_research_fan(
-            ctx, briefs=[("critique", brief)], persona=persona, effort="medium"
+            ctx,
+            briefs=[("critique", brief)],
+            persona=persona,
+            effort="medium",
+            dr_stage=_CRITIQUE_STEP,
         )
         return res[0] if res else None
 

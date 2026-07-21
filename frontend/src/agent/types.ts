@@ -172,6 +172,10 @@ export interface SubagentSpawnedEvent {
   wave?: number;
   /** For a wave-2 consumer, the earlier-wave producer labels fed into it ("← fed by …"). */
   fed_from?: string[];
+  /** The deep_research pipeline stage that spawned this child (1-based checklist ordinal:
+   * 2=Research, 3=Cross-check, 5=Gap-fill, 7=Critique). 0 for a plain `spawn_subagent`
+   * fan. Lets the checklist nest each child under the stage it ran in. */
+  dr_stage?: number;
 }
 /** A status tick for a running child. `phase` is a coarse working word (children run
  * non-streaming in v1). `tree_spent`/`tree_budget` snapshot the shared tree pool for

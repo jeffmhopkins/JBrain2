@@ -345,8 +345,26 @@ describe("applyEvent reducer", () => {
         summary: "3 tiers",
         wave: 0,
         fedFrom: [],
+        drStage: 0,
       },
     ]);
+  });
+
+  it("stamps a deep_research child with the pipeline stage that spawned it", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "deep_research", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "review",
+      label: "cross-check",
+      depth: 1,
+      dr_stage: 3,
+    });
+    // The stage rides onto the child so the checklist can nest it under Cross-check (3),
+    // not under whichever stage is live when it finishes.
+    expect(ms[0]?.tools[0]?.fan?.children[0]?.drStage).toBe(3);
   });
 
   it("folds a sub-agent's live context fill onto its child (the per-row meter)", () => {
