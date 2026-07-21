@@ -8,6 +8,7 @@ import type {
   ImageAnalysisMode,
 } from "../api/client";
 import { ApiError, api } from "../api/client";
+import { BUILD_SHA, BUILD_TIME } from "../buildInfo";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
@@ -1096,6 +1097,12 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         >
           {confirmingLogout ? "Tap again to confirm" : "Log out"}
         </button>
+        {/* Build stamp — the only reliable way to confirm which bundle a cached PWA is
+            actually running (a deploy/service-worker check). */}
+        <p className="settings-meta settings-build">
+          build {BUILD_SHA}
+          {BUILD_TIME ? ` · ${new Date(BUILD_TIME).toLocaleString()}` : ""}
+        </p>
       </section>
 
       {readTextOpen && brainAnswerVoice && (
