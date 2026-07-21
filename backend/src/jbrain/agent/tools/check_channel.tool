@@ -1,6 +1,6 @@
 ---
 name: check_channel
-version: 2
+version: 3
 permission: web
 params:
   type: object
@@ -27,10 +27,12 @@ params:
   required: [channel_id]
 ---
 List a YouTube channel's most recent uploads and return the ones NOT already in the owner's
-analysed-video library, each with its title, length, publish date, and a one-line description
-teaser — enough for you to judge which are worth adding. For each new video worth keeping (e.g.
-news or update-style episodes, not Shorts or off-topic clips), call analyze_stream on its URL in
-full mode; the ones you skip are simply not analysed. Optionally narrow the listing with
-title_include (keep titles containing ANY of several phrases) and/or published_within_days (a
-recency window like the last 7 days). Pass a channel id (a UC… id) or an @handle, never a full
-URL. Results already in the library are omitted, so analysing a returned video never repeats work.
+analysed-video library, each with its title, length, publish date, a one-line description teaser,
+and format tags — enough for you to judge which are worth adding. Two tags flag uploads you'll
+usually skip: "was live" (a finished-livestream re-upload, often multi-hour) and "Short?" (a
+vertical short-form clip). For each new video worth keeping (e.g. news or update-style episodes,
+not Shorts, livestream re-uploads, or off-topic clips), call analyze_stream on its URL in full
+mode; the ones you skip are simply not analysed. Optionally narrow the listing with title_include
+(keep titles containing ANY of several phrases) and/or published_within_days (a recency window
+like the last 7 days). Pass a channel id (a UC… id) or an @handle, never a full URL. Results
+already in the library are omitted, so analysing a returned video never repeats work.
