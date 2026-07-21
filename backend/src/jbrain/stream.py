@@ -322,12 +322,18 @@ def list_channel_uploads(
 @dataclass(frozen=True)
 class VideoMeta:
     """One upload's listing metadata — enough to judge whether it's worth analysing (style,
-    length, recency) WITHOUT resolving media formats or downloading anything. Every field is
-    best-effort: a captionless/private/geoblocked upload may resolve none of them."""
+    length, recency, format) WITHOUT resolving media formats or downloading anything. Every
+    field is best-effort: a captionless/private/geoblocked upload may resolve none of them.
+
+    `was_live` flags a finished livestream VOD (a broadcast re-upload, often multi-hour) vs a
+    produced upload. `aspect_ratio` (width/height) distinguishes a vertical Short (< 1) from a
+    landscape 16:9 episode (~1.78) — there is no dedicated is-short flag in yt-dlp's info."""
 
     duration_s: int | None = None
     published_at: datetime | None = None
     description: str = ""
+    was_live: bool = False
+    aspect_ratio: float | None = None
 
 
 # The per-video metadata resolver, injectable so `check_channel` is testable without yt-dlp
@@ -344,6 +350,26 @@ def _video_published(info: Any) -> datetime | None:
     ud = str(info.get("upload_date") or "")
     if len(ud) == 8 and ud.isdigit():
         return datetime(int(ud[:4]), int(ud[4:6]), int(ud[6:8]), tzinfo=UTC)
+    return None
+
+
+def _was_live(info: Any) -> bool:
+    """Whether an upload was originally a livestream (now a VOD). Prefers the explicit
+    `was_live` bool, else reads `live_status` (`was_live`/`post_live` = a finished broadcast)."""
+    if info.get("was_live"):
+        return True
+    return str(info.get("live_status") or "") in {"was_live", "post_live"}
+
+
+def _aspect_ratio(info: Any) -> float | None:
+    """width/height for the upload — yt-dlp's `aspect_ratio` when present, else derived from
+    `width`/`height`. < 1 is a vertical (Short-shaped) video; ~1.78 is landscape 16:9."""
+    ar = info.get("aspect_ratio")
+    if isinstance(ar, (int, float)) and ar > 0:
+        return float(ar)
+    w, h = info.get("width"), info.get("height")
+    if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0:
+        return w / h
     return None
 
 
@@ -386,6 +412,8 @@ def resolve_channel_video_meta(video_id: str, *, skip_guard: bool = False) -> Vi
         duration_s=int(dur) if isinstance(dur, (int, float)) and dur > 0 else None,
         published_at=_video_published(info),
         description=str(info.get("description") or ""),
+        was_live=_was_live(info),
+        aspect_ratio=_aspect_ratio(info),
     )
 
 

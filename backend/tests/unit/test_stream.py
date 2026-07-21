@@ -15,11 +15,13 @@ from jbrain.stream import (
     MAX_FULL_FRAMES,
     ResolvedStream,
     StreamError,
+    _aspect_ratio,
     _full_frame_count,
     _header_args,
     _input_guard_args,
     _select_media,
     _video_published,
+    _was_live,
     guard_public_host_or_stream,
     resolve_stream,
     sample_stream,
@@ -40,6 +42,22 @@ def test_video_published_falls_back_to_upload_date() -> None:
 def test_video_published_none_when_absent_or_malformed() -> None:
     assert _video_published({}) is None
     assert _video_published({"timestamp": 0, "upload_date": "nope"}) is None
+
+
+def test_was_live_reads_bool_or_live_status() -> None:
+    assert _was_live({"was_live": True}) is True
+    assert _was_live({"live_status": "was_live"}) is True
+    assert _was_live({"live_status": "post_live"}) is True
+    assert _was_live({"was_live": False, "live_status": "not_live"}) is False
+    assert _was_live({"live_status": "is_upcoming"}) is False
+    assert _was_live({}) is False
+
+
+def test_aspect_ratio_prefers_field_then_derives() -> None:
+    assert _aspect_ratio({"aspect_ratio": 1.78}) == 1.78
+    assert _aspect_ratio({"width": 1080, "height": 1920}) == 1080 / 1920  # vertical Short
+    assert _aspect_ratio({"width": 1920, "height": 0}) is None  # guard divide-by-zero
+    assert _aspect_ratio({}) is None
 
 
 def test_full_frame_count_uses_interval_density_when_given() -> None:

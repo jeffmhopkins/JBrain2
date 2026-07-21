@@ -305,6 +305,11 @@ a chat-initiated analysis, `task` when the Task runs it (both persist identicall
     description teaser — no download) and renders them fenced as untrusted third-party data.
     `title_include` accepts a **list** (OR-match) and a new `published_within_days` gives a
     recency window (fail-open on an unresolved date). Resolves run only on post-dedup uploads.
+    **v3** adds two format tags from the same info dict (no extra cost): `was live` (a finished
+    livestream re-upload, from `was_live`/`live_status`) and `Short?` (a vertical short-form
+    hint, from aspect ratio + duration — yt-dlp has no is-short flag), so the prompt can skip
+    broadcasts and Shorts explicitly. **v4** adds `full_descriptions` (opt-in) to return each
+    upload's complete uploader blurb instead of the compact one-line teaser.
 
 ---
 

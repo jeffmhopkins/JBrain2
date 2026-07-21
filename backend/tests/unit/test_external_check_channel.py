@@ -89,6 +89,39 @@ async def test_listing_shows_duration_publish_and_description(monkeypatch) -> No
     assert "\n\n" not in out.split("This week", 1)[1][:40]
 
 
+async def test_was_live_upload_is_tagged(monkeypatch) -> None:
+    await _fresh(monkeypatch, {"v1"})
+    meta = VideoMeta(duration_s=3 * 3600, was_live=True, aspect_ratio=1.78)
+    out = await _handler(_uploads(("v1", "24/7 Starbase Live")), metas={"v1": meta})(
+        {"channel_id": "UCabc"}, _CTX
+    )
+    assert "was live" in out
+
+
+async def test_vertical_short_is_tagged_but_long_vertical_is_not(monkeypatch) -> None:
+    await _fresh(monkeypatch, {"short", "tall"})
+    metas = {
+        "short": VideoMeta(duration_s=45, aspect_ratio=0.56),  # vertical + brief → Short?
+        "tall": VideoMeta(duration_s=1800, aspect_ratio=0.56),  # vertical but 30 min → not tagged
+    }
+    out = await _handler(_uploads(("short", "Clip"), ("tall", "Vertical Doc")), metas=metas)(
+        {"channel_id": "UCabc"}, _CTX
+    )
+    short_line = next(ln for ln in out.splitlines() if "Clip" in ln)
+    tall_line = next(ln for ln in out.splitlines() if "Vertical Doc" in ln)
+    assert "Short?" in short_line
+    assert "Short?" not in tall_line
+
+
+async def test_landscape_episode_is_not_tagged_short(monkeypatch) -> None:
+    await _fresh(monkeypatch, {"v1"})
+    meta = VideoMeta(duration_s=90, aspect_ratio=1.78)  # brief but 16:9 → not a Short
+    out = await _handler(_uploads(("v1", "News Bite")), metas={"v1": meta})(
+        {"channel_id": "UCabc"}, _CTX
+    )
+    assert "Short?" not in out and "was live" not in out
+
+
 async def test_description_teaser_is_capped(monkeypatch) -> None:
     await _fresh(monkeypatch, {"v1"})
     meta = VideoMeta(description="x" * 1000)
@@ -96,6 +129,17 @@ async def test_description_teaser_is_capped(monkeypatch) -> None:
         {"channel_id": "UCabc"}, _CTX
     )
     assert "…" in out and "x" * 500 not in out
+
+
+async def test_full_descriptions_returns_the_whole_blurb(monkeypatch) -> None:
+    await _fresh(monkeypatch, {"v1"})
+    blurb = "Line one about the launch.\n" + "y" * 1000  # multi-line + over the teaser cap
+    meta = VideoMeta(description=blurb)
+    out = await _handler(_uploads(("v1", "Long blurb")), metas={"v1": meta})(
+        {"channel_id": "UCabc", "full_descriptions": True}, _CTX
+    )
+    assert "y" * 1000 in out and "…" not in out  # uncut, no truncation marker
+    assert "Line one about the launch." in out
 
 
 async def test_published_within_days_drops_old_uploads(monkeypatch) -> None:

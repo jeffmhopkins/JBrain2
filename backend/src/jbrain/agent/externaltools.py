@@ -62,6 +62,11 @@ _DESCRIPTION_MAX_CHARS = 4_000
 # model to judge "news / update-style vs short/off-topic" without turning the listing into a
 # wall of the full descriptions. The full blurb is on read_external_video after analysis.
 _LISTING_DESC_SNIPPET = 240
+# A vertical upload (aspect < 1) is Short-shaped; a produced episode is landscape 16:9. YouTube
+# Shorts run to ~3 min, so a vertical clip at/under this length is flagged "Short?" (a hint, not
+# a hard classifier — yt-dlp exposes no is-short flag). A vertical BUT long upload isn't tagged.
+_SHORT_MAX_S = 180
+_VERTICAL_ASPECT = 1.0
 
 # Pull the video id out of a watch/short/live/embed URL (or accept a bare id the search tool
 # echoed back). Non-URL, non-YouTube refs pass through as-is for a direct video_id match.
@@ -106,22 +111,40 @@ def _title_terms(raw: object) -> list[str]:
     return [s.strip().lower() for s in values if isinstance(s, str) and s.strip()]
 
 
-def _listing_line(title: str, url: str, meta: VideoMeta | None) -> str:
-    """One channel-listing entry: title + (published · length) + a one-line description teaser.
-    Missing metadata just drops its bit — a resolve that failed still shows title + url so the
-    model can judge from the title alone rather than the upload vanishing."""
+def _looks_short(meta: VideoMeta) -> bool:
+    """A hint that an upload is a YouTube Short: vertical (aspect < 1) and, when a duration is
+    known, within the ~3-min Shorts ceiling. A vertical-but-long upload is not flagged."""
+    if meta.aspect_ratio is None or meta.aspect_ratio >= _VERTICAL_ASPECT:
+        return False
+    return meta.duration_s is None or meta.duration_s <= _SHORT_MAX_S
+
+
+def _listing_line(title: str, url: str, meta: VideoMeta | None, *, full_description: bool) -> str:
+    """One channel-listing entry: title + (published · length · format tags) + the uploader's
+    description. Missing metadata just drops its bit — a resolve that failed still shows title +
+    url so the model can judge from the title alone rather than the upload vanishing. `was live`
+    marks a finished-livestream re-upload; `Short?` a vertical short-form clip. The description is
+    a one-line teaser by default; `full_description` returns the whole blurb, indented, uncut."""
     bits: list[str] = []
     if meta and meta.published_at is not None:
         bits.append(f"published {meta.published_at:%Y-%m-%d}")
     if meta and meta.duration_s:
         bits.append(_hms(meta.duration_s * 1000))
+    if meta and meta.was_live:
+        bits.append("was live")
+    if meta and _looks_short(meta):
+        bits.append("Short?")
     meta_bit = f" ({' · '.join(bits)})" if bits else ""
     line = f"- {title}{meta_bit}\n  {url}"
     if meta and meta.description.strip():
-        teaser = " ".join(meta.description.split())
-        if len(teaser) > _LISTING_DESC_SNIPPET:
-            teaser = teaser[:_LISTING_DESC_SNIPPET].rstrip() + "…"
-        line += f"\n  {teaser}"
+        if full_description:
+            # The complete blurb, each line indented to stay grouped under the entry.
+            desc = meta.description.strip().replace("\n", "\n  ")
+        else:
+            desc = " ".join(meta.description.split())
+            if len(desc) > _LISTING_DESC_SNIPPET:
+                desc = desc[:_LISTING_DESC_SNIPPET].rstrip() + "…"
+        line += f"\n  {desc}"
     return line
 
 
@@ -293,6 +316,7 @@ def build_external_handlers(
         limit = max(1, min(int(arguments.get("limit", 10) or 10), _CHANNEL_MAX))
         within = arguments.get("published_within_days")
         within_days = int(within) if within not in (None, "") else None
+        full_desc = bool(arguments.get("full_descriptions"))
 
         try:
             uploads = await asyncio.to_thread(lister, channel_id, limit=limit)
@@ -338,7 +362,7 @@ def build_external_handlers(
                     f" {within_days} day(s)."
                 )
 
-        lines = [_listing_line(u.title, u.url, m) for u, m in pairs]
+        lines = [_listing_line(u.title, u.url, m, full_description=full_desc) for u, m in pairs]
         # Titles and uploader descriptions are attacker-authorable third-party text, so fence
         # the listing as data to judge — never as instructions (the same posture the search and
         # list tools take). The model decides which fit; a channel's uploads mix styles.
