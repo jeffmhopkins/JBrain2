@@ -57,6 +57,23 @@ def test_select_skips_a_track_with_no_usable_url() -> None:
     assert track is not None and track.kind == "auto" and track.ext == "vtt"
 
 
+def test_select_skips_youtube_live_chat_pseudo_track() -> None:
+    # YouTube exposes the live-chat replay as a `subtitles` track keyed `live_chat`; it is chat
+    # JSON, not speech captions, and fetching it slow-loris-hangs the analysis. It must never be
+    # selected — even though it is the only "manual" track (which would otherwise win).
+    info = {
+        "subtitles": {"live_chat": _fmts("json3")},
+        "automatic_captions": {"en": _fmts("json3")},
+    }
+    track = select_caption(info)
+    assert track is not None and track.lang == "en" and track.kind == "auto"
+
+
+def test_select_returns_none_when_only_live_chat_exists() -> None:
+    # live_chat as the sole track → no real captions, so the caller falls back to whisper.
+    assert select_caption({"subtitles": {"live_chat": _fmts("json3")}}) is None
+
+
 # --- json3 parsing --------------------------------------------------------------------
 
 
