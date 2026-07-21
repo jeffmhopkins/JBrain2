@@ -27,6 +27,7 @@ from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
+from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.tasks.repo import TaskInfo, TaskRunInfo, TaskRunRepo
 
 log = structlog.get_logger()
@@ -135,6 +136,7 @@ class TaskRunner:
         executor: TurnExecutor,
         push: PushPoke | None = None,
         push_tokens: Sequence[str] = (),
+        notify: NotifyBus | None = None,
     ):
         self._sessions = sessions
         self._runlog = runlog
@@ -143,6 +145,7 @@ class TaskRunner:
         self._executor = executor
         self._push = push
         self._push_tokens = list(push_tokens)
+        self._notify = notify
 
     async def run(self, owner_ctx: SessionContext, task: TaskInfo, *, trigger: str) -> TaskRunInfo:
         """Execute one run of `task`. `owner_ctx` must carry the owner's principal id
@@ -239,6 +242,21 @@ class TaskRunner:
         if task.notify_push and self._push is not None and self._push_tokens:
             with contextlib.suppress(Exception):
                 await self._push.poke(self._push_tokens)
+
+        # Self-hosted delivery: publish a task-ready notification to the owner's connected
+        # devices (the native app's SSE stream renders it locally). Content-carrying — it's
+        # the owner's own server and device — and best-effort, never breaking the run.
+        if task.notify_push:
+            summary_line = summary[:_SUMMARY_LEN].strip() if status == "done" else (error or "")
+            notify_owner(
+                self._notify,
+                Notification(
+                    kind="task_run",
+                    title=f"Task ready: {task.name}" if task.name else "Task ready",
+                    body=summary_line or ("finished" if status == "done" else "failed"),
+                    ref=session.id,
+                ),
+            )
 
         return TaskRunInfo(
             id=task_run_id,
