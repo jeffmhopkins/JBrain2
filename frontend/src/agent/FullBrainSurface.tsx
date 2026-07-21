@@ -786,19 +786,16 @@ function Bubble({
 
   // A self-contained analysis card (video_analysis / task_status) is full-bleed and brings
   // its own frame, so — like an image turn — it stands as its own frameless media bubble,
-  // flush in the conversation, and the turn's prose, proposal, and "Thinking / Worked" foot
-  // ride SEPARATE normal bubbles around it. Keeping the foot in a real (inset) bubble is
-  // what lets its thinking + tool-use disclosure render correctly; the old CSS-only flatten
-  // stripped the shared bubble's chrome and orphaned the foot, colliding the strips.
+  // flush in the conversation. The turn's "Thinking / Worked" foot is tucked INSIDE that
+  // frame (`.fb-analysis-card` wraps the card + foot as one unit) so the whole analysis reads
+  // as a SINGLE component, not a card with a separate disclosure box floating beneath it. The
+  // turn's prose and any OTHER reply views/affordances still ride their own normal bubbles.
   const analysisViews = viewsToRender.filter((v) => ANALYSIS_VIEWS.has(v.view));
   if (analysisViews.length > 0) {
     const otherViews = viewsToRender.filter((v) => !ANALYSIS_VIEWS.has(v.view));
-    const hasReply =
-      otherViews.length > 0 ||
-      staged !== undefined ||
-      interruptedSpawn ||
-      generalKnowledge ||
-      activityLine !== null;
+    const lastAnalysis = analysisViews.length - 1;
+    const hasOtherReply =
+      otherViews.length > 0 || staged !== undefined || interruptedSpawn || generalKnowledge;
     return (
       <>
         {message.text.trim() !== "" && (
@@ -819,14 +816,19 @@ function Bubble({
         {analysisViews.map((v, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
           <div className="bubble ai bubble-media" key={`av-${i}`}>
-            <ToolView
-              payload={v}
-              onOpenSession={onOpenSession}
-              onDeferredComplete={onDeferredComplete}
-            />
+            <div className="fb-analysis-card">
+              <ToolView
+                payload={v}
+                onOpenSession={onOpenSession}
+                onDeferredComplete={onDeferredComplete}
+              />
+              {/* The "Thinking / Worked" foot lives inside the (last) card's frame — one
+                  unified component instead of a separate box below it. */}
+              {i === lastAnalysis && activityLine}
+            </div>
           </div>
         ))}
-        {hasReply && (
+        {hasOtherReply && (
           <div className="bubble ai">
             {otherViews.map((v, i) => (
               <ToolView
@@ -840,7 +842,6 @@ function Bubble({
             {stagedAffordance}
             {interruptedSpawn && <InterruptedSubagentsNote />}
             {generalKnowledge && <GeneralKnowledgeNote />}
-            {activityLine}
           </div>
         )}
         {standaloneFanBlocks}
@@ -983,7 +984,10 @@ function ActivityLine({
   const label = thinking
     ? "Thinking…"
     : ms !== null
-      ? `Thought for ${Math.max(1, Math.round(ms / 1000))}s`
+      ? // Long reasoning runs past a minute, so carry minutes (and hours) the same way the
+        // turn timer does — `formatElapsed` gives "45s" / "2m 5s" / "1h 3m" — rather than an
+        // ever-growing seconds count ("Thought for 137s").
+        `Thought for ${formatElapsed(Math.max(1000, ms))}`
       : "Thought";
   // No top border (and flush to the top) while the line leads a still-thinking
   // bubble with no answer above it yet.

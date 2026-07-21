@@ -33,12 +33,18 @@ interface TaskStatusProps {
 }
 
 // The truthful phase sequence a stream analysis moves through, matched from the server's
-// progress label (which is the source of truth — "Opening stream…", "Analyzing frame
-// 3/16", "Transcribing 2/8", "Writing summary…"). A phase before the current one is done,
-// the current one spins, later ones wait — so the checklist never claims more than ran.
+// progress label (which is the source of truth — "Opening stream…", "Reading captions…",
+// "Analyzing frame 3/16", "Transcribing 2/8", "Writing summary…"). A phase before the
+// current one is done, the current one spins, later ones wait — so the checklist never
+// claims more than ran.
+//
+// "Reading captions…" is the provider-caption fetch, which runs BEFORE frames (captions-first
+// pipeline), so it belongs to the open/prepare stage — NOT the frames stage. It used to match
+// `caption` in the frames row, which lit "Analyze the frames" while the label still said
+// "Reading captions…"; the frames matcher is now `frame|analyz` only.
 const PHASES: { key: string; label: string; match: RegExp }[] = [
-  { key: "open", label: "Open the stream", match: /open/i },
-  { key: "frames", label: "Analyze the frames", match: /frame|analyz|caption/i },
+  { key: "open", label: "Open the stream", match: /open|caption/i },
+  { key: "frames", label: "Analyze the frames", match: /frame|analyz/i },
   { key: "audio", label: "Transcribe the audio", match: /transcrib|audio/i },
   { key: "summary", label: "Write the summary", match: /writ|summar|fus/i },
 ];

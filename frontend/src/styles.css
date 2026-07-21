@@ -16942,6 +16942,33 @@ button.auto-sect[aria-expanded="true"] > svg {
   padding: 0;
   background: none;
 }
+/* One unified analysis card: the card AND its "Thinking / Worked" foot share a single frame
+   so the turn reads as one component, not a card with a separate disclosure box beneath it.
+   This wrapper owns the frame; the inner card drops its own border/radius/fill so there's no
+   frame-inside-a-frame, and the foot becomes the card's footer strip. */
+.fb-shell .fb-analysis-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--surface);
+}
+.fb-shell .fb-analysis-card .tv-vid,
+.fb-shell .fb-analysis-card .tv-task {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+/* The foot sits flush at the bottom (no negative margins, its own padding since the media
+   bubble is frameless); its `.fb-activity` border-top is the divider from the card body. */
+.fb-shell .fb-analysis-card .fb-act-foot {
+  margin: 0;
+  padding: 8px 14px 10px;
+}
+.fb-shell .fb-analysis-card .fb-act-foot.bare .fb-activity {
+  /* keep the divider even if the foot leads with no answer, so the footer stays attached */
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
 .tv-task {
   display: flex;
   flex-direction: column;
