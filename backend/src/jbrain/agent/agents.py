@@ -57,6 +57,15 @@ SPAWN_TOOL = "spawn_subagent"
 # leaf — the tool refuses at depth > 0).
 DEEP_RESEARCH_TOOL = "deep_research"
 
+# The two-tier decomposition primitive (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2): a
+# TASK-AGENT-only affordance that lets a depth-1 research_deep child split its assigned
+# sub-question into one bounded fan of depth-2 sub agents, ONCE. `web`-gated and
+# NEVER_DEFAULT like the other spawn primitives; the handler refuses at depth 0 (the
+# orchestrator plans its own fan) and past the run's `max_depth`, so it is inert outside
+# a deepest run that seeded a two-tier tree. jerv formally holds it (so the parent⊆child
+# clamp passes it to a research_deep task agent) but never usefully calls it (depth 0).
+DECOMPOSE_TOOL = "decompose_research"
+
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather (forecast + history) + hurricane
 # lookups, the local
@@ -125,6 +134,10 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "query_server_metrics",
         # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,
+        # The two-tier decomposition primitive. jerv holds it only so the parent⊆child
+        # clamp passes it down to a research_deep task agent; the handler refuses at
+        # depth 0, so jerv never usefully calls it (DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
+        DECOMPOSE_TOOL,
         # The deep-research primitive — jerv orchestrates a bounded research run over the
         # same fan (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
         DEEP_RESEARCH_TOOL,
@@ -176,7 +189,7 @@ ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 # KB-capable curator on an unknown name — so a malformed or injected persona is
 # refused, never resolved to a knowledge agent.
 SUBAGENT_PERSONAS = frozenset(
-    {"research", "review", "summarize", "research_library", "review_library"}
+    {"research", "review", "summarize", "research_library", "review_library", "research_deep"}
 )
 
 # research / review children: the internet tools and the dataless clock — and NO
@@ -188,6 +201,13 @@ SUBAGENT_PERSONAS = frozenset(
 # parent's at dispatch.
 RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time"})
 REVIEW_TOOLS = RESEARCH_TOOLS
+# research_deep: the TASK-AGENT tier of a deepest-research run (max_depth=2). Identical to
+# `research` — same web sandbox, no KB, no location — PLUS the one-shot `decompose_research`
+# tool, so a task agent may split a genuinely compound sub-question into a bounded fan of
+# depth-2 sub agents. The sub agents run plain `research` (no decompose), so the recursion
+# is exactly one tier and the parent⊆child clamp keeps a sub agent from ever holding
+# decompose. Inert outside a max_depth=2 tree (the handler is depth-guarded).
+RESEARCH_DEEP_TOOLS = RESEARCH_TOOLS | frozenset({DECOMPOSE_TOOL})
 # research_library / review_library children: the video-library corpus tools and the
 # dataless clock, and NO web tools — `deep_research`'s `sources=library` /
 # `library_first` gather/refill/analyst fans run these so a corpus-scoped run touches
@@ -298,6 +318,16 @@ AGENTS: dict[str, AgentProfile] = {
         "review",
         "review.prompt",
         tools=REVIEW_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
+    # The task-agent tier of a deepest-research run: `research` plus the one-shot
+    # decomposition tool. Same sandbox and budget; the extra tool lets it spawn ONE fan
+    # of depth-2 sub agents (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
+    "research_deep": _profile(
+        "research_deep",
+        "research_deep.prompt",
+        tools=RESEARCH_DEEP_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=2,
     ),

@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2◻️ R3◻️ R4◻️ R5◻️ R6◻️ R7◻️ R8◻️
+> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3◻️ R4◻️ R5◻️ R6◻️ R7◻️ R8◻️
 
 **R1 landed (2026-07-22).** The adaptive loop shipped as `deep_research(mode="deepest")`
 — in-request, depth-1, no second agent tier yet. The single fixed refill became a
@@ -12,14 +12,29 @@ pool-drained / round-cap, driven by a new `stable` field on the reflect judge
 park** to build the full stack in sequence; R0's value probe is folded in as a decision
 the owner has made, not a gate that blocks the build.
 
-**R2 in progress (2026-07-22).** The foundational, behaviour-neutral piece landed:
-depth is now **run-scoped** — `TreeState.max_depth` (default `1`, so ordinary runs are
-unchanged) + `can_spawn_at(depth)`, with `spawn.py`'s flat-fan depth check reading the
-tree instead of the module constant. A tree seeded `max_depth=2` lets a depth-1 task
-agent spawn one tier; depth 2 stays a leaf (tree + spawn tests). Still to land in R2:
-the decomposition-only spawn tool + task-agent persona wiring, the per-parent sub-fan
-cap `K` and one-shot-decomposition flag, and the full depth-2 isolation suite (§4). No
-depth-2 tree is minted yet — that arrives with the trusted deepest driver (R3/R4).
+**R2 landed (2026-07-22).** The two-tier decomposition mechanism is complete and
+tested; it is inert until a `max_depth=2` tree is minted (that activation is R3/R4):
+- **Run-scoped depth** — `TreeState.max_depth` (default `1`) + `can_spawn_at`; `spawn.py`
+  reads the tree, not the module constant. Ordinary runs unchanged.
+- **`research_deep` task-agent persona** (`research` + the one-shot `decompose_research`
+  tool; sub agents run plain `research`, so a sub agent can never hold decompose — the
+  transitivity property). New `research_deep.prompt`, admitted to the agent CHECKs by
+  migration `0146`.
+- **`decompose_research` tool + `SpawnService.decompose_fan`** — the amplification
+  controls live here: depth-guarded (refuses at depth 0 and past `max_depth`), **one-shot**
+  (`TreeState.decomposed`, so a task agent can't read its first sub-fan then spawn a
+  second embedding it), and a **per-parent cap `K`** (`MAX_SUBFAN_PER_TASK_AGENT`).
+  `web`-classed + `NEVER_DEFAULT`; jerv holds it only for the clamp.
+- **Tests** — run-scoped `can_spawn_at`, depth-1→depth-2 spawn, depth-0 / leaf refusals,
+  one-shot, `K` cap, and a transitivity assertion (a depth-2 sub agent's clamped tools
+  exclude `decompose_research`). The depth-2 sandbox/firewall (no memory / domain / read
+  scope / location) is inherited by construction — `_run_child` mints every child, any
+  depth, through the identical sandbox. Also bumped `deep_research.tool` v2→v3 (the R1
+  `mode` param was an un-versioned edit) and refreshed its pinned digest.
+
+Not yet wired: a live deepest run does not spawn `research_deep` task agents or seed
+`max_depth=2` — the two-tier fan activates only from the trusted background driver
+(R3/R4). The mechanism sits dormant behind the default `max_depth=1`.
 
 A **no-holds** sibling to the in-progress `deep_research` tool
 (`DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,

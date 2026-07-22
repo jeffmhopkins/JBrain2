@@ -42,7 +42,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_intake_link_handlers, build_proposal_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
-from jbrain.agent.spawn import SpawnRef, SpawnService
+from jbrain.agent.spawn import DecomposeRef, SpawnRef, SpawnService
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.neighborhood import (
@@ -658,6 +658,9 @@ def build_registry(
     # service (which needs the very registry being built), so it is wired below once both
     # exist (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
     deep_research_ref = DeepResearchRef()
+    # The two-tier decomposition primitive (a task agent's one-shot sub-fan), late-bound
+    # to the same spawn service (DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
+    decompose_ref = DecomposeRef()
     registry = load_registry(
         TOOLS_DIR,
         {
@@ -737,6 +740,10 @@ def build_registry(
             # (curator's tools=None never absorbs it), wired below once the spawn
             # service exists (deep research runs its fans through it).
             "deep_research": deep_research_ref,
+            # The task-agent decomposition tool: a research_deep child reaches it by
+            # allowlist (jerv holds it only for the parent⊆child clamp); NEVER_DEFAULT, so
+            # curator's tools=None never absorbs it. Wired below with the spawn service.
+            "decompose_research": decompose_ref,
         },
         optional=(
             OPTIONAL_IMAGE_TOOLS
@@ -766,4 +773,6 @@ def build_registry(
         deep_research_ref.service = DeepResearchService(
             router=router, spawn=spawn_ref.service, maker=maker
         )
+        # decompose_research forwards to the same spawn service (it spawns the sub-fan).
+        decompose_ref.service = spawn_ref.service
     return registry

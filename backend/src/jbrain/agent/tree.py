@@ -9,7 +9,7 @@ spawn service — so both can reference it without an import cycle.
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Structural fan caps (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S1). These shape caps
 # bound the tree on their own — no model cooperation.
@@ -26,6 +26,14 @@ MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all de
 # so the serial local wall-clock stays under the parent turn cap and the surface stays
 # legible; the total children across all waves still obey MAX_CHILDREN_PER_PARENT.
 MAX_WAVES = 2
+
+# Deepest-research two-tier recursion (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2). The
+# amplification bound on a task agent's own sub-fan: at most this many sub agents per
+# decomposition, AND a task agent decomposes at most ONCE (the one-shot flag on
+# TreeState). Together they cap how much attacker-steered research one laundered task-
+# agent brief can spawn — the tree-wide total (MAX_TOTAL_AGENTS_PER_TREE) is the outer
+# bound, this is the per-parent inner bound. Kept well under MAX_CHILDREN_PER_PARENT.
+MAX_SUBFAN_PER_TASK_AGENT = 3
 
 # Deep research (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md) bounds its gather rounds the same
 # way — one gather fan and at most one gap-refill — but STRUCTURALLY (there is no loop in
@@ -127,6 +135,12 @@ class TreeState:
     # over-spending producer cannot starve the deliverable wave, then released to 0
     # when the final wave itself starts. 0 for a flat fan (no effect).
     stage_reserve: int = 0
+    # One-shot decomposition (R2): the set of task-agent session ids that have already
+    # spawned their one sub-fan. A task agent may decompose EXACTLY ONCE, so it cannot
+    # read its first sub-fan's fetched content and then spawn a second fan embedding it
+    # (the lateral cross-fan exfil path). Keyed by the child's own session id, which is
+    # unique per task agent. Empty for a flat run — no decomposition ever happens.
+    decomposed: set[str] = field(default_factory=set)
 
     @classmethod
     def rooted(cls, base_max_cost_tokens: int) -> "TreeState":
@@ -148,6 +162,14 @@ class TreeState:
     def seconds_left(self) -> float | None:
         """Wall-clock remaining before the staged deadline, or None if unbounded."""
         return None if self.deadline is None else max(0.0, self.deadline - time.monotonic())
+
+    def has_decomposed(self, agent_id: str) -> bool:
+        """Whether this task agent has already spawned its one allowed sub-fan (one-shot)."""
+        return agent_id in self.decomposed
+
+    def note_decomposition(self, agent_id: str) -> None:
+        """Record that this task agent has spent its single decomposition."""
+        self.decomposed.add(agent_id)
 
     def can_spawn_at(self, depth: int) -> bool:
         """Whether an agent at `depth` may spawn a fan — the run-scoped depth cap. A child
