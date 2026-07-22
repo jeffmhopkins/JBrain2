@@ -177,6 +177,31 @@ class TreeState:
             max_depth=DEEPEST_MAX_DEPTH,
         )
 
+    @classmethod
+    def for_resume(
+        cls,
+        *,
+        budget_tokens: int,
+        spent: int,
+        agents_spawned: int,
+        seconds_left: float,
+    ) -> "TreeState":
+        """The two-tier tree for a RESUMED deepest run (R5). Rewinds `spent`/`agents_spawned`
+        to the last COMMITTED round's counters (so the run neither re-spends the budget nor
+        double-counts against the agent cap on the round it re-executes), and sets the
+        remaining wall-clock — `seconds_left` is derived by the caller from the checkpoint's
+        absolute-UTC deadline (`max(0, deadline - now)`), which, unlike a monotonic clock,
+        survives the restart. Same two-tier depth as `rooted_deepest`."""
+        budget = max(0, budget_tokens)
+        return cls(
+            tree_budget=budget,
+            root_reserve=int(budget * ROOT_RESERVE_FRACTION),
+            spent=max(0, spent),
+            agents_spawned=max(0, agents_spawned),
+            deadline=time.monotonic() + max(0.0, seconds_left),
+            max_depth=DEEPEST_MAX_DEPTH,
+        )
+
     def out_of_time(self) -> bool:
         """True once a staged call's cumulative wall-clock deadline has passed — the
         structural bound the per-child clock never provided. None deadline → never."""

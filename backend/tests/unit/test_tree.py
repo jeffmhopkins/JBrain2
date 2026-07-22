@@ -152,3 +152,21 @@ def test_rooted_deepest_is_the_only_two_tier_mint() -> None:
     # The ordinary constructors never mint the extra tier (negative-depth isolation).
     assert TreeState.rooted(800_000).max_depth == MAX_DEPTH == 1
     assert TreeState().max_depth == MAX_DEPTH
+
+
+def test_for_resume_rewinds_counters_and_remaining_clock() -> None:
+    """A resumed deepest run rewinds spent/agents to the last committed round (never
+    re-spends the budget or double-counts the re-run round against the agent cap) and
+    carries the remaining wall-clock, at two-tier depth."""
+    t = TreeState.for_resume(
+        budget_tokens=50_000_000, spent=12_000_000, agents_spawned=7, seconds_left=1800
+    )
+    assert t.max_depth == DEEPEST_MAX_DEPTH
+    assert t.tree_budget == 50_000_000
+    assert t.spent == 12_000_000  # rewound to the committed value, not zero
+    assert t.agents_spawned == 7
+    assert t.can_admit(5) and not t.can_admit(6)  # 7 already counted against the 12 cap
+    assert t.deadline is not None and not t.out_of_time()
+    # A past (exhausted) wall-clock resumes already out of time — the ceiling still bites.
+    spent = TreeState.for_resume(budget_tokens=1, spent=0, agents_spawned=0, seconds_left=0)
+    assert spent.out_of_time()
