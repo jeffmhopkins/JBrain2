@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3◻️ R4◻️ R5◻️ R6◻️ R7◻️ R8◻️
+> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4◻️ R5◻️ R6◻️ R7◻️ R8◻️
 
 **R1 landed (2026-07-22).** The adaptive loop shipped as `deep_research(mode="deepest")`
 — in-request, depth-1, no second agent tier yet. The single fixed refill became a
@@ -35,6 +35,20 @@ tested; it is inert until a `max_depth=2` tree is minted (that activation is R3/
 Not yet wired: a live deepest run does not spawn `research_deep` task agents or seed
 `max_depth=2` — the two-tier fan activates only from the trusted background driver
 (R3/R4). The mechanism sits dormant behind the default `max_depth=1`.
+
+**R3 landed (2026-07-22).** The concurrent execution lane — `DeepestRunLane`
+(`agent/deepest_lane.py`). A deepest run is minutes-to-hours, so it cannot run inline on
+either sequential loop (the job worker and the tasks tick each `await` one item at a
+time); the lane runs a run as a **detached, genuinely concurrent** `asyncio.Task`:
+`launch` returns immediately (non-blocking — the kickoff tool gets its turn back), runs
+proceed in parallel up to a pool size (default 1, open decision §9.4 — a second launch is
+refused, not queued or blocked), a **watchdog** cancels a run past its wall-clock ceiling
+(the backstop for work that runs outside the `/chat` and worker timeouts), and `cancel` /
+`drain` settle in-flight runs cleanly (with a defensive deregister for a task cancelled
+before it starts, whose `finally` never fires). Deliberately generic — it supervises an
+opaque `run()` coroutine and knows nothing about the tree, the DB, or the LLM, so it is
+proven with plain coroutines (7 tests, no DB). What the coroutine *does* — build the
+trusted `max_depth=2` context, drive `DeepResearchService`, checkpoint, notify — is R4–R7.
 
 A **no-holds** sibling to the in-progress `deep_research` tool
 (`DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,
