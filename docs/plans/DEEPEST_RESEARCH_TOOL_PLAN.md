@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6◻️ R7◻️ R8◻️
+> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7◻️ R8◻️
 
 **R1 landed (2026-07-22).** The adaptive loop shipped as `deep_research(mode="deepest")`
 — in-request, depth-1, no second agent tier yet. The single fixed refill became a
@@ -91,6 +91,16 @@ trusted `max_depth=2` context, drive `DeepResearchService`, checkpoint, notify �
 The **end-to-end kill-mid-run → resume** gate (rehydrate findings, continue the loop,
 coverage-equivalent report) needs the run driver that ties checkpoint → lane →
 `DeepResearchService`; that driver is R7, so the end-to-end resume test lands there.
+
+**R6 landed (2026-07-22).** The periodic progress channel — `DeepestProgressChannel`
+(`agent/deepest_progress.py`). A background run has no live `/chat` SSE to stream into, so
+it reuses the two proven off-turn paths: **`round()`** and **`done()`** each (1) append a
+server-authored assistant turn to the initiating session via `AgentTranscript.record_answer`
+(owner-RLS `agent_turns`, no fake user bubble — renders on reopen), (2) publish a `NotifyBus`
+nudge whose `ref` is the session id (the app deep-links to the run's chat), and (3) fire an
+FCM content-free `poke` to wake a closed app. Everything is **best-effort** — each leg
+swallows its own error, so a progress hiccup never crashes or stalls the run. 5 tests
+(fakes, no DB). Live in-place streaming into an already-open surface stays deferred (§8).
 
 A **no-holds** sibling to the in-progress `deep_research` tool
 (`DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,
