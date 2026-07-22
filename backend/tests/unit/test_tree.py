@@ -120,3 +120,18 @@ def test_rooted_stamps_a_wall_clock_deadline() -> None:
     assert tree.deadline is not None
     assert not tree.out_of_time()
     assert tree.stage_reserve == 0
+
+
+def test_can_spawn_at_is_run_scoped() -> None:
+    """Depth is capped by the tree's own `max_depth`, not a global constant. The default
+    (1) reproduces the shipped rule — only the root spawns; a deepest run raises its own
+    tree to 2 so a depth-1 task agent may spawn one tier, while depth 2 stays a leaf."""
+    default = TreeState.rooted(800_000)
+    assert default.max_depth == 1
+    assert default.can_spawn_at(0)  # root spawns
+    assert not default.can_spawn_at(1)  # a child is a leaf
+
+    deep = TreeState.rooted(800_000)
+    deep.max_depth = 2
+    assert deep.can_spawn_at(0) and deep.can_spawn_at(1)  # orchestrator + task agent
+    assert not deep.can_spawn_at(2)  # sub agent is a hard leaf

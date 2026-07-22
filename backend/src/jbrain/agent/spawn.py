@@ -61,7 +61,6 @@ from jbrain.agent.tree import (
     CHILD_MAX_COST_TOKENS,
     CHILD_WALL_CLOCK_S,
     MAX_CHILDREN_PER_PARENT,
-    MAX_DEPTH,
     MAX_PARALLEL,
     MAX_WAVES,
     MIN_VIABLE_CHILD_BUDGET,
@@ -421,10 +420,12 @@ class SpawnService:
         if ctx.tree is None:
             return _refuse("sub-agent spawning is only available in an interactive owner turn.")
         # --- depth cap (structural, no model cooperation) ---------------------
-        # Only the root turn (jerv, depth 0) may spawn; a child is always a leaf. Belt
-        # and suspenders with the persona allowlists, which no longer offer a child the
-        # spawn tool at all.
-        if ctx.depth >= MAX_DEPTH:
+        # Run-scoped (`tree.max_depth`, default 1): in an ordinary run only the root
+        # (jerv, depth 0) may spawn and a child is always a leaf; a deepest-research run
+        # raises its own tree to 2 so a task agent may spawn one tier of sub agents. The
+        # cap is on the tree, never a global constant, so the extra tier can't leak into
+        # jerv's ordinary fan. Belt-and-suspenders with the persona allowlists.
+        if not ctx.tree.can_spawn_at(ctx.depth):
             return _refuse("a sub-agent cannot spawn its own sub-agents; only jerv fans out.")
 
         tasks = args.get("tasks")

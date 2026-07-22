@@ -105,6 +105,14 @@ class TreeState:
 
     agents_spawned: int = 0
     max_total_agents: int = MAX_TOTAL_AGENTS_PER_TREE
+    # The deepest depth at which spawning is still allowed, as a property of THIS run
+    # (not a global constant) — so the two-tier deepest-research recursion is confined to
+    # its own trusted run and jerv's ordinary fan stays flat. Defaults to MAX_DEPTH (1):
+    # only the root spawns, children are leaves — the shipped behaviour. A deepest run
+    # seeds it at 2 (orchestrator → task agent → sub agent); a sub agent at depth 2 is a
+    # hard leaf. The interactive/scheduled seed paths never raise it, so a depth-2 tree
+    # can arise only from the trusted deepest driver (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
+    max_depth: int = MAX_DEPTH
     # 0 means "budget not seeded" (a non-spawn turn that still passes a TreeState):
     # charge/exhaustion are no-ops, so an ordinary turn is governed only by its own
     # per-loop Guardrails, exactly as before Wave S2.
@@ -140,6 +148,12 @@ class TreeState:
     def seconds_left(self) -> float | None:
         """Wall-clock remaining before the staged deadline, or None if unbounded."""
         return None if self.deadline is None else max(0.0, self.deadline - time.monotonic())
+
+    def can_spawn_at(self, depth: int) -> bool:
+        """Whether an agent at `depth` may spawn a fan — the run-scoped depth cap. A child
+        at `depth == max_depth` is a hard leaf. Default `max_depth` (1) reproduces the
+        shipped rule exactly: only the root (depth 0) spawns."""
+        return depth < self.max_depth
 
     def can_admit(self, n: int) -> bool:
         """Whether this fan of `n` children fits under the tree-wide total cap."""

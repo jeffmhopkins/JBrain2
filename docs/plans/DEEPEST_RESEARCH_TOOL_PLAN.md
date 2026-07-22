@@ -12,6 +12,15 @@ pool-drained / round-cap, driven by a new `stable` field on the reflect judge
 park** to build the full stack in sequence; R0's value probe is folded in as a decision
 the owner has made, not a gate that blocks the build.
 
+**R2 in progress (2026-07-22).** The foundational, behaviour-neutral piece landed:
+depth is now **run-scoped** — `TreeState.max_depth` (default `1`, so ordinary runs are
+unchanged) + `can_spawn_at(depth)`, with `spawn.py`'s flat-fan depth check reading the
+tree instead of the module constant. A tree seeded `max_depth=2` lets a depth-1 task
+agent spawn one tier; depth 2 stays a leaf (tree + spawn tests). Still to land in R2:
+the decomposition-only spawn tool + task-agent persona wiring, the per-parent sub-fan
+cap `K` and one-shot-decomposition flag, and the full depth-2 isolation suite (§4). No
+depth-2 tree is minted yet — that arrives with the trusted deepest driver (R3/R4).
+
 A **no-holds** sibling to the in-progress `deep_research` tool
 (`DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,
 single-turn* pipeline — plan → gather → analyze → reflect → **one** refill →

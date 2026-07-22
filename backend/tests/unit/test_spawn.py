@@ -1362,3 +1362,20 @@ async def test_flat_fan_children_honor_the_tree_wall_clock(
         _ctx(tree=tree), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
     )
     assert "timed out" in out.lower()
+
+
+async def test_a_task_agent_spawns_one_tier_when_the_run_allows_depth_2(
+    service: SpawnService,
+) -> None:
+    """Run-scoped depth (deepest-research R2): a tree seeded `max_depth=2` lets a depth-1
+    task agent spawn a tier of sub agents — orchestrator → task agent → sub agent. The
+    sub agent lands at depth 2; that it is itself a leaf is the default-tree refusal in
+    `test_a_child_cannot_spawn_children`. Ordinary runs (default `max_depth=1`) are
+    unaffected — the depth change is confined to the run that opts in."""
+    tree = TreeState(max_depth=2)
+    out = await service.spawn_fan(
+        _ctx(depth=1, tree=tree),
+        {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]},
+    )
+    assert "refused" not in out.lower()
+    assert _FakeLoop.calls and _FakeLoop.calls[-1]["depth"] == 2
