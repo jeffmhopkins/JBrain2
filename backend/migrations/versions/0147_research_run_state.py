@@ -59,8 +59,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX research_run_state_status_idx"
-        " ON app.research_run_state (status, updated_at)"
+        "CREATE INDEX research_run_state_status_idx ON app.research_run_state (status, updated_at)"
     )
 
     op.execute("ALTER TABLE app.research_run_state ENABLE ROW LEVEL SECURITY")

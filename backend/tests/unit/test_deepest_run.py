@@ -92,7 +92,9 @@ class _FakeRunState:
             principal_id=principal_id, principal_kind="owner", domain_scopes=("external",)
         )
 
-    async def create_run(self, maker, ctx, *, run_id, session_id, question, ceiling_tokens, wall_clock_deadline):  # noqa: ANN001, ANN003, E501
+    async def create_run(
+        self, maker, ctx, *, run_id, session_id, question, ceiling_tokens, wall_clock_deadline
+    ):  # noqa: ANN001, ANN003, E501
         self.created.append(run_id)
         return "row-id"
 

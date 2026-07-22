@@ -23,6 +23,7 @@ import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
+import { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
 import type { FullBrain } from "./useFullBrain";
@@ -1317,8 +1318,9 @@ function LiveToolStatus({ tool }: { tool: ToolActivity }): ReactNode {
 // no sub-agent row) used to show only a spinner; this checklist gives every stage a
 // `DeepResearchProgress` (the live deep_research timeline) and `DeepestRunCard` (its
 // backgrounded deepest-research wrapper) live in their own module so the tool-view registry
-// can render the `deepest_run` view without an import cycle; re-exported here for inline use.
-export { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
+// can render the `deepest_run` view without an import cycle; imported at the top for inline
+// use (the surface renders DeepResearchProgress) and re-exported here for existing importers.
+export { DeepResearchProgress, DeepestRunCard };
 
 // aspect arg → CSS ratio, so the preview frame holds a stable size before the
 // first preview frame arrives (matching the image-gen tool's three presets).

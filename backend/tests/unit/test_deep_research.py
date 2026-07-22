@@ -836,9 +836,7 @@ async def test_deepest_stops_on_diminishing_returns() -> None:
 async def test_deepest_respects_the_round_cap() -> None:
     """With reflect perpetually uncovered, not stable, and every round adding fresh
     sources, the loop is bounded by the structural round cap — never unbounded."""
-    script = tuple(
-        (False, (f"g{n}a", f"g{n}b"), False) for n in range(DR_DEEPEST_MAX_ROUNDS)
-    )
+    script = tuple((False, (f"g{n}a", f"g{n}b"), False) for n in range(DR_DEEPEST_MAX_ROUNDS))
     router = _FakeRouter(reflect_script=script)
     spawn = _FakeSpawn(sources_per_child=2)  # fresh sources each round → no diminishing stop
     out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})

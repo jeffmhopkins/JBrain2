@@ -117,10 +117,7 @@ async def test_scoped_principal_cannot_write(maker: async_sessionmaker) -> None:
     with pytest.raises(ProgrammingError):
         async with scoped_session(maker, GENERAL_ONLY) as s:
             await s.execute(
-                text(
-                    "INSERT INTO app.research_run_state (run_id, question)"
-                    " VALUES (:r, 'q')"
-                ),
+                text("INSERT INTO app.research_run_state (run_id, question) VALUES (:r, 'q')"),
                 {"r": _run_id()},
             )
 

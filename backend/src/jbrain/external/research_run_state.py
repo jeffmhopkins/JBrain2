@@ -139,9 +139,7 @@ async def finish(
         return cast(CursorResult[Any], res).rowcount > 0
 
 
-async def claim_resume(
-    maker: async_sessionmaker, ctx: SessionContext, run_id: str
-) -> bool:
+async def claim_resume(maker: async_sessionmaker, ctx: SessionContext, run_id: str) -> bool:
     """Atomically claim a running run for resume — sets `resumed_at` iff running and
     unclaimed, returns whether THIS caller won. Exactly-once across a restart, a retry, or
     two processes racing to resume the same run (the `resumed_at IS NULL` guard)."""
@@ -156,21 +154,23 @@ async def claim_resume(
         return cast(CursorResult[Any], res).rowcount > 0
 
 
-async def load(
-    maker: async_sessionmaker, ctx: SessionContext, run_id: str
-) -> RunState | None:
+async def load(maker: async_sessionmaker, ctx: SessionContext, run_id: str) -> RunState | None:
     """Read a run's checkpoint for rehydrate, or None if unknown (or RLS-invisible)."""
     async with scoped_session(maker, ctx) as session:
         row = (
-            await session.execute(
-                text(
-                    "SELECT id, run_id, session_id, question, status, round, ceiling_tokens,"
-                    " wall_clock_deadline, spent_tokens, agents_spawned, state, resumed_at"
-                    " FROM app.research_run_state WHERE run_id = :run_id"
-                ),
-                {"run_id": run_id},
+            (
+                await session.execute(
+                    text(
+                        "SELECT id, run_id, session_id, question, status, round, ceiling_tokens,"
+                        " wall_clock_deadline, spent_tokens, agents_spawned, state, resumed_at"
+                        " FROM app.research_run_state WHERE run_id = :run_id"
+                    ),
+                    {"run_id": run_id},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         return _row_to_state(row) if row is not None else None
 
 
