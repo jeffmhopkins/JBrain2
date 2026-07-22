@@ -4,6 +4,8 @@ adapter, no model cooperation."""
 
 from jbrain.agent.tree import (
     CHILD_MAX_STEPS,
+    DEEPEST_MAX_DEPTH,
+    MAX_DEPTH,
     MIN_VIABLE_CHILD_BUDGET,
     ROOT_RESERVE_FRACTION,
     SPAWN_MULTIPLIER,
@@ -135,3 +137,18 @@ def test_can_spawn_at_is_run_scoped() -> None:
     deep.max_depth = 2
     assert deep.can_spawn_at(0) and deep.can_spawn_at(1)  # orchestrator + task agent
     assert not deep.can_spawn_at(2)  # sub agent is a hard leaf
+
+
+def test_rooted_deepest_is_the_only_two_tier_mint() -> None:
+    """A background deepest run seeds max_depth=DEEPEST_MAX_DEPTH (2) and the owner-set
+    ceiling; the interactive/scheduled constructors stay at MAX_DEPTH (1), so the extra
+    tier can never appear outside a deepest run."""
+    deep = TreeState.rooted_deepest(budget_tokens=50_000_000, wall_clock_s=3600)
+    assert deep.max_depth == DEEPEST_MAX_DEPTH == 2
+    assert deep.tree_budget == 50_000_000
+    assert deep.root_reserve == int(50_000_000 * ROOT_RESERVE_FRACTION)
+    assert deep.can_spawn_at(0) and deep.can_spawn_at(1)  # orchestrator + task agent
+    assert not deep.can_spawn_at(2)  # sub agent is a leaf
+    # The ordinary constructors never mint the extra tier (negative-depth isolation).
+    assert TreeState.rooted(800_000).max_depth == MAX_DEPTH == 1
+    assert TreeState().max_depth == MAX_DEPTH

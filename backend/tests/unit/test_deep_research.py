@@ -164,7 +164,7 @@ class _FakeSpawn:
         # Personas come in web/library families: research|research_library are the
         # gather/refill producers; review|review_library are the analyst/critique.
         is_review = persona in ("review", "review_library")
-        is_research = persona in ("research", "research_library")
+        is_research = persona in ("research", "research_library", "research_deep")
         if is_review:
             ok = self.analyst_ok if first_label == "cross-check" else self.critique_ok
         else:
@@ -862,3 +862,44 @@ async def test_unknown_mode_is_refused() -> None:
     out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "bogus"})
     assert "refused" in out.lower()
     assert not spawn.fans and not router.calls
+
+
+# --- two-tier activation (R4): a background deepest run gathers with research_deep ------
+
+
+async def test_background_deepest_gathers_with_research_deep_task_agents() -> None:
+    """A deepest run whose tree is seeded two-tier (rooted_deepest, max_depth=2) gathers
+    with `research_deep` task agents — each may decompose its major sub-question one tier
+    down. Web mode only; the pipeline is otherwise unchanged."""
+    tree = TreeState.rooted_deepest(budget_tokens=50_000_000, wall_clock_s=3600)
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())  # covered → no refill
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(tree=tree), {"question": "q", "mode": "deepest"})
+    personas = [f["persona"] for f in spawn.fans]
+    assert "research_deep" in personas  # the gather fan ran task agents
+    assert out.view is not None  # type: ignore[attr-defined]
+
+
+async def test_in_request_deepest_stays_single_tier() -> None:
+    """In-request deepest (the default tree, max_depth=1) does NOT spawn task agents — it
+    gathers with plain `research`, exactly like R1. The extra tier is background-only."""
+    router = _FakeRouter(covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})
+    personas = [f["persona"] for f in spawn.fans]
+    assert "research_deep" not in personas
+    assert "research" in personas
+
+
+async def test_two_tier_is_web_only_not_library() -> None:
+    """A two-tier tree in a library mode still gathers with the corpus persona — there is
+    no research_deep twin for the video library."""
+    tree = TreeState.rooted_deepest(budget_tokens=50_000_000, wall_clock_s=3600)
+    router = _FakeRouter(covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(
+        _ctx(tree=tree), {"question": "q", "mode": "deepest", "sources": "library"}
+    )
+    personas = [f["persona"] for f in spawn.fans]
+    assert "research_deep" not in personas
+    assert "research_library" in personas

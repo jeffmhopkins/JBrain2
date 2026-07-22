@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4◻️ R5◻️ R6◻️ R7◻️ R8◻️
+> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5◻️ R6◻️ R7◻️ R8◻️
 
 **R1 landed (2026-07-22).** The adaptive loop shipped as `deep_research(mode="deepest")`
 — in-request, depth-1, no second agent tier yet. The single fixed refill became a
@@ -49,6 +49,25 @@ before it starts, whose `finally` never fires). Deliberately generic — it supe
 opaque `run()` coroutine and knows nothing about the tree, the DB, or the LLM, so it is
 proven with plain coroutines (7 tests, no DB). What the coroutine *does* — build the
 trusted `max_depth=2` context, drive `DeepResearchService`, checkpoint, notify — is R4–R7.
+
+**R4 landed (2026-07-22).** The trusted run-context — the two-tier mechanism is now
+**live** when driven by it (no longer dormant):
+- **The seed** — `TreeState.rooted_deepest(budget_tokens, wall_clock_s)` mints the owner-set
+  ceiling and `max_depth = DEEPEST_MAX_DEPTH (2)`. It is the **only** constructor that
+  raises the tier; `rooted()` and bare `TreeState()` stay at `MAX_DEPTH`, so a non-deepest
+  seed can never produce `max_depth > 1` (negative-depth isolation, tested).
+- **Two-tier activation** — `deep_research.py` gathers with `research_deep` task agents when
+  `deepest and source_mode == "web" and ctx.tree.max_depth > MAX_DEPTH`. In-request deepest
+  (default tree, `max_depth=1`) and library modes stay single-tier `research` (tested three
+  ways).
+- **The context builder** — `agent/deepest_run.py` `build_deepest_run_context`: owner-scoped
+  but **KB-less** (`read_context` with empty domain scopes → the firewalled domains never
+  enter the run), no location, and `agent_tools = JERV_TOOLS` (the clamp ceiling a
+  `research_deep` task agent needs). Owner-set ceiling defaults, overridable per run.
+- **Isolation** proven at the unit level (the context reads no domain by construction —
+  `domain_scopes == ()`, stronger than "no cross-domain"). The DB session mint + a real
+  testcontainer RLS isolation test land with R5's `research_run_state` table; the monotonic
+  deadline is refactored to absolute-UTC (restart-safe) in R5.
 
 A **no-holds** sibling to the in-progress `deep_research` tool
 (`DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,

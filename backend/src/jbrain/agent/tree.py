@@ -35,6 +35,12 @@ MAX_WAVES = 2
 # bound, this is the per-parent inner bound. Kept well under MAX_CHILDREN_PER_PARENT.
 MAX_SUBFAN_PER_TASK_AGENT = 3
 
+# The depth a background deepest-research run seeds (orchestrator 0 → task agent 1 → sub
+# agent 2). Exactly one tier deeper than the ordinary MAX_DEPTH; minted ONLY by
+# TreeState.rooted_deepest, so the extra tier can never appear in an interactive or
+# scheduled turn (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R4).
+DEEPEST_MAX_DEPTH = MAX_DEPTH + 1
+
 # Deep research (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md) bounds its gather rounds the same
 # way — one gather fan and at most one gap-refill — but STRUCTURALLY (there is no loop in
 # `deep_research.py` that could run a third round), so no constant governs it; it is a
@@ -152,6 +158,23 @@ class TreeState:
             tree_budget=tree_budget,
             root_reserve=int(tree_budget * ROOT_RESERVE_FRACTION),
             deadline=time.monotonic() + TREE_WALL_CLOCK_S,
+        )
+
+    @classmethod
+    def rooted_deepest(cls, *, budget_tokens: int, wall_clock_s: float) -> "TreeState":
+        """The tree for a BACKGROUND deepest-research run: a two-tier depth
+        (`max_depth = DEEPEST_MAX_DEPTH`, so a task agent may spawn one tier of sub agents)
+        and the owner-set token + wall-clock ceiling — NOT the interactive SPAWN_MULTIPLIER.
+        This is the ONLY constructor that mints `max_depth > MAX_DEPTH`; `rooted()` and the
+        bare `TreeState()` stay at the default, so the extra tier can never leak into an
+        interactive or scheduled turn (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R4). The
+        monotonic deadline is refactored to an absolute-UTC, restart-safe one in R5."""
+        budget = max(0, budget_tokens)
+        return cls(
+            tree_budget=budget,
+            root_reserve=int(budget * ROOT_RESERVE_FRACTION),
+            deadline=time.monotonic() + wall_clock_s,
+            max_depth=DEEPEST_MAX_DEPTH,
         )
 
     def out_of_time(self) -> bool:

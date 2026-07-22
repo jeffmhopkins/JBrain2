@@ -332,6 +332,14 @@ class DeepResearchService:
         # The mode picks the persona each child fan runs; the pipeline is otherwise
         # unchanged. `review_persona` covers both the analyst and the critique.
         gather_persona, refill_persona, review_persona = _personas_for(source_mode)
+        # Two-tier activation (R4): a BACKGROUND deepest run (its tree seeded
+        # max_depth > MAX_DEPTH by rooted_deepest) gathers with `research_deep` task
+        # agents, each of which may decompose its major sub-question into one tier of sub
+        # agents. In-request deepest (max_depth == MAX_DEPTH) and every standard run stay
+        # single-tier with plain `research`. Web only — the library modes have no corpus
+        # decompose twin — and gather only: a refill gap is already narrow.
+        if deepest and source_mode == "web" and ctx.tree.max_depth > MAX_DEPTH:
+            gather_persona = "research_deep"
 
         # --- (1) PLAN (+ complexity) ----------------------------------------------
         self._phase(ctx, 1, "Planning the investigation")
