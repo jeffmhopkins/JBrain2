@@ -33,19 +33,8 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   state machine + two-sided child-safety layer + two UIs. Waves W1–W8 with a hard
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
-- `DEEPEST_RESEARCH_TOOL_PLAN.md` — a no-holds sibling to the in-progress
-  `deep_research`: an autonomous, resumable **background** research run that
-  recurses two tiers deep (orchestrator → task agent → sub agent, `max_depth=2`),
-  loops until covered or a large owner-set ceiling is hit, checkpoints its state,
-  streams periodic progress back to the initiating chat, and lands a cited report
-  in the existing research library. Unbounded in effort, still bounded in blast
-  radius — though the two-tier recursion opens a new brief-laundering **egress-
-  exfil** channel the shipped sandbox doesn't defend, so closing it is a hard R2
-  build blocker. **Parked**: gated on a value probe (R0) firing the deferral
-  trigger *and* Phase 6 shipping before any infra. Red-teamed (five adversarial
-  reviews); waves R0–R8. Companion to `../plans/DEEP_RESEARCH_TOOL_PLAN.md`.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
-`DEEP_RESEARCH_TOOL_PLAN.md`, and `VIDEO_IMAGE_TOOLS_PLAN.md` were promoted to
-`../plans/` and are in progress.)_
+`DEEP_RESEARCH_TOOL_PLAN.md`, `DEEPEST_RESEARCH_TOOL_PLAN.md`, and
+`VIDEO_IMAGE_TOOLS_PLAN.md` were promoted to `../plans/` and are in progress.)_

@@ -1,9 +1,19 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** Proposed (parked) · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1◻️ R2◻️ R3◻️ R4◻️ R5◻️ R6◻️ R7◻️ R8◻️
+> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2◻️ R3◻️ R4◻️ R5◻️ R6◻️ R7◻️ R8◻️
+
+**R1 landed (2026-07-22).** The adaptive loop shipped as `deep_research(mode="deepest")`
+— in-request, depth-1, no second agent tier yet. The single fixed refill became a
+resource-terminated loop (`deep_research.py`: `DR_DEEPEST_MAX_ROUNDS`,
+`DR_DEEPEST_MIN_NEW_SOURCES`) that stops on covered / stable / diminishing-returns /
+pool-drained / round-cap, driven by a new `stable` field on the reflect judge
+(`deep_research_reflect.prompt` → `dr-reflect-v2`). Standard mode is byte-identical (all
+38 prior tests pass); 6 new tests cover the loop's stops. **The owner overrode the §0
+park** to build the full stack in sequence; R0's value probe is folded in as a decision
+the owner has made, not a gate that blocks the build.
 
 A **no-holds** sibling to the in-progress `deep_research` tool
-(`../plans/DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,
+(`DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,
 single-turn* pipeline — plan → gather → analyze → reflect → **one** refill →
 synthesize → critique → **one** revise, all inside one owner turn —
 `deepest_research` removes the *effort* bounds while keeping every *blast-radius*
@@ -12,13 +22,14 @@ two tiers deep, loops until the topic is covered (or a large owner-set ceiling i
 hit), checkpoints its state, sends periodic progress back to the initiating chat,
 and lands a cited report in the existing research library.
 
-This is a **Proposed, parked** design (icebox). Nothing is built. It is on the
-record so the shape, the security carve-outs, the value gate, and the wave
-breakdown are settled before any code — and it has been **red-teamed** (five
-adversarial reviews: security, feasibility, cost/value, process, and the
-progress-transport map; their findings are folded in below and dated
-2026-07-22). It reuses a large amount of shipped substrate; the net-new surface
-is called out precisely in §5.
+**In progress** — the owner elected to build the full stack in sequence rather
+than hold at the §0 park (see the R1-landed note above). The plan was **red-teamed**
+first (five adversarial reviews: security, feasibility, cost/value, process, and the
+progress-transport map; their findings are folded in below and dated 2026-07-22), and
+those findings shape the waves. §0's value hypothesis and kill criterion are retained
+as the record of *why* the machinery exists, not as a gate blocking the owner-directed
+build. It reuses a large amount of shipped substrate; the net-new surface is called out
+precisely in §5.
 
 The guiding frame, stated once: **unbounded in effort, still bounded in blast
 radius.** "No holds" relaxes the budget / depth / round holds. It does **not**
@@ -418,4 +429,4 @@ DB access, `dev-setup.sh` currency).
 _Grounded in a substrate map of `backend/src/jbrain/{agent,workflow,tasks,external,
 notify,push,api}` + `frontend/src/agent` and five adversarial reviews (security,
 feasibility, cost/value, process, progress-transport), all 2026-07-22. Companion
-to the in-progress `../plans/DEEP_RESEARCH_TOOL_PLAN.md`._
+to the in-progress `DEEP_RESEARCH_TOOL_PLAN.md`._

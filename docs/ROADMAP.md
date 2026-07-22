@@ -274,6 +274,16 @@ on-branch (D1 spine, D2 refill round + critique, D3 the `deep_research_report` t
 steering) with full backend + frontend unit suites; the D3 mock-gate sign-off and on-box budget /
 wall-clock tuning remain before it is marked settled.
 
+**In progress:** Deepest research (build plan: `docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md`) — a
+no-holds `deepest_research`: an autonomous, resumable background run that recurses two agent tiers
+(orchestrator → task agent → sub agent), loops until covered or an owner-set token/wall-clock
+ceiling, checkpoints its state, streams periodic progress back to the initiating chat, and lands a
+cited report in the existing `research_reports` library. Red-teamed across five adversarial reviews;
+§4 documents a real brief-laundering egress-exfil channel the shipped web sandbox does not defend,
+closed as a hard R2 build blocker. R1 (the adaptive reflect→refill loop shipped as
+`deep_research(mode="deepest")`, in-request and depth-1) landed on-branch; the background lane,
+two-tier recursion, checkpoint/resume, and progress channel (R2–R8) remain.
+
 **In progress:** Deep research — video-library source modes (build plan:
 `docs/plans/DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md`) — a `sources` knob on the shipped `deep_research` tool so
 a run can draw from the owner's external video library (`external_sources`/`external_source_chunks`) instead
