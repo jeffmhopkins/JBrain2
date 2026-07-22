@@ -42,6 +42,7 @@ to skip a stage), and the research children corroborate proportional to source a
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import structlog
@@ -59,6 +60,10 @@ from jbrain.llm.types import LlmTurn, TextChunk, UserMessage
 
 log = structlog.get_logger()
 
+# The background deepest driver's per-round hook (R7): `(round_no, findings_count)` after
+# gather and each committed gap round, so the driver checkpoints + posts progress.
+RoundHook = Callable[[int, int], Awaitable[None]]
+
 _PROMPTS = Path(__file__).parent / "prompts"
 _PLAN = load_prompt(_PROMPTS / "deep_research_plan.prompt")
 _REFLECT = load_prompt(_PROMPTS / "deep_research_reflect.prompt")
@@ -74,6 +79,19 @@ DR_DEFAULT_BREADTH = 4
 DR_MAX_BREADTH = 5
 DR_SIMPLE_BREADTH = 2  # a `simple`-rated question researches fewer angles (breadth only)
 DR_MAX_GAP_QUESTIONS = 2
+
+# Deepest mode (docs/proposed/DEEPEST_RESEARCH_TOOL_PLAN.md, Wave R1). `mode="deepest"`
+# turns the single fixed refill into an ADAPTIVE, resource-terminated loop: keep
+# reflect→refill going until the run is covered, the coverage judge calls it stable
+# (further rounds would only add marginal detail), a round stops adding new sources
+# (diminishing returns), the pool can no longer seat a fan, or the structural round cap
+# is hit. Still in-request and depth-1 — this wave adds only the loop, never a second
+# agent tier (that is R2). The stops below bite first on a well-behaved run; the round
+# cap only backstops a pathological one, so a single owner turn can never run unbounded.
+DR_DEEPEST_MAX_ROUNDS = 6  # hard ceiling on gap rounds in deepest mode (standard = 1)
+DR_DEEPEST_MIN_NEW_SOURCES = 3  # a round adding fewer NEW sources than this = stop (dim. returns)
+_MODES = ("standard", "deepest")
+_DEFAULT_MODE = "standard"
 
 # The source the run draws from (owner-chosen via the `sources` param, default `web`):
 #   web           — the open web only (the original behaviour, unchanged).
@@ -170,6 +188,10 @@ _REFLECT_SCHEMA = {
     "properties": {
         "covered": {"type": "boolean"},
         "gaps": {"type": "array", "items": {"type": "string"}},
+        # Deepest-mode only: the diminishing-returns signal (the "picture stopped
+        # moving" judgment). Ignored in a single-round standard run; unset defaults to
+        # False so a standard reflect response validates and behaves exactly as before.
+        "stable": {"type": "boolean"},
     },
     "required": ["covered", "gaps"],
 }
@@ -289,7 +311,13 @@ class DeepResearchService:
         # DB skips persistence (the report still renders), so persist is always best-effort.
         self._maker = maker
 
-    async def research(self, ctx: ToolContext, args: dict) -> str:
+    async def research(
+        self, ctx: ToolContext, args: dict, *, on_round: RoundHook | None = None
+    ) -> str:
+        # `on_round(round_no, findings)` is the background deepest driver's per-round hook
+        # (R7): it fires after gather and after each committed gap round so the driver can
+        # checkpoint the run state and post progress to the chat. None on the in-request
+        # path (and every standard run), so the hook is inert there.
         # --- guards (mirror the spawn fan: owner turn, depth 0, a seeded tree) -----
         if ctx.tree is None:
             return _refuse("deep research is only available in an interactive owner turn.")
@@ -305,9 +333,24 @@ class DeepResearchService:
             return _refuse(
                 f"unknown sources mode {source_mode!r}; choose one of {list(_SOURCE_MODES)}."
             )
+        # `deepest` turns the single refill into the adaptive loop below (Wave R1); the
+        # pipeline is otherwise identical, in-request and depth-1. `sources` and `mode`
+        # are orthogonal — a deepest run can still be library-scoped.
+        mode = args.get("mode") or _DEFAULT_MODE
+        if mode not in _MODES:
+            return _refuse(f"unknown mode {mode!r}; choose one of {list(_MODES)}.")
+        deepest = mode == "deepest"
         # The mode picks the persona each child fan runs; the pipeline is otherwise
         # unchanged. `review_persona` covers both the analyst and the critique.
         gather_persona, refill_persona, review_persona = _personas_for(source_mode)
+        # Two-tier activation (R4): a BACKGROUND deepest run (its tree seeded
+        # max_depth > MAX_DEPTH by rooted_deepest) gathers with `research_deep` task
+        # agents, each of which may decompose its major sub-question into one tier of sub
+        # agents. In-request deepest (max_depth == MAX_DEPTH) and every standard run stay
+        # single-tier with plain `research`. Web only — the library modes have no corpus
+        # decompose twin — and gather only: a refill gap is already narrow.
+        if deepest and source_mode == "web" and ctx.tree.max_depth > MAX_DEPTH:
+            gather_persona = "research_deep"
 
         # --- (1) PLAN (+ complexity) ----------------------------------------------
         self._phase(ctx, 1, "Planning the investigation")
@@ -353,6 +396,10 @@ class DeepResearchService:
             # slice), and keep the critique's reserved through the analyst + refill fans.
             ctx.tree.stage_reserve = DR_CRITIQUE_RESERVE
 
+            # First committed round (gather): checkpoint + progress for a background run.
+            if on_round is not None:
+                await on_round(1, sum(1 for r in gather if r.ok))
+
             # --- (3) ANALYZE — a review sub-agent fed the researchers' findings ----
             # The cross-agent handoff: an analyst reads the whole gather roster (as escaped
             # data) and cross-checks it before anything is written.
@@ -360,37 +407,68 @@ class DeepResearchService:
             analyst = await self._analyze(ctx, question, gather, review_persona, source_mode)
             analysis = analyst.summary if analyst and analyst.ok else ""
 
-            # --- (4) REFLECT — coverage check over findings + analysis ------------
-            self._phase(ctx, 4, "Checking coverage for gaps")
-            gaps = await self._reflect(ctx, question, sections, gather, analysis)
-            gaps = gaps[:DR_MAX_GAP_QUESTIONS]
-            # `library_first` with a dry library: there were no findings to reflect on, so
-            # hand the whole planned outline to the web refill rather than synthesizing from
-            # nothing — the library's miss becomes the web round's work.
-            if source_mode == "library_first" and not gather_ok and not gaps:
-                gaps = [brief for _, brief in sub_questions][:DR_MAX_GAP_QUESTIONS]
-
-            # --- (5) REFILL — one bounded gap round (skipped-loud if pool is drained) -
+            # --- (4/5) REFLECT + REFILL — one round (standard) or an adaptive loop ---
+            # Standard mode runs exactly one coverage check + at most one gap round (the
+            # shipped v2 behaviour, unchanged). Deepest mode loops reflect→refill until
+            # the run is covered, the coverage judge calls it `stable` (further rounds
+            # would only add marginal detail), a round adds too few NEW sources
+            # (diminishing returns), the pool can't seat the next fan, or the structural
+            # round cap is hit — a resource-terminated loop, never infinite. In-request
+            # and depth-1 throughout: the fan guards are exactly the standard ones.
             refill: list[_ChildResult] = []
             coverage_limited = False
-            if gaps:
-                if ctx.tree.can_admit(len(gaps)) and ctx.tree.can_admit_budget(len(gaps)):
-                    self._phase(ctx, 5, f"Filling {len(gaps)} gap(s)")
-                    refill = await self._spawn.run_research_fan(
-                        ctx,
-                        briefs=[(_title(g, i), g) for i, g in enumerate(gaps)],
-                        persona=refill_persona,
-                        effort="low",  # research children run at low reasoning (see gather)
-                    )
-                    # A refill that was admitted but produced NOTHING usable (every gap
-                    # child failed) added no coverage — report it as partial, and don't
-                    # count it as a second round (truthful depth, not "rounds=2").
-                    if not any(r.ok for r in refill):
-                        coverage_limited = True
-                else:
+            useful_rounds = 0  # gap rounds that produced usable findings (honest `rounds`)
+            max_rounds = DR_DEEPEST_MAX_ROUNDS if deepest else 1
+            # New-source high-water mark for the diminishing-returns check (gather + analyst
+            # already reached these before any refill round runs).
+            seen_sources = len(_collect_sources([*gather, *([analyst] if analyst else [])]))
+            while useful_rounds < max_rounds:
+                self._phase(ctx, 4, "Checking coverage for gaps")
+                gaps, stable = await self._reflect(
+                    ctx, question, sections, gather + refill, analysis, deepest=deepest
+                )
+                gaps = gaps[:DR_MAX_GAP_QUESTIONS]
+                # `library_first` with a dry library on the FIRST pass: there were no
+                # findings to reflect on, so hand the whole planned outline to the web
+                # refill rather than synthesizing from nothing.
+                if source_mode == "library_first" and not gather_ok and not gaps and not refill:
+                    gaps = [brief for _, brief in sub_questions][:DR_MAX_GAP_QUESTIONS]
+                if not gaps:
+                    break  # covered — nothing left worth a round
+                # Deepest: once a round is in, a `stable` verdict ends the loop even if
+                # gaps are still nameable (they aren't decision-changing anymore).
+                if deepest and stable and useful_rounds >= 1:
+                    break
+                if not (ctx.tree.can_admit(len(gaps)) and ctx.tree.can_admit_budget(len(gaps))):
                     # The pool can't seat the gap children — synthesize from what we have
                     # and say so, rather than failing (a refused refill is not a crash).
                     coverage_limited = True
+                    break
+                self._phase(ctx, 5, f"Filling {len(gaps)} gap(s)")
+                round_children = await self._spawn.run_research_fan(
+                    ctx,
+                    briefs=[(_title(g, i), g) for i, g in enumerate(gaps)],
+                    persona=refill_persona,
+                    effort="low",  # research children run at low reasoning (see gather)
+                )
+                # A round admitted but producing NOTHING usable added no coverage — report
+                # it as partial and stop (truthful depth, not an inflated round count).
+                if not any(r.ok for r in round_children):
+                    coverage_limited = True
+                    break
+                useful_rounds += 1
+                refill += round_children
+                # A committed gap round: checkpoint + progress for a background run.
+                if on_round is not None:
+                    await on_round(1 + useful_rounds, sum(1 for r in gather + refill if r.ok))
+                # Diminishing returns (mechanical): a round that adds too few NEW sources
+                # isn't worth another — stop before spending the next round's budget.
+                now_sources = len(
+                    _collect_sources([*gather, *([analyst] if analyst else []), *refill])
+                )
+                if deepest and (now_sources - seen_sources) < DR_DEEPEST_MIN_NEW_SOURCES:
+                    break
+                seen_sources = now_sources
 
             results = gather + refill
 
@@ -424,8 +502,7 @@ class DeepResearchService:
             ctx.tree.stage_reserve = prior_reserve
 
         analyzed = bool(analysis.strip())
-        refilled = any(r.ok for r in refill)
-        rounds = 1 + (1 if refilled else 0)
+        rounds = 1 + useful_rounds  # gather + the gap rounds that produced usable findings
         # The full cast that actually ran, in run order — research findings PLUS the
         # analyst and critique review children — so the reopened report shows who ran, not
         # just the sources. `results` (gather+refill) stays the synthesis input.
@@ -456,6 +533,9 @@ class DeepResearchService:
             revised=revised,
             coverage_limited=coverage_limited,
             source_mode=source_mode,
+            # Tag the library row so a deepest report doesn't clobber a deep one on the
+            # same question (0148 tool-aware dedup).
+            tool="deepest_research" if deepest else "deep_research",
         )
         return ToolOutput(
             _frame(
@@ -496,6 +576,7 @@ class DeepResearchService:
         revised: bool,
         coverage_limited: bool,
         source_mode: str = _DEFAULT_SOURCE_MODE,
+        tool: str = "deep_research",
     ) -> None:
         """Write the finished report into the library (best-effort). None maker (headless/test)
         or any DB error is swallowed — the report the owner already sees never depends on it."""
@@ -516,6 +597,7 @@ class DeepResearchService:
                 truncated=any(r.truncated for r in roster),
                 sources=[{"url": ws.url, "title": ws.title} for ws in sources],
                 source_mode=source_mode,
+                tool=tool,
             )
         except Exception:  # noqa: BLE001 - best-effort; the report already rendered
             log.warning("deep_research.persist_failed", exc_info=True)
@@ -599,7 +681,13 @@ class DeepResearchService:
         sections: list[str],
         gather: list[_ChildResult],
         analysis: str,
-    ) -> list[str]:
+        *,
+        deepest: bool = False,
+    ) -> tuple[list[str], bool]:
+        """The coverage check. Returns `(gaps, stable)`: the gaps still worth a round, and
+        the diminishing-returns signal. `stable` is meaningful only in a deepest run (it
+        ends the adaptive loop); a standard run ignores it. A `covered` verdict returns
+        `([], True)` — nothing left, and by definition stable."""
         user_text = (
             f"Original question:\n{question}\n\n"
             f"Planned outline:\n{_outline_text(sections)}\n\n"
@@ -609,6 +697,14 @@ class DeepResearchService:
             user_text += "\n\nAnalyst's cross-check of those findings:\n" + compose_feed_block(
                 [("cross-check", "review", analysis)]
             )
+        # Tell the judge whether more rounds can follow, so it names gaps (and sets
+        # `stable`) for the right regime — a single-round standard run vs the deepest loop.
+        user_text += (
+            "\n\nThis is a DEEPEST run — more gap rounds may follow. Set `stable` true once "
+            "further research would only add marginal, non-decision-changing detail."
+            if deepest
+            else "\n\nThis is the only gap round — name every real gap now."
+        )
         result = await self._router.complete(
             _TASK,
             system=_REFLECT.render(),
@@ -619,8 +715,9 @@ class DeepResearchService:
         self._charge(ctx, result)
         data = result.parsed or {}
         if data.get("covered") is True:
-            return []
-        return [g for g in (_coerce_brief(x) for x in data.get("gaps", [])) if g]
+            return [], True
+        gaps = [g for g in (_coerce_brief(x) for x in data.get("gaps", [])) if g]
+        return gaps, bool(data.get("stable"))
 
     async def _synthesize(
         self,

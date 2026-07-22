@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 2
+version: 3
 permission: web
 cost_class: expensive
 params:
@@ -28,6 +28,15 @@ params:
         of videos they've analysed) — no web at all; use it for "what do my videos say
         about X". `library_first` makes the library the primary pass and lets the web
         fill only what the library is missing. Omit for `web`.
+    mode:
+      type: string
+      enum: [standard, deepest]
+      description: >-
+        Optional. `standard` (default) runs the bounded pipeline: one gap round, one
+        critique. `deepest` keeps looping the gap-filling round until the question is
+        genuinely covered and the findings stop changing (or a large internal ceiling is
+        hit) — materially more thorough and more expensive. Reserve `deepest` for a big,
+        open question that a single gap round clearly won't cover; omit for `standard`.
   required: [question]
 ---
 Research a question in depth and get back a structured, cited report. Use this for a

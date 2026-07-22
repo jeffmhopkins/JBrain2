@@ -13,6 +13,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 import { api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+import { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
 import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
@@ -1315,82 +1316,11 @@ function LiveToolStatus({ tool }: { tool: ToolActivity }): ReactNode {
 // The deep_research pipeline stages, indexed by the backend `_phase` step ordinal (1-8,
 // deep_research.py). A "dark" orchestration stage (Plan / Coverage / Write / Revise spawns
 // no sub-agent row) used to show only a spinner; this checklist gives every stage a
-// visible position + what's left, and Write/Revise ALSO stream the report itself
-// (progress.preview) into a live pane, so the longest phases are watched, not blank.
-const DR_PHASES = [
-  "Plan",
-  "Research",
-  "Cross-check",
-  "Coverage",
-  "Gap-fill",
-  "Write",
-  "Critique",
-  "Revise",
-] as const;
-
-export function DeepResearchProgress({
-  tool,
-  fan,
-}: {
-  tool: ToolActivity;
-  /** The turn's live sub-agent fan (`<SubagentFan>`, unchanged). It mounts in the ACTIVE
-   * stage's slot so the roster + budget read as part of the stage that spawned them,
-   * rather than a loose block below the whole checklist. */
-  fan?: ReactNode;
-}): ReactNode {
-  const p = tool.progress;
-  const step = p?.step ?? 0; // 1-based; 0 before the first phase event lands
-  const preview = p?.preview ?? "";
-  // The stage whose slot the detail/fan/report hang under: the live ordinal, or Plan while
-  // we wait for the first phase event (so a fan that spawned pre-phase still has a home).
-  const active = step > 0 ? step : 1;
-  // Follow the report as it streams into the pane, unless the reader scrolled up in it.
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  const stick = useRef(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `preview` is the scroll trigger
-  useEffect(() => {
-    const el = paneRef.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [preview]);
-  function onScroll(): void {
-    const el = paneRef.current;
-    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
-  }
-  return (
-    <output className="fb-drp" aria-live="polite">
-      <ol className="fb-drp-steps">
-        {DR_PHASES.map((name, i) => {
-          const ord = i + 1;
-          // A vertical timeline: everything before the live step reads done, the live step
-          // opens its slot, the rest wait — one scannable column that never wraps.
-          const state = ord < step ? "done" : ord === active ? "active" : "todo";
-          const isActive = state === "active";
-          return (
-            <li key={name} className={`fb-drp-step ${state}`}>
-              <span className="fb-drp-dot" aria-hidden="true">
-                {state === "done" ? "✓" : ""}
-              </span>
-              <span className="fb-drp-name">{name}</span>
-              {/* The active stage's slot: its live detail, the sub-agent fan it spawned, and
-                  (Write / Revise) the report streaming in — all indented under the stage. */}
-              {isActive && (p?.label || fan || preview) && (
-                <div className="fb-drp-panel">
-                  {p?.label && <div className="fb-drp-active">{p.label}</div>}
-                  {fan}
-                  {preview && (
-                    <div className="fb-drp-report" ref={paneRef} onScroll={onScroll}>
-                      <Markdown text={preview} harmonyCitations />
-                    </div>
-                  )}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-    </output>
-  );
-}
+// `DeepResearchProgress` (the live deep_research timeline) and `DeepestRunCard` (its
+// backgrounded deepest-research wrapper) live in their own module so the tool-view registry
+// can render the `deepest_run` view without an import cycle; imported at the top for inline
+// use (the surface renders DeepResearchProgress) and re-exported here for existing importers.
+export { DeepResearchProgress, DeepestRunCard };
 
 // aspect arg → CSS ratio, so the preview frame holds a stable size before the
 // first preview frame arrives (matching the image-gen tool's three presets).

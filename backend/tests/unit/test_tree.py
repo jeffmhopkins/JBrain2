@@ -4,6 +4,8 @@ adapter, no model cooperation."""
 
 from jbrain.agent.tree import (
     CHILD_MAX_STEPS,
+    DEEPEST_MAX_DEPTH,
+    MAX_DEPTH,
     MIN_VIABLE_CHILD_BUDGET,
     ROOT_RESERVE_FRACTION,
     SPAWN_MULTIPLIER,
@@ -120,3 +122,51 @@ def test_rooted_stamps_a_wall_clock_deadline() -> None:
     assert tree.deadline is not None
     assert not tree.out_of_time()
     assert tree.stage_reserve == 0
+
+
+def test_can_spawn_at_is_run_scoped() -> None:
+    """Depth is capped by the tree's own `max_depth`, not a global constant. The default
+    (1) reproduces the shipped rule — only the root spawns; a deepest run raises its own
+    tree to 2 so a depth-1 task agent may spawn one tier, while depth 2 stays a leaf."""
+    default = TreeState.rooted(800_000)
+    assert default.max_depth == 1
+    assert default.can_spawn_at(0)  # root spawns
+    assert not default.can_spawn_at(1)  # a child is a leaf
+
+    deep = TreeState.rooted(800_000)
+    deep.max_depth = 2
+    assert deep.can_spawn_at(0) and deep.can_spawn_at(1)  # orchestrator + task agent
+    assert not deep.can_spawn_at(2)  # sub agent is a hard leaf
+
+
+def test_rooted_deepest_is_the_only_two_tier_mint() -> None:
+    """A background deepest run seeds max_depth=DEEPEST_MAX_DEPTH (2) and the owner-set
+    ceiling; the interactive/scheduled constructors stay at MAX_DEPTH (1), so the extra
+    tier can never appear outside a deepest run."""
+    deep = TreeState.rooted_deepest(budget_tokens=50_000_000, wall_clock_s=3600)
+    assert deep.max_depth == DEEPEST_MAX_DEPTH == 2
+    assert deep.tree_budget == 50_000_000
+    assert deep.root_reserve == int(50_000_000 * ROOT_RESERVE_FRACTION)
+    assert deep.can_spawn_at(0) and deep.can_spawn_at(1)  # orchestrator + task agent
+    assert not deep.can_spawn_at(2)  # sub agent is a leaf
+    # The ordinary constructors never mint the extra tier (negative-depth isolation).
+    assert TreeState.rooted(800_000).max_depth == MAX_DEPTH == 1
+    assert TreeState().max_depth == MAX_DEPTH
+
+
+def test_for_resume_rewinds_counters_and_remaining_clock() -> None:
+    """A resumed deepest run rewinds spent/agents to the last committed round (never
+    re-spends the budget or double-counts the re-run round against the agent cap) and
+    carries the remaining wall-clock, at two-tier depth."""
+    t = TreeState.for_resume(
+        budget_tokens=50_000_000, spent=12_000_000, agents_spawned=7, seconds_left=1800
+    )
+    assert t.max_depth == DEEPEST_MAX_DEPTH
+    assert t.tree_budget == 50_000_000
+    assert t.spent == 12_000_000  # rewound to the committed value, not zero
+    assert t.agents_spawned == 7
+    assert t.can_admit(5) and not t.can_admit(6)  # 7 already counted against the 12 cap
+    assert t.deadline is not None and not t.out_of_time()
+    # A past (exhausted) wall-clock resumes already out of time — the ceiling still bites.
+    spent = TreeState.for_resume(budget_tokens=1, spent=0, agents_spawned=0, seconds_left=0)
+    assert spent.out_of_time()

@@ -61,8 +61,8 @@ from jbrain.agent.tree import (
     CHILD_MAX_COST_TOKENS,
     CHILD_WALL_CLOCK_S,
     MAX_CHILDREN_PER_PARENT,
-    MAX_DEPTH,
     MAX_PARALLEL,
+    MAX_SUBFAN_PER_TASK_AGENT,
     MAX_WAVES,
     MIN_VIABLE_CHILD_BUDGET,
     TreeState,
@@ -421,10 +421,12 @@ class SpawnService:
         if ctx.tree is None:
             return _refuse("sub-agent spawning is only available in an interactive owner turn.")
         # --- depth cap (structural, no model cooperation) ---------------------
-        # Only the root turn (jerv, depth 0) may spawn; a child is always a leaf. Belt
-        # and suspenders with the persona allowlists, which no longer offer a child the
-        # spawn tool at all.
-        if ctx.depth >= MAX_DEPTH:
+        # Run-scoped (`tree.max_depth`, default 1): in an ordinary run only the root
+        # (jerv, depth 0) may spawn and a child is always a leaf; a deepest-research run
+        # raises its own tree to 2 so a task agent may spawn one tier of sub agents. The
+        # cap is on the tree, never a global constant, so the extra tier can't leak into
+        # jerv's ordinary fan. Belt-and-suspenders with the persona allowlists.
+        if not ctx.tree.can_spawn_at(ctx.depth):
             return _refuse("a sub-agent cannot spawn its own sub-agents; only jerv fans out.")
 
         tasks = args.get("tasks")
@@ -599,6 +601,66 @@ class SpawnService:
         # emit_view=False: deep_research emits its own deep_research_report view, so the
         # internal fans must not persist a competing subagent_synthesis roster card.
         return await self._execute_fan(ctx, tree, plans, max_parallel=n, emit_view=False)
+
+    async def decompose_fan(self, ctx: ToolContext, args: dict) -> str:
+        """Handle a task agent's `decompose_research` call: spawn ONE bounded fan of
+        depth-2 sub agents over the given sub-briefs and hand their cited findings back as
+        escaped data (the feeding-waves envelope). The two-tier amplification controls
+        (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R2) live here:
+
+        - **depth-guarded** — refuses at depth 0 (the orchestrator plans its own fan) and
+          past the run's `max_depth` (a sub agent is a leaf), so it is inert unless a
+          deepest run seeded a two-tier tree and this is a depth-1 task agent.
+        - **one-shot** — a task agent decomposes at most once (the `decomposed` set on the
+          tree), so it cannot read its first sub-fan's fetched content and then spawn a
+          second fan embedding it + an attacker URL (the lateral cross-fan exfil path).
+        - **per-parent cap `K`** — at most `MAX_SUBFAN_PER_TASK_AGENT` sub agents, bounding
+          how much attacker-steered research one laundered task-agent brief can spawn.
+
+        The sub agents run the plain `research` persona (no `decompose_research`), so the
+        recursion is exactly one tier; the parent⊆child clamp keeps a sub agent from ever
+        holding decompose. A refused/empty fan degrades to a plain note, never a crash."""
+        if ctx.tree is None:
+            return _refuse("decomposition is only available inside a research run.")
+        # Task-agent tier only: depth 0 is the orchestrator (it plans its own fan);
+        # depth == max_depth is a leaf sub agent. Both are structurally refused here, so a
+        # bug elsewhere can't turn decompose into an escalation path.
+        if ctx.depth == 0:
+            return _refuse("only a task agent decomposes; the orchestrator plans its own fan.")
+        if not ctx.tree.can_spawn_at(ctx.depth):
+            return _refuse("a sub agent is a leaf; it cannot decompose further.")
+        # One-shot tracking keys on the task agent's own session id; without one there is
+        # no way to enforce the single-decomposition bound, so fail closed.
+        agent_id = ctx.agent_session_id
+        if not agent_id:
+            return _refuse("decomposition needs an established agent session.")
+        if ctx.tree.has_decomposed(agent_id):
+            return _refuse("a task agent may decompose only once; research the parts you have.")
+        subtopics = args.get("subtopics")
+        if not isinstance(subtopics, list) or not subtopics:
+            return _refuse("provide a non-empty `subtopics` array (one sub-brief per sub agent).")
+        if len(subtopics) > MAX_SUBFAN_PER_TASK_AGENT:
+            return _refuse(
+                f"{len(subtopics)} sub agents requested; a decomposition may launch at most "
+                f"{MAX_SUBFAN_PER_TASK_AGENT}."
+            )
+        briefs: list[tuple[str, str]] = []
+        for i, st in enumerate(subtopics):
+            if not isinstance(st, dict):
+                return _refuse(f"subtopic {i} is not an object.")
+            raw_brief = st.get("brief")
+            if not isinstance(raw_brief, str) or not raw_brief.strip():
+                return _refuse(f"subtopic {i} needs a non-empty `brief`.")
+            raw_title = st.get("title")
+            label = raw_title.strip() if isinstance(raw_title, str) and raw_title.strip() else ""
+            briefs.append((label or f"part {i + 1}", raw_brief.strip()))
+        # Mark the one-shot BEFORE spawning so a concurrent re-entry can't double-spawn.
+        ctx.tree.note_decomposition(agent_id)
+        children = await self.run_research_fan(ctx, briefs=briefs, persona="research", effort="low")
+        fed = [(c.label, c.persona, c.summary) for c in children if c.ok and c.summary.strip()]
+        if not fed:
+            return "The sub agents returned no usable findings; research this yourself."
+        return compose_feed_block(fed)
 
     async def _spawn_waves(self, ctx: ToolContext, args: dict) -> str:
         """Run an ordered sequence of disconnected waves, feeding each wave's summaries
@@ -1195,3 +1257,17 @@ class SpawnRef:
         if self.service is None:
             return _refuse("sub-agent spawning is not available in this configuration.")
         return await self.service.spawn_fan(ctx, args)
+
+
+class DecomposeRef:
+    """Late-bound handler for the `decompose_research` tool (a task agent's one-shot
+    sub-fan), mirroring `SpawnRef`: bound to the SpawnService once the registry it
+    launches children on exists. An unbound ref refuses cleanly."""
+
+    def __init__(self) -> None:
+        self.service: SpawnService | None = None
+
+    async def __call__(self, args: dict, ctx: ToolContext) -> str:
+        if self.service is None:
+            return _refuse("decomposition is not available in this configuration.")
+        return await self.service.decompose_fan(ctx, args)

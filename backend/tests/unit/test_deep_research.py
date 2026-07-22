@@ -14,6 +14,7 @@ from jbrain.agent.briefs import FEED_OPEN
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.deep_research import (
     DR_CRITIQUE_RESERVE,
+    DR_DEEPEST_MAX_ROUNDS,
     DR_MAX_GAP_QUESTIONS,
     DR_REVIEW_RESERVE,
     DR_SIMPLE_BREADTH,
@@ -55,11 +56,17 @@ class _FakeRouter:
         sub_questions: tuple[str | dict[str, str], ...] = ("sub one", "sub two", "sub three"),
         covered: bool = False,
         gaps: tuple[str, ...] = ("gap one", "gap two"),
+        # Deepest mode: a per-round script of (covered, gaps, stable) consumed in order by
+        # successive COVERAGE CHECK calls; once exhausted the last entry repeats. None →
+        # every reflect returns the fixed (covered, gaps, stable=False) above (unchanged).
+        reflect_script: tuple[tuple[bool, tuple[str, ...], bool], ...] | None = None,
     ) -> None:
         self.complexity = complexity
         self.sub_questions = list(sub_questions)
         self.covered = covered
         self.gaps = list(gaps)
+        self.reflect_script = reflect_script
+        self._reflect_calls = 0
         self.calls: list[dict] = []
         self.synth_calls: list[str] = []
 
@@ -77,6 +84,15 @@ class _FakeRouter:
                 },
             )
         if "COVERAGE CHECK" in system:
+            if self.reflect_script:
+                idx = min(self._reflect_calls, len(self.reflect_script) - 1)
+                covered, gaps, stable = self.reflect_script[idx]
+                self._reflect_calls += 1
+                return _Result(
+                    text="",
+                    usage=usage,
+                    parsed={"covered": covered, "gaps": list(gaps), "stable": stable},
+                )
             return _Result(
                 text="", usage=usage, parsed={"covered": self.covered, "gaps": self.gaps}
             )
@@ -114,10 +130,15 @@ class _FakeSpawn:
         analyst_ok: bool = True,
         critique_ok: bool = True,
         refuse_labels: frozenset[str] = frozenset(),
+        # How many DISTINCT web sources each research child reaches. Default 1 (unchanged);
+        # raise it so a deepest gap round can clear DR_DEEPEST_MIN_NEW_SOURCES and the loop
+        # is driven by the coverage script rather than diminishing returns.
+        sources_per_child: int = 1,
     ) -> None:
         self.fans: list[dict] = []
         self.gather_ok = gather_ok
         self.refill_ok = refill_ok
+        self.sources_per_child = sources_per_child
         self.analyst_ok = analyst_ok
         self.critique_ok = critique_ok
         self.refuse_labels = set(refuse_labels)
@@ -143,7 +164,7 @@ class _FakeSpawn:
         # Personas come in web/library families: research|research_library are the
         # gather/refill producers; review|review_library are the analyst/critique.
         is_review = persona in ("review", "review_library")
-        is_research = persona in ("research", "research_library")
+        is_research = persona in ("research", "research_library", "research_deep")
         if is_review:
             ok = self.analyst_ok if first_label == "cross-check" else self.critique_ok
         else:
@@ -160,7 +181,10 @@ class _FakeSpawn:
                 # so the run can build its global citation registry (favicon targets). The
                 # corpus tools emit the same WebSource chips as web_search.
                 web_sources=(
-                    (WebSource(url=f"https://ex.com/{label}", title=f"Src {label}"),)
+                    tuple(
+                        WebSource(url=f"https://ex.com/{label}/{k}", title=f"Src {label} {k}")
+                        for k in range(self.sources_per_child)
+                    )
                     if ok and is_research
                     else ()
                 ),
@@ -753,3 +777,127 @@ async def test_library_first_frame_names_the_mixed_sources() -> None:
     )
     assert out.view is not None and out.view.data["source_mode"] == "library_first"  # type: ignore[attr-defined]
     assert "video library + web" in out
+
+
+# --- deepest mode (Wave R1): the adaptive reflect->refill loop --------------
+# All in-request and depth-1 (no second agent tier — that is R2). The fake fan does not
+# enforce the tree admission cap, so these exercise the LOOP's own stops (covered /
+# stable / diminishing returns / round cap) in isolation; the tree caps are proven in
+# test_spawn / test_tree.
+
+
+def _refills(spawn: _FakeSpawn) -> int:
+    """Gap rounds that ran = every research fan after the gather fan."""
+    return max(0, len(_research_fans(spawn)) - 1)
+
+
+async def test_deepest_loops_until_covered() -> None:
+    """Deepest keeps running gap rounds while reflect returns uncovered, and stops the
+    turn reflect finally reports covered — more rounds than standard's fixed one."""
+    script = (
+        (False, ("g1a", "g1b"), False),
+        (False, ("g2a", "g2b"), False),
+        (True, (), False),
+    )
+    router = _FakeRouter(complexity="deep", reflect_script=script)
+    spawn = _FakeSpawn(sources_per_child=2)  # 4 new sources/round clears diminishing-returns
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})
+    assert _refills(spawn) == 2  # two gap rounds, then covered
+    assert out.view is not None and out.view.data["rounds"] == 3  # type: ignore[attr-defined]
+
+
+async def test_deepest_stops_when_reflect_calls_it_stable() -> None:
+    """A `stable` verdict (findings converged) ends the loop even though gaps are still
+    nameable — the diminishing-returns judge, not just the covered flag."""
+    script = (
+        (False, ("g1a", "g1b"), False),
+        (False, ("g2a", "g2b"), True),  # round 2's check: gaps remain but it's stable
+    )
+    router = _FakeRouter(reflect_script=script)
+    spawn = _FakeSpawn(sources_per_child=2)
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})
+    assert _refills(spawn) == 1  # ran one round, then stable stopped it before a second
+    assert out.view is not None and out.view.data["rounds"] == 2  # type: ignore[attr-defined]
+
+
+async def test_deepest_stops_on_diminishing_returns() -> None:
+    """A round that adds fewer than DR_DEEPEST_MIN_NEW_SOURCES new sources ends the loop
+    mechanically — even with reflect still uncovered and not stable. Not a drained/pool
+    stop, so it is not flagged coverage_limited."""
+    router = _FakeRouter(covered=False, gaps=("g", "h"))  # never covered, never stable
+    spawn = _FakeSpawn()  # 1 source/child × 2 gaps = 2 new (< 3) → diminishing after round 1
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})
+    assert _refills(spawn) == 1
+    assert out.view is not None  # type: ignore[attr-defined]
+    assert out.view.data["rounds"] == 2  # type: ignore[attr-defined]
+    assert out.view.data["coverage_limited"] is False  # type: ignore[attr-defined]
+
+
+async def test_deepest_respects_the_round_cap() -> None:
+    """With reflect perpetually uncovered, not stable, and every round adding fresh
+    sources, the loop is bounded by the structural round cap — never unbounded."""
+    script = tuple((False, (f"g{n}a", f"g{n}b"), False) for n in range(DR_DEEPEST_MAX_ROUNDS))
+    router = _FakeRouter(reflect_script=script)
+    spawn = _FakeSpawn(sources_per_child=2)  # fresh sources each round → no diminishing stop
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})
+    assert _refills(spawn) == DR_DEEPEST_MAX_ROUNDS
+    assert out.view is not None  # type: ignore[attr-defined]
+    assert out.view.data["rounds"] == 1 + DR_DEEPEST_MAX_ROUNDS  # type: ignore[attr-defined]
+
+
+async def test_standard_mode_runs_exactly_one_gap_round() -> None:
+    """The default (mode omitted) is unchanged: at most one gap round, whatever reflect
+    would keep asking for."""
+    router = _FakeRouter(covered=False, gaps=("g", "h"))
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    assert _refills(spawn) == 1
+    assert out.view is not None and out.view.data["rounds"] == 2  # type: ignore[attr-defined]
+
+
+async def test_unknown_mode_is_refused() -> None:
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "bogus"})
+    assert "refused" in out.lower()
+    assert not spawn.fans and not router.calls
+
+
+# --- two-tier activation (R4): a background deepest run gathers with research_deep ------
+
+
+async def test_background_deepest_gathers_with_research_deep_task_agents() -> None:
+    """A deepest run whose tree is seeded two-tier (rooted_deepest, max_depth=2) gathers
+    with `research_deep` task agents — each may decompose its major sub-question one tier
+    down. Web mode only; the pipeline is otherwise unchanged."""
+    tree = TreeState.rooted_deepest(budget_tokens=50_000_000, wall_clock_s=3600)
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())  # covered → no refill
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(tree=tree), {"question": "q", "mode": "deepest"})
+    personas = [f["persona"] for f in spawn.fans]
+    assert "research_deep" in personas  # the gather fan ran task agents
+    assert out.view is not None  # type: ignore[attr-defined]
+
+
+async def test_in_request_deepest_stays_single_tier() -> None:
+    """In-request deepest (the default tree, max_depth=1) does NOT spawn task agents — it
+    gathers with plain `research`, exactly like R1. The extra tier is background-only."""
+    router = _FakeRouter(covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})
+    personas = [f["persona"] for f in spawn.fans]
+    assert "research_deep" not in personas
+    assert "research" in personas
+
+
+async def test_two_tier_is_web_only_not_library() -> None:
+    """A two-tier tree in a library mode still gathers with the corpus persona — there is
+    no research_deep twin for the video library."""
+    tree = TreeState.rooted_deepest(budget_tokens=50_000_000, wall_clock_s=3600)
+    router = _FakeRouter(covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(
+        _ctx(tree=tree), {"question": "q", "mode": "deepest", "sources": "library"}
+    )
+    personas = [f["persona"] for f in spawn.fans]
+    assert "research_deep" not in personas
+    assert "research_library" in personas

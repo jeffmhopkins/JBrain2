@@ -30,7 +30,7 @@ from jbrain.agent.agents import (
 )
 
 
-def test_ten_agents_are_defined() -> None:
+def test_eleven_agents_are_defined() -> None:
     assert (
         frozenset(
             {
@@ -44,6 +44,7 @@ def test_ten_agents_are_defined() -> None:
                 "intake",
                 "research_library",
                 "review_library",
+                "research_deep",
             }
         )
         == AGENT_NAMES
@@ -101,6 +102,8 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "query_server_metrics",
             "spawn_subagent",
             "deep_research",
+            "decompose_research",
+            "deepest_research",
             "list_research_report",
             "search_research_report",
             "read_research_report",
@@ -209,11 +212,20 @@ def test_library_subagent_personas_are_corpus_sandboxed_and_kb_less() -> None:
 
 
 def test_spawn_set_matches_the_subagent_personas() -> None:
-    """The closed spawn set is exactly the five child personas — `spawn_subagent`
+    """The closed spawn set is exactly the six child personas — `spawn_subagent`
     validates against it BEFORE agent_for (which would otherwise resolve an unknown
     name to the KB-capable curator)."""
     assert (
-        frozenset({"research", "review", "summarize", "research_library", "review_library"})
+        frozenset(
+            {
+                "research",
+                "review",
+                "summarize",
+                "research_library",
+                "review_library",
+                "research_deep",
+            }
+        )
         == SUBAGENT_PERSONAS
     )
     assert SUBAGENT_PERSONAS <= AGENT_NAMES
@@ -311,6 +323,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "review_library": (
             "agent-review-library-v1",
             "dfe6a297ac32de73ffafbb2f3910e47698698268d64787b8d744cb44c56a010c",
+        ),
+        "research_deep": (
+            "agent-research-deep-v1",
+            "42f217d5e32431c24555753a6b96ea18773689bc1d7ff705b4e4c5d20970f150",
         ),
     }
     assert set(pins) == AGENT_NAMES

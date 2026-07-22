@@ -28,6 +28,9 @@ from jbrain.agent.clock import build_clock_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.deep_research import DeepResearchRef, DeepResearchService
+from jbrain.agent.deepest_lane import DeepestRunLane
+from jbrain.agent.deepest_progress import DeepestProgressChannel
+from jbrain.agent.deepest_tool import DeepestKickoffService, DeepestResearchRef
 from jbrain.agent.geocodetools import build_geocode_handlers
 from jbrain.agent.labtools import build_lab_handlers
 from jbrain.agent.listtools import build_list_handlers
@@ -42,7 +45,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_intake_link_handlers, build_proposal_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
-from jbrain.agent.spawn import SpawnRef, SpawnService
+from jbrain.agent.spawn import DecomposeRef, SpawnRef, SpawnService
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.neighborhood import (
@@ -658,6 +661,12 @@ def build_registry(
     # service (which needs the very registry being built), so it is wired below once both
     # exist (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
     deep_research_ref = DeepResearchRef()
+    # The two-tier decomposition primitive (a task agent's one-shot sub-fan), late-bound
+    # to the same spawn service (DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
+    decompose_ref = DecomposeRef()
+    # The no-holds background research kickoff (enqueue-and-return), late-bound to the lane
+    # + the deep-research service below (DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
+    deepest_research_ref = DeepestResearchRef()
     registry = load_registry(
         TOOLS_DIR,
         {
@@ -737,6 +746,13 @@ def build_registry(
             # (curator's tools=None never absorbs it), wired below once the spawn
             # service exists (deep research runs its fans through it).
             "deep_research": deep_research_ref,
+            # The task-agent decomposition tool: a research_deep child reaches it by
+            # allowlist (jerv holds it only for the parent⊆child clamp); NEVER_DEFAULT, so
+            # curator's tools=None never absorbs it. Wired below with the spawn service.
+            "decompose_research": decompose_ref,
+            # The deepest-research kickoff: enqueue-and-return, jerv-only + NEVER_DEFAULT,
+            # wired below with the lane + the deep-research service it drives.
+            "deepest_research": deepest_research_ref,
         },
         optional=(
             OPTIONAL_IMAGE_TOOLS
@@ -765,5 +781,17 @@ def build_registry(
         # and a deep_research call refuses cleanly.
         deep_research_ref.service = DeepResearchService(
             router=router, spawn=spawn_ref.service, maker=maker
+        )
+        # decompose_research forwards to the same spawn service (it spawns the sub-fan).
+        decompose_ref.service = spawn_ref.service
+        # Deepest research: a single background lane (one run at a time by default), a
+        # progress channel that appends to the run's chat transcript (the durable path; the
+        # NotifyBus/FCM nudge legs are wired where those transports are available), and the
+        # kickoff service that drives the deep-research service in deepest mode.
+        deepest_research_ref.service = DeepestKickoffService(
+            lane=DeepestRunLane(),
+            service=deep_research_ref.service,
+            progress=DeepestProgressChannel(transcript=AgentTranscript(maker)),
+            maker=maker,
         )
     return registry

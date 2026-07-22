@@ -15,6 +15,7 @@ from jbrain.agent.tree import (
     MAX_CHILDREN_PER_PARENT,
     MAX_DEPTH,
     MAX_PARALLEL,
+    MAX_SUBFAN_PER_TASK_AGENT,
     MAX_WAVES,
     TreeState,
     child_steps_for,
@@ -1362,3 +1363,92 @@ async def test_flat_fan_children_honor_the_tree_wall_clock(
         _ctx(tree=tree), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
     )
     assert "timed out" in out.lower()
+
+
+async def test_a_task_agent_spawns_one_tier_when_the_run_allows_depth_2(
+    service: SpawnService,
+) -> None:
+    """Run-scoped depth (deepest-research R2): a tree seeded `max_depth=2` lets a depth-1
+    task agent spawn a tier of sub agents — orchestrator → task agent → sub agent. The
+    sub agent lands at depth 2; that it is itself a leaf is the default-tree refusal in
+    `test_a_child_cannot_spawn_children`. Ordinary runs (default `max_depth=1`) are
+    unaffected — the depth change is confined to the run that opts in."""
+    tree = TreeState(max_depth=2)
+    out = await service.spawn_fan(
+        _ctx(depth=1, tree=tree),
+        {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]},
+    )
+    assert "refused" not in out.lower()
+    assert _FakeLoop.calls and _FakeLoop.calls[-1]["depth"] == 2
+
+
+# --- deepest-research R2: the one-shot decomposition sub-fan ----------------
+# A task agent (depth 1, run seeded max_depth=2) may split its sub-question into ONE
+# bounded fan of depth-2 sub agents via decompose_research. The amplification controls
+# (depth guard, one-shot, per-parent cap K) and the transitivity (a sub agent can never
+# hold decompose_research) live in SpawnService.decompose_fan.
+
+
+async def test_decompose_refused_at_depth_0(service: SpawnService) -> None:
+    """The orchestrator (depth 0) plans its own fan directly; decompose is task-agent-only."""
+    out = await service.decompose_fan(
+        _ctx(depth=0, tree=TreeState(max_depth=2)),
+        {"subtopics": [{"title": "A", "brief": "research A"}]},
+    )
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_decompose_refused_for_a_leaf_sub_agent(service: SpawnService) -> None:
+    """A depth-2 sub agent is a leaf under max_depth=2 — it cannot decompose further."""
+    out = await service.decompose_fan(
+        _ctx(depth=2, tree=TreeState(max_depth=2)),
+        {"subtopics": [{"title": "A", "brief": "research A"}]},
+    )
+    assert "refused" in out.lower() and "leaf" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_decompose_spawns_research_sub_agents_one_tier_down(service: SpawnService) -> None:
+    """A depth-1 task agent under max_depth=2 spawns its sub-fan at depth 2, and each sub
+    agent is a plain `research` child — its clamped tools EXCLUDE decompose_research, so
+    the recursion is exactly one tier (transitivity: sub ⊆ task, minus decompose)."""
+    tree = TreeState(max_depth=2)
+    out = await service.decompose_fan(
+        _ctx(depth=1, tree=tree),
+        {
+            "subtopics": [
+                {"title": "A", "brief": "research topic A"},
+                {"title": "B", "brief": "research topic B"},
+            ]
+        },
+    )
+    assert "refused" not in out.lower()
+    assert len(_FakeLoop.calls) == 2
+    assert all(c["depth"] == 2 for c in _FakeLoop.calls)
+    assert all("decompose_research" not in c["tools_allow"] for c in _FakeLoop.calls)
+    assert tree.has_decomposed("parent-sess")  # one-shot recorded
+
+
+async def test_decompose_is_one_shot(service: SpawnService) -> None:
+    """A task agent decomposes at most once — the second call is refused so it cannot read
+    its first sub-fan's fetched content and spawn a second fan embedding it (lateral exfil)."""
+    tree = TreeState(max_depth=2)
+    ctx = _ctx(depth=1, tree=tree)
+    first = await service.decompose_fan(ctx, {"subtopics": [{"brief": "topic A"}]})
+    assert "refused" not in first.lower()
+    _FakeLoop.calls = []
+    second = await service.decompose_fan(ctx, {"subtopics": [{"brief": "topic B"}]})
+    assert "refused" in second.lower() and "once" in second.lower()
+    assert not _FakeLoop.calls  # no second fan launched
+
+
+async def test_decompose_caps_the_subfan_at_K(service: SpawnService) -> None:
+    """At most MAX_SUBFAN_PER_TASK_AGENT sub agents per decomposition — the per-parent
+    amplification bound on a laundered task-agent brief."""
+    over = [{"brief": f"topic {i}"} for i in range(MAX_SUBFAN_PER_TASK_AGENT + 1)]
+    out = await service.decompose_fan(
+        _ctx(depth=1, tree=TreeState(max_depth=2)), {"subtopics": over}
+    )
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls

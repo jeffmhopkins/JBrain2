@@ -11555,6 +11555,42 @@ button.small {
   background: var(--surface-2);
   border-radius: 12px;
 }
+
+/* Deepest research (DEEPEST_RESEARCH_TOOL_PLAN.md, R8): the deep_research timeline
+   backgrounded — an amber "deepest" identity + a coarse per-round meta line above the
+   unchanged .fb-drp timeline. Amber is the research accent (distinct from a live
+   deep_research card); the timeline machinery below it stays steel. */
+.fb-shell .fb-deepest {
+  display: block;
+}
+.fb-shell .fb-deepest-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fb-shell .fb-deepest-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--amber);
+  background: var(--amber-tint);
+  border: 1px solid rgba(201, 163, 106, 0.3);
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+}
+.fb-shell .fb-deepest-sub {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.fb-shell .fb-deepest-meta {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
 .fb-shell .fb-genprev-frame {
   position: relative;
   width: 100%;

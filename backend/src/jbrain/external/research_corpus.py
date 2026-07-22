@@ -112,8 +112,10 @@ async def persist_report(
     tool: str | None = None,
 ) -> str:
     """Upsert the library row for one completed report and enqueue its summary embedding. Keyed on
-    the question hash: a re-run of the same question replaces the older report (newest wins) and
-    NULLs the embedding so `embed_research_report` re-fills it. Runs under `SYSTEM_CTX`."""
+    `(question_hash, tool)` (migration 0148): a re-run of the same question BY THE SAME TOOL
+    replaces the older report (newest wins) and NULLs the embedding so `embed_research_report`
+    re-fills it, while a deep and a deepest report on one question coexist as distinct rows.
+    Runs under `SYSTEM_CTX`."""
     params = {
         "session_id": session_id or None,
         "question": question,
@@ -129,7 +131,9 @@ async def persist_report(
         "truncated": truncated,
         "sources": json.dumps(sources or []),
         "source_mode": source_mode,
-        "tool": tool,
+        # The library column is NOT NULL DEFAULT 'deep_research' (0148); a None from a
+        # pre-tag caller is the deep_research tool.
+        "tool": tool or "deep_research",
     }
     async with scoped_session(maker, SYSTEM_CTX) as session:
         report_id = (
@@ -143,7 +147,7 @@ async def persist_report(
                     "  :summary, :complexity, :rounds, :sub_agents, :analyzed, :revised,"
                     "  :coverage_limited, :truncated, cast(:sources AS jsonb), :source_mode,"
                     "  :tool, 'done')"
-                    " ON CONFLICT (question_hash) DO UPDATE SET"
+                    " ON CONFLICT (question_hash, tool) DO UPDATE SET"
                     "  session_id = EXCLUDED.session_id, question = EXCLUDED.question,"
                     "  report_md = EXCLUDED.report_md, summary = EXCLUDED.summary,"
                     "  complexity = EXCLUDED.complexity, rounds = EXCLUDED.rounds,"

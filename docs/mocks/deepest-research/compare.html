@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Deepest research — in-flight surface variants (GUI gate)</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --r-card:16px; --r-pill:999px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  :root[data-theme="light"]{
+    --bg:#f7f7f5; --surface:#fff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+  body{background:var(--bg);color:var(--text);padding:22px 14px 70px;min-height:100vh;transition:background .2s;}
+
+  /* page chrome */
+  .pagehead{max-width:1180px;margin:0 auto 18px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;}
+  .pagehead h1{font-size:19px;font-weight:650;letter-spacing:-.01em;}
+  .pagehead p{color:var(--text-2);font-size:13px;line-height:1.55;max-width:720px;margin-top:6px;}
+  .toggle{margin-left:auto;display:inline-flex;border:1px solid var(--border);border-radius:var(--r-pill);overflow:hidden;flex:none;}
+  .toggle button{background:none;border:none;color:var(--text-2);font:inherit;font-size:12px;padding:6px 14px;cursor:pointer;}
+  .toggle button.on{background:var(--steel-tint);color:var(--steel);}
+
+  .row{max-width:1180px;margin:0 auto;display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;justify-content:center;}
+  .col{width:360px;max-width:94vw;}
+  .cap{padding:0 4px 10px;}
+  .cap .tag{display:inline-block;font-size:11px;padding:2px 10px;border-radius:var(--r-pill);margin-bottom:7px;background:var(--amber-tint);color:var(--amber);font-weight:600;}
+  .cap h2{font-size:14.5px;font-weight:640;}
+  .cap p{color:var(--text-2);font-size:12px;line-height:1.5;margin-top:5px;}
+  .cap .win{color:var(--green);font-weight:600;}
+
+  .phone{width:360px;max-width:94vw;height:660px;background:var(--bg);border:1px solid #2a2c30;border-radius:30px;overflow:hidden;display:flex;flex-direction:column;}
+  :root[data-theme="light"] .phone{border-color:var(--border);box-shadow:0 1px 3px rgba(0,0,0,.06);}
+  .ptitle{text-align:center;font-size:12px;font-weight:600;padding:12px 0 7px;color:var(--text-3);flex:none;}
+  .chat{flex:1;overflow-y:auto;padding:4px 13px 16px;display:flex;flex-direction:column;gap:9px;}
+  .bubble{padding:10px 13px;border-radius:15px;font-size:13.5px;line-height:1.45;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:96%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;padding-bottom:8px;}
+
+  /* the deepest badge — amber research identity over the shared steel machinery */
+  .dbadge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--amber);background:var(--amber-tint);border:1px solid rgba(201,163,106,.3);padding:3px 10px;border-radius:var(--r-pill);}
+  .dbadge svg{width:12px;height:12px;}
+  .runmeta{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;margin-top:2px;}
+
+  /* ===== fb-drp timeline (reused from deep_research) ===== */
+  .fb-drp{display:block;margin:8px 0 2px;}
+  .fb-drp-steps{display:flex;flex-direction:column;gap:0;list-style:none;}
+  .fb-drp-step{display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:9px;align-items:start;position:relative;padding-bottom:3px;font-size:13px;color:var(--text-3);}
+  .fb-drp-step::before{content:"";position:absolute;left:7px;top:20px;bottom:0;width:2px;background:var(--border);}
+  .fb-drp-step:last-child::before{display:none;}
+  .fb-drp-step.done::before{background:var(--steel);}
+  .fb-drp-dot{grid-column:1;width:15px;height:15px;margin-top:3px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-pill);border:1.5px solid var(--border);background:var(--surface);font-size:9px;line-height:1;color:var(--steel);}
+  .fb-drp-name{grid-column:2;min-width:0;padding:4px 0 5px;align-self:center;}
+  .fb-drp-step.done .fb-drp-dot{background:var(--steel-tint);border-color:var(--steel);}
+  .fb-drp-step.done .fb-drp-name{color:var(--text-2);}
+  .fb-drp-step.active .fb-drp-dot{border-color:var(--steel);background:var(--steel-tint);animation:drp-pulse 1.3s ease-in-out infinite;}
+  .fb-drp-step.active .fb-drp-name{color:var(--text);font-weight:600;}
+  @keyframes drp-pulse{0%,100%{box-shadow:0 0 0 0 var(--steel-tint);}50%{box-shadow:0 0 0 5px var(--steel-tint);}}
+  .fb-drp-panel{grid-column:2;min-width:0;color:var(--text);display:flex;flex-direction:column;gap:8px;padding-bottom:10px;}
+  .fb-drp-active{color:var(--text-2);font-size:12px;}
+
+  /* ===== fb-sa fan (reused) ===== */
+  .fb-sa{margin:6px 0 2px;border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface-2);overflow:hidden;}
+  .fb-sa-head{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);}
+  .fb-sa-spark{color:var(--steel);}
+  .fb-sa-h-t{font-size:12px;font-weight:500;}
+  .fb-sa-h-c{font-size:11px;color:var(--text-3);}
+  .fb-sa-budget{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text-3);}
+  .fb-sa-track{flex:1;height:4px;border-radius:var(--r-pill);background:var(--surface);overflow:hidden;}
+  .fb-sa-track i{display:block;height:100%;background:var(--steel);}
+  .fb-sa-row{border-bottom:1px solid var(--border);}
+  .fb-sa-row:last-child{border-bottom:none;}
+  .fb-sa-row.sub{margin-left:18px;}
+  .fb-sa-line{display:flex;align-items:flex-start;gap:8px;width:100%;padding:8px 12px;}
+  .fb-sa-g{flex:none;margin-top:2px;width:13px;display:inline-flex;gap:2px;}
+  .fb-sa-g.done{color:var(--green);}.fb-sa-g.fail{color:var(--rose);}
+  .fb-sa-g i{width:3px;height:3px;border-radius:50%;background:var(--steel);display:block;}
+  .fb-sa-g.run i{animation:dot 1s infinite ease-in-out;}
+  .fb-sa-g.run i:nth-child(2){animation-delay:.15s;}.fb-sa-g.run i:nth-child(3){animation-delay:.3s;}
+  @keyframes dot{0%,100%{opacity:.3;}50%{opacity:1;}}
+  .fb-sa-lbl{font-size:12px;flex:1;min-width:0;}
+  .fb-sa-st{font-size:11px;color:var(--text-2);flex:none;margin-top:1px;}
+  .fb-sa-st.fail{color:var(--rose);}
+  .fb-sa-car{color:var(--text-3);font-size:11px;flex:none;margin-top:1px;}
+  .fb-sa-bar{height:3px;margin:0 12px 8px;border-radius:var(--r-pill);background:var(--surface);overflow:hidden;}
+  .fb-sa-bar i{display:block;height:100%;}
+  .fb-sa-bar.done i{width:100%;background:var(--green);}
+  .fb-sa-bar.running i{width:40%;background:var(--steel);animation:sweep 1.1s ease-in-out infinite;}
+  .fb-sa-bar.queued i{width:100%;opacity:.22;background:var(--steel);}
+  @keyframes sweep{0%{margin-left:-40%;}100%{margin-left:100%;}}
+  .fb-sa-ptag{flex:none;font-size:10px;padding:1px 7px;border-radius:var(--r-pill);font-weight:500;background:var(--surface);color:var(--text-2);border:1px solid var(--border);}
+
+  /* ===== variant B banner ===== */
+  .banner{display:flex;flex-direction:column;gap:7px;padding:11px 13px;border:1px solid var(--border);border-left:3px solid var(--amber);border-radius:12px;background:var(--surface-2);}
+  .banner-top{display:flex;align-items:center;gap:8px;}
+  .banner-q{font-size:13px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .banner-bar{height:4px;border-radius:var(--r-pill);background:var(--surface);overflow:hidden;}
+  .banner-bar i{display:block;height:100%;width:64%;background:var(--steel);}
+  .banner-foot{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .banner-view{color:var(--steel);font-weight:600;}
+
+  /* ===== variant C two-tier legend ===== */
+  .tier-legend{display:flex;gap:12px;font-size:11px;color:var(--text-3);padding:2px 2px 6px;}
+  .tier-legend span{display:inline-flex;align-items:center;gap:5px;}
+  .tier-dot{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--steel);}
+  .tier-dot.t1{background:var(--steel-tint);}
+  .tier-dot.t2{background:var(--surface);border-style:dashed;}
+
+  /* ===== tv-dr report card (the SHARED finished view) ===== */
+  .tv-dr{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface-2);padding:12px 13px;}
+  .tv-dr-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+  .tv-dr-cap{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);font-weight:600;}
+  .tv-dr-q{font-size:13px;font-weight:500;color:var(--text);}
+  .tv-dr-actions{margin-left:auto;display:inline-flex;gap:2px;}
+  .tv-dr-act{width:26px;height:26px;border:0;border-radius:7px;background:none;color:var(--text-3);display:inline-flex;align-items:center;justify-content:center;}
+  .tv-dr-act svg{width:15px;height:15px;}
+  .tv-dr-chips{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 8px;}
+  .chip{font-size:10px;padding:1px 8px;border-radius:var(--r-pill);background:var(--surface);color:var(--text-2);border:1px solid var(--border);}
+  .chip.cx-deep{background:var(--violet-tint);color:var(--violet);border-color:transparent;font-weight:600;text-transform:capitalize;}
+  .chip.tier{background:var(--amber-tint);color:var(--amber);border-color:transparent;font-weight:600;}
+  .chip.ok{background:var(--green-tint);color:var(--green);border-color:transparent;}
+  .chip.warn{color:var(--amber);border-color:var(--amber);}
+  .tv-dr-report{font-size:12.5px;line-height:1.55;color:var(--text);border-top:1px solid var(--border);padding-top:9px;}
+  .tv-dr-report h4{font-size:12.5px;margin:8px 0 3px;}
+  .tv-dr-report p{margin:0 0 6px;color:var(--text-2);}
+  .tv-dr-roster{margin-top:9px;border-top:1px solid var(--border);padding-top:7px;}
+  .tv-dr-rtoggle{padding:0;border:0;background:none;color:var(--text-3);font:inherit;font-size:12px;margin-bottom:5px;}
+  .tv-syn-rowwrap{display:flex;align-items:center;gap:6px;padding:4px 0;}
+  .tv-syn-row{display:flex;align-items:center;gap:7px;flex:1;min-width:0;}
+  .tv-syn-row.sub{margin-left:16px;}
+  .tv-syn-mark{flex:none;color:var(--green);font-size:12px;}
+  .tv-syn-mark.bad{color:var(--rose);}
+  .tv-syn-clbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;}
+  .tv-syn-open{flex:none;width:24px;height:24px;border:0;border-radius:7px;background:none;color:var(--text-3);display:inline-flex;align-items:center;justify-content:center;}
+  .tv-syn-open svg{width:14px;height:14px;}
+
+  /* favicon citation pill (reused) */
+  .md-webcite{vertical-align:super;font-size:10px;font-weight:600;line-height:1;margin-left:1px;}
+  .md-webcite a{display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:15px;height:15px;padding:0 4px 0 3px;border-radius:5px;background:var(--steel-tint);color:var(--steel);text-decoration:none;}
+  .md-favicon{width:11px;height:11px;border-radius:3px;background:var(--steel);opacity:.5;display:block;}
+  .md-cite-n{font-variant-numeric:tabular-nums;}
+</style>
+</head>
+<body>
+  <div class="pagehead">
+    <div>
+      <h1>Deepest research — the in-flight surface (GUI gate)</h1>
+      <p><b>Deepest research</b> is a no-holds background run: it recurses two agent tiers deep and can run
+      for an hour, so — unlike <code>deep_research</code>'s live in-turn card — it must be surfaced as a
+      <b>backgrounded</b> run that posts coarse per-round progress into the chat. All three variants reuse the
+      <code>deep_research</code> visual language wholesale — the steel timeline rail + pulsing dot, the
+      <code>fb-sa</code> fan, favicon <code>[^n]</code> citations, and the <b>identical finished-report card</b>
+      (bottom) — and add only an <b>amber "deepest" identity</b> and the two-tier fan. They differ ONLY in how the
+      running state sits in the chat. Same run throughout: a <span style="color:var(--violet)">deep</span> question,
+      round 3 of an adaptive loop, 4 task agents each fanning sub-agents.</p>
+    </div>
+    <div class="toggle"><button class="on" data-t="dark">Dark</button><button data-t="light">Light</button></div>
+  </div>
+
+  <div class="row">
+    <!-- ============ VARIANT A ============ -->
+    <div class="col">
+      <div class="cap">
+        <span class="tag">A · Backgrounded card</span>
+        <h2>The deep_research card, backgrounded</h2>
+        <p>The exact 8-stage <code>deep_research</code> timeline, verbatim — plus an amber "background" header and a
+        coarse round line (it advances per checkpoint tick, not live tokens). <span class="win">Max familiarity, least
+        risk.</span> Cost: a full timeline card pinned in chat for a run that may last an hour.</p>
+      </div>
+      <div class="phone">
+        <div class="ptitle">Full Brain</div>
+        <div class="chat">
+          <div class="bubble me">Do the deepest possible dive on solid-state batteries — how they work and where mass production really stands.</div>
+          <div class="bubble ai">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span class="dbadge"><svg viewBox="0 0 24 24"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg>Deepest research</span>
+              <span style="font-size:11px;color:var(--text-2)">running in the background</span>
+            </div>
+            <div class="runmeta">round 3 · 62 sources · ~70% covered · 24 min elapsed · you can leave — I'll post the report here</div>
+            <div class="fb-drp"><ol class="fb-drp-steps">
+              <li class="fb-drp-step done"><span class="fb-drp-dot">✓</span><span class="fb-drp-name">Plan</span></li>
+              <li class="fb-drp-step done"><span class="fb-drp-dot">✓</span><span class="fb-drp-name">Research</span></li>
+              <li class="fb-drp-step done"><span class="fb-drp-dot">✓</span><span class="fb-drp-name">Cross-check</span></li>
+              <li class="fb-drp-step active"><span class="fb-drp-dot"></span><span class="fb-drp-name">Coverage · Gap-fill (round 3)</span>
+                <div class="fb-drp-panel">
+                  <div class="fb-drp-active">filling 2 gaps — thermal-runaway data, 2027 pilot-line yields</div>
+                  <div class="fb-sa">
+                    <div class="fb-sa-head"><span class="fb-sa-spark">✦</span><span class="fb-sa-h-t">Task agents</span><span class="fb-sa-h-c">· 4 · 9 sub-agents</span></div>
+                    <div class="fb-sa-budget"><span>18.4M / 50M</span><span class="fb-sa-track"><i style="width:37%"></i></span></div>
+                    <div class="fb-sa-row"><div class="fb-sa-line"><span class="fb-sa-g done">✓</span><span class="fb-sa-lbl">Electrolyte chemistry &amp; ion transport</span><span class="fb-sa-st">done · 3 subs</span><span class="fb-sa-car">▸</span></div><div class="fb-sa-bar done"><i></i></div></div>
+                    <div class="fb-sa-row"><div class="fb-sa-line"><span class="fb-sa-g run"><i></i><i></i><i></i></span><span class="fb-sa-lbl">Manufacturing &amp; pilot lines</span><span class="fb-sa-st">researching · 6 steps</span><span class="fb-sa-car">▾</span></div><div class="fb-sa-bar running"><i></i></div></div>
+                    <div class="fb-sa-row sub"><div class="fb-sa-line"><span class="fb-sa-g run"><i></i><i></i><i></i></span><span class="fb-sa-lbl">QuantumScape 2027 yield claims</span><span class="fb-sa-st">4 steps</span><span class="fb-sa-car">▸</span></div><div class="fb-sa-bar running"><i></i></div></div>
+                    <div class="fb-sa-row sub"><div class="fb-sa-line"><span class="fb-sa-g queued"><i></i><i></i><i></i></span><span class="fb-sa-lbl">Toyota / Idemitsu sulfide line</span><span class="fb-sa-st queued" style="font-style:italic">queued</span><span class="fb-sa-car">▸</span></div><div class="fb-sa-bar queued"><i></i></div></div>
+                  </div>
+                </div>
+              </li>
+              <li class="fb-drp-step"><span class="fb-drp-dot"></span><span class="fb-drp-name">Write</span></li>
+              <li class="fb-drp-step"><span class="fb-drp-dot"></span><span class="fb-drp-name">Critique</span></li>
+              <li class="fb-drp-step"><span class="fb-drp-dot"></span><span class="fb-drp-name">Revise</span></li>
+            </ol></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ VARIANT B ============ -->
+    <div class="col">
+      <div class="cap">
+        <span class="tag">B · Run banner + reopen</span>
+        <h2>A compact pinned banner</h2>
+        <p>A slim amber-edged banner holds the chat: question, a steel progress bar, and <code>round · sources ·
+        coverage · elapsed</code>. <b>Tap "View progress"</b> to expand the full timeline (shown open below it).
+        Keeps an hour-long run from dominating the thread; the detail is one tap away.</p>
+      </div>
+      <div class="phone">
+        <div class="ptitle">Full Brain</div>
+        <div class="chat">
+          <div class="bubble me">Do the deepest possible dive on solid-state batteries.</div>
+          <div class="bubble ai" style="padding:8px;">
+            <div class="banner">
+              <div class="banner-top">
+                <span class="dbadge"><svg viewBox="0 0 24 24"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg>Deepest</span>
+                <span class="banner-q">Solid-state batteries — how they work &amp; mass production</span>
+              </div>
+              <div class="banner-bar"><i></i></div>
+              <div class="banner-foot"><span>round 3 · 62 sources · ~70% covered · 24m</span><span class="banner-view">View progress ▾</span></div>
+            </div>
+            <!-- expanded on tap: the same timeline, compact -->
+            <div style="margin-top:9px;padding-left:2px;">
+              <div class="fb-drp"><ol class="fb-drp-steps">
+                <li class="fb-drp-step done"><span class="fb-drp-dot">✓</span><span class="fb-drp-name">Plan · Research · Cross-check</span></li>
+                <li class="fb-drp-step active"><span class="fb-drp-dot"></span><span class="fb-drp-name">Coverage · Gap-fill (round 3)</span>
+                  <div class="fb-drp-panel"><div class="fb-drp-active">4 task agents · 9 sub-agents · filling 2 gaps</div>
+                    <div class="fb-sa"><div class="fb-sa-budget" style="border-bottom:none;"><span>18.4M / 50M</span><span class="fb-sa-track"><i style="width:37%"></i></span></div></div>
+                  </div>
+                </li>
+                <li class="fb-drp-step"><span class="fb-drp-dot"></span><span class="fb-drp-name">Write · Critique · Revise</span></li>
+              </ol></div>
+            </div>
+          </div>
+          <div class="bubble me" style="opacity:.6;">meanwhile — remind me what's on my calendar tomorrow?</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ VARIANT C ============ -->
+    <div class="col">
+      <div class="cap">
+        <span class="tag">C · Two-tier emphasis</span>
+        <h2>Foreground the recursion</h2>
+        <p>Same timeline, but the active stage makes visible what <b>deepest</b> adds over deep_research: the
+        <b>orchestrator → task agent → sub agent</b> recursion. A tier legend + nested (dashed) sub-agent rows show
+        the depth. Most distinct; teaches why this run is "deeper".</p>
+      </div>
+      <div class="phone">
+        <div class="ptitle">Full Brain</div>
+        <div class="chat">
+          <div class="bubble me">Do the deepest possible dive on solid-state batteries.</div>
+          <div class="bubble ai">
+            <div style="display:flex;align-items:center;gap:8px;"><span class="dbadge"><svg viewBox="0 0 24 24"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg>Deepest research</span><span style="font-size:11px;color:var(--text-2)">2 tiers · background</span></div>
+            <div class="tier-legend"><span><span class="tier-dot t1"></span>task agent</span><span><span class="tier-dot t2"></span>sub agent</span><span style="margin-left:auto;color:var(--text-2)">round 3 · 62 sources</span></div>
+            <div class="fb-drp"><ol class="fb-drp-steps">
+              <li class="fb-drp-step done"><span class="fb-drp-dot">✓</span><span class="fb-drp-name">Plan · Research · Cross-check</span></li>
+              <li class="fb-drp-step active"><span class="fb-drp-dot"></span><span class="fb-drp-name">Gap-fill (round 3)</span>
+                <div class="fb-drp-panel">
+                  <div class="fb-sa">
+                    <div class="fb-sa-head"><span class="fb-sa-spark">✦</span><span class="fb-sa-h-t">Manufacturing &amp; pilot lines</span><span class="fb-sa-h-c">· task agent · 3 subs</span></div>
+                    <div class="fb-sa-row"><div class="fb-sa-line"><span class="fb-sa-g run"><i></i><i></i><i></i></span><span class="fb-sa-lbl">decomposed into 3 sub-questions</span><span class="fb-sa-st">synthesizing</span><span class="fb-sa-car">▾</span></div><div class="fb-sa-bar running"><i></i></div></div>
+                    <div class="fb-sa-row sub"><div class="fb-sa-line"><span class="fb-sa-g done">✓</span><span class="fb-sa-lbl">QuantumScape 2027 yields</span><span class="fb-sa-st">done</span><span class="fb-sa-car">▸</span></div><div class="fb-sa-bar done"><i></i></div></div>
+                    <div class="fb-sa-row sub"><div class="fb-sa-line"><span class="fb-sa-g run"><i></i><i></i><i></i></span><span class="fb-sa-lbl">Toyota / Idemitsu sulfide line</span><span class="fb-sa-st">5 steps</span><span class="fb-sa-car">▸</span></div><div class="fb-sa-bar running"><i></i></div></div>
+                    <div class="fb-sa-row sub"><div class="fb-sa-line"><span class="fb-sa-g queued"><i></i><i></i><i></i></span><span class="fb-sa-lbl">Samsung SDI oxide pilot</span><span class="fb-sa-st queued" style="font-style:italic">queued</span><span class="fb-sa-car">▸</span></div><div class="fb-sa-bar queued"><i></i></div></div>
+                  </div>
+                  <div class="fb-drp-active">+ 3 more task agents running their own sub-fans</div>
+                </div>
+              </li>
+              <li class="fb-drp-step"><span class="fb-drp-dot"></span><span class="fb-drp-name">Write · Critique · Revise</span></li>
+            </ol></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SHARED FINISHED REPORT (common to all three) ============ -->
+  <div class="row" style="margin-top:30px;">
+    <div class="col" style="width:392px;">
+      <div class="cap">
+        <span class="tag" style="background:var(--green-tint);color:var(--green);">Shared · the finished report</span>
+        <h2>Identical in all three variants</h2>
+        <p>When the run lands, every variant resolves to the <b>same <code>deep_research_report</code> card</b> — the
+        provenance chips just carry the deepest extras (<b>2 tiers</b>, task/sub-agent counts, <b>resumed once</b>),
+        and the roster lists the task agents with their sub-agents nested, each deep-linking to its session.
+        Favicon <code>[^n]</code> citations render exactly as today.</p>
+      </div>
+      <div class="phone" style="height:560px;">
+        <div class="ptitle">Full Brain</div>
+        <div class="chat">
+          <div class="tv-dr">
+            <div class="tv-dr-head">
+              <span class="tv-dr-cap">deepest research</span>
+              <span class="tv-dr-q">Solid-state batteries — how they work &amp; mass production</span>
+              <div class="tv-dr-actions">
+                <button class="tv-dr-act"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+                <button class="tv-dr-act"><svg viewBox="0 0 24 24"><path d="M12 3v13M7 12l5 5 5-5M5 21h14"/></svg></button>
+              </div>
+            </div>
+            <div class="tv-dr-chips">
+              <span class="chip cx-deep">deep</span>
+              <span class="chip tier">2 tiers</span>
+              <span class="chip">62 sources</span>
+              <span class="chip">4 rounds</span>
+              <span class="chip">4 task · 11 sub-agents</span>
+              <span class="chip ok">cross-checked</span>
+              <span class="chip ok">revised</span>
+              <span class="chip">resumed once</span>
+            </div>
+            <div class="tv-dr-report">
+              <h4>How they work</h4>
+              <p>Solid-state cells replace the liquid electrolyte with a solid ion conductor — sulfide, oxide, or
+              polymer — enabling a lithium-metal anode and higher energy density<span class="md-webcite"><a><span class="md-favicon"></span><span class="md-cite-n">1</span></a></span><span class="md-webcite"><a><span class="md-favicon"></span><span class="md-cite-n">2</span></a></span>. The main hurdles are dendrite
+              suppression at the interface and manufacturability at scale<span class="md-webcite"><a><span class="md-favicon"></span><span class="md-cite-n">7</span></a></span>.</p>
+              <h4>Where mass production stands</h4>
+              <p>Pilot lines exist (QuantumScape, Toyota-Idemitsu, Samsung SDI) but yields remain the gating
+              factor; credible mass-market volume is <b>2027–2030</b>, not sooner<span class="md-webcite"><a><span class="md-favicon"></span><span class="md-cite-n">14</span></a></span>.</p>
+            </div>
+            <div class="tv-dr-roster">
+              <button class="tv-dr-rtoggle">▾ 15 sub-agents</button>
+              <div class="tv-syn-rowwrap"><span class="tv-syn-row"><span class="tv-syn-mark">✓</span><span class="tv-syn-clbl">Electrolyte chemistry &amp; ion transport</span><span class="fb-sa-ptag">task</span></span><button class="tv-syn-open"><svg viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></svg></button></div>
+              <div class="tv-syn-rowwrap"><span class="tv-syn-row sub"><span class="tv-syn-mark">✓</span><span class="tv-syn-clbl">Sulfide vs oxide conductivity</span><span class="fb-sa-ptag">sub</span></span><button class="tv-syn-open"><svg viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></svg></button></div>
+              <div class="tv-syn-rowwrap"><span class="tv-syn-row"><span class="tv-syn-mark">✓</span><span class="tv-syn-clbl">Manufacturing &amp; pilot lines</span><span class="fb-sa-ptag">task</span></span><button class="tv-syn-open"><svg viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></svg></button></div>
+              <div class="tv-syn-rowwrap"><span class="tv-syn-row"><span class="tv-syn-mark">✓</span><span class="tv-syn-clbl">cross-check</span><span class="fb-sa-ptag">review</span></span><button class="tv-syn-open"><svg viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></svg></button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  document.querySelectorAll('.toggle button').forEach(b=>b.addEventListener('click',()=>{
+    document.documentElement.setAttribute('data-theme', b.dataset.t);
+    document.querySelectorAll('.toggle button').forEach(x=>x.classList.toggle('on', x===b));
+  }));
+</script>
+</body>
+</html>
