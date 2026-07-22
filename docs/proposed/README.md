@@ -33,6 +33,14 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   state machine + two-sided child-safety layer + two UIs. Waves W1–W8 with a hard
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
+- `DEEPEST_RESEARCH_TOOL_PLAN.md` — a no-holds sibling to the shipped
+  `deep_research`: an autonomous, resumable **background** research run that
+  recurses two tiers deep (orchestrator → task agent → sub agent, `max_depth=2`),
+  loops until covered or a large owner-set ceiling is hit, checkpoints its state,
+  and lands a cited report in the existing research library. Unbounded in effort,
+  still bounded in blast radius (the sandbox/RLS/no-KB holds survive at every
+  depth). Waves DR1–DR7 with a hard depth-2 isolation gate before prod. Companion
+  to `../plans/DEEP_RESEARCH_TOOL_PLAN.md`.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
