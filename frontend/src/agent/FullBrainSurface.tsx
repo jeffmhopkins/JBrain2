@@ -1392,6 +1392,50 @@ export function DeepResearchProgress({
   );
 }
 
+/** A background deepest-research run in the chat (DEEPEST_RESEARCH_TOOL_PLAN.md, R8;
+ * GUI gate: variant A). Deliberately thin — it IS the `deep_research` timeline card,
+ * backgrounded: an amber "deepest" identity + a coarse per-round meta line (a deepest run
+ * is background, so it advances per checkpoint tick, not per streamed token), wrapped
+ * around the unchanged `DeepResearchProgress` timeline + its `SubagentFan`. Maximum reuse
+ * of the deep_research surface, per the chosen mock. */
+export function DeepestRunCard({
+  run,
+  tool,
+  fan,
+}: {
+  run: {
+    round: number;
+    sources: number;
+    coverageLabel: string;
+    elapsedLabel: string;
+    status: "running" | "done" | "failed";
+  };
+  tool: ToolActivity;
+  fan?: ReactNode;
+}): ReactNode {
+  const running = run.status === "running";
+  return (
+    <div className="fb-deepest">
+      <div className="fb-deepest-head">
+        <span className="fb-deepest-badge">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="12" height="12">
+            <path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5" />
+          </svg>
+          Deepest research
+        </span>
+        <span className="fb-deepest-sub">{running ? "running in the background" : run.status}</span>
+      </div>
+      {running && (
+        <div className="fb-deepest-meta" aria-live="polite">
+          round {run.round} · {run.sources} sources · {run.coverageLabel} · {run.elapsedLabel} · you
+          can leave — I'll post the report here
+        </div>
+      )}
+      <DeepResearchProgress tool={tool} fan={fan} />
+    </div>
+  );
+}
+
 // aspect arg → CSS ratio, so the preview frame holds a stable size before the
 // first preview frame arrives (matching the image-gen tool's three presets).
 const PREVIEW_ASPECT: Record<string, string> = {

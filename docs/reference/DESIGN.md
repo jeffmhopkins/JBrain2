@@ -1307,6 +1307,23 @@ the live `.tool-view`. Like every view it is **data, not instruction** (I-1) and
 external resource (I-9). The non-happy states (coverage-limited / truncated / thin-sources)
 and a reference mock go through the mock gate before this is marked settled.
 
+### Deepest research — the in-flight surface (GUI gate settled: **A — backgrounded card**; reference mock `docs/mocks/deepest-research/compare.html`, build plan `docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md` R8)
+
+`deepest_research` is a no-holds **background** run (two agent tiers, minutes-to-hours), so
+unlike `deep_research`'s live in-turn card it is surfaced as a *backgrounded* run whose
+progress arrives as coarse per-round ticks (R6). A three-way GUI review (A backgrounded
+card · B run banner + reopen · C two-tier emphasis) settled on **A** (owner, 2026-07-22):
+the surface **is the `deep_research` timeline, backgrounded** — `DeepestRunCard`
+(`FullBrainSurface.tsx`) wraps the unchanged `DeepResearchProgress` timeline + its
+`SubagentFan`, adding only an **amber "deepest" identity badge** (amber = the research
+accent, distinguishing it from a live deep_research card) and a coarse per-round meta line
+(`round N · sources · coverage · elapsed`) that advances per checkpoint tick, not per token.
+The finished run resolves to the **same `deep_research_report` view** — its provenance chips
+carry the deepest extras (`2 tiers`, task/sub-agent counts, `resumed once`) and the roster
+nests sub-agents under their task agent, each deep-linking to its session. Tokens-only
+`.fb-deepest-*` classes over the reused `.fb-drp-*` / `.fb-sa-*` machinery; data, not
+instruction (I-1). The losing variants B/C are retained in `compare.html` as the record.
+
 ## Research Library (settled in a three-way GUI review — binding mock: `docs/mocks/research-library/b-segmented-tabs.html`; build plan `docs/archive/RESEARCH_LIBRARY_PLAN.md`)
 
 The owner-facing browse surface over the two **`external`-corpus** artifacts jerv

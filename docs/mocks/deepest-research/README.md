@@ -44,8 +44,9 @@ strong hedge if a persistent hour-long card proves too heavy in the thread. C's 
 emphasis can be folded into whichever wins (the nested sub-rows are the same `.fb-sa-row.sub`
 primitive) rather than shipped as its own layout.
 
-**Chosen: _(pending owner review)._** Once picked, the winner's reasoning folds into
-`../../reference/DESIGN.md` (a "Deepest research" section), `compare.html` stays as the
-record of the review, and R8 implements the chosen surface in `FullBrainSurface.tsx` +
-`styles.css`, reusing the existing `DeepResearchProgress` / `SubagentFan` /
-`deep_research_report` components.
+**Chosen: A — Backgrounded card** (owner, 2026-07-22). It best honours the "heavy reliance
+on deep_research commonality" ask — it *is* the deep_research card, backgrounded. Folded
+into `../../reference/DESIGN.md` §"Deepest research — the in-flight surface"; implemented as
+`DeepestRunCard` in `frontend/src/agent/FullBrainSurface.tsx` + the `.fb-deepest-*` styles,
+wrapping the unchanged `DeepResearchProgress` / `SubagentFan`. `compare.html` stays as the
+record of the review; B/C are retained there as the losing variants.

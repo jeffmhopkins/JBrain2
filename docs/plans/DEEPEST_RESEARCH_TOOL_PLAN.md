@@ -2,6 +2,18 @@
 
 > **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8◻️
 
+**R8 in progress (2026-07-22).** GUI gate **settled: variant A — the backgrounded
+`deep_research` card** (owner, three-way review over `docs/mocks/deepest-research/compare.html`;
+folded into `DESIGN.md` §"Deepest research — the in-flight surface"). The presentational
+component landed: **`DeepestRunCard`** (`FullBrainSurface.tsx`) wraps the unchanged
+`DeepResearchProgress` timeline + `SubagentFan`, adding only the amber "deepest" identity
+badge + a coarse per-round meta line; `.fb-deepest-*` styles reuse the `.fb-drp-*`/`.fb-sa-*`
+machinery. 3 vitest tests (badge + round line + timeline reuse + fan mount + done-state);
+biome + the existing `DeepResearchProgress` suite green. **Remaining in R8:** the data path
+— threading a live/finished deepest run's state (from R6's transcript ticks or a run-state
+read) into `DeepestRunCard` inside `FullBrainSurface`'s render, and the `deep_research_report`
+provenance extras (tiers / task-sub counts / resumed). That wiring is the last integration.
+
 **R1 landed (2026-07-22).** The adaptive loop shipped as `deep_research(mode="deepest")`
 — in-request, depth-1, no second agent tier yet. The single fixed refill became a
 resource-terminated loop (`deep_research.py`: `DR_DEEPEST_MAX_ROUNDS`,
