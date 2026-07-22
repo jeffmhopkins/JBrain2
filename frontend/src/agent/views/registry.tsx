@@ -24,7 +24,9 @@ import { TaskStatus } from "../../components/TaskStatus";
 import { TimeSeriesPlot } from "../../components/TimeSeriesPlot";
 import { VideoAnalysis, type VideoFrame } from "../../components/VideoAnalysis";
 import { serverMetricSeries } from "../../components/serverMetricSeries";
+import { DeepestRunCard } from "../DeepResearchProgress";
 import { type CiteTarget, Markdown } from "../markdown";
+import type { ToolActivity } from "../transcript";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
 import {
@@ -1395,6 +1397,41 @@ function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
  * turn), and every count is derived from DB-run state. The `[^n]` footnotes render as the
  * report's own numbered chips (its `## Sources` section maps them); the flags are enum
  * tones the theme colors, never a model-sent color (DESIGN.md). */
+/** The `deepest_run` view: a live/finished background deepest run (DEEPEST_RESEARCH_TOOL_PLAN.md,
+ * R8; GUI gate variant A). Maps the run-state payload to `DeepestRunCard` — the backgrounded
+ * deep_research timeline. Data-only (I-1): every field comes from the run's checkpoint, never
+ * model prose; the finished report renders through the separate `deep_research_report` view. */
+function DeepestRun({ data }: ViewProps): ReactNode {
+  const d = data as {
+    round?: number;
+    sources?: number;
+    coverage?: string;
+    elapsed?: string;
+    status?: string;
+    step?: number;
+    label?: string;
+  };
+  const status: "running" | "done" | "failed" =
+    d.status === "done" || d.status === "failed" ? d.status : "running";
+  const tool: ToolActivity = {
+    id: "deepest",
+    name: "deepest_research",
+    progress: { step: typeof d.step === "number" ? d.step : 0, total: 0, label: d.label ?? "" },
+  };
+  return (
+    <DeepestRunCard
+      run={{
+        round: d.round ?? 0,
+        sources: d.sources ?? 0,
+        coverageLabel: d.coverage ?? "in progress",
+        elapsedLabel: d.elapsed ?? "",
+        status,
+      }}
+      tool={tool}
+    />
+  );
+}
+
 function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
   const question = typeof data.question === "string" ? data.question : "";
   const complexity = typeof data.complexity === "string" ? data.complexity : "";
@@ -2396,6 +2433,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   hurricane_card: HurricaneCard,
   subagent_synthesis: SubagentSynthesis,
   deep_research_report: DeepResearchReport,
+  deepest_run: DeepestRun,
   chart: ChartCard,
   lab_chart: ChartCard,
 };

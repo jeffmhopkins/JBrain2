@@ -59,6 +59,20 @@ def _clip(text: str, n: int = _BODY_MAX) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def _deepest_view_step(data: dict[str, Any]) -> dict[str, Any]:
+    """A persisted tool step carrying the `deepest_run` tool-view, so the progress turn
+    replays as the backgrounded deep_research timeline card on reopen (R8; the same
+    `step["view"]` shape the transcript accumulator writes for a live tool-view). Data-only
+    — the payload is the run's checkpoint state, never model prose."""
+    return {
+        "name": "deepest_research",
+        "args": {},
+        "ok": True,
+        "summary": "",
+        "view": {"view": "deepest_run", "surface": "inline", "data": data, "refs": []},
+    }
+
+
 class DeepestProgressChannel:
     """Posts a background deepest run's progress into the initiating chat and nudges the
     owner's devices. Constructed once per run (or shared) with the transcript store and the
@@ -92,12 +106,25 @@ class DeepestProgressChannel:
             f"Deepest research · round {round_no} · {findings} finding(s) so far · "
             f"{coverage_label} · still going"
         )
+        # The card advances coarsely per round: round 1 is the gather stage, later rounds
+        # the gap-fill stage (the timeline's active step).
+        view = _deepest_view_step(
+            {
+                "round": round_no,
+                "sources": findings,
+                "coverage": coverage_label,
+                "status": "running",
+                "step": 2 if round_no <= 1 else 5,
+                "label": body,
+            }
+        )
         await self._emit(
             owner_ctx,
             session_id=session_id,
             run_id=run_id,
             title="Deepest research — in progress",
             body=body,
+            view=view,
         )
 
     async def done(
@@ -110,12 +137,14 @@ class DeepestProgressChannel:
     ) -> None:
         """The completion tick — the report has landed in the library."""
         body = f"Deepest research complete — “{question}”. The report is ready."
+        view = _deepest_view_step({"status": "done", "step": 8, "label": body})
         await self._emit(
             owner_ctx,
             session_id=session_id,
             run_id=run_id,
             title="Deepest research ready",
             body=body,
+            view=view,
         )
 
     async def _emit(
@@ -126,8 +155,10 @@ class DeepestProgressChannel:
         run_id: str,
         title: str,
         body: str,
+        view: dict[str, Any] | None = None,
     ) -> None:
-        # (1) durable: append the server-authored assistant turn (renders on reopen).
+        # (1) durable: append the server-authored assistant turn (renders on reopen). The
+        # `deepest_run` tool-view rides the turn's `tools` so it replays as the card on load.
         if self._transcript is not None:
             try:
                 await self._transcript.record_answer(
@@ -135,7 +166,7 @@ class DeepestProgressChannel:
                     session_id=session_id,
                     run_id=run_id,
                     assistant_text=body,
-                    tools=[],
+                    tools=[view] if view is not None else [],
                 )
             except Exception:  # noqa: BLE001 — progress is best-effort, never crash the run
                 log.warning("deepest_progress.record_failed", run_id=run_id, exc_info=True)

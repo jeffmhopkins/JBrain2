@@ -28,6 +28,7 @@ class _FakeTranscript:
                 "run_id": run_id,
                 "text": assistant_text,
                 "kind": "assistant",
+                "tools": list(tools),
             }
         )
 
@@ -69,6 +70,10 @@ async def test_round_posts_a_server_authored_turn_and_nudges() -> None:
     ans = tr.answers[0]
     assert ans["session_id"] == "sess-1" and ans["run_id"] == "run-1" and ans["kind"] == "assistant"
     assert "round 3" in ans["text"] and "42" in ans["text"] and "still going" in ans["text"]
+    # The deepest_run tool-view rides the turn so it replays as the timeline card on reload.
+    view = ans["tools"][0]["view"]
+    assert view["view"] == "deepest_run"
+    assert view["data"]["round"] == 3 and view["data"]["status"] == "running"
     # (2) a NotifyBus nudge deep-linked to the chat by session id.
     assert len(bus.published) == 1
     note = bus.published[0]

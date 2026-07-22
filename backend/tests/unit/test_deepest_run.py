@@ -3,6 +3,8 @@ place a background deepest run's context is assembled. Pure, DB-free — the ass
 the security properties of that context: owner-scoped but KB-less, the only max_depth>1
 mint, no location, and the clamp ceiling a research_deep task agent needs."""
 
+from types import SimpleNamespace
+
 from jbrain.agent.deepest_run import (
     DEEPEST_DEFAULT_CEILING_TOKENS,
     DEEPEST_DEFAULT_WALL_CLOCK_S,
@@ -77,10 +79,13 @@ class _FakeService:
 class _FakeRunState:
     """Stands in for the research_run_state repo module."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, claimable: bool = True, existing: dict | None = None) -> None:
         self.created: list[str] = []
         self.checkpoints: list[dict] = []
         self.finished: list[str] = []
+        self.claims: list[str] = []
+        self._claimable = claimable
+        self._existing = existing  # a stored row `load` returns (for resume)
 
     def run_state_context(self, principal_id: str) -> SessionContext:
         return SessionContext(
@@ -98,6 +103,13 @@ class _FakeRunState:
     async def finish(self, maker, ctx, *, run_id, status):  # noqa: ANN001, ANN003
         self.finished.append(status)
         return True
+
+    async def claim_resume(self, maker, ctx, run_id):  # noqa: ANN001, ANN003
+        self.claims.append(run_id)
+        return self._claimable
+
+    async def load(self, maker, ctx, run_id):  # noqa: ANN001, ANN003
+        return SimpleNamespace(**self._existing) if self._existing else None
 
 
 class _FakeProgress:
@@ -154,3 +166,53 @@ async def test_driver_fails_closed_on_a_research_error() -> None:
     assert rs.finished == ["failed"]
     assert prog.dones == []  # no completion announced
     assert prog.rounds and "failed" in prog.rounds[-1][2]  # a failure notice was posted
+
+
+# --- resume (R7): claim an interrupted run and re-drive -------------------------------
+
+from jbrain.agent.deepest_run import resume_deepest  # noqa: E402
+
+
+async def test_resume_claims_then_re_drives() -> None:
+    """A restart claims the interrupted run (exactly-once) and re-drives it from the
+    checkpoint's rehydrated params — a coverage-equivalent report over the same question."""
+    svc = _FakeService()
+    rs = _FakeRunState(
+        claimable=True,
+        existing={
+            "status": "running",
+            "question": "how does X work",
+            "session_id": "sess-1",
+            "ceiling_tokens": 50_000_000,
+            "wall_clock_deadline": None,
+        },
+    )
+    prog = _FakeProgress()
+    status = await resume_deepest(
+        principal_id="owner-1",
+        run_id="run-1",
+        maker=object(),
+        service=svc,  # type: ignore[arg-type]
+        progress=prog,  # type: ignore[arg-type]
+        run_state=rs,  # type: ignore[arg-type]
+    )
+    assert status == "done"
+    assert rs.claims == ["run-1"]  # it claimed the run
+    assert svc.calls and svc.calls[0]["args"]["question"] == "how does X work"  # rehydrated
+    assert rs.finished == ["done"]
+
+
+async def test_resume_declines_a_run_it_cannot_claim() -> None:
+    """A run already claimed by another process (or finished) yields None — no double-drive."""
+    svc = _FakeService()
+    rs = _FakeRunState(claimable=False)
+    status = await resume_deepest(
+        principal_id="owner-1",
+        run_id="run-1",
+        maker=object(),
+        service=svc,  # type: ignore[arg-type]
+        progress=_FakeProgress(),  # type: ignore[arg-type]
+        run_state=rs,  # type: ignore[arg-type]
+    )
+    assert status is None
+    assert not svc.calls  # never re-driven

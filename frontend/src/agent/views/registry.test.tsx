@@ -1163,6 +1163,34 @@ describe("ToolView registry", () => {
     expect(getByText(/skipped — sub-agent budget spent by earlier waves/)).toBeInTheDocument();
     expect(getByText(/1 skipped/)).toBeInTheDocument();
   });
+
+  it("renders a deepest_run view as the backgrounded deep_research timeline card", () => {
+    expect(isKnownView("deepest_run")).toBe(true);
+    const { getByText, container } = render(
+      <ToolView
+        payload={payload({
+          view: "deepest_run",
+          data: {
+            round: 3,
+            sources: 62,
+            coverage: "~70% covered",
+            elapsed: "24 min",
+            status: "running",
+            step: 4,
+            label: "Filling 2 gaps",
+          },
+        })}
+      />,
+    );
+    // The amber deepest identity + the coarse per-round meta line.
+    expect(getByText("Deepest research")).toBeInTheDocument();
+    expect(getByText(/round 3 · 62 sources · ~70% covered · 24 min/)).toBeInTheDocument();
+    // It reuses the deep_research timeline — all eight stages, step 4 active (3 done).
+    expect(getByText("Cross-check")).toBeInTheDocument();
+    expect(container.querySelectorAll(".fb-drp-step.done")).toHaveLength(3);
+    expect(container.querySelectorAll(".fb-drp-step.active")).toHaveLength(1);
+    expect(getByText("Filling 2 gaps")).toBeInTheDocument();
+  });
 });
 
 describe("chart & lab_chart views", () => {

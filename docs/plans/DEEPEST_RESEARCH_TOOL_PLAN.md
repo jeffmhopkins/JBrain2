@@ -1,18 +1,37 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8◻️
+> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8✅
 
-**R8 in progress (2026-07-22).** GUI gate **settled: variant A — the backgrounded
+**Finish-off pass (2026-07-22).** The three remaining threads closed:
+- **Tool-aware report dedup** (was an R7 sub-item) — migration `0148` widens the dedup key
+  to `(question_hash, tool)` (tool NOT NULL DEFAULT 'deep_research', existing rows
+  backfilled); `persist_report` conflicts on it and `deep_research` tags the row
+  `deepest_research` for a deepest run — so a deep and a deepest report on one question
+  coexist. (The DB coexistence test runs in CI; the code path is verified structurally.)
+- **Resume path** (was an R7 sub-item) — `deepest_run.py` `resume_deepest`: atomically
+  **claims** an interrupted run (exactly-once via `claim_resume`), rehydrates its
+  question/session/ceiling from the checkpoint, and re-drives — a coverage-equivalent
+  report (the gate's bar, not byte-equality). `_seconds_left` re-derives the remaining
+  wall-clock from the checkpoint's absolute-UTC deadline. Fake-tested (claim → re-drive;
+  decline-when-unclaimable). `TreeState.for_resume` is retained for a future *continue-
+  from-round*.
+- **R8 data path** — the `deepest_run` **tool-view** is registered (`views/registry.tsx`
+  → `DeepestRunCard`, extracted to `DeepResearchProgress.tsx` to break the cycle), and R6
+  now **attaches that view to its progress turn** (`step["view"]` shape), so the run
+  replays as the backgrounded timeline card on reopen (§3.5). Only *live* in-place
+  delivery into an already-open surface stays deferred (§8 — no per-session channel).
+
+**R8 landed (2026-07-22).** GUI gate **settled: variant A — the backgrounded
 `deep_research` card** (owner, three-way review over `docs/mocks/deepest-research/compare.html`;
 folded into `DESIGN.md` §"Deepest research — the in-flight surface"). The presentational
 component landed: **`DeepestRunCard`** (`FullBrainSurface.tsx`) wraps the unchanged
 `DeepResearchProgress` timeline + `SubagentFan`, adding only the amber "deepest" identity
 badge + a coarse per-round meta line; `.fb-deepest-*` styles reuse the `.fb-drp-*`/`.fb-sa-*`
 machinery. 3 vitest tests (badge + round line + timeline reuse + fan mount + done-state);
-biome + the existing `DeepResearchProgress` suite green. **Remaining in R8:** the data path
-— threading a live/finished deepest run's state (from R6's transcript ticks or a run-state
-read) into `DeepestRunCard` inside `FullBrainSurface`'s render, and the `deep_research_report`
-provenance extras (tiers / task-sub counts / resumed). That wiring is the last integration.
+biome + the existing `DeepResearchProgress` suite green. **The data path is now wired** (see
+the finish-off pass above): the `deepest_run` tool-view renders `DeepestRunCard` from a
+run-state payload, and R6 attaches that view to its progress turn, so the run replays as the
+card on reopen. Only *live* in-place delivery (§8) remains deferred.
 
 **R1 landed (2026-07-22).** The adaptive loop shipped as `deep_research(mode="deepest")`
 — in-request, depth-1, no second agent tier yet. The single fixed refill became a

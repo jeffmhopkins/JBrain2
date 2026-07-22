@@ -168,3 +168,49 @@ async def run_deepest(
                 coverage_label="the run failed — nothing was saved",
             )
     return status
+
+
+def _seconds_left(deadline_utc: datetime | None) -> float:
+    """Remaining wall-clock from a checkpoint's ABSOLUTE deadline — restart-safe (a monotonic
+    clock would be meaningless across the restart). None (unbounded) falls back to the default."""
+    if deadline_utc is None:
+        return float(DEEPEST_DEFAULT_WALL_CLOCK_S)
+    return max(0.0, (deadline_utc - datetime.now(UTC)).total_seconds())
+
+
+async def resume_deepest(
+    *,
+    principal_id: str,
+    run_id: str,
+    maker: object,
+    service: object,
+    progress: DeepestProgressChannel,
+    run_state: ModuleType = rrs,
+) -> str | None:
+    """Resume a background run interrupted by a restart. Atomically **claims** the run
+    (exactly-once — a second process, or a retry, gets None), rehydrates its question /
+    session / ceiling from the checkpoint, and re-drives it — producing a coverage-equivalent
+    report over the accumulated library (the report persist dedups on `(question_hash,
+    tool)`, so the finished report replaces the run's own earlier partial, never a deep one).
+    Returns the terminal status, or None if the run couldn't be claimed (already claimed, not
+    running, or gone). The tree's committed counters are available via `TreeState.for_resume`
+    for a future *continue-from-round*; this entry re-runs the pipeline, which the gate's
+    coverage-equivalent bar (not byte-equality — the LLM calls are non-seeded) permits."""
+    ext_ctx = run_state.run_state_context(principal_id)
+    if not await run_state.claim_resume(maker, ext_ctx, run_id):
+        return None  # not ours to resume (already claimed / finished)
+    st = await run_state.load(maker, ext_ctx, run_id)
+    if st is None or st.status != "running":
+        return None
+    return await run_deepest(
+        principal_id=principal_id,
+        run_id=run_id,
+        session_id=st.session_id or "",
+        question=st.question,
+        maker=maker,
+        service=service,
+        progress=progress,
+        budget_tokens=st.ceiling_tokens,
+        wall_clock_s=_seconds_left(st.wall_clock_deadline),
+        run_state=run_state,
+    )

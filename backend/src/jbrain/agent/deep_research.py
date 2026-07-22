@@ -533,6 +533,9 @@ class DeepResearchService:
             revised=revised,
             coverage_limited=coverage_limited,
             source_mode=source_mode,
+            # Tag the library row so a deepest report doesn't clobber a deep one on the
+            # same question (0148 tool-aware dedup).
+            tool="deepest_research" if deepest else "deep_research",
         )
         return ToolOutput(
             _frame(
@@ -573,6 +576,7 @@ class DeepResearchService:
         revised: bool,
         coverage_limited: bool,
         source_mode: str = _DEFAULT_SOURCE_MODE,
+        tool: str = "deep_research",
     ) -> None:
         """Write the finished report into the library (best-effort). None maker (headless/test)
         or any DB error is swallowed — the report the owner already sees never depends on it."""
@@ -593,6 +597,7 @@ class DeepResearchService:
                 truncated=any(r.truncated for r in roster),
                 sources=[{"url": ws.url, "title": ws.title} for ws in sources],
                 source_mode=source_mode,
+                tool=tool,
             )
         except Exception:  # noqa: BLE001 - best-effort; the report already rendered
             log.warning("deep_research.persist_failed", exc_info=True)
