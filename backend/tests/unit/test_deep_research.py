@@ -829,8 +829,8 @@ async def test_deepest_stops_on_diminishing_returns() -> None:
     out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})
     assert _refills(spawn) == 1
     assert out.view is not None  # type: ignore[attr-defined]
-    assert out.view.data["rounds"] == 2
-    assert out.view.data["coverage_limited"] is False
+    assert out.view.data["rounds"] == 2  # type: ignore[attr-defined]
+    assert out.view.data["coverage_limited"] is False  # type: ignore[attr-defined]
 
 
 async def test_deepest_respects_the_round_cap() -> None:
@@ -842,7 +842,7 @@ async def test_deepest_respects_the_round_cap() -> None:
     out = await _svc(router, spawn).research(_ctx(), {"question": "q", "mode": "deepest"})
     assert _refills(spawn) == DR_DEEPEST_MAX_ROUNDS
     assert out.view is not None  # type: ignore[attr-defined]
-    assert out.view.data["rounds"] == 1 + DR_DEEPEST_MAX_ROUNDS
+    assert out.view.data["rounds"] == 1 + DR_DEEPEST_MAX_ROUNDS  # type: ignore[attr-defined]
 
 
 async def test_standard_mode_runs_exactly_one_gap_round() -> None:

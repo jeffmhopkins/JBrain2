@@ -51,7 +51,7 @@ class _FakePush:
 
 def _channel(**kw: Any) -> tuple[DeepestProgressChannel, _FakeTranscript, _FakeBus, _FakePush]:
     tr, bus, push = _FakeTranscript(**kw), _FakeBus(), _FakePush()
-    ch = DeepestProgressChannel(transcript=tr, notify=bus, push=push, push_tokens=["tok-1"])
+    ch = DeepestProgressChannel(transcript=tr, notify=bus, push=push, push_tokens=["tok-1"])  # type: ignore[arg-type]
     return ch, tr, bus, push
 
 
@@ -100,7 +100,7 @@ async def test_progress_is_best_effort_a_transcript_failure_never_propagates() -
 
 async def test_no_push_tokens_means_no_poke() -> None:
     tr, bus, push = _FakeTranscript(), _FakeBus(), _FakePush()
-    ch = DeepestProgressChannel(transcript=tr, notify=bus, push=push, push_tokens=[])
+    ch = DeepestProgressChannel(transcript=tr, notify=bus, push=push, push_tokens=[])  # type: ignore[arg-type]
     await ch.round(OWNER, session_id="s", run_id="r", round_no=1, findings=1, coverage_label="x")
     assert push.pokes == []  # no tokens → no poke, but the turn + nudge still happen
     assert tr.answers and bus.published
