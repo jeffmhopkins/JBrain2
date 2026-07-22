@@ -42,6 +42,7 @@ to skip a stage), and the research children corroborate proportional to source a
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import structlog
@@ -58,6 +59,10 @@ from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.types import LlmTurn, TextChunk, UserMessage
 
 log = structlog.get_logger()
+
+# The background deepest driver's per-round hook (R7): `(round_no, findings_count)` after
+# gather and each committed gap round, so the driver checkpoints + posts progress.
+RoundHook = Callable[[int, int], Awaitable[None]]
 
 _PROMPTS = Path(__file__).parent / "prompts"
 _PLAN = load_prompt(_PROMPTS / "deep_research_plan.prompt")
@@ -306,7 +311,13 @@ class DeepResearchService:
         # DB skips persistence (the report still renders), so persist is always best-effort.
         self._maker = maker
 
-    async def research(self, ctx: ToolContext, args: dict) -> str:
+    async def research(
+        self, ctx: ToolContext, args: dict, *, on_round: RoundHook | None = None
+    ) -> str:
+        # `on_round(round_no, findings)` is the background deepest driver's per-round hook
+        # (R7): it fires after gather and after each committed gap round so the driver can
+        # checkpoint the run state and post progress to the chat. None on the in-request
+        # path (and every standard run), so the hook is inert there.
         # --- guards (mirror the spawn fan: owner turn, depth 0, a seeded tree) -----
         if ctx.tree is None:
             return _refuse("deep research is only available in an interactive owner turn.")
@@ -385,6 +396,10 @@ class DeepResearchService:
             # slice), and keep the critique's reserved through the analyst + refill fans.
             ctx.tree.stage_reserve = DR_CRITIQUE_RESERVE
 
+            # First committed round (gather): checkpoint + progress for a background run.
+            if on_round is not None:
+                await on_round(1, sum(1 for r in gather if r.ok))
+
             # --- (3) ANALYZE — a review sub-agent fed the researchers' findings ----
             # The cross-agent handoff: an analyst reads the whole gather roster (as escaped
             # data) and cross-checks it before anything is written.
@@ -443,6 +458,9 @@ class DeepResearchService:
                     break
                 useful_rounds += 1
                 refill += round_children
+                # A committed gap round: checkpoint + progress for a background run.
+                if on_round is not None:
+                    await on_round(1 + useful_rounds, sum(1 for r in gather + refill if r.ok))
                 # Diminishing returns (mechanical): a round that adds too few NEW sources
                 # isn't worth another — stop before spending the next round's budget.
                 now_sources = len(

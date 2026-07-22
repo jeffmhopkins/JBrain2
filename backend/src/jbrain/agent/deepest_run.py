@@ -24,10 +24,20 @@ R5–R7; the builder itself is pure and DB-free.
 
 from __future__ import annotations
 
+import contextlib
+from datetime import UTC, datetime, timedelta
+from types import ModuleType
+
+import structlog
+
 from jbrain.agent.agents import JERV_TOOLS
+from jbrain.agent.deepest_progress import DeepestProgressChannel
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.session import read_context
 from jbrain.agent.tree import TreeState
+from jbrain.external import research_run_state as rrs
+
+log = structlog.get_logger()
 
 # Owner-set per-run ceiling defaults (open decision §9.2 — to be grounded on-box). The
 # ceiling is the HARD terminal bound: a run stops when it reaches the token budget or the
@@ -62,3 +72,99 @@ def build_deepest_run_context(
         tree=TreeState.rooted_deepest(budget_tokens=budget_tokens, wall_clock_s=wall_clock_s),
         run_id=run_id,
     )
+
+
+async def run_deepest(
+    *,
+    principal_id: str,
+    run_id: str,
+    session_id: str,
+    question: str,
+    maker: object,
+    service: object,
+    progress: DeepestProgressChannel,
+    budget_tokens: int = DEEPEST_DEFAULT_CEILING_TOKENS,
+    wall_clock_s: float = DEEPEST_DEFAULT_WALL_CLOCK_S,
+    timezone: str | None = None,
+    run_state: ModuleType = rrs,
+) -> str:
+    """The background deepest-research run — the coroutine `DeepestRunLane.launch` supervises.
+    It composes the earlier waves into one run: open the checkpoint row (R5), build the
+    trusted two-tier context (R4), drive `DeepResearchService` in deepest mode with a
+    per-round hook that checkpoints the committed round (R5) and posts progress to the chat
+    (R6), then mark the run done and announce it — or, on any failure, mark it failed and
+    still post a notice. **Fail-closed**: it never raises into the lane (the lane's watchdog
+    handles a hang; this handles a crash). Returns the terminal status for the caller/tests.
+
+    `service`, `run_state`, and `progress` are injected so the whole composition is
+    unit-testable with fakes — no LLM, no DB, no live tree."""
+    ext_ctx = run_state.run_state_context(principal_id)
+    ctx = build_deepest_run_context(
+        principal_id,
+        agent_session_id=session_id,
+        run_id=run_id,
+        budget_tokens=budget_tokens,
+        wall_clock_s=wall_clock_s,
+        timezone=timezone,
+    )
+    owner_ctx = ctx.session  # owner-scoped (KB-less); the progress record_answer is owner-RLS
+    tree = ctx.tree
+    deadline_utc = datetime.now(UTC) + timedelta(seconds=wall_clock_s)
+
+    with contextlib.suppress(Exception):
+        await run_state.create_run(
+            maker,
+            ext_ctx,
+            run_id=run_id,
+            session_id=session_id,
+            question=question,
+            ceiling_tokens=budget_tokens,
+            wall_clock_deadline=deadline_utc,
+        )
+
+    async def on_round(round_no: int, findings: int) -> None:
+        # Commit the round's state (so a restart rewinds to here) and post progress — both
+        # best-effort so a persistence/notify hiccup never stalls the research itself.
+        with contextlib.suppress(Exception):
+            await run_state.checkpoint(
+                maker,
+                ext_ctx,
+                run_id=run_id,
+                round=round_no,
+                spent_tokens=tree.spent if tree else 0,
+                agents_spawned=tree.agents_spawned if tree else 0,
+                state={"round": round_no, "findings": findings},
+            )
+        await progress.round(
+            owner_ctx,
+            session_id=session_id,
+            run_id=run_id,
+            round_no=round_no,
+            findings=findings,
+            coverage_label="in progress",
+        )
+
+    status = "failed"
+    try:
+        await service.research(  # type: ignore[attr-defined]
+            ctx, {"question": question, "mode": "deepest"}, on_round=on_round
+        )
+        status = "done"
+    except Exception:  # noqa: BLE001 — a run failure is a recorded status, never a lane crash
+        log.warning("deepest_run.failed", run_id=run_id, exc_info=True)
+
+    with contextlib.suppress(Exception):
+        await run_state.finish(maker, ext_ctx, run_id=run_id, status=status)
+    with contextlib.suppress(Exception):
+        if status == "done":
+            await progress.done(owner_ctx, session_id=session_id, run_id=run_id, question=question)
+        else:
+            await progress.round(
+                owner_ctx,
+                session_id=session_id,
+                run_id=run_id,
+                round_no=0,
+                findings=0,
+                coverage_label="the run failed — nothing was saved",
+            )
+    return status

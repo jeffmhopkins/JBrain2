@@ -47,3 +47,110 @@ def test_ceiling_defaults_apply_and_override() -> None:
         "o", agent_session_id="s", run_id="r", budget_tokens=1_000_000, wall_clock_s=60
     )
     assert custom.tree is not None and custom.tree.tree_budget == 1_000_000
+
+
+# --- the run driver (R7): composes run-state + DeepResearchService + progress ----------
+
+from jbrain.agent.deepest_run import run_deepest  # noqa: E402
+from jbrain.db.session import SessionContext  # noqa: E402
+
+
+class _FakeService:
+    """Stands in for DeepResearchService: records the research call, drives the per-round
+    hook, and (optionally) fails — so the driver's composition is observable without an LLM."""
+
+    def __init__(self, *, rounds=((1, 3), (2, 5)), boom: bool = False) -> None:
+        self.calls: list[dict] = []
+        self._rounds = rounds
+        self._boom = boom
+
+    async def research(self, ctx, args, *, on_round=None):  # noqa: ANN001, ANN003
+        self.calls.append({"args": args, "max_depth": ctx.tree.max_depth if ctx.tree else None})
+        if self._boom:
+            raise RuntimeError("research blew up")
+        if on_round is not None:
+            for rn, f in self._rounds:
+                await on_round(rn, f)
+        return "THE REPORT"
+
+
+class _FakeRunState:
+    """Stands in for the research_run_state repo module."""
+
+    def __init__(self) -> None:
+        self.created: list[str] = []
+        self.checkpoints: list[dict] = []
+        self.finished: list[str] = []
+
+    def run_state_context(self, principal_id: str) -> SessionContext:
+        return SessionContext(
+            principal_id=principal_id, principal_kind="owner", domain_scopes=("external",)
+        )
+
+    async def create_run(self, maker, ctx, *, run_id, session_id, question, ceiling_tokens, wall_clock_deadline):  # noqa: ANN001, ANN003, E501
+        self.created.append(run_id)
+        return "row-id"
+
+    async def checkpoint(self, maker, ctx, *, run_id, round, spent_tokens, agents_spawned, state):  # noqa: ANN001, ANN003, A002
+        self.checkpoints.append({"round": round, "findings": state.get("findings")})
+        return True
+
+    async def finish(self, maker, ctx, *, run_id, status):  # noqa: ANN001, ANN003
+        self.finished.append(status)
+        return True
+
+
+class _FakeProgress:
+    def __init__(self) -> None:
+        self.rounds: list[tuple] = []
+        self.dones: list[str] = []
+
+    async def round(self, owner_ctx, *, session_id, run_id, round_no, findings, coverage_label):  # noqa: ANN001, ANN003
+        self.rounds.append((round_no, findings, coverage_label))
+
+    async def done(self, owner_ctx, *, session_id, run_id, question):  # noqa: ANN001, ANN003
+        self.dones.append(question)
+
+
+async def test_driver_composes_a_full_run() -> None:
+    """Happy path: opens the checkpoint, drives research in DEEPEST mode with a two-tier
+    tree, checkpoints + posts progress each committed round, then marks done and announces."""
+    svc, rs, prog = _FakeService(), _FakeRunState(), _FakeProgress()
+    status = await run_deepest(
+        principal_id="owner-1",
+        run_id="run-1",
+        session_id="sess-1",
+        question="how does X actually work",
+        maker=object(),
+        service=svc,  # type: ignore[arg-type]
+        progress=prog,  # type: ignore[arg-type]
+        run_state=rs,  # type: ignore[arg-type]
+    )
+    assert status == "done"
+    assert svc.calls[0]["args"]["mode"] == "deepest"
+    assert svc.calls[0]["max_depth"] == 2  # the trusted context seeded the two-tier tree
+    assert rs.created == ["run-1"]
+    assert [c["round"] for c in rs.checkpoints] == [1, 2]  # every committed round checkpointed
+    assert rs.finished == ["done"]
+    assert [r[0] for r in prog.rounds] == [1, 2]  # per-round progress to the chat
+    assert prog.dones == ["how does X actually work"]
+
+
+async def test_driver_fails_closed_on_a_research_error() -> None:
+    """A research failure marks the run failed, posts a failure notice, and never announces
+    completion — and it does NOT raise (the lane must not crash)."""
+    svc, rs, prog = _FakeService(boom=True), _FakeRunState(), _FakeProgress()
+    status = await run_deepest(
+        principal_id="owner-1",
+        run_id="run-2",
+        session_id="sess-2",
+        question="q",
+        maker=object(),
+        service=svc,  # type: ignore[arg-type]
+        progress=prog,  # type: ignore[arg-type]
+        run_state=rs,  # type: ignore[arg-type]
+    )
+    assert status == "failed"
+    assert rs.finished == ["failed"]
+    assert prog.dones == []  # no completion announced
+    assert prog.rounds and "failed" in prog.rounds[-1][2]  # a failure notice was posted

@@ -769,6 +769,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # sub-fan (DEEPEST_RESEARCH_TOOL_PLAN.md, R2), reached only by the research_deep
         # persona allowlist, never the curator wildcard.
         "decompose_research",
+        # deepest_research is `web`-classed + NEVER_DEFAULT: jerv's enqueue-and-return
+        # kickoff for a no-holds background run (R7), never the curator wildcard.
+        "deepest_research",
         # The deep-research report library (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md) —
         # `web`-classed (jerv-only), reading/managing the research-report corpus via a
         # purpose-built scope, never the curator wildcard.
@@ -1253,6 +1256,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "decompose_research",
             1,
             "1570a30ddcb01a40862c551246e567df9fe739f85ba79b819980d4eeeef37574",
+        ),
+        "deepest_research.tool": (
+            "deepest_research",
+            1,
+            "2ce3fab6919ea95b910dcfee09a0862707fb7f6745d81661a45e6f9ed64e62e4",
         ),
         "list_research_report.tool": (
             "list_research_report",

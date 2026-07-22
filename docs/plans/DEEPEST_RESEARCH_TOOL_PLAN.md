@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7◻️ R8◻️
+> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8◻️
 
 **R1 landed (2026-07-22).** The adaptive loop shipped as `deep_research(mode="deepest")`
 — in-request, depth-1, no second agent tier yet. The single fixed refill became a
@@ -101,6 +101,32 @@ nudge whose `ref` is the session id (the app deep-links to the run's chat), and 
 FCM content-free `poke` to wake a closed app. Everything is **best-effort** — each leg
 swallows its own error, so a progress hiccup never crashes or stalls the run. 5 tests
 (fakes, no DB). Live in-place streaming into an already-open surface stays deferred (§8).
+
+**R7 landed (2026-07-22).** The integration wave — the backend is now functionally
+complete end to end:
+- **The per-round hook** — `DeepResearchService.research(..., on_round=…)` fires after
+  gather and each committed gap round (inert on the in-request path, which passes nothing).
+- **The run driver** — `deepest_run.py` `run_deepest`: opens the checkpoint (R5), builds the
+  trusted two-tier context (R4), drives `DeepResearchService` in deepest mode with a hook
+  that checkpoints + posts progress (R5+R6) each round, then marks done + announces — or, on
+  any error, marks failed and posts a notice. **Fail-closed** (never raises into the lane).
+- **The kickoff tool** — `deepest_research` (`.tool` + `deepest_tool.py`
+  `DeepestKickoffService`/`DeepestResearchRef`): jerv-only, owner-turn-only, depth-0-only,
+  **enqueue-and-return** — mints a run id, `DeepestRunLane.launch`, hands the turn back with
+  a "run started" acknowledgement; a run already in flight is reported, not queued.
+  `web`-classed + `NEVER_DEFAULT`; wired in the composition root with the lane + progress
+  channel (transcript leg; the NotifyBus/FCM legs bind where those transports are available).
+- **Tests** — the driver's happy path + fail-closed (composition, fakes), the kickoff guards
+  + non-blocking launch + already-in-flight path, and the snapshot/version pins for the new
+  tool. 201 passed across the touched suites; ruff + pyright clean.
+
+**Two R7 sub-items remain (both need a live DB, deferred honestly):**
+- **Tool-aware report dedup** — `research_reports` still dedups on `question_hash` alone, so
+  a deep and a deepest report on the same question would clobber. The `(question_hash, tool)`
+  migration + the deepest tool-tag in `persist_report` is a small DB change verified in CI.
+- **The end-to-end kill-mid-run → resume test** — the checkpoint/resume *primitives* (R5) and
+  the driver (R7) are in, but a full kill→rehydrate→continue→coverage-equivalent-report test
+  needs a live DB + a resume entry path; it lands with the dedup change.
 
 A **no-holds** sibling to the in-progress `deep_research` tool
 (`DEEP_RESEARCH_TOOL_PLAN.md`): where `deep_research` is a *bounded,

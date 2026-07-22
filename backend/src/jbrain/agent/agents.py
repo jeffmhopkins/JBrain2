@@ -66,6 +66,12 @@ DEEP_RESEARCH_TOOL = "deep_research"
 # clamp passes it to a research_deep task agent) but never usefully calls it (depth 0).
 DECOMPOSE_TOOL = "decompose_research"
 
+# The no-holds background research primitive (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7):
+# jerv's enqueue-and-return kickoff for an autonomous, two-tier, minutes-to-hours run. Like
+# the other spawn primitives it is `web`-gated and NEVER_DEFAULT (only jerv holds it), and a
+# child never does (the handler refuses at depth > 0).
+DEEPEST_RESEARCH_TOOL = "deepest_research"
+
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather (forecast + history) + hurricane
 # lookups, the local
@@ -141,6 +147,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # The deep-research primitive — jerv orchestrates a bounded research run over the
         # same fan (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
         DEEP_RESEARCH_TOOL,
+        # The deepest-research primitive — jerv kicks off a no-holds background run and
+        # returns immediately (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
+        DEEPEST_RESEARCH_TOOL,
         # The deep-research report library — browse / search / read / show / remove the
         # reports deep_research persisted, the same corpus pattern as the video tools. read_
         # returns a report's FULL text, so a follow-up turn can reference an earlier run
