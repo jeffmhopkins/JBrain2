@@ -52,7 +52,6 @@ def build_deepest_run_context(
     principal_id: str,
     *,
     agent_session_id: str,
-    run_id: str,
     budget_tokens: int = DEEPEST_DEFAULT_CEILING_TOKENS,
     wall_clock_s: float = DEEPEST_DEFAULT_WALL_CLOCK_S,
     timezone: str | None = None,
@@ -61,7 +60,15 @@ def build_deepest_run_context(
     owner identity so it can mint child sessions and cite, KB-less so it (and its children)
     touch no owner-domain data, and a two-tier tree so the `research_deep` fan activates.
     `agent_tools=JERV_TOOLS` is the ceiling children clamp to (a `research_deep` task agent
-    needs `decompose_research` + the web tools, all of which jerv holds)."""
+    needs `decompose_research` + the web tools, all of which jerv holds).
+
+    `run_id` is left None on purpose: `ToolContext.run_id` is an `app.runs` UUID used ONLY
+    to stamp a spawned child's `parent_run_id` (loop.py), and a background orchestrator has
+    no `/chat` turn run backing it — unlike the lane's own `run_id` ("deepest-<uuid>"), which
+    is the run-state/progress key (text), NOT an `app.runs` id. Threading that text key here
+    would make every top-level child spawn's `uuid.UUID(parent_run_id)` raise; None makes the
+    orchestrator's direct children root subagent runs (valid — the `runs` CHECK admits a null
+    parent), and their own runs still parent the deeper tier normally."""
     return ToolContext(
         session=read_context(principal_id, ()),  # owner, KB-less: no domain scope
         scopes=(),
@@ -70,7 +77,7 @@ def build_deepest_run_context(
         depth=0,
         agent_tools=JERV_TOOLS,
         tree=TreeState.rooted_deepest(budget_tokens=budget_tokens, wall_clock_s=wall_clock_s),
-        run_id=run_id,
+        run_id=None,
     )
 
 
@@ -102,7 +109,6 @@ async def run_deepest(
     ctx = build_deepest_run_context(
         principal_id,
         agent_session_id=session_id,
-        run_id=run_id,
         budget_tokens=budget_tokens,
         wall_clock_s=wall_clock_s,
         timezone=timezone,

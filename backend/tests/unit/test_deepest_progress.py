@@ -4,6 +4,7 @@ paths. Proven with fakes — no DB, no real bus — so the assertions are the co
 durable assistant turn (server-authored, no user bubble), a NotifyBus nudge deep-linked
 by session id, an FCM poke, and best-effort semantics (a failure never propagates)."""
 
+import uuid
 from typing import Any
 
 from jbrain.agent.deepest_progress import NOTIFY_KIND, DeepestProgressChannel
@@ -22,6 +23,12 @@ class _FakeTranscript:
     ):
         if self._boom:
             raise RuntimeError("transcript down")
+        # Mirror the real store's coercion (transcript_store.record_answer does
+        # `uuid.UUID(run_id)`): a non-UUID run_id — e.g. the lane's "deepest-<uuid>" key —
+        # must raise here, not be quietly swallowed, so the regression that dropped every
+        # progress turn can never come back unnoticed.
+        if run_id is not None:
+            uuid.UUID(run_id)
         self.answers.append(
             {
                 "session_id": session_id,
@@ -68,7 +75,9 @@ async def test_round_posts_a_server_authored_turn_and_nudges() -> None:
     # (1) a durable assistant-only turn into the initiating session (no user bubble).
     assert len(tr.answers) == 1
     ans = tr.answers[0]
-    assert ans["session_id"] == "sess-1" and ans["run_id"] == "run-1" and ans["kind"] == "assistant"
+    # run_id is None: these are server-authored turns with no agent run, and the lane's
+    # "run-1"-style key is not an `app.runs` UUID (feeding it here dropped every turn).
+    assert ans["session_id"] == "sess-1" and ans["run_id"] is None and ans["kind"] == "assistant"
     assert "round 3" in ans["text"] and "42" in ans["text"] and "still going" in ans["text"]
     # The deepest_run tool-view rides the turn so it replays as the timeline card on reload.
     view = ans["tools"][0]["view"]

@@ -17,15 +17,24 @@ def test_context_is_owner_scoped_but_kb_less() -> None:
     """Owner identity (so it can mint child sessions and cite) but EMPTY domain scopes —
     the orchestrator and its children read no owner-domain data (the health/finance/
     location firewalls never enter the run), exactly like the in-request jerv orchestrator."""
-    ctx = build_deepest_run_context("owner-1", agent_session_id="s1", run_id="r1")
+    ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
     assert ctx.session.principal_id == "owner-1"
     assert ctx.session.principal_kind == "owner"
     assert ctx.session.domain_scopes == ()  # KB-less: cannot read ANY domain, not just cross-domain
     assert ctx.scopes == ()
 
 
+def test_context_run_id_is_none_so_child_spawns_dont_choke_on_the_lane_key() -> None:
+    """`ToolContext.run_id` stamps a spawned child's `parent_run_id` (an `app.runs` UUID),
+    so it must NOT carry the lane's "deepest-<uuid>" run-state key — that text is not a UUID,
+    and threading it made every top-level child spawn's `uuid.UUID(parent_run_id)` raise,
+    silently killing the whole research fan. None makes those children valid root subagent runs."""
+    ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
+    assert ctx.run_id is None
+
+
 def test_context_is_the_only_two_tier_mint_and_has_no_location() -> None:
-    ctx = build_deepest_run_context("owner-1", agent_session_id="s1", run_id="r1")
+    ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
     assert ctx.depth == 0
     assert ctx.tree is not None
     assert ctx.tree.max_depth == DEEPEST_MAX_DEPTH > MAX_DEPTH  # the two-tier seed
@@ -36,17 +45,17 @@ def test_context_clamp_ceiling_covers_a_task_agent() -> None:
     """The orchestrator holds what a research_deep task agent must inherit through the
     parent⊆child clamp — decompose_research plus the web tools — else the clamp would
     strip decompose and the second tier could never spawn."""
-    ctx = build_deepest_run_context("owner-1", agent_session_id="s1", run_id="r1")
+    ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
     assert "decompose_research" in ctx.agent_tools
     assert {"web_search", "web_fetch"} <= ctx.agent_tools
 
 
 def test_ceiling_defaults_apply_and_override() -> None:
-    default = build_deepest_run_context("o", agent_session_id="s", run_id="r")
+    default = build_deepest_run_context("o", agent_session_id="s")
     assert default.tree is not None and default.tree.tree_budget == DEEPEST_DEFAULT_CEILING_TOKENS
     assert DEEPEST_DEFAULT_WALL_CLOCK_S > 0
     custom = build_deepest_run_context(
-        "o", agent_session_id="s", run_id="r", budget_tokens=1_000_000, wall_clock_s=60
+        "o", agent_session_id="s", budget_tokens=1_000_000, wall_clock_s=60
     )
     assert custom.tree is not None and custom.tree.tree_budget == 1_000_000
 

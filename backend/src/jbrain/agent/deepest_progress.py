@@ -159,12 +159,16 @@ class DeepestProgressChannel:
     ) -> None:
         # (1) durable: append the server-authored assistant turn (renders on reopen). The
         # `deepest_run` tool-view rides the turn's `tools` so it replays as the card on load.
+        # run_id is None here on purpose: `agent_turns.run_id` is an `app.runs` UUID FK, but a
+        # deepest lane `run_id` is "deepest-<uuid>" (the run-state key, text) — passing it made
+        # `record_answer`'s `uuid.UUID(run_id)` raise, silently dropping EVERY progress turn.
+        # These are server-authored ticks with no agent run, so None is the honest value.
         if self._transcript is not None:
             try:
                 await self._transcript.record_answer(
                     owner_ctx,
                     session_id=session_id,
-                    run_id=run_id,
+                    run_id=None,
                     assistant_text=body,
                     tools=[view] if view is not None else [],
                 )
