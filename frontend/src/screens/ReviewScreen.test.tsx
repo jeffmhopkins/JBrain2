@@ -165,6 +165,9 @@ describe("ReviewScreen (split inbox)", () => {
       if (path === "/api/notes" && init?.method === "POST") {
         return jsonResponse({ id: "note-new", ...JSON.parse(String(init.body)) });
       }
+      if (path.endsWith("/correction") && init?.method === "POST") {
+        return jsonResponse({ note_id: "note-new", created: true });
+      }
       if (path === "/api/review/resolve-batch" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as {
           decisions: { id: string; action: string }[];
@@ -390,6 +393,43 @@ describe("ReviewScreen (split inbox)", () => {
     expect(screen.getByText("Me")).toBeInTheDocument();
   });
 
+  it("renders the object node's name as the value, not the prose statement", async () => {
+    // The address-display bug: value_json null with the value trapped in the
+    // sentence, but the edge resolved to a Place. The card must show the object
+    // node (like the analysis view / factValue), never the whole statement.
+    const addr: ReviewItem = {
+      id: "inf-addr",
+      kind: "low_confidence_inference",
+      domain: "finance",
+      created_at: "2026-07-23T17:12:00Z",
+      status: "open",
+      resolution: null,
+      resolved_at: null,
+      payload: {
+        entity_ref: "acct",
+        predicate: "address",
+        qualifier: "",
+        statement: "The account address is 6070 Chapman Street Cocoa, Florida 32927.",
+        value_json: null,
+        object_name: "6070 Chapman Street Cocoa, Florida 32927",
+        reasons: ["below_threshold"],
+        summary: "hold for review (below_threshold): The account address is 6070 Chapman Street…",
+        outcomes: { accept: "the fact is recorded and pinned.", reject: "the fact is discarded." },
+      },
+    };
+    serve([addr], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/hold for review/);
+    fireEvent.click(screen.getByRole("button", { name: /hold for review/ }));
+
+    const proposed = screen.getByLabelText("proposed fact");
+    // The place, not the "The account address is …" sentence value_label would floor to.
+    expect(
+      within(proposed).getByText("6070 Chapman Street Cocoa, Florida 32927"),
+    ).toBeInTheDocument();
+    expect(within(proposed).queryByText(/The account address is/)).not.toBeInTheDocument();
+  });
+
   it("fills the predicate picker from on-demand suggestions when none are baked in", async () => {
     // A card with no predicate_suggestions in its payload (e.g. filed before the
     // picker existed) fetches them on demand.
@@ -427,7 +467,7 @@ describe("ReviewScreen (split inbox)", () => {
     fireEvent.click(screen.getByRole("button", { name: /name\.given/ }));
     fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
     const noteCall = await waitFor(() => {
-      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/correction"));
       if (!call) throw new Error("no note filed yet");
       return call;
     });
@@ -494,11 +534,11 @@ describe("ReviewScreen (split inbox)", () => {
     // resolves as corrected linked to it — never a direct value write.
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/notes",
+        expect.stringMatching(/\/correction$/),
         expect.objectContaining({ method: "POST" }),
       ),
     );
-    const noteCall = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+    const noteCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/correction"));
     const body = JSON.parse(String((noteCall?.[1] as RequestInit).body)) as {
       domain: string;
       body: string;
@@ -544,7 +584,7 @@ describe("ReviewScreen (split inbox)", () => {
     fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
 
     const noteCall = await waitFor(() => {
-      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/correction"));
       if (!call) throw new Error("no note filed yet");
       return call;
     });
@@ -827,7 +867,7 @@ describe("ReviewScreen (split inbox)", () => {
     // relation change (the #7 channel — never a direct predicate write).
     fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
     const noteCall = await waitFor(() => {
-      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/correction"));
       if (!call) throw new Error("no note filed yet");
       return call;
     });
@@ -870,7 +910,7 @@ describe("ReviewScreen (split inbox)", () => {
     // change (the #7 channel — never a direct assertion write).
     fireEvent.click(screen.getByRole("button", { name: "approve correction" }));
     const noteCall = await waitFor(() => {
-      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/correction"));
       if (!call) throw new Error("no note filed yet");
       return call;
     });
@@ -895,7 +935,7 @@ describe("ReviewScreen (split inbox)", () => {
 
     // A real note is filed in the item's domain, spelling out the fix...
     const noteCall = await waitFor(() => {
-      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/correction"));
       if (!call) throw new Error("no note filed yet");
       return call;
     });
@@ -1149,7 +1189,7 @@ describe("ReviewScreen (split inbox)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "file correction" }));
     const noteCall = await waitFor(() => {
-      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/correction"));
       if (!call) throw new Error("no note filed yet");
       return call;
     });

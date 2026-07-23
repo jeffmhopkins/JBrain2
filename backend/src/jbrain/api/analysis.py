@@ -6,11 +6,13 @@ The response shapes are a frozen contract with the frontend — change them
 only with a coordinated frontend PR.
 """
 
+import uuid
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from jbrain.analysis.repo import (
     REVIEW_STATUSES,
@@ -23,12 +25,23 @@ from jbrain.api.deps import OwnerDep, PrincipalDep
 from jbrain.api.images import MAX_IMAGE_BYTES, sniff_image_type, sniff_path
 from jbrain.api.notes import BlobStoreDep, ctx_for
 from jbrain.embed import EmbedClient
+from jbrain.notes.repo import SqlNotesRepo
+from jbrain.notes.service import UnknownDomain
+from jbrain.workflow import events as wf_events
 
 router = APIRouter()
 
 
 def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
     return cast(SqlAnalysisRepo, request.app.state.analysis_repo)
+
+
+def get_notes_repo(request: Request) -> SqlNotesRepo:
+    return cast(SqlNotesRepo, request.app.state.notes_repo)
+
+
+def get_session_maker(request: Request) -> "async_sessionmaker":
+    return cast("async_sessionmaker", request.app.state.session_maker)
 
 
 def get_embed_client(request: Request) -> EmbedClient:
@@ -171,6 +184,59 @@ async def resolve_review(
     if item is None:
         raise HTTPException(status_code=404, detail="review item not found")
     return item
+
+
+class ReviewCorrectionRequest(BaseModel):
+    body: str = Field(min_length=1)
+    domain: str = "general"
+
+
+@router.post("/review/{item_id}/correction", status_code=201)
+async def file_review_correction(
+    item_id: str, body: ReviewCorrectionRequest, owner: OwnerDep, request: Request
+) -> dict[str, Any]:
+    """Mint the owner CORRECTION note behind the review card's "correct it" flow —
+    provenance=owner_correction, the #7 channel (docs/reference/DESIGN.md "Edit model").
+
+    An owner correction "out-argues the graph": its surface-attested facts extract at
+    full weight and force-supersede + pin the current head (supersession.decide), so a
+    fix APPLIES instead of colliding with what it corrects. Filing it as a plain `human`
+    note — the prior behaviour — routed it back through normal extraction, where a
+    same-value restatement of a prose-valued attribute (value_json null) reads as a fresh
+    conflict and files another attribute_collision card: the correction spawned reviews
+    instead of resolving one. EXPLICITLY owner-gated like the wiki correction path: minting
+    an owner_correction is the one privileged write that force-supersedes the graph. The
+    card is resolved separately (action `correct`, carrying this note id) once the id is in
+    hand, mirroring the wiki flow's create-then-drive shape."""
+    ctx = ctx_for(owner)
+    maker = get_session_maker(request)
+    try:
+        note, created = await get_notes_repo(request).create_note(
+            ctx,
+            client_id=f"correction-{uuid.uuid4().hex}",
+            domain=body.domain,
+            destination=None,
+            body=body.body,
+            provenance="owner_correction",
+            source_ref=f"review:{item_id}",
+        )
+    except UnknownDomain:
+        raise HTTPException(status_code=400, detail="unknown domain") from None
+    if created:
+        # Drive ingestion via the note.created event exactly as POST /notes does — the
+        # dispatcher resolves it to ingest_note; the correction then flows extract →
+        # integrate → force-supersede + pin. Best-effort: a dropped emit is re-driven by
+        # the pending-notes reconciler, so it never blocks the create.
+        await wf_events.emit_event(
+            maker,
+            ctx,
+            type=wf_events.NOTE_CREATED,
+            domain_code=note.domain,
+            payload={"note_id": note.id},
+            enqueued=wf_events.shadow_enqueued("ingest_note", {"note_id": note.id}),
+            principal_id=ctx.principal_id,
+        )
+    return {"note_id": note.id, "created": created}
 
 
 class BatchDecision(BaseModel):

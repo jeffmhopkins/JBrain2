@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-07-13
+> **Status:** Living · **Last verified:** 2026-07-23
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -198,12 +198,19 @@ reschedules. Past-tense references convert `expected` → `occurred`.
   to ground, a paraphrased statement), so the owner sees a review card for a fact
   already on the graph. `arbiter.dedup_intent_facts` (run after predicate
   canonicalization, before the weight signals) groups facts on a base key that
-  EXCLUDES the object — entity.predicate.qualifier, assertion, statement,
+  EXCLUDES the object AND the statement — entity.predicate.qualifier, assertion,
   value_json — then within a group an object-less copy is SUBSUMED by any
   object-bearing sibling and dropped, while edges to DIFFERENT objects (enumerated
   children, two distinct medications) all survive even when their statements
   coincide. The surviving copy is the one the arbiter would have committed
-  (grounded, not inferred), never the drifted twin.
+  (grounded, not inferred), never the drifted twin. **The statement is out of the
+  key on purpose**: a prose-valued attribute puts its value in the SENTENCE and
+  leaves value_json null (an `address` the model rendered nine ways — "the address
+  should be…", "corrected address:…", "account address set to…"), so keying on
+  statement would fragment one value into nine groups and file an
+  attribute_collision card per paraphrase (the account-address explosion). Value
+  distinction rides value_json (the datum note.extract requires for every non-edge
+  fact) and the object node, never the free-text rendering.
 - **Domain placement [decided: inherit + promote]**: an entity inherits the
   domain of the note that created it; a later mention from a *less*
   restrictive domain proposes promotion via the review inbox. Facts always

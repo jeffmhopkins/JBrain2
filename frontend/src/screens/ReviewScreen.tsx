@@ -80,7 +80,9 @@ function ListRow({ item, selectable, selected, onToggle, onOpen }: ListRowProps)
           <span className="rrow-fact fact-edge">
             <span className="edge-path">{edgePath(p.predicate, p.qualifier)}</span>
             <span className="edge-arrow"> → </span>
-            <span className="edge-value">{valueLabel(p.valueJson, p.statement ?? "")}</span>
+            <span className="edge-value">
+              {p.objectName ?? valueLabel(p.valueJson, p.statement ?? "")}
+            </span>
           </span>
         )}
         <span className="rrow-meta">
@@ -134,7 +136,13 @@ function Detail({ item, lane, queue, position, onClose, onAdvance, onNav }: Deta
   // proposed relation) plus free entry; the value is free text, or a typed
   // predicate's members as chips.
   const editable = EDITABLE_FACT_KINDS.has(item.kind) && parsed.predicate !== null;
-  const originalValue = editable ? valueLabel(parsed.valueJson, parsed.statement ?? "") : "";
+  // Prefer the resolved object node's name (an `address` -> a Place) over the
+  // prose statement, mirroring factValue: this is both what the card shows and
+  // what pre-fills the correction composer, so a fix reads "value should be 6070
+  // Chapman Street", never the whole sentence it was buried in.
+  const originalValue = editable
+    ? (parsed.objectName ?? valueLabel(parsed.valueJson, parsed.statement ?? ""))
+    : "";
   const [editValue, setEditValue] = useState(originalValue);
   const [editingValue, setEditingValue] = useState(false);
   const valueEdited = editable && editValue.trim().length > 0 && editValue.trim() !== originalValue;

@@ -49,6 +49,7 @@ from jbrain.analysis.display import (
     inference_display,
     mark_snippet,
     merge_display,
+    object_or_value,
     promotion_display,
     truncation_display,
     value_label,
@@ -655,14 +656,21 @@ class AnalysisPipeline:
             # source of truth, no snapshot drift between the two surfaces.
             card_value_json = fact.value_json
             card_statement = fact.statement
+            card_object_name: str | None = None
             if held_id is not None:
                 row = (
                     await session.execute(
-                        select(Fact.value_json, Fact.statement).where(Fact.id == held_id)
+                        select(Fact.value_json, Fact.statement, Fact.object_entity_id).where(
+                            Fact.id == held_id
+                        )
                     )
                 ).first()
                 if row is not None:
                     card_value_json, card_statement = row.value_json, row.statement
+                    # An edge that resolved to an object entity renders that node's
+                    # name as its value (like factValue / the analysis view), not the
+                    # prose statement value_label would floor to.
+                    card_object_name = await self._entity_name(session, row.object_entity_id)
             # A typed (closed-enum) predicate carries its members so the card can
             # offer a pick-a-member correction instead of free text — gender →
             # {male, female, unknown}. Empty (and so omitted) for free-text edges.
@@ -685,6 +693,9 @@ class AnalysisPipeline:
                         # value`, so the owner sees the exact fact they're
                         # approving — not only the prose statement.
                         "value_json": card_value_json,
+                        # The object node's name when the edge resolved to one, so
+                        # the proposed value renders like the analysis view.
+                        **({"object_name": card_object_name} if card_object_name else {}),
                         **({"enum_values": list(enum_members)} if enum_members else {}),
                         "weight": pf.weight,
                         "reasons": list(pf.review_reasons),
@@ -2139,6 +2150,7 @@ class AnalysisPipeline:
             note_id,
             valid_from,
             conflict=conflict,
+            object_entity_id=object_entity.id if object_entity else None,
             snippet=_cite(anchor, chunks),
         )
         # Reciprocity: a directed relationship edge inserted ACTIVE gets its
@@ -2208,6 +2220,17 @@ class AnalysisPipeline:
             )
         return new_fact.id
 
+    async def _entity_name(self, session: AsyncSession, entity_id: uuid.UUID | None) -> str | None:
+        """The canonical name of an entity id, or None. Used to render an edge's
+        OBJECT node as a card's value (an `address` -> Place), so the review card
+        shows what the analysis view shows rather than the prose statement."""
+        if entity_id is None:
+            return None
+        row = (
+            await session.execute(select(Entity.canonical_name).where(Entity.id == entity_id))
+        ).first()
+        return row[0] if row else None
+
     async def _apply_decision_side_effects(
         self,
         session: AsyncSession,
@@ -2219,6 +2242,7 @@ class AnalysisPipeline:
         valid_from: datetime | None,
         *,
         conflict: FactView | None,
+        object_entity_id: uuid.UUID | None = None,
         snippet: str | None,
     ) -> None:
         for old_id in decision.supersede_ids:
@@ -2239,6 +2263,17 @@ class AnalysisPipeline:
             # channel), never a hand-written fact. The editable side is fact_b, the
             # value this note proposes. enum_values rides only for a typed predicate.
             enum_members = get_registry().enum_values_for(fact.predicate)
+            # An edge that resolved to an object entity (an `address` pointing at a
+            # Place) shows the object's NAME as its value — matching the analysis
+            # view — never the statement sentence value_label would otherwise floor
+            # to. Look up both sides' object names so the card's proposed value and
+            # both choice buttons render like the entity page (display.object_or_value).
+            proposed_object_name = await self._entity_name(session, object_entity_id)
+            conflict_object_name = (
+                await self._entity_name(session, uuid.UUID(conflict.object_entity_id))
+                if conflict and conflict.object_entity_id
+                else None
+            )
             session.add(
                 ReviewItem(
                     kind=decision.review_kind,
@@ -2251,6 +2286,10 @@ class AnalysisPipeline:
                         "assertion": fact.assertion,
                         "statement": fact.statement,
                         "value_json": fact.value_json,
+                        # The proposed edge's object name, so the frontend
+                        # proposed-fact panel renders the value like factValue
+                        # (object node first) instead of the prose statement.
+                        **({"object_name": proposed_object_name} if proposed_object_name else {}),
                         **({"enum_values": list(enum_members)} if enum_members else {}),
                         "note_id": str(note_id),
                         # The subject the card is about, so the review UI groups
@@ -2263,11 +2302,15 @@ class AnalysisPipeline:
                             entity_ref=fact.entity_ref,
                             changed=bool(decision.supersede_ids),
                             label_a=(
-                                value_label(conflict.value_json, conflict.statement)
+                                object_or_value(
+                                    conflict_object_name, conflict.value_json, conflict.statement
+                                )
                                 if conflict
                                 else "the earlier value"
                             ),
-                            label_b=value_label(fact.value_json, fact.statement),
+                            label_b=object_or_value(
+                                proposed_object_name, fact.value_json, fact.statement
+                            ),
                             snippet=snippet,
                         ),
                         **decision.review_extra,

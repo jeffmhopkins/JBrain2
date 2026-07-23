@@ -54,6 +54,23 @@ def value_label(value_json: dict[str, Any] | None, statement: str) -> str:
     return _structured_label(value_json) or statement
 
 
+def object_or_value(
+    object_name: str | None, value_json: dict[str, Any] | None, statement: str
+) -> str:
+    """A fact's display value: the OBJECT entity's name when the edge resolved to
+    one, else the bare datum. Mirrors the frontend `factValue` object-node
+    short-circuit (analysis/format.ts) so a review card describes a fact's value
+    the same way the entity page and analysis tab do.
+
+    This is what keeps an `address` that resolved to a Place ("6070 Chapman
+    Street…") from rendering its whole statement sentence on the card while the
+    analysis view shows the linked place — the value lives in the object node, not
+    in value_json, and `value_label`'s statement floor would otherwise surface the
+    sentence. An object-less fact falls through to `value_label` unchanged."""
+    name = object_name.strip() if isinstance(object_name, str) else None
+    return name or value_label(value_json, statement)
+
+
 def _structured_label(value_json: dict[str, Any] | None) -> str | None:
     """The bare datum a value_json reduces to, or None when it carries none."""
     if not isinstance(value_json, dict):

@@ -12,6 +12,7 @@ from jbrain.analysis.display import (
     ambiguous_display,
     collision_display,
     mark_snippet,
+    object_or_value,
     promotion_display,
     truncation_display,
     value_label,
@@ -93,6 +94,32 @@ class TestValueLabel:
         # A short datum with an internal period (a title, an initial) is the value,
         # never mistaken for a sentence.
         assert value_label({"value": "Dr. Patel"}, "Saw Dr. Patel.") == "Dr. Patel"
+
+
+class TestObjectOrValue:
+    def test_object_name_wins_over_a_prose_statement(self) -> None:
+        # The address explosion: value_json null, value trapped in the sentence, but
+        # the edge resolved to a Place. The card shows the place, like the analysis
+        # view — never the whole "The account address is …" statement.
+        assert (
+            object_or_value(
+                "6070 Chapman Street Cocoa, Florida 32927",
+                None,
+                "The account address is 6070 Chapman Street Cocoa, Florida 32927.",
+            )
+            == "6070 Chapman Street Cocoa, Florida 32927"
+        )
+
+    def test_no_object_falls_through_to_value_label(self) -> None:
+        assert object_or_value(None, {"value": "95 mg/dL"}, "s") == "95 mg/dL"
+        assert (
+            object_or_value(None, None, "Sarah works for Ridgeline.")
+            == "Sarah works for Ridgeline."
+        )
+
+    def test_blank_object_name_is_ignored(self) -> None:
+        # A whitespace-only name is not a value: fall through to value_label.
+        assert object_or_value("   ", {"value": "female"}, "s") == "female"
 
 
 class TestReviewDisplays:

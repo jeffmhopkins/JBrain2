@@ -498,15 +498,22 @@ def dedup_intent_facts(intent: IntegrationIntent, chunk_texts: list[str]) -> Int
     states verbatim), so the owner sees a review card for a fact already on the graph
     (the medication-bite-review case).
 
-    Facts are grouped on a base key that EXCLUDES the object — entity, predicate,
-    qualifier, assertion, statement, value_json — so a genuinely SET-VALUED predicate
-    keeps its distinct members: two edges to DIFFERENT objects (enumerated children,
-    two different medications) survive as separate edges even when their statements
-    coincide. Within a group an object-less copy is SUBSUMED by any object-bearing
-    sibling (the dropped-object twin adds no datum the bound edge lacks) and dropped;
-    same-object duplicates — and an all-object-less group — collapse to the single
-    best copy (grounded + not inferred, then higher self_confidence, then earliest),
-    i.e. the copy the arbiter would have committed, never the drifted twin.
+    Facts are grouped on a base key that EXCLUDES both the object AND the statement —
+    entity, predicate, qualifier, assertion, value_json — so a genuinely SET-VALUED
+    predicate keeps its distinct members: two edges to DIFFERENT objects (enumerated
+    children, two different medications) survive as separate edges (split by object
+    below), while N PARAPHRASES of one value collapse. The statement is deliberately
+    out of the key: for a prose-valued attribute the model puts the value in the
+    SENTENCE and leaves value_json null (`account.address` rendered nine ways —
+    "the address should be…", "corrected address:…", "account address set to…" — one
+    per re-framing), so keying on statement would fragment one value into N groups and
+    file an attribute_collision card per paraphrase. Value distinction rides value_json
+    (a datum the note-extract contract requires for every non-edge fact) and the object,
+    never the free-text rendering. Within a group an object-less copy is SUBSUMED by any
+    object-bearing sibling (the dropped-object twin adds no datum the bound edge lacks)
+    and dropped; same-object duplicates — and an all-object-less group — collapse to the
+    single best copy (grounded + not inferred, then higher self_confidence, then
+    earliest), i.e. the copy the arbiter would have committed, never the drifted twin.
     Order-preserving. Runs AFTER predicate canonicalization so aliased spellings share
     one key."""
     haystack = _norm("\n".join(chunk_texts))
@@ -525,7 +532,6 @@ def dedup_intent_facts(intent: IntegrationIntent, chunk_texts: list[str]) -> Int
             f.predicate,
             f.qualifier,
             f.assertion,
-            f.statement,
             json.dumps(f.value_json, sort_keys=True),
         )
 

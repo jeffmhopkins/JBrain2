@@ -126,6 +126,11 @@ export interface Parsed {
   assertion: string | null;
   statement: string | null;
   valueJson: unknown;
+  // The proposed edge's OBJECT entity name when it resolved to one (an `address`
+  // -> a Place). Rendered as the fact's value ahead of value_json/statement, so a
+  // card shows what the analysis view shows — the linked node, not the prose
+  // sentence. Null for a value-only fact; the renderer then falls to valueLabel.
+  objectName: string | null;
   // A typed (closed-enum) predicate's members — gender → [male, female,
   // unknown]. Empty for free-text edges; drives the correct-in-place picker.
   enumValues: string[];
@@ -209,6 +214,7 @@ export function parsePayload(payload: Record<string, unknown>): Parsed {
     assertion: str(payload.assertion),
     statement: str(payload.statement),
     valueJson: payload.value_json,
+    objectName: str(payload.object_name),
     enumValues: Array.isArray(payload.enum_values)
       ? payload.enum_values.flatMap((v: unknown): string[] => (typeof v === "string" ? [v] : []))
       : [],
