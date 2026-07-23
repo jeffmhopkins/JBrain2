@@ -3429,6 +3429,19 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json(note, 201);
   }
 
+  // The review card's "correct it" flow files an owner_correction note (the #7
+  // channel) so the fix force-supersedes what it corrects. Mirror the create in
+  // the mock so dev:mock's correct-in-place resolves.
+  const reviewCorrectionMatch = path.match(/^\/api\/review\/([^/]+)\/correction$/);
+  if (reviewCorrectionMatch && method === "POST") {
+    const body = JSON.parse(String(init?.body)) as { body: string; domain?: string };
+    const domain = body.domain ?? "general";
+    if (!VALID_DOMAINS.has(domain)) return json({ detail: "unknown domain" }, 400);
+    const note = seedNote(domain, null, body.body, new Date().toISOString(), [], "pending");
+    notes.push(note);
+    return json({ note_id: note.id, created: true }, 201);
+  }
+
   const noteMatch = path.match(/^\/api\/notes\/([^/]+)$/);
   if (noteMatch && method === "PATCH") {
     const note = notes.find((n) => n.id === decodeURIComponent(noteMatch[1] ?? ""));

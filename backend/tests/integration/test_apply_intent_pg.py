@@ -471,6 +471,58 @@ async def test_conflict_card_carries_the_editable_proposed_fact(maker, tmp_path)
     assert p["statement"] == "Acme: fintech now"
 
 
+async def test_review_card_renders_the_object_node_not_the_statement(maker, tmp_path):  # noqa: F811
+    # The address-display bug: an `address` attribute that resolved to a Place has
+    # value_json null (the value lives in the sentence), so the card fell back to the
+    # whole statement while the analysis view showed the linked place. A fact-bearing
+    # card must carry the OBJECT node's name so the proposed value renders like the
+    # analysis view (display.object_or_value / frontend factValue), not the sentence.
+    note_id = await make_note(maker, domain="general", body="The account address is 200 Oak Ave.")
+    await ingest(maker, note_id, tmp_path)
+    intent = _intent(
+        note_id,
+        [
+            EntityResolution(
+                mention_ref="m1", mode="new", new_kind="Organization", new_name="Acme"
+            ),
+            EntityResolution(
+                mention_ref="m2", mode="new", new_kind="Place", new_name="200 Oak Ave"
+            ),
+        ],
+        [
+            _fact(
+                "m1",
+                predicate="address",
+                kind="attribute",
+                value_json=None,
+                object_entity_ref="m2",
+                statement="The account address is 200 Oak Ave.",
+                attested_span=AttestedSpan("c", "200 Oak Ave"),
+                inferred=True,
+                self_confidence=0.2,
+            )
+        ],
+    )
+    # Below threshold → held behind a low_confidence_inference card (the shape the box
+    # filed for the object-bound account address).
+    plan = plan_intent(intent, signals={0: ConfidenceSignals(False, False)})
+    assert plan.to_review and not plan.to_commit
+    await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
+
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        card = (
+            await session.execute(
+                select(ReviewItem).where(
+                    ReviewItem.kind == "low_confidence_inference",
+                    ReviewItem.payload["note_id"].astext == note_id,
+                )
+            )
+        ).scalar_one()
+    # The card carries the object node's name — the value the frontend renders ahead
+    # of the prose statement value_label would otherwise floor to.
+    assert card.payload["object_name"] == "200 Oak Ave"
+
+
 async def test_held_fact_is_idempotent_across_reanalysis(maker, tmp_path):  # noqa: F811
     # Real reprocessing resolves a mention to the SAME existing entity (the agent
     # sees it in graph context, so mode="existing"), so re-running must refresh the

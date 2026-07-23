@@ -1375,3 +1375,41 @@ def test_dedup_intent_facts_distinguishes_by_value_json():
     b = _fact(predicate="weight", kind="measurement", value_json={"value": 180, "unit": "lb"})
     out = dedup_intent_facts(_intent(entity_resolutions=[_res()], facts=[a, b]), [""])
     assert len(out.facts) == 2
+
+
+def test_dedup_intent_facts_collapses_paraphrased_prose_attribute():
+    from jbrain.analysis.arbiter import dedup_intent_facts
+
+    # The account-address explosion (confirmed on the box): a prose-valued attribute
+    # the model rendered nine ways, all value_json null and object-less, one value.
+    # Keying on the statement fragmented them into nine attribute_collision cards;
+    # excluding it collapses them to the single best copy.
+    value = "6070 Chapman Street Cocoa, Florida 32927"
+    framings = [
+        f"The account address is {value}.",
+        f"Account address is {value}.",
+        f"Account address set to {value}.",
+        f"Corrected address: {value}.",
+        f"The corrected address is {value}.",
+        f"Address corrected to {value}.",
+        f"The address should be {value}.",
+        f"The address value should be {value}.",
+        f"Account address corrected to {value}.",
+    ]
+    facts = [
+        _fact(
+            predicate="address",
+            kind="attribute",
+            value_json=None,
+            object_entity_ref=None,
+            statement=s,
+            attested_span=None,
+            inferred=False,
+        )
+        for s in framings
+    ]
+    out = dedup_intent_facts(
+        _intent(entity_resolutions=[_res()], facts=facts), ["\n".join(framings)]
+    )
+    assert len(out.facts) == 1
+    assert out.facts[0].predicate == "address"

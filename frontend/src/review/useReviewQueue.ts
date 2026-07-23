@@ -108,11 +108,12 @@ export function useReviewQueue(): ReviewQueueController {
       const current = pendingRef.current?.find((r) => r.id === id);
       if (current === undefined) return;
       setActionError(null);
-      // File the correction as a real note in the item's domain; on success,
-      // resolve the item as corrected and link it. resolve() does the
-      // optimistic move once the note id is in hand.
+      // File the correction as an owner_correction note (the #7 channel) in the
+      // item's domain so it force-supersedes what it corrects instead of
+      // colliding with it; on success, resolve the item as corrected and link
+      // it. resolve() does the optimistic move once the note id is in hand.
       api
-        .createNote({ client_id: crypto.randomUUID(), domain: current.domain, body })
+        .reviewFileCorrection(id, current.domain, body)
         .then((note) => resolve(id, "correct", { note_id: note.id, summary: body.slice(0, 140) }))
         .catch(() => setActionError("couldn't file the correction — try again."));
     },

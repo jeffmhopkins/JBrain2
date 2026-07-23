@@ -603,7 +603,12 @@ fix as a real **correction note** (the #7 channel) in the item's domain and
 resolves the item as *corrected*; the pipeline applies it when it processes
 that note (**re-adjudicate**, never a hand-written fact), so the wiki stays
 machine-written and the value lands once extraction runs — reopening keeps
-the note (it's the human's own). The planned third mode, **talk it over
+the note (it's the human's own). The note is filed with
+`provenance=owner_correction` (`POST /api/review/{id}/correction`, owner-gated
+like the wiki path), so its facts *force-supersede + pin* what they correct;
+filing it as a plain `human` note instead let a same-value correction of a
+prose-valued attribute read as a fresh conflict and spawn another collision
+card — the correction spawned reviews rather than resolving one. The planned third mode, **talk it over
 with the assistant**, is the conversational version of the same — the
 assistant drafts that correction-note body from your intent; until that
 handoff is wired the footer affordance parks the item for the assistant.

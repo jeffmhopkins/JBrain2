@@ -2350,6 +2350,18 @@ export const api = {
     return (await response.json()) as ResolveBatchResult;
   },
 
+  // File the owner CORRECTION note behind "correct it" (provenance
+  // owner_correction, the #7 channel) so the fix force-supersedes what it
+  // corrects instead of colliding with it. The card is then resolved with the
+  // returned note id via reviewResolve(id, "correct", { note_id }).
+  async reviewFileCorrection(id: string, domain: string, body: string): Promise<{ id: string }> {
+    const response = await request(
+      `/api/review/${encodeURIComponent(id)}/correction`,
+      jsonInit("POST", { body, domain }),
+    );
+    return { id: ((await response.json()) as { note_id: string }).note_id };
+  },
+
   // Full unwind: the backend reverses the resolution's recorded graph
   // effects and re-queues the item; 409 when it is already open.
   async reviewReopen(id: string): Promise<ReviewReopened> {
