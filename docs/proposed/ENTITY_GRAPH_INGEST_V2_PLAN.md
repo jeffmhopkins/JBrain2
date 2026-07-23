@@ -279,6 +279,14 @@ exist:
   reuses `evals/integrate_runner.py` (in-memory); the **cards-filed + supersession-
   correctness** delta comes from the DB-mode runner — two harnesses, both extant, both
   cited correctly now.
+- **Hold the model constant (the 100%-local decision, §11.5).** Today every task defaults
+  to `xai:grok-4.3` (`router.py:45-62`); the ratified target is `local:gpt-oss-120b`. So the
+  v1-vs-v2 diff must run **both arms on gpt-oss-120b** — otherwise it conflates the *policy*
+  change (Levers A/B/C) with a cloud→local *model* swing and measures nothing clean. V0
+  therefore first establishes a **v1-on-`gpt-oss-120b` baseline**, then measures v2 against
+  it on the same model. (Grading needs no cloud judge: the integrate eval scores against
+  per-case golds, `integrate_runner.py:_score`, not an LLM oracle — consistent with no cloud
+  inference at all.) Whether that baseline is owned here or by a separate migration is §11.5a.
 - **Acceptance artifact (owner gate, V4):** on the corpus snapshot, v2 vs v1: (a)
   materially fewer cards, (b) **no tier-1 recall regression** on the graded corpus
   (`tests/eval/corpus/`), (c) **firewall/RLS parity** (every v1 floor/ratchet/cross-subject
@@ -358,9 +366,21 @@ One PR per wave; per-task + per-wave adversarial review; **security red-team on 
    *asserted* sensitive facts on non-floored predicates (belt-and-suspenders; more cards).
 4. **Escalation floor overall.** With the ceiling gone, what still forces review beyond the
    spine? Default: I5–I9 + LLM-`escalate` + structural namesake ambiguity. Ratify.
-5. **Local-model judgment quality (V0 gate).** If the box model can't match cloud on the
-   integrate + supersession-correctness golds: default ship v2 on **cloud** first, move to
-   local when the model lands (privacy-routing axis supports both), or block on parity.
+5. **Local-model judgment quality (V0 gate) — RATIFIED 2026-07-23: 100% local, no cloud.**
+   The system runs entirely on `local:gpt-oss-120b` (text reasoning, `local_catalog.py:166`);
+   **no cloud inference and no cloud fallback, ever.** V0 is therefore a **hard blocking
+   gate**: if gpt-oss-120b can't clear the integrate + supersession-correctness bar, the
+   response is to *narrow what the LLM decides* (lean harder on the deterministic spine) or
+   defer — never fall back to cloud. This makes the v0.2 design choice (disposition stays
+   deterministic; the LLM only *raises* a soft escalate hint, never lowers a floor)
+   **load-bearing, not optional** — a 120B OSS model is exactly where the §4 supersession-
+   lossiness result (arXiv 2606.27472) bites hardest, so keeping the safety-critical
+   decisions off the model is the whole reason the design survives on local hardware.
+5a. **Local-cutover sequencing (OPEN).** Today every task defaults to `xai:grok-4.3`
+   (`router.py:45-62`); "100% local" is a pending migration. Does Ingest V2 **own** the
+   ingest path's cloud→local cutover (V0 validates extraction *and* integration on
+   gpt-oss-120b as one coordinated move), or does a **separate** pipeline-wide migration
+   establish the local baseline first, leaving V2 a pure policy change on top? — see §7.
 6. **Lever C doctrine.** Default: direct structured writes for review-card fixes (per
    `ANALYSIS.md:359-362`), editing that line's mechanism in-wave; correction-*notes* kept
    for prose/wiki. Confirm this is a mechanism edit, not a CLAUDE.md #7 violation.
