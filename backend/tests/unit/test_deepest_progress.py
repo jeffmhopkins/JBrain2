@@ -107,6 +107,41 @@ async def test_progress_is_best_effort_a_transcript_failure_never_propagates() -
     assert bus.published and push.pokes  # the nudge + poke still went out
 
 
+async def test_push_tokens_come_from_the_live_provider_when_no_static_list() -> None:
+    """A static token list goes stale across a long run, so prod resolves the owner's live
+    tokens per tick via the provider — used only when no static list was given (tests)."""
+    tr, push = _FakeTranscript(), _FakePush()
+
+    async def _provider() -> list[str]:
+        return ["tok-live"]
+
+    ch = DeepestProgressChannel(
+        transcript=tr, push=push, push_tokens=(), push_tokens_provider=_provider
+    )
+    await ch.round(
+        OWNER, session_id="s", run_id="deepest-x", round_no=1, findings=1, coverage_label="x"
+    )
+    assert push.pokes == [["tok-live"]]  # resolved live, then poked
+
+
+async def test_static_tokens_win_over_the_provider() -> None:
+    tr, push = _FakeTranscript(), _FakePush()
+    called = False
+
+    async def _provider() -> list[str]:
+        nonlocal called
+        called = True
+        return ["tok-live"]
+
+    ch = DeepestProgressChannel(
+        transcript=tr, push=push, push_tokens=["tok-static"], push_tokens_provider=_provider
+    )
+    await ch.round(
+        OWNER, session_id="s", run_id="deepest-x", round_no=1, findings=1, coverage_label="x"
+    )
+    assert push.pokes == [["tok-static"]] and called is False
+
+
 async def test_no_push_tokens_means_no_poke() -> None:
     tr, bus, push = _FakeTranscript(), _FakeBus(), _FakePush()
     ch = DeepestProgressChannel(transcript=tr, notify=bus, push=push, push_tokens=[])  # type: ignore[arg-type]

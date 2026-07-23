@@ -105,6 +105,22 @@ async def test_claim_resume_is_exactly_once(maker: async_sessionmaker) -> None:
     assert st is not None and st.resumed_at is not None
 
 
+async def test_list_running_returns_only_unclaimed_running(maker: async_sessionmaker) -> None:
+    r1, r2, done, claimed = _run_id(), _run_id(), _run_id(), _run_id()
+    for rid in (r1, r2, done, claimed):
+        await _create(maker, OWNER_EXT, rid)
+    await rrs.finish(maker, OWNER_EXT, run_id=done, status="done")  # no longer running
+    assert await rrs.claim_resume(maker, OWNER_EXT, claimed) is True  # running but claimed
+
+    running = {st.run_id for st in await rrs.list_running(maker, OWNER_EXT)}
+    assert {r1, r2} <= running  # both unclaimed running runs are in the sweep's work-list
+    assert done not in running and claimed not in running  # finished / already-claimed excluded
+
+    # A scoped non-owner sees none of the owner's runs (RLS), so its sweep is empty of them.
+    scoped = {st.run_id for st in await rrs.list_running(maker, GENERAL_ONLY)}
+    assert not ({r1, r2} & scoped)
+
+
 async def test_scoped_principal_cannot_read(maker: async_sessionmaker) -> None:
     rid = _run_id()
     await _create(maker, OWNER_EXT, rid)

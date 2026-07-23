@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from jbrain.citygeocode import CityGeocoder
     from jbrain.geocode import NominatimReverseClient
     from jbrain.llm.router import LlmRouter
+    from jbrain.notify import NotifyBus
+    from jbrain.push.repo import FcmTokenRepo
+    from jbrain.push.sender import PushNotifier
     from jbrain.settings_store import SqlSettingsStore
 
 from jbrain.agent.appointmenttools import (
@@ -30,7 +33,12 @@ from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.deep_research import DeepResearchRef, DeepResearchService
 from jbrain.agent.deepest_lane import DeepestRunLane
 from jbrain.agent.deepest_progress import DeepestProgressChannel
-from jbrain.agent.deepest_tool import DeepestKickoffService, DeepestResearchRef
+from jbrain.agent.deepest_tool import (
+    DeepestHandle,
+    DeepestKickoffService,
+    DeepestResearchRef,
+    _owner_principal_id,
+)
 from jbrain.agent.geocodetools import build_geocode_handlers
 from jbrain.agent.labtools import build_lab_handlers
 from jbrain.agent.listtools import build_list_handlers
@@ -644,6 +652,10 @@ def build_registry(
     gmail_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
     research_report_handlers: dict[str, ToolHandler] | None = None,
+    notify_bus: "NotifyBus | None" = None,
+    push: "PushNotifier | None" = None,
+    fcm_token_repo: "FcmTokenRepo | None" = None,
+    deepest_handle: DeepestHandle | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -784,14 +796,38 @@ def build_registry(
         )
         # decompose_research forwards to the same spawn service (it spawns the sub-fan).
         decompose_ref.service = spawn_ref.service
-        # Deepest research: a single background lane (one run at a time by default), a
-        # progress channel that appends to the run's chat transcript (the durable path; the
-        # NotifyBus/FCM nudge legs are wired where those transports are available), and the
-        # kickoff service that drives the deep-research service in deepest mode.
-        deepest_research_ref.service = DeepestKickoffService(
+
+        # Deepest research: a single background lane (one run at a time by default) and a
+        # progress channel with all three off-turn legs wired — the durable chat transcript,
+        # the NotifyBus deep-link nudge, and (when a real push notifier is deployed) an FCM
+        # poke to owner devices whose tokens are resolved live per tick. The kickoff service
+        # drives the deep-research service in deepest mode and also owns resume/drain.
+        async def _owner_push_tokens() -> list[str]:
+            # The owner's live device tokens, resolved per progress tick (best-effort). Empty
+            # when no push notifier / token repo is configured, so the poke leg no-ops.
+            if fcm_token_repo is None:
+                return []
+            owner_pid = await _owner_principal_id(maker)
+            if owner_pid is None:
+                return []
+            owner_ctx = SessionContext(principal_id=owner_pid, principal_kind="owner")
+            return await fcm_token_repo.tokens_for_subjects(owner_ctx, [owner_pid])
+
+        deepest_kickoff = DeepestKickoffService(
             lane=DeepestRunLane(),
             service=deep_research_ref.service,
-            progress=DeepestProgressChannel(transcript=AgentTranscript(maker)),
+            progress=DeepestProgressChannel(
+                transcript=AgentTranscript(maker),
+                notify=notify_bus,
+                push=push,
+                push_tokens_provider=_owner_push_tokens,
+            ),
             maker=maker,
         )
+        deepest_research_ref.service = deepest_kickoff
+        # Expose the wired service so the app lifespan can resume interrupted runs at startup
+        # and drain in-flight ones at shutdown (it can't build the service — that needs the
+        # registry-backed DeepResearchService created just above).
+        if deepest_handle is not None:
+            deepest_handle.service = deepest_kickoff
     return registry

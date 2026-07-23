@@ -23,7 +23,7 @@ per-session standing channel exists yet.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
 import structlog
@@ -90,11 +90,16 @@ class DeepestProgressChannel:
         notify: NotifyBus | None = None,
         push: _Push | None = None,
         push_tokens: Sequence[str] = (),
+        # A run outlives many token changes, so a static token list captured at build time
+        # goes stale (a device registered after boot never gets poked). The provider resolves
+        # the owner's live tokens per tick instead; `push_tokens` stays for tests.
+        push_tokens_provider: Callable[[], Awaitable[Sequence[str]]] | None = None,
     ) -> None:
         self._transcript = transcript
         self._notify = notify
         self._push = push
         self._push_tokens = list(push_tokens)
+        self._push_tokens_provider = push_tokens_provider
 
     async def round(
         self,
@@ -184,7 +189,14 @@ class DeepestProgressChannel:
             self._notify,
             Notification(kind=NOTIFY_KIND, title=title, body=_clip(body), ref=session_id),
         )
-        # (3) wake a closed app: an FCM content-free poke (no PII in the push).
-        if self._push is not None and self._push_tokens:
-            with contextlib.suppress(Exception):
-                await self._push.poke(self._push_tokens)
+        # (3) wake a closed app: an FCM content-free poke (no PII in the push). Tokens come
+        # from the static list (tests) or the live provider (prod) — resolved per tick so a
+        # newly-registered device still gets woken.
+        if self._push is not None:
+            tokens = list(self._push_tokens)
+            if not tokens and self._push_tokens_provider is not None:
+                with contextlib.suppress(Exception):
+                    tokens = list(await self._push_tokens_provider())
+            if tokens:
+                with contextlib.suppress(Exception):
+                    await self._push.poke(tokens)

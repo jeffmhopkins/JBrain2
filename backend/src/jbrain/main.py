@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.brainevents import build_event_emitter, build_flag_emitter
+from jbrain.agent.deepest_tool import DeepestHandle
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
@@ -598,6 +599,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.turn_attachments,
             maker,
         )
+        deepest_handle = DeepestHandle()
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -636,6 +638,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 TeiEmbedClient(settings.embed_url),
                 proposals=app.state.agent_proposals,
             ),
+            # Deepest-research off-turn transports (R6): the NotifyBus deep-link nudge and the
+            # FCM poke (owner tokens resolved live per tick); `deepest_handle` hands the wired
+            # kickoff service back out for the lifespan resume/drain hooks below.
+            notify_bus=app.state.notify_bus,
+            push=app.state.push_notifier,
+            fcm_token_repo=app.state.fcm_token_repo,
+            deepest_handle=deepest_handle,
+        )
+        # The background deepest-research supervisor (resume interrupted runs at startup,
+        # drain in-flight ones at shutdown); None when deepest isn't wired (no router).
+        app.state.deepest = deepest_handle.service
+        # A restart (deploy/crash) kills the lane's in-process tasks, so re-drive any run left
+        # 'running' in the checkpoint table. Detached so a slow DB never blocks boot; stored so
+        # the task isn't GC'd. Best-effort inside resume_interrupted (never raises into boot).
+        app.state.deepest_resume_task = (
+            asyncio.create_task(app.state.deepest.resume_interrupted())
+            if app.state.deepest is not None
+            else None
         )
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)
@@ -736,6 +756,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await asyncio.wait_for(
                     asyncio.gather(*warm_tasks, return_exceptions=True), timeout=5.0
                 )
+        # Drain in-flight deepest runs: cancel + AWAIT (bounded) so each records a terminal
+        # status via run_deepest's cancel path — which opens a fresh session — BEFORE the
+        # engine is disposed, the same pool-outlives-cleanup ordering the live turns need.
+        resume_task = getattr(app.state, "deepest_resume_task", None)
+        if resume_task is not None:
+            resume_task.cancel()
+        deepest = getattr(app.state, "deepest", None)
+        if deepest is not None:
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(deepest.drain(), timeout=10.0)
         await app.state.supervisor_client.aclose()
         if image_gen_client is not None:
             await image_gen_client.aclose()

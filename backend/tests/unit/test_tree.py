@@ -170,3 +170,17 @@ def test_for_resume_rewinds_counters_and_remaining_clock() -> None:
     # A past (exhausted) wall-clock resumes already out of time — the ceiling still bites.
     spent = TreeState.for_resume(budget_tokens=1, spent=0, agents_spawned=0, seconds_left=0)
     assert spent.out_of_time()
+
+
+def test_task_agent_wall_clock_covers_its_serial_subfan() -> None:
+    """A research_deep task agent must contain its own (serialized) decompose sub-fan within
+    its turn, so it gets a larger wall-clock than a leaf child — room for the sub-fan plus its
+    own gather/synthesis — else 'deepest' truncates toward single-tier."""
+    from jbrain.agent.tree import (
+        CHILD_WALL_CLOCK_S,
+        MAX_SUBFAN_PER_TASK_AGENT,
+        TASK_AGENT_WALL_CLOCK_S,
+    )
+
+    assert TASK_AGENT_WALL_CLOCK_S > CHILD_WALL_CLOCK_S
+    assert TASK_AGENT_WALL_CLOCK_S == CHILD_WALL_CLOCK_S * (MAX_SUBFAN_PER_TASK_AGENT + 1)
