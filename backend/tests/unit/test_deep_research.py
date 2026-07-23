@@ -901,3 +901,35 @@ async def test_two_tier_is_web_only_not_library() -> None:
     personas = [f["persona"] for f in spawn.fans]
     assert "research_deep" not in personas
     assert "research_library" in personas
+
+
+async def test_persist_reraises_only_under_require_persist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_persist` is best-effort by default (a lost library write is swallowed — the owner
+    already sees the returned report), but fails closed under `require_persist`: a background
+    deepest run DISCARDS the return, so that write is its ONLY delivery — a lost report must
+    surface as a raise (→ a failed run), never a silent "ready"."""
+    from jbrain.agent import deep_research as dr
+
+    async def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("library write failed")
+
+    monkeypatch.setattr(dr, "persist_report", _boom)
+    svc = DeepResearchService(router=object(), spawn=object(), maker=object())  # type: ignore[arg-type]
+    kw = {
+        "question": "q",
+        "report": "r",
+        "complexity": "simple",
+        "rounds": 1,
+        "roster": [],
+        "sources": [],
+        "analyzed": False,
+        "revised": False,
+        "coverage_limited": False,
+    }
+    # default: the failed write is swallowed, _persist returns cleanly
+    await svc._persist(_ctx(), **kw)  # type: ignore[arg-type]
+    # require_persist: the failed write propagates so the caller can fail the run
+    with pytest.raises(RuntimeError):
+        await svc._persist(_ctx(), require_persist=True, **kw)  # type: ignore[arg-type]

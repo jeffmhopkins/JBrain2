@@ -3,7 +3,10 @@ place a background deepest run's context is assembled. Pure, DB-free — the ass
 the security properties of that context: owner-scoped but KB-less, the only max_depth>1
 mint, no location, and the clamp ceiling a research_deep task agent needs."""
 
+import asyncio
 from types import SimpleNamespace
+
+import pytest
 
 from jbrain.agent.deepest_run import (
     DEEPEST_DEFAULT_CEILING_TOKENS,
@@ -68,15 +71,28 @@ from jbrain.db.session import SessionContext  # noqa: E402
 
 class _FakeService:
     """Stands in for DeepResearchService: records the research call, drives the per-round
-    hook, and (optionally) fails — so the driver's composition is observable without an LLM."""
+    hook, and (optionally) fails — so the driver's composition is observable without an LLM.
+    `boom` models a research/persist failure (with require_persist, a lost write surfaces here
+    as a raise); `cancel` models the lane's watchdog cancelling the run mid-flight."""
 
-    def __init__(self, *, rounds=((1, 3), (2, 5)), boom: bool = False) -> None:
+    def __init__(
+        self, *, rounds=((1, 3), (2, 5)), boom: bool = False, cancel: bool = False
+    ) -> None:  # noqa: E501
         self.calls: list[dict] = []
         self._rounds = rounds
         self._boom = boom
+        self._cancel = cancel
 
-    async def research(self, ctx, args, *, on_round=None):  # noqa: ANN001, ANN003
-        self.calls.append({"args": args, "max_depth": ctx.tree.max_depth if ctx.tree else None})
+    async def research(self, ctx, args, *, on_round=None, require_persist=False):  # noqa: ANN001, ANN003
+        self.calls.append(
+            {
+                "args": args,
+                "max_depth": ctx.tree.max_depth if ctx.tree else None,
+                "require_persist": require_persist,
+            }
+        )
+        if self._cancel:
+            raise asyncio.CancelledError
         if self._boom:
             raise RuntimeError("research blew up")
         if on_round is not None:
@@ -152,6 +168,8 @@ async def test_driver_composes_a_full_run() -> None:
     assert status == "done"
     assert svc.calls[0]["args"]["mode"] == "deepest"
     assert svc.calls[0]["max_depth"] == 2  # the trusted context seeded the two-tier tree
+    # The background run fails closed on a lost library write (the report's only delivery).
+    assert svc.calls[0]["require_persist"] is True
     assert rs.created == ["run-1"]
     assert [c["round"] for c in rs.checkpoints] == [1, 2]  # every committed round checkpointed
     assert rs.finished == ["done"]
@@ -177,6 +195,27 @@ async def test_driver_fails_closed_on_a_research_error() -> None:
     assert rs.finished == ["failed"]
     assert prog.dones == []  # no completion announced
     assert prog.rounds and "failed" in prog.rounds[-1][2]  # a failure notice was posted
+
+
+async def test_driver_records_a_terminal_status_and_notice_on_watchdog_cancel() -> None:
+    """The lane's wall-clock watchdog cancels the run (CancelledError). The driver must still
+    mark the run-state terminal ('cancelled') and post a notice — else the row is stranded
+    'running' forever — and then re-raise so the lane settles the task as cancelled."""
+    svc, rs, prog = _FakeService(cancel=True), _FakeRunState(), _FakeProgress()
+    with pytest.raises(asyncio.CancelledError):
+        await run_deepest(
+            principal_id="owner-1",
+            run_id="run-3",
+            session_id="sess-3",
+            question="q",
+            maker=object(),
+            service=svc,  # type: ignore[arg-type]
+            progress=prog,  # type: ignore[arg-type]
+            run_state=rs,  # type: ignore[arg-type]
+        )
+    assert rs.finished == ["cancelled"]  # terminal status recorded despite the cancel
+    assert prog.dones == []  # not a completion
+    assert prog.rounds and "time limit" in prog.rounds[-1][2]  # a cancel notice was posted
 
 
 # --- resume (R7): claim an interrupted run and re-drive -------------------------------

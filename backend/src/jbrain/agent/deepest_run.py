@@ -24,6 +24,7 @@ R5–R7; the builder itself is pure and DB-free.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from datetime import UTC, datetime, timedelta
 from types import ModuleType
@@ -47,6 +48,13 @@ log = structlog.get_logger()
 DEEPEST_DEFAULT_CEILING_TOKENS = 50_000_000
 DEEPEST_DEFAULT_WALL_CLOCK_S = 3 * 60 * 60.0  # 3 hours
 
+# The chat notice for a non-success terminal exit — a lost/failed run and a watchdog cancel
+# read differently to the owner, but neither leaves a saved report.
+_TERMINAL_LABEL = {
+    "failed": "the run failed — nothing was saved",
+    "cancelled": "the run hit its time limit and stopped — nothing was saved",
+}
+
 
 def build_deepest_run_context(
     principal_id: str,
@@ -63,7 +71,8 @@ def build_deepest_run_context(
     needs `decompose_research` + the web tools, all of which jerv holds).
 
     `run_id` is left None on purpose: `ToolContext.run_id` is an `app.runs` UUID used ONLY
-    to stamp a spawned child's `parent_run_id` (loop.py), and a background orchestrator has
+    to stamp a spawned child's `parent_run_id` (consumed in spawn.py's child-run start), and
+    a background orchestrator has
     no `/chat` turn run backing it — unlike the lane's own `run_id` ("deepest-<uuid>"), which
     is the run-state/progress key (text), NOT an `app.runs` id. Threading that text key here
     would make every top-level child spawn's `uuid.UUID(parent_run_id)` raise; None makes the
@@ -152,27 +161,44 @@ async def run_deepest(
 
     status = "failed"
     try:
-        await service.research(  # type: ignore[attr-defined]
-            ctx, {"question": question, "mode": "deepest"}, on_round=on_round
-        )
-        status = "done"
-    except Exception:  # noqa: BLE001 — a run failure is a recorded status, never a lane crash
-        log.warning("deepest_run.failed", run_id=run_id, exc_info=True)
-
-    with contextlib.suppress(Exception):
-        await run_state.finish(maker, ext_ctx, run_id=run_id, status=status)
-    with contextlib.suppress(Exception):
-        if status == "done":
-            await progress.done(owner_ctx, session_id=session_id, run_id=run_id, question=question)
-        else:
-            await progress.round(
-                owner_ctx,
-                session_id=session_id,
-                run_id=run_id,
-                round_no=0,
-                findings=0,
-                coverage_label="the run failed — nothing was saved",
+        try:
+            await service.research(  # type: ignore[attr-defined]
+                ctx,
+                {"question": question, "mode": "deepest"},
+                on_round=on_round,
+                require_persist=True,  # the report's ONLY delivery is the library write
             )
+            status = "done"
+        except asyncio.CancelledError:
+            # The lane's wall-clock watchdog fired (or an explicit cancel). Record a terminal
+            # status and post a notice below, then re-raise so the lane settles the task as
+            # cancelled — WITHOUT this, `except Exception` misses CancelledError and the
+            # run-state row is left 'running' forever with no notice (a silent strand).
+            status = "cancelled"
+            raise
+        except Exception:  # noqa: BLE001 — a run failure is a recorded status, never a lane crash
+            log.warning("deepest_run.failed", run_id=run_id, exc_info=True)
+    finally:
+        # Every exit — done, failed, or cancelled — records a terminal status and posts a
+        # notice, best-effort. A finally's awaits complete even while a CancelledError is
+        # propagating, so a watchdog-cancelled run is never left 'running' and always tells
+        # the owner it stopped.
+        with contextlib.suppress(Exception):
+            await run_state.finish(maker, ext_ctx, run_id=run_id, status=status)
+        with contextlib.suppress(Exception):
+            if status == "done":
+                await progress.done(
+                    owner_ctx, session_id=session_id, run_id=run_id, question=question
+                )
+            else:
+                await progress.round(
+                    owner_ctx,
+                    session_id=session_id,
+                    run_id=run_id,
+                    round_no=0,
+                    findings=0,
+                    coverage_label=_TERMINAL_LABEL[status],
+                )
     return status
 
 

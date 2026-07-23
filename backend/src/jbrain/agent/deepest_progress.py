@@ -69,6 +69,11 @@ def _deepest_view_step(data: dict[str, Any]) -> dict[str, Any]:
         "args": {},
         "ok": True,
         "summary": "",
+        # `sources` is REQUIRED: the transcript accumulator seeds every persisted tool step
+        # with `sources: []`, and the PWA's transcript hydrator reads `tool.sources` un-guarded
+        # (useFullBrain.fromTurn) — a hand-built step that omits it throws on reopen and blanks
+        # the whole session. Keep this shape in lockstep with the accumulator's canonical step.
+        "sources": [],
         "view": {"view": "deepest_run", "surface": "inline", "data": data, "refs": []},
     }
 
