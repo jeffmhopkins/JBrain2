@@ -288,6 +288,32 @@ exist:
   per-case golds, `integrate_runner.py:_score`, not an LLM oracle — consistent with no cloud
   inference at all.) Ratified: the owner's box already runs every task on gpt-oss-120b, so
   both arms are already on the same local model and V2 owns no cloud→local migration (§11.5a).
+- **On-box interactive validation via the debug console (owner-driven, read-only + live
+  model).** The debug-token surface (`api/debug.py`, `docs/runbooks/DEBUG_ACCESS.md`) is
+  read-only for data but **runs live LLM calls through the adapter to gpt-oss-120b** — which
+  makes it a first-class V0 tool, not just an inspector:
+  - **`/tool-probe`** sends a **JSON schema** to the model with *no handler running* — the
+    exact shape the Integrator uses (`json_schema=INTENT_SCHEMA`). So the v2 prompt **and**
+    its extended `IntegrationIntent` schema (the new soft `escalate` field) can be exercised
+    against the real gpt-oss-120b, on-box, before any pipeline wiring — the fastest possible
+    prompt/schema iteration loop, and the honest measure of whether the local model produces
+    a well-formed, well-judged intent (the V0 make-or-break, §11.5).
+  - **`/complete`** probes free-form judgment on a hand-picked hard note; the **routing
+    inspector** confirms the task is actually on `local:gpt-oss-120b`.
+  - **`sql.read`** (read-only, owner RLS) reads back `facts`/`entities`/fact-chains/
+    `review_items` after a batch of test notes runs through v2 behind the flag — the owner
+    sees exactly what committed vs. carded, live, without waiting on the eval report.
+  This channel is no-cloud and cannot escalate (no write route), so it is safe to lean on
+  throughout V0–V4. *(Writing the test notes themselves is a separate owner-session write —
+  `POST /api/notes` — or the DB-mode fixture loader; the debug token drives the model and
+  reads the result, it does not author notes.)*
+- **The "huge swap of test notes" = a reusable ingest test-corpus** (V0/V2 deliverable):
+  a large, versioned batch of representative + adversarial notes — seeded from the 74 harness
+  scenarios (`tests/harness/scenarios/`), the graded corpus (`tests/eval/corpus/`), and a
+  snapshot of the owner's real notes — that BOTH the automated v1-vs-v2 diff and the
+  interactive debug-console loop draw from, so a scenario is repeatable and a regression is
+  attributable. Batch-ingest → inspect-via-debug-console → iterate is the owner's manual
+  test loop alongside the CI eval.
 - **Acceptance artifact (owner gate, V4):** on the corpus snapshot, v2 vs v1: (a)
   materially fewer cards, (b) **no tier-1 recall regression** on the graded corpus
   (`tests/eval/corpus/`), (c) **firewall/RLS parity** (every v1 floor/ratchet/cross-subject
@@ -314,7 +340,7 @@ built — DOC_LIFECYCLE). V4 is an **owner acceptance gate**, not a code wave.
 
 | Wave | Delivers | Depends on | Size | Owner state? |
 |---|---|---|---|---|
-| V0 | **Local-box judgment spike:** `integrate.note.v2` prompt (soft `escalate` hint) + `TASK_DEFAULTS` reg + the DB-mode-runner extension for the cards + **supersession-correctness** metric; run on the box's local model. Go/no-go on local judgment quality (§11.5). | §11 decisions | M-L | no |
+| V0 | **Local-box judgment spike:** `integrate.note.v2` prompt (soft `escalate` hint) + `TASK_DEFAULTS` reg + the DB-mode-runner extension for the cards + **supersession-correctness** metric. Iterate the prompt + intent schema **live against gpt-oss-120b via the debug console `/tool-probe`** (`api/debug.py`) before pipeline wiring; inspect results with read-only `sql.read`. Go/no-go on local judgment quality (§11.5). | §11 decisions | M-L | no |
 | V1 | **The deterministic v2 enactor + expanded safety spine I1–I9** (Lever A ceiling removal + sensitive net I5; Lever B state/relationship default + validity-time; I6–I9 re-asserted). Pure, unit-tested, LLM faked. **Security red-team (firewall/validity/identity floors).** | V0 | L | no |
 | V2 | `integrate_note_v2` action (`registry.py` ActionSpec) + the corpus-snapshot diff harness over `run_case_db`; the v1-vs-v2 report. | V1 | M-L | no |
 | V3 | Corpus/harness **re-tier** (invert the ceiling-trap cases; `absent_review_cards` sweeps; the `ANALYSIS.md:111` attribute case stays green; validity-time + sensitive-net cases). | V1 | M | no |
