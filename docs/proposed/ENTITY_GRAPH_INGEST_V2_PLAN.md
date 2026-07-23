@@ -475,3 +475,30 @@ One PR per wave; per-task + per-wave adversarial review; **security red-team on 
 - **Citations fixed** — `_extract_note` def `pipeline.py:226`; `domain_floor:177` /
   `ratchet_domain:183` (not the dict at 149-171); single-call language retired for the
   ratified two-call design.
+
+## 14. V0 preliminary probe — on-box gpt-oss-120b (2026-07-23)
+
+Two live probes through the owner's debug console (`/api/debug/complete`, `task=integrate.note`,
+`provider=local model=gpt-oss-120b`, `reasoning_effort=medium`) exercised a first-cut v2
+integrate prompt + a constrained intent schema carrying the `disposition ∈
+{commit,supersede,escalate}` field. Hand-fed graph context + extraction; schema-valid JSON
+returned both times (~950 output tokens each). The model's dispositions matched the design on
+every case tried, including the two most likely to break:
+
+| Case | Correct v2 behavior | gpt-oss-120b |
+|---|---|---|
+| Address change vs current head | supersede, bind the right head | ✅ `supersede`, `supersedes=f-100` |
+| Birthday conflict on an attribute | escalate (I6 hidden-merge signal) | ✅ `escalate`, cites "timeless attribute … human arbitration" |
+| New fact, no head (Mom's birthday) | commit | ✅ `commit` |
+| **Retrospective address (2010–2014) vs current head** | **commit as history, NOT supersede** (I4 validity-time) | ✅ `commit`, `supersedes=None` |
+| **Inferred gender from "sister"** (Lever A) | commit quietly, not escalate | ✅ `commit`, `inferred=true` |
+
+**Read honestly:** two probes are a *signal*, not the V0 eval — the real gate runs the graded
+corpus with the supersession-correctness metric ≥3× for reasoning-model variance (§7 a–e), and
+extraction quality on gpt-oss-120b is a separate variable not tested here. But the core V0
+hypothesis — *the local model can produce well-formed, well-judged dispositions* — has strong
+first support, and notably the model AGREED with the deterministic validity-time floor (I4)
+rather than fighting it, which lowers the escalate-noise risk. I4 stays deterministic anyway
+(one good probe is not a guarantee across phrasings — belt and suspenders). Minor: the probe
+schema let the model overload `new_kind`/`new_name` on existing-entity resolutions — a schema
+nit to fix when the real `IntegrationIntent` v2 shape is authored in V0.
