@@ -1,374 +1,428 @@
-# JBrain2 — Ingest V2: LLM-Judged Disposition + Non-Destructive Supersession (sideload → cutover)
+# JBrain2 — Ingest V2: Flip the Disposition Default (fewer cards, same safety)
 
-> **Status:** Proposed (not scheduled) · **Last verified:** 2026-07-23 — nothing
-> built. Grounded by three scoped researchers (current-pipeline code map, review-inbox
-> burden + churn, and an eight-system industry survey of RAG/KG memory ingestion) and
-> owner-directed. This doc is the icebox record per `docs/DOC_LIFECYCLE.md`; promotion
-> to `docs/plans/` requires the §11 open decisions ratified and a roadmap slot in
-> `docs/ROADMAP.md`. Supersedes the *mechanism* (not the thesis) of
-> `docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md`: that plan trimmed the predicate
-> vocabulary (spine-not-encyclopedia, shipped PR #718); this plan changes *who decides
-> disposition* and *what a conflict costs*, on top of that trimmed spine.
+> **Status:** Proposed (not scheduled) · **Waves:** V0◻️ V1◻️ V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-07-23
+
+The **icebox record** per `docs/DOC_LIFECYCLE.md` — nothing built. Promotion to
+`docs/plans/` requires the §11 open decisions ratified and a `docs/ROADMAP.md`
+slot. This plan **corrects-in-place** (not supersedes) two Living docs when it
+builds: `docs/reference/ANALYSIS.md` (the per-kind conflict policy and the
+correction-note doctrine change) and `docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md`
+(whose §6 rationale leans on the `INFERRED_CEILING` gate this plan removes). Both
+stay Living and CLAUDE.md-cited; neither is archived. Grounded by three
+current-system researchers + four independent adversarial reviews (safety/RLS,
+architecture/feasibility, industry-grounding, process/scope); this is post-review
+**v0.2** — §6 and the sideload were redesigned after the safety and feasibility
+reviews broke the v0.1 mechanism (§13 records what changed and why).
 
 ## Thesis
 
-The graph pipeline gets the **shape** right (notes source facts, the graph arbitrates
-current truth, everything is non-destructive history) but the **disposition policy**
-wrong for a single-user corpus. Two structural facts, both verified in code:
+The pipeline gets the **shape** right (notes source facts; the graph arbitrates
+current truth; supersession chains are full non-destructive history) but the
+**disposition default** is tuned for a multi-author corpus, not a single owner.
+Two verified structural facts:
 
-1. **The default fate of any inferred fact is a review card.** `INFERRED_CEILING = 0.6`
-   (`analysis/weight.py:28`) sits *below* every commit threshold — attribute 0.8,
-   relationship/state/measurement/event 0.7 (`weight.py:37-44`). So `0.6 < 0.7` means a
-   fact the model flags `inferred` **cannot** clear its threshold and is forced to
-   `low_confidence_inference` review. The entire back half of `analysis/arbiter.py`
-   (~400 lines: eight deterministic "attest anyway" backstops — `_object_named`,
-   `_relationship_object_named`, `_gender_grounded`, `_date_phrase_grounded`,
-   `_time_grounded`, plus `recover_dropped_fields`, `dedup_intent_facts`,
-   `derive_kinship_gender`) exists **only to claw specific note-shapes back from that
-   trap.** Every note shape none of the eight recognizes becomes a fresh pile of cards.
-   This is the single highest-volume source of review noise, and it fires on facts the
-   note *genuinely states*.
-
+1. **The default fate of an inferred fact is a review card.** `INFERRED_CEILING =
+   0.6` (`analysis/weight.py:28`) is below every commit threshold — attribute 0.8,
+   relationship/state/measurement/event 0.7 (`weight.py:37-44`). So a fact the model
+   flags `inferred` cannot clear its threshold and is forced to
+   `low_confidence_inference`. The back half of `analysis/arbiter.py` (~400 lines:
+   eight deterministic "attest anyway" backstops — `_object_named:181`,
+   `_relationship_object_named:204`, `_gender_grounded:300`, `_date_phrase_grounded:568`,
+   `_time_grounded:584`, `recover_dropped_fields:396`, `dedup_intent_facts:487`,
+   `derive_kinship_gender:338`) exists **only to claw specific note-shapes back from
+   that trap.** Any shape none of the eight recognizes becomes a pile of cards, on
+   facts the note *genuinely states*. This is the dominant noise source.
 2. **Every conflict costs a human click.** `analysis/supersession.decide`
-   (`supersession.py:526-796`) refuses to auto-supersede attributes/measurements/events:
-   two birthdays → both to review (`:605-624`), most conflicts → `fact_conflict`. That is
-   a sound default when notes disagree *by accident* across many authors. But the owner is
-   the *only* author and is usually *deliberately correcting their own data* — and the
-   policy cannot tell "the owner is updating this" from "two notes accidentally disagree,"
-   so corrections **collide instead of winning** (the loop PR #937 fought).
+   (`supersession.py:526-796`) refuses to auto-supersede state/attribute/measurement:
+   two birthdays → both held (`:605-624`), most conflicts → `fact_conflict`. Sound when
+   notes disagree *by accident* across authors; wrong when the owner is the *only*
+   author *deliberately correcting their own data* — corrections collide instead of
+   winning (the loop PR #937 fought).
 
-The redundancy the owner senses is real: the **Integrator LLM call already sees the
-current graph and already emits `supersession_proposals`/`merge_proposals`**
-(`analysis/intent.py:99-133`, prompt `integrate_note.prompt:12-21` "You decide MEANING"),
-but the deterministic layer **throws that judgment away** — the proposals are demoted to a
-display/trace signal (`arbiter.py:625-628`, `pipeline.py:594-598`), and a conservative
-deterministic re-derivation decides commit-vs-review instead. The semantic judgment
-happens once, in the LLM, and is then overruled.
+The redundancy the owner senses is real: the Integrator already sees the graph and
+emits `supersession_proposals` (`intent.py:99-133`, `integrate_note.prompt` "You
+decide MEANING"), but the deterministic layer discards them — advisory only
+(`arbiter.py:625-629`, `pipeline.py:594-598`) — and re-derives conservatively.
 
-**The move:** let the LLM *own* the commit-vs-escalate disposition (industry-standard —
-§4), default conflicts to **non-destructive supersession** instead of review (Graphiti-
-standard — §4), and let structured corrections write **directly** instead of laundering
-through a prose note. Keep a small deterministic **safety spine** the LLM never touches:
-the domain firewall, RLS, whole-intent atomicity, pinned-override immutability, and
-**determinism across re-runs** (§6 — the one hard problem the industry does not solve for
-us). Build it as a **sideload** (§7) that runs in shadow against the live pipeline and is
-validated on the owner's local box before any cutover.
+**The move — smaller and safer than v0.1 framed it.** Do **not** move
+safety-critical disposition into a non-deterministic LLM (the safety and feasibility
+reviews showed why — §13). Instead:
+
+- **Lever A — remove the inferred-ceiling *review* trap** so a model-asserted fact
+  commits by default, retiring the eight backstops that only existed to fight it —
+  while **keeping a narrow escalation net for sensitive-domain inferred facts** (§5).
+- **Lever B — flip the deterministic conflict *default* from flag-to-review to
+  supersede-with-retained-history** for the kinds that already do newest-wins
+  (`state`, functional `relationship`), **by validity time**, while **keeping**
+  attribute-collision and the other identity/safety floors as review (§5).
+- **Lever C — let a structured review-card correction write its pinned override
+  directly** (re-running the pipeline's shape/firewall/scope checks), dropping the
+  prose-note round-trip for the *structured* case only (§5).
+
+Re-run determinism stays exactly where it is today: the deterministic enactor
+**recomputes** conflict disposition over the current graph (idempotent) — there is
+**no cached LLM verdict** (§6). The LLM's authority grows only in the *soft*
+direction: it can *raise* an escalate signal for genuine ambiguity; it can never
+*lower* a safety floor. Built as a **corpus-snapshot sideload** validated on the
+owner's local box before cutover (§7).
 
 ## 0. What this plan does NOT do
 
-- **No change to the fact grammar or the graph shape.** Facts stay
-  `entity.predicate[.qualifier]` edges; supersession chains stay the full non-destructive
-  revision history (`docs/reference/ANALYSIS.md` "The fact grammar"). Nothing is ever
-  deleted except on note deletion. This plan changes *policy over that shape*, not the
-  shape.
-- **No weakening of the domain firewall.** The firewall floor/ratchet
-  (`analysis/extraction.py:149-171`, applied at `pipeline.py:1902-1909`) and its RLS
-  enforcement stay deterministic and untouched. The LLM may *detect* a cross-subject link
-  (it already sets `cross_subject`, `intent.py:57`); the fail-safe *routing* of a
-  cross-subject fact stays deterministic code (§5, invariant I2).
-- **No destructive deletes.** Unlike Mem0 base (§4), a superseded fact is never removed —
-  it is chained with retained history, exactly as `state` facts already are (SCD-2).
-- **No big-bang cutover.** The new pipeline ships behind a flag, runs shadow-only first,
-  and is diffed + graded on the local box before it writes owner-visible state (§7).
+- **No change to the fact/graph shape.** Facts stay `entity.predicate[.qualifier]`
+  edges; chains stay non-destructive history. Policy over the shape changes, not the
+  shape. No graph-shape migration.
+- **No cached LLM disposition.** v0.1's "persist the disposition keyed to structural
+  identity" is **dropped** — the safety review showed a disposition depends on current
+  graph state, so a cached verdict is stale-*wrong*, and `value_json`-null collapses
+  distinct values onto one key (§13, F1/F2). Determinism comes from deterministic
+  recomputation, as today.
+- **No blanket attribute auto-supersede.** Lever B is scoped to `state`/functional-
+  `relationship`; `attribute` conflicts (two birthdays) **stay** review — they are the
+  hidden-two-people-merge identity signal (`supersession.py:605-624`; §5, I6).
+- **No weakening of the firewall.** `domain_floor` (`extraction.py:177`) /
+  `ratchet_domain` (`:183`) and their RLS enforcement are unchanged; the sensitive-
+  predicate escalation net (§5, I5) replaces the ceiling's incidental firewall coverage.
+- **No destructive deletes** (unlike Mem0 base — §4).
+- **No big-bang cutover.** v2 ships behind a flag, is diffed vs v1 on a corpus
+  snapshot on the box, and is graded before it writes owner-visible state (§7).
 - **Notes remain the sole sources of truth; the wiki stays machine-written.** Lever C
-  (§5) removes the *prose-note round-trip* for a **structured** fact correction, not the
-  doctrine — a prose/wiki correction still files a correction note.
-- **No new runtime dependency** (CLAUDE.md #8 goal) and no GUI surface change in the
-  shadow waves (the review-inbox UI only *shrinks*; the GUI gate is only tripped by the
-  Lever-C correction affordance in the final wave — §9).
+  removes the *note round-trip* for a structured fix; a prose/wiki correction still
+  files a correction note (§5, §11.6).
 
-## 1. The current pipeline, precisely (correcting the "three LLM calls" model)
+## 1. The current pipeline, precisely
 
-It is **two LLM calls + a deterministic layer**, not three calls (`pipeline.py:289-452`):
+Two LLM calls + a deterministic layer, not three calls (`pipeline.py:289-452`):
 
 | Stage | Kind | Sees | Produces |
 |---|---|---|---|
-| Extraction (`_extract_note`, `pipeline.py:342`) | 1 strong LLM call | paragraph chunks + capture anchor | `Extraction`: facts, mentions, temporal tokens (`note_extract.prompt` v31) |
-| Integration (`Integrator.integrate`, `integrate.py:38`) | 1 strong LLM call | note text + extraction + **current graph context** (existing entities + live facts, with ids; `pipeline.py:360-367`) | `IntegrationIntent`: resolutions, facts, **supersession/merge/distinct proposals** (`intent.py:123-133`, `integrate_note.prompt` v12) |
-| Repair passes | deterministic | the intent | five in-place fixes (`recover_dropped_fields`, `derive_kinship_gender`, `canonicalize_intent`, `dedup_intent_facts`) — `pipeline.py:380-395` |
-| Arbiter `plan_intent` | deterministic, pure | intent + chunk texts | commit/review/reject partition (`arbiter.py:95-178`) |
-| Apply `apply_intent` | deterministic | plan | writes facts/entities/chains + files review cards (`pipeline.py:454-532`) |
+| Extraction (`_extract_note` def `pipeline.py:226`, called `:342`) | 1 strong call | paragraph chunks + capture anchor | `Extraction` (`note_extract.prompt` v31) |
+| Integration (`Integrator.integrate`, `integrate.py:38`) | 1 strong call | note text + extraction + **current graph context** (`pipeline.py:360-367`) | `IntegrationIntent` incl. advisory supersession/merge proposals (`intent.py:99-133`) |
+| Repair passes (defined in `arbiter.py`, called `pipeline.py:380-395`) | deterministic | the intent | `recover_dropped_fields`, `derive_kinship_gender`, `canonicalize_intent`, `dedup_intent_facts` |
+| Arbiter `plan_intent` | deterministic, pure | intent + chunk texts | commit/review/reject (`arbiter.py:95-178`) |
+| Apply `apply_intent` | deterministic | plan | writes facts/entities/chains + files cards (`pipeline.py:454-532`) |
 
-The review surface is decided in exactly two places:
+Review is decided in `plan_intent` (weight/ambiguous/cross-subject) and
+`supersession.decide` (the conflict rules). Only **cross-subject (`arbiter.py:131-132`)
+and the firewall** are safety-critical; the rest is heuristic conflict-handling and
+model-error compensation, deterministic for stability/idempotency/auditability.
 
-- **`plan_intent`** (`arbiter.py:135-170`): weight-below-threshold (R1), inferred ceiling
-  (R2, `weight.py:28-31`), ambiguous mention (R3), cross-subject (R4), merge/distinct (R5).
-- **`supersession.decide`** (`supersession.py`): same-instant measurement clash (`:583`),
-  attribute collision both-sides-held (`:605-624`), relationship contradiction (`:626`),
-  irrealis-vs-asserted (`:752`), pinned-head re-flag (`:610,712,759`), low-confidence
-  overwrite guard (`:721,767`).
+## 2. The review-burden math
 
-Of these, **only R4 (cross-subject) and the firewall are safety-critical**; the rest is
-heuristic conflict-handling and model-error compensation, deterministic here for
-*stability, idempotency, and auditability* — not because an LLM would be unsafe. (Full map:
-the current-pipeline researcher's report, archived alongside this plan's research dossier.)
-
-## 2. The review-burden math (why it feels intrusive)
-
-`low_confidence_inference` dominates card volume, by construction: `INFERRED_CEILING 0.6 <
-COMMIT_THRESHOLDS 0.7–0.8`. The eight backstops are the maintenance tax of fighting that
-gap one note-shape at a time; each docstring names a real recurring pain ("the run-to-run
-flip on conjoined objects," "holding one per family member per note is pure review
-noise," "the owner sees a review card for a fact already on the graph"). Second and third
-offenders — `attribute_collision` and `fact_conflict` — are the deliberately-conservative
-conflict policy firing on the owner's own restatements and corrections.
-
-The load-bearing/safety cards (firewall: `domain_promotion`, `inverse_proposal`; identity:
-`merge_proposal`, `ambiguous_mention`; genuine contradiction: `fact_conflict`,
-`low_confidence`) are a **minority** of real volume. The bulk is policy, not safety.
+`low_confidence_inference` dominates by construction (`0.6 < 0.7`). The eight backstops
+are the tax of fighting that gap note-shape by note-shape. Second/third offenders,
+`attribute_collision` + `fact_conflict`, are the conservative conflict policy firing on
+the owner's own restatements. Load-bearing/safety cards (firewall: `domain_promotion`,
+`inverse_proposal`; identity: `merge_proposal`, `ambiguous_mention`; genuine
+contradiction) are a **minority** of real volume.
 
 ## 3. Why PR #937 patched but did not cure
 
-The correction loop (`api/analysis.py:194-239`): an owner "correct it" mints an
-`owner_correction` **note** that re-runs the whole extract→integrate→force-supersede+pin
-pipeline just to change one value. #937 (a) dropped `statement` from the dedup key so N
-paraphrases of a `value_json`-null fact collapse (`arbiter.py:529`) and (b) routed the
-correction through `owner_correction` so it force-supersedes instead of colliding. That
-**breaks the loop** — but the root cause it *names* ("value trapped in prose, not
-value_json") is untouched: the collapse only works when all copies share a `value_json`
-(here, all null); two *different* `value_json` shapes for one value would still fragment.
-And the round-trip itself — a structured fix laundered through a prose note + a full LLM
-pass — is the ergonomic complaint. Lever C (§5) removes it.
+The correction loop (`api/analysis.py:194-239`): "correct it" mints an
+`owner_correction` **note** re-running the whole pipeline to change one value. #937 (a)
+dropped `statement` from the dedup key (`arbiter.py:529`) and (b) routed the correction
+through `owner_correction` so it force-supersedes. It broke the *loop* but the root
+cause it *names* ("value trapped in prose, not `value_json`") is untouched: the collapse
+only works when all copies share a `value_json` (here, all null); divergent `value_json`
+shapes still fragment. Lever C removes the round-trip; the divergent-shape fragility is
+now explicitly in scope to close (§12), not inherit.
 
-## 4. How the industry does this (grounded)
+## 4. How the industry does this (grounded, corrected)
 
-Eight OSS RAG/KG memory systems surveyed (repos/papers in the research dossier). The
-pattern for the exact step in question — *compare new info against the graph, decide
-add/update/invalidate* — is near-universal and **not** what JBrain2 does:
+Eight OSS RAG/KG memory systems surveyed (repos/papers in the research dossier):
 
-| System | Calls/ingest | Entity dedup | Conflict reconciliation | Human review? | Confidence gate? |
-|---|---|---|---|---|---|
-| **Mem0** (arxiv 2504.19413) | 1 extract + 1 per-fact update | embed top-k=10 | **1 LLM call → ADD/UPDATE/DELETE/NOOP** over neighbors; **destructive DELETE** | **none** | none |
-| **Graphiti/Zep** (arxiv 2501.13956) | multi (extract, resolve, invalidate) | embed cosine + full-text → LLM | **LLM contradiction check → invalidate old edge by timestamp**; non-destructive, bi-temporal | **none** | none (temporal validity) |
-| **MS GraphRAG** | many (+ "gleanings") | exact name group | **none** — concatenate descriptions, reader LLM reconciles at query time | **none** | none |
-| **LightRAG / nano-graphrag** | 1 + ≤1 gleaning | exact name | **none** — additive, coexist | **none** | none |
-| **Cognee** (ECL) | ~6-stage | content-hash + LLM unify | ontology-grounded; no bi-temporal | **none** | none |
-| **Letta/MemGPT** | agent self-edits | agent decides | agent overwrites memory block; **conversational** correction | **none (pull, not queue)** | none |
-| **LlamaIndex PGIndex** | schema-guided extract | user-supplied | **none built-in** | **none** | none |
+| System | Calls/ingest | Entity dedup | Conflict reconciliation | Human review? |
+|---|---|---|---|---|
+| **Mem0** (arXiv 2504.19413) | 1 extract + 1 per-fact update | embed top-k=10 | **1 LLM call → ADD/UPDATE/DELETE/NOOP**; base is destructive DELETE¹ | none |
+| **Graphiti/Zep** (arXiv 2501.13956) | multi | embed cosine + full-text → LLM | LLM contradiction check → **invalidate old edge by timestamp** (bi-temporal, non-destructive) | none |
+| **MS GraphRAG** | many (+ gleanings) | exact name group | no fact-level arbitration — duplicate descriptions **LLM-summarized at *index* time**²; contradictions coexist, dilute in retrieval | none |
+| **LightRAG / nano-graphrag** | 1 + ≤1 gleaning | exact name | none — additive, coexist | none |
+| **Cognee** (ECL) | ~6-stage | content-hash + LLM unify | ontology-grounded; no bi-temporal | none |
+| **Letta/MemGPT** | agent self-edits | agent decides | agent overwrites block; conversational correction | none (pull) |
+| **LlamaIndex PGIndex** | schema-guided extract | user-supplied | none built-in | none |
+
+¹ *Mem0's published paper is destructively two-pass; its production code has since
+drifted toward non-destructive ADD-only, and Mem0ᵍ (graph) marks edges invalid rather
+than deleting — the industry is converging on Graphiti's non-destructive stance, which
+strengthens Lever B.*
+² *Corrected from v0.1's "reconcile at query time": GraphRAG runs an index-time LLM
+description-merge; it does no truth-arbitration of conflicting facts.*
 
 Three conclusions:
 
 - **The dominant reconcile pattern is embedding-retrieve neighbors → one LLM judgment
-  call** (Mem0 is the purest). **Nobody uses a deterministic weighing arbiter.** This
-  validates the owner's instinct directly.
-- **Nobody has a human review inbox.** But — the load-bearing insight — **they skip it not
-  because the LLM is trusted, but because they made being wrong cheap:** either
-  *non-destructive* (Graphiti: keep both, timestamp validity, reconcile at read) or
-  *non-authoritative* (GraphRAG: concatenate, dilute in retrieval). Mem0 base is the
-  exception and pays for it with silent destructive loss — acceptable for chat
-  personalization, **not** for a machine-written wiki treated as truth.
-- **JBrain2's inbox is noisy because it made the opposite choice on both axes:** its graph
-  is *authoritative* (feeds the wiki) **and** its arbiter tries to get every fact right *at
-  write time*. The cure is therefore not only "a better single call" — it is **also**
-  shifting the cost of uncertainty off the human, the way Graphiti does.
+  call** (Mem0 purest). **No *streaming agent-memory* system in this class ships a review
+  inbox.** *Scoped honestly:* human-in-the-loop KG-construction tools **do** (e.g.
+  **ExtracTable**, arXiv 2506.03221; the KG-construction survey arXiv 2510.20345 documents
+  confidence-gated staging) — but for *multi-author, authoritative* corpora, a different
+  regime. JBrain2 is single-author but authoritative (feeds the wiki), so it sits between.
+- **They skip the inbox by making being wrong cheap** — non-destructive versioning
+  (Graphiti) or non-authoritative additive merge (GraphRAG) — not by trusting the LLM.
+- **JBrain2's inbox is noisy because it is authoritative *and* arbitrates at write time.**
+  The cure is to shift the cost of uncertainty (Lever B, non-destructive) — *not* to hand
+  safety-critical disposition to the model.
 
-The strongest published direction is the hybrid Mem0ᵍ and Graphiti are independently
-converging on: **one LLM operation-decision per fact, implemented non-destructively.**
-That is exactly Levers A+B.
+**The risk the industry evidence adds** (industry review's strongest finding): the
+single-LLM-call disposition Mem0 uses is **documented ~15–20 points lossy on
+supersession** — the "Supersede" memory-update-gap study (arXiv 2606.27472) names Mem0's
+op-choice "a heuristic, not a learned policy" and measures accuracy dropping 92→77%
+(and 82→63% on a smaller model) at exactly *keep-current / retire-superseded*. This is
+**why v0.2 keeps disposition deterministic** and gives the LLM only a *soft escalate
+signal* — and why the V0 gate measures **supersession correctness**, not just fewer cards
+(§7, §12). (See also A-Mem, arXiv 2502.12110; surveys arXiv 2510.20345 / 2512.13564.)
 
-## 5. The proposed model — three levers on one safety spine
+## 5. The proposed model — three levers on an expanded safety spine
 
-### Lever A — the Integrator owns commit-vs-escalate (single judgment)
+### Lever A — remove the inferred-ceiling *review* trap; keep a sensitive net
 
-The integrator already sees the graph and proposes supersessions. Give it authority to
-emit, **per fact**, an explicit disposition: `commit` | `supersede` | `escalate` (with a
-machine-readable reason), plus the operation on any existing head. The deterministic layer
-then **enacts** the disposition rather than re-deriving it — subject only to the safety
-spine below. Consequences:
+Delete `INFERRED_CEILING`/`COMMIT_THRESHOLDS` as the *review gate* (`weight.py`) and
+retire the eight attest-anyway backstops (`arbiter.py`; keep `dedup_intent_facts` as an
+idempotency net). A model-asserted fact commits by default. **But** — because the ceiling
+today incidentally forces *non-floored* sensitive inferred facts to review (the firewall
+allowlist is deliberately partial: weight/temperature and unknown predicates fall back to
+the model, `extraction.py:148-151,171-174`), Lever A adds a **narrow deterministic
+escalation net (I5):** an `inferred` fact whose predicate OR resolved domain is
+health/finance/location — and is not already floored — escalates (a `domain_promotion`-
+class review), so a mis-domained sensitive inference can't commit silently. Non-sensitive
+inferred facts commit. This removes the volume without reopening a firewall gap.
 
-- **Delete `INFERRED_CEILING`/`COMMIT_THRESHOLDS` as the review gate** (`weight.py`) and
-  **delete the eight backstops** (`arbiter.py`) — they exist solely to fight a gate that
-  no longer exists. (Keep `dedup_intent_facts` as a cheap idempotency net; retire the
-  attest-anyway rescuers.) This is the bulk of the friction *and* the bulk of the arbiter
-  line count, gone together.
-- The model's self-confidence stops being a floor-fighting number and becomes one input to
-  *its own* escalate decision — where run-to-run noise is tolerable because a stable
-  disposition is pinned (§6).
+### Lever B — non-destructive supersede as the default for state/relationship, by validity time
 
-### Lever B — non-destructive supersession is the default; review is the exception
+For the kinds that already do newest-wins-eagerly (`state`; functional `relationship` —
+`supersession.py:110,113`), change the default from "supersede **and flag review**" to
+"supersede **with retained history**, no card." **Newest = latest *validity* time
+(`valid_from`, tie-broken by `reported_at`), never capture time** (I4 —
+`supersession.py:3-6`): a retrospective note lands as closed history, never as the new
+head. Escalate to review **only** when a retained floor fires (I4–I9 below) or the LLM
+raises `escalate`.
 
-Change `supersession.decide`'s default for a conflicting head from "hold both for review"
-to **"the newest asserted value becomes the active head; the prior is chained with retained
-history"** — exactly what `state` facts already do (SCD-2), extended to attribute /
-measurement / functional-relationship kinds. Escalate to a review card **only** when:
+**Explicitly out of Lever B — stay review (I6):** `attribute` conflicts (two birthdays,
+two genders) remain `attribute_collision` review. This is a **deliberate reversal-guard**:
+`ANALYSIS.md:110-111` says attributes "hold `pending_review`, never auto-supersede — two
+birthdays is a bug, not news," because a collision is the primary signal that two real
+people were wrongly merged into one entity — and the LLM is the component that produced
+the bad merge, so it cannot be trusted to escalate it. Owner attribute *corrections* route
+through Lever C, not through silent supersession. `measurement`/`event` stay accumulate
+(a new reading is a datapoint, not a conflict; genuinely contradictory same-instant
+readings still escalate). **This narrows Lever B vs v0.1 and removes the direct
+`ANALYSIS.md:111` contradiction** — but the state/relationship half is still a per-kind
+policy change under a Living doc, surfaced for owner ratification (§11.2) and reconciled
+in-wave.
 
-1. the LLM's disposition is `escalate` (it judged a genuine unresolvable contradiction — a
-   hidden two-people split, a safety conflict), **or**
-2. a **safety-spine** rule fires (firewall promotion, cross-subject, pinned-head overwrite,
-   low-self-confidence-would-overwrite-good-data — the OCR guard `supersession.py:721`
-   stays), **or**
-3. a **structural** conflict the LLM can't see (e.g. two live namesakes) needs identity
-   adjudication.
+### Lever C — structured corrections write directly, re-running the pipeline's checks
 
-Everything else supersedes silently, with full history retained and reversible. The inbox
-shrinks to safety + genuine ambiguity. *(Measurement "never auto-supersede" stays as a
-per-kind accumulate — a new reading is a new datapoint, not a supersession; that is not a
-conflict and files no card. Only genuinely contradictory same-instant readings escalate.)*
+`ANALYSIS.md:359-362` already sanctions this: *"structured pipeline outputs … are
+corrected directly in the review inbox. A correction note's elevated weight is implemented
+as pinning."* So a review-card structured fix writes the pinned, force-superseding override
+**directly** — but it **must re-run the enforcement the note→extract path owns** before
+pinning (I8): `_shape_check` (`pipeline.py:1932-1945`), `domain_floor` + `ratchet_domain`
+(`:1906-1909`), and entity-scope validation (`_resolve_from_intent`, `:548-563`). Skipping
+them would let an owner correction commit a malformed/mis-domained value that is then
+*pinned* (immutable) — a human-triggered firewall/corruption bypass (§13, F6). Correction-
+*notes* stay the path for **prose/wiki** corrections. `ANALYSIS.md:359-362` is edited
+in-wave (the mechanism changes from "note" to "direct write").
 
-### Lever C — structured corrections write directly
+### The safety spine — deterministic, the LLM never lowers these (I1–I9)
 
-`docs/reference/ANALYSIS.md` already states a correction's weight "is *implemented as*
-pinning the facts it asserts." So for a **structured** fact fix from a review card, write
-the pinned override **directly** (force-supersede + `pinned=true`, recording the owner
-action for provenance) — no minted note, no LLM round-trip. Keep correction-*notes* for
-**prose/wiki** corrections (the doctrine that governs machine-written text). This kills the
-"it has to log a note as another thing of truth" round-trip for the structured case while
-preserving the note-as-truth rule where it belongs. *(This is the only lever that adds a
-GUI affordance — §9, GUI gate.)*
+| # | Invariant | Where it lives today |
+|---|---|---|
+| I1 | Domain firewall floor/ratchet + RLS; **every commit routes through `_upsert_fact`** | `extraction.py:177,183`; `pipeline.py:1906-1909` |
+| I2 | Cross-subject facts deterministically routed (LLM only *detects*) | `arbiter.py:131-132`; `intent.py:57` |
+| I3 | Whole-intent atomicity — fatal violation rejects the whole intent | `arbiter.py:116-123`; `intent.py:283` |
+| I4 | Supersession compares **validity** time, never capture time | `supersession.py:3-6,662-796` |
+| I5 | **Sensitive-domain inferred facts escalate** (new — replaces the ceiling's firewall role) | new (Lever A) |
+| I6 | Attribute collision stays review (hidden-merge identity signal) | `supersession.py:605-624` |
+| I7 | Pinned-override immutability; irrealis never displaces asserted; asserted-vs-negated held | `supersession.py:610,712,759,752,638-657` |
+| I8 | **Direct corrections re-run shape/floor/scope checks before pinning** (new — Lever C) | new (Lever C) |
+| I9 | Derived edge never supersedes a primary head; low-self-confidence never overwrites more-confident (OCR guard) | `pipeline.py:2418-2430`; `supersession.py:721,767` |
 
-### The safety spine (deterministic, the LLM never decides these) — invariants
+The v2 enactor must re-implement I1–I9, not just `decide()`'s happy path (I9's derived-
+defers-primary lives in the apply layer, *outside* `decide()` — the safety review's F9).
 
-- **I1 — Domain firewall + RLS.** Floor/ratchet (`extraction.py:149-171`) and RLS-scoped
-  writes are deterministic and unchanged. A hallucinated domain is a leak, not a nit.
-- **I2 — Cross-subject routing.** The LLM may set `cross_subject`; a cross-subject fact is
-  *deterministically* routed (staged/escalated), never auto-committed. (N3.)
-- **I3 — Whole-intent atomicity.** A fatal structural violation rejects the whole intent;
-  no partial commit (`intent.py`, `arbiter.py:116-123`).
-- **I4 — Pinned-override immutability.** A human/owner-pinned head is never auto-flipped,
-  only re-flagged (`supersession.py:610,712,759`). The LLM cannot overrule a human.
-- **I5 — Determinism across re-runs.** Re-analysis of an unchanged note must produce the
-  same graph. This is the invariant the industry does *not* preserve — §6.
+## 6. Re-run determinism — by recomputation, not caching
 
-## 6. The hard problem: determinism across re-runs (and its solution)
+The one hard requirement the industry does not solve for us: re-analysis of a note (model/
+prompt upgrade, corpus re-run — `POST /api/notes/{id}/analyze`) must produce the same
+graph; "a silent flip is the one outcome no layer may produce" (`ANALYSIS.md`).
 
-Mem0/Graphiti **never re-ingest the same episode**, so a non-deterministic LLM disposition
-never bites them. JBrain2 **does** re-extract on model/prompt upgrades
-(`POST /api/notes/{id}/analyze`, corpus re-runs), upserting on the structural identity key
-(`docs/reference/ANALYSIS.md` "Reprocessing"). If the LLM freely decides supersession, a
-re-run could non-deterministically flip a disposition — "a silent flip is the one outcome
-no layer may produce" (`docs/reference/ANALYSIS.md` "Same-name coexistence").
+**v0.2 keeps the source of determinism exactly where it is today: the deterministic
+enactor recomputes conflict disposition over the *current* graph.** `supersession.decide`
+is already a pure, idempotent function of `(candidate, current heads)`; re-running it
+yields the same result given the same graph. Lever B changes its *default outcome* (silent
+supersede vs flag) but not its determinism. **There is no cached LLM verdict** — which is
+what makes this safe: a disposition depends on graph *state* the structural-identity key
+does not capture, so caching it (v0.1's §6) was stale-*wrong*, not just stable (§13,
+F1/F2/F7/F8). The LLM's contribution stays *advisory* (resolutions, facts, and a new
+`escalate` hint the enactor may honor to *raise* a review, never to *suppress* one), so
+its run-to-run noise can only add a card, never silently flip a head. Because nothing is
+cached, there is **no disposition-backfill problem** for the existing corpus (§13 dissolves
+process #7/#8).
 
-**Solution — persist the disposition, keyed to the structural identity.** The LLM's
-disposition for `(entity, predicate, qualifier, value_json-hash)` is recorded (a
-`disposition` provenance row, mirroring how human decisions pin today). On re-analysis, a
-matching key **reuses the stored disposition** instead of re-rolling it; only a *new* key
-(genuinely new fact) draws a fresh LLM judgment. This makes re-runs idempotent by
-construction while still letting the first pass be an LLM call. It is the same mechanism as
-today's pinned human overrides, extended to cover machine dispositions — and it is the one
-piece that cannot be copied from Mem0. **This is the load-bearing design decision of the
-plan and the first thing the adversarial reviews must attack.**
+## 7. The sideload — corpus-snapshot eval on the box, not a production shadow store
 
-*(Alternative considered — feed the prior disposition into the re-run prompt as context and
-accept "usually stable": rejected as insufficient; "usually" is a silent-flip risk. The
-persisted-key approach is deterministic by construction.)*
+v0.1 claimed the Phase-5 "shadow" pattern as precedent; the feasibility review showed that
+pattern is only an **enqueue-string diff** (`workflow/events.py`, `dispatcher.py:232-275`)
+— no shadow *write* store exists, and a faithful in-production v1-vs-v2 diff hits an
+ordering problem (v1 commits first; v2 then reads post-v1 heads and decides differently).
+**v0.2 drops the production shadow-write substrate** in favor of a precedent that *does*
+exist:
 
-## 7. The sideload: shadow first, cut over only after local-box validation
+- **The DB-mode eval runner already does the whole thing.** `tests/eval/runner.py`
+  `run_case_db` runs `plan_intent → apply_intent → COMMIT` against a real (testcontainer/
+  ephemeral) Postgres and reads back the committed facts **and the filed review cards**
+  (`runner.py:245+`) — exactly the v1-vs-v2 comparison surface, against a throwaway DB, no
+  production shadow store, no ordering dance.
+- **The sideload = run v1 and v2 through `run_case_db` over a snapshot of the owner's real
+  corpus on the local box**, with the router's per-task override sending the v2 integrate
+  task to the **local** provider (`llm/router.py` overrides; `llm/local_catalog.py`). The
+  new task `integrate.note.v2` must be registered in `TASK_DEFAULTS` first
+  (`router.py:62,226-228` raises on an unregistered task). The judgment/safety scoring
+  reuses `evals/integrate_runner.py` (in-memory); the **cards-filed + supersession-
+  correctness** delta comes from the DB-mode runner — two harnesses, both extant, both
+  cited correctly now.
+- **Acceptance artifact (owner gate, V4):** on the corpus snapshot, v2 vs v1: (a)
+  materially fewer cards, (b) **no tier-1 recall regression** on the graded corpus
+  (`tests/eval/corpus/`), (c) **firewall/RLS parity** (every v1 floor/ratchet/cross-subject
+  action reproduced), (d) **supersession correctness** ≥ v1 (the §4 lossiness risk — did v2
+  supersede the *right* head, by validity time?), (e) re-run idempotency proven (run the
+  snapshot twice, identical graph).
+- **Cutover (V5) is a pipeline-pointer flip** to `integrate_note_v2`, v1 behind a flag for
+  one release. Two non-obvious tasks the feasibility review surfaced: the note-dedup guard
+  (`queue.has_active_analysis`, hardcoded `kind='integrate_note'`, `queue.py:274`) and the
+  integration reconciler (`dispatcher.py:342-370`) must be extended to the v2 kind or E4
+  double-process protection lapses. **Rollback caveat:** Lever B will have already
+  rewritten owner-visible heads non-destructively; reverting the code path does not revert
+  that state — but because every superseded head is retained history (never deleted), the
+  prior heads are recoverable. Stated, not hand-waved.
 
-The codebase already has the exact pattern this needs — **do not invent new plumbing.**
-
-- **Shadow precedent.** The Phase-5 workflow engine ran a *shadow observation* alongside
-  the hardcoded path and **diffed** before Wave 2 cut over (`workflow/events.py:1-14`,
-  `shadow_enqueued`). Ingest V2 reuses this shape: a new registry action
-  `integrate_note_v2` (`workflow/registry.py:177` is the `integrate_note` template) runs
-  **read-only against a shadow store**, producing a v2 result diffed against the live v1
-  graph write — never touching owner-visible state.
-- **Local-box test harness precedent.** The integrate eval already drives the *real*
-  prompt through an **injected router** and scores judgment + safety against golds, "the
-  box driver passes a live one" (`evals/integrate_runner.py:199-235`,
-  `evals/integrate_cases/`). V2 extends this: the same harness runs the single-call v2
-  prompt through the **local** provider (the router's per-task override routes
-  `integrate.note.v2` → `local:<model>`, `docs/reference/ANALYSIS.md` "Runtime routing
-  overrides"; catalog `llm/local_catalog.py`) on the owner's Strix-Halo box, scoring the
-  v2 disposition against the same golds *plus* a new "cards-filed" delta metric.
-- **Shadow diff = the acceptance artifact.** For a window of real notes, run v1 (live,
-  authoritative) and v2 (shadow, read-only) on the same input; record per-note: facts
-  committed, dispositions, and **cards that would have fired**. The owner reviews the diff
-  (a shadow report, not the live inbox). Cutover is gated on: (a) v2 files materially fewer
-  cards, (b) no tier-1 recall regression vs v1 on the graded corpus
-  (`tests/eval/corpus/`), (c) firewall/RLS parity (every v1 firewall action reproduced),
-  (d) re-run determinism proven (§6) on the harness.
-- **Cutover = flip the dispatcher**, with v1 kept behind the flag for one release as the
-  rollback. No data migration (the graph shape is unchanged); the shadow store is dropped.
-
-This is the "put it over the side, test with the local LLM, then commit" path the owner
-asked for, expressed in the repo's own shadow/eval idiom.
+No new production table is required by this design (the disposition cache is gone; the eval
+runs on a throwaway DB), so **no new-table RLS migration** — a direct consequence of the §6
+redesign.
 
 ## 8. Waves (per `docs/reference/PROCESS.md`)
 
-| Wave | Delivers | Depends on | Size | Writes owner state? |
-|---|---|---|---|---|
-| V0 | **Spike/host-validation:** the single-call v2 prompt + `parse` + the integrate-eval extension, run against the **local box** model; a go/no-go on local-model judgment quality before any engine work. Blocking. | §11 decisions | M | no |
-| V1 | v2 **disposition schema** + the `disposition` persistence + the deterministic *enactor* (safety spine I1–I5) — pure, unit-tested, no LLM. | V0 | M-L | no |
-| V2 | `integrate_note_v2` **shadow action** + shadow store + the shadow-diff report. Read-only. | V1 | M | no (shadow) |
-| V3 | **Non-destructive supersession default** (Lever B) behind the v2 enactor; corpus/harness re-tier; the cards-filed delta metric. | V1 | M-L | no (still shadow) |
-| V4 | **Owner acceptance gate:** shadow-diff + local-box eval artifact (§7 a-d). Owner ratifies cutover. | V2,V3 | — | no |
-| V5 | **Cutover** — dispatcher flip, v1 behind rollback flag; **Lever C** direct-correction affordance (**GUI gate: three mocks** for the changed review-card action, `PROCESS.md` GUI gate). | V4 | M | **yes** |
-| V6 | Retire v1 + the eight backstops + the dead ceiling; docs reconciliation (`ANALYSIS.md`, `ENTITY_GRAPH_REFOCUS_PLAN.md`, this plan → archive). | V5 stable one release | M | — |
+Promote this doc to `Scheduled`/`plans/` **before** V0 (a `Proposed` doc means nothing
+built — DOC_LIFECYCLE). V4 is an **owner acceptance gate**, not a code wave.
 
-Conventional Commits per wave; one PR per wave; per-task + per-wave adversarial review;
-security/red-team review mandatory on V1 (safety spine), V3 (supersession), V5 (cutover +
-firewall parity). CI green before merge.
+| Wave | Delivers | Depends on | Size | Owner state? |
+|---|---|---|---|---|
+| V0 | **Local-box judgment spike:** `integrate.note.v2` prompt (soft `escalate` hint) + `TASK_DEFAULTS` reg + the DB-mode-runner extension for the cards + **supersession-correctness** metric; run on the box's local model. Go/no-go on local judgment quality (§11.5). | §11 decisions | M-L | no |
+| V1 | **The deterministic v2 enactor + expanded safety spine I1–I9** (Lever A ceiling removal + sensitive net I5; Lever B state/relationship default + validity-time; I6–I9 re-asserted). Pure, unit-tested, LLM faked. **Security red-team (firewall/validity/identity floors).** | V0 | L | no |
+| V2 | `integrate_note_v2` action (`registry.py` ActionSpec) + the corpus-snapshot diff harness over `run_case_db`; the v1-vs-v2 report. | V1 | M-L | no |
+| V3 | Corpus/harness **re-tier** (invert the ceiling-trap cases; `absent_review_cards` sweeps; the `ANALYSIS.md:111` attribute case stays green; validity-time + sensitive-net cases). | V1 | M | no |
+| V4 | **Owner acceptance gate:** the §7 (a–e) artifact from the local box. Owner ratifies cutover + the §11 doctrine changes. | V2,V3 | — | no |
+| V5 | **Cutover** — pipeline-pointer flip, dedup-guard + reconciler extended to v2 kind, v1 behind rollback flag; **Lever C** direct-correction (I8); **frontend review-block registry** edits for the removed card kinds (**GUI gate: three mocks**); **in-PR doc reconciliation** of `ANALYSIS.md` (per-kind policy + correction doctrine) and `ENTITY_GRAPH_REFOCUS_PLAN.md` (ceiling rationale) — corrected in place, not archived. | V4 | M-L | **yes** |
+| — | (follow-up, after V5 stable one release) retire v1 + the backstops + dead ceiling code. | V5 | S | — |
+
+One PR per wave; per-task + per-wave adversarial review; **security red-team on V1 and V5**
+(firewall/RLS/identity). CI green before merge. Conventional Commits.
 
 ## 9. GUI gate
 
-Only **V5** touches a GUI surface: the review card's "correct it" changes from
-"compose a correction note" to "apply structured fix" (Lever C). Three interactive mock
-HTML artifacts per `docs/reference/DESIGN.md`, owner-chosen before V5 build. The inbox
-*shrinking* (fewer cards) is not a surface change and trips no gate.
+- **V5 trips it:** (a) the review card's "correct it" → structured direct-apply (Lever C),
+  and (b) the **review-block registry / card renderers** change when Lever A removes card
+  kinds (the refocus plan flagged this same surface). Three interactive mock HTML artifacts
+  per `docs/reference/DESIGN.md`, owner-chosen before V5 build.
+- **Undecided (§11.7):** whether the V2 shadow-diff **report** and any v2 **routing
+  setting** (§11.5) are owner-facing surfaces needing their own mocks. Defaulted to
+  dev-only (no gate); ratify.
 
 ## 10. Non-negotiables reconciliation (`CLAUDE.md`)
 
-1. LLM via the adapter — the v2 call is a `router.complete` task like every other (§7). ✓
-2. File I/O via storage abstraction — unchanged. ✓
-3. RLS + isolation tests — I1/I2 unchanged; the shadow store and any new provenance table
-   get the standard `has_domain_scope` policy + an RLS isolation test. ✓
-4. Comments explain why — enforced in review. ✓
-5. Tests same PR; 80%/security-100%; real Postgres; LLM faked — the shadow diff and enactor
-   are testcontainer-tested; the safety spine is security-100%. ✓
+1. LLM via adapter — v2 is a `router.complete` task. ✓
+2. Storage abstraction — unchanged. ✓
+3. RLS + isolation tests — **no new table** (the disposition cache is gone; eval runs on a
+   throwaway DB), so no new RLS surface. I1/I2 unchanged. ✓ *(if any decision reintroduces a
+   table, its RLS isolation test is in-wave)*
+4. Comments explain why — review-enforced. ✓
+5. Tests same PR; 80%/security-100%; real Postgres; LLM faked — the enactor + diff harness
+   are testcontainer-tested; the safety spine is security-100%; **backstop deletion must not
+   drop coverage below 80%** (verify locally, §12). ✓
 6. Conventional Commits; branch+PR; CI green. ✓ (§8)
-7. Wiki machine-written; humans correct via correction notes — **preserved for prose**;
-   Lever C narrows the *structured* case only (§5). ✓ *(owner-ratify — §11.6)*
-8. `dev-setup.sh` updated with any new tool/step — no new dep expected. ✓
-9. Docs travel with code — §8 V6 reconciles. ✓
+7. Wiki machine-written; humans correct via correction notes — **preserved for prose.**
+   Lever C narrows the *structured* case, sanctioned by `ANALYSIS.md:359-362` (§11.6). ✓
+8. `dev-setup.sh` — no new dep expected. ✓
+9. Docs travel with code — **reconciled in the V5 PR** (the behaviour-change wave), not
+   deferred (§8). ✓
 
 ## 11. Open decisions for the owner (recommended default first)
 
-1. **Disposition authority scope.** Default: LLM decides `commit|supersede|escalate`; the
-   safety spine (I1–I5) can only *escalate* the LLM's call, never *downgrade* an escalate
-   to a commit. Alternative: keep a deterministic weight as a second, conservative vote.
-2. **Non-destructive default breadth.** Default: extend silent-supersede-with-history to
-   attribute + state + functional-relationship; keep measurement/event as accumulate.
-   Alternative: also auto-supersede within measurement series (riskier — loses the
-   "contradictory reading" signal).
-3. **Determinism mechanism (§6).** Default: persist disposition keyed to structural
-   identity (deterministic by construction). Alternative: prompt-context stability
-   (simpler, weaker). **This is the plan's crux — ratify explicitly.**
-4. **Escalation floor.** With the ceiling gone, what still *forces* review beyond the
-   safety spine? Default: only LLM-`escalate` + structural namesake ambiguity. Alternative:
-   a small retained floor for health/finance value changes (belt-and-suspenders on the
-   firewall domains).
-5. **Local-model judgment quality (V0 gate).** If the local box model can't match cloud
-   judgment on the integrate golds, do we (default) ship v2 on **cloud** first and move to
-   local when the model lands, or block on local parity? (The privacy-routing axis already
-   supports either — `docs/reference/ANALYSIS.md` "Privacy routing".)
-6. **Lever C doctrine (CLAUDE.md #7).** Default: direct structured writes for review-card
-   fixes; correction-*notes* retained for prose/wiki. Ratify that this does not violate
-   "humans correct via correction notes."
-7. **Single-call vs keep-two-calls.** Default: **keep extraction and integration as two
-   calls**, move only the *disposition authority* into integration (the token saving of
-   merging is minor and the long-note map-reduce + clean extraction artifact for re-runs
-   argue against merging). Alternative: true single-call Mem0-style (bigger blast radius,
-   re-run artifact lost).
+1. **Escalate-signal authority.** Default: the LLM's `escalate` hint may only *raise* a
+   review, never suppress a floor or a commit. Alternative: also let a high-confidence LLM
+   `commit` override I6 attribute-collision (rejected by default — F3).
+2. **Lever B breadth / `ANALYSIS.md` change.** Default: silent supersede-with-history for
+   `state` + functional `relationship` only; `attribute` stays review (I6). Ratify the
+   per-kind policy edit to `ANALYSIS.md:110-111`. Alternative: include attribute (reopens
+   the hidden-merge risk — not recommended).
+3. **Sensitive net threshold (I5).** Default: any `inferred` fact on a health/finance/
+   location predicate-or-domain not already floored → escalate. Alternative: also escalate
+   *asserted* sensitive facts on non-floored predicates (belt-and-suspenders; more cards).
+4. **Escalation floor overall.** With the ceiling gone, what still forces review beyond the
+   spine? Default: I5–I9 + LLM-`escalate` + structural namesake ambiguity. Ratify.
+5. **Local-model judgment quality (V0 gate).** If the box model can't match cloud on the
+   integrate + supersession-correctness golds: default ship v2 on **cloud** first, move to
+   local when the model lands (privacy-routing axis supports both), or block on parity.
+6. **Lever C doctrine.** Default: direct structured writes for review-card fixes (per
+   `ANALYSIS.md:359-362`), editing that line's mechanism in-wave; correction-*notes* kept
+   for prose/wiki. Confirm this is a mechanism edit, not a CLAUDE.md #7 violation.
+7. **GUI surfaces (§9).** Default: V2 diff report + v2 routing setting are dev-only (no
+   mock gate); only the card renderer + Lever C trip the gate. Ratify.
+8. **Two calls vs one.** Default: **keep two calls** (extraction + integration); move only
+   the soft escalate authority into integration. The token saving of merging is minor and
+   the long-note map-reduce + clean extraction artifact argue against it. (v0.1's pervasive
+   "single-call" language is retired — §13.)
 
 ## 12. Risks (honest)
 
-- **Local-model judgment is unproven** — V0 is the blocking spike; §11.5 is the fallback.
-- **The determinism mechanism (§6) is novel here** — if the persisted-disposition key is
-  wrong (e.g. value_json-shape drift changes the key), a re-run could still flip. The key
-  design must be attacked in the V1 red-team; the divergent-`value_json` fragility PR #937
-  left standing (§3) is the same failure mode and must be closed here, not inherited.
-- **Non-destructive default could mask a real contradiction** the old review surfaced — the
-  cards-filed delta must be paired with a *recall* check (V3): did any conflict that
-  *should* have escalated get silently superseded? The shadow diff is where this is caught
-  before cutover.
-- **Firewall parity is safety-critical** — the shadow diff must prove every v1 firewall
-  action (promotion, cross-subject hold) is reproduced by v2; V5's security review
-  red-teams this specifically.
-- **Backstop deletion is broad** — removing ~400 lines + their tests must not drop coverage
-  below the 80% gate; verify locally per `ENTITY_GRAPH_REFOCUS_PLAN.md`'s coverage-on-
-  deleted-paths note.
-- **Wiki leans on this** — Phase 6 treats the graph as truth; a supersede-by-default that
-  silently changes a head changes what the wiki publishes. The Phase 6 plan
-  (`docs/plans/PHASE6_WIKI_PLAN.md`) must be re-read against this before V5.
-- **Two pipelines during shadow** double the ingest LLM cost for the shadow window —
-  bounded (shadow runs on a sample or off-peak), and temporary.
+- **Local-model judgment is unproven** — V0 blocking spike; §11.5 fallback.
+- **Supersession is a documented LLM weak spot** (§4, arXiv 2606.27472, ~15–20 pts) — v0.2
+  keeps disposition deterministic precisely for this; the residual risk is the LLM's
+  *escalate* hint being noisy (only adds cards) and the *default* policy mis-superseding by
+  validity-time edge cases — the V0/V4 supersession-correctness metric is the gate.
+- **Lever B could mask a real contradiction** the old review surfaced — the cards-filed
+  delta is paired with a **recall check** (V4 (d)): did any conflict that *should* have
+  escalated get silently superseded? Caught on the snapshot before cutover.
+- **The `ANALYSIS.md:111` attribute doctrine** is deliberately *not* changed (I6); if the
+  owner wants attribute corrections frictionless, that rides Lever C, not Lever B.
+- **Divergent-`value_json`-shape fragility** (the #937 residue) must be *closed* here (a
+  normalized value fingerprint for dedup/idempotency), not inherited (§3, §13 F2).
+- **Firewall parity is safety-critical** — V4 (c) proves every v1 floor/ratchet/cross-
+  subject action is reproduced; V1 + V5 security reviews red-team it.
+- **Backstop deletion is broad** (~400 lines + tests) — coverage must stay ≥80% (CLAUDE.md
+  #5); verify locally per the refocus plan's coverage-on-deleted-paths note.
+- **Wiki leans on this** — a supersede-by-default changes what the wiki publishes; re-read
+  `docs/plans/PHASE6_WIKI_PLAN.md` against this before V5.
+- **Rollback reverts code, not state** — mitigated by non-destructive retained history
+  (§7); the prior heads are recoverable.
+- **Cutover guards** — the hardcoded `integrate_note` dedup guard + reconciler must extend
+  to the v2 kind or double-process protection lapses (§7).
+
+## 13. What changed from v0.1 (post-review changelog)
+
+- **§6 rewritten.** v0.1 persisted the LLM disposition keyed to structural identity; the
+  safety review proved this stale-*wrong* (disposition depends on graph state; `value_json`-
+  null collapses distinct values — F1/F2/F7/F8). v0.2 keeps deterministic recomputation
+  (idempotent, as today); the LLM gets only a soft *raise-only* escalate signal. Dissolves
+  the disposition table, the backfill wave, and the "no owner state in shadow" tension.
+- **§7 rewritten.** v0.1's production shadow-write store had no real precedent (the Phase-5
+  shadow is an enqueue-string diff) and an unsolved read-ordering problem (feasibility F1).
+  v0.2 uses the extant DB-mode eval runner over a corpus snapshot on the box.
+- **Lever A narrowed** — keeps a sensitive-domain escalation net (I5) so removing the
+  ceiling doesn't reopen the firewall gap it incidentally covered (safety F5).
+- **Lever B narrowed** — scoped to state/relationship + validity-time; `attribute` stays
+  review as the hidden-merge identity signal (safety F3/F4, process #2 — the direct
+  `ANALYSIS.md:111` contradiction is removed, the remaining change is surfaced for
+  ratification).
+- **Lever C hardened** — re-runs shape/floor/scope checks before pinning (safety F6);
+  re-pointed to its real authority `ANALYSIS.md:359-362`, not CLAUDE.md #7 (process #10).
+- **Safety spine expanded** I1→I9 to name the floors v0.1 dropped (validity-time, attribute-
+  identity, irrealis, asserted-vs-negated, derived-defers-primary, OCR guard — safety
+  F4/F9/F10/F11).
+- **Industry §4 corrected** — GraphRAG index-time (not query-time) merge; "no review inbox"
+  scoped to streaming agent memory (HITL KG tools excepted); the Supersede lossiness result
+  added and wired into the V0 metric; Mem0 non-destructive drift footnoted.
+- **Lifecycle fixes** — "correct-in-place," not "supersede," the cited refocus doc; in-wave
+  reconciliation; README index entry; `Waves:` header; V4 relabeled a gate; buried
+  decisions (attribute doctrine, sensitive net, GUI surfaces) surfaced to §11.
+- **Citations fixed** — `_extract_note` def `pipeline.py:226`; `domain_floor:177` /
+  `ratchet_domain:183` (not the dict at 149-171); single-call language retired for the
+  ratified two-call design.

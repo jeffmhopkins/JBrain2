@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-07-18
+> **Status:** Living · **Last verified:** 2026-07-23
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -15,6 +15,15 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `ENTITY_GRAPH_INGEST_V2_PLAN.md` — reduce entity-graph ingest review-inbox burden by
+  flipping the deterministic disposition *default*: remove the inferred-ceiling review
+  trap (Lever A, keep a sensitive-domain net), default state/relationship conflicts to
+  non-destructive supersede-with-history by validity time (Lever B, attributes stay
+  review as the hidden-merge signal), and let structured review-card corrections write
+  their pinned override directly (Lever C). Re-run determinism stays deterministic
+  (recomputation, no cached LLM verdict); validated as a corpus-snapshot sideload on the
+  local box via the DB-mode eval runner before cutover. Waves V0–V5. Grounded in
+  Mem0/Graphiti/GraphRAG + temporal-KG literature; post four-scope adversarial review (v0.2).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
