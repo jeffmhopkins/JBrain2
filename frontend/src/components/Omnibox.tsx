@@ -161,20 +161,21 @@ export function Omnibox({
     if (meta.domain === null) {
       // Research / Full Brain hand off to the conversation surface, staged files
       // riding along as chat attachments. A files-only turn is allowed (caption
-      // optional). Clear the composer only once the send is confirmed under way —
-      // an upload failure keeps BOTH the text and the files staged for a retry.
+      // optional). Clear the typed text at once — the transcript already shows the
+      // message optimistically, so leaving it in the box makes it read twice while
+      // the model (perhaps still loading) spins up. Staged files clear only once the
+      // send confirms, since an upload can still fail; on any failure the text comes
+      // back (unless a new one's been typed) so the owner can retry without re-typing.
       if (body === "" && files.length === 0) return;
       const staged = files;
+      setText("");
       const result = onConversation(body, staged);
       if (result instanceof Promise) {
         void result.then((ok) => {
-          if (ok) {
-            setText("");
-            setFiles((cur) => cur.filter((f) => !staged.includes(f)));
-          }
+          if (ok) setFiles((cur) => cur.filter((f) => !staged.includes(f)));
+          else setText((cur) => (cur === "" ? body : cur));
         });
       } else {
-        setText("");
         setFiles([]);
       }
       return;

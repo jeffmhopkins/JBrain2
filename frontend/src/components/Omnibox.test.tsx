@@ -217,6 +217,51 @@ describe("Omnibox", () => {
     await waitFor(() => expect(screen.getByLabelText("Composer")).toHaveValue("read this"));
   });
 
+  it("clears the typed text immediately on a conversational send, before it confirms", () => {
+    // The send's confirmation is still pending (the model hasn't started streaming) —
+    // the box must clear at once so the just-sent message doesn't sit there beside its
+    // own transcript bubble until the reply begins.
+    let settle: (ok: boolean) => void = () => {};
+    const onConversation = vi.fn(
+      () =>
+        new Promise<boolean>((r) => {
+          settle = r;
+        }),
+    );
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={onConversation}
+        onOpenLauncher={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "hello brain" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    // Cleared synchronously — no waiting on the pending promise.
+    expect(screen.getByLabelText("Composer")).toHaveValue("");
+    act(() => settle(true));
+  });
+
+  it("restores the typed text when a conversational send fails, unless a new one was typed", async () => {
+    // A failure (e.g. no scope yet, or an aborted upload) brings the text back so the
+    // owner can retry without re-typing.
+    const onConversation = vi.fn(() => Promise.resolve(false));
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "fullbrain" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={onConversation}
+        onOpenLauncher={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "retry me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getByLabelText("Composer")).toHaveValue("retry me"));
+  });
+
   it("turns the send button into Stop while a turn streams, and aborts on tap", () => {
     const onStop = vi.fn();
     render(

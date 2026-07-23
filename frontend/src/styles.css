@@ -694,10 +694,11 @@ h3 {
   color: var(--mode);
 }
 
-/* The send button turns into Stop while a turn streams — the amber "this is live,
-   interrupt it" register rather than the calm mode accent. */
+/* The send button turns into Stop while a turn streams — it stays on the mode's
+   own accent (blue in Brain, amber in Research), matching the send glyph it
+   replaces so the button reads as the same control in a different state. */
 .stop-btn {
-  color: var(--amber);
+  color: var(--mode);
 }
 
 /* The live context-usage meter in the composer foot: a thin two-tone fill bar + a
