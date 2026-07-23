@@ -286,7 +286,8 @@ exist:
   therefore first establishes a **v1-on-`gpt-oss-120b` baseline**, then measures v2 against
   it on the same model. (Grading needs no cloud judge: the integrate eval scores against
   per-case golds, `integrate_runner.py:_score`, not an LLM oracle — consistent with no cloud
-  inference at all.) Whether that baseline is owned here or by a separate migration is §11.5a.
+  inference at all.) Ratified: the owner's box already runs every task on gpt-oss-120b, so
+  both arms are already on the same local model and V2 owns no cloud→local migration (§11.5a).
 - **Acceptance artifact (owner gate, V4):** on the corpus snapshot, v2 vs v1: (a)
   materially fewer cards, (b) **no tier-1 recall regression** on the graded corpus
   (`tests/eval/corpus/`), (c) **firewall/RLS parity** (every v1 floor/ratchet/cross-subject
@@ -376,11 +377,13 @@ One PR per wave; per-task + per-wave adversarial review; **security red-team on 
    **load-bearing, not optional** — a 120B OSS model is exactly where the §4 supersession-
    lossiness result (arXiv 2606.27472) bites hardest, so keeping the safety-critical
    decisions off the model is the whole reason the design survives on local hardware.
-5a. **Local-cutover sequencing (OPEN).** Today every task defaults to `xai:grok-4.3`
-   (`router.py:45-62`); "100% local" is a pending migration. Does Ingest V2 **own** the
-   ingest path's cloud→local cutover (V0 validates extraction *and* integration on
-   gpt-oss-120b as one coordinated move), or does a **separate** pipeline-wide migration
-   establish the local baseline first, leaving V2 a pure policy change on top? — see §7.
+5a. **Local-cutover sequencing — RATIFIED 2026-07-23: already local; V2 owns no migration.**
+   The owner's deployment already runs every task on `local:gpt-oss-120b` via task overrides
+   (DB override > env `JBRAIN_LLM_TASKS` > code default — so the `xai:grok-4.3` defaults in
+   `router.py:45-62` are irrelevant to this box and are **not** changed by this plan). V0
+   therefore runs on the already-local baseline; both v1 and v2 diff arms are on
+   gpt-oss-120b automatically (the §7 model-constant requirement is satisfied for free).
+   Ingest V2 is a **pure policy change** on top of an already-local pipeline.
 6. **Lever C doctrine.** Default: direct structured writes for review-card fixes (per
    `ANALYSIS.md:359-362`), editing that line's mechanism in-wave; correction-*notes* kept
    for prose/wiki. Confirm this is a mechanism edit, not a CLAUDE.md #7 violation.
