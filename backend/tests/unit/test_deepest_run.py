@@ -3,7 +3,10 @@ place a background deepest run's context is assembled. Pure, DB-free — the ass
 the security properties of that context: owner-scoped but KB-less, the only max_depth>1
 mint, no location, and the clamp ceiling a research_deep task agent needs."""
 
+import asyncio
 from types import SimpleNamespace
+
+import pytest
 
 from jbrain.agent.deepest_run import (
     DEEPEST_DEFAULT_CEILING_TOKENS,
@@ -17,15 +20,24 @@ def test_context_is_owner_scoped_but_kb_less() -> None:
     """Owner identity (so it can mint child sessions and cite) but EMPTY domain scopes —
     the orchestrator and its children read no owner-domain data (the health/finance/
     location firewalls never enter the run), exactly like the in-request jerv orchestrator."""
-    ctx = build_deepest_run_context("owner-1", agent_session_id="s1", run_id="r1")
+    ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
     assert ctx.session.principal_id == "owner-1"
     assert ctx.session.principal_kind == "owner"
     assert ctx.session.domain_scopes == ()  # KB-less: cannot read ANY domain, not just cross-domain
     assert ctx.scopes == ()
 
 
+def test_context_run_id_is_none_so_child_spawns_dont_choke_on_the_lane_key() -> None:
+    """`ToolContext.run_id` stamps a spawned child's `parent_run_id` (an `app.runs` UUID),
+    so it must NOT carry the lane's "deepest-<uuid>" run-state key — that text is not a UUID,
+    and threading it made every top-level child spawn's `uuid.UUID(parent_run_id)` raise,
+    silently killing the whole research fan. None makes those children valid root subagent runs."""
+    ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
+    assert ctx.run_id is None
+
+
 def test_context_is_the_only_two_tier_mint_and_has_no_location() -> None:
-    ctx = build_deepest_run_context("owner-1", agent_session_id="s1", run_id="r1")
+    ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
     assert ctx.depth == 0
     assert ctx.tree is not None
     assert ctx.tree.max_depth == DEEPEST_MAX_DEPTH > MAX_DEPTH  # the two-tier seed
@@ -36,17 +48,17 @@ def test_context_clamp_ceiling_covers_a_task_agent() -> None:
     """The orchestrator holds what a research_deep task agent must inherit through the
     parent⊆child clamp — decompose_research plus the web tools — else the clamp would
     strip decompose and the second tier could never spawn."""
-    ctx = build_deepest_run_context("owner-1", agent_session_id="s1", run_id="r1")
+    ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
     assert "decompose_research" in ctx.agent_tools
     assert {"web_search", "web_fetch"} <= ctx.agent_tools
 
 
 def test_ceiling_defaults_apply_and_override() -> None:
-    default = build_deepest_run_context("o", agent_session_id="s", run_id="r")
+    default = build_deepest_run_context("o", agent_session_id="s")
     assert default.tree is not None and default.tree.tree_budget == DEEPEST_DEFAULT_CEILING_TOKENS
     assert DEEPEST_DEFAULT_WALL_CLOCK_S > 0
     custom = build_deepest_run_context(
-        "o", agent_session_id="s", run_id="r", budget_tokens=1_000_000, wall_clock_s=60
+        "o", agent_session_id="s", budget_tokens=1_000_000, wall_clock_s=60
     )
     assert custom.tree is not None and custom.tree.tree_budget == 1_000_000
 
@@ -59,15 +71,28 @@ from jbrain.db.session import SessionContext  # noqa: E402
 
 class _FakeService:
     """Stands in for DeepResearchService: records the research call, drives the per-round
-    hook, and (optionally) fails — so the driver's composition is observable without an LLM."""
+    hook, and (optionally) fails — so the driver's composition is observable without an LLM.
+    `boom` models a research/persist failure (with require_persist, a lost write surfaces here
+    as a raise); `cancel` models the lane's watchdog cancelling the run mid-flight."""
 
-    def __init__(self, *, rounds=((1, 3), (2, 5)), boom: bool = False) -> None:
+    def __init__(
+        self, *, rounds=((1, 3), (2, 5)), boom: bool = False, cancel: bool = False
+    ) -> None:  # noqa: E501
         self.calls: list[dict] = []
         self._rounds = rounds
         self._boom = boom
+        self._cancel = cancel
 
-    async def research(self, ctx, args, *, on_round=None):  # noqa: ANN001, ANN003
-        self.calls.append({"args": args, "max_depth": ctx.tree.max_depth if ctx.tree else None})
+    async def research(self, ctx, args, *, on_round=None, require_persist=False):  # noqa: ANN001, ANN003
+        self.calls.append(
+            {
+                "args": args,
+                "max_depth": ctx.tree.max_depth if ctx.tree else None,
+                "require_persist": require_persist,
+            }
+        )
+        if self._cancel:
+            raise asyncio.CancelledError
         if self._boom:
             raise RuntimeError("research blew up")
         if on_round is not None:
@@ -143,6 +168,8 @@ async def test_driver_composes_a_full_run() -> None:
     assert status == "done"
     assert svc.calls[0]["args"]["mode"] == "deepest"
     assert svc.calls[0]["max_depth"] == 2  # the trusted context seeded the two-tier tree
+    # The background run fails closed on a lost library write (the report's only delivery).
+    assert svc.calls[0]["require_persist"] is True
     assert rs.created == ["run-1"]
     assert [c["round"] for c in rs.checkpoints] == [1, 2]  # every committed round checkpointed
     assert rs.finished == ["done"]
@@ -168,6 +195,27 @@ async def test_driver_fails_closed_on_a_research_error() -> None:
     assert rs.finished == ["failed"]
     assert prog.dones == []  # no completion announced
     assert prog.rounds and "failed" in prog.rounds[-1][2]  # a failure notice was posted
+
+
+async def test_driver_records_a_terminal_status_and_notice_on_watchdog_cancel() -> None:
+    """The lane's wall-clock watchdog cancels the run (CancelledError). The driver must still
+    mark the run-state terminal ('cancelled') and post a notice — else the row is stranded
+    'running' forever — and then re-raise so the lane settles the task as cancelled."""
+    svc, rs, prog = _FakeService(cancel=True), _FakeRunState(), _FakeProgress()
+    with pytest.raises(asyncio.CancelledError):
+        await run_deepest(
+            principal_id="owner-1",
+            run_id="run-3",
+            session_id="sess-3",
+            question="q",
+            maker=object(),
+            service=svc,  # type: ignore[arg-type]
+            progress=prog,  # type: ignore[arg-type]
+            run_state=rs,  # type: ignore[arg-type]
+        )
+    assert rs.finished == ["cancelled"]  # terminal status recorded despite the cancel
+    assert prog.dones == []  # not a completion
+    assert prog.rounds and "time limit" in prog.rounds[-1][2]  # a cancel notice was posted
 
 
 # --- resume (R7): claim an interrupted run and re-drive -------------------------------

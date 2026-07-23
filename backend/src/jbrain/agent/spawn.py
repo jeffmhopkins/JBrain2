@@ -65,6 +65,7 @@ from jbrain.agent.tree import (
     MAX_SUBFAN_PER_TASK_AGENT,
     MAX_WAVES,
     MIN_VIABLE_CHILD_BUDGET,
+    TASK_AGENT_WALL_CLOCK_S,
     TreeState,
     child_steps_for,
 )
@@ -1010,10 +1011,15 @@ class SpawnService:
             # outlive TREE_WALL_CLOCK_S the way an unbounded one used to (a stalled fan
             # hammering blocked sites otherwise ran on to the per-child cap × batches).
             # Computed before the try so it's always bound for the timeout handler below.
+            # A research_deep task agent gets the larger allowance — it must contain its own
+            # (serialized) decompose sub-fan, not just a single leaf's work.
+            _base_wall_clock = (
+                TASK_AGENT_WALL_CLOCK_S if persona == "research_deep" else CHILD_WALL_CLOCK_S
+            )
             _tree_left = tree.seconds_left()
-            child_timeout = CHILD_WALL_CLOCK_S
+            child_timeout = _base_wall_clock
             if _tree_left is not None:
-                child_timeout = min(CHILD_WALL_CLOCK_S, _tree_left)
+                child_timeout = min(_base_wall_clock, _tree_left)
             try:
                 result = await asyncio.wait_for(
                     loop.run(

@@ -174,6 +174,30 @@ async def load(maker: async_sessionmaker, ctx: SessionContext, run_id: str) -> R
         return _row_to_state(row) if row is not None else None
 
 
+async def list_running(maker: async_sessionmaker, ctx: SessionContext) -> list[RunState]:
+    """Every still-running, unclaimed run — the startup resume sweep's work-list after a
+    restart. `resumed_at IS NULL` excludes runs another process already picked up; the atomic
+    `claim_resume` is still the exactly-once guard, so a racing sweep can safely list the same
+    row (only one claim wins). Oldest first, so the longest-stranded run resumes first."""
+    async with scoped_session(maker, ctx) as session:
+        rows = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id, run_id, session_id, question, status, round, ceiling_tokens,"
+                        " wall_clock_deadline, spent_tokens, agents_spawned, state, resumed_at"
+                        " FROM app.research_run_state"
+                        " WHERE status = 'running' AND resumed_at IS NULL"
+                        " ORDER BY created_at"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [_row_to_state(row) for row in rows]
+
+
 def _row_to_state(row: Any) -> RunState:  # a SQLAlchemy RowMapping (str keys)
     state = row["state"]
     if isinstance(state, str):  # jsonb usually decodes to dict; be robust to a text driver

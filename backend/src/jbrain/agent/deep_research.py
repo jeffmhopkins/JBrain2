@@ -312,8 +312,17 @@ class DeepResearchService:
         self._maker = maker
 
     async def research(
-        self, ctx: ToolContext, args: dict, *, on_round: RoundHook | None = None
+        self,
+        ctx: ToolContext,
+        args: dict,
+        *,
+        on_round: RoundHook | None = None,
+        require_persist: bool = False,
     ) -> str:
+        # `require_persist` fails the run closed if the library write fails (R7): the
+        # background deepest driver DISCARDS this return value, so `persist_report` is the
+        # run's ONLY durable delivery — a swallowed persist error would strand the report yet
+        # still announce "ready". In-request runs leave it False (the owner sees the return).
         # `on_round(round_no, findings)` is the background deepest driver's per-round hook
         # (R7): it fires after gather and after each committed gap round so the driver can
         # checkpoint the run state and post progress to the chat. None on the in-request
@@ -536,6 +545,8 @@ class DeepResearchService:
             # Tag the library row so a deepest report doesn't clobber a deep one on the
             # same question (0148 tool-aware dedup).
             tool="deepest_research" if deepest else "deep_research",
+            # A background run has no inline delivery, so a lost write is a failed run.
+            require_persist=require_persist,
         )
         return ToolOutput(
             _frame(
@@ -577,9 +588,13 @@ class DeepResearchService:
         coverage_limited: bool,
         source_mode: str = _DEFAULT_SOURCE_MODE,
         tool: str = "deep_research",
+        require_persist: bool = False,
     ) -> None:
-        """Write the finished report into the library (best-effort). None maker (headless/test)
-        or any DB error is swallowed — the report the owner already sees never depends on it."""
+        """Write the finished report into the library. Best-effort by default (a DB error is
+        swallowed — the report the owner already sees never depends on it), but fail-closed
+        when `require_persist` is set: a background deepest run's ONLY delivery is this write,
+        so a lost report must surface as a failed run, not a false "ready" (R7). A None maker
+        (headless/test) is still a clean no-op even under require_persist."""
         if self._maker is None:
             return
         try:
@@ -601,6 +616,8 @@ class DeepResearchService:
             )
         except Exception:  # noqa: BLE001 - best-effort; the report already rendered
             log.warning("deep_research.persist_failed", exc_info=True)
+            if require_persist:
+                raise  # background run: a lost write is a failed run, not a silent "ready"
 
     def _phase(self, ctx: ToolContext, step: int, label: str) -> None:
         """Emit a visible phase line for the current stage. Reuses the multi-phase

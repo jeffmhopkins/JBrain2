@@ -65,6 +65,12 @@ CHILD_WALL_CLOCK_S = 1200.0  # hard per-child time limit; past it the child retu
 # (Doubled from 600s with the step caps so a medium/high child can actually reach its
 # larger step budget on the slow local box before the clock — not the steps — stops it.)
 CHILD_MAX_COST_TOKENS = 900_000  # per-child token backstop (steps/wall-clock bite first)
+# A research_deep TASK AGENT (deepest, depth 1) is not a leaf: within its own turn it must run
+# its entire decompose sub-fan (up to MAX_SUBFAN_PER_TASK_AGENT children), which the local
+# route SERIALIZES — so the leaf's CHILD_WALL_CLOCK_S would cut it off before the second tier
+# finished, silently degrading "deepest" toward single-tier. Give it room for its sub-fan plus
+# its own gather/synthesis; still clamped by the tree wall-clock, the real hard bound.
+TASK_AGENT_WALL_CLOCK_S = CHILD_WALL_CLOCK_S * (MAX_SUBFAN_PER_TASK_AGENT + 1)
 
 
 def child_steps_for(effort: str | None) -> int:

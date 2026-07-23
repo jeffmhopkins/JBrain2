@@ -23,7 +23,7 @@ per-session standing channel exists yet.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
 import structlog
@@ -69,6 +69,11 @@ def _deepest_view_step(data: dict[str, Any]) -> dict[str, Any]:
         "args": {},
         "ok": True,
         "summary": "",
+        # `sources` is REQUIRED: the transcript accumulator seeds every persisted tool step
+        # with `sources: []`, and the PWA's transcript hydrator reads `tool.sources` un-guarded
+        # (useFullBrain.fromTurn) — a hand-built step that omits it throws on reopen and blanks
+        # the whole session. Keep this shape in lockstep with the accumulator's canonical step.
+        "sources": [],
         "view": {"view": "deepest_run", "surface": "inline", "data": data, "refs": []},
     }
 
@@ -85,11 +90,16 @@ class DeepestProgressChannel:
         notify: NotifyBus | None = None,
         push: _Push | None = None,
         push_tokens: Sequence[str] = (),
+        # A run outlives many token changes, so a static token list captured at build time
+        # goes stale (a device registered after boot never gets poked). The provider resolves
+        # the owner's live tokens per tick instead; `push_tokens` stays for tests.
+        push_tokens_provider: Callable[[], Awaitable[Sequence[str]]] | None = None,
     ) -> None:
         self._transcript = transcript
         self._notify = notify
         self._push = push
         self._push_tokens = list(push_tokens)
+        self._push_tokens_provider = push_tokens_provider
 
     async def round(
         self,
@@ -159,12 +169,16 @@ class DeepestProgressChannel:
     ) -> None:
         # (1) durable: append the server-authored assistant turn (renders on reopen). The
         # `deepest_run` tool-view rides the turn's `tools` so it replays as the card on load.
+        # run_id is None here on purpose: `agent_turns.run_id` is an `app.runs` UUID FK, but a
+        # deepest lane `run_id` is "deepest-<uuid>" (the run-state key, text) — passing it made
+        # `record_answer`'s `uuid.UUID(run_id)` raise, silently dropping EVERY progress turn.
+        # These are server-authored ticks with no agent run, so None is the honest value.
         if self._transcript is not None:
             try:
                 await self._transcript.record_answer(
                     owner_ctx,
                     session_id=session_id,
-                    run_id=run_id,
+                    run_id=None,
                     assistant_text=body,
                     tools=[view] if view is not None else [],
                 )
@@ -175,7 +189,14 @@ class DeepestProgressChannel:
             self._notify,
             Notification(kind=NOTIFY_KIND, title=title, body=_clip(body), ref=session_id),
         )
-        # (3) wake a closed app: an FCM content-free poke (no PII in the push).
-        if self._push is not None and self._push_tokens:
-            with contextlib.suppress(Exception):
-                await self._push.poke(self._push_tokens)
+        # (3) wake a closed app: an FCM content-free poke (no PII in the push). Tokens come
+        # from the static list (tests) or the live provider (prod) — resolved per tick so a
+        # newly-registered device still gets woken.
+        if self._push is not None:
+            tokens = list(self._push_tokens)
+            if not tokens and self._push_tokens_provider is not None:
+                with contextlib.suppress(Exception):
+                    tokens = list(await self._push_tokens_provider())
+            if tokens:
+                with contextlib.suppress(Exception):
+                    await self._push.poke(tokens)

@@ -159,7 +159,7 @@ const LIVE: FullBrainDeps = {
 /** Map a persisted turn back into a transcript message — assistant turns rebuild
  * their tool steps, note sources, and any staged-proposal / resolved-entity chips
  * so the bubble (and its inline entity links) replay in full. */
-function fromTurn(t: TranscriptTurn): TranscriptMessage {
+export function fromTurn(t: TranscriptTurn): TranscriptMessage {
   return {
     role: t.role,
     text: t.content,
@@ -169,7 +169,14 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.ok === null ? {} : { ok: tool.ok }),
       ...(tool.args ? { args: tool.args } : {}),
       ...(tool.summary ? { summary: tool.summary } : {}),
-      sources: tool.sources.map((s) => ({ noteId: s.note_id, domain: s.domain, text: s.snippet })),
+      // `?? []`: a persisted step is normally seeded with `sources: []`, but a server-authored
+      // step (e.g. a deepest-run progress tick) may omit it — tolerate that rather than throw,
+      // since `t.tools.map` is eager and one bad step would blank the entire transcript on load.
+      sources: (tool.sources ?? []).map((s) => ({
+        noteId: s.note_id,
+        domain: s.domain,
+        text: s.snippet,
+      })),
       ...(tool.web_sources?.length ? { webSources: tool.web_sources } : {}),
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
