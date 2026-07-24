@@ -108,11 +108,13 @@ def test_event_never_supersedes() -> None:
 # --- state: newest-wins eagerly, close interval, flag review --------------
 
 
-def test_state_change_supersedes_and_flags() -> None:
+def test_state_change_supersedes_silently() -> None:
+    # Lever B (ENTITY_GRAPH_INGEST_V2 §5): a clean state supersede by a newer-validity
+    # value retains history (supersede_ids) but files NO review card.
     d = decide(cand(), [view()])
     assert d.insert and d.insert_status == "active"
     assert d.supersede_ids == ["old-1"]
-    assert d.review_kind == "fact_conflict"
+    assert d.review_kind is None
 
 
 def test_state_retrospective_note_does_not_displace_current() -> None:
@@ -189,14 +191,16 @@ def test_low_confidence_candidate_never_auto_supersedes() -> None:
 def test_confidence_at_threshold_supersedes_normally() -> None:
     """LOW_CONFIDENCE is exclusive: exactly 0.5 self-confidence is not 'low'."""
     d = decide(cand(self_confidence=0.5), [view(confidence=0.95)])
-    assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
+    # Guard passes → clean state supersede → silent (Lever B).
+    assert d.supersede_ids == ["old-1"] and d.review_kind is None
 
 
 def test_low_confidence_may_replace_an_even_shakier_fact() -> None:
     """The guard protects HIGHER-confidence knowledge only; between two weak
     facts, newest still wins (with the usual conflict flag)."""
     d = decide(cand(self_confidence=0.4), [view(confidence=0.2)])
-    assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
+    # Guard protects higher-confidence only; here it passes → clean supersede → silent.
+    assert d.supersede_ids == ["old-1"] and d.review_kind is None
 
 
 # --- in-place interval close ------------------------------------------------
@@ -306,11 +310,12 @@ def test_two_co_stated_past_jobs_neither_supersedes() -> None:
     assert d.supersede_ids == [] and d.insert_superseded_by is None
 
 
-def test_backdated_correction_of_same_interval_supersedes_with_conflict() -> None:
+def test_backdated_correction_of_same_interval_supersedes_silently() -> None:
     """Two CLOSED values for the SAME interval + object but a DIFFERENT value is a
-    CORRECTION, not parallel history: newest-report supersedes the prior, with a
-    fact_conflict for the human to confirm ("in 2019 it was Columbus, not
-    Cleveland"). Distinct from co-stated past values (different object/interval)."""
+    CORRECTION, not parallel history: newest-report supersedes the prior ("in 2019 it
+    was Columbus, not Cleveland"). Lever B: a clean state correction supersedes with
+    retained history and NO card. Distinct from co-stated past values (different
+    object/interval)."""
     cleveland = view(
         kind="state", value_json={"city": "Cleveland"}, valid_from=T0, valid_to=T1, reported_at=T0
     )
@@ -320,7 +325,7 @@ def test_backdated_correction_of_same_interval_supersedes_with_conflict() -> Non
     d = decide(columbus, [cleveland])
     assert d.insert and d.insert_status == "active" and d.insert_valid_to == T1
     assert d.supersede_ids == ["old-1"]
-    assert d.review_kind == "fact_conflict" and d.conflicting_id == "old-1"
+    assert d.review_kind is None
 
 
 def test_used_to_does_not_supersede_a_current_open_job() -> None:
@@ -446,7 +451,8 @@ def test_reschedule_earlier_still_supersedes() -> None:
     d = decide(wednesday, [friday], predicate="scheduledTime")
     assert d.insert and d.insert_status == "active"
     assert d.supersede_ids == ["old-1"]
-    assert d.review_kind == "fact_conflict"
+    # Lever B: a reschedule is a clean state-binding supersede → silent (calendar just updates).
+    assert d.review_kind is None
 
 
 def test_reschedule_later_supersedes_unchanged() -> None:
@@ -548,14 +554,16 @@ def test_set_valued_irrealis_peer_is_not_a_contradiction() -> None:
     assert d.insert and d.insert_status == "active" and d.review_kind is None
 
 
-def test_functional_relationship_supersedes() -> None:
+def test_functional_relationship_supersedes_silently() -> None:
+    # Lever B: a functional-relationship change (employer Acme → Globex) supersedes with
+    # retained history and NO card — the owner changed jobs, not a conflict to adjudicate.
     old = view(kind="relationship", object_entity_id="acme", statement="works at Acme")
     d = decide(
         cand(kind="relationship", object_entity_id="globex", statement="works at Globex"),
         [old],
         predicate="employer",
     )
-    assert d.supersede_ids == ["old-1"] and d.review_kind == "fact_conflict"
+    assert d.supersede_ids == ["old-1"] and d.review_kind is None
 
 
 def test_functional_predicate_allowlist() -> None:

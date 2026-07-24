@@ -729,11 +729,13 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
                 review_kind="low_confidence",
                 conflicting_id=correction.id,
             )
+        # Lever B: a clean correction of a historical state/relationship value (reached only
+        # after the pinned + low-confidence guards above) supersedes silently with retained
+        # history — no card. The 677 gate already scopes this to `state`/`relationship`.
         return Decision(
             insert=True,
             insert_valid_to=candidate.valid_to,
             supersede_ids=[correction.id],
-            review_kind="fact_conflict",
             conflicting_id=correction.id,
         )
 
@@ -779,10 +781,20 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
                 review_kind="low_confidence",
                 conflicting_id=current.id,
             )
+        # Lever B (ENTITY_GRAPH_INGEST_V2_PLAN §5, ratified §11.2): a CLEAN supersession of
+        # the current head by a newer-validity value is the owner updating their own data —
+        # supersede with retained history and NO review card. Reached only after the
+        # pinned / irrealis / low-confidence guards above, so the value genuinely wins.
+        # Scoped to `state` + functional `relationship`; `preference` keeps its low-urgency
+        # flag (out of the ratified scope). `supersede_ids` is unchanged — the prior head is
+        # chained as history, never lost.
+        lever_b_silent = candidate.kind == "state" or (
+            candidate.kind == "relationship" and is_functional(predicate)
+        )
         return Decision(
             insert=True,
             supersede_ids=[current.id],
-            review_kind="fact_conflict",
+            review_kind=None if lever_b_silent else "fact_conflict",
             review_extra={"urgency": "low"} if candidate.kind == "preference" else {},
             conflicting_id=current.id,
         )

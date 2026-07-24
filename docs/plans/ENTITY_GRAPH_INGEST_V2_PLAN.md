@@ -610,3 +610,50 @@ evidence** — recorded here so they are not re-litigated:
 **Net:** keep the two-call + deterministic-spine architecture; the ingest-quality work is
 prompt + schema (Wave 2) on top of the Levers A/B/C already in this plan. The wiki-noise
 reduction the owner wanted comes from Lever A/B, not from a heavier ingest engine.
+
+## 17. V1 build decomposition (grounded 2026-07-24) — and the prompt/schema reconciliation
+
+The §8 wave table predates the §15 on-box finding. Reconciliation: **prompt+schema work
+(the §15 deltas) lands in V2**, alongside the corpus-snapshot diff harness (it is what the
+diff measures). **V1 stays the deterministic-engine change** — Lever A/B + the safety spine —
+now decomposed into grounded tasks with confirmed change points:
+
+- **T1.1 — Lever B (supersede silently, keep history).** In `supersession.decide`
+  (`supersession.py`) drop `review_kind="fact_conflict"` from the two *clean-supersede*
+  returns — the state/functional-relationship newest-wins path (`:782-788`) and the
+  historical-value correction path (`:732-738`) — so a clean supersession chains history
+  (`supersede_ids` unchanged) with **no card**. Reached only AFTER the pinned (`:759`),
+  irrealis-vs-asserted (`:752`), and low-confidence-overwrite (`:767`) guards, which all
+  **stay**. Untouched (per ratified §11.2 + the safety spine): attribute collision
+  (`:605-624`, I6), measurement/event same-instant clash (`:594-602`), non-functional
+  relationship contradiction (`:651-657`), validity-time ordering (I4). Tests: update
+  `tests/unit/test_supersession.py` (clean state/rel supersede → silent, no `review_kind`)
+  and harness scenarios `rel_employer_change.json`, `relocation_supersession.json`, and any
+  other clean-state-supersede scenario asserting `fact_conflict` → assert silent supersede +
+  `review_items: []`; keep `adv_two_birthdays_*`, `adv_self_contradiction_one_note`,
+  `hist_*` retrospective, and the low-confidence scenarios green untouched.
+- **T1.2 — Lever A (retire the inferred-ceiling review gate).** In `weight.py` remove
+  `INFERRED_CEILING`/`INFERRED_OVERWRITE_CEILING`/`COMMIT_THRESHOLDS` as the review driver so
+  a model-asserted or reasonably-inferred fact commits; `plan_intent` (`arbiter.py:144-160`)
+  stops routing inferred facts to review by default. Rewrite `test_analysis_weight.py`.
+- **T1.3 — I5 sensitive net (new, replaces the ceiling's incidental firewall role).** A
+  deterministic check: an `inferred` fact whose predicate/resolved-domain is
+  health/finance/location and is NOT already floored → route to review (domain_promotion
+  class). Hooked in the arbiter/apply path; RLS-scoped; unit + isolation tests. (The on-box
+  validation §15 confirmed the model sets `inferred`+`domain` reliably, so this net is the
+  enforcer.)
+- **T1.4 — retire the eight backstops** (`arbiter.py:181-602` + `recover_dropped_fields`/
+  `derive_kinship_gender` where they only fed the ceiling) and their tests, keeping
+  `dedup_intent_facts` as the idempotency net. Verify module coverage stays ≥80% (deleted
+  paths + tests together).
+- **T1.5 — safety-spine invariants explicit + tested (I1–I9).** Assertion/coverage that the
+  firewall floor (I1), cross-subject routing (I2), atomicity (I3), validity-time (I4),
+  sensitive net (I5), attribute-collision (I6), pinned/irrealis/negated (I7), Lever-C shape/
+  floor/scope re-checks (I8, lands V5), derived-defers-primary + OCR guard (I9) each hold,
+  with the derived-defers-primary check (`pipeline.py:2418-2430`) re-asserted since it lives
+  outside `decide()`.
+
+Per-task local gate (ruff + pyright + the task's unit tests) before it merges into the wave
+branch; per-wave **security red-team** (firewall/RLS/validity/identity floors) before the
+one V1 PR; testcontainer integration + coverage gates run in CI. T1.1 is the safest,
+most-contained first task and is where the build starts.
