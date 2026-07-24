@@ -1,6 +1,6 @@
 {
   "name": "a stolen item ends ownership and records the theft as an event",
-  "description": "Loss/theft: 'my laptop was stolen' ends ownership. The owns state flips its value_json owned true->false so supersession.values_equal sees a real change and the state newest-wins branch closes the owned=true interval (SCD-2) and files a fact_conflict; the current head is owned=false. A separate event-kind theft fact records WHEN it happened on its own identity key (Laptop.theftEvent) and accumulates independently. Pins that loss is a status transition on the possession, not a silent delete, while the historical owned=true interval is retained (docs/reference/ANALYSIS.md state row: 'the old fact stays true about its interval').",
+  "description": "Loss/theft: 'my laptop was stolen' ends ownership. The owns state flips its value_json owned true->false so supersession.values_equal sees a real change and the state newest-wins branch closes the owned=true interval (SCD-2) and files a fact_conflict; the current head is owned=false. A separate event-kind theft fact records WHEN it happened on its own identity key (Laptop.theftEvent) and accumulates independently. Pins that loss is a status transition on the possession, not a silent delete, while the historical owned=true interval is retained (docs/reference/ANALYSIS.md state row: 'the old fact stays true about its interval'). Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
   "steps": [
     {
       "domain": "general",
@@ -8,13 +8,43 @@
       "body": "Bought a new ThinkPad laptop.",
       "extraction": {
         "title": "New laptop",
-        "tags": ["laptop"],
+        "tags": [
+          "laptop"
+        ],
         "mentions": [
-          {"name": "Me", "kind": "Person", "surface_text": "Bought"},
-          {"name": "Laptop", "kind": "Product", "surface_text": "ThinkPad laptop"}
+          {
+            "name": "Me",
+            "kind": "Person",
+            "surface_text": "Bought"
+          },
+          {
+            "name": "Laptop",
+            "kind": "Product",
+            "surface_text": "ThinkPad laptop"
+          }
         ],
         "facts": [
-          {"predicate": "owns", "qualifier": "Laptop", "kind": "state", "statement": "I own a ThinkPad laptop.", "value_json": {"item": "ThinkPad", "owned": true}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Laptop", "temporal": {"phrase": "", "resolved_start": "2026-02-01T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.92}
+          {
+            "predicate": "owns",
+            "qualifier": "Laptop",
+            "kind": "state",
+            "statement": "I own a ThinkPad laptop.",
+            "value_json": {
+              "item": "ThinkPad",
+              "owned": true
+            },
+            "assertion": "asserted",
+            "entity_ref": "Me",
+            "object_entity_ref": "Laptop",
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-02-01T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.92
+          }
         ],
         "temporal_tokens": []
       }
@@ -25,14 +55,62 @@
       "body": "My laptop was stolen from the car today.",
       "extraction": {
         "title": "Laptop stolen",
-        "tags": ["laptop", "theft"],
+        "tags": [
+          "laptop",
+          "theft"
+        ],
         "mentions": [
-          {"name": "Me", "kind": "Person", "surface_text": "My"},
-          {"name": "Laptop", "kind": "Product", "surface_text": "laptop"}
+          {
+            "name": "Me",
+            "kind": "Person",
+            "surface_text": "My"
+          },
+          {
+            "name": "Laptop",
+            "kind": "Product",
+            "surface_text": "laptop"
+          }
         ],
         "facts": [
-          {"predicate": "owns", "qualifier": "Laptop", "kind": "state", "statement": "I no longer own the laptop; it was stolen.", "value_json": {"item": "ThinkPad", "owned": false}, "assertion": "negated", "entity_ref": "Me", "object_entity_ref": "Laptop", "temporal": {"phrase": "today", "resolved_start": "2026-06-05T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9},
-          {"predicate": "theftEvent", "qualifier": "Laptop", "kind": "event", "statement": "The laptop was stolen from the car.", "value_json": null, "assertion": "asserted", "entity_ref": "Laptop", "object_entity_ref": null, "temporal": {"phrase": "today", "resolved_start": "2026-06-05T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+          {
+            "predicate": "owns",
+            "qualifier": "Laptop",
+            "kind": "state",
+            "statement": "I no longer own the laptop; it was stolen.",
+            "value_json": {
+              "item": "ThinkPad",
+              "owned": false
+            },
+            "assertion": "negated",
+            "entity_ref": "Me",
+            "object_entity_ref": "Laptop",
+            "temporal": {
+              "phrase": "today",
+              "resolved_start": "2026-06-05T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          },
+          {
+            "predicate": "theftEvent",
+            "qualifier": "Laptop",
+            "kind": "event",
+            "statement": "The laptop was stolen from the car.",
+            "value_json": null,
+            "assertion": "asserted",
+            "entity_ref": "Laptop",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "today",
+              "resolved_start": "2026-06-05T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          }
         ],
         "temporal_tokens": []
       }
@@ -40,15 +118,45 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Me", "predicate": "owns", "qualifier": "Laptop", "kind": "state", "value_contains": "stolen", "status": "active", "chained": false},
-      {"entity": "Me", "predicate": "owns", "qualifier": "Laptop", "kind": "state", "value_contains": "I own a ThinkPad", "status": "superseded", "chained": true},
-      {"entity": "Laptop", "predicate": "theftEvent", "kind": "event", "value_contains": "stolen", "status": "active"}
+      {
+        "entity": "Me",
+        "predicate": "owns",
+        "qualifier": "Laptop",
+        "kind": "state",
+        "value_contains": "stolen",
+        "status": "active",
+        "chained": false
+      },
+      {
+        "entity": "Me",
+        "predicate": "owns",
+        "qualifier": "Laptop",
+        "kind": "state",
+        "value_contains": "I own a ThinkPad",
+        "status": "superseded",
+        "chained": true
+      },
+      {
+        "entity": "Laptop",
+        "predicate": "theftEvent",
+        "kind": "event",
+        "value_contains": "stolen",
+        "status": "active"
+      }
     ],
     "absent_facts": [
-      {"entity": "Me", "predicate": "owns", "value_contains": "I own a ThinkPad", "status": "active"}
+      {
+        "entity": "Me",
+        "predicate": "owns",
+        "value_contains": "I own a ThinkPad",
+        "status": "active"
+      }
     ],
     "review_items": [
-      {"kind": "fact_conflict", "summary_contains": "owns"}
+      {
+        "kind": "fact_conflict",
+        "count": 0
+      }
     ]
   }
 }

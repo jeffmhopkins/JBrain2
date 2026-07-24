@@ -1,6 +1,6 @@
 {
   "name": "backdated correction of a WRONG past value (same validity interval) supersedes it",
-  "description": "Two notes assert a state about the SAME historical interval (Wei's 2019 home city): note A says Cleveland, note B (captured later) corrects it to Columbus for the SAME valid_from 2019-01-01. This is 'this interval was wrong', not 'the value changed over time'. In decide() for a state, valid_from ties, so key(candidate)=(2019, reported_B) >= key(current)=(2019, reported_A) because reported_B > reported_A (tie-break by reported_at, supersession._validity). So Columbus supersedes Cleveland with a fact_conflict for the human to confirm the correction. Pins that an equal-validity restatement with a DIFFERENT value is a correction (newest-report wins), distinct from the retrospective branch which only fires when validity is strictly older.",
+  "description": "Two notes assert a state about the SAME historical interval (Wei's 2019 home city): note A says Cleveland, note B (captured later) corrects it to Columbus for the SAME valid_from 2019-01-01. This is 'this interval was wrong', not 'the value changed over time'. In decide() for a state, valid_from ties, so key(candidate)=(2019, reported_B) >= key(current)=(2019, reported_A) because reported_B > reported_A (tie-break by reported_at, supersession._validity). So Columbus supersedes Cleveland with a fact_conflict for the human to confirm the correction. Pins that an equal-validity restatement with a DIFFERENT value is a correction (newest-report wins), distinct from the retrospective branch which only fires when validity is strictly older. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
   "steps": [
     {
       "domain": "general",
@@ -8,10 +8,40 @@
       "body": "Back in 2019 Wei was living in Cleveland.",
       "extraction": {
         "title": "Wei in Cleveland 2019",
-        "tags": ["wei", "cleveland", "history"],
-        "mentions": [{"name": "Wei", "kind": "Person", "surface_text": "Wei"}],
+        "tags": [
+          "wei",
+          "cleveland",
+          "history"
+        ],
+        "mentions": [
+          {
+            "name": "Wei",
+            "kind": "Person",
+            "surface_text": "Wei"
+          }
+        ],
         "facts": [
-          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Wei lived in Cleveland in 2019.", "value_json": {"city": "Cleveland", "year": 2019}, "assertion": "asserted", "entity_ref": "Wei", "object_entity_ref": null, "temporal": {"phrase": "Back in 2019", "resolved_start": "2019-01-01T00:00:00-07:00", "resolved_end": "2019-12-31T23:59:59-07:00", "precision": "year"}, "domain": "general", "confidence": 0.7}
+          {
+            "predicate": "homeLocation",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Wei lived in Cleveland in 2019.",
+            "value_json": {
+              "city": "Cleveland",
+              "year": 2019
+            },
+            "assertion": "asserted",
+            "entity_ref": "Wei",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "Back in 2019",
+              "resolved_start": "2019-01-01T00:00:00-07:00",
+              "resolved_end": "2019-12-31T23:59:59-07:00",
+              "precision": "year"
+            },
+            "domain": "general",
+            "confidence": 0.7
+          }
         ],
         "temporal_tokens": []
       }
@@ -22,10 +52,40 @@
       "body": "Correction — in 2019 Wei actually lived in Columbus, not Cleveland.",
       "extraction": {
         "title": "Wei 2019 correction: Columbus",
-        "tags": ["wei", "columbus", "correction"],
-        "mentions": [{"name": "Wei", "kind": "Person", "surface_text": "Wei"}],
+        "tags": [
+          "wei",
+          "columbus",
+          "correction"
+        ],
+        "mentions": [
+          {
+            "name": "Wei",
+            "kind": "Person",
+            "surface_text": "Wei"
+          }
+        ],
         "facts": [
-          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Wei lived in Columbus in 2019.", "value_json": {"city": "Columbus", "year": 2019}, "assertion": "asserted", "entity_ref": "Wei", "object_entity_ref": null, "temporal": {"phrase": "in 2019", "resolved_start": "2019-01-01T00:00:00-07:00", "resolved_end": "2019-12-31T23:59:59-07:00", "precision": "year"}, "domain": "general", "confidence": 0.92}
+          {
+            "predicate": "homeLocation",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Wei lived in Columbus in 2019.",
+            "value_json": {
+              "city": "Columbus",
+              "year": 2019
+            },
+            "assertion": "asserted",
+            "entity_ref": "Wei",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "in 2019",
+              "resolved_start": "2019-01-01T00:00:00-07:00",
+              "resolved_end": "2019-12-31T23:59:59-07:00",
+              "precision": "year"
+            },
+            "domain": "general",
+            "confidence": 0.92
+          }
         ],
         "temporal_tokens": []
       }
@@ -33,15 +93,42 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Wei", "predicate": "homeLocation", "kind": "state", "value_contains": "Columbus", "status": "active", "chained": false},
-      {"entity": "Wei", "predicate": "homeLocation", "kind": "state", "value_contains": "Cleveland", "status": "superseded", "chained": true},
-      {"entity": "Wei", "predicate": "homeLocation", "kind": "state", "status": "active", "count": 1}
+      {
+        "entity": "Wei",
+        "predicate": "homeLocation",
+        "kind": "state",
+        "value_contains": "Columbus",
+        "status": "active",
+        "chained": false
+      },
+      {
+        "entity": "Wei",
+        "predicate": "homeLocation",
+        "kind": "state",
+        "value_contains": "Cleveland",
+        "status": "superseded",
+        "chained": true
+      },
+      {
+        "entity": "Wei",
+        "predicate": "homeLocation",
+        "kind": "state",
+        "status": "active",
+        "count": 1
+      }
     ],
     "review_items": [
-      {"kind": "fact_conflict", "summary_contains": "homeLocation", "count": 1}
+      {
+        "kind": "fact_conflict",
+        "count": 0
+      }
     ],
     "entities": [
-      {"name": "Wei", "kind": "Person", "status": "provisional"}
+      {
+        "name": "Wei",
+        "kind": "Person",
+        "status": "provisional"
+      }
     ]
   }
 }

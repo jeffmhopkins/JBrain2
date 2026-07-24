@@ -1,6 +1,6 @@
 {
   "name": "reschedule to an EARLIER time should still win (appointment time-binding)",
-  "description": "SPEC (docs/reference/ANALYSIS.md 'Temporal tokens and appointment identity'): an appointment's scheduled time is a supersedable binding where the NEWEST note's instruction wins regardless of whether the new time is earlier or later — 'mint a new token from the new note, supersede the binding'. Here 'Dr. Reyes Friday' is moved EARLIER to Wednesday. The spec-correct result: the Wednesday time is the active binding and Friday is superseded. GAP (closed): supersession.decide used to compare VALIDITY time (valid_from) for every state, so the earlier Wednesday candidate failed the `key(candidate) >= key(current)` test and landed in the retrospective branch, leaving the stale Friday time active. Schedule-binding predicates (SCHEDULE_PREDICATES: scheduledTime/scheduled_time) now order by reported_at — the latest reschedule instruction wins in either direction — while ordinary states keep validity ordering.",
+  "description": "SPEC (docs/reference/ANALYSIS.md 'Temporal tokens and appointment identity'): an appointment's scheduled time is a supersedable binding where the NEWEST note's instruction wins regardless of whether the new time is earlier or later — 'mint a new token from the new note, supersede the binding'. Here 'Dr. Reyes Friday' is moved EARLIER to Wednesday. The spec-correct result: the Wednesday time is the active binding and Friday is superseded. GAP (closed): supersession.decide used to compare VALIDITY time (valid_from) for every state, so the earlier Wednesday candidate failed the `key(candidate) >= key(current)` test and landed in the retrospective branch, leaving the stale Friday time active. Schedule-binding predicates (SCHEDULE_PREDICATES: scheduledTime/scheduled_time) now order by reported_at — the latest reschedule instruction wins in either direction — while ordinary states keep validity ordering. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
   "steps": [
     {
       "domain": "general",
@@ -8,10 +8,38 @@
       "body": "Appointment with Dr. Reyes is Friday the 19th at 2pm.",
       "extraction": {
         "title": "Dr. Reyes Friday",
-        "tags": ["reyes", "appointment"],
-        "mentions": [{"name": "Dr. Reyes appointment", "kind": "appointment", "surface_text": "Appointment with Dr. Reyes"}],
+        "tags": [
+          "reyes",
+          "appointment"
+        ],
+        "mentions": [
+          {
+            "name": "Dr. Reyes appointment",
+            "kind": "appointment",
+            "surface_text": "Appointment with Dr. Reyes"
+          }
+        ],
         "facts": [
-          {"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Appointment with Dr. Reyes scheduled for Friday 2026-06-19 at 2pm.", "value_json": {"start": "2026-06-19T14:00:00-06:00"}, "assertion": "expected", "entity_ref": "Dr. Reyes appointment", "object_entity_ref": null, "temporal": {"phrase": "Friday the 19th at 2pm", "resolved_start": "2026-06-19T14:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.9}
+          {
+            "predicate": "scheduledTime",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Appointment with Dr. Reyes scheduled for Friday 2026-06-19 at 2pm.",
+            "value_json": {
+              "start": "2026-06-19T14:00:00-06:00"
+            },
+            "assertion": "expected",
+            "entity_ref": "Dr. Reyes appointment",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "Friday the 19th at 2pm",
+              "resolved_start": "2026-06-19T14:00:00-06:00",
+              "resolved_end": null,
+              "precision": "instant"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          }
         ],
         "temporal_tokens": []
       }
@@ -22,10 +50,39 @@
       "body": "Dr. Reyes called — the appointment got pulled earlier to Wednesday the 17th at 2pm.",
       "extraction": {
         "title": "Dr. Reyes moved earlier",
-        "tags": ["reyes", "appointment", "reschedule"],
-        "mentions": [{"name": "Dr. Reyes appointment", "kind": "appointment", "surface_text": "the appointment"}],
+        "tags": [
+          "reyes",
+          "appointment",
+          "reschedule"
+        ],
+        "mentions": [
+          {
+            "name": "Dr. Reyes appointment",
+            "kind": "appointment",
+            "surface_text": "the appointment"
+          }
+        ],
         "facts": [
-          {"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Appointment with Dr. Reyes moved earlier to Wednesday 2026-06-17 at 2pm.", "value_json": {"start": "2026-06-17T14:00:00-06:00"}, "assertion": "expected", "entity_ref": "Dr. Reyes appointment", "object_entity_ref": null, "temporal": {"phrase": "Wednesday the 17th at 2pm", "resolved_start": "2026-06-17T14:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.92}
+          {
+            "predicate": "scheduledTime",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Appointment with Dr. Reyes moved earlier to Wednesday 2026-06-17 at 2pm.",
+            "value_json": {
+              "start": "2026-06-17T14:00:00-06:00"
+            },
+            "assertion": "expected",
+            "entity_ref": "Dr. Reyes appointment",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "Wednesday the 17th at 2pm",
+              "resolved_start": "2026-06-17T14:00:00-06:00",
+              "resolved_end": null,
+              "precision": "instant"
+            },
+            "domain": "general",
+            "confidence": 0.92
+          }
         ],
         "temporal_tokens": []
       }
@@ -33,15 +90,42 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Dr. Reyes appointment", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-17T14:00:00", "status": "active", "chained": false},
-      {"entity": "Dr. Reyes appointment", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-19T14:00:00", "status": "superseded", "chained": true},
-      {"entity": "Dr. Reyes appointment", "predicate": "scheduledTime", "kind": "state", "status": "active", "count": 1}
+      {
+        "entity": "Dr. Reyes appointment",
+        "predicate": "scheduledTime",
+        "kind": "state",
+        "value_contains": "2026-06-17T14:00:00",
+        "status": "active",
+        "chained": false
+      },
+      {
+        "entity": "Dr. Reyes appointment",
+        "predicate": "scheduledTime",
+        "kind": "state",
+        "value_contains": "2026-06-19T14:00:00",
+        "status": "superseded",
+        "chained": true
+      },
+      {
+        "entity": "Dr. Reyes appointment",
+        "predicate": "scheduledTime",
+        "kind": "state",
+        "status": "active",
+        "count": 1
+      }
     ],
     "review_items": [
-      {"kind": "fact_conflict", "summary_contains": "scheduledTime"}
+      {
+        "kind": "fact_conflict",
+        "count": 0
+      }
     ],
     "entities": [
-      {"name": "Dr. Reyes appointment", "kind": "appointment", "status": "provisional"}
+      {
+        "name": "Dr. Reyes appointment",
+        "kind": "appointment",
+        "status": "provisional"
+      }
     ]
   }
 }

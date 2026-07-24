@@ -1,6 +1,6 @@
 {
   "name": "second-hand relationship carries assertion=reported and still supersedes",
-  "description": "A relayed relationship ('Mom says Bob got a new job') attributes to the subject (Bob) with assertion=reported (docs/reference/ANALYSIS.md 'First person and the owner': quoted/relayed -> reported). supersession.decide() does not gate on assertion, so the reported worksFor still supersedes Bob's prior asserted employer (functional) and the new active row keeps assertion=reported. Pins that the assertion enum survives onto the active head and that reported facts participate in supersession.",
+  "description": "A relayed relationship ('Mom says Bob got a new job') attributes to the subject (Bob) with assertion=reported (docs/reference/ANALYSIS.md 'First person and the owner': quoted/relayed -> reported). supersession.decide() does not gate on assertion, so the reported worksFor still supersedes Bob's prior asserted employer (functional) and the new active row keeps assertion=reported. Pins that the assertion enum survives onto the active head and that reported facts participate in supersession. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
   "steps": [
     {
       "domain": "general",
@@ -8,13 +8,41 @@
       "body": "Bob works at Hooli.",
       "extraction": {
         "title": "Bob at Hooli",
-        "tags": ["bob", "hooli"],
+        "tags": [
+          "bob",
+          "hooli"
+        ],
         "mentions": [
-          {"name": "Bob", "kind": "Person", "surface_text": "Bob"},
-          {"name": "Hooli", "kind": "Organization", "surface_text": "Hooli"}
+          {
+            "name": "Bob",
+            "kind": "Person",
+            "surface_text": "Bob"
+          },
+          {
+            "name": "Hooli",
+            "kind": "Organization",
+            "surface_text": "Hooli"
+          }
         ],
         "facts": [
-          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Bob works for Hooli.", "value_json": null, "assertion": "asserted", "entity_ref": "Bob", "object_entity_ref": "Hooli", "temporal": {"phrase": "", "resolved_start": "2026-01-15T00:00:00-07:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+          {
+            "predicate": "worksFor",
+            "qualifier": "",
+            "kind": "relationship",
+            "statement": "Bob works for Hooli.",
+            "value_json": null,
+            "assertion": "asserted",
+            "entity_ref": "Bob",
+            "object_entity_ref": "Hooli",
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-01-15T00:00:00-07:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          }
         ],
         "temporal_tokens": []
       }
@@ -25,14 +53,46 @@
       "body": "Mom says Bob got a new job at Pied Piper.",
       "extraction": {
         "title": "Bob's new job (per Mom)",
-        "tags": ["bob", "pied piper"],
+        "tags": [
+          "bob",
+          "pied piper"
+        ],
         "mentions": [
-          {"name": "Mom", "kind": "Person", "surface_text": "Mom"},
-          {"name": "Bob", "kind": "Person", "surface_text": "Bob"},
-          {"name": "Pied Piper", "kind": "Organization", "surface_text": "Pied Piper"}
+          {
+            "name": "Mom",
+            "kind": "Person",
+            "surface_text": "Mom"
+          },
+          {
+            "name": "Bob",
+            "kind": "Person",
+            "surface_text": "Bob"
+          },
+          {
+            "name": "Pied Piper",
+            "kind": "Organization",
+            "surface_text": "Pied Piper"
+          }
         ],
         "facts": [
-          {"predicate": "worksFor", "qualifier": "", "kind": "relationship", "statement": "Bob works for Pied Piper.", "value_json": null, "assertion": "reported", "entity_ref": "Bob", "object_entity_ref": "Pied Piper", "temporal": {"phrase": "", "resolved_start": "2026-06-05T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.7}
+          {
+            "predicate": "worksFor",
+            "qualifier": "",
+            "kind": "relationship",
+            "statement": "Bob works for Pied Piper.",
+            "value_json": null,
+            "assertion": "reported",
+            "entity_ref": "Bob",
+            "object_entity_ref": "Pied Piper",
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-06-05T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.7
+          }
         ],
         "temporal_tokens": []
       }
@@ -40,16 +100,47 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Bob", "predicate": "worksFor", "kind": "relationship", "value_contains": "Hooli", "status": "superseded", "chained": true, "assertion": "asserted"},
-      {"entity": "Bob", "predicate": "worksFor", "kind": "relationship", "value_contains": "Pied Piper", "status": "active", "chained": false, "assertion": "reported"}
+      {
+        "entity": "Bob",
+        "predicate": "worksFor",
+        "kind": "relationship",
+        "value_contains": "Hooli",
+        "status": "superseded",
+        "chained": true,
+        "assertion": "asserted"
+      },
+      {
+        "entity": "Bob",
+        "predicate": "worksFor",
+        "kind": "relationship",
+        "value_contains": "Pied Piper",
+        "status": "active",
+        "chained": false,
+        "assertion": "reported"
+      }
     ],
     "review_items": [
-      {"kind": "fact_conflict", "summary_contains": "Bob's worksFor changed"}
+      {
+        "kind": "fact_conflict",
+        "count": 0
+      }
     ],
     "entities": [
-      {"name": "Bob", "kind": "Person", "status": "provisional"},
-      {"name": "Hooli", "kind": "Organization", "status": "provisional"},
-      {"name": "Pied Piper", "kind": "Organization", "status": "provisional"}
+      {
+        "name": "Bob",
+        "kind": "Person",
+        "status": "provisional"
+      },
+      {
+        "name": "Hooli",
+        "kind": "Organization",
+        "status": "provisional"
+      },
+      {
+        "name": "Pied Piper",
+        "kind": "Organization",
+        "status": "provisional"
+      }
     ]
   }
 }
