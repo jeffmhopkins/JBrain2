@@ -1,10 +1,9 @@
 # JBrain2 — Ingest V2: Flip the Disposition Default (fewer cards, same safety)
 
-> **Status:** Proposed (not scheduled) · **Waves:** V0◻️ V1◻️ V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-07-24 — on-box gpt-oss-120b validation done (§15): ingest gap is prompt+schema, not architecture; agentic/multi-tier ingestion evaluated and rejected (§16).
+> **Status:** Scheduled · **Waves:** V0🔄 (largely done — §15) V1◻️ V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-07-24 — §11 decisions ratified (Lever B: state/rel supersede, attributes stay review · sensitive net: inferred-only · Lever C: direct correction); promoted from `proposed/` to `plans/`; on-box gpt-oss-120b validation done (§15): ingest gap is prompt+schema, not architecture; agentic/multi-tier ingestion evaluated and rejected (§16).
 
-The **icebox record** per `docs/DOC_LIFECYCLE.md` — nothing built. Promotion to
-`docs/plans/` requires the §11 open decisions ratified and a `docs/ROADMAP.md`
-slot. This plan **corrects-in-place** (not supersedes) two Living docs when it
+Committed to the roadmap (`docs/ROADMAP.md`). Waves defined; the V0 local-box judgment
+spike is largely complete (§15). This plan **corrects-in-place** (not supersedes) two Living docs when it
 builds: `docs/reference/ANALYSIS.md` (the per-kind conflict policy and the
 correction-note doctrine change) and `docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md`
 (whose §6 rationale leans on the `INFERRED_CEILING` gate this plan removes). Both
@@ -381,18 +380,27 @@ One PR per wave; per-task + per-wave adversarial review; **security red-team on 
 
 ## 11. Open decisions for the owner (recommended default first)
 
-1. **Escalate-signal authority.** Default: the LLM's `escalate` hint may only *raise* a
+> **RATIFIED 2026-07-24.** The owner ratified decisions 2, 3, and 6 at the recommended
+> defaults (below), and accepted decisions 1, 4, 7, 8 as their recommended defaults, at
+> plan sign-off. Decisions 5/5a were ratified earlier (100% local). This plan is now
+> **Scheduled**; the build honors these choices.
+
+1. **Escalate-signal authority.** RATIFIED (default): the LLM's `escalate` hint may only *raise* a
    review, never suppress a floor or a commit. Alternative: also let a high-confidence LLM
    `commit` override I6 attribute-collision (rejected by default — F3).
-2. **Lever B breadth / `ANALYSIS.md` change.** Default: silent supersede-with-history for
-   `state` + functional `relationship` only; `attribute` stays review (I6). Ratify the
-   per-kind policy edit to `ANALYSIS.md:110-111`. Alternative: include attribute (reopens
-   the hidden-merge risk — not recommended).
-3. **Sensitive net threshold (I5).** Default: any `inferred` fact on a health/finance/
-   location predicate-or-domain not already floored → escalate. Alternative: also escalate
-   *asserted* sensitive facts on non-floored predicates (belt-and-suspenders; more cards).
-4. **Escalation floor overall.** With the ceiling gone, what still forces review beyond the
-   spine? Default: I5–I9 + LLM-`escalate` + structural namesake ambiguity. Ratify.
+2. **Lever B breadth / `ANALYSIS.md` change.** **RATIFIED 2026-07-24 (default):** silent
+   supersede-with-history for `state` + functional `relationship` only; `attribute` stays
+   review (I6, the hidden-two-people-merge signal). The per-kind policy edit to
+   `ANALYSIS.md:110-111` lands in the behaviour-change wave (V5). Rejected: including
+   `attribute` (would reopen the hidden-merge risk).
+3. **Sensitive net threshold (I5).** **RATIFIED 2026-07-24 (default):** an `inferred` fact on
+   a health/finance/location predicate-or-domain not already floored → escalate; directly
+   *stated* sensitive facts commit (the deterministic firewall still floors them). Rejected:
+   escalating asserted sensitive facts (more cards for little gain). The on-box validation
+   (§15) confirmed the model sets `inferred`+`domain` reliably, so the deterministic net is
+   the enforcer, not the model.
+4. **Escalation floor overall.** RATIFIED (default): with the ceiling gone, review is forced
+   only by I5–I9 + LLM-`escalate` + structural namesake ambiguity.
 5. **Local-model judgment quality (V0 gate) — RATIFIED 2026-07-23: 100% local, no cloud.**
    The system runs entirely on `local:gpt-oss-120b` (text reasoning, `local_catalog.py:166`);
    **no cloud inference and no cloud fallback, ever.** V0 is therefore a **hard blocking
@@ -410,12 +418,13 @@ One PR per wave; per-task + per-wave adversarial review; **security red-team on 
    therefore runs on the already-local baseline; both v1 and v2 diff arms are on
    gpt-oss-120b automatically (the §7 model-constant requirement is satisfied for free).
    Ingest V2 is a **pure policy change** on top of an already-local pipeline.
-6. **Lever C doctrine.** Default: direct structured writes for review-card fixes (per
-   `ANALYSIS.md:359-362`), editing that line's mechanism in-wave; correction-*notes* kept
-   for prose/wiki. Confirm this is a mechanism edit, not a CLAUDE.md #7 violation.
-7. **GUI surfaces (§9).** Default: V2 diff report + v2 routing setting are dev-only (no
-   mock gate); only the card renderer + Lever C trip the gate. Ratify.
-8. **Two calls vs one.** Default: **keep two calls** (extraction + integration); move only
+6. **Lever C doctrine.** **RATIFIED 2026-07-24 (default):** direct structured writes for
+   review-card fixes (per `ANALYSIS.md:359-362`), editing that line's mechanism in the V5
+   wave; correction-*notes* kept for prose/wiki. Confirmed a mechanism edit, not a CLAUDE.md
+   #7 violation (#7 governs the machine-written *wiki*, which is unchanged).
+7. **GUI surfaces (§9).** RATIFIED (default): V2 diff report + v2 routing setting are dev-only
+   (no mock gate); only the card renderer + Lever C trip the gate.
+8. **Two calls vs one.** RATIFIED (default): **keep two calls** (extraction + integration); move only
    the soft escalate authority into integration. The token saving of merging is minor and
    the long-note map-reduce + clean extraction artifact argue against it. (v0.1's pervasive
    "single-call" language is retired — §13.)
