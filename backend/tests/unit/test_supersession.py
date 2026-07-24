@@ -117,6 +117,17 @@ def test_state_change_supersedes_silently() -> None:
     assert d.review_kind is None
 
 
+def test_same_instant_state_clash_stays_review() -> None:
+    # Lever B is STRICTLY-newer: two different state values at the SAME validity instant
+    # have no "newest wins" basis, so the clash keeps its fact_conflict card (guards the
+    # adv_self_contradiction case — a note contradicting itself at one instant).
+    current = view(valid_from=T1, reported_at=T1)
+    clash = cand(statement="lives at 7 Birch Ln", valid_from=T1, reported_at=T1)
+    d = decide(clash, [current])
+    assert d.insert and d.supersede_ids == ["old-1"]
+    assert d.review_kind == "fact_conflict" and d.conflicting_id == "old-1"
+
+
 def test_state_retrospective_note_does_not_displace_current() -> None:
     """Validity time, never capture time: a note ABOUT 2019 captured today
     lands as closed history."""

@@ -782,14 +782,23 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
                 conflicting_id=current.id,
             )
         # Lever B (ENTITY_GRAPH_INGEST_V2_PLAN §5, ratified §11.2): a CLEAN supersession of
-        # the current head by a newer-validity value is the owner updating their own data —
-        # supersede with retained history and NO review card. Reached only after the
+        # the current head by a STRICTLY newer-validity value is the owner updating their own
+        # data — supersede with retained history and NO review card. Reached only after the
         # pinned / irrealis / low-confidence guards above, so the value genuinely wins.
         # Scoped to `state` + functional `relationship`; `preference` keeps its low-urgency
         # flag (out of the ratified scope). `supersede_ids` is unchanged — the prior head is
         # chained as history, never lost.
-        lever_b_silent = candidate.kind == "state" or (
-            candidate.kind == "relationship" and is_functional(predicate)
+        #
+        # STRICTLY newer, not >=: a SAME validity-instant different value has no
+        # "newest wins" basis (a note that contradicts itself at one instant, two notes
+        # stamped the same time) — that is a genuine clash like a same-instant measurement
+        # conflict or two birthdays, so it keeps the fact_conflict card even for state.
+        strictly_newer = key(candidate.valid_from, candidate.reported_at) > key(
+            current.valid_from, current.reported_at
+        )
+        lever_b_silent = strictly_newer and (
+            candidate.kind == "state"
+            or (candidate.kind == "relationship" and is_functional(predicate))
         )
         return Decision(
             insert=True,
