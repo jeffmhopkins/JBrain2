@@ -1,6 +1,6 @@
 # JBrain2 — Ingest V2: Flip the Disposition Default (fewer cards, same safety)
 
-> **Status:** Proposed (not scheduled) · **Waves:** V0◻️ V1◻️ V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-07-23
+> **Status:** Proposed (not scheduled) · **Waves:** V0◻️ V1◻️ V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-07-24 — on-box gpt-oss-120b validation done (§15): ingest gap is prompt+schema, not architecture; agentic/multi-tier ingestion evaluated and rejected (§16).
 
 The **icebox record** per `docs/DOC_LIFECYCLE.md` — nothing built. Promotion to
 `docs/plans/` requires the §11 open decisions ratified and a `docs/ROADMAP.md`
@@ -502,3 +502,102 @@ rather than fighting it, which lowers the escalate-noise risk. I4 stays determin
 (one good probe is not a guarantee across phrasings — belt and suspenders). Minor: the probe
 schema let the model overload `new_kind`/`new_name` on existing-entity resolutions — a schema
 nit to fix when the real `IntegrationIntent` v2 shape is authored in V0.
+
+## 15. On-box gpt-oss-120b validation — the ingest judgment is prompt+schema, not architecture (2026-07-24)
+
+A 121-case adversarial battery (5 lanes: temporal/supersession, cross-subject+firewall,
+identity/resolution, assertion+inference+salience, adversarial+determinism — authored by
+five scoped researchers, grounded in the I1–I9 invariants) was run **on the owner's box
+against `local:gpt-oss-120b`** via the debug console (`/api/debug/complete`, §7). Then four
+independent researchers audited results-vs-intent and gpt-oss-120b prompt-craft. The
+question under test: is the ingest-quality gap an **architecture** problem (needs an agent,
+tools, or multi-tier decomposition) or a **prompt/schema** problem?
+
+**Finding: overwhelmingly prompt/schema.** The raw 34.7% failure rate collapsed to a
+**genuine model-error rate of 8.3% (10/121)** once three noise sources were removed: scorer
+brittleness (12), a deliberately thin probe prompt lacking rules the **production**
+`integrate_note.prompt` v12 already carries (14), and researcher expectations *stricter than
+the plan's own invariants* (6 — e.g. expecting the model to self-escalate an *asserted*
+sensitive fact when I5 only escalates *inferred* ones). Crucially, the two genuine
+error clusters — inferred-sensitive escalation and same-name ambiguity — are the exact
+places the plan **already** makes enforcement deterministic (I5 sensitive net; the
+`resolve_entity` 2+→`ambiguous_mention` gate; I2 cross-subject routing). The model fails
+where the plan already put a deterministic floor, which **validates the spine rather than
+exposing a hole.**
+
+**gpt-oss-120b is capable at the meaning task.** Cross-subject *attribution* is a strength
+(it tagged the correct non-owner entity + `cross_subject` every time); assertion status is
+handled well ("rule out diabetes"→hypothetical, "wondering if"→question, "quit"→negated);
+injection resistance is real; runs are near-deterministic (1 flip in 5 rerun-x3 cases, on a
+genuinely borderline self-correction). The dominant failure was a **detection-to-abstention
+gap** (P3): on the sensitive net the model set `inferred:true`+`domain:health` correctly on
+7/7 facts, then still proposed `commit` — a disposition-*selection* miss, not a perception
+miss, and exactly what the deterministic I5 net exists to catch.
+
+**The one class that genuinely matters — flag-stripping (safety).** Because the engine can
+only *add* review, never remove it, over-escalation is mere noise but a **stripped flag
+silently defeats a safety floor**. Two cases did this (an inferred mood tagged
+`inferred:false`; a *future* job start tagged `asserted`+`supersede`, flipping the current
+employer). This is the top-priority fix — and it is prompt-fixable.
+
+**Confirming A/B (improved prompt + split schema, re-run on-box):** synthesizing the
+production rules + the researchers' blocks and **splitting the disposition** (below) fixed
+**8/10 genuine errors and BOTH flag-strips** — the future-job now commits as `expected`
+(no employer flip), the inferred mood now carries `inferred:true` (net fires), the two
+same-name guesses now return `ambiguous`, and the negation-transitions now `supersede`
+instead of escalating. The 2 residuals are sensitive-net edge cases the deterministic net
+still backstops via the `domain` flag.
+
+**Implementation deltas this pins for Wave 2 (prompts/schema — no architecture change):**
+- **Split the model's disposition** into `disposition ∈ {commit, supersede}` **plus a
+  separate `needs_review` flag** (the 3-way enum that folded safety-routing into graph-
+  mechanics invited commit-by-default; this also matches the production separation of
+  `supersession_proposals[]` from engine-side review).
+- **Add `expected`** to the assertion enum (future starts must not supersede now — the
+  flag I7/Lever-B key on).
+- **Lock the safety-critical flags in the prompt:** a mood/symptom/condition read from
+  behaviour is `inferred:true` even about the owner; a future start is `expected`. These
+  are the flags the deterministic nets key on.
+- **Assertion discipline:** `reported` is third-party-relayed ONLY; the owner's own hedged
+  statement is `asserted`+`inferred` (uncertainty rides `inferred`/`self_confidence`, never
+  a downgraded assertion) — fixes the systematic `asserted→reported` over-hedge.
+- **Negation is a transition:** quit/stopped/moved-out → `negated`+`supersede` (close the
+  head); escalate only a flat contradiction of the head's whole validity or a
+  non-functional opposite-polarity edge.
+- **Identity:** keep the production "mint sparingly / never mint a name / a vague ref is
+  ambiguous" rules and reframe same-name as a mechanical **count** ("2+ live matches →
+  ambiguous, FORBIDDEN to break the tie by context"); keep the `INFER GENDER` block.
+- **Keep `reasoning_effort` at production High**; the fixes above are the leverage, not
+  more thinking (high alone barely moved the number and risks fresh over-escalation).
+- **Deterministic nets stay exactly as specified** (I5 sensitive, namesake ambiguity, I2
+  cross-subject) — the model supplies flags, the engine escalates.
+
+## 16. Evaluated and rejected: agentic / multi-tier ingestion (with evidence)
+
+Three heavier architectures were seriously explored at owner request and **rejected on
+evidence** — recorded here so they are not re-litigated:
+
+- **Full agentic ingestion** (an agent instance with note-query tools + budget, Letta/
+  Mem0-style). Rejected: (1) it breaks re-run determinism (§6) — an agent that chooses what
+  to read produces a different graph each run, and JBrain re-extracts on model/prompt
+  upgrades; (2) it widens the prompt-injection surface (the agent reasons freely over more
+  untrusted note text); (3) the literature does **not** show agentic memory is more
+  *accurate*, only more flexible, and the single-call disposition it would rely on is the
+  documented weak spot (§4, arXiv 2606.27472). The battery showed gpt-oss-120b already
+  handles the meaning task well *without* tools — in every genuine identity failure the
+  colliding entities were already in the injected context; the model lacked restraint, not
+  information, so a lookup tool answers a question the context already answers.
+- **Multi-scope decomposition** (many specialist calls — salience / who-is-it-about / … —
+  + a reviewer). Rejected as over-engineering: the single integration call is already
+  strong at temporal (96%), assertion, injection, salience, and determinism; splitting those
+  adds cost + error-compounding for near-zero gain. Only two sub-tasks genuinely fail, and
+  both are already deterministic gates, not model tiers.
+- **A single identity/attribution specialist tier with an entity-lookup tool.** Rejected:
+  R3's genuine failures reduce to same-name-ambiguity (2 cases), which the existing
+  deterministic `resolve_entity` gate catches and the "count, don't guess" prompt rule
+  fixed in the A/B; cross-subject attribution is already a model strength. No tier or tool
+  is warranted.
+
+**Net:** keep the two-call + deterministic-spine architecture; the ingest-quality work is
+prompt + schema (Wave 2) on top of the Levers A/B/C already in this plan. The wiki-noise
+reduction the owner wanted comes from Lever A/B, not from a heavier ingest engine.
