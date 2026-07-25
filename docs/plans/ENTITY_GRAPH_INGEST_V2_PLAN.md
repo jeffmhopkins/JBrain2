@@ -686,3 +686,13 @@ onto `IntentFact`** — which is the V2 schema addition (domain on the fact). Op
    Lever A, so I5 is complete when the ceiling is removed.
 
 Owner/architectural decision (firewall-touching) — escalated per PROCESS.md before T1.2 code.
+
+**Correction (same day):** the "needs the V2 schema" conclusion above was over-stated.
+`_upsert_fact` already has the model's per-fact `domain` (`pipeline.py:1905` `fact.domain`)
+and computes `fact_domain`/`floor` there. So the complete ratified I5 (predicate-OR-domain)
+is implementable **within V1** by threading only the `inferred` bool onto the write-path fact
+(`ExtractedFact` + `plan_to_extraction`) and doing the I5 check in `_upsert_fact`:
+`inferred AND fact_domain in {health,finance,location} AND domain_floor(predicate) is None
+→ hold pending_review + a sensitive-inference card`. **No prompt/schema change, no V2
+coupling, no owner decision.** Option 1 collapses to this contained threading; T1.2 (arbiter:
+inferred commits) + T1.3 (I5 in `_upsert_fact`) land together as originally planned.
