@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-22 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8✅
+> **Status:** In progress · **Last verified:** 2026-07-25 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8✅
 
 **Finish-off pass (2026-07-22).** The three remaining threads closed:
 - **Tool-aware report dedup** (was an R7 sub-item) — migration `0148` widens the dedup key
@@ -18,7 +18,10 @@
 - **R8 data path** — the `deepest_run` **tool-view** is registered (`views/registry.tsx`
   → `DeepestRunCard`, extracted to `DeepResearchProgress.tsx` to break the cycle), and R6
   now **attaches that view to its progress turn** (`step["view"]` shape), so the run
-  replays as the backgrounded timeline card on reopen (§3.5). Only *live* in-place
+  replays as the backgrounded timeline card on reopen (§3.5). The **kickoff tool also
+  attaches a `running` `deepest_run` card to its own turn** (`deepest_tool.py`), so the
+  owner sees the timeline card the instant the run starts — the per-round ticks only land
+  minutes later, so without it the kickoff showed as bare text. Only *live* in-place
   delivery into an already-open surface stays deferred (§8 — no per-session channel).
 
 **R8 landed (2026-07-22).** GUI gate **settled: variant A — the backgrounded
@@ -144,7 +147,10 @@ complete end to end:
 - **The kickoff tool** — `deepest_research` (`.tool` + `deepest_tool.py`
   `DeepestKickoffService`/`DeepestResearchRef`): jerv-only, owner-turn-only, depth-0-only,
   **enqueue-and-return** — mints a run id, `DeepestRunLane.launch`, hands the turn back with
-  a "run started" acknowledgement; a run already in flight is reported, not queued.
+  a "run started" acknowledgement (carrying the `running` `deepest_run` card + an explicit
+  end-your-turn / do-not-poll directive, so the model stops instead of waiting on a report
+  that never lands in-turn); a run already in flight is reported, not queued. `jerv.prompt`
+  carries the matching steer (fire-and-forget, end the turn — the R7 prompt line).
   `web`-classed + `NEVER_DEFAULT`; wired in the composition root with the lane + progress
   channel (transcript leg; the NotifyBus/FCM legs bind where those transports are available).
 - **Tests** — the driver's happy path + fail-closed (composition, fakes), the kickoff guards

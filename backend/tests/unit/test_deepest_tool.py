@@ -78,6 +78,26 @@ async def test_kickoff_launches_and_returns_immediately() -> None:
     assert run_id.startswith("deepest-") and wall > 0
 
 
+async def test_kickoff_attaches_a_running_card_and_tells_the_model_to_stop() -> None:
+    """The kickoff surfaces the `deepest_run` timeline card immediately (so the owner sees a
+    'running' card the instant the run starts, not bare text) and its model-facing text
+    directs the model to END the turn rather than poll — the fire-and-forget contract the
+    model kept violating (no card + a stalling poll loop was the reported bug)."""
+    from jbrain.agent.loop import ToolOutput
+
+    lane = _FakeLane()
+    out = await _svc(lane).kickoff(_ctx(), {"question": "how does X actually work"})
+    assert isinstance(out, ToolOutput)
+    assert out.view is not None
+    assert out.view.view == "deepest_run"
+    assert out.view.data["status"] == "running"
+    low = out.lower()
+    assert "end your turn" in low  # the model is told to stop, not wait
+    # …and told by name not to poll the report library or re-run the research inline.
+    assert "read_research_report" in low and "list_research_report" in low
+    assert "do not start a deep_research" in low
+
+
 async def test_kickoff_reports_a_run_already_in_flight() -> None:
     lane = _FakeLane(accept=False)  # the lane is at capacity
     out = await _svc(lane).kickoff(_ctx(), {"question": "q"})

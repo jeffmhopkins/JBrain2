@@ -19,6 +19,7 @@ from typing import Any
 import structlog
 from sqlalchemy import text
 
+from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.deepest_lane import DeepestRunLane
 from jbrain.agent.deepest_progress import DeepestProgressChannel
 from jbrain.agent.deepest_run import (
@@ -28,7 +29,7 @@ from jbrain.agent.deepest_run import (
     resume_deepest,
     run_deepest,
 )
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.tree import MAX_DEPTH
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.external import research_run_state as rrs
@@ -157,14 +158,40 @@ class DeepestKickoffService:
 
         if not self._lane.launch(run_id, run, wall_clock_s=wall_clock_s):
             return (
-                "A deepest-research run is already in progress. Wait for it to finish (I'll "
-                "post the report here) before starting another."
+                "A deepest-research run is already in progress. Do not start another and do not "
+                "poll it — end your turn with a brief note that one is already running and its "
+                "report will post here when it's done."
             )
         log.info("deepest_research.kicked_off", run_id=run_id)
-        return (
-            f"Started a deepest-research run on your question. This runs in the background for "
-            f"a while — I'll post progress here and let you know when the report is ready "
-            f"(run {run_id})."
+        # Attach the timeline card to THIS turn so the owner sees a "running in the background"
+        # card the instant the run starts — the per-round progress ticks (R6) only land minutes
+        # later, so without this the kickoff shows as bare text and the owner (and the model)
+        # think nothing happened. Data-only, matching the `deepest_run` view's slots.
+        started_card = ViewPayload(
+            view="deepest_run",
+            surface="inline",
+            data={
+                "round": 0,
+                "sources": 0,
+                "coverage": "starting up",
+                "status": "running",
+                "step": 1,
+                "label": "Starting the deepest-research run…",
+            },
+        )
+        # This is enqueue-and-return: the model's job now is to STOP. It is not deep_research —
+        # there is no report to wait for in this turn, so spell that out, because otherwise the
+        # model polls read_research_report / list_research_report (or re-runs the research
+        # itself) waiting on a report that only ever arrives as a later message.
+        return ToolOutput(
+            f"Started a deepest-research run in the background (run {run_id}). This is "
+            "fire-and-forget: its progress and the finished report arrive on their own as NEW "
+            "messages in this chat, not in this turn. END YOUR TURN NOW with a short note that "
+            "the run has started and that you'll post the report here when it's ready. Do NOT "
+            "wait on it, do NOT poll it with read_research_report / list_research_report or any "
+            "other tool, and do NOT start a deep_research run on the same question — the card "
+            "already tracks it.",
+            view=started_card,
         )
 
 
