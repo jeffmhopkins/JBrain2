@@ -696,3 +696,36 @@ is implementable **within V1** by threading only the `inferred` bool onto the wr
 → hold pending_review + a sensitive-inference card`. **No prompt/schema change, no V2
 coupling, no owner decision.** Option 1 collapses to this contained threading; T1.2 (arbiter:
 inferred commits) + T1.3 (I5 in `_upsert_fact`) land together as originally planned.
+
+### T1.2/T1.3 — AUTHORITATIVE firewall finding (supersedes the two notes above)
+
+The two notes above churned; this is the accurate picture. In the integrate→arbiter→apply
+path the model's per-fact `domain` is **deliberately dropped**: `_to_extracted` sets
+`domain=""` (`arbiter.py:692`), so `_upsert_fact`'s `extracted_domain = fact.domain or
+note_domain` resolves to the **note domain**, then deterministic floor + ratchet apply
+(`pipeline.py:1905-1909`). The committed domain is therefore `note_domain + floor + ratchet`,
+**never the model's free per-fact classification** — a deliberate firewall choice (don't let
+the model's per-fact domain guess move a fact's scope).
+
+Consequence for Lever A + I5: today a non-floored sensitive *inferred* fact (mood, weight) in
+a `general` note commits in `general`, caught only by the inferred-ceiling→review that Lever A
+removes. So the ratified I5 "inferred on sensitive predicate **OR domain** → escalate" splits:
+- **predicate half** — trivial (`domain_floor(predicate)` is not None) — implementable now.
+- **domain half** — catching the non-floored sensitive case — needs the model's per-fact
+  domain, which the pipeline drops. Closing it is a **firewall-behaviour change**, not a
+  contained thread.
+
+**Owner/architectural firewall decision (escalated per PROCESS.md) before T1.2 lands:**
+- **A — floor-only I5.** Simplest; leaves the non-floored-sensitive gap (mood/weight in a
+  general note commit silently) — weaker than today's ceiling.
+- **B — use the model's per-fact domain** (stop dropping it at `_to_extracted`; thread it so
+  I5 and the committed domain reflect it). Closes the gap; §15 shows the model is reliable at
+  domain; but it changes firewall domain-determination to incorporate the model's per-fact
+  classification the design currently avoids.
+- **C — targeted ceiling retention.** Lever A removes the review ceiling for NON-sensitive
+  inferred facts but keeps a review for facts the model flags sensitive — closes the gap
+  without changing domain-determination, at the cost of some retained review on sensitive
+  inferences. Likely the smallest-blast-radius safe option.
+
+T1.2/T1.3 is paused on this decision. T1.1 (Lever B) is complete, verified, and shipped
+on-branch — a clean independent milestone.
