@@ -264,6 +264,75 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=28.0,
     ),
     LocalModel(
+        id="qwen3.6-35b-a3b",
+        label="Qwen3.6 35B · vision + reasoning (Q8)",
+        served_model="qwen3.6-35b-a3b",
+        tiers=("vision", "high"),
+        supports_vision=True,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="unsloth/Qwen3.6-35B-A3B-GGUF",
+        gguf_include="*Q8_0*.gguf",
+        # The base repo ships three projector precisions; name the F16 one (~0.9 GiB) exactly so
+        # the pull skips the redundant BF16/F32 beside it.
+        mmproj_include="mmproj-F16.gguf",
+        quant="Q8_0",
+        # Q8_0 weights (36.9 GB, single file) + the ~0.9 GiB F16 projector. Q8 (not Q4) for the
+        # same reason as qwen3-vl-30b — it preserves vision OCR fidelity — and a 3B-active MoE
+        # co-resides at Q8 on this box with room to spare, so the fidelity is nearly free here.
+        size_gb=37.8,
+        note="35B MoE, 3B active — Qwen3.6's vision + reasoning + agentic-coding model at "
+        "near-lossless Q8. Hybrid Gated-DeltaNet + Gated-Attention arch (like qwen3-next-80b): "
+        "the linear-attention layers keep the KV cache light, so it holds long context cheaply "
+        "and co-resides beside gpt-oss-120b. A HYBRID reasoner — thinking is the enable_thinking "
+        "chat-template toggle, set per task in LLM Settings ('none' runs it as a snappy Instruct "
+        "model). Needs a recent llama.cpp build with the Qwen3.6 arch + mmproj and "
+        "--reasoning-format support. For ~1.5–2x generation without vision, see the -mtp sibling.",
+        supports_reasoning=True,
+        # Emits <think>…</think> when thinking is on; deepseek format splits it onto the reasoning
+        # channel like the other Qwen hybrids.
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        # Native 256k; serves the conservative gateway default. The light hybrid-attention KV makes
+        # a big -c cheap here, so the full native window is exposed as the ceiling.
+        native_context_window=262144,
+        kv_gb_per_128k=3.5,
+    ),
+    LocalModel(
+        id="qwen3.6-35b-a3b-mtp",
+        label="Qwen3.6 35B · reasoning + coding (MTP Q8, faster)",
+        served_model="qwen3.6-35b-a3b-mtp",
+        tiers=("high",),
+        # Text-only: the MTP repo is weights-only (no projector ships with it), so on-box vision
+        # stays on the base qwen3.6-35b-a3b (or qwen3-vl-30b).
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="havenoammo/Qwen3.6-35B-A3B-MTP-GGUF",
+        gguf_include="*UD-Q8_K_XL*.gguf",
+        mmproj_include=None,
+        quant="UD-Q8_K_XL",
+        # Single UD-Q8_K_XL file (39.3 GB) with the MTP draft head stored in Q8 — a touch larger
+        # than the base repo's Q8_0 for that extra head.
+        size_gb=39.3,
+        note="35B MoE, 3B active — Qwen3.6's reasoning + agentic coder as the MTP "
+        "(multi-token-prediction) build: a draft head for self-speculative decoding (~1.5–2x "
+        "generation) via the --spec-type flags in extra_server_args. Weights-only repo, so NO "
+        "vision — use the base qwen3.6-35b-a3b for that. Same hybrid Gated-DeltaNet arch: light "
+        "KV, co-resides beside gpt-oss-120b. A HYBRID reasoner — thinking is the enable_thinking "
+        "chat-template toggle, set per task in LLM Settings ('none' runs it as a snappy Instruct "
+        "model). Needs a llama.cpp build with MTP speculative-decode support plus the Qwen3.6 arch "
+        "and --reasoning-format; else the --spec flags are rejected.",
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        # Self-speculation off the model's own MTP head (draft-mtp) — no separate draft model. The
+        # repo documents --spec-draft-n-max 3 for this build.
+        extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "3"),
+        native_context_window=262144,
+        kv_gb_per_128k=3.5,
+    ),
+    LocalModel(
         id="qwen3-235b-a22b",
         label="Qwen3-235B-A22B · reasoning (alt, 3-bit)",
         served_model="qwen3-235b-a22b",

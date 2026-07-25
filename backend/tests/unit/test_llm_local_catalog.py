@@ -154,6 +154,59 @@ def test_qwen35_122b_mtp_is_a_faster_vision_speculative_variant() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
+def test_qwen36_35b_is_a_vision_reasoning_hybrid_at_q8() -> None:
+    # Qwen3.6's 35B/3B-active MoE: vision + reasoning + agentic coding at near-lossless Q8,
+    # from the base Unsloth repo (which ships the vision projector). A hybrid reasoner.
+    m = local_catalog.get("qwen3.6-35b-a3b")
+    assert m is not None
+    assert m.tiers == ("vision", "high")
+    # Vision-capable and ships a projector (the well-formed check enforces this for the tier;
+    # pin the concrete projector glob here).
+    assert m.supports_vision and m.mmproj_include == "mmproj-F16.gguf"
+    assert m.supports_tools
+    # Hybrid reasoner: in the gating set, <think> split via deepseek, on/off via enable_thinking.
+    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    # Q8_0 (near-lossless) — preserves vision OCR fidelity like qwen3-vl-30b, not the Q4 the
+    # bigger MoE entries use; a 3B-active model co-resides at Q8 here.
+    assert m.quant == "Q8_0"
+    assert "Q8_0" in m.gguf_include
+    assert m.hf_repo == "unsloth/Qwen3.6-35B-A3B-GGUF"
+    assert m.spec == "local:qwen3.6-35b-a3b"
+    # No speculative-decode flags on the base entry (that is the -mtp sibling below).
+    assert m.extra_server_args == ()
+    # Serves the conservative gateway default with the full native 256k as the ceiling.
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144 and m.max_context_window == 262144
+    # Opt-in, not part of the default resident set the install prompt offers.
+    assert m.id not in local_catalog.recommended_ids()
+
+
+def test_qwen36_35b_mtp_is_a_text_only_speculative_sibling() -> None:
+    # The MTP build of the 35B: a draft head for self-speculative decoding, wired via the
+    # --spec-type flags. Its repo is weights-only, so unlike the base entry it has NO vision.
+    m = local_catalog.get("qwen3.6-35b-a3b-mtp")
+    assert m is not None
+    assert m.tiers == ("high",)
+    # Text-only: the MTP repo ships no projector, so vision stays on the base entry.
+    assert not m.supports_vision and m.mmproj_include is None
+    assert m.supports_tools
+    # Same hybrid-reasoner profile as the base entry.
+    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    # A distinct served name and repo from the base build.
+    assert m.spec == "local:qwen3.6-35b-a3b-mtp"
+    assert m.hf_repo == "havenoammo/Qwen3.6-35B-A3B-MTP-GGUF"
+    # The Q8 dynamic quant (MTP head stored in Q8) the manifest pulls.
+    assert m.quant == "UD-Q8_K_XL"
+    assert "UD-Q8_K_XL" in m.gguf_include
+    # The self-speculative-decoding flags the gateway needs; this build documents draft-n-max 3.
+    assert m.extra_server_args == ("--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144
+    assert m.id not in local_catalog.recommended_ids()
+
+
 def test_qwen3_next_is_a_text_only_alt_high_tier() -> None:
     m = local_catalog.get("qwen3-next-80b-a3b")
     assert m is not None
@@ -186,6 +239,8 @@ def test_qwen3_next_thinking_is_a_reasoning_deepseek_format_alt() -> None:
         "qwen3-next-80b-a3b-thinking",
         "nemotron-3-super-120b",
         "qwen3.5-122b-a10b-mtp",
+        "qwen3.6-35b-a3b",
+        "qwen3.6-35b-a3b-mtp",
         "qwen3.5-0.8b",
         "qwen3.5-4b",
     }
