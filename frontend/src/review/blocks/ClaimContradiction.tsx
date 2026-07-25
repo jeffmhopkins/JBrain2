@@ -17,11 +17,35 @@ import type { ReviewBlock } from "./types";
 // source line to its record.
 const SIDE_ACCENTS = ["steel", "amber"] as const;
 
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+
+/** First occurrence of `needle` in `hay` (both lowercased already) at or after
+ * `from` that sits on token boundaries, or -1. A short name like "Me" must not
+ * match inside "ca<mark>me</mark>ra" or "na<mark>me</mark>d"; we require the
+ * chars flanking the match to be non-word — but only on a side where the name's
+ * own edge is a word char, so names bounded by punctuation (e.g. "Dr. Croft")
+ * still match against adjacent letters. */
+function boundedIndexOf(hay: string, needle: string, from: number): number {
+  if (needle.length === 0) return -1;
+  // charAt yields "" past the string edge, and WORD_CHAR.test("") is false, so
+  // a match at the very start/end is always boundary-clean.
+  const leftWord = WORD_CHAR.test(needle.charAt(0));
+  const rightWord = WORD_CHAR.test(needle.charAt(needle.length - 1));
+  let at = hay.indexOf(needle, from);
+  while (at >= 0) {
+    const leftOk = !leftWord || !WORD_CHAR.test(hay.charAt(at - 1));
+    const rightOk = !rightWord || !WORD_CHAR.test(hay.charAt(at + needle.length));
+    if (leftOk && rightOk) return at;
+    at = hay.indexOf(needle, at + 1);
+  }
+  return -1;
+}
+
 /** Wrap each record name where it appears in the source text with its side's
  * tint, so the two flagged rows stand out among the other lines. Literal,
- * case-insensitive matching (names are extracted verbatim); longest names first
- * so a name that contains another still marks correctly. */
-function highlightSource(text: string, marks: { name: string; cls: string }[]): ReactNode[] {
+ * case-insensitive, token-bounded matching (names are extracted verbatim);
+ * longest names first so a name that contains another still marks correctly. */
+export function highlightSource(text: string, marks: { name: string; cls: string }[]): ReactNode[] {
   const ordered = marks
     .filter((m) => m.name.trim().length > 0)
     .sort((a, b) => b.name.length - a.name.length);
@@ -32,7 +56,7 @@ function highlightSource(text: string, marks: { name: string; cls: string }[]): 
     let best: { index: number; mark: { name: string; cls: string } } | null = null;
     const lower = rest.toLowerCase();
     for (const mark of ordered) {
-      const at = lower.indexOf(mark.name.toLowerCase());
+      const at = boundedIndexOf(lower, mark.name.toLowerCase(), 0);
       if (at >= 0 && (best === null || at < best.index)) best = { index: at, mark };
     }
     if (best === null) {
