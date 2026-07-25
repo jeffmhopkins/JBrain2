@@ -657,3 +657,32 @@ Per-task local gate (ruff + pyright + the task's unit tests) before it merges in
 branch; per-wave **security red-team** (firewall/RLS/validity/identity floors) before the
 one V1 PR; testcontainer integration + coverage gates run in CI. T1.1 is the safest,
 most-contained first task and is where the build starts.
+
+### T1.1 done; T1.2/T1.3 sequencing finding (2026-07-24)
+
+**T1.1 (Lever B) shipped on-branch and verified:** `supersession.decide` supersedes a
+STRICTLY-newer clean state/functional-relationship value silently with retained history (no
+card), all safety guards intact; a same-instant clash keeps its card (adv_self_contradiction).
+70 supersession + 82 arbiter/weight + 346 analysis-unit + all 74 harness scenarios green.
+Ratified: no restricted-domain carve-out (a stated health/finance state change supersedes
+silently too; carve-out remains a trivial follow-up).
+
+**Blocking finding for T1.2/T1.3:** the ratified I5 net (§11.3) is "an `inferred` fact on a
+sensitive predicate OR **domain** → escalate," but `IntentFact` carries neither the model's
+`domain` nor (downstream) `inferred` — the domain is assigned only later in `_apply`
+(`ratchet_domain`, `pipeline.py:1909`), and review status is decided earlier in the arbiter.
+So the *complete* I5 net (covering non-floored sensitive predicates like weight/mood/symptom —
+the F5 gap the ceiling covers today) requires **threading the model's `domain` classification
+onto `IntentFact`** — which is the V2 schema addition (domain on the fact). Options:
+
+1. **Add a T1.0 prerequisite to V1:** thread the model's `domain` (+ `inferred`) onto
+   `IntentFact` (contained: `intent.py` field + integrate-parse + the arbiter reads it), then
+   T1.2 (remove the ceiling gate) + T1.3 (complete I5, predicate-OR-domain) land together and
+   safe. **Recommended** — small, unblocks the complete firewall net.
+2. Ship T1.2 with a **floor-only** I5 (predicate check) and land the model-domain half with the
+   V2 schema work; documents a transient narrower net (an inferred sensitive fact the model
+   mislabels `general` commits silently until V2). Firewall-doctrine-weaker.
+3. Reorder: do the V2 prompt/schema work (which adds `domain` to the fact) **before** V1's
+   Lever A, so I5 is complete when the ceiling is removed.
+
+Owner/architectural decision (firewall-touching) — escalated per PROCESS.md before T1.2 code.
