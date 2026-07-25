@@ -729,3 +729,30 @@ removes. So the ratified I5 "inferred on sensitive predicate **OR domain** → e
 
 T1.2/T1.3 is paused on this decision. T1.1 (Lever B) is complete, verified, and shipped
 on-branch — a clean independent milestone.
+
+### T1.2/T1.3 — RESOLVED (independent red-team, 2026-07-24): deterministic floor, not model-domain
+
+An independent firewall red-team **rejected** the "thread the model's per-fact domain" option
+(5 confirmed issues): the floor guard only fires when `extracted_domain == "general"`
+(`pipeline.py:1907`), so a floored predicate the model mislabels to a *different* restricted
+domain (`bloodGlucose`→`location`) would **bypass `domain_floor`** — a cross-firewall misfile
+strictly worse than today; per-fact model domain also **splits supersession chains** (same key,
+different domain → two live heads under run-to-run variance), activates a one-click
+**health→general demotion** card (`display.py:128-139`), and the integrate path produces no
+trustworthy per-fact domain to thread anyway (it would mean trusting a second, unproven LLM
+classifier). The ratchet-only-up safety claim is false for the cross-restricted case.
+
+**Resolved approach (deterministic, asymmetric-bias-consistent):**
+- **T1.3 (F5 gap):** close it by **expanding the deterministic floor** `_DOMAIN_BY_PREDICATE`
+  (`extraction.py:152-174`) to cover the borderline-sensitive predicates (`mood`,
+  `bodyweight`/`bodymass`, and similar) so they are floored into their restricted domain
+  regardless of the model — correct-domaining via the trusted floor, no model-domain trust,
+  no floor bypass, no supersession split. If a targeted review is wanted for inferred
+  sensitive facts (ratified §11.3), the arbiter keys it on `domain_floor(predicate) is not
+  None` + `inferred` (predicate signal it already has) — no domain threading.
+- **T1.2 (Lever A):** arbiter commits inferred non-sensitive facts (remove the ceiling review
+  gate); the expanded floor + the optional predicate-keyed inferred-sensitive review are the
+  retained firewall coverage.
+- **Tests:** floor-authority unit test (floored predicate + wrong restricted model domain →
+  committed = floor); the expanded-floor predicates get harness coverage; RLS isolation
+  unchanged (no model-domain threading). No IntentFact/schema/prompt change.
