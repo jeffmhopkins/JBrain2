@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-07-18
+> **Status:** Living · **Last verified:** 2026-07-26
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -334,30 +334,34 @@ system was not properly shut down" on the next boot.
 Update-time recreation is handled for you: `jbrain update` (and the PWA update)
 **stops the `local-llm` gateway before the rebuild/recreate and restarts it after**
 (`deploy/update-inner.sh`), so the resident set never collides with the container
-churn. Harden the host against the rest (all idempotent and reversible):
+churn. The host OS hardening is now **applied automatically** by
+`scripts/local-llm-setup.sh` (so it lands on install and on every
+`jbrain enable-local-models`); the steps below are what it does and how to verify:
 
-1. **earlyoom** — kill the biggest hog on memory pressure *before* the kernel stalls:
+1. **earlyoom** — kill the biggest hog on memory pressure *before* the kernel stalls.
+   Installed and configured by the setup script; verify (or reapply by hand):
    ```bash
-   sudo apt install -y earlyoom
-   echo 'EARLYOOM_ARGS="-r 60 -m 10 -m 5 -s 5 -s 3 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"' \
-     | sudo tee /etc/default/earlyoom
-   sudo systemctl enable --now earlyoom && sudo systemctl restart earlyoom
+   systemctl is-active earlyoom && cat /etc/default/earlyoom
+   # EARLYOOM_ARGS="-r 60 -m 10 -m 5 -s 5 -s 3 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"
    ```
-2. **Reclaim headroom (sysctl)** — start reclaiming earlier, thrash into swap less:
+2. **Reclaim headroom (sysctl)** — start reclaiming earlier, thrash into swap less.
+   Written to `/etc/sysctl.d/99-jbrain-oom.conf` by the setup script; verify:
    ```bash
-   sudo tee /etc/sysctl.d/99-jbrain-oom.conf >/dev/null <<'EOF'
-   vm.min_free_kbytes = 2097152
-   vm.watermark_scale_factor = 200
-   vm.swappiness = 10
-   EOF
-   sudo sysctl --system
+   sysctl vm.min_free_kbytes vm.watermark_scale_factor vm.swappiness
+   # vm.min_free_kbytes = 2097152 · vm.watermark_scale_factor = 200 · vm.swappiness = 10
    ```
 3. **The app evicts to a RAM budget, so nothing over-commits the box** — every load frees
    the fewest resident models needed to keep ≥12.5% of RAM free (`LOCAL_LLM_FREE_RAM_FRACTION`)
    before it loads, and nothing is ever pinned beyond that floor. There is no keep-hot pin to
    over-commit: a manual **Load** (Settings → LLM → On-box models) evicts to the same budget —
    the **Stage** preview shows what it will evict first — and models you use stay warm via the
-   end-of-turn restore, not a held pin.
+   end-of-turn restore, not a held pin. **Caveat — the budget is a per-process evictor:** the
+   `api` and the `worker` each run their own `ResidencyCoordinator` against the same box with
+   no cross-process lock, so a deferred worker model-load overlapping an api one can still
+   momentarily co-load past the floor. earlyoom (steps 1–2) is what covers that residual today
+   — it kills one `llama-server` instead of letting the box livelock. A box-wide load lock
+   (true cross-process prevention, e.g. a Postgres advisory lock around evict+load) is a
+   candidate follow-up, not yet implemented.
 4. **Persistent logs** so the next event's full dump survives the freeze:
    ```bash
    sudo mkdir -p /var/log/journal

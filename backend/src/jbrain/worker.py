@@ -52,6 +52,7 @@ from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribeP
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
+from jbrain.llm.residency import ResidencyCoordinator
 from jbrain.log_capture import LogScope, configure_logging
 from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
@@ -465,10 +466,33 @@ async def run() -> None:
     # Live per-task routing/reasoning overrides apply to worker LLM calls too,
     # so the settings screen governs background analysis without a restart.
     worker_settings_store = SqlSettingsStore(maker)
+    # Admin client for the local-model gateway (loaded-state + unload), shared by the
+    # residency coordinator below and the triage precondition further down.
+    llm_gateway = LocalGatewayClient(settings.local_llm_url)
+    # The box's sole model evictor: llama-swap runs every model in one `swap: false`
+    # group (jbrain.llm.llama_swap_config), so it NEVER evicts on its own — an unadmitted
+    # local load co-loads the new model beside the resident one and hard-locks the
+    # unified-memory box. A background job that swaps large local models (the deferred
+    # analyze_stream_url / analyze_video path: caption on the vision model, then summarize
+    # on the reasoning model) hit exactly that. build_router now always admits through a
+    # coordinator, so passing ours reuses this gateway for the triage precondition too.
+    # No schedule_restore here: a background job has no end-of-turn steady state to drift
+    # back to, and the next on-demand load re-admits through ensure_room regardless.
+    residency = ResidencyCoordinator(
+        llm_gateway,
+        windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
+        models_dir=settings.local_models_dir,
+        enabled=settings.local_llm_enabled,
+        free_ram_fraction=settings.local_llm_free_ram_fraction,
+    )
     router = build_router(
         settings,
         recorder=SqlUsageRecorder(maker),
         overrides_loader=lambda: worker_settings_store.llm_task_overrides(queue.SYSTEM_CTX),
+        local_windows_loader=lambda: worker_settings_store.llm_local_context_windows(
+            queue.SYSTEM_CTX
+        ),
+        residency=residency,
     )
     # The report display-title job (external.report_titler): one LLM one-shot per
     # report, so it takes the router rather than the embed container.
@@ -673,9 +697,7 @@ async def run() -> None:
     # route + live override, no strength tier), so the gate matches what would actually
     # run. The gateway admin client points at the LLM gateway (not whisper's).
     preconditions: dict[str, Precondition] = {
-        "reasoning_model_loaded": model_already_loaded(
-            router, LocalGatewayClient(settings.local_llm_url), task="triage.classify"
-        ),
+        "reasoning_model_loaded": model_already_loaded(router, llm_gateway, task="triage.classify"),
     }
     # The host-metrics sampler reads the supervisor (the only container with the
     # host's /proc + /sys mounted) over the internal network. Gated on a token so
