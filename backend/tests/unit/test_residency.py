@@ -1,6 +1,8 @@
 """Residency: the app as sole evictor (ensure_room) and the evict→restore cycle."""
 
 import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -424,3 +426,95 @@ async def test_evict_then_restore_round_trips(monkeypatch: pytest.MonkeyPatch) -
     await coord._restore()  # noqa: SLF001
     assert gw.loaded == ["gpt-oss-120b"]
     assert coord._displaced == set()  # noqa: SLF001
+
+
+# --- box lock: cross-process serialization of evict+load ---------------------
+
+
+class _RecordingGateway(FakeLocalGateway):
+    """A gateway that logs each unload/load into a shared list, so a test can assert they
+    happened strictly BETWEEN the box lock's acquire and release."""
+
+    def __init__(self, events: list[str], running: set[str] | None = None) -> None:
+        super().__init__(running=running)
+        self._events = events
+
+    async def unload(self, served_model: str) -> None:
+        self._events.append(f"unload:{served_model}")
+        await super().unload(served_model)
+
+    async def load(self, served_model: str) -> None:
+        self._events.append(f"load:{served_model}")
+        await super().load(served_model)
+
+
+def _recording_lock(events: list[str]):
+    @contextlib.asynccontextmanager
+    async def _lock() -> AsyncIterator[None]:
+        events.append("lock")
+        try:
+            yield
+        finally:
+            events.append("unlock")
+
+    return _lock
+
+
+@pytest.mark.asyncio
+async def test_box_lock_serializes_evict_and_load_of_the_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With a box_lock, ensure_room evicts the victim AND loads the target — both strictly
+    # inside the lock — so the target's memory is committed before the lock releases and a
+    # concurrent process's plan can see it (no cross-process co-load).
+    events: list[str] = []
+    gw = _RecordingGateway(events, running={"gpt-oss-120b"})
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    coord = ResidencyCoordinator(
+        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+    )
+    await coord.ensure_room("qwen3-coder-next")  # 90+59.6 > 96 → evict gpt-oss, then load it
+    assert events == ["lock", "unload:gpt-oss-120b", "load:qwen3-coder-next", "unlock"]
+
+
+@pytest.mark.asyncio
+async def test_box_lock_fast_path_takes_no_lock_when_already_resident(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The common case (model already up) must not pay the cross-process lock or reload.
+    events: list[str] = []
+    gw = _RecordingGateway(events, running={"gpt-oss-120b"})
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    coord = ResidencyCoordinator(
+        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=_recording_lock(events)
+    )
+    await coord.ensure_room("gpt-oss-120b")  # already resident
+    assert events == []  # no lock, no unload, no load
+    assert gw.loaded == []
+
+
+@pytest.mark.asyncio
+async def test_box_lock_degrades_to_unlocked_when_acquire_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A lock-infra hiccup (DB down) must not fail the turn: proceed UNLOCKED — the free-RAM
+    # budget still evicts and loads; only cross-process serialization is lost for that load.
+    @contextlib.asynccontextmanager
+    async def failing_lock() -> AsyncIterator[None]:
+        raise RuntimeError("db down")
+        yield  # pragma: no cover - unreachable, satisfies the generator contract
+
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
+    )
+    coord = ResidencyCoordinator(
+        gw, models_dir="", enabled=True, free_ram_fraction=0.25, box_lock=failing_lock
+    )
+    await coord.ensure_room("qwen3-coder-next")
+    assert gw.unloaded == ["gpt-oss-120b"]  # still evicted, unlocked
+    assert gw.loaded == ["qwen3-coder-next"]  # and still loaded

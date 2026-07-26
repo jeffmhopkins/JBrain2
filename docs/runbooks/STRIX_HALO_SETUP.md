@@ -334,9 +334,11 @@ system was not properly shut down" on the next boot.
 Update-time recreation is handled for you: `jbrain update` (and the PWA update)
 **stops the `local-llm` gateway before the rebuild/recreate and restarts it after**
 (`deploy/update-inner.sh`), so the resident set never collides with the container
-churn. The host OS hardening is now **applied automatically** by
-`scripts/local-llm-setup.sh` (so it lands on install and on every
-`jbrain enable-local-models`); the steps below are what it does and how to verify:
+churn. The host OS hardening is **applied automatically** by
+`deploy/oom-hardening.sh` — run from `scripts/local-llm-setup.sh` (install and every
+`jbrain enable-local-models`) **and** from the host `jbrain update` path when local hosting
+is on, so an existing box gets hardened on its next update with no manual step. The steps
+below are what it does and how to verify:
 
 1. **earlyoom** — kill the biggest hog on memory pressure *before* the kernel stalls.
    Installed and configured by the setup script; verify (or reapply by hand):
@@ -355,13 +357,15 @@ churn. The host OS hardening is now **applied automatically** by
    before it loads, and nothing is ever pinned beyond that floor. There is no keep-hot pin to
    over-commit: a manual **Load** (Settings → LLM → On-box models) evicts to the same budget —
    the **Stage** preview shows what it will evict first — and models you use stay warm via the
-   end-of-turn restore, not a held pin. **Caveat — the budget is a per-process evictor:** the
-   `api` and the `worker` each run their own `ResidencyCoordinator` against the same box with
-   no cross-process lock, so a deferred worker model-load overlapping an api one can still
-   momentarily co-load past the floor. earlyoom (steps 1–2) is what covers that residual today
-   — it kills one `llama-server` instead of letting the box livelock. A box-wide load lock
-   (true cross-process prevention, e.g. a Postgres advisory lock around evict+load) is a
-   candidate follow-up, not yet implemented.
+   end-of-turn restore, not a held pin. **Cross-process serialization:** the `api` and the
+   `worker` each run their own `ResidencyCoordinator`, so to stop two processes co-loading
+   past the floor, the automatic evict+load path holds a **Postgres transaction-level
+   advisory lock** (`pg_box_lock`, `jbrain.llm.residency`) box-wide — only one process
+   evicts+loads at a time, and the loaded model's memory is committed before the lock
+   releases so the next process's plan sees it. It's best-effort: a DB hiccup degrades to
+   unlocked rather than failing a turn. A rare gap remains — a manual operator **Load**
+   (Settings → LLM) isn't under that lock — so earlyoom (steps 1–2) stays the catch-all
+   backstop for any residual overcommit.
 4. **Persistent logs** so the next event's full dump survives the freeze:
    ```bash
    sudo mkdir -p /var/log/journal

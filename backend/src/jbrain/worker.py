@@ -52,7 +52,7 @@ from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribeP
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator
+from jbrain.llm.residency import ResidencyCoordinator, pg_box_lock
 from jbrain.log_capture import LogScope, configure_logging
 from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
@@ -484,6 +484,10 @@ async def run() -> None:
         models_dir=settings.local_models_dir,
         enabled=settings.local_llm_enabled,
         free_ram_fraction=settings.local_llm_free_ram_fraction,
+        # Serialize evict+load against the api process (which runs its own coordinator over
+        # the same box) so a background job's model swap can't co-load past the free-RAM
+        # floor while the api is loading for a chat turn — the cross-process double-load.
+        box_lock=pg_box_lock(maker),
     )
     router = build_router(
         settings,
