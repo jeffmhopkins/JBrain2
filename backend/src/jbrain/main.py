@@ -120,7 +120,7 @@ from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator
+from jbrain.llm.residency import ResidencyCoordinator, pg_box_lock
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
 from jbrain.locations.pairing import SqlPairingRepo
@@ -309,6 +309,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             models_dir=settings.local_models_dir,
             enabled=settings.local_llm_enabled,
             free_ram_fraction=settings.local_llm_free_ram_fraction,
+            # Serialize evict+load against the worker process (which runs its own coordinator
+            # over the same box) so a deferred worker load can't co-load past the floor here.
+            box_lock=pg_box_lock(maker),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
         # serving at a time on the box, so a live grok `/model` switch (or a parallel agent)

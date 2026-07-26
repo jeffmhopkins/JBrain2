@@ -37,10 +37,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 import structlog
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import local_catalog
@@ -48,6 +50,35 @@ from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.llm.local_weights import weights_size_gb
 
 log = structlog.get_logger()
+
+# A box-wide critical section around evict+load. `ResidencyCoordinator` is a PER-PROCESS
+# evictor, so the api and the worker each hold the free-RAM floor on their own — two loads
+# in different processes can both read low memory, both skip eviction, and co-load past the
+# floor (the deferred-video-vs-chat race). A cross-process lock serializes the load path so
+# only one process evicts+loads at a time. Returns an async context manager; `None` (the
+# default) means no locking — single-process/cloud/test callers keep the old behavior.
+BoxLock = Callable[[], "contextlib.AbstractAsyncContextManager[None]"]
+
+# A fixed, arbitrary advisory-lock key shared by every process on the box (the api and the
+# worker), so `pg_advisory_xact_lock` serializes their model loads against each other.
+_BOX_LOCK_KEY = 0x6A_42_52_41_4E_4C_4F_41  # "jBRANLOA"
+
+
+def pg_box_lock(maker: async_sessionmaker[AsyncSession]) -> BoxLock:
+    """A cross-process box lock backed by a Postgres transaction-level advisory lock — the
+    one lock that spans the api and worker processes (an asyncio.Lock is per-process). The
+    transaction-level variant auto-releases when the txn ends (even if the pooled connection
+    is reused) and when the holding process dies, so a crash can never leak the lock. Held
+    only across a model's evict+load, which is seconds and infrequent."""
+
+    @contextlib.asynccontextmanager
+    async def _lock() -> AsyncIterator[None]:
+        async with maker() as session, session.begin():
+            await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _BOX_LOCK_KEY})
+            yield
+
+    return _lock
+
 
 # Loads the live per-model context-window overrides (catalog id → tokens), so the memory
 # budget sizes each model's KV against the window it actually serves.
@@ -104,6 +135,7 @@ class ResidencyCoordinator:
         models_dir: str = "",
         enabled: bool = False,
         free_ram_fraction: float = 0.25,
+        box_lock: BoxLock | None = None,
     ) -> None:
         self._gateway = gateway
         # Inert on a cloud-only box (no local hosting): ensure_room/restore no-op and nothing
@@ -112,6 +144,11 @@ class ResidencyCoordinator:
         self._windows_loader = windows_loader
         self._models_dir = models_dir
         self._free_ram_fraction = free_ram_fraction
+        # Cross-process serialization of the evict+load path (pg_box_lock in production).
+        # None → single-process behavior: evict only, and let the client trigger the load.
+        # Set → hold the lock across evict AND the target load, so the loaded model's memory
+        # is committed before release and a concurrent process's plan sees it (no co-load).
+        self._box_lock = box_lock
         # Served names evicted (by us or by another displacement) and awaiting restore. The
         # box's remembered steady state minus whatever currently holds the RAM. Bounded by the
         # provisioned model count; entries clear as they reload or are attempted.
@@ -269,9 +306,31 @@ class ResidencyCoordinator:
         no-op when already resident or it fits; a model larger than the whole floor evicts
         everything and takes the box — UNLESS it can't fit the box at all, in which case it
         raises ResidencyError instead of loading into an OOM. Probe/evict/meminfo hiccups are
-        swallowed (housekeeping never fails a turn); the deliberate over-box refusal is not."""
+        swallowed (housekeeping never fails a turn); the deliberate over-box refusal is not.
+
+        With a `box_lock` (production), the evict AND the target load run inside a
+        cross-process lock, so two processes can't both read low memory, skip eviction, and
+        co-load past the floor. Without one, this is the original per-process evict-only path
+        (the client triggers the load), so single-process/cloud/test callers are unchanged."""
         if not self._enabled:
             return
+        if self._box_lock is None:
+            await self._ensure_room_core(served_model, load_target=False)
+            return
+        # Fast path, lock-free: already resident → no evict, no load, no race to serialize.
+        with contextlib.suppress(Exception):
+            if served_model in await self._gateway.running():
+                self._displaced.discard(served_model)
+                return
+        # Slow path: a load is needed — serialize evict+load box-wide and load the target
+        # under the lock so its memory is committed before the next process plans.
+        async with self._box_locked():
+            await self._ensure_room_core(served_model, load_target=True)
+
+    async def _ensure_room_core(self, served_model: str, *, load_target: bool) -> None:
+        """The evict (and, under the box lock, load) work. `load_target` loads+warms the
+        target after evicting so a cross-process holder sees it resident before the lock
+        releases; off, the client triggers the load lazily (the un-serialized path)."""
         try:
             plan = await self._plan(served_model)
         except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
@@ -286,6 +345,30 @@ class ResidencyCoordinator:
             with contextlib.suppress(LocalGatewayError):
                 await self._gateway.unload(served)
                 self._displaced.add(served)  # remember it for the end-of-turn restore
+        if load_target and not plan.already_resident:
+            with contextlib.suppress(LocalGatewayError):
+                await self._gateway.load(served_model)
+
+    @contextlib.asynccontextmanager
+    async def _box_locked(self) -> AsyncIterator[None]:
+        """Hold the cross-process box lock across the block, best-effort: if acquiring it
+        fails (DB down / lock infra hiccup), degrade to running UNLOCKED rather than fail the
+        turn — the free-RAM budget still applies, we just lose cross-process serialization
+        for that one load (the OS backstop, earlyoom, covers the residual)."""
+        assert self._box_lock is not None
+        cm: contextlib.AbstractAsyncContextManager[None] | None = None
+        try:
+            cm = self._box_lock()
+            await cm.__aenter__()
+        except Exception as exc:  # noqa: BLE001 — lock is best-effort; proceed unlocked
+            log.warning("residency.box_lock_unavailable", error=repr(exc))
+            cm = None
+        try:
+            yield
+        finally:
+            if cm is not None:
+                with contextlib.suppress(Exception):
+                    await cm.__aexit__(None, None, None)
 
     async def free_room(self, served_model: str) -> None:
         """Make room for a DELIBERATE operator load (the settings screen's stage → Load):

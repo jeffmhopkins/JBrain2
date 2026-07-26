@@ -60,40 +60,11 @@ if [ "$(printf '6.18.4\n%s\n' "${KREL%%-*}" | sort -V | head -1)" != "6.18.4" ];
   say "WARNING: kernel $KREL is older than 6.18.4 — gfx1151 has a stability bug below that."
 fi
 
-# Host OOM hardening (docs/runbooks/STRIX_HALO_SETUP.md). On this unified-memory box the
-# kernel does not reliably OOM-kill a sudden overcommit — it can livelock in page reclaim
-# and hard-freeze (a full power-cycle). The app's residency budget is the primary guard,
-# but it is a PER-PROCESS evictor: the api and the worker each hold the free-RAM floor on
-# their own, so a deferred worker model-load overlapping an api one can still momentarily
-# co-load past the floor. Back that with an OS net that kills ONE llama-server (a reloadable
-# model) before the kernel stalls, and start reclaim early enough that the killer actually
-# gets scheduled. Idempotent and best-effort — a hardening hiccup never blocks model setup.
-harden_oom() {
-  command -v systemctl >/dev/null 2>&1 || { say "no systemd — skipping OOM hardening"; return 0; }
-  if ! command -v earlyoom >/dev/null 2>&1; then
-    say "Installing earlyoom (OOM backstop)"
-    apt-get update -qq && apt-get install -y -qq earlyoom \
-      || { say "WARNING: earlyoom install failed — box is unhardened against overcommit"; return 0; }
-  fi
-  # -r 60: report hourly-ish. -m 10 then -m 5: SIGTERM at 10% RAM free, SIGKILL at 5% (same
-  # for swap via -s). --prefer a llama-server (evicting a model is recoverable); --avoid the
-  # processes whose death takes the box or the data down.
-  printf 'EARLYOOM_ARGS="%s"\n' \
-    '-r 60 -m 10 -m 5 -s 5 -s 3 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$' \
-    > /etc/default/earlyoom
-  systemctl enable --now earlyoom >/dev/null 2>&1 || true
-  systemctl restart earlyoom >/dev/null 2>&1 || say "WARNING: could not (re)start earlyoom"
-  # Start reclaiming earlier and thrash into swap less, so the killer gets CPU to act BEFORE
-  # a unified-memory reclaim livelock — the failure mode earlyoom alone can lose to.
-  cat > /etc/sysctl.d/99-jbrain-oom.conf <<'SYSCTL'
-vm.min_free_kbytes = 2097152
-vm.watermark_scale_factor = 200
-vm.swappiness = 10
-SYSCTL
-  sysctl --system >/dev/null 2>&1 || say "WARNING: could not apply sysctl OOM tuning"
-  say "OOM hardening in place (earlyoom + reclaim headroom)"
-}
-harden_oom
+# Host OOM hardening (earlyoom + reclaim-headroom sysctls) — the OS net that keeps an
+# overcommit from hard-freezing this unified-memory box. Extracted to a shared script so
+# the host `jbrain update` path runs the SAME hardening (deploy/jbrain), hardening an
+# existing box on its next update. Idempotent and best-effort — never blocks model setup.
+bash "$INSTALL_DIR/src/deploy/oom-hardening.sh" || say "WARNING: OOM hardening step skipped"
 
 # Weights are tens of GB; warn (don't block) if the install disk looks tight.
 AVAIL_GB="$(df -BG --output=avail "$INSTALL_DIR" | tail -1 | tr -dc '0-9')"
