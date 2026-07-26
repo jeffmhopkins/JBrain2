@@ -159,6 +159,12 @@ _DOMAIN_BY_PREDICATE: dict[str, str] = {
             "respiratoryrate", "medication", "medicationregimen", "takesmedication",
             "prescribes", "treatedby", "diagnosis", "medicalcondition", "healthcondition",
             "allergy", "immunization", "vaccination",
+            # Borderline-sensitive predicates floored deterministically (ENTITY_GRAPH_INGEST_V2
+            # T1.3): correct-domain the mood/weight/symptom class the model emits for inferred
+            # health facts, rather than trusting a model per-fact domain (rejected by the
+            # firewall red-team). `weight`/`temperature` stay OUT (ambiguous — object weight,
+            # room temperature); `bodyweight`/`bodymass` are unambiguously the person's.
+            "mood", "mentalhealthstate", "bodyweight", "bodymass", "symptom", "hassymptom",
         )
     },
     **{
