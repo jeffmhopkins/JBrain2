@@ -47,6 +47,16 @@ async def _fresh(monkeypatch, keep: set[str]):
     monkeypatch.setattr(externaltools, "filter_new_video_ids", fake_filter)
 
 
+def _prior(monkeypatch, value: tuple[str, datetime] | None = None):
+    """Stub the corpus lookup check_channel uses to name the last-analysed video when it has
+    nothing new. Defaults to None (channel never analysed) so the base message stands alone."""
+
+    async def fake_latest(maker, provider, video_ids, *, principal_id=""):
+        return value
+
+    monkeypatch.setattr(externaltools, "latest_channel_analysis", fake_latest)
+
+
 async def test_returns_new_videos_not_in_corpus(monkeypatch) -> None:
     await _fresh(monkeypatch, {"v2"})  # v1 already in the library
     out = await _handler(_uploads(("v1", "Old Recap"), ("v2", "Starship Static Fire")))(
@@ -167,11 +177,42 @@ async def test_within_days_keeps_uploads_with_unknown_date(monkeypatch) -> None:
 
 async def test_within_days_none_left(monkeypatch) -> None:
     await _fresh(monkeypatch, {"v1"})
+    _prior(monkeypatch)
     old = VideoMeta(published_at=datetime.now(UTC) - timedelta(days=60))
     out = await _handler(_uploads(("v1", "Old")), metas={"v1": old})(
         {"channel_id": "UCabc", "published_within_days": 7}, _CTX
     )
     assert "last 7 day(s)" in out
+
+
+async def test_no_new_names_last_analysed_video(monkeypatch) -> None:
+    """A "no new videos" answer names the channel's most recently analysed upload and how long
+    ago — so the owner sees it's caught up, not that discovery silently failed."""
+    await _fresh(monkeypatch, set())  # nothing fresh — everything's in the library
+    _prior(monkeypatch, ("Starship Might Be Catch Ready", datetime.now(UTC) - timedelta(hours=10)))
+    out = await _handler(_uploads(("v1", "A"), ("v2", "B")))({"channel_id": "UCabc"}, _CTX)
+    assert "already in the library" in out
+    assert "Starship Might Be Catch Ready" in out and "10 hours ago" in out
+
+
+async def test_no_new_within_window_names_last_analysed_video(monkeypatch) -> None:
+    """The recency-window empty branch carries the same last-analysed pointer."""
+    await _fresh(monkeypatch, {"v1"})
+    _prior(monkeypatch, ("This Week in Spaceflight", datetime.now(UTC) - timedelta(days=2)))
+    old = VideoMeta(published_at=datetime.now(UTC) - timedelta(days=60))
+    out = await _handler(_uploads(("v1", "Old")), metas={"v1": old})(
+        {"channel_id": "UCabc", "published_within_days": 7}, _CTX
+    )
+    assert "last 7 day(s)" in out
+    assert "This Week in Spaceflight" in out and "2 days ago" in out
+
+
+async def test_no_new_omits_pointer_when_channel_never_analysed(monkeypatch) -> None:
+    """No prior analysis for the channel → the base message stands alone, no dangling pointer."""
+    await _fresh(monkeypatch, set())
+    _prior(monkeypatch, None)
+    out = await _handler(_uploads(("v1", "A")))({"channel_id": "UCabc"}, _CTX)
+    assert "already in the library" in out and "most recent upload" not in out.lower()
 
 
 async def test_meta_resolve_failure_still_lists_the_video(monkeypatch) -> None:
@@ -182,6 +223,7 @@ async def test_meta_resolve_failure_still_lists_the_video(monkeypatch) -> None:
 
 async def test_all_already_ingested(monkeypatch) -> None:
     await _fresh(monkeypatch, set())  # nothing fresh
+    _prior(monkeypatch)
     out = await _handler(_uploads(("v1", "A"), ("v2", "B")))({"channel_id": "UCabc"}, _CTX)
     assert "already in the library" in out
 

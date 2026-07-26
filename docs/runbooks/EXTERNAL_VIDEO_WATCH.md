@@ -1,6 +1,6 @@
 # Watching YouTube channels into the video corpus
 
-> **Status:** Living · **Last verified:** 2026-07-21 (check_channel v4: format tags + `full_descriptions`)
+> **Status:** Living · **Last verified:** 2026-07-26 (check_channel v4: format tags + `full_descriptions`; "no new videos" now names the channel's last-analysed upload)
 
 How to set up automatic nightly ingestion of a YouTube channel's new videos into the
 external-source corpus, using a recurring **Jerv Task** (the shipped Tasks feature) — no
@@ -20,7 +20,10 @@ Three jerv tools make the corpus self-maintaining once a Task drives them:
   `published_within_days` (a recency window like the last 7 days); `full_descriptions: true`
   swaps the one-line teaser for each upload's complete blurb when the teaser isn't enough to
   judge. The metadata comes from a cheap per-video resolve on the new uploads only — no
-  download, far cheaper than an analysis.
+  download, far cheaper than an analysis. When it finds **nothing new** (everything's already
+  ingested, or the recent uploads fall outside `published_within_days`), the reply names the
+  channel's **most recently analysed** video and how long ago — so "no new videos" reads as
+  *caught up*, not *discovery failed*, and you can tell a redundant re-analysis is unnecessary.
 - **`analyze_stream`** (full mode) — analyses a video and, on completion, **writes it through**
   to the corpus (summary + timeline passages + embeddings). Reuses the analysis it produces,
   so there is no extra cost, and a repeat is a no-op (`ON CONFLICT`).

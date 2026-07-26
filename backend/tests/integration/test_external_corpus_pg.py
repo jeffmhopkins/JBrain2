@@ -25,6 +25,7 @@ from jbrain.external.corpus import (
     delete_external_video,
     fetch_transcript,
     filter_new_video_ids,
+    latest_channel_analysis,
     list_corpus,
     persist_analysis,
     search_corpus,
@@ -401,6 +402,44 @@ async def test_filter_new_video_ids_skips_ingested(maker) -> None:  # noqa: F811
     fresh = await filter_new_video_ids(maker, "youtube", ["known1", "new2", "new3"])
     assert fresh == {"new2", "new3"}
     assert await filter_new_video_ids(maker, "youtube", []) == set()
+
+
+async def test_latest_channel_analysis_by_channel(maker) -> None:  # noqa: F811
+    # check_channel names the channel's most-recently-analysed video when it finds nothing new.
+    await _clear_sources(maker)
+    async with scoped_session(maker, OWNER) as s:
+        for vid, title, cid, day in (
+            ("old1", "Older Episode", "UC-nsf", 10),
+            ("new1", "Newest Episode", "UC-nsf", 20),
+            ("other", "Different Channel", "UC-other", 25),
+        ):
+            await s.execute(
+                text(
+                    "INSERT INTO app.external_sources"
+                    " (provider, video_id, url, title, channel_id, status, analyzed_at)"
+                    " VALUES ('youtube', :vid, 'https://y', :title, :cid, 'done', :ts)"
+                ),
+                {"vid": vid, "title": title, "cid": cid, "ts": datetime(2026, 7, day, tzinfo=UTC)},
+            )
+        # A same-channel row still mid-analysis must not be picked as "last analysed".
+        await s.execute(
+            text(
+                "INSERT INTO app.external_sources"
+                " (provider, video_id, url, title, channel_id, status)"
+                " VALUES ('youtube', 'wip', 'https://y', 'Analysing', 'UC-nsf', 'analyzing')"
+            )
+        )
+
+    # Keyed off a listed id from the channel (a bare @handle input never touches channel_id):
+    # returns that channel's newest DONE video, not the other channel's later one.
+    prior = await latest_channel_analysis(maker, "youtube", ["new1", "unlisted"])
+    assert prior is not None
+    title, analyzed_at = prior
+    assert title == "Newest Episode" and analyzed_at == datetime(2026, 7, 20, tzinfo=UTC)
+
+    # None when no listed id is in the library (channel never analysed) or the list is empty.
+    assert await latest_channel_analysis(maker, "youtube", ["totally-unknown"]) is None
+    assert await latest_channel_analysis(maker, "youtube", []) is None
 
 
 async def test_delete_external_video_removes_row_and_cascades(maker) -> None:  # noqa: F811
