@@ -756,3 +756,24 @@ classifier). The ratchet-only-up safety claim is false for the cross-restricted 
 - **Tests:** floor-authority unit test (floored predicate + wrong restricted model domain →
   committed = floor); the expanded-floor predicates get harness coverage; RLS isolation
   unchanged (no model-domain threading). No IntentFact/schema/prompt change.
+
+### T1.4 — CORRECTED scope (2026-07-24): the backstops are load-bearing, not dead
+
+The §17 premise "retire the eight backstops (~400 lines) once the ceiling is gone" is
+**wrong under Lever A** — grounding showed the backstops feed `surface_attested`, which after
+Lever A still has three live consumers: (1) the fact's **stored weight** (`ceiling`/
+`effective_weight`, read by the supersession low-confidence guard), (2) the **correction-
+elevation** path (`arbiter.py:143` `fact_correction = correction and surface_attested` — the
+#937 force-supersede+pin fix depends on it), and (3) the process trace. **Deleting the
+backstops would regress corrections back into #937-style collisions.** They migrated purpose
+(ceiling-rescue → weight + correction), so they STAY.
+
+What is genuinely dead is only the **review gate**: `weight.commit_status` + `weight.assess`
+(nothing consumes them after Lever A) — retired, with a note in `weight.py`. `COMMIT_THRESHOLDS`
+/`DEFAULT_THRESHOLD`/`ceiling`/`effective_weight`/`INFERRED_CEILING` all survive (weight value +
+the trace's threshold display). `test_analysis_weight`/`test_trace`/`test_analysis_arbiter`
+updated off `assess` (trace fixtures replicate the historical threshold locally; the arbiter
+date-grounding test asserts commit via `plan_intent`). 342 analysis-unit tests green.
+**Follow-up:** the process trace (`trace.py`) still renders the ceiling-vs-threshold arithmetic
+as if it gates — a Lever-A trace-accuracy pass (show weight is stored, not a gate; review = flags
++ I5) is a small display fix, not core behaviour, deferred within V1.

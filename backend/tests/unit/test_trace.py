@@ -8,7 +8,12 @@ from typing import Any
 from jbrain.analysis.arbiter import PlannedFact
 from jbrain.analysis.intent import EntityResolution, IntentFact
 from jbrain.analysis.trace import build_trace
-from jbrain.analysis.weight import ConfidenceSignals, assess
+from jbrain.analysis.weight import (
+    COMMIT_THRESHOLDS,
+    DEFAULT_THRESHOLD,
+    ConfidenceSignals,
+    effective_weight,
+)
 
 _BASE_FACT = IntentFact(
     entity_ref="Me",
@@ -34,7 +39,12 @@ def _fact(**over: Any) -> IntentFact:
 
 
 def _planned(fact: IntentFact, signals: ConfidenceSignals) -> PlannedFact:
-    weight, status = assess(fact.kind, fact.self_confidence, signals)
+    # assess() was retired with the weight-ceiling review gate (Lever A); replicate the
+    # historical threshold arithmetic locally so the trace fixtures still exercise both the
+    # active and held renderings (the trace module still surfaces the threshold for audit).
+    weight = effective_weight(fact.self_confidence, signals)
+    threshold = COMMIT_THRESHOLDS.get(fact.kind, DEFAULT_THRESHOLD)
+    status = "active" if weight >= threshold else "pending_review"
     reasons = ("below_threshold",) if status == "pending_review" else ()
     return PlannedFact(fact=fact, weight=weight, status=status, review_reasons=reasons)
 

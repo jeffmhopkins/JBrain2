@@ -5,13 +5,10 @@ thresholds.
 """
 
 from jbrain.analysis.weight import (
-    DEFAULT_THRESHOLD,
     INFERRED_CEILING,
     INFERRED_OVERWRITE_CEILING,
     ConfidenceSignals,
-    assess,
     ceiling,
-    commit_status,
     effective_weight,
 )
 
@@ -64,39 +61,16 @@ def test_surface_attested_ignores_low_self_confidence():
     assert effective_weight(0.3, _sig()) == 1.0
 
 
-def test_commit_status_uses_per_kind_threshold():
-    # attribute is strict (0.8): 0.75 holds for review, 0.85 commits.
-    assert commit_status("attribute", 0.75) == "pending_review"
-    assert commit_status("attribute", 0.85) == "active"
-    # preference is loose (0.5): 0.6 commits.
-    assert commit_status("preference", 0.6) == "active"
-
-
-def test_commit_status_exact_threshold_commits():
-    # The >= boundary: a weight exactly at the threshold commits active.
-    assert commit_status("attribute", 0.8) == "active"
-
-
 def test_self_confidence_above_one_is_clamped_to_ceiling():
     assert effective_weight(1.5, _sig()) == 1.0  # surface-attested ceiling is 1.0
 
 
-def test_unknown_kind_uses_default_threshold():
-    assert commit_status("mystery", DEFAULT_THRESHOLD) == "active"
-    assert commit_status("mystery", DEFAULT_THRESHOLD - 0.01) == "pending_review"
-
-
-def test_inferred_attribute_conflict_routes_to_review():
-    # The canonical case: a pronoun-inferred gender that would overwrite an
-    # existing value. Inferred + supersede → ceiling 0.4, far below attribute's
-    # 0.8 threshold → review, never a silent overwrite.
-    weight, status = assess("attribute", 0.99, _sig(surface_attested=False, is_supersede=True))
-    assert weight == INFERRED_OVERWRITE_CEILING
-    assert status == "pending_review"
-
-
-def test_surface_attested_fact_commits():
+def test_inferred_overwrite_ceiling_is_the_stored_weight_not_a_review_gate():
+    # Post-Lever-A: the inferred-overwrite ceiling still CAPS an inferred fact's stored
+    # weight (0.4), but it no longer routes to review — the arbiter commits inferred facts
+    # (review comes from the safety flags + the I5 sensitive net, not this weight).
+    assert effective_weight(0.99, _sig(surface_attested=False, is_supersede=True)) == (
+        INFERRED_OVERWRITE_CEILING
+    )
     # Surface-attested → full ceiling (1.0), not bounded by the self-report.
-    weight, status = assess("relationship", 0.9, _sig())
-    assert weight == 1.0
-    assert status == "active"
+    assert effective_weight(0.9, _sig()) == 1.0

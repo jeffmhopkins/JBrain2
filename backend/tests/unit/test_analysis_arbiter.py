@@ -1138,7 +1138,6 @@ def test_recover_then_ground_commits_an_inferred_birthdate_active():
         ExtractedTemporal,
         Extraction,
     )
-    from jbrain.analysis.weight import assess
 
     body = "Eli, 12, going into 7th grade."
     intent = _intent(
@@ -1182,8 +1181,9 @@ def test_recover_then_ground_commits_an_inferred_birthdate_active():
     recovered = recover_dropped_fields(intent, ext)
     sig = compute_signals(recovered, [body])[0]
     assert sig.surface_attested is True
-    _w, status = assess(recovered.facts[0].kind, recovered.facts[0].self_confidence, sig)
-    assert status == "active"  # no longer held for review
+    # The date-grounding backstop attests the inferred birthDate; it commits (Lever A).
+    plan = plan_intent(recovered, {0: sig})
+    assert len(plan.to_commit) == 1
 
 
 def test_date_phrase_in_note_attests_an_inferred_birthdate():
