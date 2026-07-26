@@ -143,6 +143,14 @@ case "${1:-}" in
     # provisioning hiccup never aborts the update.
     bash /opt/jbrain2/src/deploy/local-models-sync.sh \
       || echo "[update] local-model sync skipped (retry on next update)"
+    # Re-apply the host OOM hardening (earlyoom + reclaim-headroom sysctls) when local
+    # hosting is on, so a box that predates the automated hardening — or lost it — gets
+    # protected on its next update instead of only at enable-local-models time. Same
+    # idempotent script scripts/local-llm-setup.sh runs; best-effort, never aborts.
+    if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
+      bash /opt/jbrain2/src/deploy/oom-hardening.sh \
+        || echo "[update] OOM hardening skipped (retry on next update)"
+    fi
     # Reclaim layers orphaned by the rebuild; shared (cached) layers survive,
     # so disk use stays bounded without losing build speed.
     docker image prune -f
