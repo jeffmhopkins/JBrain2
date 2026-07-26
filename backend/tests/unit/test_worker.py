@@ -680,6 +680,45 @@ async def test_run_registers_all_job_handlers(
     }
 
 
+async def test_run_wires_residency_admission_into_the_router(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker's router MUST carry the residency evict-to-make-room hook, exactly like
+    the API's. llama-swap runs every model in one `swap: false` group (it never self-evicts),
+    so a local load with no `local_admit` co-loads the new model beside the resident one and
+    hard-locks the unified-memory box — which is what crashed a deferred video analysis when
+    it swapped from the vision model to the reasoning model. This pins the wiring so the hook
+    can't silently go missing again."""
+    from jbrain.llm.residency import ResidencyCoordinator
+
+    class FakeEngine:
+        async def dispose(self) -> None:
+            pass
+
+    captured: dict[str, Any] = {}
+    real_build = worker.build_router
+
+    def spy_build(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_build(*args, **kwargs)
+
+    async def stop(*_a: Any, **_k: Any) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker, "create_async_engine", lambda url: FakeEngine())
+    monkeypatch.setattr(worker, "build_router", spy_build)
+    monkeypatch.setattr(worker, "run_loop", stop)
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run()
+
+    admit = captured.get("local_admit")
+    assert admit is not None, "worker router built without residency admission (OOM risk)"
+    # It's the coordinator's ensure_room, not some unrelated callable — so a local load
+    # actually evicts to hold the free-RAM floor.
+    assert admit.__name__ == "ensure_room"
+    assert isinstance(admit.__self__, ResidencyCoordinator)
+
+
 async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeEngine:
         disposed = False
