@@ -138,7 +138,8 @@ async def supersession_pair(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> tuple[str, str, str]:
     """Note A asserts Denver, note B supersedes it with Boulder (SCD-2 close +
-    chain link + an open fact_conflict card)."""
+    chain link). Post-Lever-B this clean, strictly-newer state supersession enacts
+    SILENTLY — history is retained but no `fact_conflict` card is filed."""
     person = fresh_person()
     note_a = await analyzed_note(
         maker,
@@ -182,13 +183,27 @@ async def test_rerun_review_sweep_spares_resolved_history(
     maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
     person, note_a, note_b = await supersession_pair(maker, tmp_path)
+    facts = {f["city"]: f for f in await fact_rows(maker, note_a, note_b)}
+    # Lever B enacts the clean Denver→Boulder change silently (no auto card), so
+    # seed the RESOLVED fact_conflict card a human's earlier decision would have
+    # left behind — referencing the Boulder fact — to prove the re-extraction sweep
+    # spares human history even when it retracts that card's fact.
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
-                "UPDATE app.review_items SET status = 'resolved', resolved_at = now()"
-                " WHERE kind = 'fact_conflict' AND payload->>'note_id' = :nid"
+                "INSERT INTO app.review_items (id, kind, status, resolved_at, payload, domain_code)"
+                " VALUES (gen_random_uuid(), 'fact_conflict', 'resolved', now(),"
+                " cast(:payload AS jsonb), 'general')"
             ),
-            {"nid": note_b},
+            {
+                "payload": json.dumps(
+                    {
+                        "note_id": note_b,
+                        "fact_a": str(facts["Denver"]["id"]),
+                        "fact_b": str(facts["Boulder"]["id"]),
+                    }
+                )
+            },
         )
 
     await analyze(maker, note_b, extraction(person, []))
@@ -196,7 +211,8 @@ async def test_rerun_review_sweep_spares_resolved_history(
     facts = {f["city"]: f for f in await fact_rows(maker, note_a, note_b)}
     assert facts["Boulder"]["status"] == "retracted"
     assert facts["Denver"]["status"] == "active"
-    # The human's decision survives the re-run, frozen snippets and all.
+    # The human's decision survives the re-run (the sweep deletes only OPEN cards),
+    # even though its Boulder fact was just retracted.
     assert [r["status"] for r in await review_rows(maker, "fact_conflict", note_a, note_b)] == [
         "resolved"
     ]
