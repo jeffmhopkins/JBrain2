@@ -50,6 +50,7 @@ from jbrain.db.session import scoped_session
 from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.llm.promptfile import load_prompt
+from jbrain.llm.residency import ResidencyError
 from jbrain.media import SampledFrame
 from jbrain.models.notes import Attachment, AttachmentExtract, Note
 from jbrain.queue import SYSTEM_CTX
@@ -505,17 +506,26 @@ class VideoPipeline:
             return
 
         data = await self._blobs.get(sha256)
-        result = await run_video_analysis(
-            data,
-            filename=filename,
-            media_type=media_type,
-            router=self._router,
-            blobs=self._blobs,
-            sampler=self._sampler,
-            transcribe=self._transcribe,
-            transcribe_model=self._transcribe_model,
-            gateway=self._gateway,
-        )
+        try:
+            result = await run_video_analysis(
+                data,
+                filename=filename,
+                media_type=media_type,
+                router=self._router,
+                blobs=self._blobs,
+                sampler=self._sampler,
+                transcribe=self._transcribe,
+                transcribe_model=self._transcribe_model,
+                gateway=self._gateway,
+            )
+        except ResidencyError as exc:
+            # The summary model can't fit the box even after evicting everything, so the
+            # residency budget refused the load (rather than OOM-ing). Retrying re-runs the
+            # whole vision pass and refuses again identically — fail permanently instead of
+            # burning the retry budget re-billing the frame captions. (The URL/stream sibling
+            # already marks its result row failed without re-raising; this is the attachment
+            # path's equivalent terminal outcome.)
+            raise queue.PermanentJobError(str(exc)) from exc
         if result is None:
             # Nothing decodable and nothing spoken: write no marker so the on-demand
             # path re-tries (e.g. once ffmpeg/whisper is configured) rather than

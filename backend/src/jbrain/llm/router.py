@@ -299,8 +299,10 @@ class LlmRouter:
         # keeping a local load from co-loading past the unified-memory budget and
         # hard-locking the box — build_router always attaches one (inert on a cloud-only
         # box), so there is no unmanaged local path. None only on a bare test router with
-        # fake providers, which never routes to `local`. ensure_room is best-effort inside
-        # (it swallows its own hiccups); the router awaits it but it never fails the turn.
+        # fake providers, which never routes to `local`. ensure_room swallows its own
+        # housekeeping hiccups, but the deliberate over-box refusal (ResidencyError, when a
+        # model can't fit the box even after evicting everything) propagates and fails the
+        # turn/job by design — better one failed call than an OOM hard-lock.
         self._residency = residency
 
     async def _admit_local(self, provider: str, model: str) -> None:
@@ -668,21 +670,32 @@ def build_router(
         pinned=frozenset(settings.llm_tasks),
         overrides_loader=overrides_loader,
         local_windows_loader=local_windows_loader,
-        residency=residency if residency is not None else _default_residency(settings),
+        residency=(
+            residency
+            if residency is not None
+            else _default_residency(settings, local_windows_loader)
+        ),
         local_enabled=settings.local_llm_enabled,
     )
 
 
-def _default_residency(settings: Settings) -> LocalAdmitter:
+def _default_residency(
+    settings: Settings,
+    windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
+) -> LocalAdmitter:
     """The coordinator a build_router caller gets when it supplies none — sized from
     settings and inert on a cloud-only box (`enabled=settings.local_llm_enabled`), so the
-    router is memory-managed by default and there is no unadmitted local path. Imported
-    lazily to avoid an import cycle (residency imports back into the jbrain.llm package)."""
+    router is memory-managed by default and there is no unadmitted local path. Reuses the
+    router's own `local_windows_loader` so the budget sizes each model's KV against the
+    operator's live `-c`, not just the catalog default — else it under-counts KV and could
+    under-evict. Imported lazily to avoid an import cycle (residency imports back into the
+    jbrain.llm package)."""
     from jbrain.llm.local_gateway import LocalGatewayClient
     from jbrain.llm.residency import ResidencyCoordinator
 
     return ResidencyCoordinator(
         LocalGatewayClient(settings.local_llm_url),
+        windows_loader=windows_loader,
         models_dir=settings.local_models_dir,
         enabled=settings.local_llm_enabled,
         free_ram_fraction=settings.local_llm_free_ram_fraction,

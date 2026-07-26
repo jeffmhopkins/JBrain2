@@ -65,6 +65,44 @@ async def test_local_admit_not_called_for_a_cloud_completion() -> None:
     assert residency.admitted == []  # cloud models never touch the local residency budget
 
 
+async def test_local_swap_evicts_the_resident_model_through_the_router(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The behavior that actually crashed the box: a local completion whose model can't
+    co-reside with the resident one drives a REAL eviction through the router's admission.
+    Pins router → ResidencyCoordinator → gateway.unload end to end (not just that admission
+    is wired). The vision model is resident; the summary model can't fit beside it under the
+    free-RAM floor, so admitting the summary completion unloads the vision model first —
+    exactly the vision→reasoning swap the video worker makes."""
+    from jbrain.llm.residency import ResidencyCoordinator
+    from tests.unit.fakes import FakeLocalGateway
+
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b"})
+    # 121 GB box; `used` already reflects the ~33 GB resident vision model plus ~12 GB base.
+    # gpt-oss-120b (~63 GB) pushes past the 12.5%-free floor (ceiling ≈ 105.9 GB), so the
+    # coordinator must evict the vision model before the summary completion runs.
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (121.0, 45.0)
+    )
+    residency = ResidencyCoordinator(gw, models_dir="", enabled=True, free_ram_fraction=0.125)
+    fake = FakeLlmClient(["caption", "summary"])
+    router = LlmRouter(
+        {"local": fake},
+        {
+            "agent.vision": ("local", "qwen3-vl-30b-a3b"),
+            "video.summarize": ("local", "gpt-oss-120b"),
+        },
+        residency=residency,
+    )
+    # The vision model is already resident, so captioning evicts nothing.
+    await router.complete("agent.vision", system="s", user_text="frame")
+    assert gw.unloaded == []
+    # Summarizing needs the reasoning model, which can't co-reside — the vision model is
+    # unloaded first, through the router. Without admission this is the ~100 GB co-load OOM.
+    await router.complete("video.summarize", system="s", user_text="timeline")
+    assert gw.unloaded == ["qwen3-vl-30b-a3b"]
+
+
 async def test_unknown_task_raises() -> None:
     with pytest.raises(LlmError, match="unknown LLM task"):
         await fake_router(FakeLlmClient()).complete("nope", system="s", user_text="u")
