@@ -470,14 +470,14 @@ async def run() -> None:
     # residency coordinator below and the triage precondition further down.
     llm_gateway = LocalGatewayClient(settings.local_llm_url)
     # The box's sole model evictor: llama-swap runs every model in one `swap: false`
-    # group (jbrain.llm.llama_swap_config), so it NEVER evicts on its own — a load with
-    # no admission co-loads the new model beside the resident one and hard-locks the
+    # group (jbrain.llm.llama_swap_config), so it NEVER evicts on its own — an unadmitted
+    # local load co-loads the new model beside the resident one and hard-locks the
     # unified-memory box. A background job that swaps large local models (the deferred
     # analyze_stream_url / analyze_video path: caption on the vision model, then summarize
-    # on the reasoning model) hit exactly that. So the worker's router, like the API's,
-    # must run ensure_room before each local load to evict-to-make-room under the free-RAM
-    # floor. No schedule_restore here: a background job has no end-of-turn steady state to
-    # drift back to, and the next on-demand load re-admits through ensure_room regardless.
+    # on the reasoning model) hit exactly that. build_router now always admits through a
+    # coordinator, so passing ours reuses this gateway for the triage precondition too.
+    # No schedule_restore here: a background job has no end-of-turn steady state to drift
+    # back to, and the next on-demand load re-admits through ensure_room regardless.
     residency = ResidencyCoordinator(
         llm_gateway,
         windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
@@ -492,9 +492,7 @@ async def run() -> None:
         local_windows_loader=lambda: worker_settings_store.llm_local_context_windows(
             queue.SYSTEM_CTX
         ),
-        # Evict-to-make-room before a local completion (co-residency budget) — the same
-        # admission the API wires, without which a worker model swap OOM-crashes the box.
-        local_admit=residency.ensure_room,
+        residency=residency,
     )
     # The report display-title job (external.report_titler): one LLM one-shot per
     # report, so it takes the router rather than the embed container.

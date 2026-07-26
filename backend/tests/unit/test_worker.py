@@ -711,12 +711,11 @@ async def test_run_wires_residency_admission_into_the_router(
     with pytest.raises(asyncio.CancelledError):
         await worker.run()
 
-    admit = captured.get("local_admit")
-    assert admit is not None, "worker router built without residency admission (OOM risk)"
-    # It's the coordinator's ensure_room, not some unrelated callable — so a local load
-    # actually evicts to hold the free-RAM floor.
-    assert admit.__name__ == "ensure_room"
-    assert isinstance(admit.__self__, ResidencyCoordinator)
+    residency = captured.get("residency")
+    assert residency is not None, "worker router built without residency admission (OOM risk)"
+    # It's a real coordinator (its ensure_room is what the router admits through), so a
+    # local load actually evicts to hold the free-RAM floor.
+    assert isinstance(residency, ResidencyCoordinator)
 
 
 async def test_run_disposes_engine(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -30,31 +30,39 @@ async def test_complete_routes_task_to_provider_model() -> None:
     assert fake.calls[0]["system"] == "s"
 
 
+class _FakeResidency:
+    """Records the served-model names the router admits (the LocalAdmitter shape)."""
+
+    def __init__(self) -> None:
+        self.admitted: list[str] = []
+
+    async def ensure_room(self, served_model: str) -> None:
+        self.admitted.append(served_model)
+
+
 async def test_local_admit_runs_before_a_local_completion() -> None:
     # A local model's completion first gives the residency budget a chance to evict for it
     # (the served-model name), then delegates to the client — co-residency admission.
     fake = FakeLlmClient(["ok"])
-    admitted: list[str] = []
+    residency = _FakeResidency()
 
-    async def admit(model: str) -> None:
-        admitted.append(model)
-
-    router = LlmRouter({"local": fake}, {"agent.turn": ("local", "qwen3.5-4b")}, local_admit=admit)
+    router = LlmRouter(
+        {"local": fake}, {"agent.turn": ("local", "qwen3.5-4b")}, residency=residency
+    )
     await router.complete("agent.turn", system="s", user_text="u")
-    assert admitted == ["qwen3.5-4b"]
+    assert residency.admitted == ["qwen3.5-4b"]
     assert fake.calls[0]["model"] == "qwen3.5-4b"
 
 
 async def test_local_admit_not_called_for_a_cloud_completion() -> None:
     fake = FakeLlmClient(["ok"])
-    admitted: list[str] = []
+    residency = _FakeResidency()
 
-    async def admit(model: str) -> None:
-        admitted.append(model)
-
-    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")}, local_admit=admit)
+    router = LlmRouter(
+        {"xai": fake}, {"note.extract": ("xai", "grok-4.3")}, residency=residency
+    )
     await router.complete("note.extract", system="s", user_text="u")
-    assert admitted == []  # cloud models never touch the local residency budget
+    assert residency.admitted == []  # cloud models never touch the local residency budget
 
 
 async def test_unknown_task_raises() -> None:
@@ -199,6 +207,28 @@ def test_build_router_marks_pinned_tasks_so_pins_beat_tiers() -> None:
     assert router.spec("note.extract", "high") == ("anthropic", "claude-sonnet-4-6")
     # An unpinned task still honours the tier.
     assert router.spec("vision.ocr", "high") == ("xai", "grok-4.3")
+
+
+def test_build_router_always_attaches_residency_admission() -> None:
+    """The core invariant: build_router NEVER yields a local-capable router without a
+    residency admitter. The gateway never self-evicts (`swap: false`), so an unadmitted
+    local load hard-locks the unified-memory box — the worker OOM was exactly a router
+    built without admission. A caller that passes none still gets one, sized from settings
+    and enabled iff local hosting is on, so the memory-managed path is the only path."""
+    from jbrain.llm.residency import ResidencyCoordinator
+
+    # Caller supplies nothing — build_router must still attach a coordinator.
+    off = build_router(Settings(local_llm_enabled=False))
+    assert isinstance(off._residency, ResidencyCoordinator)
+    assert off._residency._enabled is False  # inert on a cloud-only box
+
+    on = build_router(Settings(local_llm_enabled=True))
+    assert isinstance(on._residency, ResidencyCoordinator)
+    assert on._residency._enabled is True  # live evictor when local hosting is on
+
+    # A caller that owns a coordinator gets THAT instance (shared bookkeeping), not a fresh one.
+    mine = ResidencyCoordinator(object(), enabled=True)  # type: ignore[arg-type]
+    assert build_router(Settings(local_llm_enabled=True), residency=mine)._residency is mine
 
 
 # --- live DB overrides (the settings screen) ---------------------------------

@@ -297,7 +297,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Best-effort; the settings screen tolerates it being unreachable.
         app.state.local_gateway = LocalGatewayClient(settings.local_llm_url)
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
-        # the free-RAM floor before each local load (wired as the router's local_admit below),
+        # the free-RAM floor before each local load (passed to build_router below as its
+        # residency, so every local completion admits through this same instance),
         # free_room does the same for the settings screen's deliberate load, plan_load previews
         # an eviction without touching the box, and schedule_restore puts back whatever a
         # transient displacement (image render, code session) removed at end of turn instead of
@@ -322,8 +323,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             recorder=SqlUsageRecorder(maker),
             overrides_loader=lambda: settings_store.llm_task_overrides(SYSTEM_CTX),
             local_windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
-            # Evict-to-make-room before a local completion (co-residency budget).
-            local_admit=app.state.residency.ensure_room,
+            # The router admits every local load through THIS coordinator — the same
+            # instance the settings screen (plan_load/free_room) and the chat endpoint
+            # (schedule_restore/note_evicted) drive, so admission and displacement
+            # bookkeeping stay coherent.
+            residency=app.state.residency,
         )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.

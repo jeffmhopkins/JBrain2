@@ -14,7 +14,7 @@ refactor — docs/reference/ANALYSIS.md "Privacy routing".
 
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 import structlog
@@ -241,6 +241,17 @@ def resolve_tiers(overrides: Mapping[str, str]) -> dict[str, tuple[str, str]]:
     return {tier: _split_spec(tier, spec) for tier, spec in merged.items()}
 
 
+class LocalAdmitter(Protocol):
+    """The one thing the router needs from residency: make room for a served model
+    before it loads. `jbrain.llm.residency.ResidencyCoordinator` satisfies it; the
+    router depends on this narrow shape (not the concrete class) so there's no import
+    cycle and test fakes stay trivial. The router holds one unconditionally — an inert
+    coordinator on a cloud-only box — so a local load can never bypass admission and
+    co-load past the unified-memory budget."""
+
+    async def ensure_room(self, served_model: str) -> None: ...
+
+
 class LlmRouter:
     """The single entry point for application LLM calls.
 
@@ -258,7 +269,7 @@ class LlmRouter:
         pinned: frozenset[str] = frozenset(),
         overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
         local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
-        local_admit: Callable[[str], Awaitable[None]] | None = None,
+        residency: LocalAdmitter | None = None,
         local_enabled: bool = True,
     ):
         self._clients = clients
@@ -282,15 +293,19 @@ class LlmRouter:
         # so the meter reports the operator's chosen `-c`, not just the catalog
         # default. None → fall back to the catalog window.
         self._local_windows_loader = local_windows_loader
-        # Residency admission for a LOCAL model: called with the served-model name just
-        # before a local completion so the memory budget can evict to make room (co-
-        # residency mode). None → no admission (the gateway swaps on its own). Best-effort
-        # inside the callback; the router awaits it but it never raises a turn-fatal error.
-        self._local_admit = local_admit
+        # Residency admission: before a LOCAL completion the router calls ensure_room so
+        # the memory budget evicts to hold the free-RAM floor. The gateway is configured
+        # never to self-evict (llama_swap_config `swap: false`), so this is the ONLY thing
+        # keeping a local load from co-loading past the unified-memory budget and
+        # hard-locking the box — build_router always attaches one (inert on a cloud-only
+        # box), so there is no unmanaged local path. None only on a bare test router with
+        # fake providers, which never routes to `local`. ensure_room is best-effort inside
+        # (it swallows its own hiccups); the router awaits it but it never fails the turn.
+        self._residency = residency
 
     async def _admit_local(self, provider: str, model: str) -> None:
-        if provider == local_catalog.LOCAL_PROVIDER and self._local_admit is not None:
-            await self._local_admit(model)
+        if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:
+            await self._residency.ensure_room(model)
 
     def _resolve(self, task: str, strength: str | None) -> tuple[str, str]:
         """Precedence: an explicit per-task pin (JBRAIN_LLM_TASKS) wins; else the
@@ -617,13 +632,20 @@ def build_router(
     recorder: UsageRecorder | None = None,
     overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
     local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
-    local_admit: Callable[[str], Awaitable[None]] | None = None,
+    residency: LocalAdmitter | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
     `overrides_loader` supplies the live DB-backed per-task overrides;
-    `local_windows_loader` the live per-model context-window overrides;
-    `local_admit` the residency budget's evict-to-make-room hook run before a local
-    completion (all None keep the static-config, no-admission behavior)."""
+    `local_windows_loader` the live per-model context-window overrides.
+
+    Residency admission (evict-to-make-room before a local load) is NOT an opt-in the
+    caller can forget: the gateway never self-evicts (`swap: false`), so an unadmitted
+    local load co-loads past the unified-memory budget and hard-locks the box (it did —
+    the worker used to build an unadmitted router). So this ALWAYS attaches a coordinator
+    — build one from `settings` when the caller passes none — making the memory-managed
+    path the only path. A caller that owns a coordinator (the API, for plan_load/restore;
+    the worker) passes it so admission runs on the same instance its displacement bookkeeping
+    uses; everyone else gets a default that is inert on a cloud-only box (enabled off)."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:
         extra["sleep"] = sleep
@@ -646,6 +668,22 @@ def build_router(
         pinned=frozenset(settings.llm_tasks),
         overrides_loader=overrides_loader,
         local_windows_loader=local_windows_loader,
-        local_admit=local_admit,
+        residency=residency if residency is not None else _default_residency(settings),
         local_enabled=settings.local_llm_enabled,
+    )
+
+
+def _default_residency(settings: Settings) -> LocalAdmitter:
+    """The coordinator a build_router caller gets when it supplies none — sized from
+    settings and inert on a cloud-only box (`enabled=settings.local_llm_enabled`), so the
+    router is memory-managed by default and there is no unadmitted local path. Imported
+    lazily to avoid an import cycle (residency imports back into the jbrain.llm package)."""
+    from jbrain.llm.local_gateway import LocalGatewayClient
+    from jbrain.llm.residency import ResidencyCoordinator
+
+    return ResidencyCoordinator(
+        LocalGatewayClient(settings.local_llm_url),
+        models_dir=settings.local_models_dir,
+        enabled=settings.local_llm_enabled,
+        free_ram_fraction=settings.local_llm_free_ram_fraction,
     )
