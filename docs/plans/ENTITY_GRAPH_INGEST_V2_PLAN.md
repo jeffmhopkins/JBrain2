@@ -1,6 +1,6 @@
 # JBrain2 — Ingest V2: Flip the Disposition Default (fewer cards, same safety)
 
-> **Status:** Scheduled · **Waves:** V0🔄 (largely done — §15) V1◻️ V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-07-24 — §11 decisions ratified (Lever B: state/rel supersede, attributes stay review · sensitive net: inferred-only · Lever C: direct correction); promoted from `proposed/` to `plans/`; on-box gpt-oss-120b validation done (§15): ingest gap is prompt+schema, not architecture; agentic/multi-tier ingestion evaluated and rejected (§16).
+> **Status:** In progress · **Waves:** V0🔄 (largely done — §15) V1🔄 (T1.1–T1.5 landed — §17) V2◻️ V3◻️ V4◻️ V5◻️ · **Last verified:** 2026-07-26 — §11 decisions ratified (Lever B: state/rel supersede, attributes stay review · sensitive net: inferred-only · Lever C: direct correction); promoted from `proposed/` to `plans/`; on-box gpt-oss-120b validation done (§15): ingest gap is prompt+schema, not architecture; agentic/multi-tier ingestion evaluated and rejected (§16). V1 deterministic enactor built: Lever A ceiling gate removed, Lever B state/rel silent supersede, I5 sensitive-inference net (unit + harness), trace Lever-A accuracy pass, safety-spine I1–I9 coverage audited (§17).
 
 Committed to the roadmap (`docs/ROADMAP.md`). Waves defined; the V0 local-box judgment
 spike is largely complete (§15). This plan **corrects-in-place** (not supersedes) two Living docs when it
@@ -777,3 +777,35 @@ date-grounding test asserts commit via `plan_intent`). 342 analysis-unit tests g
 **Follow-up:** the process trace (`trace.py`) still renders the ceiling-vs-threshold arithmetic
 as if it gates — a Lever-A trace-accuracy pass (show weight is stored, not a gate; review = flags
 + I5) is a small display fix, not core behaviour, deferred within V1.
+
+### T1.5 done + trace-accuracy follow-up landed (2026-07-26)
+
+**T1.5 (safety-spine I1–I9 explicit + tested) closed.** The one genuine gap was I5's
+*integration* coverage — the unit test (`test_analysis_arbiter.test_inferred_sensitive_fact_holds_for_review_i5`)
+proved the arbiter verdict, but nothing exercised the net end-to-end through the pipeline into a
+committed row + filed card. Filling it required threading the model's `inferred` flag through the
+pipeline (it stopped at `IntentFact`): added `ExtractedFact.inferred` (parsed from the extraction
+JSON), and the harness runner now emits `f.inferred` instead of a hardcoded `False`, so a scripted
+inferred fact reaches the arbiter's I5 check. New harness scenario
+`i5_inferred_sensitive_holds_for_review.json`: a *general* note infers `mood=depressed`
+(`inferred:true`) → the fact is floored into the **health** domain (domain_floor) AND held
+`pending_review` behind a `low_confidence_inference` card, while a co-occurring non-sensitive
+inferred `hobby` fact commits `active` — pinning that the hold is the sensitive net, not a blanket
+inferred gate. The other invariants already carry explicit coverage (audit result):
+I1 `cross_domain_no_leak`/`health_cross_domain_no_leak` + `domain_floor` units + RLS isolation;
+I2 `own_transfer_subject_cannot_move`; I3 `test_apply_intent_pg.py` "no partial commit" (N5);
+I4 the 12 `hist_*` validity-time scenarios; I6 `adv_two_birthdays_attribute_collision`;
+I7 `adv_negation_*`/`plan_cancelled`/`own_dispose_refresh_swallows_negation`;
+I9 `rel_inverse_defers_to_primary` (derived-defers-primary, re-asserted since it lives outside
+`decide()`) + `health_low_confidence_ocr_guard`. I8 (Lever-C re-checks) lands V5.
+
+**Trace-accuracy pass landed.** `trace.py`'s arbiter stage no longer frames `weight >= threshold →
+status` as the decision (the retired gate). The summary now reads `weight <w> stored · committed
+(no review flags)` | `held [<reasons>]`; the threshold row is labelled `(audit ref, not a gate)`;
+a `review` row carries the actual driver (safety flags + I5). `test_trace` updated: the old
+`test_inferred_below_threshold_shows_the_ceiling_arithmetic` became
+`test_inferred_fact_shows_the_stored_weight_arithmetic`, plus a new
+`test_committed_fact_reads_as_committed_not_a_threshold_pass` locking the framing.
+
+**V1 remaining before the single wave PR:** full backend suite + coverage gate (≥80%, security
+100%) in CI, and the per-wave security red-team (firewall/RLS/validity/identity floors).

@@ -83,17 +83,21 @@ def test_trace_has_the_three_named_stages_in_order() -> None:
     assert stages[1]["version"] == "integrator-v2 · integrate-v7"
 
 
-def test_inferred_below_threshold_shows_the_ceiling_arithmetic() -> None:
-    # The screenshot case: an inferred attribute (self 0.85) capped at the 0.60
-    # inferred ceiling, held because 0.60 < the 0.80 attribute threshold.
+def test_inferred_fact_shows_the_stored_weight_arithmetic() -> None:
+    # An inferred attribute (self 0.85) is stored capped at the 0.60 inferred
+    # ceiling. Post-Lever-A the threshold is audit context, not a gate: the trace
+    # renders the ceiling arithmetic and the historical threshold without framing
+    # the weight/threshold comparison as the review decision.
     fact = _fact(kind="attribute")
     sig = ConfidenceSignals(surface_attested=False, is_supersede=False)
     arb = _rows([s for s in _trace(fact, sig)["stages"] if s["key"] == "arbiter"][0])
     assert arb["surface_attested"] == "false"
     assert arb["ceiling"] == "0.60"
     assert arb["weight"] == "min(self 0.85, ceiling 0.60) = 0.60"
-    assert arb["threshold"] == "attribute → 0.80"
-    assert arb["status"] == "pending_review [below_threshold]"
+    assert arb["threshold"] == "attribute → 0.80 (audit ref, not a gate)"
+    # The held verdict is driven by the review reason, not weight < threshold.
+    assert arb["review"] == "below_threshold"
+    assert arb["status"] == "pending_review"
 
 
 def test_surface_attested_fact_takes_the_full_ceiling() -> None:
@@ -102,6 +106,20 @@ def test_surface_attested_fact_takes_the_full_ceiling() -> None:
     arb = _rows([s for s in _trace(fact, sig)["stages"] if s["key"] == "arbiter"][0])
     assert arb["ceiling"] == "1.00"
     assert arb["weight"] == "1.00 (surface-attested → full ceiling)"
+
+
+def test_committed_fact_reads_as_committed_not_a_threshold_pass() -> None:
+    # Post-Lever-A a fact with no review reason is committed by default; the trace
+    # summary must say so, not frame it as clearing the (retired) weight gate.
+    fact = _fact(kind="attribute", inferred=False)
+    sig = ConfidenceSignals(surface_attested=True, is_supersede=False)
+    stage = [s for s in _trace(fact, sig)["stages"] if s["key"] == "arbiter"][0]
+    arb = _rows(stage)
+    assert arb["review"] == "—"
+    assert arb["status"] == "active"
+    assert "committed (no review flags)" in stage["summary"]
+    # The summary states the STORED weight, not a `weight >= threshold` comparison.
+    assert ">=" not in stage["summary"] and "→" not in stage["summary"].split("·")[-1]
 
 
 def test_integration_stage_carries_resolution_and_supersession() -> None:

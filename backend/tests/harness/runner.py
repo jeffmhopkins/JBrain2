@@ -146,7 +146,7 @@ async def _compile_intent(maker: async_sessionmaker, step: Step, domain: str) ->
                 "assertion": f.assertion,
                 "object_entity_ref": f.object_entity_ref,
                 "self_confidence": f.confidence,
-                "inferred": False,
+                "inferred": f.inferred,
                 "surface": surface_by_name.get(f.entity_ref, body_surface),
                 "temporal": _temporal_json(f.temporal),
             }
