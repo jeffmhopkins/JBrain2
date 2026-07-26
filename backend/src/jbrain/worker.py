@@ -697,9 +697,7 @@ async def run() -> None:
     # route + live override, no strength tier), so the gate matches what would actually
     # run. The gateway admin client points at the LLM gateway (not whisper's).
     preconditions: dict[str, Precondition] = {
-        "reasoning_model_loaded": model_already_loaded(
-            router, llm_gateway, task="triage.classify"
-        ),
+        "reasoning_model_loaded": model_already_loaded(router, llm_gateway, task="triage.classify"),
     }
     # The host-metrics sampler reads the supervisor (the only container with the
     # host's /proc + /sys mounted) over the internal network. Gated on a token so

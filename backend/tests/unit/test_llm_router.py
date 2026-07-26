@@ -58,9 +58,7 @@ async def test_local_admit_not_called_for_a_cloud_completion() -> None:
     fake = FakeLlmClient(["ok"])
     residency = _FakeResidency()
 
-    router = LlmRouter(
-        {"xai": fake}, {"note.extract": ("xai", "grok-4.3")}, residency=residency
-    )
+    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")}, residency=residency)
     await router.complete("note.extract", system="s", user_text="u")
     assert residency.admitted == []  # cloud models never touch the local residency budget
 
