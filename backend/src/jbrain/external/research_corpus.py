@@ -185,6 +185,9 @@ class LibraryReport:
     created_at: datetime | None
     sub_agents: int
     rounds: int
+    # The owner's folder this report is filed under (NULL = the trailing "Ungrouped"
+    # section); owner-only browse metadata (migration 0149), opaque to jerv.
+    group_id: str | None = None
 
 
 async def list_reports(
@@ -208,8 +211,8 @@ async def list_reports(
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, title, complexity, created_at, sub_agents, rounds"
-                    " FROM app.research_reports WHERE status = 'done'"
+                    "SELECT id, question, title, complexity, created_at, sub_agents, rounds,"
+                    " group_id FROM app.research_reports WHERE status = 'done'"
                     " ORDER BY created_at DESC, id LIMIT :limit OFFSET :offset"
                 ),
                 {"limit": limit, "offset": offset},
@@ -224,6 +227,7 @@ async def list_reports(
             created_at=r.created_at,
             sub_agents=int(r.sub_agents or 0),
             rounds=int(r.rounds or 1),
+            group_id=(str(r.group_id) if r.group_id is not None else None),
         )
         for r in rows
     ], int(total)

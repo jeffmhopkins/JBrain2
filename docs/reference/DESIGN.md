@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-21
+> **Status:** Living · **Last verified:** 2026-07-27
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1387,10 +1387,28 @@ surfaces — they lost here on fit, not quality.)
   with the settled `.actrow` rows, opened from each row's `⋯`, listing only what applies to
   that source: **View** (opens the detail), **Open in jerv conversation** (both — seeds the
   owner's current Research/jerv chat, the agent that produced these artifacts, with a
-  reference to the item), **Copy** (report for a report; summary + transcript for a video),
+  reference to the item), **Move to folder** (reports only — opens the move sheet below),
+  **Copy** (report for a report; summary + transcript for a video),
   **Download report (.md)** (reports only), **Open source ↗** (videos with a URL), and
   **Delete** (both). Copy/download **fetch the full item on demand** (the listing carries no
   body); a transient feedback toast reports the result.
+- **Reports fold into owner-named folders [decided 2026-07-27 — parity with the Tasks
+  surface].** The Reports tab mirrors the Tasks grouping (Direction B — `docs/mocks/
+  task-grouping/`): a report is filed into a **folder** via its `⋯` → **Move to folder**
+  sheet (existing folders as ticked rows, an **Ungrouped** escape, a **New folder…** row that
+  creates + files in one tap — never a drag), and browse mode renders each folder as a
+  **collapsible section** (the same `⌄` head + count as the video channels) over a trailing
+  **Ungrouped** section that hides when empty. Collapse is **device-local + persisted**
+  (`jb.research.collapsedFolders`, like the Tasks `tasks/collapsed`). An **Organize folders**
+  toggle arms inline **rename / delete** on each folder header (headers force-expand while
+  organizing); deleting a folder drops the folder only — its reports fall back to Ungrouped
+  (server FK `SET NULL`), never deleted. Folders are **owner-only browse metadata**
+  (`app.report_groups` + `research_reports.group_id`, migration 0149) kept off the corpus
+  firewall — the `group_id` is opaque to jerv (its corpus tools never select it), written
+  only under the full-owner context. An **active search flattens across folders** into one
+  result list (folders + the Organize toggle show only while browsing), matching the video
+  tab. A library with **no folders** stays a flat list — the folder headers appear once the
+  owner files the first report.
 - **Delete is owner-initiated and direct** (not a staged Proposal — that path is jerv's).
   It uses the **tap-again confirm** on the sheet's rose Delete row (`window.confirm` is not
   used), spelling the consequence ("deletes this report/video"), and raises the standard

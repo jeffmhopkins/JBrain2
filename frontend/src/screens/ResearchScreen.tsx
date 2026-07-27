@@ -4,8 +4,13 @@
 // Reports/Videos segmented control switches purpose-built per-type lists; an as-you-type
 // filter narrows the active tab. Reports show their short LLM title (falling back to the
 // question); videos are grouped into collapsible per-channel sections with a thumbnail.
-// A per-row ⋯ opens the ONE consolidated action sheet (view / open-in-jerv / copy /
-// download / open-source / delete) — the detail layer is now pure reading. Delete is
+// Reports fold into owner-named folders (app.report_groups, migration 0149) — a ⋯ →
+// "Move to folder" sheet files a report (or spins up a new folder), browse mode renders
+// each folder as a collapsible section over a trailing Ungrouped one (collapse persisted
+// device-local via research/collapsed), and an Organize toggle arms folder rename/delete;
+// a search flattens across folders. A per-row ⋯ opens the ONE consolidated action sheet
+// (view / open-in-jerv / move / copy / download / open-source / delete) — the detail layer
+// is now pure reading. Delete is
 // owner-initiated with a deferred-commit undo: the row leaves the list immediately and the
 // server DELETE fires only when the undo window closes. Copy/download fetch the full item
 // on demand (the listing carries no body). Amber research accent (read-only domain).
@@ -15,23 +20,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
+  type ReportGroup,
   type ReportListItem,
   type VideoDetail,
   type VideoListItem,
   api,
 } from "../api/client";
+import { MoveReportSheet } from "../components/MoveReportSheet";
 import { Sheet } from "../components/Sheet";
 import {
   ChevronRightIcon,
   ClipIcon,
   FileIcon,
   GlobeIcon,
+  ListIcon,
   MessageIcon,
   MoreIcon,
+  PencilIcon,
+  ReorderIcon,
   SearchIcon,
   TrashIcon,
   VideoIcon,
 } from "../components/icons";
+import { UNGROUPED_KEY, loadCollapsed, writeCollapsed } from "../research/collapsed";
 
 export type ResearchKind = "report" | "video";
 type Item = { kind: "report"; row: ReportListItem } | { kind: "video"; row: VideoListItem };
@@ -147,6 +158,17 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
   const [menuFor, setMenuFor] = useState<Item | null>(null);
   // Which channel sections are collapsed (by channel name); default every section open.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // The owner's report folders + which are collapsed on this device (persisted, like the
+  // Tasks screen). Folders show only in Reports browse mode; a search flattens across them.
+  const [reportGroups, setReportGroups] = useState<ReportGroup[]>([]);
+  const [folderCollapsed, setFolderCollapsed] = useState<Set<string>>(loadCollapsed);
+  // Organize mode arms folder rename / delete (headers force-expand so nothing you're
+  // editing is hidden), mirroring the Tasks "Organize" toggle.
+  const [organizing, setOrganizing] = useState(false);
+  const [moveFor, setMoveFor] = useState<ReportListItem | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState("");
+  const [armedFolderDelete, setArmedFolderDelete] = useState<string | null>(null);
   // The undo snackbar is stamped with the pending delete's id so its lifetime tracks the
   // undo window (dismissed exactly when that delete commits) and overlapping deletes never
   // clear each other's toast.
@@ -172,6 +194,12 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
       .researchVideos()
       .then((r) => setVideos(r.items))
       .catch((e) => setError(errMsg(e)));
+    // Folders are a browse convenience; a failed load just leaves the Reports tab flat
+    // (never blanks the reports themselves).
+    api
+      .researchReportGroups()
+      .then(setReportGroups)
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -307,6 +335,88 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
     });
   }
 
+  // --- report folders ------------------------------------------------------------------
+
+  // Fold/unfold a folder, persisting the choice on this device (keyed by folder id, or the
+  // Ungrouped sentinel). Organize mode force-expands, so this only fires from browse mode.
+  function toggleFolder(bucket: string | null) {
+    const key = bucket ?? UNGROUPED_KEY;
+    setFolderCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      writeCollapsed(next);
+      return next;
+    });
+  }
+
+  // Optimistically file a report into `groupId` (null = Ungrouped); revert + surface on
+  // failure. The listing carries no order within a folder, so nothing else shifts.
+  async function moveReportTo(report: ReportListItem, groupId: string | null) {
+    setMoveFor(null);
+    if (report.group_id === groupId) return;
+    const prev = report.group_id;
+    setReports(
+      (rs) => rs?.map((r) => (r.id === report.id ? { ...r, group_id: groupId } : r)) ?? rs,
+    );
+    const label =
+      groupId === null
+        ? "Ungrouped"
+        : (reportGroups.find((g) => g.id === groupId)?.name ?? "folder");
+    try {
+      await api.moveReport(report.id, groupId);
+      setFlash(`Moved to “${label}”.`);
+    } catch (e) {
+      setReports((rs) => rs?.map((r) => (r.id === report.id ? { ...r, group_id: prev } : r)) ?? rs);
+      setFlash(errMsg(e));
+    }
+  }
+
+  // Create a folder and file the report into it in one tap (the move sheet's "New folder…").
+  async function createFolderAndMove(report: ReportListItem, name: string) {
+    setMoveFor(null);
+    try {
+      const g = await api.createReportGroup(name);
+      setReportGroups((gs) => [...gs, g]);
+      setReports((rs) => rs?.map((r) => (r.id === report.id ? { ...r, group_id: g.id } : r)) ?? rs);
+      await api.moveReport(report.id, g.id);
+      setFlash(`Created “${g.name}” — report moved.`);
+    } catch (e) {
+      setFlash(errMsg(e));
+      load();
+    }
+  }
+
+  async function commitFolderRename(groupId: string) {
+    const name = renameText.trim();
+    setRenamingFolder(null);
+    const current = reportGroups.find((g) => g.id === groupId);
+    if (!name || name === current?.name) return;
+    setReportGroups((gs) => gs.map((g) => (g.id === groupId ? { ...g, name } : g)));
+    try {
+      await api.renameReportGroup(groupId, name);
+    } catch (e) {
+      setFlash(errMsg(e));
+      load();
+    }
+  }
+
+  // Delete a folder: its reports fall to Ungrouped (server SET NULL); mirror that locally.
+  async function deleteFolder(groupId: string) {
+    setArmedFolderDelete(null);
+    setReportGroups((gs) => gs.filter((g) => g.id !== groupId));
+    setReports(
+      (rs) => rs?.map((r) => (r.group_id === groupId ? { ...r, group_id: null } : r)) ?? rs,
+    );
+    try {
+      await api.deleteReportGroup(groupId);
+      setFlash("Folder deleted — its reports moved to Ungrouped.");
+    } catch (e) {
+      setFlash(errMsg(e));
+      load();
+    }
+  }
+
   const activeList = tab === "report" ? reports : videos;
   const filtered = useMemo<(ReportListItem | VideoListItem)[] | null>(() => {
     if (!activeList) return null;
@@ -328,6 +438,119 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
     if (tab !== "video" || !filtered) return null;
     return groupByChannel(filtered as VideoListItem[]);
   }, [tab, filtered]);
+
+  // The Reports tab, bucketed into the owner's folders + a trailing Ungrouped list. A
+  // report whose folder was deleted (its group_id no longer names a known folder) falls to
+  // Ungrouped, so a stale id can never strand a report out of view.
+  const reportFolders = useMemo<{
+    byGroup: Map<string, ReportListItem[]>;
+    ungrouped: ReportListItem[];
+  } | null>(() => {
+    if (tab !== "report" || !filtered) return null;
+    const known = new Set(reportGroups.map((g) => g.id));
+    const byGroup = new Map<string, ReportListItem[]>();
+    const ungrouped: ReportListItem[] = [];
+    for (const r of filtered as ReportListItem[]) {
+      const bucket = r.group_id && known.has(r.group_id) ? byGroup.get(r.group_id) : undefined;
+      if (r.group_id && known.has(r.group_id)) {
+        if (bucket) bucket.push(r);
+        else byGroup.set(r.group_id, [r]);
+      } else {
+        ungrouped.push(r);
+      }
+    }
+    return { byGroup, ungrouped };
+  }, [tab, filtered, reportGroups]);
+
+  // Folders show only while browsing (an active search flattens across every folder into
+  // one result list, like the video tab).
+  const showReportFolders = tab === "report" && !query.trim() && reportGroups.length > 0;
+
+  // One report folder as a section: a collapsible header (a rename/delete row in organize
+  // mode) over its rows. The Ungrouped bucket has no header actions and hides itself when
+  // empty, so a fully-filed library shows only its real folders.
+  function renderReportFolder(group: ReportGroup | null, rows: ReportListItem[]) {
+    if (group === null && rows.length === 0) return null;
+    const key = group?.id ?? UNGROUPED_KEY;
+    const name = group?.name ?? "Ungrouped";
+    const isCollapsed = !organizing && folderCollapsed.has(key);
+    const canEdit = organizing && group !== null;
+    return (
+      <div className="rl-group" key={key}>
+        <div className={`rl-group-hdr${canEdit ? " rl-group-hdr-edit" : ""}`}>
+          {canEdit && renamingFolder === group.id ? (
+            <input
+              className="rl-group-rename"
+              // biome-ignore lint/a11y/noAutofocus: the header morphed into an input on the user's tap.
+              autoFocus
+              aria-label="Rename folder"
+              value={renameText}
+              onChange={(e) => setRenameText(e.target.value)}
+              onBlur={() => void commitFolderRename(group.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void commitFolderRename(group.id);
+                if (e.key === "Escape") setRenamingFolder(null);
+              }}
+            />
+          ) : organizing ? (
+            <span className="rl-group-name rl-group-name-static">{name}</span>
+          ) : (
+            <button
+              type="button"
+              className="rl-group-head"
+              aria-expanded={!isCollapsed}
+              aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${name}`}
+              onClick={() => toggleFolder(group?.id ?? null)}
+            >
+              <span className={`rl-group-chev${isCollapsed ? "" : " rl-group-chev-open"}`}>
+                <ChevronRightIcon size={16} />
+              </span>
+              <span className="rl-group-name">{name}</span>
+            </button>
+          )}
+          <span className="rl-group-n">{rows.length}</span>
+          {canEdit && renamingFolder !== group.id && (
+            <span className="rl-group-acts">
+              <button
+                type="button"
+                className="rl-group-act"
+                aria-label={`Rename ${name}`}
+                onClick={() => {
+                  setRenameText(name);
+                  setRenamingFolder(group.id);
+                }}
+              >
+                <PencilIcon size={15} />
+              </button>
+              <button
+                type="button"
+                className={`rl-group-act${armedFolderDelete === group.id ? " rl-group-act-armed" : ""}`}
+                aria-label={
+                  armedFolderDelete === group.id ? `Confirm delete ${name}` : `Delete ${name}`
+                }
+                onClick={() =>
+                  armedFolderDelete === group.id
+                    ? void deleteFolder(group.id)
+                    : setArmedFolderDelete(group.id)
+                }
+              >
+                {armedFolderDelete === group.id ? "delete?" : <TrashIcon size={15} />}
+              </button>
+            </span>
+          )}
+        </div>
+        {!isCollapsed &&
+          rows.map((row) => (
+            <ReportRow
+              key={row.id}
+              row={row}
+              onOpen={() => onOpen("report", row.id)}
+              onMenu={() => setMenuFor({ kind: "report", row })}
+            />
+          ))}
+      </div>
+    );
+  }
 
   const nReports = reports?.length ?? 0;
   const nVideos = videos?.length ?? 0;
@@ -368,6 +591,24 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
         />
       </div>
 
+      {tab === "report" && !query.trim() && reportGroups.length > 0 && (
+        <div className="rl-toolbar">
+          <button
+            type="button"
+            className={`rl-organize${organizing ? " rl-organize-on" : ""}`}
+            aria-pressed={organizing}
+            onClick={() => {
+              setOrganizing((o) => !o);
+              setRenamingFolder(null);
+              setArmedFolderDelete(null);
+            }}
+          >
+            <ReorderIcon size={16} />
+            {organizing ? "Done" : "Organize folders"}
+          </button>
+        </div>
+      )}
+
       {error !== null && (
         <p className="error" role="alert">
           {error}
@@ -385,16 +626,23 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
               : "No video analyses yet — analysed videos show up here."}
         </p>
       ) : tab === "report" ? (
-        <div className="rl-list">
-          {(filtered as ReportListItem[])?.map((row) => (
-            <ReportRow
-              key={row.id}
-              row={row}
-              onOpen={() => onOpen("report", row.id)}
-              onMenu={() => setMenuFor({ kind: "report", row })}
-            />
-          ))}
-        </div>
+        showReportFolders && reportFolders ? (
+          <div className="rl-list">
+            {reportGroups.map((g) => renderReportFolder(g, reportFolders.byGroup.get(g.id) ?? []))}
+            {renderReportFolder(null, reportFolders.ungrouped)}
+          </div>
+        ) : (
+          <div className="rl-list">
+            {(filtered as ReportListItem[])?.map((row) => (
+              <ReportRow
+                key={row.id}
+                row={row}
+                onOpen={() => onOpen("report", row.id)}
+                onMenu={() => setMenuFor({ kind: "report", row })}
+              />
+            ))}
+          </div>
+        )
       ) : (
         <div className="rl-list">
           {channelGroups?.map((group) => {
@@ -438,12 +686,28 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
             onOpen(menuFor.kind, id);
           }}
           onOpenInJerv={() => openInJerv(menuFor)}
+          onMoveToFolder={() => {
+            const row = menuFor.row as ReportListItem;
+            setMenuFor(null);
+            setMoveFor(row);
+          }}
           onCopyReport={() => void copyReport(menuFor.row as ReportListItem)}
           onDownloadReport={() => void downloadReport(menuFor.row as ReportListItem)}
           onCopySummary={() => void copyVideoText(menuFor.row as VideoListItem, "summary")}
           onCopyTranscript={() => void copyVideoText(menuFor.row as VideoListItem, "transcript")}
           onOpenSource={() => openSource(menuFor.row as VideoListItem)}
           onDelete={() => deleteItem(menuFor)}
+        />
+      )}
+
+      {moveFor !== null && (
+        <MoveReportSheet
+          reportTitle={moveFor.title || moveFor.question}
+          currentGroupId={moveFor.group_id}
+          groups={reportGroups}
+          onMove={(gid) => void moveReportTo(moveFor, gid)}
+          onCreateAndMove={(name) => void createFolderAndMove(moveFor, name)}
+          onClose={() => setMoveFor(null)}
         />
       )}
 
@@ -598,6 +862,7 @@ function ActionSheet({
   onClose,
   onView,
   onOpenInJerv,
+  onMoveToFolder,
   onCopyReport,
   onDownloadReport,
   onCopySummary,
@@ -609,6 +874,7 @@ function ActionSheet({
   onClose: () => void;
   onView: () => void;
   onOpenInJerv: () => void;
+  onMoveToFolder: () => void;
   onCopyReport: () => void;
   onDownloadReport: () => void;
   onCopySummary: () => void;
@@ -629,6 +895,9 @@ function ActionSheet({
         </button>
         {item.kind === "report" ? (
           <>
+            <button type="button" className="rl-action" onClick={onMoveToFolder}>
+              <ListIcon size={19} /> Move to folder
+            </button>
             <button type="button" className="rl-action" onClick={onCopyReport}>
               <ClipIcon size={19} /> Copy report
             </button>
