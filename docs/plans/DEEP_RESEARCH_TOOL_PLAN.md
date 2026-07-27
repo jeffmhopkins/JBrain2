@@ -2,15 +2,28 @@
 
 > **Status:** In progress · **Last verified:** 2026-07-27 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; mock-gate sign-off pending)
 
-**v10 revision (critique verifies against the cited sources).** The critique review child
-was fed only the draft text, so to check any claim it could only run a *fresh, unrelated*
-web search — it never saw the report's own `[^n]` sources and so could never catch a
-**misattributed citation** (a claim whose cited page does not actually support it). Fixed:
-`_critique` now receives the same numbered SOURCES registry the synthesizer cited against
-and is told to check citation faithfulness FIRST — resolve each `[^n]`, open the page it
-cites, and flag any claim the cited source does not support — falling back to independent
-search only for an unreachable source or an uncited claim. The cross-check analyst keeps
-its existing findings-only feed; only the draft critique gains the source list.
+**v10 revision (reviewers verify against the cited sources).** The critique and cross-check
+review children were fed only the draft/findings text, so to check any claim they could
+only run a *fresh, unrelated* web search — they never saw the report's own `[^n]` sources
+and so could never catch a **misattributed citation** (a claim whose cited page does not
+actually support it). Fixed on three fronts:
+
+- **Critique** (`_critique`) now receives the same numbered SOURCES registry the synthesizer
+  cited against and checks citation faithfulness FIRST — resolve each `[^n]`, open the page
+  it cites, flag any claim the cited source does not support — falling back to independent
+  search only for an unreachable source or an uncited claim.
+- **Cross-check analyst** (`_analyze`) is handed the pages the gather findings reached so it
+  can open a shaky claim's source rather than only re-searching (its findings keep their
+  sub-agents' own local `[^n]` numbering, so the list is offered as pages to open, not a
+  numbering the markers map onto).
+- Both gate the SOURCES list on a **web-capable** reviewer: the pure-`library` reviewer
+  (`review_library`) holds `read_external_video`, not `web_fetch`, so it keeps its
+  corpus-verification brief with no `web_fetch` instruction (`_can_open_sources`).
+
+Also fixed a latent undercount found in review: `_findings_count` keyed on the bare
+`research` persona, so a `library`/`library_first`/deepest run (gather on `research_library`
+/ `research_deep`) reported **0 sub-agent findings** in the provenance line, the report-view
+badge, and the persisted count. It now counts the research-producer FAMILY.
 
 **v9 revision (gpt-oss harmony citations render).** A report synthesized on `gpt-oss-120b`
 came back with **zero rendered citations despite ~500 collected `web_sources`**: gpt-oss
