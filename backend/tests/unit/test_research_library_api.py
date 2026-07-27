@@ -314,9 +314,7 @@ def test_rename_report_group_404_when_absent(client: TestClient, repo: FakeAuthR
     ok = client.patch("/api/research-library/report-groups/grp-1", json={"name": "Health"})
     assert ok.status_code == 200 and ok.json()["name"] == "Health"
     assert (
-        client.patch(
-            "/api/research-library/report-groups/ghost", json={"name": "x"}
-        ).status_code
+        client.patch("/api/research-library/report-groups/ghost", json={"name": "x"}).status_code
         == 404
     )
 

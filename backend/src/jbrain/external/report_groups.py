@@ -43,8 +43,7 @@ async def list_report_groups(
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, name, position FROM app.report_groups"
-                    " ORDER BY position, created_at"
+                    "SELECT id, name, position FROM app.report_groups ORDER BY position, created_at"
                 )
             )
         ).all()
