@@ -87,10 +87,12 @@ def child_steps_for(effort: str | None) -> int:
 # most SPAWN_MULTIPLIER × the root's own per-turn token cap; a fraction is reserved off
 # the top so the root can always synthesize even after a fan drains the children's
 # pool; and a fan is admitted only if each child could get a viable slice of what's
-# left. Sized generously (~6M children pool with jerv's 800k root cap) so the runtime
+# left. Sized generously (~8M children pool with jerv's 800k root cap) so the runtime
 # caps above — not budget exhaustion — are what stop a child, with ample room for a staged
 # review reserve (deep_research) on top of a full multi-round gather.
-SPAWN_MULTIPLIER = 10.0  # tree_budget = base_max_cost_tokens × this (~8.0M for jerv)
+SPAWN_MULTIPLIER = 40.0 / 3.0  # tree_budget = base_max_cost_tokens × this (~10.7M for jerv).
+# The 40/3 is chosen so the children pool (tree_budget − the 25% root reserve, i.e. × 0.75,
+# which cancels the /3) lands exactly on 8.0M for jerv's 800k root cap — the meter's ceiling.
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
 MIN_VIABLE_CHILD_BUDGET = 100_000  # admission floor: tokens each child must be able to get
 
