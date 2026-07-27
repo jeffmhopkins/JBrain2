@@ -177,3 +177,86 @@ async def test_chat_finalization_statuses_satisfy_the_runs_constraint(
         await log.finish(
             owner, run_id, status="ended", stop_reason="end_turn", step_count=1, cost_tokens=1
         )
+
+
+async def test_reap_stranded_closes_running_agent_and_subagent_runs(
+    maker: async_sessionmaker,
+) -> None:
+    """The boot reaper closes every agent/subagent run left `running` (a crash/OOM/kill, or a
+    child cancelled in a gap before its finish landed) — the rows that would otherwise read
+    'active' forever on the Runs surface and let a rejoining PWA mistake a dead run for live.
+    A cleanly-finished run and a running PIPELINE run (engine kind, closed by its own
+    reconciler) are left untouched — the sweep is scoped to kind in (agent, subagent)."""
+    owner = await _owner(maker)
+    sessions = AgentSessionRepo(maker)
+    log = AgentRunLog(maker)
+    info = await sessions.create(owner, domain_scopes=["general"], title="t")
+
+    parent = await log.start(owner, session_id=info.id, prompt_version="v1")
+    child = await log.start(
+        owner, session_id=info.id, prompt_version="v1", kind="subagent", parent_run_id=parent
+    )
+    done = await log.start(owner, session_id=info.id, prompt_version="v1")
+    await log.finish(
+        owner, done, status="done", stop_reason="end_turn", step_count=1, cost_tokens=1
+    )
+    async with scoped_session(maker, owner) as session:
+        pipe = (
+            await session.execute(
+                text(
+                    "INSERT INTO app.runs (id, kind, pipeline, status)"
+                    " VALUES (gen_random_uuid(), 'pipeline', 'reconcile_x', 'running')"
+                    " RETURNING id::text"
+                )
+            )
+        ).scalar_one()
+
+    # Boot mode: no age bound — a fresh process owns no 'running' row, so all are orphans.
+    reaped = await log.reap_stranded(owner)
+    # >= 2, not == 2: the integration module shares one Postgres container, so sibling tests
+    # may leave their own 'running' agent rows the boot reaper also legitimately closes. What
+    # this test pins is the per-row outcome below, not the module-global count.
+    assert reaped >= 2  # at least this test's parent + child
+
+    async with scoped_session(maker, owner) as session:
+        rows = {
+            str(r.id): (r.status, r.stop_reason, r.ended_at is not None)
+            for r in (
+                await session.execute(
+                    text("SELECT id, status, stop_reason, ended_at FROM app.runs")
+                )
+            ).all()
+        }
+    assert rows[parent] == ("error", "stranded", True)
+    assert rows[child] == ("error", "stranded", True)
+    assert rows[done][0] == "done"  # a cleanly-settled run is never reaped
+    assert rows[pipe][0] == "running"  # pipeline runs are out of scope for this sweep
+
+
+async def test_reap_stranded_age_bound_leaves_fresh_runs(maker: async_sessionmaker) -> None:
+    """The periodic sweep passes an age bound above the hard turn wall-clock so it can never
+    race a genuinely-live detached turn: a fresh `running` row is left alone, only one aged
+    past the threshold (whose finish provably never ran) is closed."""
+    owner = await _owner(maker)
+    sessions = AgentSessionRepo(maker)
+    log = AgentRunLog(maker)
+    info = await sessions.create(owner, domain_scopes=["general"], title="t")
+
+    fresh = await log.start(owner, session_id=info.id, prompt_version="v1")
+    old = await log.start(owner, session_id=info.id, prompt_version="v1")
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text("UPDATE app.runs SET started_at = now() - interval '2 hours' WHERE id = :id"),
+            {"id": old},
+        )
+
+    reaped = await log.reap_stranded(owner, older_than_seconds=3900)
+    assert reaped == 1
+
+    async with scoped_session(maker, owner) as session:
+        got = {
+            str(r.id): r.status
+            for r in (await session.execute(text("SELECT id, status FROM app.runs"))).all()
+        }
+    assert got[old] == "error"  # aged past the threshold → provably orphaned
+    assert got[fresh] == "running"  # too new to reap — might be a live turn

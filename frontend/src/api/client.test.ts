@@ -86,4 +86,21 @@ describe("api.chat run id", () => {
       { type: "done", stop_reason: "end_turn" },
     ]);
   });
+
+  it("sessionLiveRun returns the run id, or null when the session has no live run", async () => {
+    // A reloaded PWA maps a session back to its still-running detached turn so it can
+    // reattach; a 404 (no live run) resolves to null rather than throwing.
+    const hit = vi.fn(
+      async () => new Response(JSON.stringify({ run_id: "run-7" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", hit);
+    expect(await api.sessionLiveRun("s1")).toBe("run-7");
+    expect(hit).toHaveBeenCalledWith("/api/chat/sessions/s1/live-run", expect.anything());
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 404 })),
+    );
+    expect(await api.sessionLiveRun("s1")).toBeNull();
+  });
 });

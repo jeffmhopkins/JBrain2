@@ -95,6 +95,17 @@ _TURN_DONE = object()  # per-subscriber sentinel: the turn finished, no more fra
 # runaway that streams for the whole wall-clock. Past it the oldest frames are evicted.
 _MAX_BUFFERED_FRAMES = 20000
 
+# A ceiling on the owner's CONCURRENT detached chat turns. A turn runs detached from its
+# SSE socket, so a PWA that lost its in-memory single-in-flight guard (a full reload) could
+# POST a fresh turn while the old one still runs — and each turn can dispatch a deep_research
+# fan that pegs the GPU, so an unbounded rejoin/re-send storm stacks fans the box can't serve.
+# A second turn for the SAME session is always rejected (the client should REATTACH to the
+# live run, not restart it); this bounds the total across sessions. Sized above normal use
+# (a chat plus a second tab) but far below a runaway. Single-owner today, so this is
+# effectively a global cap; `live_turns` counts only parent /chat turns (children run inside
+# a parent, headless Task runs never register here).
+_MAX_CONCURRENT_TURNS = 4
+
 
 class _LiveTurn:
     """An in-flight turn's frame buffer + live fan-out, so the original SSE response AND
@@ -104,7 +115,12 @@ class _LiveTurn:
     lines only — keepalives are per-connection (emitted on idle by `stream`), never
     buffered, so a reconnect's `after` offset counts only real events."""
 
-    def __init__(self) -> None:
+    def __init__(self, session_id: str = "") -> None:
+        # The chat session this turn streams into. Lets the concurrency guard reject a
+        # second live turn for the same session, and the rejoin lookup map a session back
+        # to its live run_id — both without a DB hop. Defaults to "" (never a real session
+        # id, so it matches nothing) for the buffer-only unit tests that don't set it.
+        self.session_id = session_id
         self.frames: list[bytes] = []
         # Absolute index of frames[0]: count evicted off the front once the buffer hits
         # its cap, so a reconnect's `after` stays an ABSOLUTE event index (frames[0] is
@@ -570,6 +586,20 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     if session is None:
         raise HTTPException(status_code=404, detail="no such session")
 
+    # Concurrency guard (checked before the run row is minted, so a rejected turn strands
+    # nothing). A live turn detaches from its socket, so without this a full PWA reload could
+    # re-POST a turn while the old one runs on, stacking GPU-pegging fans. `.done` entries are
+    # already settled (their done-callback just hasn't popped them), so they don't count.
+    live_turns = request.app.state.live_turns
+    if any(
+        getattr(lt, "session_id", None) == session.id and not lt.done for lt in live_turns.values()
+    ):
+        # The client should reattach to the running turn (GET /chat/runs/{id}/stream via the
+        # session's live run), not start a second one over the top of it.
+        raise HTTPException(status_code=409, detail="a turn is already running for this session")
+    if sum(1 for lt in live_turns.values() if not lt.done) >= _MAX_CONCURRENT_TURNS:
+        raise HTTPException(status_code=429, detail="too many turns running; try again shortly")
+
     # The session's selected agent (docs/reference/ASSISTANT.md "Agent selection") sets the
     # persona prompt, the tool allowlist, and whether the turn reads the knowledge
     # base. A non-KB agent (teacher, jerv) runs with empty read scopes, so even a
@@ -959,7 +989,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # once it's finished it recovers the exchange from the transcript instead. The
     # composer's explicit Stop cancels the turn through the cancel endpoint, keyed by the
     # run id we expose on the response header.
-    live = _LiveTurn()
+    live = _LiveTurn(session.id)
     live.task = asyncio.create_task(drive_turn(live))
     request.app.state.live_turns[run_id] = live
     live.task.add_done_callback(lambda _t: request.app.state.live_turns.pop(run_id, None))
@@ -1050,6 +1080,28 @@ async def claim_deferred_result(
     store = cast(MediaResults, request.app.state.media_results)
     claimed = await store.claim_resume(ctx_for(principal), result_id)
     return DeferredClaimOut(claimed=claimed)
+
+
+class LiveRunOut(BaseModel):
+    """The run_id of a session's in-flight turn, for the PWA to reattach to."""
+
+    run_id: str
+
+
+@router.get("/chat/sessions/{session_id}/live-run", response_model=LiveRunOut)
+async def session_live_run(request: Request, session_id: str) -> LiveRunOut:
+    """The run_id of the session's currently-live turn, so a PWA that fully RELOADED
+    (losing its in-memory run handle) can reattach to the live SSE stream via
+    GET /chat/runs/{run_id}/stream — instead of showing nothing while a detached turn runs
+    on, and instead of the sub-agent fan reading 'done' when the turn is really still going.
+    The turn detaches from its socket, so the run outlives the reload; this is the only way
+    back to it once the client forgot the id. 404 when the session has no live turn (the
+    client then just shows the stored transcript). Owner-gated + run-id-keyed like the
+    resume/cancel endpoints (single-owner system; server-minted ids)."""
+    for run_id, live in request.app.state.live_turns.items():
+        if getattr(live, "session_id", None) == session_id and not live.done:
+            return LiveRunOut(run_id=run_id)
+    raise HTTPException(status_code=404, detail="no live run for session")
 
 
 @router.get("/chat/runs/{run_id}/stream")

@@ -29,6 +29,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     createSession: vi.fn(async () => session({ id: "new" })),
     chat: noChat,
     chatResume: async function* () {},
+    sessionLiveRun: vi.fn(async () => null),
     cancelChatRun: vi.fn(async () => {}),
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async () => []),

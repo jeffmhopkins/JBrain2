@@ -57,6 +57,7 @@ function fbDeps(): FullBrainDeps {
     })),
     chat: async function* () {},
     chatResume: async function* () {},
+    sessionLiveRun: vi.fn(async () => null),
     cancelChatRun: vi.fn(async () => {}),
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async () => []),

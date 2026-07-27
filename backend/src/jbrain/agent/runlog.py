@@ -14,17 +14,31 @@ the loop a recorder pinned to one run + context, so the loop stays database-free
 and the caller owns the run's start and finish (P4.5 wires this into /chat).
 """
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from sqlalchemy import and_, bindparam, not_, or_, select, text, update
+import structlog
+from sqlalchemy import CursorResult, and_, bindparam, not_, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.agent import Run, RunStep
 from jbrain.models.workflow import Trigger
 from jbrain.queue import queued_depth
+
+log = structlog.get_logger()
+
+# A margin above the hard turn wall-clock (`_MAX_TURN_WALL_CLOCK_S`, 3600s, in
+# api/agent.py): a genuinely-live detached turn is force-ended and settled by then, so any
+# agent/subagent run still 'running' past this is provably orphaned. Sized above the
+# ceiling + a margin so the periodic sweep can never race a real turn.
+STRANDED_AFTER_SECONDS = 3900
+# How often the background sweep runs. The boot reaper clears the pre-restart backlog once
+# on startup; this only bounds accumulation between restarts, so it can be infrequent.
+REAP_INTERVAL_SECONDS = 900
 
 
 class AgentRunLog:
@@ -106,9 +120,69 @@ class AgentRunLog:
                 )
             )
 
+    async def reap_stranded(
+        self,
+        ctx: SessionContext,
+        *,
+        older_than_seconds: float | None = None,
+    ) -> int:
+        """Close agent/subagent run rows stuck at 'running' whose `finish()` never landed.
+
+        A turn whose process died (crash/OOM/SIGKILL, or a graceful drain that overran its
+        bound) or a child cancelled in a gap before it could settle leaves its row 'running'
+        forever — inflating the Runs 'active now' tile and leaving the sub-agent rail unable
+        to tell a live turn from a dead one. This marks such rows `status='error'`,
+        `stop_reason='stranded'`, `ended_at=now()` (the constraint-valid terminal the runs
+        table and the frontend RunStatus already carry).
+
+        `older_than_seconds` bounds the sweep to rows at least that old: the periodic sweep
+        passes a margin above the hard turn wall-clock so it can never race a genuinely-live
+        detached turn, while the boot reaper passes None — a fresh process owns no prior
+        'running' row, so every one is a pre-restart orphan. Owner/system-scoped like the
+        rest of the log (runs are owner-only RLS). Returns the count closed."""
+        clause = ""
+        params: dict[str, object] = {}
+        if older_than_seconds is not None:
+            clause = " AND started_at < now() - make_interval(secs => :secs)"
+            params["secs"] = older_than_seconds
+        async with scoped_session(self._maker, ctx) as session:
+            result = await session.execute(
+                text(
+                    "UPDATE app.runs SET status = 'error', stop_reason = 'stranded',"
+                    " ended_at = now(), progress_note = NULL"
+                    " WHERE kind IN ('agent', 'subagent') AND status = 'running'" + clause
+                ),
+                params,
+            )
+        return cast(CursorResult[Any], result).rowcount or 0
+
     def bound(self, ctx: SessionContext, run_id: str) -> "BoundRecorder":
         """A `RunRecorder` (loop.py) pinned to one run and context."""
         return BoundRecorder(self, ctx, run_id)
+
+
+async def reap_stranded_loop(
+    runlog: "AgentRunLog",
+    ctx: SessionContext,
+    *,
+    interval_seconds: int = REAP_INTERVAL_SECONDS,
+    older_than_seconds: int = STRANDED_AFTER_SECONDS,
+) -> None:
+    """Sweep stranded agent/subagent runs forever, sleeping `interval_seconds` between
+    passes. The boot reaper clears the pre-restart backlog once; this only bounds
+    accumulation while the process stays up (a child stranded by a rare double-cancel, say).
+    A sweep failure is logged and the loop continues (a transient DB hiccup must not kill
+    the reaper); cancellation propagates so shutdown can stop it cleanly. Sleeps BEFORE the
+    first sweep — the boot reaper already cleared the pre-restart backlog, so nothing needs an
+    immediate pass, and no age-eligible row can exist until at least one interval has passed."""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            reaped = await runlog.reap_stranded(ctx, older_than_seconds=older_than_seconds)
+            if reaped:
+                log.info("agent.runlog.reaped_stranded", reaped=reaped)
+        except Exception:
+            log.exception("agent.runlog.reaper_failed")
 
 
 @dataclass(frozen=True)
