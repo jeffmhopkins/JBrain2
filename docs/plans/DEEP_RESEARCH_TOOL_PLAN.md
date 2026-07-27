@@ -349,9 +349,10 @@ retuning — but the **shape** (shared counter + root reserve + admission floor 
 wall-clock) is unchanged. Proposed changes (final numbers a build-plan task, validated
 on-box like the S2/F2 retunes were):
 
-- **Tree budget headroom.** ✅ `SPAWN_MULTIPLIER` raised to **10.0** for every root (v3
-  took it 3.5 → 5.0; v5 → 10.0), so jerv's children pool is **6.0M** (tree 8.0M − the 25%
-  root reserve) — the simpler lever than a dedicated deep-research multiplier, and the
+- **Tree budget headroom.** ✅ `SPAWN_MULTIPLIER` raised to **40/3 (~13.3)** for every root
+  (v3 took it 3.5 → 5.0; v5 → 10.0; then → 40/3), so jerv's children pool is **8.0M** (tree
+  ~10.7M − the 25% root reserve; the 40/3 lands the pool exactly on 8.0M) — the simpler
+  lever than a dedicated deep-research multiplier, and the
   reserve still covers the two large root calls (synthesis in 5, revision in 6). On top of
   the pool, `deep_research` carves a `DR_REVIEW_RESERVE` (`stage_reserve`, 1.2M) so the
   post-gather analyst + critique children can't be starved by a greedy gather round.
