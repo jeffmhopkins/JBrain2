@@ -30,6 +30,7 @@ from jbrain.external.corpus import (
     _corpus_read_context,
     fetch_transcript,
     filter_new_video_ids,
+    latest_channel_analysis,
     list_corpus,
     resolve_frame_thumbnails,
     search_corpus,
@@ -99,6 +100,27 @@ def _hms(ms: int) -> str:
     h, rem = divmod(total, 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _ago(ts: datetime) -> str:
+    """A coarse "N ago" for a past timestamp — how long since check_channel last analysed a
+    video from this channel. A naive timestamp is read as UTC; a future one (clock skew) reads
+    as "recently" rather than a negative span."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    secs = int((datetime.now(UTC) - ts).total_seconds())
+    if secs < 0:
+        return "recently"
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        mins = secs // 60
+        return f"{mins} minute{'s' if mins != 1 else ''} ago"
+    if secs < 86_400:
+        hours = secs // 3600
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = secs // 86_400
+    return f"{days} day{'s' if days != 1 else ''} ago"
 
 
 def _title_terms(raw: object) -> list[str]:
@@ -328,6 +350,25 @@ def build_external_handlers(
         if not uploads:
             return f"No recent uploads on {channel_id}{match_desc}."
 
+        # When check_channel surfaces nothing new, name the channel's most recently analysed
+        # video (and how long ago) so a "no new videos" answer is self-explanatory — the owner
+        # can see it's caught up, not that discovery silently failed. Keyed off the listed ids,
+        # so it resolves the channel even from a bare @handle input.
+        async def _prior_note() -> str:
+            prior = await latest_channel_analysis(
+                maker,
+                "youtube",
+                [u.video_id for u in uploads],
+                principal_id=ctx.session.principal_id,
+            )
+            if prior is None:
+                return ""
+            title, analyzed_at = prior
+            return (
+                f" The most recent upload from this channel already in your library is"
+                f' "{title}" — analysed {_ago(analyzed_at)}.'
+            )
+
         fresh_ids = await filter_new_video_ids(
             maker,
             "youtube",
@@ -338,7 +379,7 @@ def build_external_handlers(
         if not fresh:
             return (
                 f"No NEW videos on {channel_id}{match_desc}"
-                " — everything matching is already in the library."
+                " — everything matching is already in the library." + await _prior_note()
             )
 
         # Enrich ONLY the new uploads (cheapest place to resolve): a per-video metadata pull
@@ -359,7 +400,7 @@ def build_external_handlers(
             if not pairs:
                 return (
                     f"No NEW videos on {channel_id}{match_desc} published in the last"
-                    f" {within_days} day(s)."
+                    f" {within_days} day(s)." + await _prior_note()
                 )
 
         lines = [_listing_line(u.title, u.url, m, full_description=full_desc) for u, m in pairs]

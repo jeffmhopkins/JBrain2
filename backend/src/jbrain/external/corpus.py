@@ -198,6 +198,44 @@ async def filter_new_video_ids(
     return {v for v in video_ids if v not in present}
 
 
+async def latest_channel_analysis(
+    maker: async_sessionmaker[AsyncSession],
+    provider: str,
+    video_ids: list[str],
+    *,
+    principal_id: str = "",
+) -> tuple[str, datetime] | None:
+    """The most-recently-analysed `done` video from the SAME channel as any of `video_ids`, as
+    (title, analyzed_at), or None when none of those videos are in the library. `check_channel`
+    uses it to tell the owner what it last ingested from a channel when it surfaces nothing new.
+    The channel is keyed by the stored channel_id of a listed upload, so a bare `@handle` input
+    still resolves; a listing whose videos are all absent (or predate channel_id storage) yields
+    None. Reads under the purpose-built external scope."""
+    if not video_ids:
+        return None
+    async with scoped_session(maker, _corpus_read_context(principal_id)) as session:
+        row = (
+            await session.execute(
+                text(
+                    "WITH ch AS ("
+                    "  SELECT channel_id FROM app.external_sources"
+                    "  WHERE provider = :p AND video_id = ANY(:vids)"
+                    "   AND channel_id IS NOT NULL AND channel_id <> ''"
+                    "  ORDER BY analyzed_at DESC NULLS LAST LIMIT 1"
+                    ")"
+                    " SELECT s.title, s.analyzed_at FROM app.external_sources s"
+                    " JOIN ch ON s.channel_id = ch.channel_id"
+                    " WHERE s.provider = :p AND s.status = 'done'"
+                    " ORDER BY s.analyzed_at DESC NULLS LAST LIMIT 1"
+                ),
+                {"p": provider, "vids": video_ids},
+            )
+        ).first()
+    if row is None or row.analyzed_at is None:
+        return None
+    return (row.title or "", row.analyzed_at)
+
+
 async def delete_external_video(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext, source_id: str
 ) -> bool:
