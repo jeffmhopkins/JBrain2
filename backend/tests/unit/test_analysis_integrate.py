@@ -121,8 +121,8 @@ def test_integrate_prompt_content_is_pinned_to_its_version():
     blob = INTEGRATE_SYSTEM + "\x00" + json.dumps(INTENT_SCHEMA, sort_keys=True)
     digest = hashlib.sha256(blob.encode()).hexdigest()
     assert (INTEGRATE_PROMPT_VERSION, digest) == (
-        "integrate-v12",
-        "639216316f65d16a0cc42f68ee424688189c77fb86ce433cd48c087f6039dec1",
+        "integrate-v13",
+        "e25db25de1960f58aca2434a0b460808cf936108624dce2b541833db759d52ba",
     )
 
 
