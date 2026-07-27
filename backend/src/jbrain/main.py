@@ -24,7 +24,7 @@ from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
-from jbrain.agent.runlog import AgentRunLog, RunLogReader
+from jbrain.agent.runlog import AgentRunLog, RunLogReader, reap_stranded_loop
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.streamtools import build_stream_handlers
 from jbrain.agent.transcribetools import build_transcribe_handlers
@@ -665,6 +665,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else None
         )
         app.state.agent_runlog = AgentRunLog(maker)
+        # Close any agent/subagent run rows a prior process left 'running' — a crash/OOM/
+        # SIGKILL, or a shutdown drain that overran its bound, never runs the finally that
+        # settles the row. This fresh process owns none yet, so every such row is a
+        # pre-restart orphan that would otherwise read 'active' forever on the Runs surface
+        # (and let a rejoining PWA mistake a dead run for a live one). Awaited before serving
+        # so no request sees the backlog; best-effort — a reap hiccup must never block boot.
+        with suppress(Exception):
+            boot_reaped = await app.state.agent_runlog.reap_stranded(SYSTEM_CTX)
+            if boot_reaped:
+                structlog.get_logger().info("agent.runlog.boot_reaped", reaped=boot_reaped)
+        # Bound accumulation while the process stays up (a child stranded by a rare
+        # double-cancel): an age-based sweep above the hard turn wall-clock, so it never
+        # races a genuinely-live detached turn.
+        stranded_reaper_task = asyncio.create_task(
+            reap_stranded_loop(app.state.agent_runlog, SYSTEM_CTX)
+        )
         app.state.run_reader = RunLogReader(maker)
         # The owner-facing Research Library reader: browse/search/delete over jerv's
         # persisted deep-research reports + analysed videos (the external corpus).
@@ -739,6 +755,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             live_task.cancel()
         tasks_loop_task.cancel()
         intake_reaper_task.cancel()
+        stranded_reaper_task.cancel()
         jpet_loop_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT

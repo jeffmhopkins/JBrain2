@@ -31,6 +31,7 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
     createSession: vi.fn(async () => session({ id: "new" })),
     chat: async function* () {},
     chatResume: async function* () {},
+    sessionLiveRun: vi.fn(async () => null),
     listProposals: vi.fn(async () => []),
     getTranscript: vi.fn(async (): Promise<TranscriptTurn[]> => []),
     renameSession: vi.fn(async () => {}),
@@ -178,6 +179,51 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     // It reconnected from the count of server frames already folded — the synthetic `run`
     // event isn't a server frame, so only the one text_delta counts (after=1).
     expect(chatResume).toHaveBeenCalledWith("r1", 1, expect.anything());
+  });
+
+  it("reattaches to a still-running detached turn after a reload", async () => {
+    // The rejoin bug: a full PWA reload loses the in-memory run handle, so a turn still
+    // running server-side would show nothing (the stored transcript has no in-flight turn)
+    // and the sub-agent rail would read "done". On open, a session whose last_run_status is
+    // "running" is looked up and reattached — the live tail streams back onto a fresh bubble.
+    const sessionLiveRun = vi.fn(async () => "r9");
+    const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "back live" };
+      yield { type: "done", stop_reason: "end_turn" };
+    });
+    const listSessions = vi.fn(async () => [session({ id: "A", last_run_status: "running" })]);
+    const d = deps({ sessionLiveRun, chatResume, listSessions });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    // The live run is discovered and its stream resumed onto a fresh bubble, which settles.
+    await waitFor(() => expect(result.current.messages.at(-1)?.text).toBe("back live"));
+    expect(sessionLiveRun).toHaveBeenCalledWith("A");
+    // Reattach starts from frame 0 (the client folded nothing yet this mount).
+    expect(chatResume).toHaveBeenCalledWith("r9", 0, expect.anything());
+    expect(result.current.messages.at(-1)?.streaming).toBe(false);
+  });
+
+  it("does not reattach when the session has no live run (stale status)", async () => {
+    // last_run_status can lag reality — a crashed/reaped run still reads "running" until the
+    // boot reaper closes it. The lookup returns null, so we leave the stored transcript be
+    // rather than seeding a phantom streaming bubble.
+    const sessionLiveRun = vi.fn(async () => null);
+    const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {});
+    const listSessions = vi.fn(async () => [session({ id: "A", last_run_status: "running" })]);
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> => [
+        { role: "user", content: "hi", tools: [] },
+        { role: "assistant", content: "prior answer", tools: [] },
+      ],
+    );
+    const d = deps({ sessionLiveRun, chatResume, listSessions, getTranscript });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.messages.at(-1)?.text).toBe("prior answer"));
+    expect(sessionLiveRun).toHaveBeenCalledWith("A");
+    expect(chatResume).not.toHaveBeenCalled();
+    // No streaming bubble was seeded — the chat reads as settled.
+    expect(result.current.messages.at(-1)?.streaming).toBe(false);
+    expect(result.current.activeTurn).toBeNull();
   });
 
   it("refreshes the sessions list when a sub-agent spawns (live rail)", async () => {

@@ -123,6 +123,9 @@ export interface FullBrainDeps {
   createSession: (body: SessionCreate) => Promise<AgentSession>;
   chat: (body: ChatRequest, signal?: AbortSignal) => AsyncGenerator<ChatEvent>;
   chatResume: (runId: string, after: number, signal?: AbortSignal) => AsyncGenerator<ChatEvent>;
+  /** The run_id of a session's live turn, or null when it has none — how a reloaded PWA
+   * finds a still-running detached turn to reattach to. */
+  sessionLiveRun: (sessionId: string) => Promise<string | null>;
   cancelChatRun: (runId: string) => Promise<void>;
   listProposals: (sessionId?: string) => Promise<ProposalSummary[]>;
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
@@ -144,6 +147,7 @@ const LIVE: FullBrainDeps = {
   createSession: api.createSession,
   chat: api.chat,
   chatResume: api.chatResume,
+  sessionLiveRun: api.sessionLiveRun,
   cancelChatRun: api.cancelChatRun,
   listProposals: api.listProposals,
   getTranscript: api.getTranscript,
@@ -312,6 +316,7 @@ export function useFullBrain(
   autoStart = false,
 ): FullBrain {
   const { listSessions, createSession, chat, chatResume, cancelChatRun } = deps;
+  const { sessionLiveRun } = deps;
   const { listProposals, getTranscript } = deps;
   const { renameSession, deleteSession, archiveSession, unarchiveSession } = deps;
   const { rescopeSession, uploadChatAttachment, getChatCapabilities } = deps;
@@ -353,6 +358,9 @@ export function useFullBrain(
   // this session's buffer alone (its live turn isn't in the stored transcript yet), and
   // a chat switch preserves it — so returning to the chat still shows the running turn.
   const turnSessionRef = useRef<string | null>(null);
+  // Sessions we've already tried to reattach to this mount, so a re-render (or a stale
+  // `last_run_status` the reattach couldn't confirm) doesn't re-fire the lookup in a loop.
+  const reattachedRef = useRef<Set<string>>(new Set());
   // The agent model's vision capability, false until the check answers — the safe
   // default keeps the chat attach affordance hidden rather than offering one the
   // model would 415. It only ever flips true, so the paperclip appears once
@@ -546,6 +554,21 @@ export function useFullBrain(
     };
   }, [enabled, activeId, getTranscript, setSessionMessages]);
 
+  // Reattach to the active chat's still-running detached turn after a full reload. The
+  // session reports `last_run_status === "running"` but this hook lost the in-memory run
+  // handle, so without this the live deep-research/fan component never shows and the rail
+  // reads "done". One attempt per session per mount — a null lookup means the status was
+  // stale (a crashed/reaped run), so it isn't retried; `reattach` claims turnSessionRef, so
+  // a live send takes precedence. `reattach` is hoisted (function decl), read fresh here.
+  useEffect(() => {
+    if (!enabled || activeId === null) return;
+    if (active?.last_run_status !== "running") return;
+    if (busy || turnSessionRef.current !== null) return;
+    if (reattachedRef.current.has(activeId)) return;
+    reattachedRef.current.add(activeId);
+    void reattach(activeId);
+  }, [enabled, activeId, active?.last_run_status, busy]);
+
   async function send(
     textRaw: string,
     opts?: {
@@ -643,6 +666,10 @@ export function useFullBrain(
     controller: AbortController,
     turnSessionId: string,
     baseline: number,
+    // Reattach mode (a full PWA reload): the turn already runs DETACHED server-side, so
+    // there's no fresh POST — ride its live stream from the start (chatResume), falling back
+    // to the transcript exactly like a dropped-connection recovery. Set to the live run id.
+    resumeRunId?: string,
   ): Promise<void> {
     // How many SERVER frames we've folded — the offset a reconnect resumes from. The
     // synthetic `run` event is client-made (from the X-Run-Id header), so it doesn't count.
@@ -696,51 +723,60 @@ export function useFullBrain(
       }
       return settled;
     };
-    try {
-      for await (const event of chat(body, controller.signal)) {
-        if (event.type === "run") {
-          runIdRef.current = event.run_id;
-          continue;
+    // The detached-turn recovery loop: ride the live stream to settlement whenever the
+    // socket is up, else recover the finished exchange from the transcript once it lands.
+    // Keep retrying until it settles live, the turn persists, or the recovery window closes
+    // — and NEVER implicitly cancel. A force-cancel on a flaky network used to orphan a long
+    // sub-agent fan: it killed the healthy parent turn (persisting a blank spawn step with no
+    // result and no synthesis view) while the child ran on to completion. Only the composer's
+    // explicit Stop cancels a turn. Shared by the dropped-connection catch AND the reattach
+    // path (same "the turn runs on, catch up to it" job).
+    const recover = async (): Promise<void> => {
+      const deadline = Date.now() + RECONCILE_TIMEOUT_MS;
+      let recovered = false;
+      while (!recovered && Date.now() < deadline && !controller.signal.aborted) {
+        if (await resumeLive()) return;
+        // The reconnect failed — the run finished and left the live registry, or the socket
+        // dropped again on a still-live run. If the finished turn has persisted, show it;
+        // otherwise wait and reconnect again (the detached turn keeps going).
+        if (isForeground()) {
+          try {
+            const turns = await getTranscript(turnSessionId);
+            if (turns.length > baseline) {
+              setSessionMessages(turnSessionId, () => turns.map(fromTurn));
+              recovered = true;
+            }
+          } catch {}
         }
-        framesSeen += 1;
-        fold(event);
+        if (!recovered) await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
       }
-      setSessionMessages(turnSessionId, (ms) =>
-        ms[ms.length - 1]?.streaming ? endStream(ms, "end_turn") : ms,
-      );
+      if (!recovered) setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
+    };
+    try {
+      if (resumeRunId) {
+        // No fresh POST — the turn is already live and detached. Ride it from the start.
+        runIdRef.current = resumeRunId;
+        await recover();
+      } else {
+        for await (const event of chat(body, controller.signal)) {
+          if (event.type === "run") {
+            runIdRef.current = event.run_id;
+            continue;
+          }
+          framesSeen += 1;
+          fold(event);
+        }
+        setSessionMessages(turnSessionId, (ms) =>
+          ms[ms.length - 1]?.streaming ? endStream(ms, "end_turn") : ms,
+        );
+      }
     } catch {
       if (controller.signal.aborted) {
         setSessionMessages(turnSessionId, (ms) => endStream(ms, "stopped"));
       } else {
-        // The live stream dropped (the PWA backgrounded, a flaky socket, an idle-proxy
-        // cut). The turn runs DETACHED server-side — a closed socket never cancels it, so
-        // it finishes and persists on its own. Reconnect to ride its live progress; if the
-        // reconnect also drops, recover the finished exchange from the transcript once it
-        // lands. Keep retrying until it settles live, the turn persists, or the recovery
-        // window closes — and NEVER implicitly cancel here. A force-cancel on a flaky
-        // network used to orphan a long sub-agent fan: it killed the healthy parent turn
-        // (persisting a blank spawn step with no result and no synthesis view) while the
-        // child ran on to completion. Only the composer's explicit Stop cancels a turn.
-        const deadline = Date.now() + RECONCILE_TIMEOUT_MS;
-        let recovered = false;
-        while (!recovered && Date.now() < deadline && !controller.signal.aborted) {
-          // Ride the live stream to settlement whenever the socket is up.
-          if (await resumeLive()) return;
-          // The reconnect failed — the run finished and left the live registry, or the
-          // socket dropped again on a still-live run. If the finished turn has persisted,
-          // show it; otherwise wait and reconnect again (the detached turn keeps going).
-          if (isForeground()) {
-            try {
-              const turns = await getTranscript(turnSessionId);
-              if (turns.length > baseline) {
-                setSessionMessages(turnSessionId, () => turns.map(fromTurn));
-                recovered = true;
-              }
-            } catch {}
-          }
-          if (!recovered) await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
-        }
-        if (!recovered) setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
+        // The live stream dropped (the PWA backgrounded, a flaky socket, an idle-proxy cut).
+        // The turn runs DETACHED server-side, so reconnect and ride it to settlement.
+        await recover();
       }
     } finally {
       abortRef.current = null;
@@ -761,6 +797,46 @@ export function useFullBrain(
       // (turn count, preview, staged count).
       reloadSessions();
     }
+  }
+
+  // Reattach to a session's still-running turn after a FULL PWA reload. All the live-turn
+  // state (the run id, the streaming buffer, the "a turn is active" flag) lives in this
+  // hook's memory, so a reload loses it: the stored transcript has no in-flight turn (it
+  // persists only at settle), so nothing renders, and the sub-agent rail reads "done"
+  // because it has no live turn to key off. The server keeps the turn running detached and
+  // knows its run id, so we look it up, seed the live bubble, and ride the stream to
+  // settlement — the deep-research timeline, the sub-agent fan, and Stop all come back.
+  async function reattach(turnSessionId: string): Promise<void> {
+    const runId = await sessionLiveRun(turnSessionId);
+    // No live run — the session's `last_run_status` was stale (a crashed/reaped run the
+    // server no longer holds). Leave the stored transcript as-is.
+    if (!runId) return;
+    // A real send started while we were fetching the id — don't stomp its live turn.
+    if (turnSessionRef.current !== null) return;
+    turnSessionRef.current = turnSessionId;
+    setActiveTurnSessionId(turnSessionId);
+    setBusy(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    runIdRef.current = runId;
+    // Load the settled transcript first (the in-flight turn isn't in it yet), then seed the
+    // streaming bubble the reattached stream folds into. `baseline` is the settled turn
+    // count so the recovery loop's transcript fallback knows when the live turn has landed.
+    let baseline = 0;
+    try {
+      const turns = await getTranscript(turnSessionId);
+      baseline = turns.length;
+      setSessionMessages(turnSessionId, () => [...turns.map(fromTurn), streamingAssistant()]);
+    } catch {
+      setSessionMessages(turnSessionId, (ms) => [...ms, streamingAssistant()]);
+    }
+    void runTurn(
+      { session_id: turnSessionId, message: "", history: [] },
+      controller,
+      turnSessionId,
+      baseline,
+      runId,
+    );
   }
 
   // The composer's Stop. The turn runs detached server-side, so cancel it by run id;

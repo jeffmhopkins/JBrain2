@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-19
+> **Status:** Living · **Last verified:** 2026-07-27
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -168,6 +168,23 @@ last-seen offset and follows live, so thinking/render progress resumes rather th
 restarting. Once the run has finished the reconnect 404s and the PWA recovers the
 exchange from the persisted transcript instead. The composer's Stop is an explicit
 `POST /chat/runs/{id}/cancel` (closing the stream no longer ends the turn).
+
+A **full PWA reload** (not just a backgrounded socket) loses the in-memory run
+handle, so on open the client re-derives it: for any session whose
+`last_run_status` is `running` it asks `GET /chat/sessions/{id}/live-run` for the
+live run id and reattaches via the same `/chat/runs/{id}/stream` path — so the
+deep-research timeline, the sub-agent fan, and Stop all come back instead of the
+chat looking finished while a detached turn runs on. A null lookup means the status
+was stale (a crashed/reaped run), so the client just shows the stored transcript.
+To keep a reload (or a re-send) from **stacking** detached turns that each peg the
+GPU, `/chat` caps concurrency: a second live turn for the **same session** is
+rejected `409` (reattach, don't restart), and the owner's total in-flight turns are
+capped (`429`). A turn that never settles — a crash/OOM/kill, or a child cancelled
+in a gap before its `finish()` ran — would otherwise leave its `runs` row `running`
+forever (reading as "active" on the Runs surface and confusing the reattach); a
+**boot reaper** closes every such agent/subagent row on startup and a periodic
+age sweep (above the hard turn wall-clock, so it never races a live turn) bounds any
+accumulation in between.
 
 **Per-conversation model pick.** The turn's model is the `agent.turn` route by
 default, but the owner can steer a single conversation onto a different **on-box

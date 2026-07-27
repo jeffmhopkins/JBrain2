@@ -933,6 +933,13 @@ class SpawnService:
                     tree_budget=tree.children_budget(),
                 ),
             )
+            # The child model's context window — the meter's denominator. Resolved once
+            # per child (cheap, cached in the router) so its fill bar reads against the
+            # same window the child actually runs with. Resolved BEFORE the run row exists:
+            # this is a cancellable await, and a parent cancel landing on it after the row
+            # was inserted (but before the guarding try/finally) used to strand the row
+            # 'running' with 0 steps — exactly the zombie sub-agent the Runs surface showed.
+            child_window = await self._router.context_window("agent.turn")
             child_run = await self._runlog.start(
                 owner_ctx,
                 session_id=child.id,
@@ -941,6 +948,31 @@ class SpawnService:
                 parent_run_id=ctx.run_id,
             )
             tally = StepTally(self._runlog.bound(owner_ctx, child_run))
+            # Once the run row exists it MUST reach a terminal status. `finished` guards a
+            # single settle; the try/finally below backstops every path — a cancel at any
+            # await, a timeout, or a second cancel racing a terminal finish — so the row can
+            # never be left 'running' (the boot/age reaper is the last-resort net beyond it).
+            finished = False
+
+            async def _settle(status: str, stop_reason: str) -> None:
+                nonlocal finished
+                if finished:
+                    return
+                # Inline (no shield): the only cancellation that reaches a settle here has
+                # already been delivered and caught, so this await completes — mirroring the
+                # /chat drive_turn finally. Suppressed so a write hiccup never masks the
+                # outcome; `finished` flips only on a clean write, so the finally can retry.
+                with contextlib.suppress(Exception):
+                    await self._runlog.finish(
+                        owner_ctx,
+                        child_run,
+                        status=status,
+                        stop_reason=stop_reason,
+                        step_count=tally.steps,
+                        cost_tokens=tally.cost,
+                    )
+                    finished = True
+
             loop = AgentLoop(
                 self._router,
                 self._registry,
@@ -980,11 +1012,6 @@ class SpawnService:
 
             def _on_reasoning(text: str) -> None:
                 _emit(ctx, SubagentDeltaEvent(child_id=child.id, channel="reasoning", text=text))
-
-            # The child model's context window — the meter's denominator. Resolved once
-            # per child (cheap, cached in the router) so its fill bar reads against the
-            # same window the child actually runs with.
-            child_window = await self._router.context_window("agent.turn")
 
             def _on_usage(inp: int, out: int) -> None:
                 # The child's live context fill, forwarded as the fan row's context meter
@@ -1048,32 +1075,20 @@ class SpawnService:
                     ),
                     timeout=child_timeout,
                 )
+                # Settle the row done the moment the loop returns cleanly, INSIDE the try so
+                # the finally below sees it settled — and so a cancel racing this write lands
+                # in the cancelled arm rather than stranding the row.
+                await _settle("done", result.stop_reason)
             except asyncio.CancelledError:
                 # A parent cancel cascades into the fan; mark the run best-effort and
                 # let the cancellation propagate (it must not be swallowed).
-                with contextlib.suppress(Exception):
-                    await self._runlog.finish(
-                        owner_ctx,
-                        child_run,
-                        status="error",
-                        stop_reason="cancelled",
-                        step_count=tally.steps,
-                        cost_tokens=tally.cost,
-                    )
+                await _settle("error", "cancelled")
                 raise
             except TimeoutError:
                 # The per-child wall-clock fired (wait_for cancelled the run). One slow
                 # child must not stall the fan — degrade it and move on.
                 secs = int(child_timeout)
-                with contextlib.suppress(Exception):
-                    await self._runlog.finish(
-                        owner_ctx,
-                        child_run,
-                        status="error",
-                        stop_reason="timeout",
-                        step_count=tally.steps,
-                        cost_tokens=tally.cost,
-                    )
+                await _settle("error", "timeout")
                 _emit(
                     ctx,
                     SubagentDoneEvent(
@@ -1092,15 +1107,7 @@ class SpawnService:
                 return _ChildResult(label, persona, timeout_summary, ok=False, session_id=child.id)
             except Exception as exc:  # noqa: BLE001 — a child failure degrades, not crashes
                 log.warning("subagent.child_failed", persona=persona, label=label, error=repr(exc))
-                with contextlib.suppress(Exception):
-                    await self._runlog.finish(
-                        owner_ctx,
-                        child_run,
-                        status="error",
-                        stop_reason="error",
-                        step_count=tally.steps,
-                        cost_tokens=tally.cost,
-                    )
+                await _settle("error", "error")
                 _emit(
                     ctx,
                     SubagentDoneEvent(
@@ -1116,14 +1123,12 @@ class SpawnService:
                     owner_ctx, child.id, child_run, brief_text, f"ERROR: {exc}"
                 )
                 return _ChildResult(label, persona, f"ERROR: {exc}", ok=False, session_id=child.id)
-            await self._runlog.finish(
-                owner_ctx,
-                child_run,
-                status="done",
-                stop_reason=result.stop_reason,
-                step_count=tally.steps,
-                cost_tokens=tally.cost,
-            )
+            finally:
+                # Backstop: any await above cancelled before reaching a terminal settle (or a
+                # second cancel racing one) still closes the row here — inline, since the
+                # cancellation was already delivered. The boot/age reaper is the net beyond it.
+                if not finished:
+                    await _settle("error", "stranded")
             # A child is a success only if it produced a substantive answer. A clean
             # `end_turn`, or a step/budget-limited stop that still SYNTHESIZED an answer
             # (force_final_answer / a budget-cut partial), counts — it's real, just

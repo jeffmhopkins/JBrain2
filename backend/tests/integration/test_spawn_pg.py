@@ -158,6 +158,74 @@ async def test_fan_persists_sandboxed_lineage_and_writes_no_episode(
     assert turns[1].content == "child summary"
 
 
+class _FailingRouter(_FakeRouter):
+    """The child model call blows up mid-turn — the child must STILL settle its run row to a
+    terminal status rather than leave it 'running' (the strand the finally backstop closes)."""
+
+    async def converse_stream(
+        self,
+        task: str,
+        *,
+        system,
+        messages,
+        tools,
+        max_tokens,
+        strength=None,
+        effort_override=None,
+        spec_override=None,
+    ):  # noqa: ANN001, ANN003
+        raise RuntimeError("model exploded")
+        yield  # pragma: no cover - `yield` makes this an async generator that raises on use
+
+
+async def test_child_run_row_is_settled_never_left_running_when_the_model_fails(
+    maker: async_sessionmaker,
+) -> None:
+    """A child whose turn fails must reach a terminal run status: the finally-guarded settle
+    means the row is closed (done/error), never stranded 'running' — the zombie the Runs
+    surface counted as 'active' forever and the boot/age reaper had to clean up."""
+    owner = await _owner(maker)
+    sessions = AgentSessionRepo(maker)
+    runlog = AgentRunLog(maker)
+    transcript = AgentTranscript(maker)
+    svc = SpawnService(
+        router=_FailingRouter(),  # type: ignore[arg-type]
+        registry=ToolRegistry([]),
+        sessions=sessions,
+        runlog=runlog,
+        transcript=transcript,
+    )
+    parent = await sessions.create(owner, domain_scopes=[], title="root", agent="jerv")
+    parent_run = await runlog.start(owner, session_id=parent.id, prompt_version="jerv-v")
+    ctx = ToolContext(
+        session=owner,
+        scopes=(),
+        agent_session_id=parent.id,
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id=parent_run,
+    )
+
+    # The fan degrades a failed child rather than crashing — the point is the row's status.
+    await svc.spawn_fan(ctx, {"tasks": [{"persona": "research", "brief": "q", "label": "L"}]})
+
+    async with scoped_session(maker, owner) as session:
+        rows = (
+            (await session.execute(text("SELECT status FROM app.runs WHERE kind = 'subagent'")))
+            .scalars()
+            .all()
+        )
+        stranded = (
+            await session.execute(
+                text("SELECT count(*) FROM app.runs WHERE kind = 'subagent' AND status = 'running'")
+            )
+        ).scalar()
+    assert len(rows) == 1  # the child's own run row exists
+    assert stranded == 0  # …and it is NOT left 'running' (the finish guarantee)
+    assert rows[0] in ("done", "error")  # a real terminal status
+
+
 async def test_only_the_root_may_spawn_children_are_leaves(maker: async_sessionmaker) -> None:
     """Nesting removed: only jerv (depth 0) may spawn; a depth-1 child is refused
     outright — the tree is exactly two levels, enforced with no model cooperation."""

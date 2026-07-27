@@ -22,6 +22,7 @@ from jbrain.agent.session import AgentSessionInfo
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.agent.transcript_store import TurnRecord
+from jbrain.api.agent import _MAX_CONCURRENT_TURNS, _LiveTurn
 from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage, TextChunk, ToolCall
@@ -2295,3 +2296,51 @@ async def test_pending_resume_backstop_skips_a_row_it_loses_the_claim_for() -> N
     blocks = await _resume_blocks(store, skip=False)
     assert blocks == []
     assert store.claimed == ["r1"]  # it tried, but lost
+
+
+def test_session_live_run_returns_the_run_id(client: TestClient, repo: FakeAuthRepo) -> None:
+    """A reloaded PWA looks up its still-running detached turn by session so it can reattach
+    to the live stream (the in-memory run handle is gone). The endpoint returns the live
+    run_id keyed off the in-process live_turns registry."""
+    login(client, repo)
+    client.app.state.live_turns["run-xyz"] = _LiveTurn("sess-1")
+    resp = client.get("/api/chat/sessions/sess-1/live-run")
+    assert resp.status_code == 200
+    assert resp.json() == {"run_id": "run-xyz"}
+
+
+def test_session_live_run_404_when_no_live_turn(client: TestClient, repo: FakeAuthRepo) -> None:
+    """No live turn (or only a settled one whose done-callback hasn't popped it yet) → 404,
+    so the client just shows the stored transcript instead of a phantom streaming bubble."""
+    login(client, repo)
+    settled = _LiveTurn("sess-1")
+    settled.done = True
+    client.app.state.live_turns["run-done"] = settled
+    resp = client.get("/api/chat/sessions/sess-1/live-run")
+    assert resp.status_code == 404
+
+
+def test_chat_rejects_a_second_turn_for_the_same_session(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    """A turn runs detached, so a reloaded PWA that lost its single-in-flight guard could
+    re-POST while the old turn runs on. A second live turn for the SAME session is rejected
+    (409) — the client should reattach, not stack a second GPU-pegging fan."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.live_turns["run-existing"] = _LiveTurn("sess-1")
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 409
+
+
+def test_chat_caps_total_concurrent_turns(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    """Beyond the same-session guard, the owner's TOTAL in-flight turns are capped so a
+    rejoin storm across sessions can't stack unbounded detached fans (429)."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    for i in range(_MAX_CONCURRENT_TURNS):
+        client.app.state.live_turns[f"run-{i}"] = _LiveTurn(f"other-{i}")
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 429
