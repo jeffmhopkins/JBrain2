@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-25 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8✅
+> **Status:** In progress · **Last verified:** 2026-07-27 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8✅
 
 **Finish-off pass (2026-07-22).** The three remaining threads closed:
 - **Tool-aware report dedup** (was an R7 sub-item) — migration `0148` widens the dedup key
@@ -457,7 +457,7 @@ at the new depth and the amplification bounds bite:
   decomposition flag each refuse the (K+1)th / second spawn from one task agent.
 
 **Residual, quantified and accepted (settled decision 4).** With a resized tree
-cap of ~N agents × `CHILD_MAX_COST_TOKENS` (900k), the worst case is *tens of
+cap of ~N agents × `CHILD_MAX_COST_TOKENS` (1.6M), the worst case is *tens of
 millions of attacker-steerable tokens per run*, bounded by the owner ceiling. The
 owner approves that figure explicitly at kickoff. A tighter ceiling triggered by
 an injection heuristic is **out of scope** (not detectable today) but named here.
