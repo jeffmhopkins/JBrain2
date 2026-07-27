@@ -292,6 +292,21 @@ async def test_analyst_is_fed_the_gather_findings_before_synthesis() -> None:
     assert FEED_OPEN in analyst["briefs"][0][1]  # fed the findings as escaped data
 
 
+async def test_critique_is_fed_the_cited_sources_to_verify_against() -> None:
+    """The critique review child is handed the SAME numbered SOURCES list the report cites
+    against, so it can resolve each `[^n]` to the real page and check the claim against the
+    source it actually cited (citation faithfulness) rather than only re-deriving facts from
+    a fresh web search. The draft itself still rides in as boundary-wrapped data."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    critique = next(f for f in _review_fans(spawn) if f["briefs"][0][0] == "critique")
+    brief = critique["briefs"][0][1]
+    assert FEED_OPEN in brief  # the draft is fed as escaped data
+    assert "SOURCES" in brief and "citation faithfulness" in brief.lower()
+    # A real gather source URL reaches the critique so it can open + check the citation.
+    assert "https://ex.com/" in brief
+
+
 async def test_phases_are_emitted_for_the_owner_to_watch() -> None:
     events: list = []
     router, spawn = _FakeRouter(), _FakeSpawn()
