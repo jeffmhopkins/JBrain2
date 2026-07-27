@@ -2303,7 +2303,7 @@ def test_session_live_run_returns_the_run_id(client: TestClient, repo: FakeAuthR
     to the live stream (the in-memory run handle is gone). The endpoint returns the live
     run_id keyed off the in-process live_turns registry."""
     login(client, repo)
-    client.app.state.live_turns["run-xyz"] = _LiveTurn("sess-1")
+    client.app.state.live_turns["run-xyz"] = _LiveTurn("sess-1")  # type: ignore[attr-defined]
     resp = client.get("/api/chat/sessions/sess-1/live-run")
     assert resp.status_code == 200
     assert resp.json() == {"run_id": "run-xyz"}
@@ -2315,7 +2315,7 @@ def test_session_live_run_404_when_no_live_turn(client: TestClient, repo: FakeAu
     login(client, repo)
     settled = _LiveTurn("sess-1")
     settled.done = True
-    client.app.state.live_turns["run-done"] = settled
+    client.app.state.live_turns["run-done"] = settled  # type: ignore[attr-defined]
     resp = client.get("/api/chat/sessions/sess-1/live-run")
     assert resp.status_code == 404
 
@@ -2328,7 +2328,7 @@ def test_chat_rejects_a_second_turn_for_the_same_session(
     (409) — the client should reattach, not stack a second GPU-pegging fan."""
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
-    client.app.state.live_turns["run-existing"] = _LiveTurn("sess-1")
+    client.app.state.live_turns["run-existing"] = _LiveTurn("sess-1")  # type: ignore[attr-defined]
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
     assert resp.status_code == 409
 
@@ -2341,6 +2341,6 @@ def test_chat_caps_total_concurrent_turns(
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     for i in range(_MAX_CONCURRENT_TURNS):
-        client.app.state.live_turns[f"run-{i}"] = _LiveTurn(f"other-{i}")
+        client.app.state.live_turns[f"run-{i}"] = _LiveTurn(f"other-{i}")  # type: ignore[attr-defined]
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
     assert resp.status_code == 429
