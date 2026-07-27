@@ -292,6 +292,33 @@ async def test_analyst_is_fed_the_gather_findings_before_synthesis() -> None:
     assert FEED_OPEN in analyst["briefs"][0][1]  # fed the findings as escaped data
 
 
+async def test_analyst_is_fed_the_gather_sources_to_verify_against() -> None:
+    """The cross-check analyst gets the real pages the gather findings reached, so it can
+    open a source and check a shaky claim against what the page says rather than only
+    re-searching. The findings still ride in as boundary-wrapped data alongside."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    analyst = next(f for f in _review_fans(spawn) if f["briefs"][0][0] == "cross-check")
+    brief = analyst["briefs"][0][1]
+    assert FEED_OPEN in brief  # the findings are fed as escaped data
+    assert "SOURCES" in brief and "https://ex.com/" in brief  # real source URLs to open
+
+
+async def test_critique_is_fed_the_cited_sources_to_verify_against() -> None:
+    """The critique review child is handed the SAME numbered SOURCES list the report cites
+    against, so it can resolve each `[^n]` to the real page and check the claim against the
+    source it actually cited (citation faithfulness) rather than only re-deriving facts from
+    a fresh web search. The draft itself still rides in as boundary-wrapped data."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    critique = next(f for f in _review_fans(spawn) if f["briefs"][0][0] == "critique")
+    brief = critique["briefs"][0][1]
+    assert FEED_OPEN in brief  # the draft is fed as escaped data
+    assert "SOURCES" in brief and "citation faithfulness" in brief.lower()
+    # A real gather source URL reaches the critique so it can open + check the citation.
+    assert "https://ex.com/" in brief
+
+
 async def test_phases_are_emitted_for_the_owner_to_watch() -> None:
     events: list = []
     router, spawn = _FakeRouter(), _FakeSpawn()
@@ -674,6 +701,22 @@ async def test_library_mode_routes_every_fan_to_the_corpus_personas() -> None:
     assert "REVISED REPORT" in out  # the run still produced a report
 
 
+async def test_library_run_counts_its_corpus_findings_not_zero() -> None:
+    """A `library` run gathers on `research_library`, never the plain `research` persona,
+    so the finding count must key on the research FAMILY — otherwise the provenance line,
+    the report-view `sub_agents` badge, and the persisted count all read 0 despite a full
+    report. Regression guard for the persona-family undercount."""
+    router = _FakeRouter(complexity="deep", covered=False, gaps=("gap one",))
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(
+        _ctx(), {"question": "what do my videos say about X?", "sources": "library"}
+    )
+    view = out.view  # type: ignore[attr-defined]
+    # 3 gather + 1 refill corpus findings back the report — the two review children don't.
+    assert view.data["sub_agents"] == 4
+    assert "4 sub-agent finding(s)" in out  # the relayed provenance line agrees
+
+
 async def test_library_first_gathers_from_corpus_then_refills_on_the_web() -> None:
     """`sources=library_first`: the gather is `research_library` (primary pass), but the
     refill runs `research` (web supplement) and the review children run on the web too."""
@@ -691,12 +734,16 @@ async def test_library_first_gathers_from_corpus_then_refills_on_the_web() -> No
 
 async def test_library_mode_analyst_may_search_only_the_library() -> None:
     """In exclusive mode the analyst/critique brief points them at the library, not the
-    web (they hold no web tool) — the brief stays honest about the tools in hand."""
+    web (they hold no web tool) — the brief stays honest about the tools in hand. The
+    citation-faithfulness SOURCES list (a `web_fetch` instruction) is withheld, because the
+    `review_library` reviewer has no web_fetch — it would name a tool it doesn't hold."""
     router, spawn = _FakeRouter(), _FakeSpawn()
     await _svc(router, spawn).research(_ctx(), {"question": "q", "sources": "library"})
-    analyst = [f for f in spawn.fans if f["persona"] == "review_library"][0]
-    assert "video library" in analyst["briefs"][0][1]
-    assert "search the web" not in analyst["briefs"][0][1]
+    for f in (f for f in spawn.fans if f["persona"] == "review_library"):
+        brief = f["briefs"][0][1]
+        assert "video library" in brief
+        assert "search the web" not in brief
+        assert "web_fetch" not in brief and "SOURCES" not in brief
 
 
 async def test_empty_library_gather_refuses_without_touching_the_web() -> None:
