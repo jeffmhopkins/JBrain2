@@ -7736,6 +7736,16 @@ button.small {
   vertical-align: top;
   border-bottom: 1px solid var(--border);
   border-right: 1px solid var(--border);
+  /* The bubble sets overflow-wrap:anywhere (for bare URLs) and it's inherited;
+     inside a cell that lets auto-layout collapse a column to a single glyph and
+     break text mid-word ("Plat/elet/cou/nt"). Break only at word boundaries so a
+     column's natural floor is its longest word — wide enough to read. The
+     min/max keep columns off the extremes: never hair-thin, never sprawling;
+     anything past the max wraps and the wrapper scrolls. */
+  overflow-wrap: normal;
+  word-break: normal;
+  min-width: 4em;
+  max-width: 22em;
 }
 :is(.fb-shell, .jcode-bubble, .rl-md) .md-table th:last-child,
 :is(.fb-shell, .jcode-bubble, .rl-md) .md-table td:last-child {
@@ -7745,7 +7755,9 @@ button.small {
   background: var(--surface-2);
   font-weight: 600;
   color: var(--text-2);
-  white-space: nowrap;
+  /* Headers wrap at word boundaries like body cells rather than forcing a
+     single no-wrap line — a long header ("Expected range in a classic
+     presentation") no longer blows its column out to the full sentence width. */
 }
 :is(.fb-shell, .jcode-bubble, .rl-md) .md-table tbody tr:last-child td {
   border-bottom: none;
