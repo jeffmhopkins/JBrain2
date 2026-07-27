@@ -123,9 +123,7 @@ def build_trace(
     # low-confidence guard); the per-kind `threshold` is kept for audit continuity,
     # explicitly NOT the decision comparator it was before Lever A.
     reasons = ", ".join(planned.review_reasons) or "—"
-    verdict = (
-        f"held [{reasons}]" if planned.review_reasons else "committed (no review flags)"
-    )
+    verdict = f"held [{reasons}]" if planned.review_reasons else "committed (no review flags)"
     arbiter = {
         "key": "arbiter",
         "name": "Arbiter",
