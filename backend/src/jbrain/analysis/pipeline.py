@@ -61,6 +61,7 @@ from jbrain.analysis.entities import (
     DISAMBIGUATE_STRENGTH,
     DISAMBIGUATE_SYSTEM,
     DISAMBIGUATE_TASK,
+    FIRST_PERSON,
     AmbiguousEntity,
     NeedsDisambiguation,
     ResolvedEntity,
@@ -71,10 +72,12 @@ from jbrain.analysis.entities import (
     declared_alias,
     get_or_create_me,
     near_duplicate_entity,
+    normalize_alias,
     parse_disambiguation,
     plan_merge,
     register_declared_alias,
     resolve_entity,
+    same_name_entity_ids,
 )
 from jbrain.analysis.extraction import (
     ExtractedFact,
@@ -550,6 +553,18 @@ class AnalysisPipeline:
                     eid = uuid.UUID(r.proposed_entity_id)
                 except ValueError:
                     override[r.mention_ref] = None
+                    continue
+                # Same-name guard (ANALYSIS.md "Same-name coexistence"): a mention
+                # surface shared by 2+ live entities is the engine's call, not the
+                # agent's — its pick flips run-to-run. Don't honor the guess; leave
+                # the ref OUT of the override so `_resolve_entities` re-runs the
+                # deterministic `resolve_entity`, which turns 2+ exact matches into
+                # an `ambiguous_mention` card. First person is always the owner.
+                if (
+                    normalize_alias(r.mention_ref) not in FIRST_PERSON
+                    and r.mention_ref != "Me"
+                    and len(await same_name_entity_ids(session, r.mention_ref)) >= 2
+                ):
                     continue
                 entity = (
                     await session.execute(select(Entity).where(Entity.id == eid))
@@ -1065,9 +1080,11 @@ class AnalysisPipeline:
             if resolution_override is not None and name in resolution_override:
                 # The Integrator agent already resolved this mention; honor its
                 # validated choice instead of re-resolving (plan §9, Option 1).
-                # Synthetic mention_ref "names" can't be re-resolved anyway, and
-                # a non-rejected plan covers every fact ref, so this branch is
-                # taken for all of them.
+                # Synthetic mention_ref "names" can't be re-resolved anyway. A
+                # non-rejected plan covers every fact ref EXCEPT one the same-name
+                # guard (_resolve_from_intent) deliberately withheld — that ref
+                # falls through below to deterministic resolution so its 2+-match
+                # ambiguity files a card instead of committing the agent's guess.
                 resolved[name] = resolution_override[name]
                 continue
             outcome = await resolve_entity(

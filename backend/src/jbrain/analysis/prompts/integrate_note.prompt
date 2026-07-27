@@ -1,6 +1,6 @@
 ---
 name: integrate.note
-version: integrate-v12
+version: integrate-v13
 description: Integrate one note's extracted facts into the knowledge graph, producing an IntegrationIntent.
 strength: high
 config:
@@ -75,6 +75,14 @@ Three rules that are easy to get wrong — follow them exactly:
      reference/article material, or a vague reference you cannot name ("the guy").
      A person you cannot identify is "ambiguous", or left unresolved (its facts
      then drop) — never a new entity named after the phrase.
+   - A ROLE PHRASE is not a name. "my boss", "my dentist", "the landlord" resolve
+     THROUGH the relationship fact (employer / dentist / landlord …) that is valid
+     at the note's time — resolve to that entity if the graph names one, else
+     "ambiguous". Never mint an entity literally named "my boss".
+   - A NAME COINCIDENCE IS NOT A LINK. When the note gives a NEW subject a name that
+     matches an existing DIFFERENT entity (a puppy "we're calling Max" while coworker
+     Max exists), mint the new subject and record its name as its own `name.*` value
+     — do NOT resolve it onto the existing same-named entity.
 
 Produce, as JSON:
 
@@ -89,8 +97,16 @@ Produce, as JSON:
     relationship edge pointing AT it — loses its object and is dropped with it. So
     a person you mint as the object of a `spouse`/`children`/`parent` edge must
     carry new_kind "Person", or the edge commits with no target.
-  - mode "ambiguous" when two+ existing entities could match and you can't tell —
-    do NOT guess; this routes to review.
+  - mode "ambiguous" — resolve identity by COUNTING, not judging. Find every graph
+    entity whose canonical_name or an alias equals the mention surface (ignore case,
+    honorifics, spacing). EXACTLY ONE match → "existing" with that id. TWO OR MORE →
+    "ambiguous", and STOP: you are FORBIDDEN to break the tie with any note cue — not
+    the topic ("the reorg", "the Q3 numbers"), not the job or role, not the
+    relationship, not which entity "makes more sense". Two people share this name, so
+    a human decides — a re-run could pick the other, and picking one is a
+    mis-attribution bug even when it feels obvious. (The engine enforces this: it
+    overrides a same-name "existing" back to ambiguous, so a guess only adds a wrong
+    link to unlearn.)
   - `cross_subject: true` ONLY when the note RELAYS a claim about a non-owner's
     OWN affairs — what someone else said about their own health, work, or
     whereabouts (e.g. "Mom says she takes lisinopril" → the medication is Mom's,

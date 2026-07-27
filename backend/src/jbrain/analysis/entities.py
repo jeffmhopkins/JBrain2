@@ -581,6 +581,16 @@ async def _exact_matches(session: AsyncSession, norm: str) -> list:
     )
 
 
+async def same_name_entity_ids(session: AsyncSession, name: str) -> set:
+    """The distinct live entities whose canonical name or an alias equals `name`
+    (normalized). 2+ means the surface is genuinely ambiguous, so an auto-link is
+    unsafe: `resolve_entity` already routes 2+ exact matches to an
+    `ambiguous_mention` card, and ANALYSIS.md "Same-name coexistence" makes that
+    the engine's call, never a per-run LLM guess (which flips run-to-run). Callers
+    exclude first person upstream — it is always the owner, never ambiguous."""
+    return {row.id for row in await _exact_matches(session, normalize_alias(name))}
+
+
 async def _find_me(session: AsyncSession):
     return (
         await session.execute(

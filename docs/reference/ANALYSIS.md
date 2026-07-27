@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-07-26 — per-kind conflict policy + commit-vs-review corrected in place for Ingest V2 Levers A/B (silent supersede with retained history; inferred facts commit unless a safety flag or the I5 sensitive net holds them).
+> **Status:** Living · **Last verified:** 2026-07-27 — per-kind conflict policy + commit-vs-review corrected in place for Ingest V2 Levers A/B (silent supersede with retained history; inferred facts commit unless a safety flag or the I5 sensitive net holds them); same-name guard now enforced on the agent's own `existing` resolution (integrate-v13 + `_resolve_from_intent` backstop).
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -293,7 +293,13 @@ LLM disambiguation with candidates → review inbox for the gray zone.
   this single-user system. The exact-match gate (`entities.resolve_entity`:
   one match auto-links, 2+ → one deduped `ambiguous_mention` card) already
   satisfies the intent — "don't misattribute when two same-named people
-  exist" — more safely than coexistence would. Coexistence is a net loss
+  exist" — more safely than coexistence would. The **agent's own `existing`
+  resolution is held to this same gate**: `_resolve_from_intent` withholds a
+  same-name `existing` override (surface matching 2+ live entities) so it falls
+  through to the deterministic resolver and its collision card — the agent can
+  never commit a per-run bare-name guess the resolver itself would refuse
+  (integrate-v13 pairs a mechanical-counting prompt with this engine backstop).
+  Coexistence is a net loss
   here: re-analysis rebuilds mentions wholesale with no pinned routing, so
   resolving a bare name through the LLM would be **non-deterministic across
   re-runs** (a silent flip — the one outcome no layer may produce); the
