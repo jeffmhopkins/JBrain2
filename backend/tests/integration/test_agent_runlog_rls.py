@@ -213,7 +213,10 @@ async def test_reap_stranded_closes_running_agent_and_subagent_runs(
 
     # Boot mode: no age bound — a fresh process owns no 'running' row, so all are orphans.
     reaped = await log.reap_stranded(owner)
-    assert reaped == 2  # parent + child, not the done run and not the pipeline run
+    # >= 2, not == 2: the integration module shares one Postgres container, so sibling tests
+    # may leave their own 'running' agent rows the boot reaper also legitimately closes. What
+    # this test pins is the per-row outcome below, not the module-global count.
+    assert reaped >= 2  # at least this test's parent + child
 
     async with scoped_session(maker, owner) as session:
         rows = {

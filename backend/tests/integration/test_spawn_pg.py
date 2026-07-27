@@ -210,19 +210,24 @@ async def test_child_run_row_is_settled_never_left_running_when_the_model_fails(
     # The fan degrades a failed child rather than crashing — the point is the row's status.
     await svc.spawn_fan(ctx, {"tasks": [{"persona": "research", "brief": "q", "label": "L"}]})
 
+    # Scope to THIS fan's child by parent_run_id — the module shares one Postgres container,
+    # so sibling tests leave their own subagent rows a bare kind filter would also pick up.
     async with scoped_session(maker, owner) as session:
         rows = (
-            (await session.execute(text("SELECT status FROM app.runs WHERE kind = 'subagent'")))
+            (
+                await session.execute(
+                    text(
+                        "SELECT status FROM app.runs"
+                        " WHERE kind = 'subagent' AND parent_run_id = :pr"
+                    ),
+                    {"pr": parent_run},
+                )
+            )
             .scalars()
             .all()
         )
-        stranded = (
-            await session.execute(
-                text("SELECT count(*) FROM app.runs WHERE kind = 'subagent' AND status = 'running'")
-            )
-        ).scalar()
-    assert len(rows) == 1  # the child's own run row exists
-    assert stranded == 0  # …and it is NOT left 'running' (the finish guarantee)
+    assert len(rows) == 1  # this fan's one child run row exists
+    assert rows[0] != "running"  # …never left 'running' (the finish guarantee)
     assert rows[0] in ("done", "error")  # a real terminal status
 
 
