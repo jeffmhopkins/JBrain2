@@ -15,6 +15,7 @@ from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.external.corpus import CorpusHit, ExternalTranscript, LibraryVideo
+from jbrain.external.report_groups import ReportGroup
 from jbrain.external.research_corpus import LibraryReport, ReportHit, ReportRecord
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
@@ -57,6 +58,8 @@ class FakeResearchLibrary:
             frames=[{"t_ms": 0, "caption": "title card", "thumb_id": "t0"}],
             cued_transcript=None,
         )
+        # The owner's report folders (seeded so the group endpoints have something to list).
+        self._groups = [ReportGroup(id="grp-1", name="Medical", position=0)]
         self.calls: dict[str, object] = {}
 
     async def list_reports(
@@ -73,6 +76,7 @@ class FakeResearchLibrary:
                 created_at=WHEN,
                 sub_agents=6,
                 rounds=2,
+                group_id="grp-1",
             )
         ], 3
 
@@ -87,6 +91,32 @@ class FakeResearchLibrary:
 
     async def delete_report(self, ctx: SessionContext, report_id: str) -> bool:
         self.calls["deleted_report"] = (ctx, report_id)
+        return report_id == "rep-1"
+
+    async def list_report_groups(self, ctx: SessionContext) -> list[ReportGroup]:
+        self.calls["groups_ctx"] = ctx
+        return list(self._groups)
+
+    async def create_report_group(self, ctx: SessionContext, *, name: str) -> ReportGroup:
+        self.calls["created_group"] = (ctx, name)
+        return ReportGroup(id="grp-new", name=name, position=len(self._groups))
+
+    async def rename_report_group(
+        self, ctx: SessionContext, group_id: str, *, name: str
+    ) -> ReportGroup | None:
+        self.calls["renamed_group"] = (ctx, group_id, name)
+        return ReportGroup(id=group_id, name=name, position=0) if group_id == "grp-1" else None
+
+    async def delete_report_group(self, ctx: SessionContext, group_id: str) -> None:
+        self.calls["deleted_group"] = (ctx, group_id)
+
+    async def report_group_exists(self, ctx: SessionContext, group_id: str) -> bool:
+        return group_id == "grp-1"
+
+    async def set_report_group(
+        self, ctx: SessionContext, report_id: str, group_id: str | None
+    ) -> bool:
+        self.calls["moved_report"] = (ctx, report_id, group_id)
         return report_id == "rep-1"
 
     async def list_videos(
@@ -174,6 +204,11 @@ def test_all_routes_require_owner(client: TestClient) -> None:
     assert client.get(f"{r}/reports/search", params={"q": "flu"}).status_code == 401
     assert client.get(f"{r}/reports/rep-1").status_code == 401
     assert client.delete(f"{r}/reports/rep-1").status_code == 401
+    assert client.get(f"{r}/report-groups").status_code == 401
+    assert client.post(f"{r}/report-groups", json={"name": "Medical"}).status_code == 401
+    assert client.patch(f"{r}/report-groups/grp-1", json={"name": "Health"}).status_code == 401
+    assert client.delete(f"{r}/report-groups/grp-1").status_code == 401
+    assert client.patch(f"{r}/reports/rep-1/group", json={"group_id": None}).status_code == 401
     assert client.get(f"{r}/videos").status_code == 401
     assert client.get(f"{r}/videos/vid-1").status_code == 401
     assert client.delete(f"{r}/videos/vid-1").status_code == 401
@@ -203,6 +238,8 @@ def test_list_reports_shape_and_total(client: TestClient, repo: FakeAuthRepo) ->
     # The short display title rides the listing (the client falls back to the question
     # when it's still None).
     assert row["title"] == "1918 Flu Death-Toll Estimates"
+    # The owner's folder rides the listing so the Reports tab can group by it.
+    assert row["group_id"] == "grp-1"
     # The listing carries no body — that's the detail read's job.
     assert "report_md" not in row
 
@@ -245,6 +282,103 @@ def test_delete_report_204_under_owner_ctx(
     del library.calls["deleted_report"]
     assert client.delete("/api/research-library/reports/ghost").status_code == 204
     assert "deleted_report" not in library.calls
+
+
+# --- report folders --------------------------------------------------------------------
+
+
+def test_list_report_groups(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    resp = client.get("/api/research-library/report-groups")
+    assert resp.status_code == 200
+    assert resp.json() == [{"id": "grp-1", "name": "Medical", "position": 0}]
+
+
+def test_create_report_group_under_owner_ctx(
+    client: TestClient, repo: FakeAuthRepo, library: FakeResearchLibrary
+) -> None:
+    login(client, repo)
+    resp = client.post("/api/research-library/report-groups", json={"name": "  Synths  "})
+    assert resp.status_code == 201
+    assert resp.json()["name"] == "Synths"  # trimmed at the edge
+    ctx, name = library.calls["created_group"]  # type: ignore[misc]
+    assert name == "Synths"
+    assert isinstance(ctx, SessionContext) and ctx.principal_kind == "owner"
+    assert ctx.owner_scoped is False  # the trusted full-owner executor, never a jerv scope
+    # An empty name is rejected at the edge (min_length=1) — never reaches the library.
+    assert client.post("/api/research-library/report-groups", json={"name": ""}).status_code == 422
+
+
+def test_rename_report_group_404_when_absent(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    ok = client.patch("/api/research-library/report-groups/grp-1", json={"name": "Health"})
+    assert ok.status_code == 200 and ok.json()["name"] == "Health"
+    assert (
+        client.patch("/api/research-library/report-groups/ghost", json={"name": "x"}).status_code
+        == 404
+    )
+
+
+def test_delete_report_group_204(
+    client: TestClient, repo: FakeAuthRepo, library: FakeResearchLibrary
+) -> None:
+    login(client, repo)
+    assert client.delete("/api/research-library/report-groups/grp-1").status_code == 204
+    ctx, gid = library.calls["deleted_group"]  # type: ignore[misc]
+    assert gid == "grp-1" and ctx.owner_scoped is False
+
+
+def test_move_report_files_it_under_owner_ctx(
+    client: TestClient, repo: FakeAuthRepo, library: FakeResearchLibrary
+) -> None:
+    login(client, repo)
+    assert (
+        client.patch(
+            "/api/research-library/reports/rep-1/group", json={"group_id": "grp-1"}
+        ).status_code
+        == 204
+    )
+    ctx, rid, gid = library.calls["moved_report"]  # type: ignore[misc]
+    assert (rid, gid) == ("rep-1", "grp-1")
+    assert isinstance(ctx, SessionContext) and ctx.principal_kind == "owner"
+    assert ctx.owner_scoped is False
+
+
+def test_move_report_to_ungrouped_skips_folder_check(
+    client: TestClient, repo: FakeAuthRepo, library: FakeResearchLibrary
+) -> None:
+    login(client, repo)
+    # group_id=None (Ungrouped) needs no folder to exist — the move still lands.
+    assert (
+        client.patch(
+            "/api/research-library/reports/rep-1/group", json={"group_id": None}
+        ).status_code
+        == 204
+    )
+    _, _, gid = library.calls["moved_report"]  # type: ignore[misc]
+    assert gid is None
+
+
+def test_move_report_404s_on_missing_report_or_folder(
+    client: TestClient, repo: FakeAuthRepo, library: FakeResearchLibrary
+) -> None:
+    login(client, repo)
+    # A report that isn't in scope → 404, and no move attempted.
+    assert (
+        client.patch(
+            "/api/research-library/reports/ghost/group", json={"group_id": "grp-1"}
+        ).status_code
+        == 404
+    )
+    assert "moved_report" not in library.calls
+    # A real report but an unknown destination folder → 404, still no move.
+    assert (
+        client.patch(
+            "/api/research-library/reports/rep-1/group", json={"group_id": "ghost"}
+        ).status_code
+        == 404
+    )
+    assert "moved_report" not in library.calls
 
 
 def test_list_videos_shape_and_total(client: TestClient, repo: FakeAuthRepo) -> None:

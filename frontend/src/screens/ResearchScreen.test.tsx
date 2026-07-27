@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  type ReportGroup,
   type ReportListResponse,
   type VideoDetail,
   type VideoListResponse,
@@ -19,6 +20,7 @@ const REPORTS: ReportListResponse = {
       created_at: "2026-07-18T00:00:00Z",
       sub_agents: 6,
       rounds: 2,
+      group_id: null,
     },
     {
       id: "r2",
@@ -28,6 +30,7 @@ const REPORTS: ReportListResponse = {
       created_at: "2026-07-15T00:00:00Z",
       sub_agents: 4,
       rounds: 1,
+      group_id: null,
     },
   ],
   total: 2,
@@ -64,7 +67,16 @@ function stub() {
 
 const noop = () => {};
 
-afterEach(() => vi.restoreAllMocks());
+// Every render loads report folders; default to none so the Reports tab stays flat unless
+// a test opts into folders. The device-local collapse set lives in localStorage — clear it
+// between tests so a folded folder never leaks across cases.
+beforeEach(() => {
+  vi.spyOn(api, "researchReportGroups").mockResolvedValue([]);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
 
 describe("ResearchScreen", () => {
   it("lists reports and switches to the videos tab", async () => {
@@ -92,6 +104,7 @@ describe("ResearchScreen", () => {
           created_at: "2026-07-18T00:00:00Z",
           sub_agents: 5,
           rounds: 2,
+          group_id: null,
         },
       ],
       total: 1,
@@ -283,5 +296,122 @@ describe("ResearchScreen", () => {
     vi.spyOn(api, "researchVideos").mockResolvedValue(structuredClone(VIDEOS));
     render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+
+  // --- report folders ------------------------------------------------------------------
+
+  const GROUPS: ReportGroup[] = [{ id: "grp-med", name: "Medical", position: 0 }];
+
+  function stubFoldered() {
+    vi.spyOn(api, "researchReports").mockResolvedValue({
+      items: [
+        {
+          id: "filed",
+          question: "How does rituximab work?",
+          title: null,
+          complexity: "deep",
+          created_at: "2026-07-18T00:00:00Z",
+          sub_agents: 5,
+          rounds: 2,
+          group_id: "grp-med",
+        },
+        {
+          id: "loose",
+          question: "Best Eurorack modules for ambient",
+          title: null,
+          complexity: "comparative",
+          created_at: "2026-07-15T00:00:00Z",
+          sub_agents: 4,
+          rounds: 1,
+          group_id: null,
+        },
+      ],
+      total: 2,
+    });
+    vi.spyOn(api, "researchVideos").mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(api, "researchReportGroups").mockResolvedValue(structuredClone(GROUPS));
+  }
+
+  it("groups reports into folders + Ungrouped and folds a folder away", async () => {
+    stubFoldered();
+    render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);
+    await screen.findByText("How does rituximab work?");
+    // The named folder + the trailing Ungrouped section both head their reports.
+    expect(screen.getByText("Medical")).toBeInTheDocument();
+    expect(screen.getByText("Ungrouped")).toBeInTheDocument();
+    expect(screen.getByText("Best Eurorack modules for ambient")).toBeInTheDocument();
+
+    // Collapsing Medical hides its report but keeps the Ungrouped one.
+    fireEvent.click(screen.getByRole("button", { name: /Collapse Medical/ }));
+    expect(screen.queryByText("How does rituximab work?")).not.toBeInTheDocument();
+    expect(screen.getByText("Best Eurorack modules for ambient")).toBeInTheDocument();
+  });
+
+  it("files a report into a folder from the ⋯ menu", async () => {
+    stubFoldered();
+    const move = vi.spyOn(api, "moveReport").mockResolvedValue();
+    render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);
+    await screen.findByText("Best Eurorack modules for ambient");
+
+    // Open the Ungrouped report's ⋯ → the action sheet → Move to folder.
+    const kebabs = screen.getAllByRole("button", { name: "Report actions" });
+    fireEvent.click(kebabs[kebabs.length - 1] as HTMLElement); // the loose one is last
+    const sheet = await screen.findByRole("dialog");
+    fireEvent.click(within(sheet).getByText("Move to folder"));
+    // The move sheet lists the folder; pick it.
+    const moveSheet = await screen.findByRole("dialog");
+    fireEvent.click(within(moveSheet).getByRole("button", { name: /Medical/ }));
+
+    await waitFor(() => expect(move).toHaveBeenCalledWith("loose", "grp-med"));
+    expect(await screen.findByText(/Moved to .*Medical/)).toBeInTheDocument();
+  });
+
+  it("creates a folder and files the report via New folder…", async () => {
+    // No folders yet → a flat list, but the ⋯ move action still creates the first folder.
+    stub();
+    vi.spyOn(api, "researchReportGroups").mockResolvedValue([]);
+    const create = vi
+      .spyOn(api, "createReportGroup")
+      .mockResolvedValue({ id: "grp-new", name: "Synths", position: 0 });
+    const move = vi.spyOn(api, "moveReport").mockResolvedValue();
+    render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);
+    await screen.findByText("Best Eurorack modules for ambient");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Report actions" })[1] as HTMLElement);
+    fireEvent.click(within(await screen.findByRole("dialog")).getByText("Move to folder"));
+    const moveSheet = await screen.findByRole("dialog");
+    fireEvent.click(within(moveSheet).getByText("New folder…"));
+    fireEvent.change(within(moveSheet).getByLabelText("New folder name"), {
+      target: { value: "Synths" },
+    });
+    fireEvent.click(within(moveSheet).getByText("Create"));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith("Synths"));
+    await waitFor(() => expect(move).toHaveBeenCalledWith("r2", "grp-new"));
+  });
+
+  it("renames and deletes a folder in organize mode", async () => {
+    stubFoldered();
+    const rename = vi
+      .spyOn(api, "renameReportGroup")
+      .mockResolvedValue({ id: "grp-med", name: "Health", position: 0 });
+    const del = vi.spyOn(api, "deleteReportGroup").mockResolvedValue();
+    render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);
+    await screen.findByText("How does rituximab work?");
+
+    fireEvent.click(screen.getByRole("button", { name: /Organize folders/ }));
+    // Rename Medical → Health.
+    fireEvent.click(screen.getByRole("button", { name: "Rename Medical" }));
+    const input = screen.getByLabelText("Rename folder");
+    fireEvent.change(input, { target: { value: "Health" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(rename).toHaveBeenCalledWith("grp-med", "Health"));
+    expect(await screen.findByText("Health")).toBeInTheDocument();
+
+    // Delete Health (tap-again confirm) → its report falls to Ungrouped.
+    fireEvent.click(screen.getByRole("button", { name: "Delete Health" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete Health" }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith("grp-med"));
+    expect(screen.queryByText("Health")).not.toBeInTheDocument();
   });
 });

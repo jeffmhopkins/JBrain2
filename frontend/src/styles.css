@@ -20980,6 +20980,99 @@ button.task-band:active {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Report-folder headers reuse .rl-group* but wrap the collapse toggle (or a static name /
+ * rename input) beside the count + organize actions, so the header is a row, not just the
+ * toggle button (unlike the video-channel header). */
+.rl-group-hdr {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 4px;
+}
+.rl-group-hdr > .rl-group-head {
+  flex: 1;
+  min-width: 0;
+  padding-right: 0;
+}
+.rl-group-name-static {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 4px 2px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rl-group-rename {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 5px 9px;
+}
+.rl-group-rename:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 1px;
+}
+.rl-group-acts {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+.rl-group-act {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--r-input);
+  font: inherit;
+  font-size: var(--fs-micro);
+}
+.rl-group-act:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.rl-group-act-armed {
+  color: var(--rose);
+  background: var(--rose-tint);
+  padding: 4px 9px;
+}
+
+/* The Reports-tab organize toggle — a lightweight pill above the folder list. */
+.rl-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 2px;
+}
+.rl-organize {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.rl-organize-on {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: var(--amber-tint);
+}
 .rl-cx {
   font-size: 11px;
   font-weight: 600;

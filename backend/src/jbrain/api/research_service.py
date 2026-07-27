@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext
 from jbrain.embed import EmbedClient
-from jbrain.external import corpus, research_corpus
+from jbrain.external import corpus, report_groups, research_corpus
 from jbrain.storage import BlobStore
 
 
@@ -53,6 +53,31 @@ class ResearchLibrary:
 
     async def delete_report(self, ctx: SessionContext, report_id: str) -> bool:
         return await research_corpus.delete_report(self._maker, ctx, report_id)
+
+    # --- report folders (owner-only browse metadata; every call under an owner ctx) ---
+    async def list_report_groups(self, ctx: SessionContext) -> list[report_groups.ReportGroup]:
+        return await report_groups.list_report_groups(self._maker, ctx)
+
+    async def create_report_group(
+        self, ctx: SessionContext, *, name: str
+    ) -> report_groups.ReportGroup:
+        return await report_groups.create_report_group(self._maker, ctx, name=name)
+
+    async def rename_report_group(
+        self, ctx: SessionContext, group_id: str, *, name: str
+    ) -> report_groups.ReportGroup | None:
+        return await report_groups.rename_report_group(self._maker, ctx, group_id, name=name)
+
+    async def delete_report_group(self, ctx: SessionContext, group_id: str) -> None:
+        await report_groups.delete_report_group(self._maker, ctx, group_id)
+
+    async def report_group_exists(self, ctx: SessionContext, group_id: str) -> bool:
+        return await report_groups.report_group_exists(self._maker, ctx, group_id)
+
+    async def set_report_group(
+        self, ctx: SessionContext, report_id: str, group_id: str | None
+    ) -> bool:
+        return await report_groups.set_report_group(self._maker, ctx, report_id, group_id)
 
     # --- videos ---
     async def list_videos(

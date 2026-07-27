@@ -989,6 +989,16 @@ export interface ReportListItem {
   created_at: string | null;
   sub_agents: number;
   rounds: number;
+  /** The owner's folder this report is filed under; null = the trailing "Ungrouped"
+   * section. Owner-only browse metadata the Reports tab groups by. */
+  group_id: string | null;
+}
+
+/** An owner-named folder on the Research Library's Reports tab (mirrors TaskGroup). */
+export interface ReportGroup {
+  id: string;
+  name: string;
+  position: number;
 }
 export interface ReportHit {
   id: string;
@@ -2571,6 +2581,43 @@ export const api = {
 
   async deleteResearchReport(id: string): Promise<void> {
     await request(`/api/research-library/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // ----- report folders (owner-named buckets on the Reports tab; mirrors task groups) -----
+
+  async researchReportGroups(): Promise<ReportGroup[]> {
+    const response = await request("/api/research-library/report-groups");
+    return (await response.json()) as ReportGroup[];
+  },
+
+  async createReportGroup(name: string): Promise<ReportGroup> {
+    const response = await request(
+      "/api/research-library/report-groups",
+      jsonInit("POST", { name }),
+    );
+    return (await response.json()) as ReportGroup;
+  },
+
+  async renameReportGroup(id: string, name: string): Promise<ReportGroup> {
+    const response = await request(
+      `/api/research-library/report-groups/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { name }),
+    );
+    return (await response.json()) as ReportGroup;
+  },
+
+  async deleteReportGroup(id: string): Promise<void> {
+    await request(`/api/research-library/report-groups/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  // File a report into a folder (null = the trailing "Ungrouped" section).
+  async moveReport(reportId: string, groupId: string | null): Promise<void> {
+    await request(
+      `/api/research-library/reports/${encodeURIComponent(reportId)}/group`,
+      jsonInit("PATCH", { group_id: groupId }),
+    );
   },
 
   async researchVideos(limit = 50): Promise<VideoListResponse> {

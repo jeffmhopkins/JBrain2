@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
@@ -52,6 +52,9 @@ class ReportListOut(BaseModel):
     created_at: datetime | None
     sub_agents: int
     rounds: int
+    # The owner's folder this report is filed under (None = the trailing "Ungrouped"
+    # section); owner-only browse metadata the Reports tab groups by.
+    group_id: str | None = None
 
 
 class ReportHitOut(BaseModel):
@@ -83,6 +86,27 @@ class ReportListResponse(BaseModel):
 class ReportSearchResponse(BaseModel):
     items: list[ReportHitOut]
     degraded: bool
+
+
+# --- report-folder models --------------------------------------------------------------
+
+
+class ReportGroupOut(BaseModel):
+    id: str
+    name: str
+    position: int
+
+
+class ReportGroupBody(BaseModel):
+    """Create / rename payload for a report folder."""
+
+    name: str = Field(min_length=1, max_length=80)
+
+
+class MoveReportBody(BaseModel):
+    """File a report into a folder (None = the trailing "Ungrouped" section)."""
+
+    group_id: str | None = None
 
 
 # --- video models ----------------------------------------------------------------------
@@ -188,6 +212,63 @@ async def delete_report(request: Request, principal: OwnerDep, report_id: str) -
     record = await lib.fetch_report(principal.id, report_id)
     if record is not None:
         await lib.delete_report(ctx_for(principal), record.id)
+
+
+# --- report folders --------------------------------------------------------------------
+# Owner-only browse metadata (migration 0149), mirroring the Tasks surface's task-groups.
+# Every folder op runs under the FULL-owner context; the move validates the report is in
+# scope and the destination folder is the owner's before it writes the opaque group_id.
+
+
+@router.get("/report-groups")
+async def list_report_groups(request: Request, principal: OwnerDep) -> list[ReportGroupOut]:
+    groups = await get_library(request).list_report_groups(ctx_for(principal))
+    return [ReportGroupOut(**vars(g)) for g in groups]
+
+
+@router.post("/report-groups", status_code=201)
+async def create_report_group(
+    request: Request, principal: OwnerDep, body: ReportGroupBody
+) -> ReportGroupOut:
+    created = await get_library(request).create_report_group(
+        ctx_for(principal), name=body.name.strip()
+    )
+    return ReportGroupOut(**vars(created))
+
+
+@router.patch("/report-groups/{group_id}")
+async def rename_report_group(
+    request: Request, principal: OwnerDep, group_id: str, body: ReportGroupBody
+) -> ReportGroupOut:
+    updated = await get_library(request).rename_report_group(
+        ctx_for(principal), group_id, name=body.name.strip()
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no such folder")
+    return ReportGroupOut(**vars(updated))
+
+
+@router.delete("/report-groups/{group_id}", status_code=204)
+async def delete_report_group(request: Request, principal: OwnerDep, group_id: str) -> None:
+    # Its reports fall to Ungrouped (FK SET NULL); they are never deleted.
+    await get_library(request).delete_report_group(ctx_for(principal), group_id)
+
+
+@router.patch("/reports/{report_id}/group", status_code=204)
+async def move_report(
+    request: Request, principal: OwnerDep, report_id: str, body: MoveReportBody
+) -> None:
+    # Resolve the report under the owner's read scope first (tolerates a non-uuid id and
+    # confirms it exists) — a missing report is a clean 404, not a silent no-op. A non-null
+    # destination must be a folder the owner owns; the write runs under full-owner context.
+    lib = get_library(request)
+    ctx = ctx_for(principal)
+    record = await lib.fetch_report(principal.id, report_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="no report with that id in scope")
+    if body.group_id is not None and not await lib.report_group_exists(ctx, body.group_id):
+        raise HTTPException(status_code=404, detail="no such folder")
+    await lib.set_report_group(ctx, record.id, body.group_id)
 
 
 # --- videos ----------------------------------------------------------------------------
