@@ -1,0 +1,32 @@
+{
+  "name": "an inferred sensitive fact is held for review even though Lever A commits inferred facts",
+  "description": "I5 sensitive-inference net (ENTITY_GRAPH_INGEST_V2 §5, T1.2): Lever A retired the weight-ceiling review gate, so inferred facts now commit by default — EXCEPT on a clearly-sensitive predicate. A general note ('been really down, could barely get out of bed') never states a mood value; the model INFERS mood=depressed (inferred=true). Because `mood` is a deterministically floored-sensitive predicate (domain_floor -> health), two things must hold together: (1) the fact is floored into the HEALTH domain even though the note is general (firewall hardening, T1.3), and (2) it is held pending_review behind a low_confidence_inference card rather than silently committing an inferred mental-health state. A non-sensitive inferred fact in the same note (an implied hobby) commits active — proving the hold is the sensitive net, not a blanket inferred gate.",
+  "steps": [
+    {
+      "domain": "general",
+      "created_at": "2026-06-15T20:00:00-06:00",
+      "body": "Been really down this week — could barely get out of bed. Did manage to noodle on the guitar for a bit though.",
+      "extraction": {
+        "title": "Rough week",
+        "tags": ["mood", "journal"],
+        "mentions": [
+          {"name": "Me", "kind": "Person", "surface_text": "I"}
+        ],
+        "facts": [
+          {"predicate": "mood", "qualifier": "", "kind": "state", "statement": "Feeling depressed.", "value_json": {"value": "depressed"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": {"phrase": "this week", "resolved_start": "2026-06-15T00:00:00-06:00", "resolved_end": null, "precision": "week"}, "domain": "general", "confidence": 0.7, "inferred": true},
+          {"predicate": "hobby", "qualifier": "", "kind": "state", "statement": "Plays guitar.", "value_json": {"value": "guitar"}, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": null, "temporal": null, "domain": "general", "confidence": 0.7, "inferred": true}
+        ],
+        "temporal_tokens": []
+      }
+    }
+  ],
+  "expect": {
+    "facts": [
+      {"entity": "Me", "predicate": "mood", "kind": "state", "value_contains": "depressed", "status": "pending_review", "domain": "health"},
+      {"entity": "Me", "predicate": "hobby", "kind": "state", "value_contains": "guitar", "status": "active", "domain": "general"}
+    ],
+    "review_items": [
+      {"kind": "low_confidence_inference", "domain": "health", "count": 1}
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-07-23
+> **Status:** Living · **Last verified:** 2026-07-26 — per-kind conflict policy + commit-vs-review corrected in place for Ingest V2 Levers A/B (silent supersede with retained history; inferred facts commit unless a safety flag or the I5 sensitive net holds them).
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -107,15 +107,34 @@ source of facts; the entity graph is the arbiter of current truth").
 |---|---|---|---|
 | `event` | "saw Dr. Patel June 3" | `valid_from` = occurrence | **never auto-supersede** — immutable; a conflict is an extraction error → review. The newest *mention* of an old event is usually the least precise. |
 | `measurement` | BP 120/80, weight | instant + `value_json` | **never** — time-series, accumulate; same metric+time disagreeing → review |
-| `state` | address, employer | `valid_from`/`valid_to` | newest-wins eagerly: close old interval (SCD-2), flag review. The old fact stays true *about its interval*. |
+| `state` | address, employer | `valid_from`/`valid_to` | newest-wins eagerly: close old interval (SCD-2), **supersede silently with retained history** (Lever B). The old fact stays true *about its interval*. |
 | `attribute` | birthday, blood type | timeless | **hold `pending_review`, never auto-supersede** — two birthdays is a bug, not news |
-| `preference` | "prefers aisle seats" | from `reported_at` | newest-wins, low-urgency flag; superseded ones stay agent-visible |
-| `relationship` | Bob —works_at→ Acme | interval | supersede only for functional predicates (small allowlist: employer, spouse…); default accumulate |
+| `preference` | "prefers aisle seats" | from `reported_at` | newest-wins, **silent** (Lever B — treated as a state change); superseded ones stay agent-visible |
+| `relationship` | Bob —works_at→ Acme | interval | supersede only for functional predicates (small allowlist: employer, spouse…), **silently with retained history** (Lever B); default accumulate |
 
 Supersession compares **fact validity time, never note capture time** — a
 retrospective note about 2019 must not supersede the current address.
 "Newest" = latest `reported_at` *among facts about the same validity
 period*.
+
+**Disposition default (Lever B, `docs/plans/ENTITY_GRAPH_INGEST_V2_PLAN.md`).** A clean
+*strictly-newer* `state`/`preference`/functional-`relationship` supersession now enacts
+**silently** — the old interval is closed and chained (history is retained, never
+destroyed), and **no `fact_conflict` review card is filed**. A card is still filed when the
+supersession is not clean-and-newer: a same-instant clash, a blocked/derived-defers-primary
+case, or an `attribute` collision (which never auto-supersedes). This flipped the earlier
+"every supersession flags review" default — the review inbox now surfaces genuine conflicts,
+not routine value changes.
+
+**Commit-vs-review (Lever A).** A fact **commits by default**, including an *inferred* one;
+the retired weight-ceiling gate no longer routes low-weight/inferred facts to review. A fact
+is held `pending_review` only when the arbiter raises an explicit reason — a safety flag
+(cross-subject, ambiguous entity, attribute collision, low-confidence supersede guard) or the
+**I5 sensitive-inference net**: an *inferred* fact on a deterministically floored-sensitive
+predicate (health/finance/precise-location, e.g. an inferred `mood`/`diagnosis`) is held so a
+sensitive value the note never literally stated can't commit silently. The fact's weight is
+still computed and stored (the supersession low-confidence guard reads it); it is no longer a
+review gate.
 
 ### Temporal model **[decided: always resolve to absolute]**
 

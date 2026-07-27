@@ -116,23 +116,27 @@ def build_trace(
         if signals.surface_attested
         else f"min(self {fact.self_confidence:.2f}, ceiling {cap:.2f}) = {planned.weight:.2f}"
     )
-    comparator = ">=" if planned.weight >= threshold else "<"
+    # Post-Lever-A (ENTITY_GRAPH_INGEST_V2 T1.2/T1.4): the weight no longer GATES
+    # review — a fact commits by default and is held only when the arbiter raised a
+    # review reason (a safety flag or the I5 sensitive-inference net). `weight` is
+    # the fact's STORED confidence (ceiling-bounded, consumed by the supersession
+    # low-confidence guard); the per-kind `threshold` is kept for audit continuity,
+    # explicitly NOT the decision comparator it was before Lever A.
     reasons = ", ".join(planned.review_reasons) or "—"
+    verdict = f"held [{reasons}]" if planned.review_reasons else "committed (no review flags)"
     arbiter = {
         "key": "arbiter",
         "name": "Arbiter",
         "version": "weight model · deterministic",
-        "summary": (
-            f"ceiling {cap:.2f} · weight {planned.weight:.2f} "
-            f"{comparator} {threshold:.2f} → {planned.status}"
-        ),
+        "summary": f"weight {planned.weight:.2f} stored · {verdict}",
         "rows": [
             ["surface_attested", _bool(signals.surface_attested)],
             ["is_supersede", _bool(signals.is_supersede)],
             ["ceiling", f"{cap:.2f}"],
             ["weight", weight_expr],
-            ["threshold", f"{fact.kind} → {threshold:.2f}"],
-            ["status", f"{planned.status} [{reasons}]"],
+            ["threshold", f"{fact.kind} → {threshold:.2f} (audit ref, not a gate)"],
+            ["review", reasons],
+            ["status", planned.status],
         ],
     }
 

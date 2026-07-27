@@ -1193,25 +1193,21 @@ async def test_state_change_forms_supersession_chain(
     assert old.valid_to is not None  # SCD-2 close at the new interval's start
     assert str(old.note_id) == first_note and str(new.note_id) == second_note
 
+    # Post-Lever-B (ENTITY_GRAPH_INGEST_V2 §5): this is a clean, strictly-newer state
+    # change, so the supersession enacts SILENTLY — the chain above is the whole
+    # record and NO fact_conflict change-notice card is filed. (The card's rendering
+    # is still covered where a card genuinely fires: same-instant clashes, negations,
+    # attribute collisions.)
     reviews = await rows(
         maker,
         OWNER,
         "SELECT payload FROM app.review_items WHERE kind = 'fact_conflict' AND status = 'open'",
     )
-    item = next(
-        r.payload
+    assert not [
+        r
         for r in reviews
         if r.payload.get("fact_a") == str(old.id) and r.payload.get("fact_b") == str(new.id)
-    )
-    # The change-notice card: ids plus the display fields the UI renders.
-    assert item["summary"] == "Me's residence changed"
-    assert [c["action"] for c in item["choices"]] == ["accept_a", "accept_b"]
-    # The card label renders the fact's datum (the place), not the prose sentence
-    # (value-renderer fix: never echo the whole statement as the value).
-    assert item["choices"][0]["label"] == "4 Cedar Ct"
-    assert "<mark>We</mark>" in item["snippet"]
-    # The subject the review UI groups the card under (vs the "Other" bucket).
-    assert item["entity_ref"] == "Me"
+    ]
 
 
 async def test_relocation_state_supersedes_across_notes(
@@ -1219,7 +1215,8 @@ async def test_relocation_state_supersedes_across_notes(
 ) -> None:
     """Bug 1 regression: a relocation is a `state` on the canonical schema.org
     predicate homeLocation, so a later note's city supersedes the earlier one
-    (SCD-2 close + fact_conflict review), not two forked events."""
+    (SCD-2 close), not two forked events. Post-Lever-B this clean, strictly-newer
+    change supersedes SILENTLY — no fact_conflict card."""
 
     def home_fact(place: str, start: str) -> dict[str, Any]:
         return {
@@ -1278,15 +1275,14 @@ async def test_relocation_state_supersedes_across_notes(
     assert denver.valid_to is not None  # SCD-2 close
     assert str(denver.note_id) == note_a and str(boulder.note_id) == note_b
 
-    review = (
-        await rows(
-            maker,
-            OWNER,
-            "SELECT payload FROM app.review_items WHERE kind = 'fact_conflict'"
-            " AND status = 'open' AND payload->>'predicate' = 'homeLocation'",
-        )
-    )[0].payload
-    assert review["fact_a"] == str(denver.id) and review["fact_b"] == str(boulder.id)
+    # Lever B: the clean strictly-newer homeLocation change files no fact_conflict card.
+    reviews = await rows(
+        maker,
+        OWNER,
+        "SELECT payload FROM app.review_items WHERE kind = 'fact_conflict'"
+        " AND status = 'open' AND payload->>'predicate' = 'homeLocation'",
+    )
+    assert reviews == []
 
 
 async def test_malformed_extraction_is_permanent_and_writes_nothing(

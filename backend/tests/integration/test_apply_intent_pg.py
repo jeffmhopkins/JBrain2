@@ -286,7 +286,10 @@ async def test_apply_intent_holds_cross_subject_review_fact(maker, tmp_path):  #
     trace = cards[0].payload["trace"]
     assert [s["key"] for s in trace["stages"]] == ["extraction", "integration", "arbiter"]
     arbiter_rows = dict(r for r in trace["stages"][2]["rows"])
-    assert "cross_subject_link" in arbiter_rows["status"]
+    # Post-Lever-A the arbiter stage carries the held reason on a dedicated `review`
+    # row (the status row is just the disposition, not the retired gate comparison).
+    assert arbiter_rows["review"] == "cross_subject_link"
+    assert arbiter_rows["status"] == "pending_review"
 
 
 async def test_held_card_carries_weighted_predicate_suggestions(maker, tmp_path):  # noqa: F811
@@ -337,25 +340,34 @@ async def test_held_card_carries_weighted_predicate_suggestions(maker, tmp_path)
     assert top["name"] == "sector" and top["score"] > 0.99
 
 
-async def test_apply_intent_holds_below_threshold_fact_decide_would_commit(maker, tmp_path):  # noqa: F811
-    # A low-weight fact (no cross-subject) the weight model holds below threshold:
-    # routed to _insert_held_fact, it must land pending_review even though decide()
-    # — fed the same fact — would have inserted it ACTIVE (no existing head).
-    note_id = await make_note(maker, domain="general", body="Globex notes.")
+async def test_apply_intent_holds_inferred_sensitive_fact_decide_would_commit(maker, tmp_path):  # noqa: F811
+    # Post-Lever-A the weight ceiling no longer gates review; the deterministic hold
+    # that replaced it is the I5 sensitive-inference net. An INFERRED fact on a
+    # floored-sensitive predicate (mood → health) routed to _insert_held_fact must
+    # land pending_review even though decide() — fed the same fact — would have
+    # inserted it ACTIVE (no existing head).
+    note_id = await make_note(maker, domain="general", body="Journal entry.")
     await ingest(maker, note_id, tmp_path)
     intent = _intent(
         note_id,
+        [EntityResolution(mention_ref="m1", mode="new", new_kind="Person", new_name="Me")],
         [
-            EntityResolution(
-                mention_ref="m1", mode="new", new_kind="Organization", new_name="Globex"
+            _fact(
+                "m1",
+                predicate="mood",
+                kind="state",
+                value_json={"value": "depressed"},
+                statement="Feeling depressed.",
+                attested_span=None,
+                inferred=True,
+                self_confidence=0.7,
             )
         ],
-        [_fact("m1", inferred=True, self_confidence=0.2)],
     )
-    # Inferred + low self-confidence + no surface signal → weight under the commit
-    # threshold → held (below_threshold), not active.
+    # Inferred + floored-sensitive predicate → I5 holds it (sensitive_inference).
     plan = plan_intent(intent, signals={0: ConfidenceSignals(False, False)})
     assert plan.to_review and not plan.to_commit
+    assert plan.to_review[0].review_reasons == ("sensitive_inference",)
     await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
 
     async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -364,7 +376,9 @@ async def test_apply_intent_holds_below_threshold_fact_decide_would_commit(maker
             .scalars()
             .all()
         )
+    # Held pending_review AND floored into the health domain (the predicate forces it).
     assert len(facts) == 1 and facts[0].status == "pending_review"
+    assert facts[0].domain_code == "health"
 
 
 async def _seed_entity(maker, name: str, *, domain: str = "general") -> str:  # noqa: F811
@@ -483,7 +497,11 @@ async def test_review_card_renders_the_object_node_not_the_statement(maker, tmp_
         note_id,
         [
             EntityResolution(
-                mention_ref="m1", mode="new", new_kind="Organization", new_name="Acme"
+                mention_ref="m1",
+                mode="new",
+                new_kind="Organization",
+                new_name="Acme",
+                cross_subject=True,
             ),
             EntityResolution(
                 mention_ref="m2", mode="new", new_kind="Place", new_name="200 Oak Ave"
@@ -498,14 +516,13 @@ async def test_review_card_renders_the_object_node_not_the_statement(maker, tmp_
                 object_entity_ref="m2",
                 statement="The account address is 200 Oak Ave.",
                 attested_span=AttestedSpan("c", "200 Oak Ave"),
-                inferred=True,
-                self_confidence=0.2,
             )
         ],
     )
-    # Below threshold → held behind a low_confidence_inference card (the shape the box
-    # filed for the object-bound account address).
-    plan = plan_intent(intent, signals={0: ConfidenceSignals(False, False)})
+    # Cross-subject → held behind a low_confidence_inference card (the shape the box
+    # filed for the object-bound account address). The hold trigger is incidental;
+    # this test pins the card's object-node rendering, not why it was held.
+    plan = plan_intent(intent, signals={0: _SURFACE})
     assert plan.to_review and not plan.to_commit
     await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
 
@@ -587,7 +604,16 @@ async def test_reanalysis_promotes_a_held_edge_to_active_and_mints_reciprocal(ma
     child_id = await _seed_person(maker, "Kiddo")
     note_id = await make_note(maker, domain="general", body="Family notes.")
     await ingest(maker, note_id, tmp_path)
-    resolutions = [
+    # Run 1 marks the subject cross_subject → the edge is held; Run 2 drops the flag
+    # so the SAME edge commits (post-Lever-A the hold is a safety flag, not a weight
+    # gate). Both runs key on the same existing entities (mode=new would mint fresh).
+    resolutions_held = [
+        EntityResolution(
+            mention_ref="m1", mode="existing", proposed_entity_id=parent_id, cross_subject=True
+        ),
+        EntityResolution(mention_ref="m2", mode="existing", proposed_entity_id=child_id),
+    ]
+    resolutions_commit = [
         EntityResolution(mention_ref="m1", mode="existing", proposed_entity_id=parent_id),
         EntityResolution(mention_ref="m2", mode="existing", proposed_entity_id=child_id),
     ]
@@ -598,16 +624,15 @@ async def test_reanalysis_promotes_a_held_edge_to_active_and_mints_reciprocal(ma
             kind="relationship",
             object_entity_ref="m2",
             statement="Parent has a child Kiddo.",
-            self_confidence=0.2,
         )
     ]
 
-    # Run 1: below threshold → held, and a held edge mints no reciprocal.
-    held_plan = plan_intent(
-        _intent(note_id, resolutions, facts), signals={0: ConfidenceSignals(False, False)}
-    )
+    # Run 1: cross_subject → held, and a held edge mints no reciprocal.
+    held_plan = plan_intent(_intent(note_id, resolutions_held, facts), signals={0: _SURFACE})
     assert held_plan.to_review and not held_plan.to_commit
-    await _run(maker, note_id, _intent(note_id, resolutions, facts), held_plan, tmp_path=tmp_path)
+    await _run(
+        maker, note_id, _intent(note_id, resolutions_held, facts), held_plan, tmp_path=tmp_path
+    )
     async with scoped_session(maker, SYSTEM_CTX) as session:
         children = (
             (
@@ -635,10 +660,13 @@ async def test_reanalysis_promotes_a_held_edge_to_active_and_mints_reciprocal(ma
     held_id = children[0].id
     assert parents == []  # no reciprocal while held
 
-    # Run 2: now clears threshold → promote the same row in place + mint reciprocal.
-    commit_plan = plan_intent(_intent(note_id, resolutions, facts), signals={0: _SURFACE})
+    # Run 2: no cross_subject flag → the edge commits, promoting the same row in
+    # place + minting the reciprocal a held edge never did.
+    commit_plan = plan_intent(_intent(note_id, resolutions_commit, facts), signals={0: _SURFACE})
     assert commit_plan.to_commit and not commit_plan.to_review
-    await _run(maker, note_id, _intent(note_id, resolutions, facts), commit_plan, tmp_path=tmp_path)
+    await _run(
+        maker, note_id, _intent(note_id, resolutions_commit, facts), commit_plan, tmp_path=tmp_path
+    )
     async with scoped_session(maker, SYSTEM_CTX) as session:
         children2 = (
             (
@@ -789,7 +817,15 @@ async def test_inference_card_renders_the_committed_coerced_value(maker, tmp_pat
     await ingest(maker, note_id, tmp_path)
     intent = _intent(
         note_id,
-        [EntityResolution(mention_ref="m1", mode="new", new_kind="Person", new_name="Celine")],
+        [
+            EntityResolution(
+                mention_ref="m1",
+                mode="new",
+                new_kind="Person",
+                new_name="Celine",
+                cross_subject=True,
+            )
+        ],
         [
             _fact(
                 "m1",
@@ -803,8 +839,8 @@ async def test_inference_card_renders_the_committed_coerced_value(maker, tmp_pat
             )
         ],
     )
-    # Inferred (not surface-attested): weight is capped to 0.6 < the 0.7 state
-    # threshold, so the fact is held and an inference card is filed.
+    # Cross-subject → the fact is held and an inference card is filed. The value
+    # coercion the card mirrors is independent of why the fact was held.
     plan = plan_intent(intent, signals={0: ConfidenceSignals(False, False)})
     await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
 

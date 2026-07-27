@@ -1,10 +1,12 @@
 # JBrain2 — Entity Graph Refocus Plan (spine, not encyclopedia)
 
-> **Status:** Living (reference) · **Last verified:** 2026-07-03 — the two-tier
+> **Status:** Living (reference) · **Last verified:** 2026-07-26 — the two-tier
 > predicate model this plan describes shipped (PR #718, 2026-07-02; see
-> `analysis/predicates.py`, `weight.py`, `pipeline.py`, `worker.py`). Kept in
-> `docs/` as the canonical description of the two-tier model, which `README`
-> cites; the wave log below is now history.
+> `analysis/predicates.py`, `weight.py`, `pipeline.py`, `worker.py`). §6's
+> `relatedTo` deferral rationale corrected in place for Ingest V2 Lever A (the
+> `INFERRED_CEILING` no longer gates review). Kept in `docs/` as the canonical
+> description of the two-tier model, which `README` cites; the wave log below is
+> now history.
 >
 > Owner-ratified direction, grounded by six scoped codebase researchers (two-tier
 > split, prompting, traversal, relatedTo, review-inbox impact, eval fallout).
@@ -415,10 +417,13 @@ also deferred (don't touch the shipped graph-view contract).
 Researcher finding, decisive: intent validation requires every fact object to
 be a mention_ref from THIS note (`intent.py:214-219`, fatal) — so relatedTo can
 only connect entities already co-mentioned, which the traversal already links
-at 2 hops. Its only marginal population is *inferred* associations, which the
-weight model hard-routes to review (`INFERRED_CEILING 0.6 <` relationship
-threshold `0.7`) + a `low_confidence_inference` card — manufacturing exactly
-the noise this plan removes. The genuinely missed cross-note cases (episode
+at 2 hops. Its only marginal population is *inferred* associations. Under the
+Ingest V2 Lever A change (`docs/plans/ENTITY_GRAPH_INGEST_V2_PLAN.md`) the
+`INFERRED_CEILING` no longer gates review, so such an edge would instead **commit
+silently** — manufacturing low-value inferred `relatedTo` edges directly in the
+graph (the inverse noise, but the same low-value population this refocus avoids;
+`relatedTo` is not a floored-sensitive predicate, so the I5 net does not catch
+it). The genuinely missed cross-note cases (episode
 continuation, unnamed groups) are unreachable by relatedTo too; the recovery
 path is identity resolution, not a new predicate.
 

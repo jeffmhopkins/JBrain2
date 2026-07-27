@@ -34,6 +34,7 @@ from jbrain.analysis.extraction import (
     ExtractedMention,
     ExtractedTemporal,
     Extraction,
+    domain_floor,
 )
 from jbrain.analysis.intent import (
     EntityPairProposal,
@@ -48,7 +49,6 @@ from jbrain.analysis.intent import (
 from jbrain.analysis.weight import (
     CommitStatus,
     ConfidenceSignals,
-    commit_status,
     effective_weight,
 )
 from jbrain.schema import get_registry
@@ -142,7 +142,11 @@ def plan_intent(
         # force-supersede + pin.
         fact_correction = correction and signals_i.surface_attested
         weight = 1.0 if fact_correction else effective_weight(fact.self_confidence, signals_i)
-        status: CommitStatus = "active" if fact_correction else commit_status(fact.kind, weight)
+        # Lever A (ENTITY_GRAPH_INGEST_V2 §5, T1.2): a fact COMMITS by default — the
+        # inferred-ceiling review gate (commit_status/COMMIT_THRESHOLDS) is retired. Review is
+        # driven only by the safety flags (ambiguous / cross-subject) and the I5 net below.
+        # `weight` is still the fact's stored confidence; it no longer gates review.
+        status: CommitStatus = "active"
         # Order-preserving de-dup: a self-edge (same flagged mention as both
         # subject and object) must not repeat its reason.
         reasons = list(
@@ -152,12 +156,20 @@ def plan_intent(
                 if ref is not None and ref in flagged
             )
         )
+        # I5 sensitive net (T1.3, ratified §11.3): an INFERRED fact on a deterministically
+        # floored sensitive predicate holds for review — the asymmetric-caution net that
+        # replaces the ceiling's incidental firewall coverage. Keyed on the FLOOR (a predicate
+        # signal the arbiter already has), NEVER a model per-fact domain (firewall red-team).
+        # A surface-attested correction is authoritative and exempt.
+        if (
+            not reasons
+            and not fact_correction
+            and fact.inferred
+            and domain_floor(fact.predicate) is not None
+        ):
+            reasons = ["sensitive_inference"]
         if reasons:
             status = "pending_review"
-        elif status == "pending_review":
-            # Held purely by the weight ceiling — record a machine-readable
-            # reason so the inbox (A1b) needn't reconstruct it from weight+kind.
-            reasons = ["below_threshold"]
         planned.append(
             PlannedFact(
                 fact=fact,

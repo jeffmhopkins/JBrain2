@@ -1144,7 +1144,11 @@ def test_domain_floor_raises_general_to_restricted_only() -> None:
     assert domain_floor("mortgage") == "finance"
     assert domain_floor("latitude") == "location"  # precise geo only
     assert domain_floor("ate") is None  # unknown -> model decides
-    # Ambiguous / not-firewall-sensitive predicates are deliberately not floored.
+    # Borderline-sensitive predicates (T1.3): floored deterministically so an inferred
+    # mood/weight/symptom fact is correct-domained without trusting a model per-fact domain.
+    for p in ("mood", "mentalHealthState", "bodyWeight", "bodyMass", "symptom", "hasSymptom"):
+        assert domain_floor(p) == "health", p
+    # Ambiguous / not-firewall-sensitive predicates are deliberately still not floored.
     assert domain_floor("weight") is None and domain_floor("temperature") is None
     assert domain_floor("homeLocation") is None  # a home city is ordinary
 

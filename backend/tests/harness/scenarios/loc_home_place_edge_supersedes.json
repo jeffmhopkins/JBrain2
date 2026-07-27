@@ -1,6 +1,6 @@
 {
   "name": "homeLocation as a Place edge still supersedes across different place nodes",
-  "description": "Follow-up to the object-edge work (docs/reference/ANALYSIS.md 'property graph'): a residence now links to a Place node (object_entity_ref) AND keeps {place} for display, instead of burying the city in a string. The safety property this pins: homeLocation is FUNCTIONAL (supersession._existing_facts drops the object from a functional key), so moving Denver -> Boulder supersedes even though the two facts point at DIFFERENT Place entities — the move does not fork into two simultaneous residences. Contrast own_relationship_edges_accumulate, where owns is non-functional and distinct objects accumulate. Mints Denver and Boulder as provisional Place entities.",
+  "description": "Follow-up to the object-edge work (docs/reference/ANALYSIS.md 'property graph'): a residence now links to a Place node (object_entity_ref) AND keeps {place} for display, instead of burying the city in a string. The safety property this pins: homeLocation is FUNCTIONAL (supersession._existing_facts drops the object from a functional key), so moving Denver -> Boulder supersedes even though the two facts point at DIFFERENT Place entities — the move does not fork into two simultaneous residences. Contrast own_relationship_edges_accumulate, where owns is non-functional and distinct objects accumulate. Mints Denver and Boulder as provisional Place entities. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
   "steps": [
     {
       "domain": "general",
@@ -8,13 +8,44 @@
       "body": "Sarah just moved to Denver.",
       "extraction": {
         "title": "Sarah moved to Denver",
-        "tags": ["sarah", "relocation", "denver"],
+        "tags": [
+          "sarah",
+          "relocation",
+          "denver"
+        ],
         "mentions": [
-          {"name": "Sarah", "kind": "Person", "surface_text": "Sarah"},
-          {"name": "Denver", "kind": "Place", "surface_text": "Denver"}
+          {
+            "name": "Sarah",
+            "kind": "Person",
+            "surface_text": "Sarah"
+          },
+          {
+            "name": "Denver",
+            "kind": "Place",
+            "surface_text": "Denver"
+          }
         ],
         "facts": [
-          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah lives in Denver.", "value_json": {"place": "Denver"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": "Denver", "temporal": {"phrase": "just", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.85}
+          {
+            "predicate": "homeLocation",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Sarah lives in Denver.",
+            "value_json": {
+              "place": "Denver"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Sarah",
+            "object_entity_ref": "Denver",
+            "temporal": {
+              "phrase": "just",
+              "resolved_start": "2026-06-10T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.85
+          }
         ],
         "temporal_tokens": []
       }
@@ -25,13 +56,44 @@
       "body": "Sarah actually moved to Boulder, not Denver.",
       "extraction": {
         "title": "Sarah moved to Boulder",
-        "tags": ["sarah", "relocation", "correction"],
+        "tags": [
+          "sarah",
+          "relocation",
+          "correction"
+        ],
         "mentions": [
-          {"name": "Sarah", "kind": "Person", "surface_text": "Sarah"},
-          {"name": "Boulder", "kind": "Place", "surface_text": "Boulder"}
+          {
+            "name": "Sarah",
+            "kind": "Person",
+            "surface_text": "Sarah"
+          },
+          {
+            "name": "Boulder",
+            "kind": "Place",
+            "surface_text": "Boulder"
+          }
         ],
         "facts": [
-          {"predicate": "homeLocation", "qualifier": "", "kind": "state", "statement": "Sarah lives in Boulder.", "value_json": {"place": "Boulder"}, "assertion": "asserted", "entity_ref": "Sarah", "object_entity_ref": "Boulder", "temporal": {"phrase": "", "resolved_start": "2026-06-10T00:00:00-06:00", "resolved_end": null, "precision": "day"}, "domain": "general", "confidence": 0.9}
+          {
+            "predicate": "homeLocation",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Sarah lives in Boulder.",
+            "value_json": {
+              "place": "Boulder"
+            },
+            "assertion": "asserted",
+            "entity_ref": "Sarah",
+            "object_entity_ref": "Boulder",
+            "temporal": {
+              "phrase": "",
+              "resolved_start": "2026-06-10T00:00:00-06:00",
+              "resolved_end": null,
+              "precision": "day"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          }
         ],
         "temporal_tokens": []
       }
@@ -39,19 +101,53 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Sarah", "predicate": "homeLocation", "kind": "state", "value_contains": "Denver", "status": "superseded", "chained": true},
-      {"entity": "Sarah", "predicate": "homeLocation", "kind": "state", "value_contains": "Boulder", "status": "active", "chained": false}
+      {
+        "entity": "Sarah",
+        "predicate": "homeLocation",
+        "kind": "state",
+        "value_contains": "Denver",
+        "status": "superseded",
+        "chained": true
+      },
+      {
+        "entity": "Sarah",
+        "predicate": "homeLocation",
+        "kind": "state",
+        "value_contains": "Boulder",
+        "status": "active",
+        "chained": false
+      }
     ],
     "absent_facts": [
-      {"entity": "Sarah", "predicate": "homeLocation", "value_contains": "Denver", "status": "active"}
+      {
+        "entity": "Sarah",
+        "predicate": "homeLocation",
+        "value_contains": "Denver",
+        "status": "active"
+      }
     ],
     "review_items": [
-      {"kind": "fact_conflict", "summary_contains": "homeLocation"}
+      {
+        "kind": "fact_conflict",
+        "count": 0
+      }
     ],
     "entities": [
-      {"name": "Sarah", "kind": "Person", "status": "provisional"},
-      {"name": "Denver", "kind": "Place", "status": "provisional"},
-      {"name": "Boulder", "kind": "Place", "status": "provisional"}
+      {
+        "name": "Sarah",
+        "kind": "Person",
+        "status": "provisional"
+      },
+      {
+        "name": "Denver",
+        "kind": "Place",
+        "status": "provisional"
+      },
+      {
+        "name": "Boulder",
+        "kind": "Place",
+        "status": "provisional"
+      }
     ]
   }
 }

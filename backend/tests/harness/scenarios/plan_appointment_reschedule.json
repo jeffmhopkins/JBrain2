@@ -1,6 +1,6 @@
 {
   "name": "appointment reschedule supersedes the scheduled time, identity stable",
-  "description": "An appointment is a stable entity whose scheduled time is a supersedable state binding (docs/reference/ANALYSIS.md 'Temporal tokens and appointment identity'). 'Dr. Nguyen Friday' then 'moved to Monday' must close the Friday binding (SCD-2), keep the full reschedule chain, file a fact_conflict, and leave exactly one active scheduled time — all on the same appointment entity. Modeled as a state fact on schema.org-style 'scheduledTime'; the Monday time is LATER validity than Friday so the validity-newest-wins comparison in supersession.decide picks it as current.",
+  "description": "An appointment is a stable entity whose scheduled time is a supersedable state binding (docs/reference/ANALYSIS.md 'Temporal tokens and appointment identity'). 'Dr. Nguyen Friday' then 'moved to Monday' must close the Friday binding (SCD-2), keep the full reschedule chain, file a fact_conflict, and leave exactly one active scheduled time — all on the same appointment entity. Modeled as a state fact on schema.org-style 'scheduledTime'; the Monday time is LATER validity than Friday so the validity-newest-wins comparison in supersession.decide picks it as current. Lever B (ENTITY_GRAPH_INGEST_V2 §5): this clean state/relationship supersession now supersedes SILENTLY with retained history — no fact_conflict card is filed.",
   "steps": [
     {
       "domain": "general",
@@ -8,10 +8,39 @@
       "body": "Dentist with Dr. Nguyen is set for this Friday at 2pm.",
       "extraction": {
         "title": "Dentist Friday",
-        "tags": ["dentist", "appointment", "nguyen"],
-        "mentions": [{"name": "Dr. Nguyen dentist appointment", "kind": "appointment", "surface_text": "Dentist with Dr. Nguyen"}],
+        "tags": [
+          "dentist",
+          "appointment",
+          "nguyen"
+        ],
+        "mentions": [
+          {
+            "name": "Dr. Nguyen dentist appointment",
+            "kind": "appointment",
+            "surface_text": "Dentist with Dr. Nguyen"
+          }
+        ],
         "facts": [
-          {"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Dentist appointment with Dr. Nguyen scheduled for Friday 2026-06-12 at 2pm.", "value_json": {"start": "2026-06-12T14:00:00-06:00"}, "assertion": "expected", "entity_ref": "Dr. Nguyen dentist appointment", "object_entity_ref": null, "temporal": {"phrase": "this Friday at 2pm", "resolved_start": "2026-06-12T14:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.9}
+          {
+            "predicate": "scheduledTime",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Dentist appointment with Dr. Nguyen scheduled for Friday 2026-06-12 at 2pm.",
+            "value_json": {
+              "start": "2026-06-12T14:00:00-06:00"
+            },
+            "assertion": "expected",
+            "entity_ref": "Dr. Nguyen dentist appointment",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "this Friday at 2pm",
+              "resolved_start": "2026-06-12T14:00:00-06:00",
+              "resolved_end": null,
+              "precision": "instant"
+            },
+            "domain": "general",
+            "confidence": 0.9
+          }
         ],
         "temporal_tokens": []
       }
@@ -22,10 +51,39 @@
       "body": "The dentist appointment with Dr. Nguyen got moved to Monday at 2pm.",
       "extraction": {
         "title": "Dentist moved to Monday",
-        "tags": ["dentist", "appointment", "reschedule"],
-        "mentions": [{"name": "Dr. Nguyen dentist appointment", "kind": "appointment", "surface_text": "dentist appointment with Dr. Nguyen"}],
+        "tags": [
+          "dentist",
+          "appointment",
+          "reschedule"
+        ],
+        "mentions": [
+          {
+            "name": "Dr. Nguyen dentist appointment",
+            "kind": "appointment",
+            "surface_text": "dentist appointment with Dr. Nguyen"
+          }
+        ],
         "facts": [
-          {"predicate": "scheduledTime", "qualifier": "", "kind": "state", "statement": "Dentist appointment with Dr. Nguyen rescheduled to Monday 2026-06-15 at 2pm.", "value_json": {"start": "2026-06-15T14:00:00-06:00"}, "assertion": "expected", "entity_ref": "Dr. Nguyen dentist appointment", "object_entity_ref": null, "temporal": {"phrase": "Monday at 2pm", "resolved_start": "2026-06-15T14:00:00-06:00", "resolved_end": null, "precision": "instant"}, "domain": "general", "confidence": 0.92}
+          {
+            "predicate": "scheduledTime",
+            "qualifier": "",
+            "kind": "state",
+            "statement": "Dentist appointment with Dr. Nguyen rescheduled to Monday 2026-06-15 at 2pm.",
+            "value_json": {
+              "start": "2026-06-15T14:00:00-06:00"
+            },
+            "assertion": "expected",
+            "entity_ref": "Dr. Nguyen dentist appointment",
+            "object_entity_ref": null,
+            "temporal": {
+              "phrase": "Monday at 2pm",
+              "resolved_start": "2026-06-15T14:00:00-06:00",
+              "resolved_end": null,
+              "precision": "instant"
+            },
+            "domain": "general",
+            "confidence": 0.92
+          }
         ],
         "temporal_tokens": []
       }
@@ -33,15 +91,42 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Dr. Nguyen dentist appointment", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-12T14:00:00", "status": "superseded", "chained": true},
-      {"entity": "Dr. Nguyen dentist appointment", "predicate": "scheduledTime", "kind": "state", "value_contains": "2026-06-15T14:00:00", "status": "active", "chained": false},
-      {"entity": "Dr. Nguyen dentist appointment", "predicate": "scheduledTime", "kind": "state", "status": "active", "count": 1}
+      {
+        "entity": "Dr. Nguyen dentist appointment",
+        "predicate": "scheduledTime",
+        "kind": "state",
+        "value_contains": "2026-06-12T14:00:00",
+        "status": "superseded",
+        "chained": true
+      },
+      {
+        "entity": "Dr. Nguyen dentist appointment",
+        "predicate": "scheduledTime",
+        "kind": "state",
+        "value_contains": "2026-06-15T14:00:00",
+        "status": "active",
+        "chained": false
+      },
+      {
+        "entity": "Dr. Nguyen dentist appointment",
+        "predicate": "scheduledTime",
+        "kind": "state",
+        "status": "active",
+        "count": 1
+      }
     ],
     "review_items": [
-      {"kind": "fact_conflict", "summary_contains": "scheduledTime"}
+      {
+        "kind": "fact_conflict",
+        "count": 0
+      }
     ],
     "entities": [
-      {"name": "Dr. Nguyen dentist appointment", "kind": "appointment", "status": "provisional"}
+      {
+        "name": "Dr. Nguyen dentist appointment",
+        "kind": "appointment",
+        "status": "provisional"
+      }
     ]
   }
 }

@@ -1,6 +1,6 @@
 # Plans — active build plans
 
-> **Status:** Living · **Last verified:** 2026-07-20
+> **Status:** Living · **Last verified:** 2026-07-24
 
 Active, multi-wave build plans (`Scheduled` / `In progress` / `Parked`, per
 `../DOC_LIFECYCLE.md`). A plan archives to `../archive/` in the PR that lands its
@@ -8,6 +8,7 @@ last wave; proposed-but-unscheduled ideas live in `../proposed/`.
 
 | Doc | Status |
 |---|---|
+| `ENTITY_GRAPH_INGEST_V2_PLAN.md` | **Scheduled** — cut entity-graph ingest review-inbox noise without changing the pipeline structure: remove the inferred-ceiling review trap + retire the 8 arbiter backstops (Lever A), default `state`/functional-`relationship` conflicts to non-destructive supersede-with-history by validity time while attributes stay review as the hidden-merge signal (Lever B), and let structured review-card corrections write their pinned override directly (Lever C). Re-run determinism stays deterministic (recomputation, no cached verdict); the deterministic firewall/RLS/namesake spine is unchanged. §11 decisions ratified; on-box gpt-oss-120b validation (§15) showed the ingest-quality gap is prompt+schema, not architecture (agentic/multi-tier ingestion evaluated and rejected, §16). V0 spike largely done; V1–V5 open. |
 | `EMR_IMPORT_PLAN.md` | **In progress** — EMR / medical-record import: multi-system EMR PDF exports normalized into cited, health-firewalled `measurement` + `event` facts, with `lab_results`/`encounters` projections and `read_labs`/`read_encounters` tools. W0 (gates + synthetic fixtures) done; W1–W5 open. |
 | `PHASE6_WIKI_PLAN.md` | **In progress** — Phase 6 (Wiki). Waves A–C shipped (builder, citations, Talk); Wave D open (re-enable schedules, grounding-gate tuning, purge→rebuild). |
 | `JCODE_SESSION_ISOLATION_PLAN.md` | **Parked** — per-session network namespace; the P0 substrate was reverted after the P1 spike. Kept for a future revisit. |

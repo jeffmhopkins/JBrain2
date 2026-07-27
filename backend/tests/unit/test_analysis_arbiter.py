@@ -83,9 +83,10 @@ def test_surface_attested_fact_commits():
     assert plan.to_commit[0].weight == 1.0  # surface-attested → full ceiling
 
 
-def test_inferred_attribute_overwrite_routes_to_review():
-    # The canonical case: a pronoun-inferred gender that would overwrite. The
-    # weight ceiling (0.4) is far below attribute's 0.8 threshold → review.
+def test_inferred_nonsensitive_attribute_commits_under_lever_a():
+    # Lever A (T1.2): the inferred-ceiling review gate is retired — an inferred NON-sensitive
+    # attribute (gender is not floored) commits; a two-value collision is handled later by
+    # supersession (attribute_collision), not by an arbiter ceiling.
     plan = plan_intent(
         _intent(
             entity_resolutions=[_res()],
@@ -93,9 +94,7 @@ def test_inferred_attribute_overwrite_routes_to_review():
         ),
         signals={0: _inferred_overwrite_sig()},
     )
-    assert plan.to_commit == ()
-    assert len(plan.to_review) == 1
-    assert plan.to_review[0].status == "pending_review"
+    assert len(plan.to_commit) == 1 and plan.to_review == ()
 
 
 def test_cross_subject_link_forces_fact_to_review_despite_high_weight():
@@ -127,12 +126,11 @@ def test_object_ref_flag_also_forces_review():
     assert plan.to_review[0].review_reasons == ("cross_subject_link",)
 
 
-def test_missing_signals_default_conservative():
-    # No signals supplied → conservative (inferred/unknown/overwrite) → low
-    # weight → review, never a silent commit.
+def test_missing_signals_commit_under_lever_a():
+    # Lever A: with no ceiling gate, a fact commits unless a safety flag or the I5 sensitive
+    # net fires. A missing-signals fact (default _fact, non-sensitive spouse) commits.
     plan = plan_intent(_intent(entity_resolutions=[_res()], facts=[_fact()]))
-    assert plan.to_commit == ()
-    assert len(plan.to_review) == 1
+    assert len(plan.to_commit) == 1 and plan.to_review == ()
 
 
 def test_merge_and_distinct_proposals_carried_for_review():
@@ -146,15 +144,19 @@ def test_merge_and_distinct_proposals_carried_for_review():
     assert len(plan.distinct_proposals) == 1
 
 
-def test_weight_gated_review_records_below_threshold_reason():
+def test_inferred_sensitive_fact_holds_for_review_i5():
+    # I5 (T1.3): an INFERRED fact on a deterministically floored sensitive predicate (mood)
+    # holds for review with a sensitive_inference reason — keyed on the floor, never a model
+    # domain. This is the asymmetric-caution net that replaces the retired ceiling.
     plan = plan_intent(
         _intent(
             entity_resolutions=[_res()],
-            facts=[_fact(predicate="gender", kind="attribute", inferred=True, attested_span=None)],
+            facts=[_fact(predicate="mood", kind="state", inferred=True, attested_span=None)],
         ),
         signals={0: _inferred_overwrite_sig()},
     )
-    assert plan.to_review[0].review_reasons == ("below_threshold",)
+    assert plan.to_commit == ()
+    assert plan.to_review[0].review_reasons == ("sensitive_inference",)
 
 
 def test_self_edge_flag_reason_is_not_duplicated():
@@ -283,16 +285,16 @@ def test_plan_to_extraction_round_trips_all_fact_fields():
     assert ef.object_entity_ref == "m2"
 
 
-def test_plan_to_extraction_review_fact_carries_capped_weight():
-    # A below-threshold fact's confidence is its capped plan weight, not the
-    # model's (higher) self_confidence.
+def test_plan_to_extraction_inferred_fact_carries_capped_weight():
+    # Lever A: an inferred fact commits, but its stored confidence is still the CAPPED plan
+    # weight, not the model's (higher) self_confidence.
     intent = _intent(
         entity_resolutions=[_res()],
         facts=[_fact(kind="attribute", inferred=True, attested_span=None, self_confidence=0.99)],
     )
     plan = plan_intent(intent, signals={0: _inferred_overwrite_sig()})
     ef = plan_to_extraction(intent, plan).facts[0]
-    assert ef.confidence == plan.to_review[0].weight
+    assert ef.confidence == plan.to_commit[0].weight
     assert ef.confidence < 0.99
 
 
@@ -713,7 +715,9 @@ def test_inferred_fact_in_correction_note_is_not_elevated() -> None:
     )
     pf = plan.facts[0]
     assert pf.correction is False  # not a force-supersede
-    assert pf.weight < 1.0 and pf.status == "pending_review"  # normal capped/review path
+    # Lever A: not elevated → the inferred correction fact commits on the normal path (capped
+    # weight, no force-supersede/pin), no longer held by the retired ceiling.
+    assert pf.weight < 1.0 and pf.status == "active"
 
 
 def test_correction_still_forced_to_review_by_a_safety_flag() -> None:
@@ -1134,7 +1138,6 @@ def test_recover_then_ground_commits_an_inferred_birthdate_active():
         ExtractedTemporal,
         Extraction,
     )
-    from jbrain.analysis.weight import assess
 
     body = "Eli, 12, going into 7th grade."
     intent = _intent(
@@ -1178,8 +1181,9 @@ def test_recover_then_ground_commits_an_inferred_birthdate_active():
     recovered = recover_dropped_fields(intent, ext)
     sig = compute_signals(recovered, [body])[0]
     assert sig.surface_attested is True
-    _w, status = assess(recovered.facts[0].kind, recovered.facts[0].self_confidence, sig)
-    assert status == "active"  # no longer held for review
+    # The date-grounding backstop attests the inferred birthDate; it commits (Lever A).
+    plan = plan_intent(recovered, {0: sig})
+    assert len(plan.to_commit) == 1
 
 
 def test_date_phrase_in_note_attests_an_inferred_birthdate():

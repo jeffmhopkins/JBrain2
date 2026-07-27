@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-07-20
+> **Status:** Living · **Last verified:** 2026-07-24
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -254,6 +254,20 @@ citing its note).
 on-box first-token latency by keeping the static jerv/curator system-prompt prefix reusable across
 turns: W1 makes the prompt prefix byte-stable (move the volatile `now_block` to the tail), W2 turns
 on llama-server's `--cache-reuse`/slot flags. Both waves open.
+
+**Scheduled:** Entity-graph ingest V2 (build plan: `docs/plans/ENTITY_GRAPH_INGEST_V2_PLAN.md`) —
+cut the ingest review-inbox noise the owner hit without changing the pipeline structure: remove the
+inferred-ceiling review trap + the eight arbiter backstops (Lever A), default `state`/functional-
+`relationship` conflicts to non-destructive supersede-with-history by validity time while `attribute`
+collisions stay review as the hidden-two-people-merge signal (Lever B), and let a structured
+review-card correction write its pinned override directly instead of minting a prose note (Lever C).
+Re-run determinism stays deterministic recomputation (no cached verdict); the firewall/RLS/namesake
+spine is unchanged. §11 decisions ratified; on-box gpt-oss-120b validation showed the ingest-quality
+gap is prompt+schema, not architecture (agentic + multi-tier ingestion evaluated and rejected). The
+V0 local-box judgment spike is largely done; V1 (deterministic enactor + safety spine) through V5
+(cutover + Lever C + docs reconciliation) are open. Corrects-in-place `reference/ANALYSIS.md`
+(per-kind conflict policy) and `reference/ENTITY_GRAPH_REFOCUS_PLAN.md` (the `INFERRED_CEILING`
+rationale) when it builds.
 
 **In progress:** External video ingestion (build plan: `docs/plans/EXTERNAL_VIDEO_INGESTION_PLAN.md`)
 — any analysed YouTube video (ad hoc or scheduled) lands in an isolated, embedded, searchable corpus

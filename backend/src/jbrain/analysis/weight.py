@@ -87,15 +87,9 @@ def effective_weight(self_confidence: float, signals: ConfidenceSignals) -> floa
     return max(0.0, min(self_confidence, cap))
 
 
-def commit_status(kind: str, weight: float) -> CommitStatus:
-    """Whether a fact at this weight commits active or holds for review."""
-    threshold = COMMIT_THRESHOLDS.get(kind, DEFAULT_THRESHOLD)
-    return "active" if weight >= threshold else "pending_review"
-
-
-def assess(
-    kind: str, self_confidence: float, signals: ConfidenceSignals
-) -> tuple[float, CommitStatus]:
-    """Convenience: the bounded weight and the commit decision in one call."""
-    weight = effective_weight(self_confidence, signals)
-    return weight, commit_status(kind, weight)
+# `commit_status`/`assess` (the weight-ceiling review gate) were retired by Lever A
+# (ENTITY_GRAPH_INGEST_V2 T1.2/T1.4): a fact commits by default and the weight no longer
+# gates review. `COMMIT_THRESHOLDS`/`DEFAULT_THRESHOLD` survive for the process trace
+# (`trace.py`), which still surfaces the historical threshold for auditability; `ceiling`/
+# `effective_weight` survive because the (capped) weight is still the fact's stored
+# confidence, consumed by the supersession low-confidence guard and the correction path.

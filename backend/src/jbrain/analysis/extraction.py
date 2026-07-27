@@ -90,6 +90,12 @@ class ExtractedFact:
     # — full plan weight — still can't silently overwrite a confident prior.
     # Defaults to 1.0 so non-integrate constructions are treated as confident.
     self_confidence: float = 1.0
+    # True when the value is NOT surface-attested in the note (a pronoun-resolved
+    # gender, an implied relationship) — the model inferred it. Consumed by the I5
+    # sensitive-inference net (arbiter.plan_intent): an inferred fact on a
+    # floored-sensitive predicate is held for review even though Lever A commits
+    # inferred facts by default. Defaults False (a plain stated fact).
+    inferred: bool = False
     # True when this fact comes from an owner CORRECTION note (Phase 6 §4): it
     # commits at full weight and force-supersedes the current head + pins (see
     # supersession.decide). Defaults False — every non-correction path is unchanged.
@@ -159,6 +165,12 @@ _DOMAIN_BY_PREDICATE: dict[str, str] = {
             "respiratoryrate", "medication", "medicationregimen", "takesmedication",
             "prescribes", "treatedby", "diagnosis", "medicalcondition", "healthcondition",
             "allergy", "immunization", "vaccination",
+            # Borderline-sensitive predicates floored deterministically (ENTITY_GRAPH_INGEST_V2
+            # T1.3): correct-domain the mood/weight/symptom class the model emits for inferred
+            # health facts, rather than trusting a model per-fact domain (rejected by the
+            # firewall red-team). `weight`/`temperature` stay OUT (ambiguous — object weight,
+            # room temperature); `bodyweight`/`bodymass` are unambiguously the person's.
+            "mood", "mentalhealthstate", "bodyweight", "bodymass", "symptom", "hassymptom",
         )
     },
     **{
@@ -889,6 +901,7 @@ def parse_extraction(
                 # substitutes the note's domain (never trust invented codes).
                 domain=domain if domain in DOMAINS else "",
                 confidence=_clamp_confidence(raw.get("confidence")),
+                inferred=bool(raw.get("inferred", False)),
             )
         )
 
