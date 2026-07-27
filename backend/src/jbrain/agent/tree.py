@@ -54,17 +54,21 @@ DEEPEST_MAX_DEPTH = MAX_DEPTH + 1
 # ReAct turns than a quick lookup); the wall-clock is a generous backstop kept above
 # the step budget's expected runtime so a child reaches its step cap (→ a forced final
 # answer) rather than a bare timeout; the token cap is the last backstop.
-CHILD_MAX_STEPS = 24  # default/low-effort ReAct iterations a child may take
+CHILD_MAX_STEPS = 42  # default/low-effort ReAct iterations a child may take
 # Effort lifts the step cap: a high-effort child gets the room to do thorough research.
 # The runaway risk was a RETRY LOOP (jerv re-spawning fans), now closed by the prompt —
 # so a single fan can afford generous per-child budgets without pegging the box forever.
-# (Doubled from the original 12/22/32 so a research child rarely truncates mid-chain; on a
-# slow local box the per-child wall-clock below becomes the practical binding limit.)
-CHILD_STEPS_BY_EFFORT = {"high": 64, "medium": 44}
+# (Raised ~1.75× from 24/44/64 after a heavy verifier — the iTTP cross-check — kept
+# truncating mid-chain; the token cap below stays the practical binding limit on a slow box.)
+CHILD_STEPS_BY_EFFORT = {"high": 112, "medium": 77}
 CHILD_WALL_CLOCK_S = 1200.0  # hard per-child time limit; past it the child returns truncated
 # (Doubled from 600s with the step caps so a medium/high child can actually reach its
 # larger step budget on the slow local box before the clock — not the steps — stops it.)
-CHILD_MAX_COST_TOKENS = 900_000  # per-child token backstop (steps/wall-clock bite first)
+# The token cap is the last backstop, raised ~1.75× (from 900k) after the iTTP cross-check
+# burned 906k and was force-cut with NO synthesized answer (the budget stop early-returns,
+# unlike the step cap's forced final answer). At the observed ~2.2k tok/s it now bites near
+# ~720s — still comfortably under the wall clock above, so a heavy verifier finishes.
+CHILD_MAX_COST_TOKENS = 1_600_000  # per-child token backstop (steps/wall-clock bite first)
 # A research_deep TASK AGENT (deepest, depth 1) is not a leaf: within its own turn it must run
 # its entire decompose sub-fan (up to MAX_SUBFAN_PER_TASK_AGENT children), which the local
 # route SERIALIZES — so the leaf's CHILD_WALL_CLOCK_S would cut it off before the second tier

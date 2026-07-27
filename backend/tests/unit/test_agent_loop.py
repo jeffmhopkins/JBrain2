@@ -295,6 +295,57 @@ async def test_force_final_answer_synthesizes_on_step_exhaustion() -> None:
     assert isinstance(last_msg, UserMessage) and "no more tools" in last_msg.text.lower()
 
 
+async def test_force_final_answer_synthesizes_on_cost_budget() -> None:
+    # A force_final_answer child that trips its per-child TOKEN cap mid-tool-call used to
+    # early-return the capped turn's empty text — surfaced as "(no answer; stopped: budget)"
+    # (the iTTP cross-check). Now it makes the same one tool-free synthesis turn the step cap
+    # does, so the caller gets a real answer while the stop reason stays "budget" (telemetry
+    # still shows WHY it was cut, and the fan reads a budget-capped-but-answered child as ok).
+    turns = [
+        LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(10, 10)),  # trips the cap
+        LlmTurn("here is what I found", (), "end_turn", LlmUsage(1, 1)),  # the forced final
+    ]
+    router, fake = router_with(turns)
+    loop = AgentLoop(
+        router, registry_with(make_tool("search", search)), guardrails=Guardrails(max_cost_tokens=5)
+    )
+    result = await loop.run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="q")],
+        force_final_answer=True,
+    )
+    assert result.stop_reason == "budget"  # still flagged budget-capped…
+    assert result.text == "here is what I found"  # …but no longer an empty "(no answer)"
+    assert fake.converse_calls[-1]["tools"] == []  # the synthesis turn was offered no tools
+    last_msg = fake.converse_calls[-1]["messages"][-1]
+    assert isinstance(last_msg, UserMessage) and "no more tools" in last_msg.text.lower()
+
+
+async def test_force_final_answer_synthesizes_on_tree_budget_exhaustion() -> None:
+    # The same guarantee when a child is cut by the SHARED tree pool rather than its own
+    # token cap: it synthesizes from what it gathered instead of dying silently (the
+    # cross-check-killed-mid-search failure mode), with the stop reason preserved.
+    turns = [
+        LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(10, 10)),  # drains pool
+        LlmTurn("partial findings", (), "end_turn", LlmUsage(1, 1)),  # the forced final
+    ]
+    router, fake = router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    tree = TreeState(tree_budget=20, root_reserve=5)  # children pool 15; one 20-tok call drains it
+    result = await loop.run(
+        session=OWNER,
+        scopes=(),
+        conversation=[UserMessage(text="hi")],
+        depth=1,
+        tree=tree,
+        force_final_answer=True,
+    )
+    assert result.stop_reason == "tree_budget_exhausted"  # still flagged pool-exhausted…
+    assert result.text == "partial findings"  # …but the child's work isn't lost
+    assert fake.converse_calls[-1]["tools"] == []
+
+
 async def test_soft_landing_nudges_a_child_to_finish_before_the_cap() -> None:
     # A few steps before the hard cap, a force-final-eligible run (a sub-agent) is asked
     # to wrap up — so it can land on end_turn instead of being force-cut at max_steps.

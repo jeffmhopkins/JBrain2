@@ -127,8 +127,8 @@ class Guardrails:
 # runaway.)
 STEPS_BY_EFFORT: dict[str, int] = {"high": 60, "medium": 50}
 
-# The forced-final synthesis (force_final_answer, on step exhaustion) writes an answer
-# from already-gathered material — a mechanical step that needs no thinking. Run it at
+# The forced-final synthesis (force_final_answer, on step/budget/tree exhaustion) writes an
+# answer from already-gathered material — a mechanical step that needs no thinking. Run it at
 # NONE effort regardless of the run's effort: even "low" still let gpt-oss generate a
 # huge hidden reasoning trace (~74s at ~3 tok/s on the local box) that looked like a
 # stall — "none" skips the trace so the synthesis is fast.
@@ -492,6 +492,34 @@ class AgentLoop:
         # AgentResult.web_sources doc).
         web_sources: list[WebSource] = []
 
+        async def _forced_final(stop_reason: str, step_count: int) -> AgentResult:
+            """One final, tool-free synthesis turn so a force_final_answer run (a
+            sub-agent) lands on a real answer instead of an empty "(no answer)". Shared
+            by EVERY force_final_answer stop — the step cap AND the budget/tree caps,
+            which used to early-return the capped turn's (usually empty, mid-tool-call)
+            text, so a token-capped child reported nothing (the iTTP cross-check). The
+            `stop_reason` is preserved so the caller still sees WHY the child was cut;
+            only the answer is guaranteed non-empty. The single no-tool call is a
+            bounded post-cap overshoot — the same one the step-cap path already made,
+            and exactly what the tree's best-effort root reserve exists to absorb
+            (tree.py). Synthesizes from `messages` as they stand (never the dangling
+            capped tool-use turn, which was never dispatched), so the conversation stays
+            well-formed; FINAL_ANSWER_DIRECTIVE keeps gpt-oss from emitting its next
+            search as text instead of synthesizing."""
+            nonlocal cost
+            final_messages = [*messages, UserMessage(text=FINAL_ANSWER_DIRECTIVE)]
+            final = await self._converse_turn(
+                system_prompt, final_messages, (), FINAL_ANSWER_EFFORT, on_text, on_reasoning
+            )
+            spent_final = final.usage.input_tokens + final.usage.output_tokens
+            cost += spent_final
+            if tree is not None:
+                tree.charge(spent_final)
+            if on_usage is not None:
+                on_usage(final.usage.input_tokens, final.usage.output_tokens)
+            await self._record(idx, "model", "converse", ok=True, cost_tokens=spent_final)
+            return AgentResult(final.text, stop_reason, step_count, cost, tuple(web_sources))
+
         for step in range(self._g.max_steps):
             # Soft landing (sub-agents only): a few steps before the hard cap, ask the
             # model to wrap up so it lands on end_turn rather than being force-cut at the
@@ -525,10 +553,14 @@ class AgentLoop:
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 return AgentResult(turn.text, "end_turn", step + 1, cost, tuple(web_sources))
             if self._tree_exhausted(tree, depth):
+                if force_final_answer:
+                    return await _forced_final("tree_budget_exhausted", step + 1)
                 return AgentResult(
                     turn.text, "tree_budget_exhausted", step + 1, cost, tuple(web_sources)
                 )
             if cost >= self._g.max_cost_tokens:
+                if force_final_answer:
+                    return await _forced_final("budget", step + 1)
                 return AgentResult(turn.text, "budget", step + 1, cost, tuple(web_sources))
 
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
@@ -554,24 +586,9 @@ class AgentLoop:
                 return AgentResult(turn.text, "too_many_errors", step + 1, cost, tuple(web_sources))
 
         if force_final_answer:
-            # Out of steps mid-chain. Rather than return an empty "(no answer)", make one
-            # final turn with NO tools so the model must synthesize an answer from what it
-            # already gathered — a research child otherwise reports nothing the moment it
-            # hits the cap. Still flagged `max_steps` so the caller knows it's step-limited.
-            # The directive (a final user turn) keeps gpt-oss from emitting its next search
-            # as text instead of synthesizing — see FINAL_ANSWER_DIRECTIVE.
-            final_messages = [*messages, UserMessage(text=FINAL_ANSWER_DIRECTIVE)]
-            final = await self._converse_turn(
-                system_prompt, final_messages, (), FINAL_ANSWER_EFFORT, on_text, on_reasoning
-            )
-            spent_final = final.usage.input_tokens + final.usage.output_tokens
-            cost += spent_final
-            if tree is not None:
-                tree.charge(spent_final)
-            if on_usage is not None:
-                on_usage(final.usage.input_tokens, final.usage.output_tokens)
-            await self._record(idx, "model", "converse", ok=True, cost_tokens=spent_final)
-            return AgentResult(final.text, "max_steps", self._g.max_steps, cost, tuple(web_sources))
+            # Out of steps mid-chain — synthesize from what's gathered rather than
+            # reporting nothing. Still flagged `max_steps` so the caller knows why.
+            return await _forced_final("max_steps", self._g.max_steps)
         return AgentResult("", "max_steps", self._g.max_steps, cost, tuple(web_sources))
 
     async def run_stream(

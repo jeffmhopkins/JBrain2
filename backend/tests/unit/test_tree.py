@@ -3,6 +3,7 @@ incremental-spend pool, the root reserve, and the admission floor — all pure, 
 adapter, no model cooperation."""
 
 from jbrain.agent.tree import (
+    CHILD_MAX_COST_TOKENS,
     CHILD_MAX_STEPS,
     DEEPEST_MAX_DEPTH,
     MAX_DEPTH,
@@ -17,11 +18,21 @@ from jbrain.agent.tree import (
 def test_child_steps_scale_with_effort() -> None:
     """A higher-effort child earns a longer ReAct chain; unknown/absent effort falls
     back to the base cap."""
-    assert child_steps_for("high") == 64
-    assert child_steps_for("medium") == 44
+    assert child_steps_for("high") == 112
+    assert child_steps_for("medium") == 77
     assert child_steps_for("low") == CHILD_MAX_STEPS
     assert child_steps_for("none") == CHILD_MAX_STEPS
     assert child_steps_for(None) == CHILD_MAX_STEPS
+
+
+def test_child_cost_cap_sits_above_the_floor_and_within_the_pool() -> None:
+    """The per-child token backstop must clear the admission floor (a child's cap is
+    worth more than the minimum viable slice) yet stay below a standard root's whole
+    children pool — so one heavy researcher can spend its full allotment without, on
+    its own, draining the fan-wide budget."""
+    assert CHILD_MAX_COST_TOKENS == 1_600_000
+    assert CHILD_MAX_COST_TOKENS > MIN_VIABLE_CHILD_BUDGET
+    assert TreeState.rooted(800_000).children_budget() > CHILD_MAX_COST_TOKENS
 
 
 def test_rooted_sizes_budget_and_reserve_off_the_root_cap() -> None:
