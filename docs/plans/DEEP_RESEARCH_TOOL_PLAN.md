@@ -1,6 +1,33 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-27 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); mock-gate sign-off pending)
+
+**v11 revision (reports go as deep as the question earns).** The owner asked for real
+depth — a `deep` question was coming back as a one-to-two-page skim, not the eight-to-ten-page
+write-up expected. The findings were never the bottleneck: a run already feeds the writer up
+to ~60k chars of gathered material (`MAX_FEED_CHARS` × the fan) but the synthesizer compressed
+it to ~1,400 words, because the synthesize prompt actively steered short ("Lead with the answer.
+Be tight and concrete; a report is not padded length") and the `_SYNTH_MAX_TOKENS` cap sat at
+6,000. Verified on-box against the routed `gpt-oss-120b` (128k window): given a depth-oriented
+prompt and a 12k ceiling, the model produced a clean ~4,650-word / ~36.5k-char report that
+stopped on its own (well under the cap). Fixed on three fronts, all on the existing substrate:
+
+- **Synthesize prompt** (`deep_research_synthesize.prompt`, dr-synth-v4) — replaced the brevity
+  steer with an explicit depth contract: develop every section into several substantial
+  paragraphs (mechanism, background, evidence, nuance/disagreement, implications), and reach
+  the length by fully developing what the findings support, never by padding or repetition.
+  The anti-fabrication and citation machinery (`[^n]` ASCII markers, the numbered SOURCES
+  registry, corroborate-by-authority) is unchanged — depth must come from the findings.
+- **Per-report length target** (`_depth_directive`, threaded into the synth user message) —
+  the shared writer prompt scales by the plan's complexity: `deep` → ~4,000–6,000 words (8–10
+  pages), `comparative` → ~2,000–3,500, `simple` → a tight sub-page answer that must not be
+  padded. An unknown complexity fails thorough (the deep target), matching the planner's default.
+- **Room to write** — `_SYNTH_MAX_TOKENS` 6,000 → 12,000 (a generous ceiling the writer rarely
+  reaches; the word target governs typical length) and `_PLAN_MAX_TOKENS` 1,500 → 2,500 for the
+  fuller `deep` outline. The plan prompt (dr-plan-v5) now sketches a 6–10-section outline for a
+  `deep` question (lead answer, background, mechanism, evidence, controversies, limits,
+  implications) so the writer has the scaffold for a full report. Both apply to the draft AND
+  the critique-revise pass, which stay under the turn wall-clock because the synthesis streams.
 
 **v10 revision (reviewers verify against the cited sources).** The critique and cross-check
 review children were fed only the draft/findings text, so to check any claim they could

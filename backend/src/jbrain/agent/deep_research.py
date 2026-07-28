@@ -235,9 +235,16 @@ _REFLECT_SCHEMA = {
     "required": ["covered", "gaps"],
 }
 
-_PLAN_MAX_TOKENS = 1500
+_PLAN_MAX_TOKENS = 2500  # room for the fuller `deep` outline (6–10 sections) the writer expands
 _REFLECT_MAX_TOKENS = 1200
-_SYNTH_MAX_TOKENS = 6000
+# The report is the deliverable, and the owner wants real depth — a `deep` question should
+# come back as an eight-to-ten-page write-up, not a one-page skim. The synthesizer streams,
+# so a long draft renders live rather than blocking, and gpt-oss-120b's 128k window swallows
+# the findings (≤60k chars) plus a multi-thousand-word report with room to spare. Sized as a
+# generous CEILING (~9k words) the writer rarely reaches — the per-report word target is set
+# in the user message by complexity (`_depth_directive`), so a `simple` run still stays tight.
+# Both the draft and the critique-revise pass use this cap; both stream under the turn clock.
+_SYNTH_MAX_TOKENS = 12000
 
 # The two report-writing phases are jerv's own (non-spawn) model calls — the longest in
 # the run — so they STREAM: `_synthesize` accumulates the draft and emits it into the
@@ -534,7 +541,14 @@ class DeepResearchService:
             # --- (6) SYNTHESIZE the report ----------------------------------------
             self._phase(ctx, _WRITE_STEP, _WRITE_LABEL)
             report = await self._synthesize(
-                ctx, question, sections, results, analysis, sources, critique=""
+                ctx,
+                question,
+                sections,
+                results,
+                analysis,
+                sources,
+                complexity=complexity,
+                critique="",
             )
 
             # The draft is written — release the critique's slice for the critique child.
@@ -548,7 +562,14 @@ class DeepResearchService:
             if critique.strip():
                 self._phase(ctx, _REVISE_STEP, _REVISE_LABEL)
                 report = await self._synthesize(
-                    ctx, question, sections, results, analysis, sources, critique=critique
+                    ctx,
+                    question,
+                    sections,
+                    results,
+                    analysis,
+                    sources,
+                    complexity=complexity,
+                    critique=critique,
                 )
                 revised = True
         finally:
@@ -805,10 +826,15 @@ class DeepResearchService:
         analysis: str,
         sources: list[WebSource],
         *,
+        complexity: str,
         critique: str,
     ) -> str:
         user_text = (
             f"Question:\n{question}\n\n"
+            # The concrete length/depth target for THIS report (by complexity), so the shared
+            # writer prompt scales from a tight `simple` answer to the owner's asked-for
+            # eight-to-ten-page `deep` write-up without a separate prompt per tier.
+            f"{_depth_directive(complexity)}\n\n"
             f"Outline (section headings, in order):\n{_outline_text(sections)}\n\n"
             f"Findings:\n{_findings_block(results)}"
         )
@@ -964,6 +990,37 @@ def _outline_text(sections: list[str]) -> str:
     if not sections:
         return "- (no outline; use your judgement)"
     return "\n".join(f"- {s}" for s in sections)
+
+
+# The per-report length target handed to the synthesizer, keyed on the plan's complexity.
+# The synthesize prompt describes HOW to reach a depth honestly (develop the material, never
+# pad); this line sets the concrete WORD TARGET so a `deep` question lands the owner's asked-for
+# eight-to-ten pages while a `simple` one stays a tight answer — one shared prompt, scaled per run.
+_DEPTH_DIRECTIVE = {
+    "simple": (
+        "TARGET DEPTH: a tight, focused answer — usually well under a page. Answer the "
+        "question directly and stop; do not pad it to look thorough."
+    ),
+    "comparative": (
+        "TARGET DEPTH: a substantial report of roughly 2,000–3,500 words (about 5–7 pages). "
+        "Give each angle its own well-developed section and close with a synthesis that "
+        "weighs them against each other."
+    ),
+    "deep": (
+        "TARGET DEPTH: a thorough, in-depth report of roughly 4,000–6,000 words (about "
+        "8–10 pages). Develop every outline section into several substantial paragraphs — "
+        "explain the mechanisms, give the background, walk through the evidence, surface the "
+        "nuances and disagreements, and draw out the implications. Reach this length by fully "
+        "developing what the findings support, never by padding or repetition."
+    ),
+}
+
+
+def _depth_directive(complexity: str) -> str:
+    """The length/depth target line for the synthesizer, chosen by the plan's complexity.
+    An unknown value falls back to the deepest target — the same fail-thorough default the
+    planner uses — so a malformed complexity never silently produces a one-line report."""
+    return _DEPTH_DIRECTIVE.get(complexity, _DEPTH_DIRECTIVE["deep"])
 
 
 def _findings_count(roster: list[_ChildResult]) -> int:

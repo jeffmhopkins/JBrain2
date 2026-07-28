@@ -397,6 +397,36 @@ async def test_citations_are_tracked_from_sub_agents_to_the_report() -> None:
     assert len(urls) == len(set(urls))  # deduped
 
 
+# --- report depth: the synthesizer is handed a length target by complexity --
+
+
+async def test_synthesizer_gets_a_deep_length_target() -> None:
+    """A `deep` question hands the writer an eight-to-ten-page depth target, so the report
+    is the in-depth write-up the owner wants rather than a one-page skim. The target rides
+    in the synth user message (both the draft and the revise), not the shared prompt."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+    assert router.synth_calls  # the writer ran
+    assert all("TARGET DEPTH" in uw for uw in router.synth_calls)  # every synth pass is targeted
+    assert any("8–10 pages" in uw for uw in router.synth_calls)
+
+
+async def test_synthesizer_depth_target_scales_down_for_simple() -> None:
+    """A `simple` question stays tight — the depth target tells the writer to answer
+    directly and stop, so scaling the report up for `deep` never bloats a `simple` one."""
+    from jbrain.agent.deep_research import _depth_directive
+
+    router = _FakeRouter(complexity="simple", sub_questions=("a",), covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "what is X?"})
+    assert all("TARGET DEPTH" in uw for uw in router.synth_calls)
+    assert not any("8–10 pages" in uw for uw in router.synth_calls)  # not the deep target
+    # An unknown/malformed complexity fails thorough (the deep target), never a one-liner.
+    assert _depth_directive("simple") != _depth_directive("bogus")
+    assert _depth_directive("bogus") == _depth_directive("deep")
+
+
 # --- complexity sizes breadth only; it never skips a stage ------------------
 
 
@@ -472,7 +502,7 @@ def test_plan_prompt_forbids_meta_and_cross_child_subquestions() -> None:
     from jbrain.agent.deep_research import _PLAN
 
     body = _PLAN.body.lower()
-    assert _PLAN.version == "dr-plan-v4"
+    assert _PLAN.version == "dr-plan-v5"
     assert "citation matrix" in body  # the exact meta task that leaked through v1
     assert "process or meta task" in body
     assert "in isolation" in body  # names why cross-child briefs can't work
