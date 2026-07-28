@@ -38,11 +38,26 @@ from jbrain.analysis.intent import (
     IntentTemporal,
     SupersessionProposal,
 )
+from jbrain.analysis.prompt import MAX_FACTS
 from jbrain.schema import get_registry
 
 log = structlog.get_logger()
 
 _RESOLUTION_MODES = frozenset({"existing", "new", "ambiguous"})
+
+# Hard array ceilings so grammar-constrained decoding can't run away. gpt-oss-120b
+# intermittently LOOPS on this task — re-emitting the same fact until it nears the
+# token cap and TRUNCATES the JSON, which the adapter's re-ask turns into an
+# integrate abort. `maxItems` is honored by the local grammar backend (validated
+# on-box: an array capped at N stops at exactly N), so it bounds the loop and
+# guarantees the array always closes. Sized comfortably above the legitimate
+# maximum — MAX_FACTS extracted facts plus a few integrate-added identity inferences
+# (gender/kinship) — so a real note is never clipped; `dedup_intent_facts` still
+# collapses any duplicates the model emits under the ceiling. (An anti-duplication
+# PROMPT line was tried and rejected — it made gpt-oss-120b emit MORE, not fewer.)
+_MAX_INTENT_FACTS = MAX_FACTS + 12
+_MAX_INTENT_RESOLUTIONS = MAX_FACTS + 20
+_MAX_INTENT_PROPOSALS = MAX_FACTS
 
 # The JSON schema the integrate.note call is constrained to. Permissive on
 # optional fields; the parser enforces the rest and drops bad items.
@@ -52,6 +67,7 @@ INTENT_SCHEMA: dict[str, Any] = {
     "properties": {
         "resolutions": {
             "type": "array",
+            "maxItems": _MAX_INTENT_RESOLUTIONS,
             "items": {
                 "type": "object",
                 "required": ["mention_ref", "mode"],
@@ -70,6 +86,7 @@ INTENT_SCHEMA: dict[str, Any] = {
         },
         "facts": {
             "type": "array",
+            "maxItems": _MAX_INTENT_FACTS,
             "items": {
                 "type": "object",
                 "required": ["entity_ref", "predicate", "kind", "assertion", "statement"],
@@ -90,9 +107,9 @@ INTENT_SCHEMA: dict[str, Any] = {
                 },
             },
         },
-        "supersession_proposals": {"type": "array"},
-        "merge_proposals": {"type": "array"},
-        "distinct_proposals": {"type": "array"},
+        "supersession_proposals": {"type": "array", "maxItems": _MAX_INTENT_PROPOSALS},
+        "merge_proposals": {"type": "array", "maxItems": _MAX_INTENT_PROPOSALS},
+        "distinct_proposals": {"type": "array", "maxItems": _MAX_INTENT_PROPOSALS},
     },
 }
 
