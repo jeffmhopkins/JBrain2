@@ -43,8 +43,8 @@ log = structlog.get_logger()
 # Owner-set per-run ceiling defaults (open decision §9.2 — to be grounded on-box). The
 # ceiling is the HARD terminal bound: a run stops when it reaches the token budget or the
 # wall-clock, whichever comes first. Sized well above an in-request deep_research run
-# (~8M tokens / one turn) because a deepest run is minutes-to-hours over many rounds and
-# two agent tiers; the owner may override both per run.
+# (~15M-token tree pool / one turn) because a deepest run is minutes-to-hours over many
+# rounds and two agent tiers; the owner may override both per run.
 DEEPEST_DEFAULT_CEILING_TOKENS = 50_000_000
 DEEPEST_DEFAULT_WALL_CLOCK_S = 3 * 60 * 60.0  # 3 hours
 

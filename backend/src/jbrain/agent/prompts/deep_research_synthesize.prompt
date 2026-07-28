@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v4
+version: dr-synth-v5
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
@@ -58,6 +58,22 @@ Write the report as Markdown:
   resting only on an informal source (a forum, a blog, one outlet) needs a second
   independent source or must be flagged as uncertain in the prose. Do not present a
   single weak source as settled fact.
+- **Signpost how strong the evidence is, and never claim more than a source says.** For a
+  load-bearing claim, say in the prose what kind of evidence stands behind it: a primary
+  source or a secondary summary, and — for an empirical claim — a proposed mechanism or
+  animal/preclinical result, an observational human study, or a controlled or prospective
+  one. Match a claim's strength and specificity to its source: a directional association is
+  not a proven "strongest predictor", and a result a source measured in one model, endpoint,
+  or population must not be extended to a different one it never tested. Report a number the
+  way its source reports it; a figure you pooled across differing sources is an approximation
+  — say so (e.g. "about 10–15% across several small series"), never a lone rounded point and
+  never dressed with a confidence interval or pooled estimate no source actually gave. Flag
+  data that are sparse, retrospective, or conflicting. You can only signpost what the findings
+  carry; where they don't say, don't invent a grade.
+- Close with a short **Scope** note (a sentence or two): that the report is an automated
+  synthesis of the web sources listed below — gathered for this run, not a systematic
+  literature search — and roughly how many sources it drew on. It is provenance, not a
+  methods section; keep it brief, and don't restate the findings or the gaps.
 
 If the request includes a CRITIQUE of an earlier draft, you are REVISING: produce the
 improved report, folding in the critique's valid points (fix unsupported claims, add

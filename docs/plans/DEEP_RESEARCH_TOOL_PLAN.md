@@ -1,6 +1,59 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; mock-gate sign-off pending)
+
+**v13 revision (a breadth-5 two-wave run was saturating both ceilings at once).** An owner
+breadth-5 run was landing right at the token cap. The run-log confirmed it was co-limited:
+9 sub-agents spent **~9.14M** child tokens against the ~10M children pool (6 of them truncated
+at their own `max_steps`), while the turn ran **4970s** — its last child finishing just ~30s
+before the old 4500s tree deadline (≈92% of the 5400s turn cap). On the serial local box the
+two ceilings are coupled (more tokens → more generation → more wall-clock), so raising the
+token pool alone would only have hit the wall-clock next. Both moved together:
+
+- **Token pool** — jerv's `budget_multiplier` **4 → 6** (`agents.py`), lifting the deep-research
+  tree budget ~13.3M → ~20M and the children pool ~10M → ~15M. jerv (not the archivist's 4)
+  carries it because a breadth-5 two-wave fan is its heaviest turn; an ordinary jerv chat turn
+  spends far less. Pinned in `test_agents.py`.
+- **Wall-clock** — `TREE_WALL_CLOCK_S` **4500 → 6600s** (`tree.py`) and the parent turn cap
+  `_MAX_TURN_WALL_CLOCK_S` **5400 → 7500s** (`api/agent.py`), preserving the ~900s post-fan
+  synthesis headroom between them. The `_TURN_IDLE_S` progress watchdog (900s) still catches a
+  genuine stall far sooner, so the higher ceiling only helps a turn that is actually progressing.
+- For a run that wants to go past even this, the **`deepest_research`** lane (50M / 3h,
+  background, checkpointed) remains the right tool — the standard lane is deliberately still
+  one interactive turn.
+
+**v12 revision (signpost evidence strength, note scope, and hold claims to what their
+sources say).** Two owner-supplied critiques of a `deep` medical report — a narrative-review
+quality rating and a hallucination pass — converged on the same failure mode: the write-up
+asserted claims without grading the evidence, and where it hallucinated it did so not by
+inventing papers or biology (none found) but by *over-precision and attribution blending* —
+a synthesized incidence stated with a fabricated confidence interval, and one paper's
+infarct/inflammation endpoints presented as if they included the seizure/EEG endpoints a
+sibling paper measured. It also carried no note of how it was researched. Fixed in the
+prompts, kept domain-agnostic (the same levers help a hardware-benchmark or product-claim run):
+
+- **Synthesize prompt** (`deep_research_synthesize.prompt`, dr-synth-v4 → **dr-synth-v5**) —
+  additions to the existing corroborate-by-authority machinery (unchanged): (1) *signpost the
+  evidence grade* — name whether a load-bearing claim rests on a primary source or a secondary
+  summary and, for an empirical claim, whether it comes from a proposed mechanism/animal
+  result, an observational human study, or a controlled/prospective one. (2) *Hold claims to
+  their sources* — match a claim's strength and specificity to what the source shows (a
+  directional association is not a proven "strongest predictor"; a result must not be extended
+  to an endpoint/model/population the source never tested), and report a number the way its
+  source gives it — a figure pooled across differing sources is an approximation, never dressed
+  with a confidence interval or pooled estimate no source reported. (3) A short closing **Scope**
+  note — automated synthesis of the listed web sources, gathered for this run rather than a
+  systematic literature search, with roughly how many sources it drew on (provenance, not a
+  methods section).
+- **Research sub-agent** (`research.prompt`, agent-research-v8 → **agent-research-v9**, pin +
+  hash updated in `test_agents.py`) — findings now carry a source's provenance forward (primary
+  vs. secondary, and a study's design/size/setting) so the writer can grade it downstream
+  instead of receiving an already-flattened percentage.
+- **Critique brief** (`_critique`, the v10 citation-faithfulness reviewer) — sharpened to catch
+  the blending pattern the plain "does the source support the claim" check let through: verify
+  the cited page supports THAT SPECIFIC claim (same finding, endpoint, population — not an
+  adjacent result), and flag a claim that over-extends its source or a number dressed with more
+  precision than the source gave.
 
 **v11 revision (reports go as deep as the question earns).** The owner asked for real
 depth — a `deep` question was coming back as a one-to-two-page skim, not the eight-to-ten-page

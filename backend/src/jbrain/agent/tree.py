@@ -89,12 +89,12 @@ def child_steps_for(effort: str | None) -> int:
 # most SPAWN_MULTIPLIER × the root's own per-turn token cap; a fraction is reserved off
 # the top so the root can always synthesize even after a fan drains the children's
 # pool; and a fan is admitted only if each child could get a viable slice of what's
-# left. Sized generously (~10M children pool with jerv's 800k root cap) so the runtime
+# left. Sized generously (~15M children pool with jerv's 1.2M root cap) so the runtime
 # caps above — not budget exhaustion — are what stop a child, with ample room for a staged
 # review reserve (deep_research) on top of a full multi-round gather.
-SPAWN_MULTIPLIER = 50.0 / 3.0  # tree_budget = base_max_cost_tokens × this (~13.3M for jerv).
-# The 50/3 is chosen so the children pool (tree_budget − the 25% root reserve, i.e. × 0.75,
-# which cancels the /3) lands exactly on 10.0M for jerv's 800k root cap — the meter's ceiling.
+SPAWN_MULTIPLIER = 50.0 / 3.0  # tree_budget = base_max_cost_tokens × this (~20M for jerv).
+# The 50/3 means the children pool (tree_budget − the 25% root reserve, i.e. × 0.75, which
+# cancels the /3) is 12.5× the root cap: 10.0M at jerv's former 800k, 15.0M at its 1.2M (6×).
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
 MIN_VIABLE_CHILD_BUDGET = 125_000  # admission floor: tokens each child must be able to get
 # The wall-clock analog of the token floor: the least time a producer child is worth
@@ -105,10 +105,13 @@ MIN_VIABLE_CHILD_SECONDS = 120.0
 
 # Feeding waves runtime bound (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md, F2). A whole staged
 # (feeding) spawn call must finish inside this cumulative wall-clock, sized to sit under
-# the parent turn cap (_MAX_TURN_WALL_CLOCK_S=5400s) with ~900s of synthesis headroom.
+# the parent turn cap (_MAX_TURN_WALL_CLOCK_S=7500s) with ~900s of synthesis headroom.
 # Checked at each wave barrier; a wave that can't start before it is skipped, loud. Only
 # the staged scheduler consults it — a flat fan is unchanged.
-TREE_WALL_CLOCK_S = 4500.0
+# Raised 4500→6600 with jerv's 4→6 budget bump: a breadth-5 two-wave deep_research run was
+# finishing its last child ~30s before the old 4500s deadline while also near the token pool,
+# so both ceilings moved together (a bigger token pool alone would just hit this wall-clock).
+TREE_WALL_CLOCK_S = 6600.0
 
 
 @dataclass

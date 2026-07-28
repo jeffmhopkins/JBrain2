@@ -75,8 +75,11 @@ _SSE_HEARTBEAT_SECONDS = 20.0
 # every in-flight LLM call (parent AND its sub-agents, via the gather cascade) and the
 # partial answer is persisted. Generous — above a legitimate multi-child serial fan —
 # so it only ever catches the pathological case, never a real turn.
-# Sized at 3x the per-child wall-clock so a 2-3 child serial fan plus synthesis fits.
-_MAX_TURN_WALL_CLOCK_S = 5400.0
+# Sized as the staged tree deadline (TREE_WALL_CLOCK_S=6600s) plus ~900s of post-fan
+# synthesis headroom. Raised 5400→7500 alongside jerv's 4→6 budget bump so a saturating
+# breadth-5 two-wave deep_research run (which was landing ~30s under the old deadline) has
+# real room; the _TURN_IDLE_S progress watchdog still catches a genuine stall far sooner.
+_MAX_TURN_WALL_CLOCK_S = 7500.0
 
 # A PROGRESS watchdog on the turn: force-end it after this long with NO streamed frame
 # (no token, tool step, or sub-agent return). Reset on every frame, so a steadily

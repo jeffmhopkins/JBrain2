@@ -302,7 +302,12 @@ AGENTS: dict[str, AgentProfile] = {
         "jerv.prompt",
         tools=JERV_TOOLS,
         reads_knowledge_base=False,
-        budget_multiplier=4,
+        # 6 (not the archivist's 4): jerv's heaviest turn is a breadth-5 two-wave
+        # deep_research fan, which was co-saturating the 4x tree pool (~10M) and the
+        # wall-clock at once — 6 lifts the children pool to ~15M to match the widened
+        # wall-clock (tree.py). An ordinary jerv chat turn spends far less; this is the
+        # ceiling a full research fan draws on, not a target.
+        budget_multiplier=6,
     ),
     "archivist": _profile(
         "archivist",
