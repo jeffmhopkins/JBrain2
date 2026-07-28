@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-07-24
+> **Status:** Living · **Last verified:** 2026-07-28
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -32,6 +32,13 @@ approval moved from the side panel **into the conversation** (variant D,
 and a single Enact that **returns a consolidated, server-authored outcome to the assistant
 so it follows up** (the former "deferred concept" in `FullBrainSurface.tsx`). The panel
 remains for browsing older / cross-session proposals.
+
+**Report share links** ✅ (`docs/archive/RESEARCH_SHARE_LINKS_PLAN.md`, migration 0150, GUI
+variant B): the owner mints a public, revocable, no-login link to one research report or a whole
+folder; anyone opens it at `/share/<token>`. The read is a dedicated RLS scope
+(`research_reports_share`) over an empty-scope share context — the token resolves a pin, the
+database decides what's visible — and the public `/api/research-share` router is rate-limited,
+`no-referrer`, and `noindex`.
 
 ## Phase 0 — Foundation ✅ Shipped
 
