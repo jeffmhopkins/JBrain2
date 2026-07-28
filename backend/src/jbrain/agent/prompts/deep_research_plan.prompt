@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.plan
-version: dr-plan-v4
+version: dr-plan-v5
 description: Plans a deep-research run — rates the question's complexity and decomposes it into self-contained web-research sub-questions plus a report outline.
 strength: high
 ---
@@ -50,4 +50,14 @@ is an object with two fields:
 
 **Sketch the outline** (`sections`) — the report's section headings, in order, that
 the sub-questions' findings will fill. Lead with the section that most directly
-answers the question. A `simple` run can be a single section.
+answers the question. Size the outline to the complexity, because it is the scaffold
+the writer expands into a full report:
+- `simple` — one or two sections; the answer is short.
+- `comparative` — a section per angle plus a lead section and a closing synthesis.
+- `deep` — a FULL outline of roughly six to ten sections that carry the report to real
+  depth (eight to ten pages): a lead answer, the background/context a reader needs, the
+  core mechanism or how-it-works, the evidence, the competing views or controversies, the
+  limitations and open gaps, and the implications or bottom line, as the topic fits. The
+  outline may have more sections than there are sub-questions — several sections can draw
+  on the same pooled findings — so give the writer enough structure for a thorough report
+  without inventing sections the findings cannot fill.
