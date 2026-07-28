@@ -1,6 +1,26 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; mock-gate sign-off pending)
+
+**v13 revision (a breadth-5 two-wave run was saturating both ceilings at once).** An owner
+breadth-5 run was landing right at the token cap. The run-log confirmed it was co-limited:
+9 sub-agents spent **~9.14M** child tokens against the ~10M children pool (6 of them truncated
+at their own `max_steps`), while the turn ran **4970s** — its last child finishing just ~30s
+before the old 4500s tree deadline (≈92% of the 5400s turn cap). On the serial local box the
+two ceilings are coupled (more tokens → more generation → more wall-clock), so raising the
+token pool alone would only have hit the wall-clock next. Both moved together:
+
+- **Token pool** — jerv's `budget_multiplier` **4 → 6** (`agents.py`), lifting the deep-research
+  tree budget ~13.3M → ~20M and the children pool ~10M → ~15M. jerv (not the archivist's 4)
+  carries it because a breadth-5 two-wave fan is its heaviest turn; an ordinary jerv chat turn
+  spends far less. Pinned in `test_agents.py`.
+- **Wall-clock** — `TREE_WALL_CLOCK_S` **4500 → 6600s** (`tree.py`) and the parent turn cap
+  `_MAX_TURN_WALL_CLOCK_S` **5400 → 7500s** (`api/agent.py`), preserving the ~900s post-fan
+  synthesis headroom between them. The `_TURN_IDLE_S` progress watchdog (900s) still catches a
+  genuine stall far sooner, so the higher ceiling only helps a turn that is actually progressing.
+- For a run that wants to go past even this, the **`deepest_research`** lane (50M / 3h,
+  background, checkpointed) remains the right tool — the standard lane is deliberately still
+  one interactive turn.
 
 **v12 revision (signpost evidence strength, note scope, and hold claims to what their
 sources say).** Two owner-supplied critiques of a `deep` medical report — a narrative-review

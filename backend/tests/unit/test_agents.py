@@ -147,13 +147,15 @@ def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
     assert archivist.reads_knowledge_base is False
 
 
-def test_archivist_earns_a_4x_turn_budget() -> None:
+def test_long_chain_personas_earn_a_wider_turn_budget() -> None:
     """The archivist and jerv each run a long, many-tool ReAct chain (a date-by-date
-    mailbox cleanup; a multi-source web thread), so each gets a 4x budget_multiplier
+    mailbox cleanup; a multi-source web thread), so each gets a widened budget_multiplier
     (the loop scales both the step cap and the cost-token budget by it); the curator
-    and teacher keep the shared 1x default."""
+    and teacher keep the shared 1x default. jerv runs at 6 (not the archivist's 4) because
+    its heaviest turn — a breadth-5 two-wave deep_research fan — needs the larger ~15M tree
+    pool (tree.py), sized to the widened wall-clock."""
     assert AGENTS["archivist"].budget_multiplier == 4
-    assert AGENTS["jerv"].budget_multiplier == 4
+    assert AGENTS["jerv"].budget_multiplier == 6
     assert AGENTS["curator"].budget_multiplier == 1
     assert AGENTS["teacher"].budget_multiplier == 1
 

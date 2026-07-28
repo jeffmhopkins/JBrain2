@@ -236,8 +236,8 @@ a pre-registered rubric before a line of that infra is written.
 | One refill round, fixed (no loop exists) | `deep_research.py`, `DR_MAX_GAP_QUESTIONS` | **Adaptive loop** — refill until covered-and-stable or resources spent |
 | `MAX_DEPTH = 1` (children are leaves) | `agent/tree.py:20` | **Two tiers** — orchestrator → task agent → sub agent (`max_depth = 2`, sub agents are leaves) |
 | One critique / revise pass | `deep_research.py` | **N passes** until the critique stops finding fixable problems (capped) |
-| `SPAWN_MULTIPLIER = 50/3` → ~13.3M tree (10M children pool) | `tree.py` | **Owner-set per-run token ceiling** (big, not infinite) |
-| `TREE_WALL_CLOCK_S = 4500s`, one turn | `tree.py` | **Background run**, minutes-to-hours, resumable across restarts |
+| `SPAWN_MULTIPLIER = 50/3` → ~20M tree (15M children pool at jerv's 6× cap) | `tree.py` | **Owner-set per-run token ceiling** (big, not infinite) |
+| `TREE_WALL_CLOCK_S = 6600s`, one turn | `tree.py` | **Background run**, minutes-to-hours, resumable across restarts |
 | Runs in-request, blocks the turn | `deep_research.py` | **Enqueue-and-return**; periodic progress + completion nudge to the chat |
 
 **Untouched — the non-negotiables, at every depth (`spawn.py:526-534`, CLAUDE.md):**
