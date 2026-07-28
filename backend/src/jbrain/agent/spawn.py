@@ -1043,7 +1043,12 @@ class SpawnService:
             _base_wall_clock = (
                 TASK_AGENT_WALL_CLOCK_S if persona == "research_deep" else CHILD_WALL_CLOCK_S
             )
-            _tree_left = tree.seconds_left()
+            # `stage_seconds_left` (not `seconds_left`) so a producer fan is bounded by the
+            # clock MINUS any slice reserved for a not-yet-run review stage — the wall-clock
+            # twin of the `stage_reserve` token gate, so gather can't run the deadline down
+            # and leave the analyst/critique a 75s (or 0s) scrap. 0 `time_reserve` (every flat
+            # fan, and the review fans once their own slice is released) makes it a no-op.
+            _tree_left = tree.stage_seconds_left()
             child_timeout = _base_wall_clock
             if _tree_left is not None:
                 child_timeout = min(_base_wall_clock, _tree_left)

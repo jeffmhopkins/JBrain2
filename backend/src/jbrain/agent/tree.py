@@ -97,6 +97,11 @@ SPAWN_MULTIPLIER = 50.0 / 3.0  # tree_budget = base_max_cost_tokens × this (~13
 # which cancels the /3) lands exactly on 10.0M for jerv's 800k root cap — the meter's ceiling.
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
 MIN_VIABLE_CHILD_BUDGET = 125_000  # admission floor: tokens each child must be able to get
+# The wall-clock analog of the token floor: the least time a producer child is worth
+# seating with. Below it a research child can't do anything useful (a search or two, a read,
+# a summary), so a fan the remaining stage-clock can't seat at this floor is clamped rather
+# than launched to die at ~0s — the honest-degradation gate (deep_research clamps breadth).
+MIN_VIABLE_CHILD_SECONDS = 120.0
 
 # Feeding waves runtime bound (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md, F2). A whole staged
 # (feeding) spawn call must finish inside this cumulative wall-clock, sized to sit under
@@ -155,6 +160,13 @@ class TreeState:
     # over-spending producer cannot starve the deliverable wave, then released to 0
     # when the final wave itself starts. 0 for a flat fan (no effect).
     stage_reserve: int = 0
+    # The wall-clock twin of `stage_reserve` (Idea 1): seconds carved off the deadline for a
+    # not-yet-run review/final stage, so a greedy producer fan is stopped in TIME as well as
+    # tokens and can't run the clock down to nothing — the failure where gather ate the
+    # deadline and the cross-check analyst got a 75s scrap (then post-deadline gap children
+    # timed out at 0s). Stepped down as each reserved stage is reached, exactly like
+    # `stage_reserve`; 0 for a flat fan, so its behaviour is unchanged.
+    time_reserve: float = 0.0
     # One-shot decomposition (R2): the set of task-agent session ids that have already
     # spawned their one sub-fan. A task agent may decompose EXACTLY ONCE, so it cannot
     # read its first sub-fan's fetched content and then spawn a second fan embedding it
@@ -224,6 +236,22 @@ class TreeState:
     def seconds_left(self) -> float | None:
         """Wall-clock remaining before the staged deadline, or None if unbounded."""
         return None if self.deadline is None else max(0.0, self.deadline - time.monotonic())
+
+    def stage_seconds_left(self) -> float | None:
+        """The wall-clock a PRODUCER child may use: `seconds_left` minus the slice held for a
+        not-yet-run review/final stage (`time_reserve`). None (unbounded) passes through, so a
+        flat fan with no deadline is unaffected; with `time_reserve` 0 it equals `seconds_left`,
+        so a flat fan's per-child clock is unchanged. This is what a fan's per-child timeout is
+        bounded by, so the review stage the reserve protects always keeps its guaranteed time."""
+        left = self.seconds_left()
+        return left if left is None else max(0.0, left - self.time_reserve)
+
+    def can_admit_time(self, n: int) -> bool:
+        """The wall-clock admission floor (twin of `can_admit_budget`): a fan of `n` producers
+        is seatable only if the remaining stage-clock covers a minimum viable slice for each.
+        An unbounded (None) deadline → always True (only the structural caps apply)."""
+        left = self.stage_seconds_left()
+        return left is None or left >= n * MIN_VIABLE_CHILD_SECONDS
 
     def has_decomposed(self, agent_id: str) -> bool:
         """Whether this task agent has already spawned its one allowed sub-fan (one-shot)."""

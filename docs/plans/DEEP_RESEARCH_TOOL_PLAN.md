@@ -383,10 +383,16 @@ on-box like the S2/F2 retunes were):
   reserve still covers the two large root calls (synthesis in 5, revision in 6). On top of
   the pool, `deep_research` carves a `DR_REVIEW_RESERVE` (`stage_reserve`, 1.5M) so the
   post-gather analyst + critique children can't be starved by a greedy gather round.
-- **Two-fan admission.** The admission floor (`can_admit_budget`) is checked before
-  *each* fan (gather, refill) — the refill fan is skipped-loud if the pool can't seat
-  its gap children, and the run synthesizes from round-1 material tagged "coverage
-  limited."
+- **Review wall-clock reserve.** ✅ The token reserve has a wall-clock twin,
+  `DR_REVIEW_TIME_RESERVE` (`tree.time_reserve`, 900s), stepped down at the same three
+  points. A producer child's clock is bounded by `stage_seconds_left` (deadline − the
+  reserve), so gather can't run the deadline down and leave the analyst a 75s scrap or the
+  gap children a 0s one — each review stage keeps its guaranteed time as well as its tokens.
+- **Two-fan admission.** The admission floor is checked before *each* fan (gather, refill)
+  on **both** axes — `can_admit_budget` (tokens) and `can_admit_time` (the stage-clock at
+  `MIN_VIABLE_CHILD_SECONDS`/child). A fan the pool or clock can't seat is skipped-loud, and
+  gather breadth is clamped to what's seatable around the review reserve (`_seatable`, logged
+  as `deep_research.breadth_clamped`) — honest degradation, not children that die at ~0s.
 - **Tree wall-clock.** A two-round + critique run is longer than a 2-wave feed; confirm
   it fits under `TREE_WALL_CLOCK_S = 4500` with synthesis headroom, or lift it (still
   under the `_MAX_TURN_WALL_CLOCK_S = 5400` turn cap). Deferred to a background job is

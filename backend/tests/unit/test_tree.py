@@ -195,3 +195,37 @@ def test_task_agent_wall_clock_covers_its_serial_subfan() -> None:
 
     assert TASK_AGENT_WALL_CLOCK_S > CHILD_WALL_CLOCK_S
     assert TASK_AGENT_WALL_CLOCK_S == CHILD_WALL_CLOCK_S * (MAX_SUBFAN_PER_TASK_AGENT + 1)
+
+
+def test_stage_seconds_left_subtracts_the_time_reserve() -> None:
+    """A producer child's clock (`stage_seconds_left`) is the remaining tree time minus the
+    slice held for a not-yet-run review stage; with no reserve it equals `seconds_left`, and
+    an unbounded (None) deadline passes through as None (a flat fan is unaffected)."""
+    import time
+
+    tree = TreeState(deadline=time.monotonic() + 1000)
+    both = tree.stage_seconds_left(), tree.seconds_left()
+    assert both[0] is not None and both[1] is not None
+    assert abs(both[0] - both[1]) < 1.0  # no reserve → identical but for clock drift between calls
+    tree.time_reserve = 300.0
+    left, stage = tree.seconds_left(), tree.stage_seconds_left()
+    assert left is not None and stage is not None
+    assert abs((left - stage) - 300.0) < 1.0  # the reserve is carved off the producer clock
+    tree.time_reserve = 10_000.0  # a reserve larger than what's left floors at 0, never negative
+    assert tree.stage_seconds_left() == 0.0
+    assert TreeState().stage_seconds_left() is None  # unbounded deadline → None
+
+
+def test_can_admit_time_gates_on_the_stage_clock_floor() -> None:
+    """The wall-clock admission floor seats a fan only if the stage-clock (after the reserve)
+    covers MIN_VIABLE_CHILD_SECONDS per child; an unbounded deadline admits any fan."""
+    import time
+
+    from jbrain.agent.tree import MIN_VIABLE_CHILD_SECONDS
+
+    tree = TreeState(deadline=time.monotonic() + 3 * MIN_VIABLE_CHILD_SECONDS + 5)
+    assert tree.can_admit_time(3)  # 3 × floor fits
+    assert not tree.can_admit_time(4)  # 4 × floor does not
+    tree.time_reserve = MIN_VIABLE_CHILD_SECONDS  # carve one child's worth for a review stage
+    assert tree.can_admit_time(2) and not tree.can_admit_time(3)  # one fewer producer now fits
+    assert TreeState().can_admit_time(99)  # no deadline → only structural caps apply
