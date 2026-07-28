@@ -55,7 +55,7 @@ from jbrain.agent.briefs import compose_feed_block, prepend_feed
 from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.spawn import SpawnService, _ChildResult
-from jbrain.agent.tree import MAX_DEPTH
+from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.external.research_corpus import persist_report
 from jbrain.llm import LlmRouter
 from jbrain.llm.promptfile import load_prompt
@@ -188,9 +188,21 @@ def _empty_gather_msg(source_mode: str) -> str:
 # the critique's protected slice), the critique's once the draft is written. Sized above
 # MIN_VIABLE_CHILD_BUDGET so a review child gets real working room, not just a viable
 # floor.
-DR_ANALYST_RESERVE = 900_000
-DR_CRITIQUE_RESERVE = 300_000
+# Scaled with the children's pool (8M → 10M) so the review slice keeps the same proportional
+# claim on it as the pool grew.
+DR_ANALYST_RESERVE = 1_125_000
+DR_CRITIQUE_RESERVE = 375_000
 DR_REVIEW_RESERVE = DR_ANALYST_RESERVE + DR_CRITIQUE_RESERVE
+
+# The WALL-CLOCK twin of the token reserves above (Idea 1), carved off the tree deadline via
+# `tree.time_reserve` and stepped down at the same three points. The token reserve alone left
+# a hole: gather could still burn the whole DEADLINE and leave the analyst a 75s scrap (then
+# post-deadline gap children died at 0s). Reserving TIME too guarantees each review stage its
+# slice regardless of how long gather ran. The analyst is the heavier review child (fed every
+# summary plus the source pages), so it gets the larger slice; both sit under CHILD_WALL_CLOCK_S.
+DR_ANALYST_TIME_RESERVE = 600.0
+DR_CRITIQUE_TIME_RESERVE = 300.0
+DR_REVIEW_TIME_RESERVE = DR_ANALYST_TIME_RESERVE + DR_CRITIQUE_TIME_RESERVE
 
 # The complexity tiers the plan step assigns. In v2 complexity ONLY sizes the gather
 # breadth (below) — it never skips the analyst, the coverage check, the gap round, or the
@@ -306,6 +318,20 @@ def _breadth_for(complexity: str, breadth: int) -> int:
     return min(DR_SIMPLE_BREADTH, breadth) if complexity == "simple" else breadth
 
 
+def _seatable(tree: TreeState, requested: int) -> int:
+    """How many of `requested` producer children the tree can actually seat under BOTH the
+    token (`can_admit_budget`) and wall-clock (`can_admit_time`) admission floors — with the
+    review reserve already carved off, so the count is what fits AROUND the protected review
+    slice. Idea 3 (honest degradation): a run near its budget/deadline (invoked late in a
+    turn, or a deepest run deep into its rounds on a slow box) drops the angles it can't seat
+    and says so, instead of launching children that die at ~0s. Never below 1 — a run always
+    attempts at least one angle, and an empty gather has its own refusal."""
+    n = requested
+    while n > 1 and not (tree.can_admit_budget(n) and tree.can_admit_time(n)):
+        n -= 1
+    return n
+
+
 def _collect_sources(children: list[_ChildResult]) -> list[WebSource]:
     """The deduped, first-seen-ordered web pages the run reached — the GLOBAL citation
     registry. The report cites `[^n]` positionally against THIS list (see `_synthesize`),
@@ -418,14 +444,30 @@ class DeepResearchService:
         # Complexity sizes the gather breadth ONLY — it never skips a later stage.
         sub_questions = sub_questions[: _breadth_for(complexity, breadth)]
 
-        # Reserve the review children's slice off the children's pool BEFORE gather runs.
-        # `children_exhausted` honours `stage_reserve`, so a greedy gather round is stopped
-        # AT the reserve instead of draining the pool and starving the analyst/critique
-        # (the 1918-flu failure). The reserve is stepped down as each review stage is
-        # reached, and restored in `finally` so a later fan in this same turn isn't gated.
+        # Reserve the review children's slice — TOKENS (`stage_reserve`) AND TIME
+        # (`time_reserve`) — off the pool/deadline BEFORE gather runs. `children_exhausted`
+        # honours `stage_reserve` and the per-child clock honours `time_reserve` (via
+        # `stage_seconds_left`), so a greedy gather round is stopped AT the reserve on both
+        # axes instead of draining them and starving the analyst/critique (the 1918-flu
+        # failure on tokens, the 75s/0s failure on time). Both are stepped down as each review
+        # stage is reached, and restored in `finally` so a later fan in this turn isn't gated.
         prior_reserve = ctx.tree.stage_reserve
+        prior_time_reserve = ctx.tree.time_reserve
         ctx.tree.stage_reserve = DR_REVIEW_RESERVE
+        ctx.tree.time_reserve = DR_REVIEW_TIME_RESERVE
         try:
+            # Idea 3 — clamp gather to what the tree can seat AROUND the review reserve, so a
+            # run low on budget/time drops the angles it can't afford (and says so) rather than
+            # launching them to die at ~0s. A healthy fresh run keeps its full breadth.
+            seatable = _seatable(ctx.tree, len(sub_questions))
+            if seatable < len(sub_questions):
+                log.info(
+                    "deep_research.breadth_clamped",
+                    requested=len(sub_questions),
+                    seated=seatable,
+                )
+                sub_questions = sub_questions[:seatable]
+
             # --- (2) GATHER — a research fan over the sub-questions ----------------
             self._phase(ctx, 2, f"Researching {len(sub_questions)} angle(s)")
             gather = await self._spawn.run_research_fan(
@@ -449,7 +491,9 @@ class DeepResearchService:
             # Gather is done, so its children can no longer over-spend: release the
             # analyst's slice (it may now use everything but the critique's protected
             # slice), and keep the critique's reserved through the analyst + refill fans.
+            # Both axes step down together, so the analyst gets its full token AND time slice.
             ctx.tree.stage_reserve = DR_CRITIQUE_RESERVE
+            ctx.tree.time_reserve = DR_CRITIQUE_TIME_RESERVE
 
             # First committed round (gather): checkpoint + progress for a background run.
             if on_round is not None:
@@ -499,9 +543,14 @@ class DeepResearchService:
                 # gaps are still nameable (they aren't decision-changing anymore).
                 if deepest and stable and useful_rounds >= 1:
                     break
-                if not (ctx.tree.can_admit(len(gaps)) and ctx.tree.can_admit_budget(len(gaps))):
-                    # The pool can't seat the gap children — synthesize from what we have
-                    # and say so, rather than failing (a refused refill is not a crash).
+                if not (
+                    ctx.tree.can_admit(len(gaps))
+                    and ctx.tree.can_admit_budget(len(gaps))
+                    and ctx.tree.can_admit_time(len(gaps))
+                ):
+                    # The pool OR the stage-clock can't seat the gap children (with the critique
+                    # slice still reserved) — synthesize from what we have and say so, rather
+                    # than launching a round that dies at ~0s (a refused refill is not a crash).
                     coverage_limited = True
                     break
                 self._phase(ctx, 5, f"Filling {len(gaps)} gap(s)")
@@ -551,8 +600,10 @@ class DeepResearchService:
                 critique="",
             )
 
-            # The draft is written — release the critique's slice for the critique child.
+            # The draft is written — release the critique's slice (tokens AND time) for the
+            # critique child, which now runs against the full remaining pool and clock.
             ctx.tree.stage_reserve = 0
+            ctx.tree.time_reserve = 0.0
 
             # --- (7) CRITIQUE — a review sub-agent fed the draft; (8) one REVISE pass -
             self._phase(ctx, 7, "Reviewing the draft")
@@ -574,6 +625,7 @@ class DeepResearchService:
                 revised = True
         finally:
             ctx.tree.stage_reserve = prior_reserve
+            ctx.tree.time_reserve = prior_time_reserve
 
         analyzed = bool(analysis.strip())
         rounds = 1 + useful_rounds  # gather + the gap rounds that produced usable findings

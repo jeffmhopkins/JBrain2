@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-27 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8✅
+> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8✅
 
 **Finish-off pass (2026-07-22).** The three remaining threads closed:
 - **Tool-aware report dedup** (was an R7 sub-item) — migration `0148` widens the dedup key
@@ -236,8 +236,8 @@ a pre-registered rubric before a line of that infra is written.
 | One refill round, fixed (no loop exists) | `deep_research.py`, `DR_MAX_GAP_QUESTIONS` | **Adaptive loop** — refill until covered-and-stable or resources spent |
 | `MAX_DEPTH = 1` (children are leaves) | `agent/tree.py:20` | **Two tiers** — orchestrator → task agent → sub agent (`max_depth = 2`, sub agents are leaves) |
 | One critique / revise pass | `deep_research.py` | **N passes** until the critique stops finding fixable problems (capped) |
-| `SPAWN_MULTIPLIER = 40/3` → ~10.7M tree (8M children pool) | `tree.py` | **Owner-set per-run token ceiling** (big, not infinite) |
-| `TREE_WALL_CLOCK_S = 3000s`, one turn | `tree.py:78` | **Background run**, minutes-to-hours, resumable across restarts |
+| `SPAWN_MULTIPLIER = 50/3` → ~13.3M tree (10M children pool) | `tree.py` | **Owner-set per-run token ceiling** (big, not infinite) |
+| `TREE_WALL_CLOCK_S = 4500s`, one turn | `tree.py` | **Background run**, minutes-to-hours, resumable across restarts |
 | Runs in-request, blocks the turn | `deep_research.py` | **Enqueue-and-return**; periodic progress + completion nudge to the chat |
 
 **Untouched — the non-negotiables, at every depth (`spawn.py:526-534`, CLAUDE.md):**
@@ -457,7 +457,7 @@ at the new depth and the amplification bounds bite:
   decomposition flag each refuse the (K+1)th / second spawn from one task agent.
 
 **Residual, quantified and accepted (settled decision 4).** With a resized tree
-cap of ~N agents × `CHILD_MAX_COST_TOKENS` (1.6M), the worst case is *tens of
+cap of ~N agents × `CHILD_MAX_COST_TOKENS` (2.4M), the worst case is *tens of
 millions of attacker-steerable tokens per run*, bounded by the owner ceiling. The
 owner approves that figure explicitly at kickoff. A tighter ceiling triggered by
 an injection heuristic is **out of scope** (not detectable today) but named here.

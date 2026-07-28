@@ -14,9 +14,11 @@ from jbrain.agent.briefs import FEED_OPEN
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.deep_research import (
     DR_CRITIQUE_RESERVE,
+    DR_CRITIQUE_TIME_RESERVE,
     DR_DEEPEST_MAX_ROUNDS,
     DR_MAX_GAP_QUESTIONS,
     DR_REVIEW_RESERVE,
+    DR_REVIEW_TIME_RESERVE,
     DR_SIMPLE_BREADTH,
     DeepResearchService,
     _coerce_brief,
@@ -156,6 +158,7 @@ class _FakeSpawn:
                 "briefs": briefs,
                 "effort": effort,
                 "stage_reserve": ctx.tree.stage_reserve if ctx.tree else None,
+                "time_reserve": ctx.tree.time_reserve if ctx.tree else None,
             }
         )
         first_label = briefs[0][0] if briefs else ""
@@ -621,14 +624,57 @@ async def test_review_children_get_a_reserved_budget_slice() -> None:
     assert tree.stage_reserve == 0  # restored on exit
 
 
+async def test_review_children_get_a_reserved_wall_clock_slice() -> None:
+    """Idea 1: the wall-clock reserve steps down in lockstep with the token reserve, so the
+    analyst/critique are guaranteed TIME as well as tokens — the fix for the 75s analyst / 0s
+    gap-child failure where gather ran the deadline down. Same staging as the token reserve:
+    full review slice held through gather, critique's slice through the analyst, released for
+    the critique, restored on exit."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    tree = TreeState.rooted(800_000)
+    assert tree.time_reserve == 0.0
+    await _svc(router, spawn).research(_ctx(tree=tree), {"question": "q"})
+
+    gather = _research_fans(spawn)[0]
+    assert gather["time_reserve"] == DR_REVIEW_TIME_RESERVE  # full slice held through gather
+    analyst = next(f for f in _review_fans(spawn) if f["briefs"][0][0] == "cross-check")
+    assert analyst["time_reserve"] == DR_CRITIQUE_TIME_RESERVE  # analyst gets the rest
+    critique = next(f for f in _review_fans(spawn) if f["briefs"][0][0] == "critique")
+    assert critique["time_reserve"] == 0.0  # released once the draft is written
+    assert tree.time_reserve == 0.0  # restored on exit
+
+
 async def test_review_reserve_is_restored_even_when_gather_yields_nothing() -> None:
-    """The early no-findings refusal still unwinds the reserve (it runs in a `finally`),
-    so a follow-up fan in the same turn sees a clean pool."""
+    """The early no-findings refusal still unwinds BOTH reserves (they run in a `finally`),
+    so a follow-up fan in the same turn sees a clean pool and clock."""
     router, spawn = _FakeRouter(), _FakeSpawn(gather_ok=False)
     tree = TreeState.rooted(800_000)
     out = await _svc(router, spawn).research(_ctx(tree=tree), {"question": "q"})
     assert "refused" in out.lower()
     assert tree.stage_reserve == 0  # reserve unwound despite the early return
+    assert tree.time_reserve == 0.0  # ...and the wall-clock reserve too
+
+
+async def test_gather_breadth_is_clamped_to_what_the_clock_can_seat() -> None:
+    """Idea 3 (honest degradation): a run whose remaining deadline can't seat the full breadth
+    AROUND the review reserve drops the angles it can't afford instead of launching them to die
+    at ~0s. Here the deadline leaves only enough stage-clock for ~2 gather children, so a
+    breadth-4 request runs 2 angles — the analyst + critique still run (protected by the
+    reserve)."""
+    import time
+
+    from jbrain.agent.tree import MIN_VIABLE_CHILD_SECONDS
+
+    router = _FakeRouter(sub_questions=("s1", "s2", "s3", "s4"))
+    spawn = _FakeSpawn()
+    tree = TreeState.rooted(800_000)
+    # Leave only the review reserve + room for ~2 producers at the viability floor.
+    tree.deadline = time.monotonic() + DR_REVIEW_TIME_RESERVE + 2 * MIN_VIABLE_CHILD_SECONDS + 5
+    await _svc(router, spawn).research(_ctx(tree=tree), {"question": "q", "breadth": 4})
+
+    gather = _research_fans(spawn)[0]
+    assert len(gather["briefs"]) == 2  # clamped from 4 to what the clock could seat
+    assert len(_review_fans(spawn)) == 2  # analyst + critique still ran (reserve protected)
 
 
 async def test_orchestration_calls_charge_the_tree_budget() -> None:

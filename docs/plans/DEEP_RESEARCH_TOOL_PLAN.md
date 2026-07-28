@@ -376,20 +376,26 @@ retuning — but the **shape** (shared counter + root reserve + admission floor 
 wall-clock) is unchanged. Proposed changes (final numbers a build-plan task, validated
 on-box like the S2/F2 retunes were):
 
-- **Tree budget headroom.** ✅ `SPAWN_MULTIPLIER` raised to **40/3 (~13.3)** for every root
-  (v3 took it 3.5 → 5.0; v5 → 10.0; then → 40/3), so jerv's children pool is **8.0M** (tree
-  ~10.7M − the 25% root reserve; the 40/3 lands the pool exactly on 8.0M) — the simpler
-  lever than a dedicated deep-research multiplier, and the
+- **Tree budget headroom.** ✅ `SPAWN_MULTIPLIER` raised to **50/3 (~16.7)** for every root
+  (v3 took it 3.5 → 5.0; v5 → 10.0; then → 40/3; then → 50/3), so jerv's children pool is
+  **10.0M** (tree ~13.3M − the 25% root reserve; the 50/3 lands the pool exactly on 10.0M) —
+  the simpler lever than a dedicated deep-research multiplier, and the
   reserve still covers the two large root calls (synthesis in 5, revision in 6). On top of
-  the pool, `deep_research` carves a `DR_REVIEW_RESERVE` (`stage_reserve`, 1.2M) so the
+  the pool, `deep_research` carves a `DR_REVIEW_RESERVE` (`stage_reserve`, 1.5M) so the
   post-gather analyst + critique children can't be starved by a greedy gather round.
-- **Two-fan admission.** The admission floor (`can_admit_budget`) is checked before
-  *each* fan (gather, refill) — the refill fan is skipped-loud if the pool can't seat
-  its gap children, and the run synthesizes from round-1 material tagged "coverage
-  limited."
+- **Review wall-clock reserve.** ✅ The token reserve has a wall-clock twin,
+  `DR_REVIEW_TIME_RESERVE` (`tree.time_reserve`, 900s), stepped down at the same three
+  points. A producer child's clock is bounded by `stage_seconds_left` (deadline − the
+  reserve), so gather can't run the deadline down and leave the analyst a 75s scrap or the
+  gap children a 0s one — each review stage keeps its guaranteed time as well as its tokens.
+- **Two-fan admission.** The admission floor is checked before *each* fan (gather, refill)
+  on **both** axes — `can_admit_budget` (tokens) and `can_admit_time` (the stage-clock at
+  `MIN_VIABLE_CHILD_SECONDS`/child). A fan the pool or clock can't seat is skipped-loud, and
+  gather breadth is clamped to what's seatable around the review reserve (`_seatable`, logged
+  as `deep_research.breadth_clamped`) — honest degradation, not children that die at ~0s.
 - **Tree wall-clock.** A two-round + critique run is longer than a 2-wave feed; confirm
-  it fits under `TREE_WALL_CLOCK_S = 3000` with synthesis headroom, or lift it (still
-  under the `_MAX_TURN_WALL_CLOCK_S = 3600` turn cap). Deferred to a background job is
+  it fits under `TREE_WALL_CLOCK_S = 4500` with synthesis headroom, or lift it (still
+  under the `_MAX_TURN_WALL_CLOCK_S = 5400` turn cap). Deferred to a background job is
   an **explicitly considered** fallback if it doesn't fit (see Open decisions).
 - **Per-child caps** (`CHILD_MAX_STEPS`/`CHILD_WALL_CLOCK_S`/`CHILD_MAX_COST_TOKENS`)
   are unchanged — a research child in a deep-research fan is the same research child.

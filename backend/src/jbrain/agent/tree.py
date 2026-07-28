@@ -61,14 +61,16 @@ CHILD_MAX_STEPS = 42  # default/low-effort ReAct iterations a child may take
 # (Raised ~1.75× from 24/44/64 after a heavy verifier — the iTTP cross-check — kept
 # truncating mid-chain; the token cap below stays the practical binding limit on a slow box.)
 CHILD_STEPS_BY_EFFORT = {"high": 112, "medium": 77}
-CHILD_WALL_CLOCK_S = 1200.0  # hard per-child time limit; past it the child returns truncated
-# (Doubled from 600s with the step caps so a medium/high child can actually reach its
-# larger step budget on the slow local box before the clock — not the steps — stops it.)
-# The token cap is the last backstop, raised ~1.75× (from 900k) after the iTTP cross-check
-# burned 906k and was force-cut with NO synthesized answer (the budget stop early-returns,
-# unlike the step cap's forced final answer). At the observed ~2.2k tok/s it now bites near
-# ~720s — still comfortably under the wall clock above, so a heavy verifier finishes.
-CHILD_MAX_COST_TOKENS = 1_600_000  # per-child token backstop (steps/wall-clock bite first)
+CHILD_WALL_CLOCK_S = 1800.0  # hard per-child time limit; past it the child returns truncated
+# (Doubled from 600s to 1200s with the step caps so a medium/high child can reach its larger
+# step budget on the slow local box before the clock — not the steps — stops it, then +50% to
+# 1800s so a serial deep-research fan's heaviest child isn't squeezed by the tree deadline.)
+# The token cap is the last backstop, scaled with the wall clock (its whole job is to bite
+# comfortably UNDER it) after the iTTP cross-check burned 906k and was force-cut with NO
+# synthesized answer (the budget stop early-returns, unlike the step cap's forced final
+# answer). At the observed ~2.2k tok/s it bites near ~1090s — still well under the 1800s
+# wall clock above, so a heavy verifier finishes.
+CHILD_MAX_COST_TOKENS = 2_400_000  # per-child token backstop (steps/wall-clock bite first)
 # A research_deep TASK AGENT (deepest, depth 1) is not a leaf: within its own turn it must run
 # its entire decompose sub-fan (up to MAX_SUBFAN_PER_TASK_AGENT children), which the local
 # route SERIALIZES — so the leaf's CHILD_WALL_CLOCK_S would cut it off before the second tier
@@ -87,21 +89,26 @@ def child_steps_for(effort: str | None) -> int:
 # most SPAWN_MULTIPLIER × the root's own per-turn token cap; a fraction is reserved off
 # the top so the root can always synthesize even after a fan drains the children's
 # pool; and a fan is admitted only if each child could get a viable slice of what's
-# left. Sized generously (~8M children pool with jerv's 800k root cap) so the runtime
+# left. Sized generously (~10M children pool with jerv's 800k root cap) so the runtime
 # caps above — not budget exhaustion — are what stop a child, with ample room for a staged
 # review reserve (deep_research) on top of a full multi-round gather.
-SPAWN_MULTIPLIER = 40.0 / 3.0  # tree_budget = base_max_cost_tokens × this (~10.7M for jerv).
-# The 40/3 is chosen so the children pool (tree_budget − the 25% root reserve, i.e. × 0.75,
-# which cancels the /3) lands exactly on 8.0M for jerv's 800k root cap — the meter's ceiling.
+SPAWN_MULTIPLIER = 50.0 / 3.0  # tree_budget = base_max_cost_tokens × this (~13.3M for jerv).
+# The 50/3 is chosen so the children pool (tree_budget − the 25% root reserve, i.e. × 0.75,
+# which cancels the /3) lands exactly on 10.0M for jerv's 800k root cap — the meter's ceiling.
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
-MIN_VIABLE_CHILD_BUDGET = 100_000  # admission floor: tokens each child must be able to get
+MIN_VIABLE_CHILD_BUDGET = 125_000  # admission floor: tokens each child must be able to get
+# The wall-clock analog of the token floor: the least time a producer child is worth
+# seating with. Below it a research child can't do anything useful (a search or two, a read,
+# a summary), so a fan the remaining stage-clock can't seat at this floor is clamped rather
+# than launched to die at ~0s — the honest-degradation gate (deep_research clamps breadth).
+MIN_VIABLE_CHILD_SECONDS = 120.0
 
 # Feeding waves runtime bound (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md, F2). A whole staged
 # (feeding) spawn call must finish inside this cumulative wall-clock, sized to sit under
-# the parent turn cap (_MAX_TURN_WALL_CLOCK_S=3600s) with ~600s of synthesis headroom.
+# the parent turn cap (_MAX_TURN_WALL_CLOCK_S=5400s) with ~900s of synthesis headroom.
 # Checked at each wave barrier; a wave that can't start before it is skipped, loud. Only
 # the staged scheduler consults it — a flat fan is unchanged.
-TREE_WALL_CLOCK_S = 3000.0
+TREE_WALL_CLOCK_S = 4500.0
 
 
 @dataclass
@@ -153,6 +160,13 @@ class TreeState:
     # over-spending producer cannot starve the deliverable wave, then released to 0
     # when the final wave itself starts. 0 for a flat fan (no effect).
     stage_reserve: int = 0
+    # The wall-clock twin of `stage_reserve` (Idea 1): seconds carved off the deadline for a
+    # not-yet-run review/final stage, so a greedy producer fan is stopped in TIME as well as
+    # tokens and can't run the clock down to nothing — the failure where gather ate the
+    # deadline and the cross-check analyst got a 75s scrap (then post-deadline gap children
+    # timed out at 0s). Stepped down as each reserved stage is reached, exactly like
+    # `stage_reserve`; 0 for a flat fan, so its behaviour is unchanged.
+    time_reserve: float = 0.0
     # One-shot decomposition (R2): the set of task-agent session ids that have already
     # spawned their one sub-fan. A task agent may decompose EXACTLY ONCE, so it cannot
     # read its first sub-fan's fetched content and then spawn a second fan embedding it
@@ -222,6 +236,22 @@ class TreeState:
     def seconds_left(self) -> float | None:
         """Wall-clock remaining before the staged deadline, or None if unbounded."""
         return None if self.deadline is None else max(0.0, self.deadline - time.monotonic())
+
+    def stage_seconds_left(self) -> float | None:
+        """The wall-clock a PRODUCER child may use: `seconds_left` minus the slice held for a
+        not-yet-run review/final stage (`time_reserve`). None (unbounded) passes through, so a
+        flat fan with no deadline is unaffected; with `time_reserve` 0 it equals `seconds_left`,
+        so a flat fan's per-child clock is unchanged. This is what a fan's per-child timeout is
+        bounded by, so the review stage the reserve protects always keeps its guaranteed time."""
+        left = self.seconds_left()
+        return left if left is None else max(0.0, left - self.time_reserve)
+
+    def can_admit_time(self, n: int) -> bool:
+        """The wall-clock admission floor (twin of `can_admit_budget`): a fan of `n` producers
+        is seatable only if the remaining stage-clock covers a minimum viable slice for each.
+        An unbounded (None) deadline → always True (only the structural caps apply)."""
+        left = self.stage_seconds_left()
+        return left is None or left >= n * MIN_VIABLE_CHILD_SECONDS
 
     def has_decomposed(self, agent_id: str) -> bool:
         """Whether this task agent has already spawned its one allowed sub-fan (one-shot)."""
