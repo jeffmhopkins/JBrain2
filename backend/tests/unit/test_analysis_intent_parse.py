@@ -8,8 +8,23 @@ from typing import Any
 
 import pytest
 
-from jbrain.analysis.intent_parse import IntentParseError, parse_intent
+from jbrain.analysis.intent_parse import INTENT_SCHEMA, IntentParseError, parse_intent
+from jbrain.analysis.prompt import MAX_FACTS
 from jbrain.schema import get_registry
+
+
+def test_intent_schema_arrays_are_capped_above_the_fact_budget():
+    # gpt-oss-120b intermittently loops on integrate — re-emitting a fact until the
+    # JSON nears the token cap and TRUNCATES (an integrate abort). maxItems (enforced
+    # by the local grammar backend) bounds the array so it always closes. The caps
+    # must stay ABOVE the legitimate maximum — MAX_FACTS extracted facts plus a few
+    # integrate-added identity inferences — so a real note is never clipped.
+    props = INTENT_SCHEMA["properties"]
+    assert props["facts"]["maxItems"] > MAX_FACTS
+    assert props["resolutions"]["maxItems"] > MAX_FACTS
+    for k in ("supersession_proposals", "merge_proposals", "distinct_proposals"):
+        assert props[k]["maxItems"] >= MAX_FACTS
+
 
 _PROV: dict[str, Any] = dict(
     note_id="n1", schema_version=1, prompt_version="v1", integrator_version="i1"

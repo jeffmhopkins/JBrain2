@@ -1,6 +1,6 @@
 ---
 name: integrate.note
-version: integrate-v13
+version: integrate-v14
 description: Integrate one note's extracted facts into the knowledge graph, producing an IntegrationIntent.
 strength: high
 config:
