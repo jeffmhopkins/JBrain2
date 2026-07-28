@@ -188,6 +188,9 @@ class LibraryReport:
     # The owner's folder this report is filed under (NULL = the trailing "Ungrouped"
     # section); owner-only browse metadata (migration 0149), opaque to jerv.
     group_id: str | None = None
+    # The source mode (`web`|`library`|`library_first`); lets the owner UI flag a report
+    # drawn from private notes before it's shared. NULL for a pre-0142 legacy row → `web`.
+    source_mode: str = "web"
 
 
 def _row_to_library_report(row: Any) -> LibraryReport:
@@ -200,12 +203,13 @@ def _row_to_library_report(row: Any) -> LibraryReport:
         sub_agents=int(row.sub_agents or 0),
         rounds=int(row.rounds or 1),
         group_id=(str(row.group_id) if row.group_id is not None else None),
+        source_mode=row.source_mode or "web",
     )
 
 
 _SELECT_LIBRARY = (
-    "SELECT id, question, title, complexity, created_at, sub_agents, rounds, group_id"
-    " FROM app.research_reports WHERE status = 'done'"
+    "SELECT id, question, title, complexity, created_at, sub_agents, rounds, group_id,"
+    " source_mode FROM app.research_reports WHERE status = 'done'"
 )
 
 

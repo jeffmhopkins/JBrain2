@@ -7,7 +7,9 @@ import { GuidedIntakeApp } from "./intake/GuidedIntakeApp";
 import { parseIntakePath } from "./intake/share";
 import { parseSharePath } from "./jcode/share";
 import { initLocationCapture } from "./location";
+import { parseResearchSharePath } from "./research/share";
 import { JcodeShareApp } from "./screens/JcodeShareApp";
+import { ResearchShareApp } from "./screens/ResearchShareApp";
 import { initTheme } from "./theme";
 import { isForeground } from "./visibility";
 import "./styles/tokens.css";
@@ -49,6 +51,7 @@ if (!container) throw new Error("Missing #root element");
 // owner app — a recipient sees only that one scoped surface.
 function pickRoot(): JSX.Element {
   if (parseSharePath()) return <JcodeShareApp />;
+  if (parseResearchSharePath()) return <ResearchShareApp />;
   if (parseIntakePath()) return <GuidedIntakeApp />;
   return <App />;
 }

@@ -55,6 +55,9 @@ class ReportListOut(BaseModel):
     # The owner's folder this report is filed under (None = the trailing "Ungrouped"
     # section); owner-only browse metadata the Reports tab groups by.
     group_id: str | None = None
+    # `web` | `library` | `library_first` — lets the Share sheet warn before publishing a
+    # report drawn from the owner's private notes.
+    source_mode: str = "web"
 
 
 class ReportHitOut(BaseModel):

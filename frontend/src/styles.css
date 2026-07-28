@@ -21239,3 +21239,272 @@ button.task-band:active {
   padding: 4px 8px;
   border-radius: 10px;
 }
+
+/* --- Report share links ------------------------------------------------------------------
+   Owner: the folder-header Share button + the ShareSheet (mint / copy-once / revoke), amber
+   for the private-notes warning, steel for links. Public: the shell-less ResearchShareApp
+   (/share/{token}) — an amber "shared research · read-only" band, the reused report body, and
+   a folder index of cards. Tokens only (docs/reference/DESIGN.md; mock docs/mocks/research-share). */
+.rl-group-share {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: var(--steel-tint);
+  color: var(--steel);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.rl-share {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 2px 4px;
+}
+.rl-share-sub {
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.rl-share-warn {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  background: var(--amber-tint);
+  color: var(--amber);
+  border-radius: 11px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+.rl-share-warn > svg {
+  flex: none;
+  margin-top: 1px;
+}
+.rl-share-linkwrap {
+  margin-bottom: 12px;
+}
+.rl-share-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0 6px 0 12px;
+  height: 46px;
+}
+.rl-share-url {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rl-share-copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: var(--steel-tint);
+  color: var(--steel);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.rl-share-once {
+  color: var(--text-3);
+  font-size: 11.5px;
+  margin-top: 6px;
+}
+.rl-share-mint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 12px;
+  padding: 12px;
+  cursor: pointer;
+}
+.rl-share-mint:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.rl-share-list {
+  margin-top: 14px;
+}
+.rl-share-list-h {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.rl-share-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 2px;
+  border-top: 1px solid var(--border);
+}
+.rl-share-glyph {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.rl-share-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rl-share-when {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.rl-share-sub2 {
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.rl-share-revoke {
+  flex: none;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--danger);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+/* Public share view (shell-less; no owner nav) */
+.rs-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+.rs-band {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px 13px;
+  background: var(--amber-tint);
+  border-bottom: 1px solid var(--border);
+}
+.rs-band-kick {
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.rs-band-back {
+  border: none;
+  background: none;
+  color: var(--amber);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rs-wordmark {
+  margin-left: auto;
+  flex: none;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-2);
+}
+.rs-dot {
+  color: var(--amber);
+}
+.rs-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 16px 30px;
+}
+.rs-index {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 16px 30px;
+}
+.rs-index-ttl {
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.rs-index-cnt {
+  color: var(--text-2);
+  font-size: 12.5px;
+  margin: 4px 0 12px;
+}
+.rs-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 9px;
+  cursor: pointer;
+}
+.rs-card-q {
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.34;
+  color: var(--text);
+}
+.rs-foot {
+  padding: 15px 18px;
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.rs-empty {
+  color: var(--text-3);
+  text-align: center;
+  padding: 60px 20px;
+  font-size: 14px;
+}
