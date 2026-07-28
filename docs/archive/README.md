@@ -43,6 +43,7 @@ its ship evidence.
 | `INLINE_APPROVALS_PLAN.md` | Proposal approval moved into the conversation (inline variant-D card): per-leaf approve / decline-with-reason / correct-in-place + one Enact that returns a server-authored outcome to the assistant (the enact→agent feedback loop). Migration 0130. |
 | `CHAT_CHARTS_PLAN.md` | Interactive (zoom/pan) chart + lab-plot tool-views in Full Brain chat: the `InteractiveChart` engine, the `chart`/`lab_chart` tabbed views (GUI-gate variant C), `lab_chart` from `read_labs` trend, and the `chart_measurements` (grounded) + `render_chart` producers. |
 | `RESEARCH_LIBRARY_PLAN.md` | The owner-facing card-launcher **Research Library** (GUI variant B) over jerv's `external`-corpus artifacts — deep-research reports + video analyses: search / view / delete via an owner-gated `/api/research-library` API that reuses the existing corpus callables (no migration/grant), a detail layer (`<Markdown>` / `<VideoAnalysis>`), and per-item actions. PR #907; R1–R3 with both review gates. |
+| `RESEARCH_SHARE_LINKS_PLAN.md` | Public, revocable, no-login **report share links** (migration 0150, GUI variant B): mint a token targeting one report or one folder; anyone reads it at `/share/<token>`; revoke to kill it. The read is enforced in RLS via a row-scoped `research_reports_share` policy over an empty-scope share context; the public `/api/research-share` router is rate-limited + `no-referrer`/`noindex`. |
 
 ## Image generation
 | Item | What it is |

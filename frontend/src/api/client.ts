@@ -992,6 +992,9 @@ export interface ReportListItem {
   /** The owner's folder this report is filed under; null = the trailing "Ungrouped"
    * section. Owner-only browse metadata the Reports tab groups by. */
   group_id: string | null;
+  /** `web` | `library` | `library_first` — flags a report drawn from private notes, so the
+   * Share sheet can warn before publishing it. */
+  source_mode: string;
 }
 
 /** An owner-named folder on the Research Library's Reports tab (mirrors TaskGroup). */
@@ -1018,6 +1021,41 @@ export interface ReportDetail {
   truncated: boolean;
   sources: { url?: string; title?: string }[];
   created_at: string | null;
+}
+/** A minted share link — the secret is returned ONCE (build the /share/<token> URL from it). */
+export interface MintedShare {
+  id: string;
+  target_kind: "report" | "group";
+  label: string | null;
+  token: string;
+  /** The target is a report synthesised from private notes — warn before sending. */
+  library_warning: boolean;
+}
+/** A live share link in the owner's list — metadata + usage, never the secret. */
+export interface ShareLinkView {
+  id: string;
+  label: string | null;
+  target_kind: "report" | "group";
+  report_id: string | null;
+  group_id: string | null;
+  created_at: string | null;
+  last_viewed_at: string | null;
+  view_count: number;
+  library_warning: boolean;
+}
+/** One entry in a public folder-share index. */
+export interface ShareReportItem {
+  id: string;
+  question: string;
+  title: string | null;
+  created_at: string | null;
+}
+/** The public resolve of a share token: one report, or a folder label + its members. */
+export interface ShareView {
+  kind: "report" | "group";
+  label: string | null;
+  report: ReportDetail | null;
+  reports: ShareReportItem[] | null;
 }
 export interface VideoListItem {
   video_id: string;
@@ -2581,6 +2619,43 @@ export const api = {
 
   async deleteResearchReport(id: string): Promise<void> {
     await request(`/api/research-library/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // ----- public report share links (owner mint/list/revoke; anyone reads at /share/<token>) -----
+
+  /** Mint a public, revocable, no-expiry link to one report OR one folder (owner only). The
+   * secret is returned ONCE. `library_warning` flags a report drawn from private notes. */
+  async mintReportShare(target: {
+    target_kind: "report" | "group";
+    report_id?: string;
+    group_id?: string;
+  }): Promise<MintedShare> {
+    const response = await request("/api/research-library/shares", jsonInit("POST", target));
+    return (await response.json()) as MintedShare;
+  },
+
+  /** The owner's live share links — metadata + usage, no secrets. */
+  async researchShares(): Promise<ShareLinkView[]> {
+    return (await (await request("/api/research-library/shares")).json()) as ShareLinkView[];
+  },
+
+  /** Revoke a share link (owner only). A 404 (already gone) is swallowed by the reload. */
+  async revokeReportShare(id: string): Promise<void> {
+    await request(`/api/research-library/shares/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  /** PUBLIC: resolve a share token to its report or folder index. 404 (ApiError) when the
+   * link is unknown or revoked. No login — used by the shell-less ResearchShareApp. */
+  async researchShareView(token: string): Promise<ShareView> {
+    return (await (
+      await request(`/api/research-share/${encodeURIComponent(token)}`)
+    ).json()) as ShareView;
+  },
+
+  /** PUBLIC: one report within a share (a folder member, or the report link's target). */
+  async researchShareReport(token: string, reportId: string): Promise<ReportDetail> {
+    const path = `/api/research-share/${encodeURIComponent(token)}/reports/${encodeURIComponent(reportId)}`;
+    return (await (await request(path)).json()) as ReportDetail;
   },
 
   // ----- report folders (owner-named buckets on the Reports tab; mirrors task groups) -----

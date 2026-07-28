@@ -20,8 +20,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
+  type MintedShare,
   type ReportGroup,
   type ReportListItem,
+  type ShareLinkView,
   type VideoDetail,
   type VideoListItem,
   api,
@@ -33,6 +35,7 @@ import {
   ClipIcon,
   FileIcon,
   GlobeIcon,
+  LinkIcon,
   ListIcon,
   MessageIcon,
   MoreIcon,
@@ -43,6 +46,7 @@ import {
   VideoIcon,
 } from "../components/icons";
 import { UNGROUPED_KEY, loadCollapsed, writeCollapsed } from "../research/collapsed";
+import { researchShareUrl } from "../research/share";
 
 export type ResearchKind = "report" | "video";
 type Item = { kind: "report"; row: ReportListItem } | { kind: "video"; row: VideoListItem };
@@ -166,6 +170,8 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
   // editing is hidden), mirroring the Tasks "Organize" toggle.
   const [organizing, setOrganizing] = useState(false);
   const [moveFor, setMoveFor] = useState<ReportListItem | null>(null);
+  // The report or folder whose public share links the ShareSheet is managing (null = closed).
+  const [shareFor, setShareFor] = useState<ShareTarget | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
   const [armedFolderDelete, setArmedFolderDelete] = useState<string | null>(null);
@@ -509,6 +515,16 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
             </button>
           )}
           <span className="rl-group-n">{rows.length}</span>
+          {!organizing && group !== null && (
+            <button
+              type="button"
+              className="rl-group-share"
+              aria-label={`Share ${name}`}
+              onClick={() => setShareFor({ kind: "group", group })}
+            >
+              <LinkIcon size={14} /> Share
+            </button>
+          )}
           {canEdit && renamingFolder !== group.id && (
             <span className="rl-group-acts">
               <button
@@ -691,6 +707,11 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
             setMenuFor(null);
             setMoveFor(row);
           }}
+          onShare={() => {
+            const row = menuFor.row as ReportListItem;
+            setMenuFor(null);
+            setShareFor({ kind: "report", row });
+          }}
           onCopyReport={() => void copyReport(menuFor.row as ReportListItem)}
           onDownloadReport={() => void downloadReport(menuFor.row as ReportListItem)}
           onCopySummary={() => void copyVideoText(menuFor.row as VideoListItem, "summary")}
@@ -709,6 +730,10 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
           onCreateAndMove={(name) => void createFolderAndMove(moveFor, name)}
           onClose={() => setMoveFor(null)}
         />
+      )}
+
+      {shareFor !== null && (
+        <ShareSheet target={shareFor} onClose={() => setShareFor(null)} onFlash={setFlash} />
       )}
 
       {flash !== null && (
@@ -863,6 +888,7 @@ function ActionSheet({
   onView,
   onOpenInJerv,
   onMoveToFolder,
+  onShare,
   onCopyReport,
   onDownloadReport,
   onCopySummary,
@@ -875,6 +901,7 @@ function ActionSheet({
   onView: () => void;
   onOpenInJerv: () => void;
   onMoveToFolder: () => void;
+  onShare: () => void;
   onCopyReport: () => void;
   onDownloadReport: () => void;
   onCopySummary: () => void;
@@ -897,6 +924,9 @@ function ActionSheet({
           <>
             <button type="button" className="rl-action" onClick={onMoveToFolder}>
               <ListIcon size={19} /> Move to folder
+            </button>
+            <button type="button" className="rl-action" onClick={onShare}>
+              <LinkIcon size={19} /> Share…
             </button>
             <button type="button" className="rl-action" onClick={onCopyReport}>
               <ClipIcon size={19} /> Copy report
@@ -928,6 +958,174 @@ function ActionSheet({
           <TrashIcon size={19} />
           {armed ? `Tap again — deletes this ${kindWord}` : "Delete"}
         </button>
+      </div>
+    </Sheet>
+  );
+}
+
+type ShareTarget = { kind: "report"; row: ReportListItem } | { kind: "group"; group: ReportGroup };
+
+/** The public share-link sheet (docs/mocks/research-share, variant B): mint a revocable,
+ * no-login link to a report or folder, copy it (shown once), and revoke live links. A report
+ * drawn from private notes shows a warning before it's shared. */
+function ShareSheet({
+  target,
+  onClose,
+  onFlash,
+}: { target: ShareTarget; onClose: () => void; onFlash: (msg: string) => void }) {
+  const [existing, setExisting] = useState<ShareLinkView[] | null>(null);
+  const [minted, setMinted] = useState<MintedShare | null>(null);
+  const [busy, setBusy] = useState(false);
+  // A known-library report requires a second tap to publish (warn + confirm); a folder can't
+  // be pre-checked from the row, so it warns after minting (the link is revocable).
+  const [armed, setArmed] = useState(false);
+
+  const isReport = target.kind === "report";
+  const targetId = isReport ? target.row.id : target.group.id;
+  const title = isReport ? "Share this report" : `Share “${target.group.name}”`;
+  const isLibrary =
+    isReport &&
+    (target.row.source_mode === "library" || target.row.source_mode === "library_first");
+
+  const reload = useCallback(async () => {
+    try {
+      const all = await api.researchShares();
+      setExisting(
+        all.filter((s) => (isReport ? s.report_id === targetId : s.group_id === targetId)),
+      );
+    } catch (e) {
+      onFlash(errMsg(e));
+    }
+  }, [isReport, targetId, onFlash]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  async function mint() {
+    setBusy(true);
+    try {
+      const m = await api.mintReportShare(
+        isReport
+          ? { target_kind: "report", report_id: targetId }
+          : { target_kind: "group", group_id: targetId },
+      );
+      setMinted(m);
+      onFlash(
+        (await copyText(researchShareUrl(m.token)))
+          ? "Link created and copied"
+          : "Link created — copy it below",
+      );
+      void reload();
+    } catch (e) {
+      onFlash(errMsg(e));
+    } finally {
+      setBusy(false);
+      setArmed(false);
+    }
+  }
+
+  async function revoke(id: string) {
+    try {
+      await api.revokeReportShare(id);
+      setExisting((xs) => xs?.filter((x) => x.id !== id) ?? xs);
+      if (minted && id === minted.id) setMinted(null);
+      onFlash("Link revoked");
+    } catch (e) {
+      onFlash(errMsg(e));
+    }
+  }
+
+  // The freshly minted link (URL shown once); older links can only be revoked (their secret
+  // is unrecoverable, mirroring the jcode share).
+  const others = (existing ?? []).filter((s) => s.id !== minted?.id);
+
+  return (
+    <Sheet title={title} onClose={onClose}>
+      <div className="rl-share">
+        <p className="rl-share-sub">
+          {isReport
+            ? "Anyone with the link can read this report. No sign-in, no expiry — revoke any time."
+            : "Anyone with the link sees every report in this folder — including any you add to it later."}
+        </p>
+
+        {(isLibrary || minted?.library_warning) && (
+          <div className="rl-share-warn">
+            <GlobeIcon size={16} />
+            <span>
+              {isReport ? "This report was" : "This folder contains a report"} written from{" "}
+              <b>your private notes</b>. Sharing publishes that content — revoke if you didn't mean
+              to.
+            </span>
+          </div>
+        )}
+
+        {minted && (
+          <div className="rl-share-linkwrap">
+            <div className="rl-share-link">
+              <span className="rl-share-url">{researchShareUrl(minted.token)}</span>
+              <button
+                type="button"
+                className="rl-share-copy"
+                onClick={async () =>
+                  onFlash(
+                    (await copyText(researchShareUrl(minted.token)))
+                      ? "Link copied"
+                      : "Couldn't copy — clipboard unavailable.",
+                  )
+                }
+              >
+                <ClipIcon size={14} /> Copy
+              </button>
+            </div>
+            <p className="rl-share-once">Copy it now — the link isn't shown again.</p>
+          </div>
+        )}
+
+        <button
+          type="button"
+          className={`rl-share-mint${armed ? " rl-share-mint-armed" : ""}`}
+          disabled={busy}
+          onClick={() => {
+            if (isLibrary && !armed) {
+              setArmed(true); // warn + confirm: a notes-derived report needs a second tap
+              return;
+            }
+            void mint();
+          }}
+        >
+          <LinkIcon size={17} />{" "}
+          {busy
+            ? "Creating…"
+            : armed
+              ? "Tap again to publish — from private notes"
+              : "Create share link"}
+        </button>
+
+        {others.length > 0 && (
+          <div className="rl-share-list">
+            <div className="rl-share-list-h">Active links</div>
+            {others.map((s) => (
+              <div key={s.id} className="rl-share-row">
+                <span className="rl-share-glyph" aria-hidden="true">
+                  <LinkIcon size={16} />
+                </span>
+                <span className="rl-share-meta">
+                  <span className="rl-share-when">{fmtDate(s.created_at)}</span>
+                  <span className="rl-share-sub2">
+                    {s.view_count} view{s.view_count === 1 ? "" : "s"}
+                    {s.last_viewed_at
+                      ? ` · last opened ${fmtDate(s.last_viewed_at)}`
+                      : " · unopened"}
+                  </span>
+                </span>
+                <button type="button" className="rl-share-revoke" onClick={() => void revoke(s.id)}>
+                  Revoke
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </Sheet>
   );

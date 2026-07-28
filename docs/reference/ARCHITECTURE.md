@@ -1,6 +1,6 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-07-07
+> **Status:** Living · **Last verified:** 2026-07-28
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Over
@@ -98,6 +98,14 @@ carry all scopes (everything visible by default); tokens and device keys are
 scoped to (subject, domain). Wiki builds run per-domain, so a health fact can
 never be cited in a general article. Every new table ships with RLS tests
 proving a scoped session cannot see other domains' rows.
+
+The rare **public** surface (a report share link, `/api/research-share`) is not
+an exception to this — it is another RLS scope. A share visitor runs under an
+empty-scope, non-owner context pinned to one share-link id; a row-scoped policy
+(`research_reports_share`, migration 0150) grants read to exactly that link's
+report or its folder's current members, and nothing else. The token is only the
+key that resolves the pin — the database, not the endpoint, decides what the
+visitor may read.
 
 ## Knowledge pipeline
 

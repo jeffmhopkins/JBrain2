@@ -93,7 +93,7 @@ export function ResearchDetailScreen({ kind, id, syncStatus, onClose }: Research
   );
 }
 
-function ReportDetailBody({ report }: { report: ReportDetail }) {
+export function ReportDetailBody({ report }: { report: ReportDetail }) {
   // The report's `[^n]` markers map positionally to its stored source registry, so each
   // renders as a tappable favicon citation — the same rendering the deep_research_report
   // tool-view uses (registry.tsx builds these from the identical `sources` list), not a

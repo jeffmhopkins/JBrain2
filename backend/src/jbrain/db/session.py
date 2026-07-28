@@ -118,6 +118,30 @@ def intake_context(principal_id: str) -> SessionContext:
     return SessionContext(principal_id=principal_id, principal_kind="intake_link")
 
 
+def research_share_context(link_id: str = "") -> SessionContext:
+    """The session a research-report share visitor (an unauthenticated stranger) runs under.
+
+    Like `intake_context`, maximally locked down: a NON-owner principal kind
+    (`is_owner()`/`is_full_owner()` both FALSE, so every `USING(app.is_owner())` table
+    denies it) with NO `subject_id` and NO `domain_scopes` — so `app.has_domain_scope()`
+    is false for every domain and it reads zero notes/chunks/locations AND, crucially,
+    zero of the `external` report corpus by default. The ONLY grant it earns is the
+    `research_reports_share` policy (migration 0150), which keys off two GUCs this sets:
+    `auth_context='research_share'` (also unlocks the share-links SELECT policy), and
+    `principal_id` — the resolved share-link id the policy pins the report read to.
+
+    Called twice per view: with no `link_id` to resolve a token by hash (the empty pin
+    matches no link — the policy compares the id as text, so it just fails closed), then
+    re-opened pinned to the resolved id to read exactly that link's report(s). Read-only:
+    the visitor has no write policy anywhere (the view-count bump runs under `SYSTEM_CTX`).
+    """
+    return SessionContext(
+        principal_id=link_id,
+        principal_kind="research_share",
+        auth_context="research_share",
+    )
+
+
 @asynccontextmanager
 async def scoped_session(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext
