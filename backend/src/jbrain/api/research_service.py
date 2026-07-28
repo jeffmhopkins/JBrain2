@@ -115,9 +115,7 @@ class ResearchLibrary:
     ) -> research_corpus.ReportRecord | None:
         return await research_shares.fetch_shared_report(self._maker, link_id, report_id)
 
-    async def list_group_reports(
-        self, link_id: str
-    ) -> list[research_corpus.LibraryReport]:
+    async def list_group_reports(self, link_id: str) -> list[research_corpus.LibraryReport]:
         return await research_shares.list_group_reports(self._maker, link_id)
 
     # --- videos ---

@@ -350,9 +350,7 @@ async def mint_share(request: Request, principal: OwnerDep, body: MintShareBody)
         if not body.group_id or body.report_id is not None:
             raise HTTPException(status_code=422, detail="a folder link needs group_id only")
         ctx = ctx_for(principal)
-        folder = next(
-            (g for g in await lib.list_report_groups(ctx) if g.id == body.group_id), None
-        )
+        folder = next((g for g in await lib.list_report_groups(ctx) if g.id == body.group_id), None)
         if folder is None:
             raise HTTPException(status_code=404, detail="no such folder")
         report_id, group_id = None, folder.id

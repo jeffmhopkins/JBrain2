@@ -54,7 +54,7 @@ async def _seed(maker: async_sessionmaker[AsyncSession]) -> dict[str, str]:
                 "INSERT INTO app.research_reports"
                 " (id, question, question_hash, report_md, source_mode, sources, status)"
                 " VALUES (:id, 'web q', :h, '## Web', 'web',"
-                " '[{\"url\": \"https://example.com\", \"title\": \"Ex\"}]'::jsonb, 'done')"
+                ' \'[{"url": "https://example.com", "title": "Ex"}]\'::jsonb, \'done\')'
             ),
             {"id": ids["web"], "h": uuid.uuid4().hex},
         )
@@ -63,8 +63,8 @@ async def _seed(maker: async_sessionmaker[AsyncSession]) -> dict[str, str]:
                 "INSERT INTO app.research_reports"
                 " (id, question, question_hash, report_md, source_mode, sources, status)"
                 " VALUES (:id, 'lib q', :h, '## Lib', 'library',"
-                " '[{\"url\": \"https://ok.com\", \"title\": \"Ok\"},"
-                "   {\"title\": \"Private note snippet\"}]'::jsonb, 'done')"
+                ' \'[{"url": "https://ok.com", "title": "Ok"},'
+                '   {"title": "Private note snippet"}]\'::jsonb, \'done\')'
             ),
             {"id": ids["lib"], "h": uuid.uuid4().hex},
         )
@@ -177,20 +177,12 @@ async def test_share_api_end_to_end(
         index = client.get(f"{share_base}/{folder['token']}").json()
         assert index["kind"] == "group" and index["label"] == "Medical"
         assert {r["id"] for r in index["reports"]} == {ids["m1"], ids["m2"]}
-        assert (
-            client.get(f"{share_base}/{folder['token']}/reports/{ids['m1']}").status_code == 200
-        )
+        assert client.get(f"{share_base}/{folder['token']}/reports/{ids['m1']}").status_code == 200
         # A report the link does not grant (the web report, not in the folder) → 404 via RLS.
-        assert (
-            client.get(f"{share_base}/{folder['token']}/reports/{ids['web']}").status_code == 404
-        )
+        assert client.get(f"{share_base}/{folder['token']}/reports/{ids['web']}").status_code == 404
         # The /reports/{id} path also serves a REPORT link's own target, and 404s any other id.
-        assert (
-            client.get(f"{share_base}/{web['token']}/reports/{ids['web']}").status_code == 200
-        )
-        assert (
-            client.get(f"{share_base}/{web['token']}/reports/{ids['m1']}").status_code == 404
-        )
+        assert client.get(f"{share_base}/{web['token']}/reports/{ids['web']}").status_code == 200
+        assert client.get(f"{share_base}/{web['token']}/reports/{ids['m1']}").status_code == 404
         # An unknown token → 404.
         assert client.get(f"{share_base}/{uuid.uuid4().hex}").status_code == 404
 

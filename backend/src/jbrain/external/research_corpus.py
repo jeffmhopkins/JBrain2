@@ -256,9 +256,7 @@ async def list_reports(
             return [], int(total)
         rows = (
             await session.execute(
-                text(
-                    f"{_SELECT_LIBRARY} ORDER BY created_at DESC, id LIMIT :limit OFFSET :offset"
-                ),
+                text(f"{_SELECT_LIBRARY} ORDER BY created_at DESC, id LIMIT :limit OFFSET :offset"),
                 {"limit": limit, "offset": offset},
             )
         ).all()

@@ -67,9 +67,7 @@ def upgrade() -> None:
     op.execute(
         "CREATE INDEX research_share_links_report_idx ON app.research_share_links (report_id)"
     )
-    op.execute(
-        "CREATE INDEX research_share_links_group_idx ON app.research_share_links (group_id)"
-    )
+    op.execute("CREATE INDEX research_share_links_group_idx ON app.research_share_links (group_id)")
     op.execute("ALTER TABLE app.research_share_links ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE app.research_share_links FORCE ROW LEVEL SECURITY")
     # Owner owns the link lifecycle (mint / list / revoke); the SYSTEM view-count bump
@@ -87,9 +85,7 @@ def upgrade() -> None:
         FOR SELECT USING (app.auth_ctx() = 'research_share')
         """
     )
-    op.execute(
-        "GRANT SELECT, INSERT, UPDATE, DELETE ON app.research_share_links TO jbrain_app"
-    )
+    op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON app.research_share_links TO jbrain_app")
 
     # The keystone: the ONLY grant a share visitor gets on the report corpus. Additive
     # and permissive (OR'd with research_reports_domain), but the domain policy denies an
