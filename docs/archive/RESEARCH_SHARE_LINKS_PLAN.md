@@ -54,6 +54,19 @@ responses set `Referrer-Policy: no-referrer` + `X-Robots-Tag: noindex` and are r
 
 ## Follow-ups carried forward
 
-- A folder-share **library warning** covers only per-report links today; a group whose members
-  include a notes-derived report isn't flagged at mint (the generic forward-looking notice is).
 - The label snapshot goes stale on a folder rename (cosmetic; documented in the mock README).
+- The public read reuses the OwnTracks `TokenBucket` (per-IP, in-memory, unbounded map). Fine at
+  personal scale; if abuse on the internet-facing route becomes a concern, bound the map and key
+  off a trusted forwarded-for. (Independent-review note; not a confidentiality issue.)
+
+## Independent review (post-build)
+
+Three independent reviewers (security red-team, backend, frontend) reviewed the diff. No
+exploit found — the RLS design holds, including the NULL-`group_id` edge (a report link never
+exposes ungrouped reports), verified and tested. Fixes applied from the review: folder links now
+compute `library_warning` at mint and in the list (a folder containing a notes-derived report is
+flagged, not just report links); the report mint requires a second tap to publish a
+notes-derived report (warn **+ confirm**); `_public_sources` projects citations to `{url,title}`
+explicitly (allowlist, not passthrough); a non-uuid `report_id` is rejected at mint; a failed
+member fetch keeps the folder index; added tests for the report-link `/reports/{id}` path, the
+429 rate-limit, and the folder library-warning; added a `ResearchShareApp` component test.

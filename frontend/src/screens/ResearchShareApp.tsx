@@ -13,7 +13,15 @@ type State =
   | { phase: "loading" }
   | { phase: "error" }
   | { phase: "report"; report: ReportDetail }
-  | { phase: "index"; label: string | null; items: ShareReportItem[]; open: ReportDetail | null };
+  | {
+      phase: "index";
+      label: string | null;
+      items: ShareReportItem[];
+      open: ReportDetail | null;
+      // A transient "couldn't open that one" notice — a failed member fetch must NOT discard
+      // the loaded folder index.
+      notice: string | null;
+    };
 
 export function ResearchShareApp() {
   const [state, setState] = useState<State>({ phase: "loading" });
@@ -32,7 +40,13 @@ export function ResearchShareApp() {
         if (view.kind === "report" && view.report) {
           setState({ phase: "report", report: view.report });
         } else {
-          setState({ phase: "index", label: view.label, items: view.reports ?? [], open: null });
+          setState({
+            phase: "index",
+            label: view.label,
+            items: view.reports ?? [],
+            open: null,
+            notice: null,
+          });
         }
       } catch {
         if (!stale) setState({ phase: "error" });
@@ -47,9 +61,12 @@ export function ResearchShareApp() {
     if (!token || state.phase !== "index") return;
     try {
       const report = await api.researchShareReport(token, id);
-      setState((s) => (s.phase === "index" ? { ...s, open: report } : s));
+      setState((s) => (s.phase === "index" ? { ...s, open: report, notice: null } : s));
     } catch {
-      setState({ phase: "error" });
+      // Keep the index — a transient per-report failure shouldn't strand the whole folder.
+      setState((s) =>
+        s.phase === "index" ? { ...s, notice: "Couldn't open that report — try again." } : s,
+      );
     }
   }
   function backToIndex(): void {
@@ -59,7 +76,9 @@ export function ResearchShareApp() {
   if (state.phase === "loading") {
     return (
       <main className="rs-shell">
-        <p className="rs-empty">Loading…</p>
+        <p className="rs-empty" aria-live="polite">
+          Loading…
+        </p>
       </main>
     );
   }
@@ -107,6 +126,11 @@ export function ResearchShareApp() {
         <p className="rs-index-cnt">
           {state.items.length} report{state.items.length === 1 ? "" : "s"}
         </p>
+        {state.notice && (
+          <p className="rs-notice" aria-live="polite">
+            {state.notice}
+          </p>
+        )}
         {state.items.map((item) => (
           <button
             key={item.id}

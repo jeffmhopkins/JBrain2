@@ -13,6 +13,7 @@ call the corpus delete callables straight, not the proposal/executor path. The w
 is owner-gated (`owner_only`); a capability/device token 403s before any read.
 """
 
+import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -118,6 +119,14 @@ class MoveReportBody(BaseModel):
 # source modes that synthesize the owner's private notes into the report body — sharing one
 # publicly leaks note content RLS can't catch, so the owner is warned at mint / in the list.
 _LIBRARY_MODES = frozenset({"library", "library_first"})
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 class MintShareBody(BaseModel):
@@ -328,8 +337,10 @@ async def mint_share(request: Request, principal: OwnerDep, body: MintShareBody)
     library_warning = False
     label = body.label
     if body.target_kind == "report":
-        if not body.report_id or body.group_id is not None:
-            raise HTTPException(status_code=422, detail="a report link needs report_id only")
+        # A report link is by id only — reject a question-string ref (fetch_report also accepts
+        # one) so a share can't resolve a different report than the caller named.
+        if not body.report_id or body.group_id is not None or not _is_uuid(body.report_id):
+            raise HTTPException(status_code=422, detail="a report link needs a report_id (uuid)")
         record = await lib.fetch_report(principal.id, body.report_id)
         if record is None:
             raise HTTPException(status_code=404, detail="no report with that id in scope")
@@ -346,6 +357,9 @@ async def mint_share(request: Request, principal: OwnerDep, body: MintShareBody)
             raise HTTPException(status_code=404, detail="no such folder")
         report_id, group_id = None, folder.id
         label = label or folder.name  # snapshot the folder name for the public index
+        # Warn if the folder currently holds a notes-derived report (the report path warns from
+        # the target's own source_mode; a folder must check its members).
+        library_warning = await lib.group_has_library_report(ctx, folder.id)
     token, link = await lib.mint_share(
         ctx_for(principal),
         target_kind=body.target_kind,
@@ -376,7 +390,7 @@ async def list_shares(request: Request, principal: OwnerDep) -> list[ShareOut]:
             created_at=s.created_at,
             last_viewed_at=s.last_viewed_at,
             view_count=s.view_count,
-            library_warning=s.report_source_mode in _LIBRARY_MODES,
+            library_warning=s.library_warning,
         )
         for s in links
     ]

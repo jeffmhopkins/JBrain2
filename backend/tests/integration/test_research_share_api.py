@@ -25,6 +25,7 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings
 from jbrain.db.session import scoped_session
+from jbrain.locations.ratelimit import TokenBucket
 from jbrain.main import create_app
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
@@ -115,14 +116,39 @@ async def test_share_api_end_to_end(
             f"{lib_base}/shares", json={"target_kind": "group", "group_id": gid}
         ).json()
         assert folder["label"] == "Medical"  # folder name snapshotted for the public index
+        assert folder["library_warning"] is False  # Medical holds only web reports
 
-        # The secret is shown once and is NOT recoverable from the list.
+        # A folder containing a notes-derived report warns at mint too (not just report links).
+        ngid = client.post(f"{lib_base}/report-groups", json={"name": "Notes"}).json()["id"]
+        assert (
+            client.patch(f"{lib_base}/reports/{ids['lib']}/group", json={"group_id": ngid})
+        ).status_code == 204
+        notes_folder = client.post(
+            f"{lib_base}/shares", json={"target_kind": "group", "group_id": ngid}
+        ).json()
+        assert notes_folder["library_warning"] is True
+
+        # The list flags the library warning for both kinds (report link + folder-with-library).
         listed = client.get(f"{lib_base}/shares").json()
-        assert {row["id"] for row in listed} == {web["id"], libr["id"], folder["id"]}
-        assert all("token" not in row for row in listed)
+        warn_by_id = {row["id"]: row["library_warning"] for row in listed}
+        assert warn_by_id == {
+            web["id"]: False,
+            libr["id"]: True,
+            folder["id"]: False,
+            notes_folder["id"]: True,
+        }
+        assert all("token" not in row for row in listed)  # secrets never recoverable from the list
 
-        # Mint validation: mismatched target/kind → 422; unknown target → 404.
+        # Mint validation: mismatched target/kind → 422; a non-uuid report_id → 422 (by-id only);
+        # an unknown uuid target → 404.
         assert client.post(f"{lib_base}/shares", json={"target_kind": "report"}).status_code == 422
+        assert (
+            client.post(
+                f"{lib_base}/shares",
+                json={"target_kind": "report", "report_id": "not-a-uuid"},
+            ).status_code
+            == 422
+        )
         assert (
             client.post(
                 f"{lib_base}/shares",
@@ -158,6 +184,13 @@ async def test_share_api_end_to_end(
         assert (
             client.get(f"{share_base}/{folder['token']}/reports/{ids['web']}").status_code == 404
         )
+        # The /reports/{id} path also serves a REPORT link's own target, and 404s any other id.
+        assert (
+            client.get(f"{share_base}/{web['token']}/reports/{ids['web']}").status_code == 200
+        )
+        assert (
+            client.get(f"{share_base}/{web['token']}/reports/{ids['m1']}").status_code == 404
+        )
         # An unknown token → 404.
         assert client.get(f"{share_base}/{uuid.uuid4().hex}").status_code == 404
 
@@ -167,3 +200,20 @@ async def test_share_api_end_to_end(
         assert client.delete(f"{lib_base}/shares/{web['id']}").status_code == 404  # already gone
         client.cookies.clear()
         assert client.get(f"{share_base}/{web['token']}").status_code == 404
+
+
+async def test_share_public_reads_are_rate_limited(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The public read is bounded per client — a scanner gets a 429 (the token 404s at the same
+    limiter, so the limit applies before any resolve)."""
+    await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    with TestClient(app) as client:
+        # Squeeze the bucket AFTER startup (the lifespan installs the default) so the second
+        # request in a burst trips (no refill within the test).
+        app.state.research_share_rate_limiter = TokenBucket(capacity=1, refill_per_sec=0.0)
+        token = uuid.uuid4().hex  # unknown token: exercises the limiter without needing a mint
+        assert client.get(f"/api/research-share/{token}").status_code == 404  # first: allowed
+        assert client.get(f"/api/research-share/{token}").status_code == 429  # second: limited

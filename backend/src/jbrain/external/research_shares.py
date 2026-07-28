@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,6 +29,12 @@ from jbrain.auth import keys
 from jbrain.db.session import SessionContext, research_share_context, scoped_session
 from jbrain.external import research_corpus
 from jbrain.queue import SYSTEM_CTX
+
+log = structlog.get_logger()
+
+# Source modes whose report body synthesizes the owner's private notes — the owner is warned
+# before sharing one (report link) or a folder that contains one (group link).
+_LIBRARY_MODES = ("library", "library_first")
 
 
 @dataclass(frozen=True)
@@ -43,9 +50,10 @@ class ShareLink:
     revoked_at: datetime | None
     last_viewed_at: datetime | None
     view_count: int
-    # The target report's source mode for a report link (`web`|`library`|`library_first`);
-    # None for a group link. Lets the list badge a shared library report (private-notes risk).
-    report_source_mode: str | None = None
+    # True when the shared target is (report link) or contains (group link) a report drawn
+    # from the owner's private notes — the list badges it (private-notes risk). Computed in
+    # `list_shares`; absent from a bare mint row (the API sets the mint warning directly).
+    library_warning: bool = False
 
 
 @dataclass(frozen=True)
@@ -59,10 +67,11 @@ class ResolvedShare:
     group_id: str | None
 
 
-_LINK_COLS = (
-    "l.id, l.label, l.target_kind, l.report_id, l.group_id, l.created_at,"
-    " l.revoked_at, l.last_viewed_at, l.view_count"
+_LINK_FIELDS = (
+    "id, label, target_kind, report_id, group_id, created_at,"
+    " revoked_at, last_viewed_at, view_count"
 )
+_LINK_COLS = ", ".join(f"l.{c.strip()}" for c in _LINK_FIELDS.split(","))
 
 
 def _row_to_link(row: Any) -> ShareLink:
@@ -76,7 +85,7 @@ def _row_to_link(row: Any) -> ShareLink:
         revoked_at=row.revoked_at,
         last_viewed_at=row.last_viewed_at,
         view_count=int(row.view_count or 0),
-        report_source_mode=getattr(row, "source_mode", None),
+        library_warning=bool(getattr(row, "library_warning", False)),
     )
 
 
@@ -101,7 +110,7 @@ async def mint_share(
                     " (token_hash, label, target_kind, report_id, group_id, principal_id)"
                     " VALUES (:h, :label, :kind, cast(:rid AS uuid), cast(:gid AS uuid),"
                     "  cast(:pid AS uuid))"
-                    f" RETURNING {_LINK_COLS.replace('l.', '')}"
+                    f" RETURNING {_LINK_FIELDS}"
                 ),
                 {
                     "h": keys.hash_token(secret),
@@ -113,23 +122,33 @@ async def mint_share(
                 },
             )
         ).one()
-    return secret, _row_to_link(row)
+    link = _row_to_link(row)
+    log.info("research_share_mint", share_id=link.id, target_kind=target_kind)
+    return secret, link
 
 
 async def list_shares(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext
 ) -> list[ShareLink]:
     """The owner's live (non-revoked) share links, newest first — metadata only, no secrets.
-    Joins the target report so a shared library report is flagged in the list."""
+    `library_warning` is true when a report link's target — or ANY current member of a folder
+    link — was drawn from private notes, so the list flags either kind."""
     async with scoped_session(maker, ctx) as session:
         rows = (
             await session.execute(
                 text(
-                    f"SELECT {_LINK_COLS}, r.source_mode"
+                    f"SELECT {_LINK_COLS},"
+                    " CASE WHEN l.report_id IS NOT NULL"
+                    "   THEN coalesce(r.source_mode = ANY(:modes), false)"
+                    "   ELSE EXISTS (SELECT 1 FROM app.research_reports g"
+                    "     WHERE g.group_id = l.group_id AND g.status = 'done'"
+                    "       AND g.source_mode = ANY(:modes))"
+                    " END AS library_warning"
                     " FROM app.research_share_links l"
                     " LEFT JOIN app.research_reports r ON r.id = l.report_id"
                     " WHERE l.revoked_at IS NULL ORDER BY l.created_at DESC, l.id"
-                )
+                ),
+                {"modes": list(_LIBRARY_MODES)},
             )
         ).all()
     return [_row_to_link(r) for r in rows]
@@ -155,6 +174,8 @@ async def revoke_share(
                 {"id": share_id},
             )
         ).first()
+    if row is not None:
+        log.info("research_share_revoke", share_id=share_id)
     return row is not None
 
 
@@ -198,15 +219,34 @@ async def resolve_share(
     )
 
 
+async def group_has_library_report(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, group_id: str
+) -> bool:
+    """Whether folder `group_id` currently contains a report drawn from private notes — the
+    mint-time warning for a folder link. Runs under the owner ctx (reads the `external` corpus)."""
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM app.research_reports WHERE group_id = cast(:gid AS uuid)"
+                    " AND status = 'done' AND source_mode = ANY(:modes) LIMIT 1"
+                ),
+                {"gid": group_id, "modes": list(_LIBRARY_MODES)},
+            )
+        ).first()
+    return row is not None
+
+
 def _public_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep only external-URL citations. A library report's `sources` can hold note-derived
-    entries (private titles/snippets, no URL) that must not reach a share visitor; a web
-    report's are all URLs, so this is lossless there."""
+    """Project each external-URL citation to `{url, title}` ONLY — an explicit allowlist, not a
+    passthrough. A library report's `sources` can carry note-derived entries (private
+    titles/snippets, no URL, or a private field beside a real URL) that must never reach a share
+    visitor; a web report's citations are `{url, title}` already, so this is lossless there."""
     kept: list[dict[str, Any]] = []
     for source in sources:
         url = str(source.get("url") or "")
         if url.startswith("http://") or url.startswith("https://"):
-            kept.append(source)
+            kept.append({"url": url, "title": str(source.get("title") or "")})
     return kept
 
 
@@ -229,4 +269,9 @@ async def list_group_reports(
 ) -> list[research_corpus.LibraryReport]:
     """The reports a folder link currently exposes — read PINNED to `link_id`, so RLS returns
     exactly the shared folder's live members (dynamic: reports moved in/out appear/vanish)."""
-    return await research_corpus.list_reports_scoped(maker, research_share_context(link_id))
+    reports = await research_corpus.list_reports_scoped(maker, research_share_context(link_id))
+    if len(reports) >= research_corpus.SCOPED_LIST_LIMIT:
+        # A folder is assumed browse-sized; flag if a share ever hits the cap (silent
+        # truncation would read as "the whole folder" when it isn't).
+        log.warning("research_share_group_index_truncated", link_id=link_id, count=len(reports))
+    return reports

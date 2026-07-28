@@ -733,11 +733,7 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
       )}
 
       {shareFor !== null && (
-        <ShareSheet
-          target={shareFor}
-          onClose={() => setShareFor(null)}
-          onFlash={(msg) => setFlash(msg)}
-        />
+        <ShareSheet target={shareFor} onClose={() => setShareFor(null)} onFlash={setFlash} />
       )}
 
       {flash !== null && (
@@ -980,6 +976,9 @@ function ShareSheet({
   const [existing, setExisting] = useState<ShareLinkView[] | null>(null);
   const [minted, setMinted] = useState<MintedShare | null>(null);
   const [busy, setBusy] = useState(false);
+  // A known-library report requires a second tap to publish (warn + confirm); a folder can't
+  // be pre-checked from the row, so it warns after minting (the link is revocable).
+  const [armed, setArmed] = useState(false);
 
   const isReport = target.kind === "report";
   const targetId = isReport ? target.row.id : target.group.id;
@@ -1022,6 +1021,7 @@ function ShareSheet({
       onFlash(errMsg(e));
     } finally {
       setBusy(false);
+      setArmed(false);
     }
   }
 
@@ -1049,12 +1049,13 @@ function ShareSheet({
             : "Anyone with the link sees every report in this folder — including any you add to it later."}
         </p>
 
-        {isLibrary && (
+        {(isLibrary || minted?.library_warning) && (
           <div className="rl-share-warn">
             <GlobeIcon size={16} />
             <span>
-              This report was written from <b>your private notes</b>. Sharing publishes that content
-              — revoke if you didn't mean to.
+              {isReport ? "This report was" : "This folder contains a report"} written from{" "}
+              <b>your private notes</b>. Sharing publishes that content — revoke if you didn't mean
+              to.
             </span>
           </div>
         )}
@@ -1081,8 +1082,24 @@ function ShareSheet({
           </div>
         )}
 
-        <button type="button" className="rl-share-mint" disabled={busy} onClick={() => void mint()}>
-          <LinkIcon size={17} /> {busy ? "Creating…" : "Create share link"}
+        <button
+          type="button"
+          className={`rl-share-mint${armed ? " rl-share-mint-armed" : ""}`}
+          disabled={busy}
+          onClick={() => {
+            if (isLibrary && !armed) {
+              setArmed(true); // warn + confirm: a notes-derived report needs a second tap
+              return;
+            }
+            void mint();
+          }}
+        >
+          <LinkIcon size={17} />{" "}
+          {busy
+            ? "Creating…"
+            : armed
+              ? "Tap again to publish — from private notes"
+              : "Create share link"}
         </button>
 
         {others.length > 0 && (

@@ -212,9 +212,16 @@ _SELECT_LIBRARY = (
     " source_mode FROM app.research_reports WHERE status = 'done'"
 )
 
+# The (generous) ceiling on an RLS-scoped, unpaged report listing — a research-share folder
+# index. A folder is browse-sized; the share reader logs if a folder ever reaches this cap.
+SCOPED_LIST_LIMIT = 200
+
 
 async def list_reports_scoped(
-    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, *, limit: int = 200
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    limit: int = SCOPED_LIST_LIMIT,
 ) -> list[LibraryReport]:
     """The reports visible under an arbitrary `ctx`, newest first — for a caller that has
     already narrowed the scope in RLS (the research-share group index, whose pinned context

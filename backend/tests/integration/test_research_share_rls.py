@@ -151,7 +151,8 @@ async def test_no_pin_and_write_denial(maker: async_sessionmaker) -> None:
         maker, owner, target_kind="report", report_id=rid, group_id=None, label="A"
     )
     # An unpinned (empty principal_id) share context reads zero reports and does NOT raise —
-    # the policy's nullif guard turns the empty pin into a NULL that matches nothing.
+    # the policy compares the link id as text (`l.id::text = current_setting(...)`), so an empty
+    # pin is `l.id::text = ''`, false for every row (never a uuid-cast error).
     assert await _visible_report_ids(maker, "") == set()
 
     # Provably read-only: an insert under the pinned share context is refused by RLS.

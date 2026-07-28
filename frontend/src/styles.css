@@ -21508,3 +21508,14 @@ button.task-band:active {
   padding: 60px 20px;
   font-size: 14px;
 }
+
+.rl-share-mint-armed {
+  border-color: var(--amber);
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.rs-notice {
+  color: var(--danger);
+  font-size: 12.5px;
+  margin: 0 0 10px;
+}

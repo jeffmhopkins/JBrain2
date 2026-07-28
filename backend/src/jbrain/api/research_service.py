@@ -104,6 +104,9 @@ class ResearchLibrary:
     async def revoke_share(self, ctx: SessionContext, share_id: str) -> bool:
         return await research_shares.revoke_share(self._maker, ctx, share_id)
 
+    async def group_has_library_report(self, ctx: SessionContext, group_id: str) -> bool:
+        return await research_shares.group_has_library_report(self._maker, ctx, group_id)
+
     async def resolve_share(self, token: str) -> research_shares.ResolvedShare | None:
         return await research_shares.resolve_share(self._maker, token)
 
