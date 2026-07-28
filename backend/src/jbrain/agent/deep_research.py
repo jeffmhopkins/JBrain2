@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -332,18 +333,88 @@ def _seatable(tree: TreeState, requested: int) -> int:
     return n
 
 
+# Query params that only track a click, never identify the page — dropped when building the
+# dedup key so the SAME page reached via different campaign links counts once.
+_TRACKING_PARAMS = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "utm_id",
+        "utm_reader",
+        "utm_name",
+        "utm_social",
+        "utm_brand",
+        "gclid",
+        "gclsrc",
+        "dclid",
+        "fbclid",
+        "msclkid",
+        "mc_cid",
+        "mc_eid",
+        "igshid",
+        "yclid",
+        "_hsenc",
+        "_hsmi",
+        "vero_id",
+        "wickedid",
+        "oly_anon_id",
+        "oly_enc_id",
+        "ref",
+        "ref_src",
+        "ref_url",
+        "spm",
+        "scm",
+    }
+)
+
+
+def _canonical_url(url: str) -> str:
+    """A dedup KEY for a URL — NOT for display (the first-seen original is kept for the
+    citation). Collapses the ways one page arrives as many URLs: scheme (http vs https) and a
+    `www.` host prefix are dropped, the fragment is dropped, tracking params (utm_*, gclid,
+    fbclid, …) are stripped, remaining params are sorted, and a trailing slash is trimmed. Two
+    genuinely different pages (different path or non-tracking query) keep distinct keys. A URL
+    that won't parse falls back to its raw lowercased self, so it still dedups exact repeats."""
+    try:
+        parts = urlsplit(url.strip())
+        host = parts.hostname or ""
+        if host.startswith("www."):
+            host = host[4:]
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        query = urlencode(
+            sorted((k, v) for k, v in parse_qsl(parts.query) if k.lower() not in _TRACKING_PARAMS)
+        )
+        path = parts.path.rstrip("/")
+        # Scheme + fragment intentionally dropped from the key (host normalized to lowercase).
+        return urlunsplit(("", host.lower(), path, query, ""))
+    except ValueError:
+        return url.strip().lower()
+
+
 def _collect_sources(children: list[_ChildResult]) -> list[WebSource]:
     """The deduped, first-seen-ordered web pages the run reached — the GLOBAL citation
     registry. The report cites `[^n]` positionally against THIS list (see `_synthesize`),
     so every marker in the final report resolves to a real URL / tappable favicon, instead
     of the children's local `[^n]` markers that die at the fan boundary. Without this the
-    URLs behind the findings are lost between the sub-agents and the report."""
+    URLs behind the findings are lost between the sub-agents and the report.
+
+    Dedup is by CANONICAL url (`_canonical_url`), not the raw string, so the same page reached
+    via a tracking link, `http` vs `https`, `www.`, or a trailing slash counts once — the raw
+    count otherwise over-reports the distinct sources by a wide margin. The first-seen original
+    URL is what's kept and cited."""
     seen: set[str] = set()
     out: list[WebSource] = []
     for child in children:
         for ws in child.web_sources:
-            if ws.url and ws.url not in seen:
-                seen.add(ws.url)
+            if not ws.url:
+                continue
+            key = _canonical_url(ws.url)
+            if key not in seen:
+                seen.add(key)
                 out.append(ws)
     return out
 

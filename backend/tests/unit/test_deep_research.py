@@ -21,7 +21,9 @@ from jbrain.agent.deep_research import (
     DR_REVIEW_TIME_RESERVE,
     DR_SIMPLE_BREADTH,
     DeepResearchService,
+    _canonical_url,
     _coerce_brief,
+    _collect_sources,
 )
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.spawn import _ChildResult
@@ -1056,3 +1058,46 @@ async def test_persist_reraises_only_under_require_persist(
     # require_persist: the failed write propagates so the caller can fail the run
     with pytest.raises(RuntimeError):
         await svc._persist(_ctx(), require_persist=True, **kw)  # type: ignore[arg-type]
+
+
+def _research_child(urls: list[str]) -> _ChildResult:
+    return _ChildResult(
+        label="l",
+        persona="research",
+        summary="s",
+        ok=True,
+        session_id="sid",
+        web_sources=tuple(WebSource(url=u, title=u) for u in urls),
+    )
+
+
+def test_canonical_url_collapses_scheme_www_tracking_fragment_slash() -> None:
+    base = _canonical_url("https://example.com/article")
+    # http↔https, a www. prefix, a trailing slash, a #fragment, and tracking params all
+    # collapse to the same page.
+    for variant in (
+        "http://example.com/article",
+        "https://www.example.com/article/",
+        "https://example.com/article#section",
+        "https://example.com/article?utm_source=twitter&utm_campaign=x&fbclid=abc",
+    ):
+        assert _canonical_url(variant) == base
+    # A different path or a MEANINGFUL (non-tracking) query stays distinct.
+    assert _canonical_url("https://example.com/other") != base
+    assert _canonical_url("https://example.com/article?id=2") != base
+
+
+def test_collect_sources_dedupes_by_canonical_url_keeping_first_seen() -> None:
+    children = [
+        _research_child(["https://example.com/a?utm_source=x", "https://example.com/b"]),
+        # Both re-reached as near-duplicates (www + trailing slash; a tracking param).
+        _research_child(["http://www.example.com/a/", "https://example.com/b?utm_medium=y"]),
+        _research_child(["https://example.com/c"]),
+    ]
+    out = _collect_sources(children)
+    # Three distinct pages, first-seen ORIGINAL url kept (not the normalized key).
+    assert [ws.url for ws in out] == [
+        "https://example.com/a?utm_source=x",
+        "https://example.com/b",
+        "https://example.com/c",
+    ]

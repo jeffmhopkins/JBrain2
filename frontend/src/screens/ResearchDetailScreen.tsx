@@ -93,6 +93,19 @@ export function ResearchDetailScreen({ kind, id, syncStatus, onClose }: Research
   );
 }
 
+/** Distinct `[^n]` citation markers actually placed in the report body (ASCII `[^n]` or the
+ * fullwidth 【^n】/【n】 a browsing model emits), counting only markers that resolve to a stored
+ * source. The `sources` registry is every page the run REACHED; this is how many it CITED —
+ * so the provenance can be honest instead of labelling the whole registry "N sources". */
+export function citedSourceCount(reportMd: string, reached: number): number {
+  const nums = new Set<number>();
+  for (const m of reportMd.matchAll(/\[\^(\d+)\]|【\^?(\d+)】/g)) {
+    const n = Number(m[1] ?? m[2]);
+    if (n >= 1 && n <= reached) nums.add(n);
+  }
+  return nums.size;
+}
+
 export function ReportDetailBody({ report }: { report: ReportDetail }) {
   // The report's `[^n]` markers map positionally to its stored source registry, so each
   // renders as a tappable favicon citation — the same rendering the deep_research_report
@@ -103,6 +116,10 @@ export function ReportDetailBody({ report }: { report: ReportDetail }) {
     url: String(s.url ?? ""),
     title: String(s.title ?? ""),
   }));
+  // "N sources" alone conflated pages reached with pages cited (a deep run reaches far more
+  // than it cites); show both when they differ so the count isn't misread.
+  const reached = report.sources.length;
+  const cited = citedSourceCount(report.report_md, reached);
   return (
     <article className="rl-report">
       <h2 className="rl-report-q">{report.question}</h2>
@@ -112,9 +129,18 @@ export function ReportDetailBody({ report }: { report: ReportDetail }) {
         <span className="rl-chip">
           {report.rounds} round{report.rounds === 1 ? "" : "s"}
         </span>
-        <span className="rl-chip">
-          {report.sources.length} source{report.sources.length === 1 ? "" : "s"}
-        </span>
+        {cited < reached ? (
+          <span
+            className="rl-chip"
+            title={`${reached} pages reached; ${cited} cited in this report`}
+          >
+            {cited} cited · {reached} reached
+          </span>
+        ) : (
+          <span className="rl-chip">
+            {reached} source{reached === 1 ? "" : "s"}
+          </span>
+        )}
         {report.analyzed && <span className="rl-flag rl-flag-ok">cross-checked</span>}
         {report.revised && <span className="rl-flag rl-flag-ok">revised</span>}
         {report.coverage_limited && <span className="rl-flag rl-flag-warn">coverage limited</span>}
