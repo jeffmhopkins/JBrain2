@@ -2,26 +2,38 @@
 
 > **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; mock-gate sign-off pending)
 
-**v12 revision (signpost how strong the evidence is, and note the report's scope).** A
-narrative-review critique of a `deep` medical report found the write-up asserted claims
-without grading the evidence behind them — a mechanistic/animal result read the same as a
-human study, a single retrospective series' figure was stated as a bare percentage, and the
-report carried no note of how it was researched. Fixed in the prompts, kept domain-agnostic
-(the same levers help a hardware-benchmark or product-claim run):
+**v12 revision (signpost evidence strength, note scope, and hold claims to what their
+sources say).** Two owner-supplied critiques of a `deep` medical report — a narrative-review
+quality rating and a hallucination pass — converged on the same failure mode: the write-up
+asserted claims without grading the evidence, and where it hallucinated it did so not by
+inventing papers or biology (none found) but by *over-precision and attribution blending* —
+a synthesized incidence stated with a fabricated confidence interval, and one paper's
+infarct/inflammation endpoints presented as if they included the seizure/EEG endpoints a
+sibling paper measured. It also carried no note of how it was researched. Fixed in the
+prompts, kept domain-agnostic (the same levers help a hardware-benchmark or product-claim run):
 
 - **Synthesize prompt** (`deep_research_synthesize.prompt`, dr-synth-v4 → **dr-synth-v5**) —
-  two additions to the existing corroborate-by-authority machinery (unchanged): (1) *signpost
-  the evidence grade* — name in the prose whether a load-bearing claim rests on a primary
-  source or a secondary summary and, for an empirical claim, whether it comes from a proposed
-  mechanism/animal result, an observational human study, or a controlled/prospective one; give
-  a statistic as what it measures with its range, not a lone rounded figure; the writer only
-  grades what the findings carry. (2) A short closing **Scope** note — that the report is an
-  automated synthesis of the listed web sources, gathered for this run rather than a systematic
-  literature search, and roughly how many sources it drew on (provenance, not a methods section).
+  additions to the existing corroborate-by-authority machinery (unchanged): (1) *signpost the
+  evidence grade* — name whether a load-bearing claim rests on a primary source or a secondary
+  summary and, for an empirical claim, whether it comes from a proposed mechanism/animal
+  result, an observational human study, or a controlled/prospective one. (2) *Hold claims to
+  their sources* — match a claim's strength and specificity to what the source shows (a
+  directional association is not a proven "strongest predictor"; a result must not be extended
+  to an endpoint/model/population the source never tested), and report a number the way its
+  source gives it — a figure pooled across differing sources is an approximation, never dressed
+  with a confidence interval or pooled estimate no source reported. (3) A short closing **Scope**
+  note — automated synthesis of the listed web sources, gathered for this run rather than a
+  systematic literature search, with roughly how many sources it drew on (provenance, not a
+  methods section).
 - **Research sub-agent** (`research.prompt`, agent-research-v8 → **agent-research-v9**, pin +
   hash updated in `test_agents.py`) — findings now carry a source's provenance forward (primary
   vs. secondary, and a study's design/size/setting) so the writer can grade it downstream
   instead of receiving an already-flattened percentage.
+- **Critique brief** (`_critique`, the v10 citation-faithfulness reviewer) — sharpened to catch
+  the blending pattern the plain "does the source support the claim" check let through: verify
+  the cited page supports THAT SPECIFIC claim (same finding, endpoint, population — not an
+  adjacent result), and flag a claim that over-extends its source or a number dressed with more
+  precision than the source gave.
 
 **v11 revision (reports go as deep as the question earns).** The owner asked for real
 depth — a `deep` question was coming back as a one-to-two-page skim, not the eight-to-ten-page

@@ -1043,9 +1043,12 @@ class DeepResearchService:
         verify = _can_open_sources(source_mode) and bool(sources)
         cite_clause = (
             "FIRST check citation faithfulness: for each cited claim, open the source it "
-            "cites in the SOURCES list below and verify that source genuinely supports the "
-            "claim — flag any claim its cited source does NOT support, contradicts, or that "
-            "cites nothing at all. "
+            "cites in the SOURCES list below and verify that source genuinely supports THAT "
+            "SPECIFIC claim — the same finding, endpoint, and population, not merely a related "
+            "or adjacent result. Flag any claim its cited source does NOT support, only partly "
+            "supports, extends beyond what it measured, contradicts, or that cites nothing at "
+            "all. Also flag a number dressed with more precision than its source gives (a "
+            "confidence interval or pooled estimate the source never reported). "
             if verify
             else ""
         )
