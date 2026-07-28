@@ -188,8 +188,10 @@ def _empty_gather_msg(source_mode: str) -> str:
 # the critique's protected slice), the critique's once the draft is written. Sized above
 # MIN_VIABLE_CHILD_BUDGET so a review child gets real working room, not just a viable
 # floor.
-DR_ANALYST_RESERVE = 900_000
-DR_CRITIQUE_RESERVE = 300_000
+# Scaled with the children's pool (8M → 10M) so the review slice keeps the same proportional
+# claim on it as the pool grew.
+DR_ANALYST_RESERVE = 1_125_000
+DR_CRITIQUE_RESERVE = 375_000
 DR_REVIEW_RESERVE = DR_ANALYST_RESERVE + DR_CRITIQUE_RESERVE
 
 # The complexity tiers the plan step assigns. In v2 complexity ONLY sizes the gather

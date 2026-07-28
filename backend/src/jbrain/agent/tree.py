@@ -61,14 +61,16 @@ CHILD_MAX_STEPS = 42  # default/low-effort ReAct iterations a child may take
 # (Raised ~1.75× from 24/44/64 after a heavy verifier — the iTTP cross-check — kept
 # truncating mid-chain; the token cap below stays the practical binding limit on a slow box.)
 CHILD_STEPS_BY_EFFORT = {"high": 112, "medium": 77}
-CHILD_WALL_CLOCK_S = 1200.0  # hard per-child time limit; past it the child returns truncated
-# (Doubled from 600s with the step caps so a medium/high child can actually reach its
-# larger step budget on the slow local box before the clock — not the steps — stops it.)
-# The token cap is the last backstop, raised ~1.75× (from 900k) after the iTTP cross-check
-# burned 906k and was force-cut with NO synthesized answer (the budget stop early-returns,
-# unlike the step cap's forced final answer). At the observed ~2.2k tok/s it now bites near
-# ~720s — still comfortably under the wall clock above, so a heavy verifier finishes.
-CHILD_MAX_COST_TOKENS = 1_600_000  # per-child token backstop (steps/wall-clock bite first)
+CHILD_WALL_CLOCK_S = 1800.0  # hard per-child time limit; past it the child returns truncated
+# (Doubled from 600s to 1200s with the step caps so a medium/high child can reach its larger
+# step budget on the slow local box before the clock — not the steps — stops it, then +50% to
+# 1800s so a serial deep-research fan's heaviest child isn't squeezed by the tree deadline.)
+# The token cap is the last backstop, scaled with the wall clock (its whole job is to bite
+# comfortably UNDER it) after the iTTP cross-check burned 906k and was force-cut with NO
+# synthesized answer (the budget stop early-returns, unlike the step cap's forced final
+# answer). At the observed ~2.2k tok/s it bites near ~1090s — still well under the 1800s
+# wall clock above, so a heavy verifier finishes.
+CHILD_MAX_COST_TOKENS = 2_400_000  # per-child token backstop (steps/wall-clock bite first)
 # A research_deep TASK AGENT (deepest, depth 1) is not a leaf: within its own turn it must run
 # its entire decompose sub-fan (up to MAX_SUBFAN_PER_TASK_AGENT children), which the local
 # route SERIALIZES — so the leaf's CHILD_WALL_CLOCK_S would cut it off before the second tier
@@ -87,21 +89,21 @@ def child_steps_for(effort: str | None) -> int:
 # most SPAWN_MULTIPLIER × the root's own per-turn token cap; a fraction is reserved off
 # the top so the root can always synthesize even after a fan drains the children's
 # pool; and a fan is admitted only if each child could get a viable slice of what's
-# left. Sized generously (~8M children pool with jerv's 800k root cap) so the runtime
+# left. Sized generously (~10M children pool with jerv's 800k root cap) so the runtime
 # caps above — not budget exhaustion — are what stop a child, with ample room for a staged
 # review reserve (deep_research) on top of a full multi-round gather.
-SPAWN_MULTIPLIER = 40.0 / 3.0  # tree_budget = base_max_cost_tokens × this (~10.7M for jerv).
-# The 40/3 is chosen so the children pool (tree_budget − the 25% root reserve, i.e. × 0.75,
-# which cancels the /3) lands exactly on 8.0M for jerv's 800k root cap — the meter's ceiling.
+SPAWN_MULTIPLIER = 50.0 / 3.0  # tree_budget = base_max_cost_tokens × this (~13.3M for jerv).
+# The 50/3 is chosen so the children pool (tree_budget − the 25% root reserve, i.e. × 0.75,
+# which cancels the /3) lands exactly on 10.0M for jerv's 800k root cap — the meter's ceiling.
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
-MIN_VIABLE_CHILD_BUDGET = 100_000  # admission floor: tokens each child must be able to get
+MIN_VIABLE_CHILD_BUDGET = 125_000  # admission floor: tokens each child must be able to get
 
 # Feeding waves runtime bound (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md, F2). A whole staged
 # (feeding) spawn call must finish inside this cumulative wall-clock, sized to sit under
-# the parent turn cap (_MAX_TURN_WALL_CLOCK_S=3600s) with ~600s of synthesis headroom.
+# the parent turn cap (_MAX_TURN_WALL_CLOCK_S=5400s) with ~900s of synthesis headroom.
 # Checked at each wave barrier; a wave that can't start before it is skipped, loud. Only
 # the staged scheduler consults it — a flat fan is unchanged.
-TREE_WALL_CLOCK_S = 3000.0
+TREE_WALL_CLOCK_S = 4500.0
 
 
 @dataclass

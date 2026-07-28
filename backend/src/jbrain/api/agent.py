@@ -76,14 +76,14 @@ _SSE_HEARTBEAT_SECONDS = 20.0
 # partial answer is persisted. Generous — above a legitimate multi-child serial fan —
 # so it only ever catches the pathological case, never a real turn.
 # Sized at 3x the per-child wall-clock so a 2-3 child serial fan plus synthesis fits.
-_MAX_TURN_WALL_CLOCK_S = 3600.0
+_MAX_TURN_WALL_CLOCK_S = 5400.0
 
 # A PROGRESS watchdog on the turn: force-end it after this long with NO streamed frame
 # (no token, tool step, or sub-agent return). Reset on every frame, so a steadily
 # progressing turn — even a long serial fan — is never cut; only a genuinely stalled one
-# (a wedged model, a hung tool) is. Sized at the per-call LLM timeout so a single
+# (a wedged model, a hung tool) is. Sized well above the per-call LLM timeout so a single
 # legitimate call (which either streams or times out on its own) can't false-trip it.
-_TURN_IDLE_S = 600.0
+_TURN_IDLE_S = 900.0
 # Min gap between reasoning flushes to the wall display — buffers fast reasoning into
 # readable, real-time bursts without overrunning the display's stream slots.
 _THINK_FLUSH_S = 0.7

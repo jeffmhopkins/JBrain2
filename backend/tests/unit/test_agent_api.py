@@ -1192,7 +1192,7 @@ def test_chat_turn_idle_watchdog_force_ends_a_stalled_turn(
 
     monkeypatch.setattr(agent_mod, "_TURN_IDLE_S", 0.1)
     # Absolute cap stays generous, proving the IDLE watchdog — not the ceiling — fired.
-    monkeypatch.setattr(agent_mod, "_MAX_TURN_WALL_CLOCK_S", 3600.0)
+    monkeypatch.setattr(agent_mod, "_MAX_TURN_WALL_CLOCK_S", 5400.0)
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
