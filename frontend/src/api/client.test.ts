@@ -87,15 +87,45 @@ describe("api.chat run id", () => {
     ]);
   });
 
-  it("sessionLiveRun returns the run id, or null when the session has no live run", async () => {
+  it("sessionLiveRun returns the run id + render snapshot + frame offset, or null", async () => {
     // A reloaded PWA maps a session back to its still-running detached turn so it can
-    // reattach; a 404 (no live run) resolves to null rather than throwing.
+    // reattach: it seeds the bubble from `snapshot` and resumes the stream at `frameIndex`.
+    // A 404 (no live run) resolves to null rather than throwing.
+    const snapshot = {
+      role: "assistant",
+      content: "partial answer",
+      tools: [{ id: "t1", name: "deep_research", ok: null, sources: [] }],
+      reasoning: "thinking…",
+    };
     const hit = vi.fn(
-      async () => new Response(JSON.stringify({ run_id: "run-7" }), { status: 200 }),
+      async () =>
+        new Response(JSON.stringify({ run_id: "run-7", snapshot, frame_index: 42 }), {
+          status: 200,
+        }),
     );
     vi.stubGlobal("fetch", hit);
-    expect(await api.sessionLiveRun("s1")).toBe("run-7");
+    expect(await api.sessionLiveRun("s1")).toEqual({
+      runId: "run-7",
+      snapshot,
+      frameIndex: 42,
+    });
     expect(hit).toHaveBeenCalledWith("/api/chat/sessions/s1/live-run", expect.anything());
+
+    // A server that hasn't attached a snapshot yet (task just started) → null snapshot, 0 offset.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ run_id: "run-8", snapshot: null, frame_index: 0 }), {
+            status: 200,
+          }),
+      ),
+    );
+    expect(await api.sessionLiveRun("s1")).toEqual({
+      runId: "run-8",
+      snapshot: null,
+      frameIndex: 0,
+    });
 
     vi.stubGlobal(
       "fetch",

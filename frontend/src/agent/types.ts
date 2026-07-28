@@ -290,6 +290,21 @@ export interface TranscriptTurn {
   attachments?: ChatAttachment[];
 }
 
+/** A session's still-running detached turn, looked up after a full PWA reload
+ * (GET /api/chat/sessions/{id}/live-run) so the controller can reattach to it. */
+export interface LiveRun {
+  /** The live turn's run id, to reconnect its SSE stream (GET /chat/runs/{id}/stream). */
+  runId: string;
+  /** The turn's render SO FAR (answer / tool steps / reasoning) in the stored-turn shape,
+   * so the reattach seeds its bubble from this — the deep-research card and partial answer
+   * show immediately, independent of the live frame buffer (whose early frames a long fan
+   * has already evicted). Null when the server holds no snapshot yet (task just started). */
+  snapshot: TranscriptTurn | null;
+  /** The absolute frame offset the snapshot reaches — the reattach resumes the live stream
+   * at this index, so it neither replays a frame already in the snapshot nor misses one. */
+  frameIndex: number;
+}
+
 // --- Agent sessions (the capability record; /api/sessions) ---
 
 export interface AgentSession {

@@ -186,7 +186,7 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     // running server-side would show nothing (the stored transcript has no in-flight turn)
     // and the sub-agent rail would read "done". On open, a session whose last_run_status is
     // "running" is looked up and reattached — the live tail streams back onto a fresh bubble.
-    const sessionLiveRun = vi.fn(async () => "r9");
+    const sessionLiveRun = vi.fn(async () => ({ runId: "r9", snapshot: null, frameIndex: 0 }));
     const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "back live" };
       yield { type: "done", stop_reason: "end_turn" };
@@ -198,8 +198,39 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     // The live run is discovered and its stream resumed onto a fresh bubble, which settles.
     await waitFor(() => expect(result.current.messages.at(-1)?.text).toBe("back live"));
     expect(sessionLiveRun).toHaveBeenCalledWith("A");
-    // Reattach starts from frame 0 (the client folded nothing yet this mount).
+    // No snapshot → seed an empty bubble and resume from frame 0.
     expect(chatResume).toHaveBeenCalledWith("r9", 0, expect.anything());
+    expect(result.current.messages.at(-1)?.streaming).toBe(false);
+  });
+
+  it("seeds the reattach bubble from the snapshot and resumes at its frame offset", async () => {
+    // The eviction case: a long deep-research turn emitted more frames than the live buffer
+    // holds, so a fresh reload can't replay from frame 0 (the card's early frames are gone).
+    // The live-run lookup returns a SNAPSHOT of the render so far + the frame offset it
+    // reaches; the bubble seeds from the snapshot at once, and the stream resumes AFTER it.
+    const snapshot: TranscriptTurn = {
+      role: "assistant",
+      content: "TTP seizures arise from",
+      tools: [{ id: "t1", name: "deep_research", ok: null, sources: [] }],
+      reasoning: "planning the fan",
+    };
+    const sessionLiveRun = vi.fn(async () => ({ runId: "r9", snapshot, frameIndex: 48352 }));
+    const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: " microthrombi." };
+      yield { type: "done", stop_reason: "end_turn" };
+    });
+    const listSessions = vi.fn(async () => [session({ id: "A", last_run_status: "running" })]);
+    const d = deps({ sessionLiveRun, chatResume, listSessions });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    // The snapshot's card + partial answer show immediately, then the live tail appends —
+    // no blank window, no dependence on the evicted early frames.
+    await waitFor(() =>
+      expect(result.current.messages.at(-1)?.text).toBe("TTP seizures arise from microthrombi."),
+    );
+    expect(result.current.messages.at(-1)?.tools[0]?.name).toBe("deep_research");
+    // The stream resumes at the snapshot's absolute offset, not 0 — no replay, no gap.
+    expect(chatResume).toHaveBeenCalledWith("r9", 48352, expect.anything());
     expect(result.current.messages.at(-1)?.streaming).toBe(false);
   });
 

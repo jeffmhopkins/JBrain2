@@ -17,6 +17,7 @@ import type {
   ChatRequest,
   Decision,
   EnactResult,
+  LiveRun,
   ProposalDetail,
   ProposalSummary,
   SessionCreate,
@@ -2924,17 +2925,28 @@ export const api = {
     yield* parseChatStream(response.body);
   },
 
-  /** The run_id of a session's currently-live turn (GET /api/chat/sessions/{id}/live-run),
-   * or null when it has none. After a full PWA reload the in-memory run handle is gone, so
-   * this is how the controller finds a still-running detached turn to reattach to (then
-   * chatResume streams it live again, restoring the bubble + sub-agent fan + Stop). A 404
-   * (no live run) resolves to null rather than throwing. */
-  async sessionLiveRun(sessionId: string): Promise<string | null> {
+  /** A session's currently-live turn (GET /api/chat/sessions/{id}/live-run), or null when it
+   * has none. After a full PWA reload the in-memory run handle is gone, so this is how the
+   * controller finds a still-running detached turn to reattach to: it seeds the bubble from
+   * the returned `snapshot` (the turn's render so far — deep-research card, partial answer,
+   * reasoning) and resumes the live SSE stream at `frameIndex` (chatResume), restoring the
+   * bubble + sub-agent fan + Stop without a blank chat while the turn runs on. A 404 (no live
+   * run) resolves to null rather than throwing. */
+  async sessionLiveRun(sessionId: string): Promise<LiveRun | null> {
     try {
       const response = await request(
         `/api/chat/sessions/${encodeURIComponent(sessionId)}/live-run`,
       );
-      return ((await response.json()) as { run_id: string }).run_id;
+      const body = (await response.json()) as {
+        run_id: string;
+        snapshot: TranscriptTurn | null;
+        frame_index: number;
+      };
+      return {
+        runId: body.run_id,
+        snapshot: body.snapshot ?? null,
+        frameIndex: body.frame_index ?? 0,
+      };
     } catch {
       return null;
     }

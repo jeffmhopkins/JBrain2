@@ -71,3 +71,38 @@ def test_reasoning_offset_tracks_interleaved_steps() -> None:
     steps = acc.tool_steps()
     assert steps[0]["reasoning_offset"] == len("first")
     assert steps[1]["reasoning_offset"] == len("first then more")
+
+
+def test_render_snapshot_is_the_live_render_without_the_interrupted_coercion() -> None:
+    # The reattach snapshot (a reloaded PWA seeding its bubble from the turn's render so far)
+    # must NOT mark an in-flight tool as failed the way `tool_steps` does at settle: the turn
+    # is still running, so the step stays `ok=None` and replays as a live spinner, not an
+    # error. It carries the answer/reasoning accumulated so far in the transcript's shape.
+    acc = TranscriptAccumulator()
+    acc.feed(ReasoningDelta(text="planning the fan"))
+    acc.feed(TextDelta(text="partial answer"))
+    acc.feed(ToolCallEvent(id="c1", name="deep_research", arguments={"breadth": 5}))
+    # No tool_result yet — the fan is still running when the owner reloads.
+
+    snap = acc.render_snapshot()
+    assert snap["role"] == "assistant"
+    assert snap["content"] == "partial answer"
+    assert snap["reasoning"] == "planning the fan"
+    assert snap["tools"][0]["name"] == "deep_research"
+    assert snap["tools"][0]["ok"] is None
+
+
+def test_render_snapshot_does_not_mutate_the_live_accumulator() -> None:
+    # The snapshot is read off a LIVE accumulator the driving task keeps feeding, so it must
+    # be non-mutating: serializing it can't flip an unsettled step to failed (which would then
+    # persist wrongly at the real settle) — the step dict is copied.
+    acc = TranscriptAccumulator()
+    acc.feed(ToolCallEvent(id="c1", name="deep_research", arguments={}))
+
+    acc.render_snapshot()
+    # The live step is untouched — still unsettled — so when the tool DOES return, the settle
+    # path records its real result rather than a stuck "(interrupted)".
+    assert acc._steps["c1"]["ok"] is None
+    acc.feed(ToolResultEvent(tool_call_id="c1", ok=True, summary="done"))
+    assert acc.tool_steps()[0]["ok"] is True
+    assert acc.tool_steps()[0]["summary"] == "done"

@@ -19,6 +19,7 @@ import type {
   ChatAttachment,
   ChatEvent,
   ChatRequest,
+  LiveRun,
   ProposalSummary,
   SessionCreate,
   TranscriptTurn,
@@ -123,9 +124,10 @@ export interface FullBrainDeps {
   createSession: (body: SessionCreate) => Promise<AgentSession>;
   chat: (body: ChatRequest, signal?: AbortSignal) => AsyncGenerator<ChatEvent>;
   chatResume: (runId: string, after: number, signal?: AbortSignal) => AsyncGenerator<ChatEvent>;
-  /** The run_id of a session's live turn, or null when it has none — how a reloaded PWA
-   * finds a still-running detached turn to reattach to. */
-  sessionLiveRun: (sessionId: string) => Promise<string | null>;
+  /** A session's live turn (run id + a snapshot of its render so far + the frame offset the
+   * snapshot reaches), or null when it has none — how a reloaded PWA finds a still-running
+   * detached turn to reattach to and seeds its bubble before resuming the live stream. */
+  sessionLiveRun: (sessionId: string) => Promise<LiveRun | null>;
   cancelChatRun: (runId: string) => Promise<void>;
   listProposals: (sessionId?: string) => Promise<ProposalSummary[]>;
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
@@ -667,13 +669,17 @@ export function useFullBrain(
     turnSessionId: string,
     baseline: number,
     // Reattach mode (a full PWA reload): the turn already runs DETACHED server-side, so
-    // there's no fresh POST — ride its live stream from the start (chatResume), falling back
-    // to the transcript exactly like a dropped-connection recovery. Set to the live run id.
+    // there's no fresh POST — ride its live stream (chatResume), falling back to the
+    // transcript exactly like a dropped-connection recovery. Set to the live run id.
     resumeRunId?: string,
+    // Reattach mode: the absolute frame offset the seeded snapshot already covers, so the
+    // resumed stream picks up AFTER it — no replaying (or missing) a frame. 0 for a fresh POST.
+    resumeAfter = 0,
   ): Promise<void> {
-    // How many SERVER frames we've folded — the offset a reconnect resumes from. The
-    // synthetic `run` event is client-made (from the X-Run-Id header), so it doesn't count.
-    let framesSeen = 0;
+    // How many SERVER frames we've folded — the offset a reconnect resumes from. Seeded from
+    // the reattach snapshot's frame offset (0 for a fresh POST). The synthetic `run` event is
+    // client-made (from the X-Run-Id header), so it doesn't count.
+    let framesSeen = resumeAfter;
     // The turn's first usage event is its carried-forward floor (history + system +
     // new message, no tools yet); later steps in the same turn only stack transient
     // tool I/O on top. Captured once so the meter can shade base vs. transient.
@@ -804,31 +810,43 @@ export function useFullBrain(
   // hook's memory, so a reload loses it: the stored transcript has no in-flight turn (it
   // persists only at settle), so nothing renders, and the sub-agent rail reads "done"
   // because it has no live turn to key off. The server keeps the turn running detached and
-  // knows its run id, so we look it up, seed the live bubble, and ride the stream to
-  // settlement — the deep-research timeline, the sub-agent fan, and Stop all come back.
+  // knows its run id AND a snapshot of its render so far, so we look it up, seed the live
+  // bubble FROM the snapshot, and resume the stream at the snapshot's frame offset — the
+  // deep-research card, the partial answer, the sub-agent fan, and Stop all come back
+  // immediately, even on a long fan whose early frames have evicted from the live buffer.
   async function reattach(turnSessionId: string): Promise<void> {
-    const runId = await sessionLiveRun(turnSessionId);
+    const live = await sessionLiveRun(turnSessionId);
     // No live run — the session's `last_run_status` was stale (a crashed/reaped run the
     // server no longer holds). Leave the stored transcript as-is.
-    if (!runId) return;
+    if (!live) return;
     // A real send started while we were fetching the id — don't stomp its live turn.
     if (turnSessionRef.current !== null) return;
+    const { runId, snapshot, frameIndex } = live;
     turnSessionRef.current = turnSessionId;
     setActiveTurnSessionId(turnSessionId);
     setBusy(true);
     const controller = new AbortController();
     abortRef.current = controller;
     runIdRef.current = runId;
-    // Load the settled transcript first (the in-flight turn isn't in it yet), then seed the
-    // streaming bubble the reattached stream folds into. `baseline` is the settled turn
-    // count so the recovery loop's transcript fallback knows when the live turn has landed.
+    // The streaming bubble the reattached stream folds into — seeded from the snapshot (the
+    // render accumulated so far) so the card/answer show at once, not a blank bubble waiting
+    // on frames the buffer may have evicted. `streaming` stays true so the resumed stream
+    // keeps appending; `thinking` shows the disclosure only while reasoning leads the answer.
+    const seed = (): TranscriptMessage => {
+      if (!snapshot) return streamingAssistant();
+      const m = fromTurn(snapshot);
+      return { ...m, streaming: true, thinking: m.text === "" && m.reasoning.length > 0 };
+    };
+    // Load the settled transcript first (the in-flight turn isn't in it yet). `baseline` is
+    // the settled turn count so the recovery loop's transcript fallback knows when the live
+    // turn has landed.
     let baseline = 0;
     try {
       const turns = await getTranscript(turnSessionId);
       baseline = turns.length;
-      setSessionMessages(turnSessionId, () => [...turns.map(fromTurn), streamingAssistant()]);
+      setSessionMessages(turnSessionId, () => [...turns.map(fromTurn), seed()]);
     } catch {
-      setSessionMessages(turnSessionId, (ms) => [...ms, streamingAssistant()]);
+      setSessionMessages(turnSessionId, (ms) => [...ms, seed()]);
     }
     void runTurn(
       { session_id: turnSessionId, message: "", history: [] },
@@ -836,6 +854,7 @@ export function useFullBrain(
       turnSessionId,
       baseline,
       runId,
+      frameIndex,
     );
   }
 

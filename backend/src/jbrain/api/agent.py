@@ -131,6 +131,19 @@ class _LiveTurn:
         self._subs: set[asyncio.Queue[bytes | object]] = set()
         # The driving task — held so the cancel endpoint and shutdown can stop it.
         self.task: asyncio.Task[None] | None = None
+        # The turn's live render accumulator, set by `drive_turn` once it exists. The
+        # reattach snapshot reads it so a reloaded PWA seeds its bubble from the turn's
+        # render SO FAR — no dependence on the frame buffer still holding the (possibly
+        # evicted) early frames of a long deep-research fan. None until the task attaches it.
+        self.acc: TranscriptAccumulator | None = None
+
+    @property
+    def frame_index(self) -> int:
+        """The ABSOLUTE index of the next frame — the total emitted so far (survivors plus
+        the count evicted off the front). A reattaching client that seeds from the snapshot
+        resumes the live stream at exactly this offset, so it neither misses a frame nor
+        replays one it already has in the snapshot."""
+        return self._base + len(self.frames)
 
     def emit(self, frame: bytes) -> None:
         """Append a data frame and fan it out to every live subscriber. INVARIANT: every
@@ -746,6 +759,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # and the tool steps in call order (the "Worked" block). Shared with the headless
         # task turn (agent/transcript_accumulator.py) so the two paths cannot drift.
         acc = TranscriptAccumulator()
+        # Expose the render accumulator on the broker so a reattaching PWA can snapshot the
+        # turn's render so far (GET /chat/sessions/{id}/live-run) instead of replaying the
+        # whole frame buffer, whose oldest frames evict on a long fan.
+        live.acc = acc
         # Whether the completed-turn record (the `done` path) already ran. A turn the
         # owner Stops — or one a dropped connection cuts — never reaches `done`, so this
         # stays False and the `finally` persists whatever partial answer streamed.
@@ -1083,24 +1100,44 @@ async def claim_deferred_result(
 
 
 class LiveRunOut(BaseModel):
-    """The run_id of a session's in-flight turn, for the PWA to reattach to."""
+    """The run_id of a session's in-flight turn, for the PWA to reattach to — plus a
+    SNAPSHOT of the turn's render so far and the frame offset it's current through, so the
+    reattach seeds its bubble from the snapshot and resumes the live stream at `frame_index`
+    rather than replaying frames from zero (a long fan's early frames are already evicted)."""
 
     run_id: str
+    # The in-flight assistant turn's accumulated render (answer / tool steps / reasoning) in
+    # the transcript's own shape, so the client reuses its stored-turn renderer to seed the
+    # live bubble. None only for a turn whose driving task hasn't attached its accumulator yet.
+    snapshot: dict[str, Any] | None = None
+    # The absolute frame index the snapshot is current through — the reattach resumes
+    # GET /chat/runs/{id}/stream?after=frame_index, so no early (evicted) frame is needed.
+    frame_index: int = 0
 
 
 @router.get("/chat/sessions/{session_id}/live-run", response_model=LiveRunOut)
 async def session_live_run(request: Request, session_id: str) -> LiveRunOut:
-    """The run_id of the session's currently-live turn, so a PWA that fully RELOADED
-    (losing its in-memory run handle) can reattach to the live SSE stream via
-    GET /chat/runs/{run_id}/stream — instead of showing nothing while a detached turn runs
-    on, and instead of the sub-agent fan reading 'done' when the turn is really still going.
-    The turn detaches from its socket, so the run outlives the reload; this is the only way
-    back to it once the client forgot the id. 404 when the session has no live turn (the
-    client then just shows the stored transcript). Owner-gated + run-id-keyed like the
-    resume/cancel endpoints (single-owner system; server-minted ids)."""
+    """The session's currently-live turn — its run_id, a snapshot of its render so far, and
+    the frame offset that snapshot reaches — so a PWA that fully RELOADED (losing its
+    in-memory run handle) reattaches WITHOUT a blank chat while a detached turn runs on. It
+    seeds the bubble from `snapshot` (the deep-research card, partial answer, and reasoning
+    accumulated so far — independent of the live frame buffer, whose oldest frames evict on a
+    long fan) and resumes the live SSE stream at `frame_index` via GET /chat/runs/{id}/stream.
+    Without the snapshot a fresh reload could only replay from frame 0, whose early frames a
+    long deep-research turn has already evicted — the reason the sub-agent fan read 'done' and
+    the body showed nothing. 404 when the session has no live turn (the client then just shows
+    the stored transcript). Owner-gated + run-id-keyed like the resume/cancel endpoints
+    (single-owner system; server-minted ids).
+
+    The snapshot and `frame_index` are read with no `await` between them, so they are a
+    consistent pair: the driving task feeds the accumulator and emits a frame within one
+    synchronous step, so at every await point the accumulator reflects exactly the frames
+    counted by `frame_index`."""
     for run_id, live in request.app.state.live_turns.items():
         if getattr(live, "session_id", None) == session_id and not live.done:
-            return LiveRunOut(run_id=run_id)
+            acc = getattr(live, "acc", None)
+            snapshot = acc.render_snapshot() if acc is not None else None
+            return LiveRunOut(run_id=run_id, snapshot=snapshot, frame_index=live.frame_index)
     raise HTTPException(status_code=404, detail="no live run for session")
 
 
