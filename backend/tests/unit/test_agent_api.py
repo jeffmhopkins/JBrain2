@@ -2301,12 +2301,45 @@ async def test_pending_resume_backstop_skips_a_row_it_loses_the_claim_for() -> N
 def test_session_live_run_returns_the_run_id(client: TestClient, repo: FakeAuthRepo) -> None:
     """A reloaded PWA looks up its still-running detached turn by session so it can reattach
     to the live stream (the in-memory run handle is gone). The endpoint returns the live
-    run_id keyed off the in-process live_turns registry."""
+    run_id keyed off the in-process live_turns registry — with a null snapshot and 0 offset
+    until the driving task attaches its accumulator."""
     login(client, repo)
     client.app.state.live_turns["run-xyz"] = _LiveTurn("sess-1")  # type: ignore[attr-defined]
     resp = client.get("/api/chat/sessions/sess-1/live-run")
     assert resp.status_code == 200
-    assert resp.json() == {"run_id": "run-xyz"}
+    assert resp.json() == {"run_id": "run-xyz", "snapshot": None, "frame_index": 0}
+
+
+def test_session_live_run_returns_render_snapshot_and_frame_offset(
+    client: TestClient, repo: FakeAuthRepo
+) -> None:
+    """The reattach fix: the endpoint returns a SNAPSHOT of the turn's render so far plus the
+    absolute frame offset it reaches, so a reloaded PWA seeds its bubble from the snapshot and
+    resumes the stream at the offset — no blank chat while a long fan (whose early frames the
+    live buffer has evicted) runs on. The snapshot reflects the accumulator; the offset counts
+    every frame emitted (survivors + evicted)."""
+    from jbrain.agent.contracts import ToolCallEvent
+    from jbrain.agent.transcript_accumulator import TranscriptAccumulator
+
+    login(client, repo)
+    acc = TranscriptAccumulator()
+    acc.feed(ToolCallEvent(id="c1", name="deep_research", arguments={"breadth": 5}))
+    live = _LiveTurn("sess-1")
+    live.acc = acc
+    # Two frames emitted, none evicted → the next frame's absolute index is 2.
+    live.emit(b"data: 1\n\n")
+    live.emit(b"data: 2\n\n")
+    client.app.state.live_turns["run-xyz"] = live  # type: ignore[attr-defined]
+
+    body = client.get("/api/chat/sessions/sess-1/live-run").json()
+    assert body["run_id"] == "run-xyz"
+    assert body["frame_index"] == 2
+    snap = body["snapshot"]
+    assert snap["role"] == "assistant"
+    # The in-flight deep_research step is present and UNSETTLED (ok=None) — it replays as a
+    # live spinner, not a failed step, because the turn is still running.
+    assert snap["tools"][0]["name"] == "deep_research"
+    assert snap["tools"][0]["ok"] is None
 
 
 def test_session_live_run_404_when_no_live_turn(client: TestClient, repo: FakeAuthRepo) -> None:

@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-27
+> **Status:** Living · **Last verified:** 2026-07-28
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -171,11 +171,18 @@ exchange from the persisted transcript instead. The composer's Stop is an explic
 
 A **full PWA reload** (not just a backgrounded socket) loses the in-memory run
 handle, so on open the client re-derives it: for any session whose
-`last_run_status` is `running` it asks `GET /chat/sessions/{id}/live-run` for the
-live run id and reattaches via the same `/chat/runs/{id}/stream` path — so the
-deep-research timeline, the sub-agent fan, and Stop all come back instead of the
-chat looking finished while a detached turn runs on. A null lookup means the status
-was stale (a crashed/reaped run), so the client just shows the stored transcript.
+`last_run_status` is `running` it asks `GET /chat/sessions/{id}/live-run`, which
+returns the live run id **plus a snapshot of the turn's render so far and the frame
+offset that snapshot reaches**. The client seeds the bubble from the snapshot (the
+deep-research card, partial answer, and reasoning accumulated so far) and resumes
+`/chat/runs/{id}/stream?after=<offset>` from there — so the timeline, the sub-agent
+fan, and Stop all come back **immediately**, instead of the chat looking finished
+while a detached turn runs on. The snapshot is what makes a **long** fan safe to
+reattach: the in-memory frame buffer evicts its oldest frames past a cap
+(`_MAX_BUFFERED_FRAMES`), so a fresh reload that replayed from frame 0 would miss
+the card's early frames and land on a blank body — seeding from the accumulator
+sidesteps the buffer entirely. A null lookup means the status was stale (a
+crashed/reaped run), so the client just shows the stored transcript.
 To keep a reload (or a re-send) from **stacking** detached turns that each peg the
 GPU, `/chat` caps concurrency: a second live turn for the **same session** is
 rejected `409` (reattach, don't restart), and the owner's total in-flight turns are

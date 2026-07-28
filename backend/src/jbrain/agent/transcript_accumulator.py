@@ -109,3 +109,20 @@ class TranscriptAccumulator:
                 s["ok"] = False
                 s.setdefault("summary", "(interrupted)")
         return steps
+
+    def render_snapshot(self) -> dict[str, Any]:
+        """The in-flight assistant turn's render SO FAR, in the transcript's own shape, so a
+        reattaching PWA can SEED its bubble from this instead of replaying the whole live
+        frame buffer (which evicts a long deep-research fan's early frames — the reason a
+        fresh reload landed on a blank chat while the turn ran on).
+
+        Non-mutating, unlike the settle-path `tool_steps`: an unsettled step keeps `ok=None`
+        so it replays as a LIVE in-flight step (a running fan, a spinning tool), not a failed
+        one — the turn is still going. The step dicts are shallow-copied so serializing the
+        snapshot can't disturb the live accumulator the driving task keeps feeding."""
+        return {
+            "role": "assistant",
+            "content": self.answer_text,
+            "tools": [dict(self._steps[i]) for i in self._order],
+            "reasoning": self.reasoning_text,
+        }
