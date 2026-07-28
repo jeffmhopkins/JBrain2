@@ -72,6 +72,7 @@ from jbrain.api import (
     pairing,
     proposals,
     research_library,
+    research_share,
     runs,
     search,
     session_bridge,
@@ -687,6 +688,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.research_library = ResearchLibrary(
             maker, app.state.embed_client, app.state.blob_store
         )
+        # Per-IP bound on the unauthenticated report-share reads (api/research_share.py).
+        # Generous enough to browse a folder's reports back-to-back; a scanner backs off.
+        app.state.research_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
         # The Automations operator surface: projects the live trigger/schedule/
         # pipeline config + the run log into the "when -> do" cards, and the action
         # registry into the Catalog. `seeded_names` is the subset mirrored into
@@ -892,6 +896,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pairing.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")
     app.include_router(research_library.router, prefix="/api")
+    app.include_router(research_share.router, prefix="/api")
     app.include_router(runs.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
     app.include_router(session_bridge.router, prefix="/api")

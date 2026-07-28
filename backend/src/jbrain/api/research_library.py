@@ -14,7 +14,7 @@ is owner-gated (`owner_only`); a capability/device token 403s before any read.
 """
 
 from datetime import datetime
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -107,6 +107,46 @@ class MoveReportBody(BaseModel):
     """File a report into a folder (None = the trailing "Ungrouped" section)."""
 
     group_id: str | None = None
+
+
+# --- share-link models -----------------------------------------------------------------
+# A public, revocable, no-login read grant for one report or one folder (migration 0150).
+
+# source modes that synthesize the owner's private notes into the report body — sharing one
+# publicly leaks note content RLS can't catch, so the owner is warned at mint / in the list.
+_LIBRARY_MODES = frozenset({"library", "library_first"})
+
+
+class MintShareBody(BaseModel):
+    """Mint a share link for a single report or a whole folder (exactly one target)."""
+
+    target_kind: Literal["report", "group"]
+    report_id: str | None = None
+    group_id: str | None = None
+    # Optional owner note; for a folder link the folder name is snapshotted here at mint.
+    label: str | None = Field(default=None, max_length=200)
+
+
+class MintShareOut(BaseModel):
+    id: str
+    target_kind: str
+    label: str | None
+    # The bearer secret — shown EXACTLY once; the client builds `${origin}/share/${token}`.
+    token: str
+    # The target is a report synthesized from the owner's private notes (warn before sharing).
+    library_warning: bool
+
+
+class ShareOut(BaseModel):
+    id: str
+    label: str | None
+    target_kind: str
+    report_id: str | None
+    group_id: str | None
+    created_at: datetime | None
+    last_viewed_at: datetime | None
+    view_count: int
+    library_warning: bool
 
 
 # --- video models ----------------------------------------------------------------------
@@ -269,6 +309,82 @@ async def move_report(
     if body.group_id is not None and not await lib.report_group_exists(ctx, body.group_id):
         raise HTTPException(status_code=404, detail="no such folder")
     await lib.set_report_group(ctx, record.id, body.group_id)
+
+
+# --- share links -----------------------------------------------------------------------
+# Owner mint / list / revoke for public report share links (migration 0150). The public
+# read side is a SEPARATE, unauthenticated router (api/research_share.py). Mint validates the
+# target is in the owner's scope before persisting; a folder link snapshots the folder name.
+
+
+@router.post("/shares", status_code=201)
+async def mint_share(request: Request, principal: OwnerDep, body: MintShareBody) -> MintShareOut:
+    """Mint a public share link for one report or one folder (owner only). Returns the secret
+    once. 404 when the target isn't in the owner's scope; 422 on a target/kind mismatch."""
+    lib = get_library(request)
+    library_warning = False
+    label = body.label
+    if body.target_kind == "report":
+        if not body.report_id or body.group_id is not None:
+            raise HTTPException(status_code=422, detail="a report link needs report_id only")
+        record = await lib.fetch_report(principal.id, body.report_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="no report with that id in scope")
+        report_id, group_id = record.id, None
+        library_warning = record.source_mode in _LIBRARY_MODES
+    else:
+        if not body.group_id or body.report_id is not None:
+            raise HTTPException(status_code=422, detail="a folder link needs group_id only")
+        ctx = ctx_for(principal)
+        folder = next(
+            (g for g in await lib.list_report_groups(ctx) if g.id == body.group_id), None
+        )
+        if folder is None:
+            raise HTTPException(status_code=404, detail="no such folder")
+        report_id, group_id = None, folder.id
+        label = label or folder.name  # snapshot the folder name for the public index
+    token, link = await lib.mint_share(
+        ctx_for(principal),
+        target_kind=body.target_kind,
+        report_id=report_id,
+        group_id=group_id,
+        label=label,
+    )
+    return MintShareOut(
+        id=link.id,
+        target_kind=link.target_kind,
+        label=link.label,
+        token=token,
+        library_warning=library_warning,
+    )
+
+
+@router.get("/shares")
+async def list_shares(request: Request, principal: OwnerDep) -> list[ShareOut]:
+    """The owner's live share links — metadata + usage, never the secret."""
+    links = await get_library(request).list_shares(ctx_for(principal))
+    return [
+        ShareOut(
+            id=s.id,
+            label=s.label,
+            target_kind=s.target_kind,
+            report_id=s.report_id,
+            group_id=s.group_id,
+            created_at=s.created_at,
+            last_viewed_at=s.last_viewed_at,
+            view_count=s.view_count,
+            library_warning=s.report_source_mode in _LIBRARY_MODES,
+        )
+        for s in links
+    ]
+
+
+@router.delete("/shares/{share_id}", status_code=204)
+async def revoke_share(request: Request, principal: OwnerDep, share_id: str) -> None:
+    """Revoke a share link (owner only). 404 on an unknown / already-revoked id. The public
+    read fails closed on the next visit (the RLS policy re-checks revocation)."""
+    if not await get_library(request).revoke_share(ctx_for(principal), share_id):
+        raise HTTPException(status_code=404, detail="no such share link")
 
 
 # --- videos ----------------------------------------------------------------------------

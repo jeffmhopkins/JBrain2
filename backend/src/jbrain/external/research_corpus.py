@@ -190,6 +190,41 @@ class LibraryReport:
     group_id: str | None = None
 
 
+def _row_to_library_report(row: Any) -> LibraryReport:
+    return LibraryReport(
+        id=str(row.id),
+        question=row.question or "",
+        title=(row.title or None),
+        complexity=row.complexity or "",
+        created_at=row.created_at,
+        sub_agents=int(row.sub_agents or 0),
+        rounds=int(row.rounds or 1),
+        group_id=(str(row.group_id) if row.group_id is not None else None),
+    )
+
+
+_SELECT_LIBRARY = (
+    "SELECT id, question, title, complexity, created_at, sub_agents, rounds, group_id"
+    " FROM app.research_reports WHERE status = 'done'"
+)
+
+
+async def list_reports_scoped(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, *, limit: int = 200
+) -> list[LibraryReport]:
+    """The reports visible under an arbitrary `ctx`, newest first — for a caller that has
+    already narrowed the scope in RLS (the research-share group index, whose pinned context
+    admits exactly the shared folder's members). No paging: a folder is browse-sized."""
+    async with scoped_session(maker, ctx) as session:
+        rows = (
+            await session.execute(
+                text(f"{_SELECT_LIBRARY} ORDER BY created_at DESC, id LIMIT :limit"),
+                {"limit": limit},
+            )
+        ).all()
+    return [_row_to_library_report(r) for r in rows]
+
+
 async def list_reports(
     maker: async_sessionmaker[AsyncSession],
     *,
@@ -211,26 +246,12 @@ async def list_reports(
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, title, complexity, created_at, sub_agents, rounds,"
-                    " group_id FROM app.research_reports WHERE status = 'done'"
-                    " ORDER BY created_at DESC, id LIMIT :limit OFFSET :offset"
+                    f"{_SELECT_LIBRARY} ORDER BY created_at DESC, id LIMIT :limit OFFSET :offset"
                 ),
                 {"limit": limit, "offset": offset},
             )
         ).all()
-    return [
-        LibraryReport(
-            id=str(r.id),
-            question=r.question or "",
-            title=(r.title or None),
-            complexity=r.complexity or "",
-            created_at=r.created_at,
-            sub_agents=int(r.sub_agents or 0),
-            rounds=int(r.rounds or 1),
-            group_id=(str(r.group_id) if r.group_id is not None else None),
-        )
-        for r in rows
-    ], int(total)
+    return [_row_to_library_report(r) for r in rows], int(total)
 
 
 _FTS_SQL = (
@@ -382,6 +403,28 @@ async def fetch_report(
                     {"h": _question_hash(ref)},
                 )
             ).first()
+    return _row_to_record(row) if row is not None else None
+
+
+async def fetch_report_scoped(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, report_id: str
+) -> ReportRecord | None:
+    """One report in full under an arbitrary `ctx` — for a caller whose RLS scope already
+    decides visibility (the research-share read, whose pinned context admits only the link's
+    target report or its folder members). A non-uuid id is a clean None (no cast error), and a
+    row RLS hides is None, so an out-of-scope id from a URL 404s naturally."""
+    report_id = (report_id or "").strip()
+    try:
+        uuid.UUID(report_id)
+    except ValueError:
+        return None
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(f"{_SELECT_RECORD} WHERE id = cast(:r AS uuid) AND status = 'done'"),
+                {"r": report_id},
+            )
+        ).first()
     return _row_to_record(row) if row is not None else None
 
 

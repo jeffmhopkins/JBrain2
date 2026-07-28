@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext
 from jbrain.embed import EmbedClient
-from jbrain.external import corpus, report_groups, research_corpus
+from jbrain.external import corpus, report_groups, research_corpus, research_shares
 from jbrain.storage import BlobStore
 
 
@@ -78,6 +78,44 @@ class ResearchLibrary:
         self, ctx: SessionContext, report_id: str, group_id: str | None
     ) -> bool:
         return await report_groups.set_report_group(self._maker, ctx, report_id, group_id)
+
+    # --- report share links (owner mint/list/revoke; public resolve/read) ---
+    async def mint_share(
+        self,
+        ctx: SessionContext,
+        *,
+        target_kind: str,
+        report_id: str | None,
+        group_id: str | None,
+        label: str | None,
+    ) -> tuple[str, research_shares.ShareLink]:
+        return await research_shares.mint_share(
+            self._maker,
+            ctx,
+            target_kind=target_kind,
+            report_id=report_id,
+            group_id=group_id,
+            label=label,
+        )
+
+    async def list_shares(self, ctx: SessionContext) -> list[research_shares.ShareLink]:
+        return await research_shares.list_shares(self._maker, ctx)
+
+    async def revoke_share(self, ctx: SessionContext, share_id: str) -> bool:
+        return await research_shares.revoke_share(self._maker, ctx, share_id)
+
+    async def resolve_share(self, token: str) -> research_shares.ResolvedShare | None:
+        return await research_shares.resolve_share(self._maker, token)
+
+    async def fetch_shared_report(
+        self, link_id: str, report_id: str
+    ) -> research_corpus.ReportRecord | None:
+        return await research_shares.fetch_shared_report(self._maker, link_id, report_id)
+
+    async def list_group_reports(
+        self, link_id: str
+    ) -> list[research_corpus.LibraryReport]:
+        return await research_shares.list_group_reports(self._maker, link_id)
 
     # --- videos ---
     async def list_videos(
