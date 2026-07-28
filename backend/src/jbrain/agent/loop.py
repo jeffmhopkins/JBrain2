@@ -551,6 +551,16 @@ class AgentLoop:
                 on_step(step + 1, cost)
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
+                # A natural end of turn. But a sub-agent that ends with EMPTY text has
+                # produced no answer — gpt-oss occasionally returns an empty final turn (a
+                # 0-token completion at high context, or all content stranded in the
+                # reasoning channel), which would waste a whole productive ReAct chain as a
+                # bare "(no answer; stopped: end_turn)" (the TTP cross-check: 21 tools, then
+                # an empty final). Route it through the SAME forced-final synthesis the cap
+                # paths use so the child lands on a real answer from what it gathered. Scoped
+                # to force_final_answer (sub-agents); the root's empty turn is handled upstream.
+                if force_final_answer and not turn.text.strip():
+                    return await _forced_final("end_turn", step + 1)
                 return AgentResult(turn.text, "end_turn", step + 1, cost, tuple(web_sources))
             if self._tree_exhausted(tree, depth):
                 if force_final_answer:

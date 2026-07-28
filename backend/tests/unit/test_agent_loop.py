@@ -346,6 +346,48 @@ async def test_force_final_answer_synthesizes_on_tree_budget_exhaustion() -> Non
     assert fake.converse_calls[-1]["tools"] == []
 
 
+async def test_force_final_answer_recovers_an_empty_final_turn() -> None:
+    # gpt-oss occasionally returns an EMPTY end_turn (a 0-token completion) after a
+    # productive tool chain — the loop used to accept it as the answer, surfacing
+    # "(no answer; stopped: end_turn)" and wasting the whole chain (the TTP cross-check:
+    # 21 tools, then an empty final). A force_final_answer child now routes an empty
+    # natural end through the same forced-final synthesis so it lands on a real answer.
+    turns = [
+        LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(1, 1)),  # a real tool step
+        LlmTurn("", (), "end_turn", LlmUsage(0, 0)),  # the empty final turn (the bug)
+        LlmTurn("here is what I found", (), "end_turn", LlmUsage(1, 1)),  # the forced final
+    ]
+    router, fake = router_with(turns)
+    loop = AgentLoop(
+        router, registry_with(make_tool("search", search)), guardrails=Guardrails(max_steps=6)
+    )
+    result = await loop.run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="q")],
+        force_final_answer=True,
+    )
+    assert result.text == "here is what I found"  # not an empty "(no answer)"
+    assert result.stop_reason == "end_turn"
+    assert fake.converse_calls[-1]["tools"] == []  # the forced-final synthesis turn, no tools
+    last_msg = fake.converse_calls[-1]["messages"][-1]
+    assert isinstance(last_msg, UserMessage) and "no more tools" in last_msg.text.lower()
+
+
+async def test_root_turn_keeps_an_empty_end_turn_unchanged() -> None:
+    # The empty-final recovery is scoped to sub-agents (force_final_answer). The root turn's
+    # empty end_turn is the user-facing turn, handled upstream — the loop must NOT inject a
+    # synthesis retry there (that would double a legitimately-empty root turn's cost).
+    router, fake = router_with([LlmTurn("", (), "end_turn", LlmUsage(1, 1))])
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    result = await loop.run(
+        session=OWNER, scopes=("general",), conversation=[UserMessage(text="q")]
+    )
+    assert result.text == ""  # returned as-is
+    assert result.stop_reason == "end_turn"
+    assert len(fake.converse_calls) == 1  # no forced-final retry on the root path
+
+
 async def test_soft_landing_nudges_a_child_to_finish_before_the_cap() -> None:
     # A few steps before the hard cap, a force-final-eligible run (a sub-agent) is asked
     # to wrap up — so it can land on end_turn instead of being force-cut at max_steps.
