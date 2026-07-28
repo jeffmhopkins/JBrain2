@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ReportDetail, type VideoDetail, api } from "../api/client";
 import { confidenceColor } from "../components/AudioTranscript";
-import { ResearchDetailScreen } from "./ResearchDetailScreen";
+import { ResearchDetailScreen, citedSourceCount } from "./ResearchDetailScreen";
 
 const REPORT: ReportDetail = {
   id: "r1",
@@ -112,5 +112,35 @@ describe("ResearchDetailScreen", () => {
     vi.spyOn(api, "researchReport").mockRejectedValue(new Error("boom"));
     render(<ResearchDetailScreen kind="report" id="r1" syncStatus="synced" onClose={noop} />);
     expect(await screen.findByText(/Couldn't load this/)).toBeInTheDocument();
+  });
+
+  it("labels the count 'cited · reached' when the report cites fewer than it reached", async () => {
+    // Registry of 3 pages reached, but only [^1] is cited in the body.
+    vi.spyOn(api, "researchReport").mockResolvedValue({
+      ...REPORT,
+      report_md: "Only one citation here.[^1]",
+      sources: [
+        { url: "https://a.example", title: "A" },
+        { url: "https://b.example", title: "B" },
+        { url: "https://c.example", title: "C" },
+      ],
+    });
+    render(<ResearchDetailScreen kind="report" id="r1" syncStatus="synced" onClose={noop} />);
+    expect(await screen.findByText("1 cited · 3 reached")).toBeInTheDocument();
+  });
+});
+
+describe("citedSourceCount", () => {
+  it("counts distinct in-range [^n] markers, not the whole registry", () => {
+    expect(citedSourceCount("A [^1] B [^3] C [^1] again.", 700)).toBe(2);
+  });
+  it("ignores markers with no matching source (out of range or zero)", () => {
+    expect(citedSourceCount("cites [^1] and [^9] and [^0]", 3)).toBe(1);
+  });
+  it("also counts the fullwidth 【^n】 / 【n】 a browsing model emits", () => {
+    expect(citedSourceCount("x 【^2】 y 【5】 z", 10)).toBe(2);
+  });
+  it("is 0 when the report cites nothing", () => {
+    expect(citedSourceCount("no citations here", 42)).toBe(0);
   });
 });
