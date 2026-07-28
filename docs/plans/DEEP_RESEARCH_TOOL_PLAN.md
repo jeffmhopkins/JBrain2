@@ -1,6 +1,27 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; mock-gate sign-off pending)
+
+**v12 revision (signpost how strong the evidence is, and note the report's scope).** A
+narrative-review critique of a `deep` medical report found the write-up asserted claims
+without grading the evidence behind them — a mechanistic/animal result read the same as a
+human study, a single retrospective series' figure was stated as a bare percentage, and the
+report carried no note of how it was researched. Fixed in the prompts, kept domain-agnostic
+(the same levers help a hardware-benchmark or product-claim run):
+
+- **Synthesize prompt** (`deep_research_synthesize.prompt`, dr-synth-v4 → **dr-synth-v5**) —
+  two additions to the existing corroborate-by-authority machinery (unchanged): (1) *signpost
+  the evidence grade* — name in the prose whether a load-bearing claim rests on a primary
+  source or a secondary summary and, for an empirical claim, whether it comes from a proposed
+  mechanism/animal result, an observational human study, or a controlled/prospective one; give
+  a statistic as what it measures with its range, not a lone rounded figure; the writer only
+  grades what the findings carry. (2) A short closing **Scope** note — that the report is an
+  automated synthesis of the listed web sources, gathered for this run rather than a systematic
+  literature search, and roughly how many sources it drew on (provenance, not a methods section).
+- **Research sub-agent** (`research.prompt`, agent-research-v8 → **agent-research-v9**, pin +
+  hash updated in `test_agents.py`) — findings now carry a source's provenance forward (primary
+  vs. secondary, and a study's design/size/setting) so the writer can grade it downstream
+  instead of receiving an already-flattened percentage.
 
 **v11 revision (reports go as deep as the question earns).** The owner asked for real
 depth — a `deep` question was coming back as a one-to-two-page skim, not the eight-to-ten-page
