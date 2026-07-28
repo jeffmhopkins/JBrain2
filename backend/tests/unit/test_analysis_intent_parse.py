@@ -25,6 +25,7 @@ def test_intent_schema_arrays_are_capped_above_the_fact_budget():
     for k in ("supersession_proposals", "merge_proposals", "distinct_proposals"):
         assert props[k]["maxItems"] >= MAX_FACTS
 
+
 _PROV: dict[str, Any] = dict(
     note_id="n1", schema_version=1, prompt_version="v1", integrator_version="i1"
 )
