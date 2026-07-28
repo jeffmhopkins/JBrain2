@@ -18,9 +18,6 @@ import "./styles.css";
 // Resolve the theme before first paint so there is no flash of wrong theme.
 initTheme();
 initFontScale();
-// Warm geolocation fix (on by default; Settings toggle) so sends can attach
-// coordinates without ever waiting on GPS.
-initLocationCapture();
 
 // autoUpdate handles relaunches; the hourly check covers a PWA left open for
 // days, so it still converges on the latest deploy without a restart. A
@@ -53,6 +50,10 @@ function pickRoot(): JSX.Element {
   if (parseSharePath()) return <JcodeShareApp />;
   if (parseResearchSharePath()) return <ResearchShareApp />;
   if (parseIntakePath()) return <GuidedIntakeApp />;
+  // Owner app only. Warm the geolocation fix here — NOT at module load — so a public
+  // share/intake recipient (a scoped surface above) is never prompted for location; only the
+  // owner's own app, which can attach coordinates to a note, asks. (On by default; Settings toggle.)
+  initLocationCapture();
   return <App />;
 }
 
