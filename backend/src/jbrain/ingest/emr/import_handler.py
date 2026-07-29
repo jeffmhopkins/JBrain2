@@ -5,10 +5,11 @@ re-ingested the note so each PDF page is a cited chunk. This handler turns those
 decrypted attachments into graph facts, deterministically and with no LLM on the
 structured path:
 
-  load PDF attachments → extract text (+ word geometry for OneContent) → dispatch
-  each to its parser → reconcile the OCR reprints against the precise draws (§6.4)
-  → integrate each precise parse through the shipped arbiter, citing the real
-  page chunk → file a review card for every parked OCR read and unrecognized file.
+  load PDF attachments → extract text, or vision-OCR a scanned (text-less) PDF
+  page by page (§6.2, the one LLM adapter touch here) → dispatch each to its parser
+  → reconcile the OCR reprints against the precise draws (§6.4) → integrate each
+  precise parse through the shipped arbiter → file a review card for every parked
+  OCR read and unrecognized file.
 
 Provenance: each precise source is integrated against ITS OWN attachment chunks,
 so a fact's citation lands on the source document (the arbiter anchors an EMR fact
@@ -41,15 +42,28 @@ from jbrain.ingest.emr.importer import ChunkResolver
 from jbrain.ingest.emr.integrate import file_parked_cards, integrate_parse_result
 from jbrain.ingest.emr.onecontent import pdf_word_pages
 from jbrain.ingest.emr.reconcile import REVIEW_KIND
-from jbrain.ingest.extract import PdfTextLayerExtractor
+from jbrain.ingest.emr.scan_ocr import VISION_OCR_TASK, ocr_scanned_pdf
+from jbrain.ingest.extract import KIND_OCR, PdfTextLayerExtractor
+from jbrain.ingest.ocr import OCR_CONFIDENCE, OCR_STRENGTH
 from jbrain.models.analysis import ReviewItem
-from jbrain.models.notes import Attachment, Chunk, Note
+from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
 from jbrain.storage import BlobStore
 from jbrain.workflow.registry import ActionSpec
 
 PDF_MEDIA_TYPE = "application/pdf"
 PARAGRAPH = "paragraph"
 UNRECOGNIZED_SUBKIND = "emr_unrecognized_source"
+
+
+def _page_no(anchor: str | None) -> int:
+    """The N in a `page N` anchor for ordering; unparseable anchors sort last."""
+    if anchor and anchor.lower().startswith("page "):
+        try:
+            return int(anchor[5:])
+        except ValueError:
+            pass
+    return 1_000_000
+
 
 # In-code-only action (a migration seeds its trigger). Stage 2 of the EMR import
 # (§6.3–§6.6) — parse the decrypted PDFs into graph facts. No LLM on this path.
@@ -133,19 +147,75 @@ class EmrImportPipeline:
         await self._card_unrecognized(ctx, note_id, domain, corpus.unrecognized)
 
     async def _build_sources(self, attachments: list[Attachment]) -> list[SourceInput]:
-        """Extract each decrypted PDF's page text (+ word geometry when the source is
-        OneContent) off the event loop. Text carries `--- page N ---` markers so the
-        parsers' page anchors line up with the chunk index."""
+        """Extract each decrypted PDF's page text off the event loop, `--- page N ---`
+        markered so the parsers' page anchors line up. A PDF WITH a text layer
+        (Epic/OneContent/athena) parses that; a scanned PDF with NONE (ARIA) is
+        vision-OCR'd page by page (§6.2). Word geometry is derived only for a
+        text-layer OneContent — a scan yields linear OCR text, no word boxes."""
         out: list[SourceInput] = []
         for att in attachments:
             data = await self._blobs.get(att.sha256)
             segments = await asyncio.to_thread(self._extractor.extract, data)
-            text = "\n".join(f"--- {seg.anchor} ---\n{seg.text}" for seg in segments if seg.anchor)
             word_pages = None
-            if select_source(text) is Source.ONECONTENT:
-                word_pages = await asyncio.to_thread(pdf_word_pages, data)
+            if segments:
+                text = "\n".join(
+                    f"--- {seg.anchor} ---\n{seg.text}" for seg in segments if seg.anchor
+                )
+                if select_source(text) is Source.ONECONTENT:
+                    word_pages = await asyncio.to_thread(pdf_word_pages, data)
+            else:
+                text = await self._ocr_text(att, data)  # scanned PDF -> vision-OCR (§6.2)
             out.append(SourceInput(text=text, ref=str(att.id), word_pages=word_pages))
         return out
+
+    async def _ocr_text(self, att: Attachment, data: bytes) -> str:
+        """The `--- page N ---` markered transcript of a scanned PDF, from the cached
+        `ocr` extracts when present (idempotent — a re-run never re-bills the vision
+        model) or a fresh vision-OCR pass otherwise, cached per page as it goes."""
+        pages = await self._cached_ocr(att.id)
+        if pages is None:
+            pages = await ocr_scanned_pdf(self._pipeline._router, data, att.filename)
+            await self._cache_ocr(att, pages)
+        return "\n".join(f"--- page {n} ---\n{t}" for n, t in enumerate(pages, start=1) if t)
+
+    async def _cached_ocr(self, att_id: uuid.UUID) -> list[str] | None:
+        """This attachment's cached OCR page transcripts in page order, or None when
+        it has never been OCR'd (the two are distinct — an all-blank scan caches as
+        empty strings and must not be re-OCR'd)."""
+        async with scoped_session(self._maker, _SYSTEM) as s:
+            rows = (
+                await s.execute(
+                    select(AttachmentExtract.source_anchor, AttachmentExtract.text).where(
+                        AttachmentExtract.attachment_id == att_id,
+                        AttachmentExtract.kind == KIND_OCR,
+                    )
+                )
+            ).all()
+        if not rows:
+            return None
+        by_page = {_page_no(anchor): (text or "") for anchor, text in rows}
+        return [by_page[n] for n in sorted(by_page)]
+
+    async def _cache_ocr(self, att: Attachment, pages: list[str]) -> None:
+        """Persist one `ocr` extract per page (`source_anchor="page N"`) so the text is
+        cited/searchable on the next re-ingest and never re-OCR'd. `tool` stamps the
+        model actually used, like the shipped OCR job."""
+        if not pages:
+            return
+        provider, model = await self._pipeline._router.effective_spec(VISION_OCR_TASK, OCR_STRENGTH)
+        async with scoped_session(self._maker, _SYSTEM) as s:
+            for number, text in enumerate(pages, start=1):
+                s.add(
+                    AttachmentExtract(
+                        attachment_id=att.id,
+                        kind=KIND_OCR,
+                        tool=f"{provider}:{model}",
+                        text=text,
+                        confidence=OCR_CONFIDENCE if text else 0.0,
+                        source_anchor=f"page {number}",
+                        domain_code=att.domain_code,
+                    )
+                )
 
     @staticmethod
     def _resolver(anchors: dict[str, uuid.UUID], chunks: list[_ChunkRef]) -> ChunkResolver:

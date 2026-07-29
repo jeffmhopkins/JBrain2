@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 
+import pymupdf
 import structlog
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -22,6 +23,26 @@ log = structlog.get_logger()
 MAX_SIDE = 2048
 # Re-encode quality — high enough to preserve OCR legibility.
 JPEG_QUALITY = 90
+# Rasterization DPI for a scanned PDF page: high enough that small lab-table type
+# survives OCR, low enough to stay under the vision size cap after downscaling.
+PDF_RENDER_DPI = 200
+
+
+def pdf_page_images(data: bytes) -> list[bytes]:
+    """Render each page of a (scanned, text-less) PDF to PNG bytes for vision OCR.
+
+    The one PDF-page rasterizer in the codebase (the text path uses `get_text`).
+    Synchronous CPU work — the caller runs it off the event loop. An unreadable
+    PDF yields no pages rather than raising, so a corrupt attachment degrades to
+    'no OCR text' instead of failing the import batch."""
+    pages: list[bytes] = []
+    try:
+        with pymupdf.open(stream=data, filetype="pdf") as doc:
+            for page in doc:
+                pages.append(page.get_pixmap(dpi=PDF_RENDER_DPI).tobytes("png"))
+    except Exception as exc:  # noqa: BLE001 — a bad scan must not fail the batch
+        log.info("vision.pdf_rasterize_skipped", error=str(exc))
+    return pages
 
 
 def downscale_for_vision(data: bytes, media_type: str) -> tuple[bytes, str]:
