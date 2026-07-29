@@ -1102,6 +1102,53 @@ class SqlAnalysisRepo:
             )
         return out
 
+    async def analyte_currency(
+        self, ctx: SessionContext, chunk_ids: list[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Per chunk id, the analyte `value` facts extracted from that chunk that are
+        NO LONGER the current, citable reading: `superseded` (a corrected/amended
+        result replaced the value) or `pending_review` (a same-instant `fact_conflict`
+        between disagreeing finals, or a preliminary reading not yet final). Both carry
+        the same staleness/contested risk, so both fire the flag (EMR plan §7.2).
+        `retracted` readings are excluded — the projection drops them (§3.5), so there
+        is nothing to quote and nothing to flag.
+
+        This is the value-precise twin of `note_currency`: it ties the currency ⚠ flag
+        to the SPECIFIC value a search snippet quotes (the value fact cites the chunk it
+        was read from), not to any stale fact anywhere in the note — a hit quoting a
+        still-current potassium value is not flagged just because a platelet value
+        elsewhere in the same report was corrected. Runs in the caller's RLS scope, so
+        out-of-scope (non-health) readings never leak.
+        """
+        ids = [str(u) for u in (_as_uuid(c) for c in chunk_ids) if u is not None]
+        if not ids:
+            return {}
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT f.chunk_id::text AS chunk_id, e.id::text AS entity_id,
+                               e.canonical_name AS analyte, f.status
+                        FROM app.facts f
+                        JOIN app.entities e ON e.id = f.entity_id
+                        WHERE f.chunk_id::text = ANY(:ids)
+                          AND f.predicate = 'value'
+                          AND f.derived_from_fact_id IS NULL
+                          AND f.status IN ('superseded', 'pending_review')
+                        ORDER BY f.chunk_id, e.canonical_name
+                        """
+                    ),
+                    {"ids": ids},
+                )
+            ).all()
+        out: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            out.setdefault(r.chunk_id, []).append(
+                {"entity_id": r.entity_id, "analyte": r.analyte, "status": r.status}
+            )
+        return out
+
     async def list_review(self, ctx: SessionContext, status: str) -> list[dict[str, Any]]:
         """Open queue oldest-first for triage; the resolved log (decisions,
         dismissals, and reopened tombstones) newest-decision-first.

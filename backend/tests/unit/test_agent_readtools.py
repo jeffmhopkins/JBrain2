@@ -51,11 +51,14 @@ CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("gener
 
 
 def result(
-    note_id: str = "n1", domain: str = "general", snippet: str = "hello world"
+    note_id: str = "n1",
+    domain: str = "general",
+    snippet: str = "hello world",
+    chunk_id: str = "c1",
 ) -> SearchResult:
     return SearchResult(
         note_id=note_id,
-        chunk_id="c1",
+        chunk_id=chunk_id,
         snippet=snippet,
         match="both",
         score=1.0,
@@ -159,12 +162,15 @@ class FakeEntities:
         currency: dict[str, list[dict]] | None = None,
         owner_id: str | None = None,
         vicinity: dict | None = None,
+        analyte: dict[str, list[dict]] | None = None,
     ):
         self.view = view
         self.owner_id = owner_id
         self.matches = matches or []
         self.related = related or []
         self.currency = currency or {}
+        self.analyte = analyte or {}
+        self.analyte_calls: list[list[str]] = []
         self.vicinity = vicinity
         self.searched: list[tuple] = []
         self.traversed: list[tuple] = []
@@ -195,6 +201,10 @@ class FakeEntities:
         self.currency_calls.append(list(note_ids))
         return {n: self.currency[n] for n in note_ids if n in self.currency}
 
+    async def analyte_currency(self, ctx, chunk_ids):  # noqa: ANN001
+        self.analyte_calls.append(list(chunk_ids))
+        return {c: self.analyte[c] for c in chunk_ids if c in self.analyte}
+
 
 def stale(
     status: str = "superseded",
@@ -216,16 +226,25 @@ def stale(
     }
 
 
+def analyte_stale(
+    status: str = "superseded",
+    entity_id: str = "e9",
+    analyte: str = "Platelet count",
+) -> dict:
+    return {"entity_id": entity_id, "analyte": analyte, "status": status}
+
+
 def handlers(
     search_resp: SearchResponse | None = None,
     stored: NoteInfo | None = None,
     currency: dict[str, list[dict]] | None = None,
+    analyte: dict[str, list[dict]] | None = None,
 ):
     resp = search_resp if search_resp is not None else SearchResponse(degraded=False, results=[])
     return build_read_handlers(
         FakeSearch(resp),  # type: ignore[arg-type]
         FakeNotes(stored),  # type: ignore[arg-type]
-        FakeEntities(None, currency=currency),  # type: ignore[arg-type]
+        FakeEntities(None, currency=currency, analyte=analyte),  # type: ignore[arg-type]
     )
 
 
@@ -314,6 +333,28 @@ def test_format_search_flags_a_hit_whose_note_has_stale_facts() -> None:
     assert "⚠" not in n2_line
 
 
+def test_format_search_flags_a_stale_analyte_value_by_chunk() -> None:
+    # The hit's chunk (c1) quotes a value whose backing reading is pending review.
+    resp = SearchResponse(degraded=False, results=[result(note_id="n1")])
+    out = format_search(resp, {}, {"c1": [analyte_stale(status="pending_review")]})
+    assert "⚠ a value here is no longer the current reading (pending): Platelet count" in out
+    assert "read_labs (or read_entity e9)" in out
+
+
+def test_format_search_analyte_flag_is_chunk_precise() -> None:
+    # Two hits, different chunks; only the one whose chunk backs a stale value is flagged.
+    r1 = result(note_id="n1", chunk_id="c1")
+    r2 = result(note_id="n2", chunk_id="c2")  # a different chunk — its value is current
+    out = format_search(
+        SearchResponse(degraded=False, results=[r1, r2]),
+        {},
+        {"c1": [analyte_stale()]},
+    )
+    n2_line = [ln for ln in out.splitlines() if "note n2" in ln][0]
+    assert "current reading" in out  # n1/c1 is flagged
+    assert "⚠" not in n2_line  # n2/c2 quotes a live value — no flag
+
+
 # --- handlers ------------------------------------------------------------
 
 
@@ -386,6 +427,30 @@ async def test_search_tool_flags_stale_hits_and_scopes_the_lookup() -> None:
     out = await tools["search"]({"query": "where does sarah live"}, CTX)
     assert "no longer current (retracted)" in out
     assert entities.currency_calls == [["n1"]]  # looked up exactly the hit notes
+
+
+async def test_search_tool_flags_a_stale_analyte_value_scoped_by_chunk() -> None:
+    resp = SearchResponse(degraded=False, results=[result(note_id="n1", chunk_id="c1")])
+    entities = FakeEntities(None, analyte={"c1": [analyte_stale(status="superseded")]})
+    tools = build_read_handlers(FakeSearch(resp), FakeNotes(None), entities)  # type: ignore[arg-type]
+    out = await tools["search"]({"query": "platelets"}, CTX)
+    assert "no longer the current reading (superseded): Platelet count" in out
+    assert entities.analyte_calls == [["c1"]]  # keyed on the hit's chunk, not its note
+
+
+async def test_search_tool_flags_value_facts_by_chunk_not_note() -> None:
+    """A superseded `value` fact surfaces via the chunk-precise analyte flag only —
+    the note-level flag drops `value` predicates, so a hit is not double-reported."""
+    resp = SearchResponse(degraded=False, results=[result(note_id="n1", chunk_id="c1")])
+    entities = FakeEntities(
+        None,
+        currency={"n1": [stale(predicate="value", entity_name="Potassium")]},
+        analyte={"c1": [analyte_stale(status="superseded", analyte="Platelet count")]},
+    )
+    tools = build_read_handlers(FakeSearch(resp), FakeNotes(None), entities)  # type: ignore[arg-type]
+    out = await tools["search"]({"query": "labs"}, CTX)
+    assert "fact(s) here are no longer current" not in out  # note-level flag suppressed
+    assert "no longer the current reading (superseded): Platelet count" in out
 
 
 def test_format_entity_shows_kind_aliases_and_edges() -> None:

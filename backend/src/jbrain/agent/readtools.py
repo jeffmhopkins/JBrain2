@@ -165,6 +165,10 @@ class EntityReader(Protocol):
         self, ctx: SessionContext, note_ids: list[str]
     ) -> dict[str, list[dict[str, Any]]]: ...
 
+    async def analyte_currency(
+        self, ctx: SessionContext, chunk_ids: list[str]
+    ) -> dict[str, list[dict[str, Any]]]: ...
+
 
 def _search_flag(stale: list[dict[str, Any]]) -> str:
     """A compact currency flag under a hit whose note has non-live facts — so the
@@ -177,8 +181,25 @@ def _search_flag(stale: list[dict[str, Any]]) -> str:
     )
 
 
+def _analyte_flag(stale: list[dict[str, Any]]) -> str:
+    """A currency flag under a health hit whose prose quotes an analyte value that is
+    no longer the current reading — the value was superseded by a correction, or it is
+    a contested/preliminary result held for review (EMR plan §7.2). Names the analyte
+    so the agent confirms the live number via read_labs before relying on the snippet."""
+    statuses = sorted({f["status"].replace("_review", "") for f in stale})
+    analytes = sorted({f["analyte"] for f in stale})
+    ids = sorted({f["entity_id"] for f in stale})
+    return (
+        f"  ⚠ a value here is no longer the current reading ({', '.join(statuses)}):"
+        f" {', '.join(analytes)} — read_labs (or read_entity {', '.join(ids)}) for the"
+        " current value"
+    )
+
+
 def format_search(
-    resp: SearchResponse, currency: dict[str, list[dict[str, Any]]] | None = None
+    resp: SearchResponse,
+    currency: dict[str, list[dict[str, Any]]] | None = None,
+    analyte: dict[str, list[dict[str, Any]]] | None = None,
 ) -> str:
     if not resp.results:
         return "No matching notes in scope."
@@ -192,6 +213,10 @@ def format_search(
         stale = (currency or {}).get(r.note_id)
         if stale:
             line += "\n" + _search_flag(stale)
+        # The chunk-precise value flag: this hit's snippet quotes a stale analyte reading.
+        stale_value = (analyte or {}).get(r.chunk_id)
+        if stale_value:
+            line += "\n" + _analyte_flag(stale_value)
         lines.append(line)
     return "\n".join(lines)
 
@@ -379,10 +404,19 @@ def build_read_handlers(
             return ToolOutput("search needs a non-empty query.")
         limit = int(arguments.get("limit", _DEFAULT_LIMIT))
         resp = await search.search(ctx.session, query, None, limit)
-        # Overlay the supersession/review outcome the snippet's prose can't show (note hits only).
-        note_ids = list({r.note_id for r in resp.results if isinstance(r, SearchResult)})
+        hits = [r for r in resp.results if isinstance(r, SearchResult)]
+        # Overlay the supersession/review outcome the snippet's prose can't show. A
+        # stale analyte `value` is flagged chunk-precisely (which reading the snippet
+        # quotes, §7.2); every other predicate stays note-scoped. Partition by predicate
+        # so the two flags never double-report the same reading.
+        note_ids = list({r.note_id for r in hits})
         currency = await entities.note_currency(ctx.session, note_ids) if note_ids else {}
-        return ToolOutput(format_search(resp, currency), search_sources(resp))
+        currency = {
+            n: [f for f in facts if f["predicate"] != "value"] for n, facts in currency.items()
+        }
+        chunk_ids = list({r.chunk_id for r in hits if r.chunk_id})
+        analyte = await entities.analyte_currency(ctx.session, chunk_ids) if chunk_ids else {}
+        return ToolOutput(format_search(resp, currency, analyte), search_sources(resp))
 
     async def read_note_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         note_id = str(arguments.get("note_id", "")).strip()
