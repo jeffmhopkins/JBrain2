@@ -14,33 +14,14 @@ vision token budget.
 
 from __future__ import annotations
 
-import asyncio
-import base64
-
-from jbrain.ingest.imageprep import downscale_for_vision, pdf_page_images
-from jbrain.ingest.ocr import OCR_MAX_TOKENS, OCR_STRENGTH, OCR_SYSTEM
+from jbrain.ingest.ocr import ocr_pdf_pages
 from jbrain.llm import LlmRouter
-from jbrain.llm.types import LlmImage
 
 VISION_OCR_TASK = "vision.ocr"
 
 
 async def ocr_scanned_pdf(router: LlmRouter, data: bytes, filename: str) -> list[str]:
-    """Transcribe each page of a scanned PDF via the vision-OCR route, in order.
-    Returns one (possibly empty) transcript per page; an unreadable PDF yields no
-    pages (rasterization degrades to empty rather than raising, §6.2)."""
-    images = await asyncio.to_thread(pdf_page_images, data)
-    texts: list[str] = []
-    for number, png in enumerate(images, start=1):
-        prepared, media_type = downscale_for_vision(png, "image/png")
-        image = LlmImage(media_type=media_type, data=base64.b64encode(prepared).decode("ascii"))
-        result = await router.complete(
-            VISION_OCR_TASK,
-            system=OCR_SYSTEM,
-            user_text=f"Transcribe this scanned page ({filename}, page {number}).",
-            images=[image],
-            max_tokens=OCR_MAX_TOKENS,
-            strength=OCR_STRENGTH,
-        )
-        texts.append(result.text.strip())
-    return texts
+    """Transcribe each page of a scanned PDF via the shared `vision.ocr` page core
+    (`ingest.ocr.ocr_pdf_pages`). The EMR importer's fallback when the ingest OCR job
+    has not already cached the transcripts — same route, same result."""
+    return await ocr_pdf_pages(router, data, filename)

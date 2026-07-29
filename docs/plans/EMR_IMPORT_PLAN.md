@@ -1740,7 +1740,17 @@ import:
   real-Postgres e2e — a text-less ARIA PDF is OCR'd, cached, parsed, and its reads park (§6.4, no
   precise source to corroborate), with a re-run proven not to re-OCR.
 
-**Wave 3 is functionally complete:** all four sources — including scanned ARIA exports — now import.
-The remaining tail is the automatic **ingest-side** enqueue of this OCR for a scanned PDF (so the OCR
-text is chunked/searchable and cited per-page without waiting on a re-ingest) and the athena
-cancelled-`RESULT NOTE` / micro-titer review-routing polish — both W3/W4 refinements, not blockers.
+- **Ingest-side scan-OCR (the first-class path).** `ingest_note` now detects a **scanned** PDF — one
+  that produced no text-layer chunk this ingest — and enqueues `ocr_attachment` for it, exactly as it
+  already does for images; the note.ingested emit waits on that OCR (the existing outstanding-vision
+  gate), so `emr_parse` fires only once the transcripts exist. `OcrPipeline.ocr_attachment` is now
+  **page-aware for PDFs**: it transcribes each page via the shared `ocr_pdf_pages` core (the EMR
+  fallback delegates to the same routine) and writes one `ocr` extract per page (`source_anchor="page
+  N"`, no caption). A re-ingest then turns those into per-page `ocr` **chunks** — so the OCR text is
+  searchable and an EMR fact cites its real page chunk, no re-ingest wait. Idempotent: a cached PDF is
+  never re-OCR'd (no loop). Tests: the per-page OCR job + the ingest auto-enqueue + the re-ingest
+  chunking, all on real Postgres with the vision model faked.
+
+**Wave 3 is complete:** all four sources — including scanned ARIA exports — import, with OCR text
+first-class (chunked, searchable, per-page-cited). The only remaining EMR polish is the athena
+cancelled-`RESULT NOTE` / micro-titer review-routing nuance (a small W3/W4 refinement, not a blocker).

@@ -24,6 +24,7 @@ from jbrain import queue
 from jbrain.db.session import scoped_session
 from jbrain.ingest.chunker import chunk_text
 from jbrain.ingest.extract import (
+    KIND_TEXT_LAYER,
     CachedExtract,
     ExtractorRegistry,
     default_registry,
@@ -141,7 +142,16 @@ class IngestPipeline:
         # Vision OCR rides the same doctrine: images whose cache is empty get
         # an async ocr_attachment job; the handler re-enqueues ingest_note, so
         # the cache check is what keeps that loop from spinning.
-        outstanding = await self._enqueue_ocr_jobs(note_id, attachments, set(extracts))
+        # Attachments that yielded a text layer this ingest — a PDF absent here is a
+        # scan and routes to page-OCR (§6.2), not left as an empty attachment.
+        text_layer_ids = {
+            c.attachment_id
+            for c in chunks
+            if c.attachment_id is not None and c.source_kind == KIND_TEXT_LAYER
+        }
+        outstanding = await self._enqueue_ocr_jobs(
+            note_id, attachments, set(extracts), text_layer_ids
+        )
         # Audio rides the identical doctrine: an uncached audio attachment gets an
         # async transcribe_attachment job whose handler re-ingests, so the cache
         # check is what keeps that loop from spinning. Its outstanding ids join the
@@ -223,11 +233,16 @@ class IngestPipeline:
         return extracts
 
     async def _enqueue_ocr_jobs(
-        self, note_id: str, attachments: list[_AttachmentRef], cached: set[UUID]
+        self,
+        note_id: str,
+        attachments: list[_AttachmentRef],
+        cached: set[UUID],
+        text_layer_ids: set[UUID],
     ) -> set[str]:
-        """One ocr_attachment job per image with no cache rows yet; returns
-        the attachment ids with OCR work outstanding after this run (newly
-        enqueued + already queued/running) — the analysis gate's input.
+        """One ocr_attachment job per image — or per SCANNED PDF (a PDF that produced
+        no text-layer chunk, §6.2) — with no cache rows yet; returns the attachment ids
+        with OCR work outstanding after this run (newly enqueued + already
+        queued/running) — the analysis gate's input.
 
         Oversized images are skipped at enqueue time (the per-task size
         budget, docs/reference/ANALYSIS.md "Dispatcher-level policy") — deliberately
@@ -238,21 +253,35 @@ class IngestPipeline:
         cache-less candidates: an in-flight on-demand re-describe of a cached
         attachment is outstanding work too.
         """
-        image_ids = [str(a.id) for a in attachments if a.media_type.startswith("image/")]
+
+        def is_scanned_pdf(att: _AttachmentRef) -> bool:
+            # A PDF that produced no text-layer chunk this ingest is a scan (§6.2):
+            # route it to page-OCR, not left as an empty attachment. Not size-capped
+            # like an image — each page is downscaled independently before the model.
+            return att.media_type == PDF_MEDIA_TYPE and att.id not in text_layer_ids
+
+        # The full candidate set (for the outstanding-jobs check) is every image + every
+        # scanned PDF, cached or not — an in-flight re-run is outstanding work too.
+        vision_ids = [
+            str(a.id) for a in attachments if a.media_type.startswith("image/") or is_scanned_pdf(a)
+        ]
         candidates: list[_AttachmentRef] = []
         for att in attachments:
-            if not att.media_type.startswith("image/") or att.id in cached:
+            if att.id in cached:
                 continue
-            if att.size_bytes > MAX_OCR_BYTES:
-                log.warning(
-                    "ingest.ocr_skipped_too_large",
-                    attachment_id=str(att.id),
-                    size_bytes=att.size_bytes,
-                    cap_bytes=MAX_OCR_BYTES,
-                )
-                continue
-            candidates.append(att)
-        if not image_ids:
+            if att.media_type.startswith("image/"):
+                if att.size_bytes > MAX_OCR_BYTES:
+                    log.warning(
+                        "ingest.ocr_skipped_too_large",
+                        attachment_id=str(att.id),
+                        size_bytes=att.size_bytes,
+                        cap_bytes=MAX_OCR_BYTES,
+                    )
+                    continue
+                candidates.append(att)
+            elif is_scanned_pdf(att):
+                candidates.append(att)
+        if not vision_ids:
             return set()
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
             outstanding = set(
@@ -264,7 +293,7 @@ class IngestPipeline:
                             " AND status IN ('queued', 'running')"
                             " AND payload->>'attachment_id' IN :ids"
                         ).bindparams(bindparam("ids", expanding=True)),
-                        {"ids": image_ids},
+                        {"ids": vision_ids},
                     )
                 ).scalars()
             )
