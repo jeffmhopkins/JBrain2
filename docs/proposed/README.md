@@ -25,14 +25,17 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   tool, and a MusicScreen — mirroring the shipped image stack. Backend (Waves M0–M3) +
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
-- `LOCAL_RESEARCH_TOOL_PLAN.md` — a prompt-customizable, local-only fork of the
-  `deep_research` engine: same multi-stage pipeline, pinned to the owner's own corpora
-  (Research Library + EMR/health facts as parent-assembled seed), never the web, driven
-  by a caller-supplied `objective` so one engine serves many recipes. Motivating recipe:
-  a hypothetical treatment plan grounded in a medical-history date range + a library
-  category. Waves W1–W3 (+ deferred health-scoped persistence W4), with a documented
-  narrow carve-out to the `EMR_IMPORT_PLAN.md` no-clinical-decision-support line and an
-  enforced no-web-egress property.
+- `DEEP_PRODUCE_PLAN.md` — generalize the `deep_research` pipeline into one **produce
+  engine** behind an abstraction layer, surfaced as two verbs: `deep_research`
+  (research→report, unchanged) and `deep_produce` (a caller-supplied Directive —
+  objective + output_kind — producing a plan/table/brief/…). Access (sources, seed, web,
+  sink) is resolved from the calling persona: a jerv call reaches web/library→external; a
+  curator call reaches library + EMR/health seed (read under RLS), web-forbidden,
+  ephemeral. One `deep_produce` tool serves both; the `seed ⇒ no-web ∧ no-external-sink`
+  invariant is the single enforced access-control point. Motivating recipe: a hypothetical
+  treatment plan grounded in a medical-history date range + a library category. Waves
+  W1–W3 (+ deferred health-scoped persistence W4), with a documented narrow carve-out to
+  the `EMR_IMPORT_PLAN.md` no-clinical-decision-support line.
 - `TEACHER_MODE_AGENTS_PLAN.md` — split the `teacher` persona into two agents:
   an owner **instructor** (authors/approves lessons + curricula, assigns to a
   child, reviews results) and a sandboxed non-owner **student** behind an
