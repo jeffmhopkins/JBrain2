@@ -29,6 +29,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.agent.spawn import _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.db.session import SessionContext
+from jbrain.llm import LlmBadResponseError
 from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
 
 
@@ -64,12 +65,19 @@ class _FakeRouter:
         # successive COVERAGE CHECK calls; once exhausted the last entry repeats. None →
         # every reflect returns the fixed (covered, gaps, stable=False) above (unchanged).
         reflect_script: tuple[tuple[bool, tuple[str, ...], bool], ...] | None = None,
+        # Simulate the local model failing to emit parseable JSON even after the router's
+        # re-ask: `router.complete` RAISES `LlmBadResponseError` on that path, so the fake
+        # raises it too for the named stage. deep_research must DEGRADE, not die.
+        plan_bad_json: bool = False,
+        reflect_bad_json: bool = False,
     ) -> None:
         self.complexity = complexity
         self.sub_questions = list(sub_questions)
         self.covered = covered
         self.gaps = list(gaps)
         self.reflect_script = reflect_script
+        self.plan_bad_json = plan_bad_json
+        self.reflect_bad_json = reflect_bad_json
         self._reflect_calls = 0
         self.calls: list[dict] = []
         self.synth_calls: list[str] = []
@@ -78,6 +86,8 @@ class _FakeRouter:
         self.calls.append({"system": system, "user_text": user_text, "json_schema": json_schema})
         usage = _Usage(10, 20)
         if "PLANNER" in system:
+            if self.plan_bad_json:
+                raise LlmBadResponseError("local: invalid JSON for task 'agent.turn' after re-ask")
             return _Result(
                 text="",
                 usage=usage,
@@ -88,6 +98,8 @@ class _FakeRouter:
                 },
             )
         if "COVERAGE CHECK" in system:
+            if self.reflect_bad_json:
+                raise LlmBadResponseError("local: invalid JSON for task 'agent.turn' after re-ask")
             if self.reflect_script:
                 idx = min(self._reflect_calls, len(self.reflect_script) - 1)
                 covered, gaps, stable = self.reflect_script[idx]
@@ -285,6 +297,42 @@ async def test_full_run_orchestrates_every_stage() -> None:
     assert len(router.synth_calls) == 2  # draft + revise
     assert "REVISED REPORT" in out
     assert "cross-checked" in out and "revised after critique" in out
+
+
+# --- degraded orchestration JSON: a flaky judge call must not kill the run ---
+
+
+async def test_reflect_bad_json_degrades_instead_of_killing_the_run() -> None:
+    """The regression the owner hit: an hour-long run whose gather + analyst finished, then
+    `reflect`'s structured `complete` returned unparseable JSON even after the router's
+    re-ask. `router.complete` RAISES `LlmBadResponseError`, which used to propagate out of
+    the tool and collapse the whole run (the loop then surfaced it to jerv as a tool error
+    and re-spawned the run). It must instead DEGRADE: end the gap loop, synthesize from what
+    was gathered, and return a real report — no raise."""
+    router = _FakeRouter(complexity="deep", reflect_bad_json=True)
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+
+    assert "REVISED REPORT" in out  # a report came back, not an exception
+    assert _reflected(router)  # the coverage check was attempted
+    # A degraded reflect names no gaps → no refill fan runs; gather is the only research fan.
+    assert len(_research_fans(spawn)) == 1
+    assert router.synth_calls  # the synthesizer still wrote the report
+
+
+async def test_plan_bad_json_degrades_to_the_raw_question_angle() -> None:
+    """A flaky PLAN call (unparseable JSON after re-ask) must not kill the run at step 1
+    either: with no parsed plan the run researches the raw question as a single angle and
+    still produces a report, rather than raising out of the tool."""
+    router = _FakeRouter(complexity="deep", plan_bad_json=True, covered=True, gaps=())
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+
+    assert "REVISED REPORT" in out
+    gather = _research_fans(spawn)[0]
+    # The fallback researches the raw question as one angle, titled off the question itself.
+    assert len(gather["briefs"]) == 1
+    assert gather["briefs"][0][1] == "how does X work?"
 
 
 async def test_analyst_is_fed_the_gather_findings_before_synthesis() -> None:

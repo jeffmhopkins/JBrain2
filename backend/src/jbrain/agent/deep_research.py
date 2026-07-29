@@ -58,9 +58,9 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.spawn import SpawnService, _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.external.research_corpus import persist_report
-from jbrain.llm import LlmRouter
+from jbrain.llm import LlmBadResponseError, LlmRouter
 from jbrain.llm.promptfile import load_prompt
-from jbrain.llm.types import LlmTurn, TextChunk, UserMessage
+from jbrain.llm.types import LlmResult, LlmTurn, TextChunk, UserMessage
 
 log = structlog.get_logger()
 
@@ -820,9 +820,41 @@ class DeepResearchService:
 
     # --- the orchestration LLM calls (each charged to the shared tree budget) ------
 
+    async def _complete_json(
+        self,
+        ctx: ToolContext,
+        *,
+        system: str,
+        user_text: str,
+        json_schema: dict,
+        max_tokens: int,
+    ) -> LlmResult | None:
+        """A structured orchestration one-shot that DEGRADES instead of dying when the
+        local model can't emit parseable JSON even after the router's re-ask. `router.complete`
+        RAISES `LlmBadResponseError` on that path; here it becomes a `None` result so the
+        caller falls through to its existing empty-parse default (plan → research the raw
+        question as one angle; reflect → treat coverage as done and write from what's gathered)
+        rather than collapsing a long, otherwise-finished run — and its report — on one flaky
+        judge call, which the loop would then surface to jerv as a tool error and re-spawn.
+        Charges the tokens on success; a raise loses the usage handle, so that rare degraded
+        call goes uncharged (best-effort accounting, never a wedged run)."""
+        try:
+            result = await self._router.complete(
+                _TASK,
+                system=system,
+                user_text=user_text,
+                json_schema=json_schema,
+                max_tokens=max_tokens,
+            )
+        except LlmBadResponseError:
+            log.warning("deep_research.json_degraded", task=_TASK)
+            return None
+        self._charge(ctx, result)
+        return result
+
     async def _plan(self, ctx: ToolContext, question: str, breadth: int) -> dict:
-        result = await self._router.complete(
-            _TASK,
+        result = await self._complete_json(
+            ctx,
             system=_PLAN.render(),
             user_text=(
                 f"Research question:\n{question}\n\n"
@@ -831,8 +863,7 @@ class DeepResearchService:
             json_schema=_PLAN_SCHEMA,
             max_tokens=_PLAN_MAX_TOKENS,
         )
-        self._charge(ctx, result)
-        data = result.parsed or {}
+        data = (result.parsed if result is not None else None) or {}
         complexity = data.get("complexity")
         # A malformed/unrated complexity defaults to the broadest real tier — thorough is
         # the safe failure. Complexity only sizes gather breadth, so a bad value can never
@@ -926,15 +957,17 @@ class DeepResearchService:
             if deepest
             else "\n\nThis is the only gap round — name every real gap now."
         )
-        result = await self._router.complete(
-            _TASK,
+        result = await self._complete_json(
+            ctx,
             system=_REFLECT.render(),
             user_text=user_text,
             json_schema=_REFLECT_SCHEMA,
             max_tokens=_REFLECT_MAX_TOKENS,
         )
-        self._charge(ctx, result)
-        data = result.parsed or {}
+        # A degraded (unparseable) coverage judge returns `{}` → no `covered`, no `gaps` →
+        # `([], False)`: the gap loop ends and the run synthesizes from what it has, instead
+        # of the whole run dying on one flaky reflect call.
+        data = (result.parsed if result is not None else None) or {}
         if data.get("covered") is True:
             return [], True
         gaps = [g for g in (_coerce_brief(x) for x in data.get("gaps", [])) if g]
