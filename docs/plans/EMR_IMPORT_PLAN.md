@@ -1650,11 +1650,12 @@ concern — the trigger + event-payload widening, §6.0/§12.2, needs an owner s
 approach before it lands). The one LLM touch on the structured path — the pathology-narrative
 Final-Diagnosis extraction — is now landed (`pathology.py`, above).
 
-### 12.8 Wave 3 — in progress (parsers + dedup + dispatch + job + trigger landed)
+### 12.8 Wave 3 — functionally complete (parsers + dedup + dispatch + job + trigger + scan-OCR landed)
 
 The three remaining per-source parsers, the cross-source reconciliation enforcer, the parser dispatch,
-the `emr_parse` job, and the seeded two-stage trigger are built and tested (`backend/src/jbrain/ingest/emr/`);
-only the ARIA vision-OCR extractor is left:
+the `emr_parse` job, the seeded two-stage trigger, and the scanned-PDF vision-OCR extractor are built
+and tested (`backend/src/jbrain/ingest/emr/`) — all four sources, including scanned ARIA exports, now
+import:
 
 - **`onecontent.py`** — the OneContent cumulative-lab parser, resolving the §6.2 go/no-go to
   **x-geometry**: a pure function of `get_text("words")` word boxes that groups words into lines by
@@ -1728,7 +1729,18 @@ only the ARIA vision-OCR extractor is left:
   live dispatcher tick resolves the archive note into exactly one intake job, the decrypted note into
   one parse job, and a plain Records note into neither.
 
-**Remaining in W3 (next):** the **ARIA vision-OCR extractor** (§6.2) — rasterize a scanned (zero
-text-layer) PDF's pages and run the vision-LLM OCR route (`confidence=0.7`) into the
-`attachment_extracts` cache, so the shipped `emr_parse` handler feeds the ARIA parser real OCR text
-rather than the current canned fixtures. The parsers, dedup, dispatch, job, and trigger are all landed.
+- **`scan_ocr.py` + `imageprep.pdf_page_images`** — the **ARIA vision-OCR extractor** (§6.2), the
+  one LLM adapter touch on the scanned path. `pdf_page_images` renders each page of a zero-text-layer
+  PDF to PNG (the sole PDF rasterizer in the tree; the text path uses `get_text`); `ocr_scanned_pdf`
+  runs each page through the shipped `vision.ocr` route (reusing its prompt/tier/`0.7` confidence and
+  the `downscale_for_vision` cap). `emr_parse._build_sources` now falls back to this when
+  `PdfTextLayerExtractor` yields nothing, caching the transcripts as per-page `ocr`
+  `attachment_extracts` (`source_anchor="page N"`) so a re-run never re-bills the model and the text
+  is chunkable on a later re-ingest. Tests (LLM faked): the rasterizer + per-page OCR (unit) and a
+  real-Postgres e2e — a text-less ARIA PDF is OCR'd, cached, parsed, and its reads park (§6.4, no
+  precise source to corroborate), with a re-run proven not to re-OCR.
+
+**Wave 3 is functionally complete:** all four sources — including scanned ARIA exports — now import.
+The remaining tail is the automatic **ingest-side** enqueue of this OCR for a scanned PDF (so the OCR
+text is chunked/searchable and cited per-page without waiting on a re-ingest) and the athena
+cancelled-`RESULT NOTE` / micro-titer review-routing polish — both W3/W4 refinements, not blockers.
