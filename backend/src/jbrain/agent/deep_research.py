@@ -1080,8 +1080,16 @@ class DeepResearchService:
             "SPECIFIC claim — the same finding, endpoint, and population, not merely a related "
             "or adjacent result. Flag any claim its cited source does NOT support, only partly "
             "supports, extends beyond what it measured, contradicts, or that cites nothing at "
-            "all. Also flag a number dressed with more precision than its source gives (a "
-            "confidence interval or pooled estimate the source never reported). "
+            "all. Check every SPECIFIC QUANTITY against the cited source: a sample size or "
+            "study count, an effect size (odds/hazard/risk ratio, a 'doubling'/'tripling'), a "
+            "percentage, an incidence, or a rate — flag any that the source does not actually "
+            "state, including a number dressed with more precision than the source gives (a "
+            "confidence interval or pooled estimate it never reported). Also check ATTRIBUTION: "
+            "where the draft names a cited document — its issuing body, publication year, "
+            "edition, or document type ('the ASH 2024 guideline', 'BSH 2023 consensus') — "
+            "confirm the cited source actually carries that body, year, and type, and flag any "
+            "mislabelled year/society or a review or summary passed off as the primary "
+            "guideline or study. "
             if verify
             else ""
         )

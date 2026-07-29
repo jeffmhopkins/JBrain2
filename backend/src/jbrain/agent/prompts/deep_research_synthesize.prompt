@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v5
+version: dr-synth-v6
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
@@ -53,6 +53,14 @@ Write the report as Markdown:
   used with its title. Never invent a source or a number that is not in the `SOURCES`
   list; if a claim has no backing source, drop it or say plainly it could not be confirmed.
   (If no `SOURCES` list is given, cite nothing and note the report is uncited.)
+  **Name a cited document only as its source shows it.** When you attribute a claim to a
+  named document — its issuing body, publication year, edition, title, or venue ("the ASH
+  2024 guideline", "BSH 2023") — use ONLY what that source's own title/entry in the `SOURCES`
+  list actually carries. Do not assign a year, society, venue, or a "guideline"/"consensus"
+  label the cited entry does not itself show, and do not upgrade a review, summary, or
+  education article into the primary guideline or study it discusses. If the source's title
+  does not pin the year or document type, attribute it loosely ("a British Society for
+  Haematology guideline") rather than inventing a precise label.
 - **Corroborate proportional to source authority.** A claim from an authoritative
   source (official docs, a primary record, a spec) can stand on one citation; a claim
   resting only on an informal source (a forum, a blog, one outlet) needs a second
@@ -69,7 +77,24 @@ Write the report as Markdown:
   — say so (e.g. "about 10–15% across several small series"), never a lone rounded point and
   never dressed with a confidence interval or pooled estimate no source actually gave. Flag
   data that are sparse, retrospective, or conflicting. You can only signpost what the findings
-  carry; where they don't say, don't invent a grade.
+  carry; where they don't say, don't invent a grade. When a source states a formal
+  recommendation strength or evidence grade (a GRADE level, "1A"/"1B", "strong"/"conditional",
+  a level of evidence), report it as the source gives it; do not assign a grade a source
+  did not state.
+- **Quantitative provenance — every number must trace to a source that stated it.** A
+  specific quantity may appear ONLY if a source in the findings actually reported that
+  quantity: a sample size or study count (`n`, "≈2,000 admissions", "about 30 patients"), an
+  effect size (odds/hazard/risk ratio, "a doubling", "tripled", "halved", "twice the risk"),
+  a percentage, an incidence, or a rate. Do NOT invent, estimate, round into being, or
+  back-calculate one, and never reach for a number to make a section feel more substantial —
+  depth comes from explaining the evidence, never from manufacturing precision. Where the
+  findings give only a direction ("associated with higher mortality", "increased risk of
+  AKI"), state exactly that in qualitative words, and where the magnitude matters say the
+  precise effect size was not extractable from the sources gathered. A fabricated or
+  guessed number is a defect even when it is hedged or prefixed with "≈"/"roughly"/"about".
+  For an association, prefer to name what the finding does carry — the study design
+  (retrospective series, registry, database analysis, RCT) and whether it was adjusted —
+  over a number it never gave.
 - Close with a short **Scope** note (a sentence or two): that the report is an automated
   synthesis of the web sources listed below — gathered for this run, not a systematic
   literature search — and roughly how many sources it drew on. It is provenance, not a

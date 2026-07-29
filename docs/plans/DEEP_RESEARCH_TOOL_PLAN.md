@@ -1,6 +1,39 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-07-29 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; v14 quantitative-provenance rule + citation-attribution fidelity + recommendation-grade signpost; mock-gate sign-off pending)
+
+**v14 revision (stop invented precision and mislabelled citations — a frontier-model
+critique of the TTP-transfusion `deep` report).** An owner-supplied review of the platelet/
+red-cell transfusion report converged with the v12 finding: the writer hedges verbally yet
+still manufactures precision next to the hedge. The shipped report invented sample sizes
+("≈2,000 admissions", "≈100 episodes"), an effect size ("a *doubling* of AKI") one line above
+"precise odds ratios are not published", and mislabelled a cited source — attributing a claim
+to "ASH … (Blood 2024)" when the cited page is a 2017 *Blood* review, not a 2024 ASH guideline.
+Reproduced on-box against `gpt-oss-120b` (the model `agent.turn` routes to): fed a finding that
+carried only a *direction*, the v5 prompt still wrote "mortality rates roughly double" and "RR
+1.5–2.0" — because inventing the point estimate itself is not the CI/pooled *dressing* the v12
+rule already forbade. Fixed in the prompts, kept domain-agnostic; each change re-verified on-box
+(the invented numbers disappeared, depth held, and the writer downgraded the review from
+"guideline (Blood 2024)" to "the ASH review" with no fabricated year):
+
+- **Synthesize prompt** (`deep_research_synthesize.prompt`, dr-synth-v5 → **dr-synth-v6**) —
+  three additions to the existing machinery (unchanged): (1) a dedicated *quantitative
+  provenance* rule — a specific quantity (sample size/study count, an effect size incl. a
+  "doubling"/"tripling", a percentage, an incidence, a rate) may appear ONLY if a source
+  actually stated it; never invent, estimate, round into being, or back-calculate one, and a
+  guessed number is a defect even prefixed with "≈"/"roughly". Where a finding gives only a
+  direction, say so qualitatively and name the study design over a number it never gave. (2)
+  *Citation-attribution fidelity* — name a cited document (issuing body, year, edition, type)
+  only as its `SOURCES` entry shows it; don't assign a year/society/"guideline" label the entry
+  doesn't carry, and don't upgrade a review/summary into the primary guideline it discusses.
+  (3) *Recommendation-grade signpost* — when a source states a formal strength/grade (GRADE,
+  1A/1B, strong/conditional), report it as given; don't invent one.
+- **Critique brief** (`_critique`, the v10 citation-faithfulness reviewer) — its faithfulness
+  pass now also checks every SPECIFIC QUANTITY against the cited source (flag any the source
+  does not state) and ATTRIBUTION (flag a mislabelled year/society or a review passed off as
+  the primary guideline), catching what a plain "does the source support the claim" check let
+  through.
+
 
 **v13 revision (a breadth-5 two-wave run was saturating both ceilings at once).** An owner
 breadth-5 run was landing right at the token cap. The run-log confirmed it was co-limited:
