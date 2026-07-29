@@ -26,6 +26,7 @@ Transient LLM faults propagate and ride the queue's retry backoff; nothing is
 written until every call succeeds, so a failed run never half-fills the cache.
 """
 
+import asyncio
 import base64
 from pathlib import Path
 from typing import Any, Protocol
@@ -37,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain import queue
 from jbrain.analysis import flow_trace
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.ingest.imageprep import downscale_for_vision
+from jbrain.ingest.imageprep import downscale_for_vision, pdf_page_images
 from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.promptfile import load_prompt
 from jbrain.models.notes import Attachment, AttachmentExtract, Note
@@ -51,6 +52,7 @@ log = structlog.get_logger()
 # skips ENQUEUEING OCR for larger images, with a logged warning — no cache
 # row, so shrinking the file and re-ingesting picks it up again.
 MAX_OCR_BYTES = 8 * 1024 * 1024
+PDF_MEDIA_TYPE = "application/pdf"
 
 # The Guards cap: OCR text is machine-read, not author-written.
 OCR_CONFIDENCE = 0.7
@@ -118,9 +120,18 @@ def resolve_mode(requested: Any, configured: str) -> str:
 
 
 def build_extract(
-    *, attachment_id: Any, domain: str, filename: str, kind: str, text: str, tool: str
+    *,
+    attachment_id: Any,
+    domain: str,
+    filename: str,
+    kind: str,
+    text: str,
+    tool: str,
+    anchor: str | None = None,
 ) -> AttachmentExtract:
-    """One cache row, confidence pre-capped per kind (zero when empty)."""
+    """One cache row, confidence pre-capped per kind (zero when empty). `anchor` sets
+    `source_anchor` (a per-page `page N` for a scanned PDF); defaults to the filename
+    for a single-image extract."""
     clean = text.strip()
     return AttachmentExtract(
         attachment_id=attachment_id,
@@ -128,9 +139,31 @@ def build_extract(
         tool=tool,
         text=clean,
         confidence=EXTRACT_CONFIDENCE[kind] if clean else 0.0,
-        source_anchor=filename,
+        source_anchor=anchor or filename,
         domain_code=domain,
     )
+
+
+async def ocr_pdf_pages(router: LlmRouter, data: bytes, filename: str) -> list[str]:
+    """Transcribe each page of a scanned (text-less) PDF via the `vision.ocr` route,
+    in order — the shared page-OCR core for the ingest OCR job and the EMR importer.
+    Each page is rasterized then downscaled under the vision token cap. An unreadable
+    PDF yields no pages (rasterization degrades to empty, never raising)."""
+    images = await asyncio.to_thread(pdf_page_images, data)
+    texts: list[str] = []
+    for number, png in enumerate(images, start=1):
+        prepared, media_type = downscale_for_vision(png, "image/png")
+        image = LlmImage(media_type=media_type, data=base64.b64encode(prepared).decode("ascii"))
+        result = await router.complete(
+            "vision.ocr",
+            system=OCR_SYSTEM,
+            user_text=f"Transcribe this scanned page ({filename}, page {number}).",
+            images=[image],
+            max_tokens=OCR_MAX_TOKENS,
+            strength=OCR_STRENGTH,
+        )
+        texts.append(result.text.strip())
+    return texts
 
 
 class OcrPipeline:
@@ -183,17 +216,28 @@ class OcrPipeline:
                 )
             ).scalar_one_or_none() is not None
 
-        run_kinds = [*([] if has_ocr else ["ocr"]), *(["caption"] if mode == "full" else [])]
+        # A scanned PDF is transcribed page by page (source_anchor="page N"), no
+        # caption — captioning each page of a document is noise, not a reading.
+        is_pdf = media_type == PDF_MEDIA_TYPE
+        run_kinds = [
+            *([] if has_ocr else ["ocr"]),
+            *(["caption"] if mode == "full" and not is_pdf else []),
+        ]
         if not run_kinds:
             log.info("ocr.skipped", attachment_id=attachment_id, reason="nothing to run")
             return
 
         data = await self._blobs.get(sha256)
+        rows: list[AttachmentExtract] = []
+        if is_pdf:
+            if "ocr" in run_kinds:
+                rows = await self._ocr_pdf_rows(att.id, data, filename, domain, note_id)
+            await self._persist_extracts(attachment_id, note_id, mode, run_kinds, rows)
+            return
         # Downscale oversized images so the vision model isn't handed thousands of
         # image tokens (slow + context overflow — the OCR timeout/retry loop).
         data, media_type = downscale_for_vision(data, media_type)
         image = LlmImage(media_type=media_type, data=base64.b64encode(data).decode("ascii"))
-        rows: list[AttachmentExtract] = []
         if "ocr" in run_kinds:
             ocr = await self._router.complete(
                 "vision.ocr",
@@ -253,10 +297,45 @@ class OcrPipeline:
                 )
             )
 
+        await self._persist_extracts(attachment_id, note_id, mode, run_kinds, rows)
+
+    async def _ocr_pdf_rows(
+        self, att_id: Any, data: bytes, filename: str, domain: str, note_id: str
+    ) -> list[AttachmentExtract]:
+        """One `ocr` extract per scanned-PDF page (`source_anchor="page N"`) so the
+        transcript chunks and cites per page (§6.2), not as one filename-anchored blob."""
+        texts = await ocr_pdf_pages(self._router, data, filename)
+        spec = await self._router.effective_spec("vision.ocr", OCR_STRENGTH)
+        rows: list[AttachmentExtract] = []
+        for number, text in enumerate(texts, start=1):
+            flow_trace.vision(
+                str(att_id),
+                note_id=note_id,
+                kind="ocr",
+                provider=spec[0],
+                model=spec[1],
+                filename=f"{filename}#page-{number}",
+                text=text,
+            )
+            rows.append(
+                build_extract(
+                    attachment_id=att_id,
+                    domain=domain,
+                    filename=filename,
+                    kind="ocr",
+                    text=text,
+                    tool=":".join(spec),
+                    anchor=f"page {number}",
+                )
+            )
+        return rows
+
+    async def _persist_extracts(
+        self, attachment_id: str, note_id: str, mode: str, run_kinds: list[str], rows: list
+    ) -> None:
+        """Delete + insert only the kinds this run recomputed (the chunks pattern keeps
+        retries idempotent), then re-ingest so the rebuilt chunks pick up the cache."""
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            # Delete + insert only the kinds this run recomputed: the chunks
-            # pattern keeps retries idempotent, and an on-demand re-describe
-            # must not drop a still-valid transcription.
             await session.execute(
                 delete(AttachmentExtract).where(
                     AttachmentExtract.attachment_id == attachment_id,
