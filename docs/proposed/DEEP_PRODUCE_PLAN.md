@@ -86,7 +86,7 @@ timeline | …`).
 `deep_research` is `Directive(output_kind = report, objective ← question)` — the existing
 behavior, reproduced exactly by the rules above.
 
-### 2. `SourcePlan` — *what to produce it from (a persona-bounded ceiling)*  [R]
+### 2. `SourcePlan` — *keyed on seed-presence, not persona (D5 resolved)*  [R]
 
 The review corrected the original framing. Two shipped facts:
 
@@ -95,21 +95,26 @@ The review corrected the original framing. Two shipped facts:
 - `ToolContext` carries **no** persona/agent field; the persona is flattened upstream
   (`api/agent.py:623`) into the session's `tools_allow` + `read_scopes` + system prompt.
 
-So access is **not** "resolved from a persona field," and is **not** "never caller-supplied."
-The correct model: the session's upstream-resolved grants are a **ceiling**, and caller
-args may narrow *within* it but never widen it.
+So the engine **cannot** ask "am I curator?" — and it does not need to. Rather than infer
+persona identity, `_run` keys the SourcePlan on a fact it computes directly: *did this
+invocation assemble a health/KB seed?* That boolean is exactly the antecedent of the safety
+invariant, so branching on it makes the invariant self-enforcing at the one point where the
+seed is known. It resolves into a clean three-way (which also subsumes grounding-refusal):
 
-| Caller | Ceiling (from upstream grants) | Caller args | Seed | Web fans | Sink |
-|---|---|---|---|---|---|
-| **jerv** | web + library | picks `web/library/library_first` (unchanged) | none | allowed | `external` corpus |
-| **curator** | library only (no web tools granted) + health `read_scopes` | clamped to library | KB/health facts | **forbidden** | non-external (see Safety) |
+| Case | Condition | Sources | Web fans | Sink |
+|---|---|---|---|---|
+| **1 — seeded produce** | seed requested **and** assembled (health scope present + EMR read non-empty) | pinned local; any `web`/`library_first` arg **rejected** | **forbidden** | non-external (see Safety) |
+| **2 — refuse** | seed requested but **not** assembled (no health scope / empty read) | — | — | — (returns a refusal) |
+| **3 — plain produce** | no seed requested | caller picks `web/library/library_first` (unchanged) | allowed | `external` corpus |
 
-**Open: how `_run` learns its SourcePlan (D5).** Because `ctx` has no persona field, the
-engine cannot read "am I curator?" directly. W1 must pick the source of truth — recommended:
-derive it from the session's resolved `read_scopes` (does it include `health`?) plus the
-granted tool set, or thread an explicit `SourcePlan` from the per-verb adapter that *does*
-know its registration context. This is an implementation decision the plan must settle, not
-assume.
+Case 3 is the shipped jerv/`deep_research` path, byte-for-byte. jerv can never reach case 1
+— it holds no health scope or EMR tools to build a seed with — so the two verbs run the same
+code and the *only* brancher is seed-presence, which is directly observable and testable.
+
+**Edge (documented, not a blocker):** if the owner pastes health text into the free-text
+`objective` and requests web, that text reaches the web — but that is the owner choosing to
+web-search their own words, exactly as if they typed it into jerv. The invariant guards the
+engine-assembled seed against *system* leakage, not the owner's deliberate act.
 
 ### 3. The invariant the abstraction owns  [R]
 
@@ -209,12 +214,19 @@ narrow, owner-only case, recorded rather than silently overridden:
   `_can_open_sources` returns `source_mode != "library"` (`:137-143`), so a **library-only
   run gets no citation/quantitative/attribution check at all** — exactly the seeded case.
   The check must fire whenever there is anything (library reports or seed) to cite against.
-- **Not health-firewalled in v1 [R] — do not call it "ephemeral."** The return persists via
-  `record_exchange` into `agent_turns`, whose RLS is `USING(is_owner())` with **no** domain
-  predicate (`0020:44-50`) — so a health-derived plan is durably readable by any later
-  owner-scoped session. v1 must either **pull W4 forward** (write the artifact under
-  `domain_code='health'` in a firewalled store) or **explicitly state** that the transcript
-  + view are owner-wide, not health-firewalled, and accept that for v1. Pick one before W2.
+- **Owner-wide, not health-firewalled, in v1 (D6 resolved) [R] — not "ephemeral."** The
+  return persists via `record_exchange` into `agent_turns`, whose RLS is `USING(is_owner())`
+  with **no** domain predicate (`0020:44-50`) — so a health-derived plan is durably readable
+  by any later owner-scoped session. **v1 accepts this and documents it**, because it is
+  **not new to `deep_produce`**: every curator health answer today ("what were my last labs")
+  already lands health content in that same owner-wide `agent_turns`. The storage property is
+  identical; only the content is richer. What v1 does *not* do is write to the `external`
+  corpus — that write (jerv-readable + publicly shareable via `0150`) is genuinely worse and
+  is suppressed (`_persist` no-op when `sink != external`). Truly domain-tagging the
+  transcript is a **systemic** follow-up (it must fix *every* health chat turn, not just this
+  verb), tracked as a separate effort — see W4. If cross-*scope* visibility of a health plan
+  *within the owner's own sessions* is unacceptable to the owner, that systemic work becomes a
+  W2 prerequisite; otherwise it does not gate v1.
 - **Never a committed health fact** — never writes a `MedicalCondition`, a `measurement`,
   or a wiki article.
 - **Not medical advice** — carries an explicit standing disclaimer.
@@ -247,9 +259,9 @@ synth prompt (sha256 of the report-path body + a `_SYNTH.version` assert, mirror
 | Wave | Scope | Gate |
 |---|---|---|
 | **W1** | Single-impl refactor: `_run(directive, source_plan, on_round, require_persist)`; `deep_research`/`deepest` as thin adapters (both kwargs threaded); byte-stable report rule (no OBJECTIVE block; `_shape_directive`); `output_kind` plumbing; `extra_tools` gate. **No** curator/seed/non-report render yet. Ship a jerv non-report produce recipe end-to-end. | `deep_research` **and** `deepest` regression: golden `ViewPayload` + persisted row + step 6/8 + `deepest_run.py:165`/`resume_deepest` exercised; `_admits` byte-identical for jerv/teacher; directive-fidelity (report run's plan/reflect/synth/critique inputs identical pre/post) |
-| **W2** | curator `deep_produce`: SourcePlan resolution (D5), health seed + fail-closed grounding refusal, `_persist` sink suppression, web-fan suppression, output-surfacing (`_frame`/`_report_view` + frontend + mock gate), budget decision, treatment-plan recipe. | RLS isolation (health read health-scoped; zero `research_reports` rows written); exfiltration property test (no web persona spawns, no seed reaches a fan child); non-health session **refuses**; sandbox-untouched; on-box run; mock-gate sign-off |
+| **W2** | curator `deep_produce`: seed-keyed SourcePlan (D5) — the three-way seeded/refuse/plain split; health seed + fail-closed grounding refusal; `_persist` external-write suppression (D6); web-fan suppression; output-surfacing (`_frame`/`_report_view` + frontend + mock gate); budget decision; treatment-plan recipe; document the owner-wide `agent_turns` property. | RLS isolation (health read health-scoped; zero `research_reports` rows written); exfiltration property test (no web persona spawns, no seed reaches a fan child); non-health session **refuses**; sandbox-untouched; on-box run; mock-gate sign-off |
 | **W3** | Recipe registry (named `objective` + `output_kind` presets) and owner UI (recipe / date range / category). | Recipe round-trip; mock-gate |
-| **W4** *(pull forward if v1 needs firewalling)* | Health-scoped persistence: revisitable saved artifacts under `domain_code='health'`. | New table + RLS isolation test |
+| **W4** *(systemic follow-up, not a v1 blocker — see D6)* | Domain-tag the agent transcript so health turns (all of them, not just `deep_produce`) are firewalled; optionally a revisitable health-scoped saved-artifact store under `domain_code='health'`. Promotes to a W2 prerequisite only if the owner requires cross-scope isolation of health output within their own sessions. | New/changed RLS + isolation test on `agent_turns`; artifact-store isolation test |
 
 ## Open decisions
 
@@ -265,11 +277,18 @@ synth prompt (sha256 of the report-path body + a `_SYNTH.version` assert, mirror
 - **D4 — `output_kind` taxonomy.** Start with `report`, `plan`; grow the enum as recipes
   demand. Each kind templates only the artifact-shape section — the provenance block is
   invariant (B3).
-- **D5 — how `_run` determines its SourcePlan** (`ctx` has no persona field). Recommend
-  deriving from resolved `read_scopes` + granted tools, or threading an explicit
-  `SourcePlan` from the per-verb adapter. Settle in W1.
-- **D6 — sink for v1**: pull W4 forward (health-firewalled store) vs. document `agent_turns`
-  as owner-wide-not-firewalled. Settle before W2.
+- **D5 — how `_run` determines its SourcePlan. Resolved:** key on **seed-presence**, not
+  persona identity (see §SourcePlan). The engine keys the plan on whether it assembled a
+  health/KB seed — the exact antecedent of the safety invariant — giving the three-way
+  seeded / refuse / plain-produce split. jerv and curator run the same code; the only
+  brancher is a directly-observable boolean. Avoids reading a persona field `ctx` doesn't
+  carry and makes the invariant self-enforcing.
+- **D6 — sink for v1. Resolved:** **accept and document** the owner-wide `agent_turns`
+  property (it is pre-existing for all curator health chat, not introduced here); **suppress**
+  the `external`-corpus write (the one genuinely-worse, jerv-readable/shareable sink). Do
+  **not** pull W4 forward as a v1 blocker — domain-tagging the transcript is a systemic effort
+  that must cover every health turn. It becomes a W2 prerequisite *only* if the owner deems
+  cross-scope visibility within their own sessions unacceptable.
 
 ## Out of scope
 
