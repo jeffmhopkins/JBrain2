@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -105,6 +106,40 @@ _DEFAULT_MODE = "standard"
 # The mode picks the persona each child fan runs — the pipeline is otherwise identical.
 _SOURCE_MODES = ("web", "library", "library_first")
 _DEFAULT_SOURCE_MODE = "web"
+
+# The artifact the run produces (DEEP_PRODUCE_PLAN.md). `report` is the shipped
+# deep_research behaviour and stays the default; the other kinds are the deep_produce verb.
+_OUTPUT_KINDS = ("report", "plan", "table", "brief", "differential", "timeline")
+_DEFAULT_OUTPUT_KIND = "report"
+
+# Where a finished artifact is persisted. `external` is the owner-wide research corpus jerv
+# reads back and shares; a seeded (health/KB) deep_produce run uses a non-external sink so a
+# seed run never lands in the shareable corpus (the exfiltration invariant's sink half).
+_SINK_EXTERNAL = "external"
+
+
+@dataclass(frozen=True)
+class Directive:
+    """*What to produce* — the objective (research/shaping intent) and the artifact shape.
+    For the `deep_research` report preset the objective IS the question, which is how the
+    engine knows to stay byte-stable (an objective equal to the question emits no OBJECTIVE
+    block anywhere)."""
+
+    objective: str
+    output_kind: str = _DEFAULT_OUTPUT_KIND
+
+
+@dataclass(frozen=True)
+class SourcePlan:
+    """*What to produce it from* — the source mode, an optional owner-KB/health `seed`
+    assembled by the parent, and the persistence `sink`. Keyed on seed-presence: a run
+    carrying a seed is pinned local (no web fan) and never persists to the external corpus.
+    W1 uses only the plain path (`seed=None`, `sink=external`); the seeded curator path is
+    W2."""
+
+    source_mode: str = _DEFAULT_SOURCE_MODE
+    seed: str | None = None
+    sink: str = _SINK_EXTERNAL
 
 # The research-PRODUCER personas across every source/mode family — the gather/refill
 # children whose findings back the report, as opposed to the `review` analyst/critique.
@@ -492,6 +527,43 @@ class DeepResearchService:
         if mode not in _MODES:
             return _refuse(f"unknown mode {mode!r}; choose one of {list(_MODES)}.")
         deepest = mode == "deepest"
+        # deep_research is the report preset of the shared engine: the objective IS the
+        # question (so no OBJECTIVE block is emitted — the report path stays byte-stable),
+        # and a jerv run persists to the external report corpus. `sources`/`mode` remain
+        # caller-chosen here, unchanged. The deep_produce verb (W2) builds a different
+        # Directive/SourcePlan and reaches the same `_run` body.
+        directive = Directive(objective=question, output_kind=_DEFAULT_OUTPUT_KIND)
+        source_plan = SourcePlan(source_mode=source_mode, seed=None, sink=_SINK_EXTERNAL)
+        return await self._run(
+            ctx,
+            question=question,
+            breadth=breadth,
+            deepest=deepest,
+            directive=directive,
+            source_plan=source_plan,
+            on_round=on_round,
+            require_persist=require_persist,
+        )
+
+    async def _run(
+        self,
+        ctx: ToolContext,
+        *,
+        question: str,
+        breadth: int,
+        deepest: bool,
+        directive: Directive,
+        source_plan: SourcePlan,
+        on_round: RoundHook | None = None,
+        require_persist: bool = False,
+    ) -> str:
+        """The single engine implementation behind every verb — `deep_research`, the
+        background `deepest` lane, and (W2) `deep_produce`. Keeping ONE body threaded with
+        `on_round` and `require_persist` is the review's #1 no-regression guard: a dropped
+        kwarg would silently break the deepest lane, which drives this same path
+        (DEEP_PRODUCE_PLAN.md, single-impl spine). `directive`/`source_plan` carry what to
+        produce and from where; W1 exercises only the report preset + plain source path."""
+        source_mode = source_plan.source_mode
         # The mode picks the persona each child fan runs; the pipeline is otherwise
         # unchanged. `review_persona` covers both the analyst and the critique.
         gather_persona, refill_persona, review_persona = _personas_for(source_mode)

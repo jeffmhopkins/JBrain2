@@ -241,6 +241,66 @@ def _reflected(router: _FakeRouter) -> bool:
     return any("COVERAGE CHECK" in c["system"] for c in router.calls)
 
 
+# --- single-impl spine: research() and the deepest driver share _run (DEEP_PRODUCE_PLAN) --
+
+
+async def test_research_delegates_to_run_with_a_report_directive() -> None:
+    """`deep_research` is a thin adapter: it parses args and drives the shared `_run` with a
+    report Directive (objective == question, so no OBJECTIVE block → byte-stable) and the
+    plain external-sink SourcePlan. Guards the review's #1 no-regression seam."""
+    from jbrain.agent.deep_research import _DEFAULT_OUTPUT_KIND, Directive, SourcePlan
+
+    captured: dict = {}
+
+    async def _spy(self, ctx, **kw):  # noqa: ANN001
+        captured.update(kw)
+        return "OK"
+
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    # Patch the instance's _run so we observe exactly what the adapter builds.
+    import types
+
+    svc._run = types.MethodType(_spy, svc)  # type: ignore[method-assign]
+    out = await svc.research(_ctx(), {"question": "  how does X work?  ", "breadth": 3})
+
+    assert out == "OK"
+    assert captured["question"] == "how does X work?"  # trimmed
+    assert captured["breadth"] == 3
+    assert captured["deepest"] is False
+    d: Directive = captured["directive"]
+    assert d.output_kind == _DEFAULT_OUTPUT_KIND == "report"
+    assert d.objective == "how does X work?"  # objective IS the question → byte-stable report
+    sp: SourcePlan = captured["source_plan"]
+    assert sp.source_mode == "web" and sp.seed is None and sp.sink == "external"
+    # on_round/require_persist are threaded through (the deepest lane depends on them).
+    assert captured["on_round"] is None and captured["require_persist"] is False
+
+
+async def test_run_preserves_on_round_and_require_persist_for_the_deepest_lane() -> None:
+    """The background deepest driver calls `research(..., on_round=, require_persist=True)`;
+    both must reach `_run` intact (a dropped kwarg silently breaks that lane). Assert the
+    adapter forwards them verbatim."""
+    captured: dict = {}
+
+    async def _spy(self, ctx, **kw):  # noqa: ANN001
+        captured.update(kw)
+        return "OK"
+
+    async def _hook(_round: int, _findings: int) -> None:
+        return None
+
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    import types
+
+    svc._run = types.MethodType(_spy, svc)  # type: ignore[method-assign]
+    await svc.research(
+        _ctx(), {"question": "q", "mode": "deepest"}, on_round=_hook, require_persist=True
+    )
+    assert captured["deepest"] is True
+    assert captured["on_round"] is _hook
+    assert captured["require_persist"] is True
+
+
 # --- refusal paths (return before any model/fan touch) ----------------------
 
 
