@@ -72,6 +72,15 @@ DECOMPOSE_TOOL = "decompose_research"
 # child never does (the handler refuses at depth > 0).
 DEEPEST_RESEARCH_TOOL = "deepest_research"
 
+# The deep-produce verb (docs/plans/DEEP_PRODUCE_PLAN.md): the SAME engine as deep_research,
+# but the caller chooses the artifact via `output_kind` (+ an optional `objective` shaping
+# directive). W1 grants it to jerv only — a standalone research/produce capability. Like the
+# other spawn-backed primitives it is NEVER_DEFAULT, so curator's `tools=None` wildcard never
+# absorbs it (the curator seed path is W2, via a per-profile `extra_tools` grant). `read`-class
+# so that future curator grant is gated by health RLS, not the web gate; jerv holds it by
+# explicit allowlist regardless of class.
+DEEP_PRODUCE_TOOL = "deep_produce"
+
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather (forecast + history) + hurricane
 # lookups, the local
@@ -147,6 +156,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # The deep-research primitive — jerv orchestrates a bounded research run over the
         # same fan (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
         DEEP_RESEARCH_TOOL,
+        # The deep-produce verb — the same engine as deep_research, but jerv chooses the
+        # artifact (plan/table/brief/…) via output_kind (DEEP_PRODUCE_PLAN.md, W1).
+        DEEP_PRODUCE_TOOL,
         # The deepest-research primitive — jerv kicks off a no-holds background run and
         # returns immediately (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
         DEEPEST_RESEARCH_TOOL,

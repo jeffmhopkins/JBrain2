@@ -241,6 +241,66 @@ def _reflected(router: _FakeRouter) -> bool:
     return any("COVERAGE CHECK" in c["system"] for c in router.calls)
 
 
+# --- single-impl spine: research() and the deepest driver share _run (DEEP_PRODUCE_PLAN) --
+
+
+async def test_research_delegates_to_run_with_a_report_directive() -> None:
+    """`deep_research` is a thin adapter: it parses args and drives the shared `_run` with a
+    report Directive (objective == question, so no OBJECTIVE block → byte-stable) and the
+    plain external-sink SourcePlan. Guards the review's #1 no-regression seam."""
+    from jbrain.agent.deep_research import _DEFAULT_OUTPUT_KIND, Directive, SourcePlan
+
+    captured: dict = {}
+
+    async def _spy(self, ctx, **kw):  # noqa: ANN001
+        captured.update(kw)
+        return "OK"
+
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    # Patch the instance's _run so we observe exactly what the adapter builds.
+    import types
+
+    svc._run = types.MethodType(_spy, svc)  # type: ignore[method-assign]
+    out = await svc.research(_ctx(), {"question": "  how does X work?  ", "breadth": 3})
+
+    assert out == "OK"
+    assert captured["question"] == "how does X work?"  # trimmed
+    assert captured["breadth"] == 3
+    assert captured["deepest"] is False
+    d: Directive = captured["directive"]
+    assert d.output_kind == _DEFAULT_OUTPUT_KIND == "report"
+    assert d.objective == "how does X work?"  # objective IS the question → byte-stable report
+    sp: SourcePlan = captured["source_plan"]
+    assert sp.source_mode == "web" and sp.seed is None and sp.sink == "external"
+    # on_round/require_persist are threaded through (the deepest lane depends on them).
+    assert captured["on_round"] is None and captured["require_persist"] is False
+
+
+async def test_run_preserves_on_round_and_require_persist_for_the_deepest_lane() -> None:
+    """The background deepest driver calls `research(..., on_round=, require_persist=True)`;
+    both must reach `_run` intact (a dropped kwarg silently breaks that lane). Assert the
+    adapter forwards them verbatim."""
+    captured: dict = {}
+
+    async def _spy(self, ctx, **kw):  # noqa: ANN001
+        captured.update(kw)
+        return "OK"
+
+    async def _hook(_round: int, _findings: int) -> None:
+        return None
+
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    import types
+
+    svc._run = types.MethodType(_spy, svc)  # type: ignore[method-assign]
+    await svc.research(
+        _ctx(), {"question": "q", "mode": "deepest"}, on_round=_hook, require_persist=True
+    )
+    assert captured["deepest"] is True
+    assert captured["on_round"] is _hook
+    assert captured["require_persist"] is True
+
+
 # --- refusal paths (return before any model/fan touch) ----------------------
 
 
@@ -1149,3 +1209,85 @@ def test_collect_sources_dedupes_by_canonical_url_keeping_first_seen() -> None:
         "https://example.com/b",
         "https://example.com/c",
     ]
+
+
+# --- deep_produce: output_kind shapes the .md; report stays byte-stable (DEEP_PRODUCE_PLAN) ---
+
+
+def test_shape_directive_report_is_the_exact_depth_target() -> None:
+    """`report` (the default) returns the exact complexity length target, so a report run's
+    synth message is byte-for-byte the shipped one; a non-report kind returns its own shape
+    directive; an unknown kind fails to the report target, never an unshaped run."""
+    from jbrain.agent.deep_research import _depth_directive, _shape_directive
+
+    for c in ("simple", "comparative", "deep", "bogus"):
+        assert _shape_directive("report", c) == _depth_directive(c)
+    assert "PRODUCE A PLAN" in _shape_directive("plan", "deep")
+    assert "PRODUCE A COMPARISON TABLE" in _shape_directive("table", "deep")
+    assert _shape_directive("unheard-of", "deep") == _depth_directive("deep")  # fail-to-report
+
+
+def test_tool_tag_keeps_report_stable_and_tags_produce() -> None:
+    from jbrain.agent.deep_research import _tool_tag
+
+    assert _tool_tag("report", False) == "deep_research"  # unchanged
+    assert _tool_tag("report", True) == "deepest_research"  # unchanged
+    assert _tool_tag("plan", False) == "deep_produce"
+    assert _tool_tag("table", True) == "deep_produce"  # a produce run is a produce run
+
+
+async def test_report_run_emits_no_objective_block() -> None:
+    """The byte-stable guarantee: a plain deep_research run (objective defaulted from the
+    question) injects NO OBJECTIVE block into any synth pass — the message is the shipped one."""
+    router, spawn = _FakeRouter(covered=True, gaps=()), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+    assert router.synth_calls
+    assert not any("OBJECTIVE —" in uw for uw in router.synth_calls)
+    assert all("TARGET DEPTH" in uw for uw in router.synth_calls)  # still the depth target
+
+
+async def test_produce_plan_threads_objective_and_shape_into_synthesis() -> None:
+    """`deep_produce(output_kind=plan)` with a custom objective shapes the writer: the synth
+    message carries the OBJECTIVE block and the PLAN shape directive (not the report depth
+    target), while the run still drives the full pipeline and emits the SHARED report view."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).produce(
+        _ctx(),
+        {
+            "question": "how should I treat a recurrence of X?",
+            "output_kind": "plan",
+            "objective": "an idealized step-by-step treatment plan if symptoms recur",
+        },
+    )
+    assert router.synth_calls
+    assert all("OBJECTIVE —" in uw for uw in router.synth_calls)  # objective threaded
+    assert all("PRODUCE A PLAN" in uw for uw in router.synth_calls)  # plan shape, not report
+    assert not any("TARGET DEPTH" in uw for uw in router.synth_calls)  # not the report target
+    # Reuses the shipped view — the artifact is still a .md report card (no new GUI surface).
+    assert out.view is not None and out.view.view == "deep_research_report"  # type: ignore[attr-defined]
+    assert "REVISED REPORT" in out
+
+
+async def test_produce_report_default_is_byte_stable_like_deep_research() -> None:
+    """`deep_produce` with no output_kind/objective is the report preset: no OBJECTIVE block,
+    the depth target present — indistinguishable from a deep_research run's synth message."""
+    router, spawn = _FakeRouter(covered=True, gaps=()), _FakeSpawn()
+    await _svc(router, spawn).produce(_ctx(), {"question": "how does X work?"})
+    assert router.synth_calls
+    assert not any("OBJECTIVE —" in uw for uw in router.synth_calls)
+    assert all("TARGET DEPTH" in uw for uw in router.synth_calls)
+
+
+async def test_produce_refuses_an_unknown_output_kind() -> None:
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    out = await _svc(router, spawn).produce(_ctx(), {"question": "q", "output_kind": "poem"})
+    assert "refused" in out.lower()
+    assert not spawn.fans and not router.calls
+
+
+async def test_produce_refuses_a_child_turn_and_empty_question() -> None:
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    child = await svc.produce(_ctx(depth=MAX_DEPTH), {"question": "x"})
+    empty = await svc.produce(_ctx(), {"question": "  "})
+    assert "refused" in child.lower() and "refused" in empty.lower()

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -105,6 +106,41 @@ _DEFAULT_MODE = "standard"
 # The mode picks the persona each child fan runs — the pipeline is otherwise identical.
 _SOURCE_MODES = ("web", "library", "library_first")
 _DEFAULT_SOURCE_MODE = "web"
+
+# The artifact the run produces (DEEP_PRODUCE_PLAN.md). `report` is the shipped
+# deep_research behaviour and stays the default; the other kinds are the deep_produce verb.
+_OUTPUT_KINDS = ("report", "plan", "table", "brief", "differential", "timeline")
+_DEFAULT_OUTPUT_KIND = "report"
+
+# Where a finished artifact is persisted. `external` is the owner-wide research corpus jerv
+# reads back and shares; a seeded (health/KB) deep_produce run uses a non-external sink so a
+# seed run never lands in the shareable corpus (the exfiltration invariant's sink half).
+_SINK_EXTERNAL = "external"
+
+
+@dataclass(frozen=True)
+class Directive:
+    """*What to produce* — the objective (research/shaping intent) and the artifact shape.
+    For the `deep_research` report preset the objective IS the question, which is how the
+    engine knows to stay byte-stable (an objective equal to the question emits no OBJECTIVE
+    block anywhere)."""
+
+    objective: str
+    output_kind: str = _DEFAULT_OUTPUT_KIND
+
+
+@dataclass(frozen=True)
+class SourcePlan:
+    """*What to produce it from* — the source mode, an optional owner-KB/health `seed`
+    assembled by the parent, and the persistence `sink`. Keyed on seed-presence: a run
+    carrying a seed is pinned local (no web fan) and never persists to the external corpus.
+    W1 uses only the plain path (`seed=None`, `sink=external`); the seeded curator path is
+    W2."""
+
+    source_mode: str = _DEFAULT_SOURCE_MODE
+    seed: str | None = None
+    sink: str = _SINK_EXTERNAL
+
 
 # The research-PRODUCER personas across every source/mode family — the gather/refill
 # children whose findings back the report, as opposed to the `review` analyst/critique.
@@ -492,6 +528,106 @@ class DeepResearchService:
         if mode not in _MODES:
             return _refuse(f"unknown mode {mode!r}; choose one of {list(_MODES)}.")
         deepest = mode == "deepest"
+        # deep_research is the report preset of the shared engine: the objective IS the
+        # question (so no OBJECTIVE block is emitted — the report path stays byte-stable),
+        # and a jerv run persists to the external report corpus. `sources`/`mode` remain
+        # caller-chosen here, unchanged. The deep_produce verb (W2) builds a different
+        # Directive/SourcePlan and reaches the same `_run` body.
+        directive = Directive(objective=question, output_kind=_DEFAULT_OUTPUT_KIND)
+        source_plan = SourcePlan(source_mode=source_mode, seed=None, sink=_SINK_EXTERNAL)
+        return await self._run(
+            ctx,
+            question=question,
+            breadth=breadth,
+            deepest=deepest,
+            directive=directive,
+            source_plan=source_plan,
+            on_round=on_round,
+            require_persist=require_persist,
+        )
+
+    async def produce(
+        self,
+        ctx: ToolContext,
+        args: dict,
+        *,
+        on_round: RoundHook | None = None,
+        require_persist: bool = False,
+    ) -> str:
+        """The `deep_produce` entrypoint: like `deep_research`, but the caller chooses the
+        artifact via `output_kind` and an optional `objective` shaping directive. W1 is the
+        PLAIN source path only (no owner-KB/health seed): jerv research/library to any
+        artifact, external sink — the seeded curator path is W2. Reaches the same `_run`
+        engine, so `on_round`/`require_persist` and every stage guard are shared with
+        `deep_research` (DEEP_PRODUCE_PLAN.md)."""
+        if ctx.tree is None:
+            return _refuse("deep produce is only available in an interactive owner turn.")
+        if ctx.depth >= MAX_DEPTH:
+            return _refuse("a sub-agent cannot start its own deep-produce run.")
+        question = args.get("question")
+        if not isinstance(question, str) or not question.strip():
+            return _refuse("provide a non-empty `question` to research.")
+        question = question.strip()
+        output_kind = args.get("output_kind") or _DEFAULT_OUTPUT_KIND
+        if output_kind not in _OUTPUT_KINDS:
+            return _refuse(
+                f"unknown output_kind {output_kind!r}; choose one of {list(_OUTPUT_KINDS)}."
+            )
+        # A custom objective shapes WHAT to produce; absent, it defaults to the question, so a
+        # deep_produce(report) is indistinguishable from deep_research (no OBJECTIVE block).
+        raw_objective = args.get("objective")
+        objective = (
+            raw_objective.strip()
+            if isinstance(raw_objective, str) and raw_objective.strip()
+            else question
+        )
+        breadth = _clamp_breadth(args.get("breadth"))
+        source_mode = args.get("sources") or _DEFAULT_SOURCE_MODE
+        if source_mode not in _SOURCE_MODES:
+            return _refuse(
+                f"unknown sources mode {source_mode!r}; choose one of {list(_SOURCE_MODES)}."
+            )
+        mode = args.get("mode") or _DEFAULT_MODE
+        if mode not in _MODES:
+            return _refuse(f"unknown mode {mode!r}; choose one of {list(_MODES)}.")
+        deepest = mode == "deepest"
+        directive = Directive(objective=objective, output_kind=output_kind)
+        # W1: the plain path only — no seed, external sink (the jerv verb). The seed-keyed
+        # curator SourcePlan (seed present ⇒ local + non-external sink) is W2.
+        source_plan = SourcePlan(source_mode=source_mode, seed=None, sink=_SINK_EXTERNAL)
+        return await self._run(
+            ctx,
+            question=question,
+            breadth=breadth,
+            deepest=deepest,
+            directive=directive,
+            source_plan=source_plan,
+            on_round=on_round,
+            require_persist=require_persist,
+        )
+
+    async def _run(
+        self,
+        ctx: ToolContext,
+        *,
+        question: str,
+        breadth: int,
+        deepest: bool,
+        directive: Directive,
+        source_plan: SourcePlan,
+        on_round: RoundHook | None = None,
+        require_persist: bool = False,
+    ) -> str:
+        """The single engine implementation behind every verb — `deep_research`, the
+        background `deepest` lane, and (W2) `deep_produce`. Keeping ONE body threaded with
+        `on_round` and `require_persist` is the review's #1 no-regression guard: a dropped
+        kwarg would silently break the deepest lane, which drives this same path
+        (DEEP_PRODUCE_PLAN.md, single-impl spine). `directive`/`source_plan` carry what to
+        produce and from where; W1 exercises only the report preset + plain source path."""
+        # Both entrypoints (research/produce) guard `ctx.tree is None` before delegating, so a
+        # seeded tree is an invariant here — assert it to narrow the type for the pipeline below.
+        assert ctx.tree is not None
+        source_mode = source_plan.source_mode
         # The mode picks the persona each child fan runs; the pipeline is otherwise
         # unchanged. `review_persona` covers both the analyst and the critique.
         gather_persona, refill_persona, review_persona = _personas_for(source_mode)
@@ -669,6 +805,7 @@ class DeepResearchService:
                 sources,
                 complexity=complexity,
                 critique="",
+                directive=directive,
             )
 
             # The draft is written — release the critique's slice (tokens AND time) for the
@@ -692,6 +829,7 @@ class DeepResearchService:
                     sources,
                     complexity=complexity,
                     critique=critique,
+                    directive=directive,
                 )
                 revised = True
         finally:
@@ -730,9 +868,9 @@ class DeepResearchService:
             revised=revised,
             coverage_limited=coverage_limited,
             source_mode=source_mode,
-            # Tag the library row so a deepest report doesn't clobber a deep one on the
-            # same question (0148 tool-aware dedup).
-            tool="deepest_research" if deepest else "deep_research",
+            # Tag the library row so a deepest report doesn't clobber a deep one — or a
+            # deep_produce artifact a report — on the same question (0148 tool-aware dedup).
+            tool=_tool_tag(directive.output_kind, deepest),
             # A background run has no inline delivery, so a lost write is a failed run.
             require_persist=require_persist,
         )
@@ -984,15 +1122,25 @@ class DeepResearchService:
         *,
         complexity: str,
         critique: str,
+        directive: Directive,
     ) -> str:
+        # A custom objective (deep_produce) rides ahead of everything as an owner-authored
+        # instruction. For the report preset the objective IS the question, so this block is
+        # empty and the message below is byte-identical to the shipped deep_research path.
+        objective = directive.objective.strip()
+        objective_block = (
+            f"OBJECTIVE — produce THIS, over the default report shape:\n{objective}\n\n"
+            if objective and objective != question.strip()
+            else ""
+        )
         user_text = (
-            f"Question:\n{question}\n\n"
-            # The concrete length/depth target for THIS report (by complexity), so the shared
-            # writer prompt scales from a tight `simple` answer to the owner's asked-for
-            # eight-to-ten-page `deep` write-up without a separate prompt per tier.
-            f"{_depth_directive(complexity)}\n\n"
-            f"Outline (section headings, in order):\n{_outline_text(sections)}\n\n"
-            f"Findings:\n{_findings_block(results)}"
+            objective_block
+            # The artifact-shape/depth line: the exact complexity length target for a `report`
+            # (byte-stable), or the output_kind's shape directive for a deep_produce run.
+            + f"Question:\n{question}\n\n"
+            + f"{_shape_directive(directive.output_kind, complexity)}\n\n"
+            + f"Outline (section headings, in order):\n{_outline_text(sections)}\n\n"
+            + f"Findings:\n{_findings_block(results)}"
         )
         if sources:
             # The canonical, pre-numbered source registry (real URLs). The synthesizer
@@ -1190,6 +1338,65 @@ def _depth_directive(complexity: str) -> str:
     return _DEPTH_DIRECTIVE.get(complexity, _DEPTH_DIRECTIVE["deep"])
 
 
+# The artifact-shape line for a `deep_produce` run (DEEP_PRODUCE_PLAN.md). `report` keeps the
+# exact complexity length target above, so a report run's synth message is byte-for-byte
+# unchanged; every other `output_kind` describes the SHAPE of the Markdown to produce. This
+# rides in the USER message only — the synthesize SYSTEM prompt (citations, quantitative
+# provenance, evidence grading) is never forked per kind, so the anti-hallucination
+# discipline is invariant across every output_kind (the plan's B3 fix).
+_SHAPE_DIRECTIVE = {
+    "plan": (
+        "PRODUCE A PLAN, not a prose report: a decision-oriented, actionable Markdown plan. "
+        "Open with the recommended path in a sentence or two, then lay out concrete ordered "
+        "steps or options grouped under the outline headings, each with its rationale, "
+        "preconditions, and trade-offs drawn from the findings. As long as the material "
+        "genuinely supports, no longer."
+    ),
+    "table": (
+        "PRODUCE A COMPARISON TABLE, not a prose report: a Markdown table comparing the "
+        "options/items across the dimensions the findings support (one row per item, one "
+        "column per dimension), then a short synthesis of what it shows. Keep every cell "
+        "grounded in the findings."
+    ),
+    "brief": (
+        "PRODUCE A BRIEF, not a full report: a tight Markdown brief — a one-paragraph "
+        "bottom-line up front, then only the points that matter under short headings. Answer "
+        "directly and stop; do not pad it to look thorough."
+    ),
+    "differential": (
+        "PRODUCE A DIFFERENTIAL, not a prose report: enumerate the candidate "
+        "explanations/hypotheses the findings raise, each its own Markdown subsection with "
+        "the evidence for and against and what would distinguish it, ordered most to least "
+        "supported. Do not assert a single answer the findings do not establish."
+    ),
+    "timeline": (
+        "PRODUCE A TIMELINE, not a prose report: a chronological Markdown account — dated "
+        "entries in order, each with what happened and its source, then a short synthesis of "
+        "the arc. Keep every entry grounded in the findings."
+    ),
+}
+
+
+def _shape_directive(output_kind: str, complexity: str) -> str:
+    """The writer's artifact-shape line. `report` (the default) returns the exact
+    complexity-keyed length target — so a report run is byte-for-byte unchanged — while every
+    other `output_kind` returns its shape directive. An unknown kind falls back to the report
+    target (fail-to-report), never an unshaped run."""
+    if output_kind == _DEFAULT_OUTPUT_KIND:
+        return _depth_directive(complexity)
+    return _SHAPE_DIRECTIVE.get(output_kind, _depth_directive(complexity))
+
+
+def _tool_tag(output_kind: str, deepest: bool) -> str:
+    """The library `tool` column for a persisted artifact — so a deep_produce plan/table
+    doesn't clobber a deep_research report on the same question (tool-aware dedup, 0148). A
+    `report` run keeps its exact shipped tag (byte-stable), non-report kinds tag as
+    `deep_produce`."""
+    if output_kind != _DEFAULT_OUTPUT_KIND:
+        return "deep_produce"
+    return "deepest_research" if deepest else "deep_research"
+
+
 def _findings_count(roster: list[_ChildResult]) -> int:
     """The number of usable research findings that back the report — the research-producer
     children across ALL source/mode families (`research`, the corpus `research_library`,
@@ -1302,3 +1509,17 @@ class DeepResearchRef:
         if self.service is None:
             return _refuse("deep research is not available in this configuration.")
         return await self.service.research(ctx, args)
+
+
+class DeepProduceRef:
+    """Late-bound handler for the `deep_produce` tool. Shares the DeepResearchService with
+    `deep_research` (one engine, two verbs — DEEP_PRODUCE_PLAN.md); it only routes to the
+    `produce` entrypoint, which builds a Directive/SourcePlan from the caller args."""
+
+    def __init__(self) -> None:
+        self.service: DeepResearchService | None = None
+
+    async def __call__(self, args: dict, ctx: ToolContext) -> str:
+        if self.service is None:
+            return _refuse("deep produce is not available in this configuration.")
+        return await self.service.produce(ctx, args)

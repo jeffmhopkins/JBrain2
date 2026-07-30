@@ -33,7 +33,7 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # truth; `agents.SPAWN_TOOL` matches it (asserted in tests, kept here to avoid an
 # agents→toolregistry import cycle).
 NEVER_DEFAULT: frozenset[str] = frozenset(
-    {"spawn_subagent", "deep_research", "decompose_research", "deepest_research"}
+    {"spawn_subagent", "deep_research", "decompose_research", "deepest_research", "deep_produce"}
 )
 
 

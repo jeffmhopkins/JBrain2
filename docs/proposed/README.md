@@ -38,4 +38,5 @@ promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_P
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `DEEP_RESEARCH_TOOL_PLAN.md`, `DEEPEST_RESEARCH_TOOL_PLAN.md`, and
 `VIDEO_IMAGE_TOOLS_PLAN.md` were promoted to `../plans/` and are in progress.
-`ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (Scheduled).)_
+`ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (Scheduled).
+`DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (Scheduled).)_
