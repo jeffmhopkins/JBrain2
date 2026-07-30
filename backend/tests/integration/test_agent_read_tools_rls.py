@@ -345,3 +345,73 @@ async def test_owner_entity_id_resolves_the_subject_linked_me(
             )
         ).one()
     assert row.canonical_name == "Me" and row.subject_id is not None and row.status != "merged"
+
+
+async def test_analyte_currency_flags_stale_value_facts_by_chunk(
+    maker: async_sessionmaker,
+) -> None:
+    """The value-precise currency source (EMR plan §7.2): a `superseded` /
+    `pending_review` analyte `value` fact surfaces under the chunk it was read from
+    (so a search hit on that prose can flag the exact analyte), an `active` reading on
+    the same chunk does not, and the whole lookup is invisible under a non-health
+    scope — the firewall is RLS, not the query."""
+    owner = await _owner(maker)
+    run = uuid.uuid4().hex[:8]
+    platelet, potassium, sodium = (str(uuid.uuid4()) for _ in range(3))
+    note, chunk = str(uuid.uuid4()), str(uuid.uuid4())
+    async with scoped_session(maker, owner) as session:
+        for eid, name in (
+            (platelet, f"Platelet count {run}"),
+            (potassium, f"Potassium {run}"),
+            (sodium, f"Sodium {run}"),
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO app.entities (id, kind, canonical_name, status, domain_code)"
+                    " VALUES (:id, 'Observation', :name, 'confirmed', 'health')"
+                ),
+                {"id": eid, "name": name},
+            )
+        await session.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (:id, :cid, 'health', 'CBC panel')"
+            ),
+            {"id": note, "cid": f"{run}-n"},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq, text)"
+                " VALUES (:id, :note, 'health', 'paragraph', 0, 'Platelet 38; K 4.8; Na 140')"
+            ),
+            {"id": chunk, "note": note},
+        )
+        # Three readings cited to the same chunk: a corrected (superseded) platelet, a
+        # contested (pending_review) sodium, and a live potassium — only the first two fire.
+        for eid, status, stmt in (
+            (platelet, "superseded", "Platelet 38"),
+            (sodium, "pending_review", "Sodium 140"),
+            (potassium, "active", "Potassium 4.8"),
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO app.facts (id, entity_id, predicate, qualifier, kind, statement,"
+                    " value_json, assertion, reported_at, temporal_precision, status, note_id,"
+                    " chunk_id, extractor, prompt_version, domain_code)"
+                    " VALUES (gen_random_uuid(), :eid, 'value', '2026-01-01|blood', 'measurement',"
+                    " :stmt, NULL, 'asserted', now(), 'unknown', :status, :note, :chunk,"
+                    " 'test', 'v1', 'health')"
+                ),
+                {"eid": eid, "stmt": stmt, "status": status, "note": note, "chunk": chunk},
+            )
+
+    repo = SqlAnalysisRepo(maker)
+    out = await repo.analyte_currency(read_context(owner.principal_id, ("health",)), [chunk])
+    assert list(out) == [chunk]
+    flagged = {f["analyte"]: f["status"] for f in out[chunk]}
+    # The corrected and the contested readings fire; the live potassium does not.
+    assert flagged == {f"Platelet count {run}": "superseded", f"Sodium {run}": "pending_review"}
+
+    # A non-health scope cannot see the health readings — RLS, not the query.
+    general = read_context(owner.principal_id, ("general",))
+    assert await repo.analyte_currency(general, [chunk]) == {}

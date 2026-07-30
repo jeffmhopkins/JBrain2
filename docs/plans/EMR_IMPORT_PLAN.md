@@ -1,6 +1,6 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ W4◻️ W5◻️
+> **Status:** In progress · **Last verified:** 2026-07-29 · **Waves:** W0✅ W1✅ W2◻️ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Wave 0
 (gates + fixtures) and Wave 1 (storage bedrock — schema defs, the `fhir_status`/supersession
@@ -1754,3 +1754,27 @@ import:
 **Wave 3 is complete:** all four sources — including scanned ARIA exports — import, with OCR text
 first-class (chunked, searchable, per-page-cited). The only remaining EMR polish is the athena
 cancelled-`RESULT NOTE` / micro-titer review-routing nuance (a small W3/W4 refinement, not a blocker).
+
+### 12.9 Wave 4 — broadened currency ⚠ flag on search hits (landed)
+
+The safety-critical retrieval property of §7.2 is now **value-precise** on the `search` tool. A new
+`SqlAnalysisRepo.analyte_currency(ctx, chunk_ids)` (the value twin of `note_currency`) returns, per
+chunk, the analyte `value` facts read from that chunk whose backing reading is **`superseded`** (a
+`corrected`/`amended` result replaced it) **or `pending_review`** (a same-instant `fact_conflict`
+between disagreeing finals, or a `preliminary` reading not yet final) — `retracted` readings are
+excluded, matching the projection that drops them (§3.5). The `search` handler keys this on each
+hit's `chunk_id` (the value fact cites the chunk it was read from, §6.2's page-anchored citation) and
+renders a `⚠ a value here is no longer the current reading (…): <analyte> — read_labs (or
+read_entity …)` line under the hit; the note-level flag now drops `value` predicates so the two
+never double-report the same reading. The effect: a hit quoting a still-current potassium value is
+**not** flagged just because a platelet value elsewhere in the same report was corrected — and two
+independent draws (both `active`) still fire nothing, keeping the flag meaningful. Runs in the
+caller's RLS scope, so under a non-health scope the readings are invisible. Tests: the formatter and
+the scoped handler lookup (unit, faked repo) plus a real-Postgres RLS test proving the chunk-keyed
+query surfaces the superseded + pending readings, hides the active one, and leaks nothing to a
+non-health session.
+
+Still open in W4: the health-scoped hybrid search over the pathology narrative (the `search` service
+is already RLS/health-scoped; the remaining work is corpus/quality tuning), the seeded import
+pipeline (0118), and the athena review-routing nuance above. Wave 5 (the condition wiki) stays
+blocked on Phase 6 (the wiki engine is not shipped).
