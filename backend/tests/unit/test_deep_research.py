@@ -59,6 +59,9 @@ class _FakeRouter:
         # A plan sub-question is a {title, brief} object; the planner also (still) emits
         # bare strings and leaked object-strings, so the fake accepts either shape.
         sub_questions: tuple[str | dict[str, str], ...] = ("sub one", "sub two", "sub three"),
+        # Optional ordered pipeline (the interview shape). Empty → today's flat gather. Each
+        # entry is a {title, brief, web} object; ≥2 trigger the sequential staged runner.
+        stages: tuple[dict, ...] = (),
         covered: bool = False,
         gaps: tuple[str, ...] = ("gap one", "gap two"),
         # Deepest mode: a per-round script of (covered, gaps, stable) consumed in order by
@@ -73,6 +76,7 @@ class _FakeRouter:
     ) -> None:
         self.complexity = complexity
         self.sub_questions = list(sub_questions)
+        self.stages = list(stages)
         self.covered = covered
         self.gaps = list(gaps)
         self.reflect_script = reflect_script
@@ -95,6 +99,7 @@ class _FakeRouter:
                     "complexity": self.complexity,
                     "sub_questions": self.sub_questions,
                     "sections": ["Overview", "Detail"],
+                    "stages": self.stages,
                 },
             )
         if "COVERAGE CHECK" in system:
@@ -405,6 +410,88 @@ async def test_analyst_is_fed_the_gather_findings_before_synthesis() -> None:
     assert FEED_OPEN in analyst["briefs"][0][1]  # fed the findings as escaped data
 
 
+# --- W2: the staged single-source pipeline (extract -> answer/fact-check) -----
+
+_INTERVIEW_STAGES = (
+    {"title": "Extract questions", "brief": "list every question in the video", "web": False},
+    {"title": "Answer & fact-check", "brief": "answer each question found", "web": True},
+)
+
+
+async def test_staged_plan_runs_stages_sequentially_and_feeds_forward() -> None:
+    """The coordination fix: a ≥2-stage plan runs the gather as an ORDERED pipeline, and each
+    later stage is fed the earlier stages' findings as boundary-wrapped data — so the answer
+    stage consumes the extract stage's real output instead of a parallel sibling re-deriving
+    its own divergent question list (the interview failure)."""
+    router = _FakeRouter(stages=_INTERVIEW_STAGES, sub_questions=(), covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(
+        _ctx(), {"question": "extract & answer the interview questions", "sources": "library_first"}
+    )
+
+    # The first two fans are the two gather stages, in order — not a parallel sub_questions fan.
+    stage1, stage2 = spawn.fans[0], spawn.fans[1]
+    assert stage1["briefs"][0][0] == "Extract questions"
+    assert stage2["briefs"][0][0] == "Answer & fact-check"
+    # Stage 2's brief carries stage 1's finding as fenced inert data (fed forward).
+    assert FEED_OPEN in stage2["briefs"][0][1]
+    assert "finding for Extract questions" in stage2["briefs"][0][1]
+    # Stage 1's brief was NOT fed anything (nothing ran before it).
+    assert FEED_OPEN not in stage1["briefs"][0][1]
+
+
+async def test_staged_persona_per_stage_under_library_first() -> None:
+    """Per-stage persona (the fact-check fix): under `library_first` an extract stage reads
+    the corpus (`research_library`) and a `web` stage reaches the open web (`research`) — so a
+    fact-check stage actually holds web tools, unlike the corpus-only gather that made the
+    interview run's fact-check child report it 'can only access the video library'."""
+    router = _FakeRouter(stages=_INTERVIEW_STAGES, sub_questions=(), covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q", "sources": "library_first"})
+    assert spawn.fans[0]["persona"] == "research_library"  # extract from the library
+    assert spawn.fans[1]["persona"] == "research"  # answer/fact-check on the web
+
+
+async def test_library_mode_stages_stay_corpus_only() -> None:
+    """The exclusive no-web guarantee holds per-stage: in `library` mode even a `web: true`
+    stage runs the corpus persona, and NO web persona ever spawns on any stage."""
+    router = _FakeRouter(stages=_INTERVIEW_STAGES, sub_questions=(), covered=True, gaps=())
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "q", "sources": "library"})
+
+    gather_personas = {spawn.fans[0]["persona"], spawn.fans[1]["persona"]}
+    assert gather_personas == {"research_library"}  # both stages corpus-only
+    # Zero web-family persona on ANY fan (gather, analyst, refill, critique).
+    assert all(f["persona"] not in ("research", "research_deep") for f in spawn.fans)
+
+
+async def test_single_stage_plan_falls_back_to_the_flat_gather() -> None:
+    """One stage is not a pipeline — it must run the byte-stable flat parallel gather over
+    `sub_questions`, never the staged runner (which needs ≥2 stages)."""
+    router = _FakeRouter(
+        stages=({"title": "only", "brief": "x", "web": False},), covered=True, gaps=()
+    )
+    spawn = _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+
+    # The flat gather ran the plan's sub_questions, and no stage brief was fed forward.
+    gather = _research_fans(spawn)[0]
+    assert [b[1] for b in gather["briefs"]] == ["sub one", "sub two", "sub three"]
+    assert all(FEED_OPEN not in b[1] for b in gather["briefs"])
+
+
+async def test_staged_chain_stops_when_a_stage_produces_nothing() -> None:
+    """A stage that yields nothing usable breaks the chain — a later stage fed an empty prior
+    would only re-derive it or fail on a dependency the data can't satisfy."""
+    router = _FakeRouter(stages=_INTERVIEW_STAGES, sub_questions=(), covered=True, gaps=())
+    spawn = _FakeSpawn(gather_ok=False)  # stage 1 (the first research fan) produces nothing
+    await _svc(router, spawn).research(_ctx(), {"question": "q", "sources": "library_first"})
+    # Only stage 1 ran; the chain stopped before stage 2 (no "Answer & fact-check" fan).
+    stage_labels = [f["briefs"][0][0] for f in spawn.fans]
+    assert "Extract questions" in stage_labels
+    assert "Answer & fact-check" not in stage_labels
+
+
 async def test_analyst_is_fed_the_gather_sources_to_verify_against() -> None:
     """The cross-check analyst gets the real pages the gather findings reached, so it can
     open a source and check a shaky claim against what the page says rather than only
@@ -615,7 +702,7 @@ def test_plan_prompt_forbids_meta_and_cross_child_subquestions() -> None:
     from jbrain.agent.deep_research import _PLAN
 
     body = _PLAN.body.lower()
-    assert _PLAN.version == "dr-plan-v5"
+    assert _PLAN.version == "dr-plan-v6"
     assert "citation matrix" in body  # the exact meta task that leaked through v1
     assert "process or meta task" in body
     assert "in isolation" in body  # names why cross-child briefs can't work

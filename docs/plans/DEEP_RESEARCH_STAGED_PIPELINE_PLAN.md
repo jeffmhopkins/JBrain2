@@ -27,6 +27,14 @@ instant** (all `research_library`, corpus-only, no web):
 | Provide Concise Answers | research_library | ✗ | re-derived its **own, divergent** question list (no overlap with the extractor's) |
 | Fact-Check and Analyze | research_library | ✗ | *"I'm unable to verify against external web sources, as I can only access the video library."* |
 
+A follow-up attempt made the failure sharper still: jerv reached for the right verb and
+shape — `deep_produce(output_kind=table)` with a good objective — but passed **`sources=web`**
+for a video that exists only in the owner's **library**. The produce children were web
+`research` personas with no corpus access, so they could not read the transcript at all, and
+the run errored ("Something went wrong"). Even a perfect staged pipeline fails if the run is
+pointed at the web for a library-only source — so the routing fix (W3) is load-bearing, not
+cosmetic.
+
 Three root causes, each traced to code:
 
 1. **No coordination → duplicated, divergent work.** `run_research_fan`
@@ -179,10 +187,16 @@ enforce). Per-stage web egress under `library_first` is the *same* SSRF-guarded
   table the owner asked for (one row per extracted item), not a prose report — reusing the
   shipped `_shape_directive`/`table` and the `deep_research_report` view (the artifact is a
   `.md` document, no new GUI surface, per `DEEP_PRODUCE_PLAN.md`).
-- **Routing.** `jerv.prompt` gains steering: a *single-source structured-extraction*
-  request ("extract the questions from this video and tabulate", "pull the action items
-  from this transcript") reaches for `deep_produce(output_kind=table, sources=library_first)`
-  with the staged plan, rather than `deep_research(report)`. Version bump + digest pin.
+- **Routing (load-bearing — see the follow-up failure).** `jerv.prompt` gains steering: a
+  *single-source structured-extraction* request ("extract the questions from this video and
+  tabulate", "pull the action items from this transcript") reaches for
+  `deep_produce(output_kind=table, sources=library_first)` with the staged plan, rather than
+  `deep_research(report)` — and, critically, **never `sources=web` for a specific analysed
+  video**: a video the owner analysed lives only in the library, so `web` gives the produce
+  children no way to read its transcript (the observed `deep_produce(table, sources=web)`
+  error). The `deep_produce.tool` / `deep_research.tool` `sources` descriptions gain the same
+  rule. Version bump + digest pin. (Engine auto-detection of a library video in the objective
+  is an Open-decision follow-up; jerv steering is the first-line fix.)
 
 ## Waves
 
