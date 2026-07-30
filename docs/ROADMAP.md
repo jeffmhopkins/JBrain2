@@ -338,8 +338,8 @@ hardened before scheduling. W1–W3 open. The motivating recipe: `deep_produce(o
 curator call — a hypothetical treatment plan grounded in a medical-history date range and a library
 category, if symptoms were to recur.
 
-**Scheduled:** Deep research staged single-source pipeline (build plan:
-`docs/plans/DEEP_RESEARCH_STAGED_PIPELINE_PLAN.md`) — teach the shipped `deep_research`/`deep_produce`
+**Shipped:** Deep research staged single-source pipeline (build record:
+`docs/archive/DEEP_RESEARCH_STAGED_PIPELINE_PLAN.md`) — teach the shipped `deep_research`/`deep_produce`
 engine a **staged, dependency-aware** pipeline so it can process a *single known source*, the motivating
 case being "extract every question from this interview, answer each, fact-check each against the web, and
 tabulate." Today the engine flattens that sequential job into a **parallel fan of independent angles**
@@ -354,7 +354,7 @@ that verifies W2. W2 adds the staged/feed-forward runner (reusing the inert-data
 gather→gather) with a per-stage persona (extract=library, answer/fact-check=web under `library_first`); W3
 adds the single-source primitives (windowed transcript read, enumeration mode, `output_kind=table`, jerv
 routing). Additive throughout — a single-stage plan is byte-identical to today's flat gather, so the report
-path cannot regress. W1–W3 open.
+path cannot regress. W1–W3 shipped (PR #966); each wave independently adversarially reviewed.
 
 **In progress:** Video/image inspection tools (build plan: `docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md`) —
 give jerv eyes on a specific still so a visual question is answered from pixels it actually saw, not a
