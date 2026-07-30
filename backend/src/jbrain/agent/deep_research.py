@@ -1107,9 +1107,21 @@ class DeepResearchService:
         `web` flag (`_stage_persona`): under `library_first` an extract stage reads the corpus
         and a fact-check stage reaches the web, while `library` mode stays corpus-only on
         every stage. Returns every stage's children in run order — the combined gather the
-        rest of the pipeline (analyze / reflect / synthesize / critique) works over unchanged."""
+        rest of the pipeline (analyze / reflect / synthesize / critique) works over unchanged.
+
+        Single-tier by design: a staged run always uses `research`/`research_library`, never
+        the deepest `research_deep` task-agent tier — staging is single-source and sequential,
+        so the two features don't compose (a deepest+staged run stays single-tier here)."""
         produced: list[_ChildResult] = []
         for i, stage in enumerate(stages):
+            # Honest degradation (the flat gather gets this via `_seatable`; the per-stage path
+            # would otherwise skip it): if the tree can no longer seat a child on the wall-clock
+            # or the pool, stop the chain rather than launch a late stage that dies at ~0s.
+            tree = ctx.tree
+            if tree is not None and not (
+                tree.can_admit(1) and tree.can_admit_budget(1) and tree.can_admit_time(1)
+            ):
+                break
             persona = _stage_persona(source_mode, stage.web)
             # Feed EVERY prior successful finding forward (each capped + boundary-neutralized
             # by the envelope), so a late stage sees the whole chain, not just its predecessor.
