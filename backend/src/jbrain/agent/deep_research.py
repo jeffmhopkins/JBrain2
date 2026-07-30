@@ -84,6 +84,11 @@ DR_DEFAULT_BREADTH = 4
 DR_MAX_BREADTH = 5
 DR_SIMPLE_BREADTH = 2  # a `simple`-rated question researches fewer angles (breadth only)
 DR_MAX_GAP_QUESTIONS = 2
+# A single-source pipeline (the interview shape) runs its stages SEQUENTIALLY, so the count
+# is a hard bound on chained fans — capped low (extract → answer → fact-check → …). Fewer than
+# two stages is not a pipeline (one stage == a flat one-brief gather), so staging needs ≥2.
+DR_MAX_STAGES = 4
+DR_MIN_STAGES = 2
 
 # Deepest mode (docs/proposed/DEEPEST_RESEARCH_TOOL_PLAN.md, Wave R1). `mode="deepest"`
 # turns the single fixed refill into an ADAPTIVE, resource-terminated loop: keep
@@ -147,6 +152,32 @@ class SourcePlan:
 # `research` (web), `research_library` (corpus), `research_deep` (deepest task-agent tier).
 # Used to count findings regardless of which family a run's gather ran on.
 _RESEARCH_PERSONAS = frozenset({"research", "research_library", "research_deep"})
+
+
+@dataclass(frozen=True)
+class _Stage:
+    """One step of a SEQUENTIAL single-source pipeline (the interview shape: extract the
+    questions → answer + fact-check them). A titled research brief plus whether the stage
+    needs the open web (answer/fact-check from the world) vs. the library/source it extracts
+    from. The planner emits `stages` only for a single-source extract→enrich task; a plain
+    research question emits none and the flat parallel gather runs byte-unchanged."""
+
+    title: str
+    brief: str
+    web: bool = False
+
+
+def _stage_persona(source_mode: str, wants_web: bool) -> str:
+    """The gather persona for one pipeline stage. `library` mode stays corpus-only on EVERY
+    stage — the exclusive no-web guarantee holds regardless of a stage's `web` flag; `web`
+    mode is always the web persona; only `library_first` lets a stage choose: extract from
+    the library (corpus), answer/fact-check on the web. This is the per-round `library_first`
+    split (`_personas_for`) generalized onto ordered stages."""
+    if source_mode == "library":
+        return "research_library"
+    if source_mode == "web":
+        return "research"
+    return "research" if wants_web else "research_library"
 
 
 def _personas_for(source_mode: str) -> tuple[str, str, str]:
@@ -267,6 +298,24 @@ _PLAN_SCHEMA = {
             },
         },
         "sections": {"type": "array", "items": {"type": "string"}},
+        # OPTIONAL ordered pipeline for a single-source extract→enrich task (the interview
+        # shape). When present with ≥2 entries, the gather runs these stages SEQUENTIALLY,
+        # feeding each forward, instead of the independent parallel `sub_questions` fan — so a
+        # dependent stage consumes the prior stage's real output. Absent/short ⇒ today's flat
+        # gather, byte-for-byte. `web` marks a stage that must reach the open web (answer /
+        # fact-check) rather than the library/source it extracts from.
+        "stages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "brief": {"type": "string"},
+                    "web": {"type": "boolean"},
+                },
+                "required": ["title", "brief"],
+            },
+        },
     },
     "required": ["complexity", "sub_questions", "sections"],
 }
@@ -339,6 +388,20 @@ def _sub_question(item: object, i: int) -> tuple[str, str] | None:
     raw_title = item.get("title") if isinstance(item, dict) else None
     title = raw_title.strip() if isinstance(raw_title, str) else ""
     return (_title(title or brief, i), brief)
+
+
+def _stage(item: object, i: int) -> _Stage | None:
+    """One planned pipeline stage from the plan JSON. Reuses `_coerce_brief` (so a brief the
+    local model wrapped in a JSON object is still recovered) and `_title` for the row label;
+    the `web` flag is coerced to a plain bool. Returns None for an empty brief (dropped)."""
+    if not isinstance(item, dict):
+        return None
+    brief = _coerce_brief(item)
+    if not brief:
+        return None
+    raw_title = item.get("title")
+    title = raw_title if isinstance(raw_title, str) and raw_title.strip() else brief
+    return _Stage(title=_title(title, i), brief=brief, web=bool(item.get("web")))
 
 
 def _clamp_breadth(raw: object) -> int:
@@ -650,6 +713,11 @@ class DeepResearchService:
         sub_questions = plan["sub_questions"] or [(_title(question, 0), question)]
         # Complexity sizes the gather breadth ONLY — it never skips a later stage.
         sub_questions = sub_questions[: _breadth_for(complexity, breadth)]
+        # A single-source pipeline (extract → answer → fact-check): the planner emits ≥2
+        # ordered stages that run SEQUENTIALLY, feeding forward. Fewer than DR_MIN_STAGES is
+        # not a pipeline (one stage == a flat one-brief gather), so the flat parallel gather
+        # below stays byte-for-byte the shipped behaviour for every ordinary research question.
+        staged = plan["stages"] if len(plan["stages"]) >= DR_MIN_STAGES else []
 
         # Reserve the review children's slice — TOKENS (`stage_reserve`) AND TIME
         # (`time_reserve`) — off the pool/deadline BEFORE gather runs. `children_exhausted`
@@ -663,30 +731,35 @@ class DeepResearchService:
         ctx.tree.stage_reserve = DR_REVIEW_RESERVE
         ctx.tree.time_reserve = DR_REVIEW_TIME_RESERVE
         try:
-            # Idea 3 — clamp gather to what the tree can seat AROUND the review reserve, so a
-            # run low on budget/time drops the angles it can't afford (and says so) rather than
-            # launching them to die at ~0s. A healthy fresh run keeps its full breadth.
-            seatable = _seatable(ctx.tree, len(sub_questions))
-            if seatable < len(sub_questions):
-                log.info(
-                    "deep_research.breadth_clamped",
-                    requested=len(sub_questions),
-                    seated=seatable,
-                )
-                sub_questions = sub_questions[:seatable]
+            # --- (2) GATHER — a sequential single-source pipeline, or a parallel fan -------
+            if staged:
+                # Ordered stages, fed forward: extract from the source, then answer/fact-check
+                # what it found — no independent sibling re-derives the extraction.
+                gather = await self._gather_staged(ctx, staged, source_mode)
+            else:
+                # Idea 3 — clamp gather to what the tree can seat AROUND the review reserve, so
+                # a run low on budget/time drops the angles it can't afford (and says so)
+                # rather than launching them to die at ~0s. A healthy fresh run keeps breadth.
+                seatable = _seatable(ctx.tree, len(sub_questions))
+                if seatable < len(sub_questions):
+                    log.info(
+                        "deep_research.breadth_clamped",
+                        requested=len(sub_questions),
+                        seated=seatable,
+                    )
+                    sub_questions = sub_questions[:seatable]
 
-            # --- (2) GATHER — a research fan over the sub-questions ----------------
-            self._phase(ctx, 2, f"Researching {len(sub_questions)} angle(s)")
-            gather = await self._spawn.run_research_fan(
-                ctx,
-                briefs=sub_questions,
-                persona=gather_persona,
-                # Research children run at LOW reasoning: a gather angle is a focused
-                # search-and-summarize, not a hard reasoning task, and the lower step cap
-                # curbs the over-searching that hammered the upstream engines. The review
-                # children (analyst, critique) keep medium — that's where the thinking is.
-                effort="low",
-            )
+                self._phase(ctx, 2, f"Researching {len(sub_questions)} angle(s)")
+                gather = await self._spawn.run_research_fan(
+                    ctx,
+                    briefs=sub_questions,
+                    persona=gather_persona,
+                    # Research children run at LOW reasoning: a gather angle is a focused
+                    # search-and-summarize, not a hard reasoning task, and the lower step cap
+                    # curbs the over-searching that hammered the upstream engines. The review
+                    # children (analyst, critique) keep medium — that's where the thinking is.
+                    effort="low",
+                )
             gather_ok = any(r.ok for r in gather)
             # An empty gather is fatal for `web`/`library` (there is nothing to synthesize
             # from, and a dry library must not silently reach the web). `library_first`
@@ -1012,7 +1085,59 @@ class DeepResearchService:
         sub_questions = [s for s in raw_subs if s][:breadth]
         sections = [_coerce_brief(s) for s in data.get("sections", [])]
         sections = [s for s in sections if s]
-        return {"complexity": complexity, "sub_questions": sub_questions, "sections": sections}
+        raw_stages = (_stage(s, i) for i, s in enumerate(data.get("stages", [])))
+        # Cap the pipeline length like the gather breadth — a bounded number of sequential
+        # stages, so a malformed/over-long plan can't launch an unbounded chain of fans.
+        stages = [s for s in raw_stages if s][:DR_MAX_STAGES]
+        return {
+            "complexity": complexity,
+            "sub_questions": sub_questions,
+            "sections": sections,
+            "stages": stages,
+        }
+
+    async def _gather_staged(
+        self, ctx: ToolContext, stages: list[_Stage], source_mode: str
+    ) -> list[_ChildResult]:
+        """Run the plan's stages SEQUENTIALLY, feeding each stage's successful findings
+        forward into the next as fenced inert data (the feeding-waves envelope) — so a
+        dependent stage (answer the questions the extract stage found) consumes the prior
+        stage's real output instead of re-deriving it in a parallel sibling (the coordination
+        bug the interview run hit). Each stage picks its persona from the source mode + its
+        `web` flag (`_stage_persona`): under `library_first` an extract stage reads the corpus
+        and a fact-check stage reaches the web, while `library` mode stays corpus-only on
+        every stage. Returns every stage's children in run order — the combined gather the
+        rest of the pipeline (analyze / reflect / synthesize / critique) works over unchanged.
+
+        Single-tier by design: a staged run always uses `research`/`research_library`, never
+        the deepest `research_deep` task-agent tier — staging is single-source and sequential,
+        so the two features don't compose (a deepest+staged run stays single-tier here)."""
+        produced: list[_ChildResult] = []
+        for i, stage in enumerate(stages):
+            # Honest degradation (the flat gather gets this via `_seatable`; the per-stage path
+            # would otherwise skip it): if the tree can no longer seat a child on the wall-clock
+            # or the pool, stop the chain rather than launch a late stage that dies at ~0s.
+            tree = ctx.tree
+            if tree is not None and not (
+                tree.can_admit(1) and tree.can_admit_budget(1) and tree.can_admit_time(1)
+            ):
+                break
+            persona = _stage_persona(source_mode, stage.web)
+            # Feed EVERY prior successful finding forward (each capped + boundary-neutralized
+            # by the envelope), so a late stage sees the whole chain, not just its predecessor.
+            feed = _findings_block([r for r in produced if r.ok])
+            brief = prepend_feed(feed, stage.brief)
+            self._phase(ctx, 2, f"Stage {i + 1}/{len(stages)}: {stage.title}")
+            children = await self._spawn.run_research_fan(
+                ctx, briefs=[(stage.title, brief)], persona=persona, effort="low"
+            )
+            produced += children
+            # A stage that produced nothing usable breaks the chain: a later stage fed an
+            # empty prior would only re-derive it (or fail on a dependency the data can't
+            # satisfy), so stop and synthesize from what ran rather than press on.
+            if not any(c.ok for c in children):
+                break
+        return produced
 
     async def _analyze(
         self,

@@ -102,3 +102,45 @@ async def test_record_answer_persists_the_answer_only(maker: async_sessionmaker)
         ("assistant", "Here's the breakdown outline:\n- Point one"),
     ]
     assert turns[0].tools[0]["name"] == "read_external_video"
+
+
+async def test_child_tool_steps_and_reasoning_round_trip(maker: async_sessionmaker) -> None:
+    # A spawned child now records its tool steps + reasoning (previously dropped as tools=[])
+    # to its own session via the same record_exchange path — so reopening the sub-agent
+    # replays its Worked list + thinking and the trace is debuggable. The richer step dicts
+    # (web_sources, offsets) must serialize into the tools JSONB and load back intact.
+    owner = await _owner(maker)
+    sessions = AgentSessionRepo(maker)
+    info = await sessions.create(owner, domain_scopes=["general"], title="child")
+    run_id = await AgentRunLog(maker).start(owner, session_id=info.id, prompt_version="v1")
+
+    store = AgentTranscript(maker)
+    await store.record_exchange(
+        owner,
+        session_id=info.id,
+        run_id=run_id,
+        user_text="extract the questions from the video",
+        assistant_text="Q1 …; Q2 …",
+        tools=[
+            {
+                "id": "c1",
+                "name": "read_external_video",
+                "ok": True,
+                "args": {"url": "https://youtu.be/x"},
+                "sources": [],
+                "web_sources": [{"url": "https://youtu.be/x", "title": "Interview"}],
+                "text_offset": 0,
+                "reasoning_offset": 12,
+                "summary": "transcript excerpt …",
+            }
+        ],
+        reasoning="let me read the whole transcript in order",
+    )
+
+    turns = await store.load(owner, info.id)
+    assistant = turns[1]
+    assert assistant.reasoning == "let me read the whole transcript in order"
+    step = assistant.tools[0]
+    assert step["name"] == "read_external_video"
+    assert step["web_sources"][0]["url"] == "https://youtu.be/x"
+    assert step["reasoning_offset"] == 12

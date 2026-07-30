@@ -1,6 +1,6 @@
 ---
 name: deep_produce
-version: 1
+version: 2
 permission: read
 cost_class: expensive
 params:
@@ -41,7 +41,12 @@ params:
         Optional. Where the research draws from. `web` (default) researches the open web.
         `library` researches ONLY the owner's analysed-video library — no web at all.
         `library_first` makes the library the primary pass and lets the web fill only what it is
-        missing. Omit for `web`.
+        missing. Omit for `web`. IMPORTANT: to produce something FROM a specific video the owner
+        has analysed (e.g. a table of every question in an interview, the claims in a talk), you
+        MUST use `library_first` (or `library`) — that video's transcript lives only in the
+        library, so `web` cannot read it. Never pass `web` for a task about a specific analysed
+        video, even when part of it (fact-checking) needs the web: `library_first` extracts from
+        the video and still lets the later steps reach the web.
     mode:
       type: string
       enum: [standard, deepest]

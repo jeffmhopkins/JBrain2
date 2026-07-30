@@ -1297,8 +1297,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "read_external_video.tool": (
             "read_external_video",
-            1,
-            "15e160e9e1bf7b7a3c7b77a1401b0980645f6f00af49298ce585df7aba8397f0",
+            2,
+            "4a16825b58ef4a3983f1be7c2944887e7e62487ebce810e783d46940c7867c8c",
         ),
         "show_external_video.tool": (
             "show_external_video",
@@ -1317,13 +1317,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "deep_research.tool": (
             "deep_research",
-            3,
-            "02b5cd095009da92c5b4bd1bbe23a3fb38db047611062e77f22084a9f2fd4548",
+            4,
+            "b7c8e4f4aaea536246ef1fa18aad3340510249f38926ec4c33d491d41b4b103b",
         ),
         "deep_produce.tool": (
             "deep_produce",
-            1,
-            "50a21ee6e1332be342f3057d1956746dcc2350437f689cfedd4305cef1f29ef4",
+            2,
+            "9ce7ade1529bf302de956c4ba0672d7ad02def9017e53f21a26c92d87058fe40",
         ),
         "decompose_research.tool": (
             "decompose_research",
