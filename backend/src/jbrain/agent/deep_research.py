@@ -141,6 +141,7 @@ class SourcePlan:
     seed: str | None = None
     sink: str = _SINK_EXTERNAL
 
+
 # The research-PRODUCER personas across every source/mode family — the gather/refill
 # children whose findings back the report, as opposed to the `review` analyst/critique.
 # `research` (web), `research_library` (corpus), `research_deep` (deepest task-agent tier).
@@ -623,6 +624,9 @@ class DeepResearchService:
         kwarg would silently break the deepest lane, which drives this same path
         (DEEP_PRODUCE_PLAN.md, single-impl spine). `directive`/`source_plan` carry what to
         produce and from where; W1 exercises only the report preset + plain source path."""
+        # Both entrypoints (research/produce) guard `ctx.tree is None` before delegating, so a
+        # seeded tree is an invariant here — assert it to narrow the type for the pipeline below.
+        assert ctx.tree is not None
         source_mode = source_plan.source_mode
         # The mode picks the persona each child fan runs; the pipeline is otherwise
         # unchanged. `review_persona` covers both the analyst and the critique.
