@@ -102,14 +102,52 @@ async def test_caps_a_very_long_description(monkeypatch) -> None:
     assert "description truncated" in out
 
 
-async def test_truncates_a_very_long_transcript(monkeypatch) -> None:
+async def test_truncates_a_very_long_transcript_with_a_continuation_pointer(monkeypatch) -> None:
+    # A long transcript is capped on a window boundary and names the exact from_ms to resume at,
+    # so an exhaustive reader can sweep the WHOLE thing across calls instead of losing the tail.
     windows = [(i * 1000, "word " * 200) for i in range(400)]  # well over the char cap
     t = ExternalTranscript(
         "s2", "Long", "", "https://youtu.be/x", "whisper", "", 1200, None, windows
     )
     out, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x"})
-    assert "transcript truncated" in out
+    assert "transcript continues" in out
+    assert "from_ms=" in out
     assert len(out) < 65_000
+
+
+async def test_from_ms_lets_a_reader_sweep_the_whole_transcript(monkeypatch) -> None:
+    # Following the from_ms each read hands back eventually reaches the FINAL window — so an
+    # exhaustive reader covers the whole long transcript across successive calls, and no single
+    # read could have (it takes more than one). This is the completeness fix for enumeration.
+    windows = [(i * 1000, f"passage number {i} " + "word " * 180) for i in range(400)]
+    t = ExternalTranscript(
+        "s2", "Long", "", "https://youtu.be/x", "whisper", "", 1200, None, windows
+    )
+    first, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x"})
+    resume = int(first.split("from_ms=")[1].split(" ")[0].rstrip("]"))
+    assert resume > 0
+    assert f"passage number {resume // 1000}" not in first  # the tail was cut from read 1
+
+    from_ms, reads, seen_last = resume, 1, False
+    while reads < 30:
+        out, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x", "from_ms": from_ms})
+        reads += 1
+        assert "reading from" in out
+        if "passage number 399" in out:  # the very last window
+            seen_last = True
+            break
+        assert "from_ms=" in out  # offers a continuation until the end
+        from_ms = int(out.split("from_ms=")[1].split(" ")[0].rstrip("]"))
+    assert seen_last and reads >= 2
+
+
+async def test_from_ms_past_the_end_says_so(monkeypatch) -> None:
+    windows = [(i * 1000, "hello") for i in range(5)]
+    t = ExternalTranscript(
+        "s2", "Short", "", "https://youtu.be/x", "whisper", "", 10, None, windows
+    )
+    out, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x", "from_ms": 999_000})
+    assert "No transcript beyond" in out
 
 
 async def test_summary_fallback_when_no_windows(monkeypatch) -> None:

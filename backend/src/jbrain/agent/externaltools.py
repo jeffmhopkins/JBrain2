@@ -170,37 +170,63 @@ def _listing_line(title: str, url: str, meta: VideoMeta | None, *, full_descript
     return line
 
 
-def _render_transcript(t: ExternalTranscript) -> str:
-    """The fenced full read of one library video: a header (title/channel/length/source), the
+def _render_transcript(t: ExternalTranscript, from_ms: int = 0) -> str:
+    """The fenced read of one library video: a header (title/channel/length/source), the
     uploader's own description, the whole summary, then the timestamped transcript windows (or
-    just the summary when a source has no passage rows). The transcript is truncated at the char
-    cap with a pointer; the description is capped on its own; metadata + summary come through in
-    full."""
-    text = "\n".join(f"[{_hms(ms)}] {passage}" for ms, passage in t.windows)
-    truncated = len(text) > _TRANSCRIPT_MAX_CHARS
-    if truncated:
-        text = text[:_TRANSCRIPT_MAX_CHARS]
+    just the summary when a source has no passage rows). The transcript is emitted from
+    `from_ms` onward and truncated at the char cap on a WINDOW boundary — so when a long source
+    (an 85-min interview is ~80k chars, over the 60k cap) doesn't fit in one read, the
+    continuation pointer names the exact `from_ms` to resume at, letting an exhaustive reader
+    sweep the WHOLE transcript across a couple of calls instead of losing the tail. The
+    description is capped on its own; metadata + summary come through in full."""
+    windows = [(ms, p) for ms, p in t.windows if ms >= max(0, from_ms)]
+    lines: list[str] = []
+    total = 0
+    next_from_ms: int | None = None
+    for ms, passage in windows:
+        line = f"[{_hms(ms)}] {passage}"
+        # Truncate on a window boundary (keep at least the first window), and remember where the
+        # tail resumes so the reader can continue from an exact timestamp, not a mid-cut point.
+        if lines and total + len(line) + 1 > _TRANSCRIPT_MAX_CHARS:
+            next_from_ms = ms
+            break
+        lines.append(line)
+        total += len(line) + 1
+    text = "\n".join(lines)
     channel = f" ({t.channel_name})" if t.channel_name else ""
     meta = f"source: {t.transcript_source or 'unknown'}"
     if t.duration_s:
         meta = f"length: {_hms(t.duration_s * 1000)} · " + meta
     if t.published_at is not None:
         meta = f"published: {t.published_at:%Y-%m-%d %H:%M UTC} · " + meta
-    header = f"{_FENCE}\n\nFull transcript — {t.title}{channel}\n{meta} · {t.url}"
+    window_note = f" · reading from {_hms(from_ms)}" if from_ms > 0 else ""
+    header = f"{_FENCE}\n\nFull transcript — {t.title}{channel}\n{meta} · {t.url}{window_note}"
     # The uploader's own channel-authored blurb — separate from the machine summary, and its own
     # (attacker-authorable) third-party data. Capped so a link-and-boilerplate wall can't swamp
-    # the read; the fence already frames the whole body as data, not instructions.
+    # the read; the fence already frames the whole body as data, not instructions. Shown only on
+    # the first read (from_ms == 0) so a windowed continuation is transcript, not repeated meta.
     desc_truncated = len(t.description) > _DESCRIPTION_MAX_CHARS
     desc_text = t.description[:_DESCRIPTION_MAX_CHARS] if desc_truncated else t.description
-    description = f"\n\nUploader's description:\n{desc_text}" if desc_text.strip() else ""
-    if desc_truncated:
+    description = (
+        f"\n\nUploader's description:\n{desc_text}" if desc_text.strip() and from_ms == 0 else ""
+    )
+    if description and desc_truncated:
         description += "\n[description truncated]"
-    summary = f"\n\nSummary: {t.summary}" if t.summary else ""
-    # No passage rows (e.g. a captionless source with only a summary): the summary is the read.
-    transcript = f"\n\nTranscript:\n{text}" if text else "\n\n(No timestamped transcript stored.)"
+    summary = f"\n\nSummary: {t.summary}" if t.summary and from_ms == 0 else ""
+    if not windows and from_ms > 0:
+        transcript = f"\n\n(No transcript beyond {_hms(from_ms)} — the video ends before it.)"
+    elif text:
+        transcript = f"\n\nTranscript:\n{text}"
+    else:
+        # No passage rows at all (a captionless source with only a summary): summary is the read.
+        transcript = "\n\n(No timestamped transcript stored.)"
     body = f"{header}{description}{summary}{transcript}"
-    if truncated:
-        body += "\n\n[transcript truncated — use search_external_video to jump to a moment]"
+    if next_from_ms is not None:
+        body += (
+            "\n\n[transcript continues — call read_external_video again with "
+            f"from_ms={next_from_ms} to read the next part (to enumerate the WHOLE video you "
+            "must continue to the end), or use search_external_video to jump to a moment]"
+        )
     return body
 
 
@@ -431,7 +457,11 @@ def build_external_handlers(
             )
         if not transcript.windows and not transcript.summary:
             return f"'{transcript.title}' is in the library but has no stored transcript."
-        body = _render_transcript(transcript)
+        # Optional window offset (ms) so an exhaustive reader can continue past the char cap on a
+        # long source and cover the WHOLE transcript across calls. A bool is not an int here.
+        raw_from = arguments.get("from_ms")
+        from_ms = raw_from if isinstance(raw_from, int) and not isinstance(raw_from, bool) else 0
+        body = _render_transcript(transcript, max(0, from_ms))
         source = WebSource(url=transcript.url, title=transcript.title or transcript.url)
         return ToolOutput(body, web_sources=(source,))
 
