@@ -3,6 +3,7 @@ transcript render, the untrusted fence, truncation, and the not-found path. The 
 (fetch_transcript) is covered by the integration tests; here it is stubbed."""
 
 import datetime as dt
+import re
 
 import jbrain.agent.externaltools as externaltools
 from jbrain.agent.externaltools import _parse_video_id, build_external_handlers
@@ -115,30 +116,58 @@ async def test_truncates_a_very_long_transcript_with_a_continuation_pointer(monk
     assert len(out) < 65_000
 
 
-async def test_from_ms_lets_a_reader_sweep_the_whole_transcript(monkeypatch) -> None:
-    # Following the from_ms each read hands back eventually reaches the FINAL window — so an
-    # exhaustive reader covers the whole long transcript across successive calls, and no single
-    # read could have (it takes more than one). This is the completeness fix for enumeration.
+def _passage_ids(text: str) -> list[int]:
+    return [int(m) for m in re.findall(r"passage number (\d+)", text)]
+
+
+async def test_from_ms_sweeps_the_whole_transcript_gaplessly(monkeypatch) -> None:
+    # Following the from_ms each read hands back covers EVERY window exactly once — no gap, no
+    # duplicate — across successive calls, and no single read could have (it takes more than
+    # one). This is the completeness fix for enumeration.
     windows = [(i * 1000, f"passage number {i} " + "word " * 180) for i in range(400)]
     t = ExternalTranscript(
         "s2", "Long", "", "https://youtu.be/x", "whisper", "", 1200, None, windows
     )
-    first, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x"})
-    resume = int(first.split("from_ms=")[1].split(" ")[0].rstrip("]"))
-    assert resume > 0
-    assert f"passage number {resume // 1000}" not in first  # the tail was cut from read 1
-
-    from_ms, reads, seen_last = resume, 1, False
-    while reads < 30:
+    seen: list[int] = []
+    from_ms, reads = 0, 0
+    while reads < 40:
         out, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x", "from_ms": from_ms})
         reads += 1
-        assert "reading from" in out
-        if "passage number 399" in out:  # the very last window
-            seen_last = True
+        seen.extend(_passage_ids(out))
+        if "from_ms=" not in out:
             break
-        assert "from_ms=" in out  # offers a continuation until the end
         from_ms = int(out.split("from_ms=")[1].split(" ")[0].rstrip("]"))
-    assert seen_last and reads >= 2
+    assert reads >= 2  # a single read could not have covered it
+    assert seen == list(range(400))  # gapless AND no duplicates, in order
+
+
+async def test_equal_timestamp_windows_do_not_loop_or_duplicate(monkeypatch) -> None:
+    # The strict-advance guarantee: windows sharing one t_ms are never split across the cap.
+    # A boundary group at the same ms is kept together so the resume offset always progresses —
+    # otherwise a next_from_ms equal to an included window's ms would re-emit it forever.
+    # 80 windows at ms=1000 (jointly OVER the 60k cap on their own) then 30 at ms=2000.
+    windows = [(1000, f"passage number {i} " + "word " * 180) for i in range(80)]
+    windows += [(2000, f"passage number {100 + i} " + "word " * 180) for i in range(30)]
+    t = ExternalTranscript("s2", "Long", "", "https://youtu.be/x", "whisper", "", 3, None, windows)
+    first, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x"})
+    # The whole ms=1000 group is shown together (even over the cap); the tail (ms=2000) is
+    # deferred to from_ms=2000 — the resume offset is strictly past everything shown.
+    assert "from_ms=2000" in first
+    assert set(_passage_ids(first)) == set(range(80))  # all of group 1, none of group 2
+    tail, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/x", "from_ms": 2000})
+    assert set(_passage_ids(tail)) == set(range(100, 130))  # group 2, no re-emit of group 1
+    assert "from_ms=" not in tail  # terminates — no infinite continuation
+
+
+async def test_summary_only_source_shows_summary_even_with_from_ms(monkeypatch) -> None:
+    # A captionless source (summary, no windows) must still surface its summary when read with a
+    # stray from_ms — not hide it behind a misleading "the video ends before it" message.
+    t = ExternalTranscript(
+        "s3", "T", "", "https://youtu.be/y", "captions:auto", "Just a summary.", 600, None, []
+    )
+    out, _ = await _run(monkeypatch, t, {"url": "https://youtu.be/y", "from_ms": 999_000})
+    assert "Just a summary." in out
+    assert "No transcript beyond" not in out
 
 
 async def test_from_ms_past_the_end_says_so(monkeypatch) -> None:

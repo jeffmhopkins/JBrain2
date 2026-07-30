@@ -179,20 +179,30 @@ def _render_transcript(t: ExternalTranscript, from_ms: int = 0) -> str:
     continuation pointer names the exact `from_ms` to resume at, letting an exhaustive reader
     sweep the WHOLE transcript across a couple of calls instead of losing the tail. The
     description is capped on its own; metadata + summary come through in full."""
-    windows = [(ms, p) for ms, p in t.windows if ms >= max(0, from_ms)]
+    from_ms = max(0, from_ms)
+    windows = [(ms, p) for ms, p in t.windows if ms >= from_ms]
     lines: list[str] = []
     total = 0
+    last_ms: int | None = None
     next_from_ms: int | None = None
     for ms, passage in windows:
         line = f"[{_hms(ms)}] {passage}"
-        # Truncate on a window boundary (keep at least the first window), and remember where the
-        # tail resumes so the reader can continue from an exact timestamp, not a mid-cut point.
-        if lines and total + len(line) + 1 > _TRANSCRIPT_MAX_CHARS:
+        over = bool(lines) and total + len(line) + 1 > _TRANSCRIPT_MAX_CHARS
+        # Truncate only on a NEW timestamp, never mid-group: windows sharing one t_ms stay
+        # together, so `next_from_ms` (the first excluded window's ms) is ALWAYS strictly greater
+        # than every ms shown. That strict-advance guarantee is what stops a resume offset equal
+        # to an included window's ms — which would re-emit it and never progress — since window
+        # timestamps are monotonic non-decreasing but not strictly increasing.
+        if over and ms != last_ms:
             next_from_ms = ms
             break
         lines.append(line)
         total += len(line) + 1
+        last_ms = ms
     text = "\n".join(lines)
+    # A source with NO passage rows at all (a captionless upload with only a summary) is
+    # distinct from a real transcript whose windows all precede `from_ms` (a read past the end).
+    has_windows = bool(t.windows)
     channel = f" ({t.channel_name})" if t.channel_name else ""
     meta = f"source: {t.transcript_source or 'unknown'}"
     if t.duration_s:
@@ -207,13 +217,18 @@ def _render_transcript(t: ExternalTranscript, from_ms: int = 0) -> str:
     # the first read (from_ms == 0) so a windowed continuation is transcript, not repeated meta.
     desc_truncated = len(t.description) > _DESCRIPTION_MAX_CHARS
     desc_text = t.description[:_DESCRIPTION_MAX_CHARS] if desc_truncated else t.description
+    # Show meta (description/summary) on the first read of a real transcript; suppress it on a
+    # windowed CONTINUATION (a genuine from_ms>0 into a transcript). A summary-only source has no
+    # continuation, so its summary is always shown — never hidden behind a stray from_ms.
+    show_meta = from_ms == 0 or not has_windows
     description = (
-        f"\n\nUploader's description:\n{desc_text}" if desc_text.strip() and from_ms == 0 else ""
+        f"\n\nUploader's description:\n{desc_text}" if desc_text.strip() and show_meta else ""
     )
     if description and desc_truncated:
         description += "\n[description truncated]"
-    summary = f"\n\nSummary: {t.summary}" if t.summary and from_ms == 0 else ""
-    if not windows and from_ms > 0:
+    summary = f"\n\nSummary: {t.summary}" if t.summary and show_meta else ""
+    if has_windows and not windows:
+        # A real transcript, but from_ms is past its last window — an honest end-of-video note.
         transcript = f"\n\n(No transcript beyond {_hms(from_ms)} — the video ends before it.)"
     elif text:
         transcript = f"\n\nTranscript:\n{text}"
