@@ -344,10 +344,14 @@ export function SubagentFan({
           </span>
         </button>
         {/* A thin per-row bar: STATIC while queued, an indeterminate sweep once running,
-            solid green/rose on settle. */}
-        <div className={`fb-sa-bar ${isQueued(c) ? "queued" : c.status}`} aria-hidden="true">
-          <i />
-        </div>
+            solid rose on failure. A cleanly-done child drops the bar entirely — its ✓
+            glyph carries the settled state, so a finished fan reads as a calm list of
+            checkmarks rather than a wall of full-width green. */}
+        {c.status !== "done" && (
+          <div className={`fb-sa-bar ${isQueued(c) ? "queued" : c.status}`} aria-hidden="true">
+            <i />
+          </div>
+        )}
         {/* The feed edge as text (Direction 1) — visible even while the row is collapsed. */}
         {c.fedFrom && c.fedFrom.length > 0 && (
           <div className="fb-sa-fed">← fed by {c.fedFrom.join(", ")}</div>
