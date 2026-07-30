@@ -128,6 +128,10 @@ class _FakeLoop:
             stop_reason="end_turn",
             steps=1,
             cost_tokens=10,
+            tool_steps=(
+                {"id": "c1", "name": "search", "ok": True, "args": {"q": "hnsw"}, "sources": []},
+            ),
+            reasoning="thinking about it",
         )
 
 
@@ -142,7 +146,13 @@ class _FakeTranscript:
         self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning=""
     ):  # noqa: ANN001, ANN003, E501
         self.exchanges.append(
-            {"session_id": session_id, "user_text": user_text, "assistant_text": assistant_text}
+            {
+                "session_id": session_id,
+                "user_text": user_text,
+                "assistant_text": assistant_text,
+                "tools": tools,
+                "reasoning": reasoning,
+            }
         )
         return "turn-1"
 
@@ -459,6 +469,10 @@ async def test_child_brief_and_answer_persisted_to_its_own_transcript(
     assert ex["session_id"] == "sess-1"  # the child session, not "parent-sess"
     assert ex["user_text"] == "what is HNSW?"
     assert ex["assistant_text"] == "summary for sess-1"
+    # The child's tool steps + reasoning are persisted too (previously dropped as tools=[]),
+    # so reopening the sub-agent replays its "Worked" list + thinking and it's debuggable.
+    assert [t["name"] for t in ex["tools"]] == ["search"]
+    assert ex["reasoning"] == "thinking about it"
 
 
 async def test_high_effort_child_gets_a_larger_step_cap(service: SpawnService) -> None:

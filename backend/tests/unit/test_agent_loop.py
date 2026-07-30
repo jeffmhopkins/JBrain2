@@ -264,6 +264,83 @@ async def test_run_streams_text_and_reasoning_to_callbacks() -> None:
     assert result.text == "the answer"
 
 
+async def test_run_accumulates_tool_steps_and_reasoning_for_persistence() -> None:
+    # A spawned child runs this non-streaming loop; its tool steps + reasoning ride out on
+    # AgentResult in the SAME shape the streamed parent turn stores, so the spawn service can
+    # record them to the child's own transcript (replay + debug SQL) — they were dropped before.
+    turns = [
+        LlmTurn(
+            "",
+            (ToolCall("c1", "search_sourced", {"q": "x"}),),
+            "tool_use",
+            LlmUsage(1, 1),
+            reasoning="let me look",
+        ),
+        LlmTurn("the answer", (), "end_turn", LlmUsage(1, 1), reasoning="done"),
+    ]
+    router, _ = router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("search_sourced", search_sourced)))
+    result = await run(loop)
+
+    assert result.text == "the answer"
+    # Reasoning accumulates across every step, not just the final turn.
+    assert result.reasoning == "let me lookdone"
+    assert len(result.tool_steps) == 1
+    step = result.tool_steps[0]
+    assert step["id"] == "c1"
+    assert step["name"] == "search_sourced"
+    assert step["ok"] is True
+    assert step["args"] == {"q": "x"}
+    assert step["summary"] == "found 1"
+    assert step["sources"] == [{"note_id": "n1", "domain": "general", "snippet": "hi"}]
+    # The call falls after the turn's thinking streamed (reasoning_offset), before any prose.
+    assert step["reasoning_offset"] == len("let me look")
+    assert step["text_offset"] == 0
+
+
+async def test_persisted_tool_step_carries_web_sources_and_view() -> None:
+    # web_sources / view / proposal / entities surfaced by a step are folded in too, so a
+    # reopened child replays favicon citations and rich views — not just the plain result.
+    turns = [
+        LlmTurn("", (ToolCall("c1", "web_sourced", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("", (ToolCall("c2", "view_tool", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = router_with(turns)
+    loop = AgentLoop(
+        router,
+        registry_with(make_tool("web_sourced", web_sourced), make_tool("view_tool", view_tool)),
+    )
+    result = await run(loop)
+
+    steps = {s["name"]: s for s in result.tool_steps}
+    assert steps["web_sourced"]["web_sources"] == [
+        {"url": "https://x.example/a", "title": "A page"}
+    ]
+    assert steps["view_tool"]["view"]["view"] == "list_card"
+
+
+async def test_persisted_step_summary_is_capped() -> None:
+    # A child can read a 60k-char transcript; the STORED step summary is capped so the
+    # trace stays bounded, while the model still saw the full result in-context this turn.
+    big = "z" * 10_000
+
+    async def huge(arguments: dict, ctx: ToolContext) -> str:
+        return big
+
+    turns = [
+        LlmTurn("", (ToolCall("c1", "huge", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("ok", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("huge", huge)))
+    result = await run(loop)
+
+    summary = result.tool_steps[0]["summary"]
+    assert summary.endswith("[truncated]")
+    assert len(summary) < len(big)
+
+
 async def test_force_final_answer_synthesizes_on_step_exhaustion() -> None:
     # A child that keeps tool-calling hits max_steps; with force_final_answer the loop
     # makes one final no-tools turn so the caller gets a real answer, not an empty one.
