@@ -102,6 +102,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "query_server_metrics",
             "spawn_subagent",
             "deep_research",
+            "deep_produce",
             "decompose_research",
             "deepest_research",
             "list_research_report",
@@ -114,6 +115,11 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
     assert jerv.reads_knowledge_base is False
     assert jerv.tools is not None and SPAWN_TOOL in jerv.tools  # jerv is the spawner
     assert "deep_research" in jerv.tools  # jerv is the deep-research orchestrator
+    assert "deep_produce" in jerv.tools  # ...and holds the produce verb (DEEP_PRODUCE_PLAN W1)
+    # deep_produce is NEVER_DEFAULT, so curator's tools=None wildcard can never absorb it.
+    from jbrain.agent.toolregistry import NEVER_DEFAULT
+
+    assert "deep_produce" in NEVER_DEFAULT
 
 
 def test_image_tools_are_jerv_only() -> None:

@@ -765,6 +765,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # deep_research is `web`-classed + NEVER_DEFAULT: jerv's bounded research run
         # over the fan, never offered to the curator wildcard.
         "deep_research",
+        # deep_produce is `read`-classed + NEVER_DEFAULT: the same engine, jerv's choice of
+        # artifact (plan/table/…); jerv-only in W1, never the curator wildcard.
+        "deep_produce",
         # decompose_research is `web`-classed + NEVER_DEFAULT: the task-agent one-shot
         # sub-fan (DEEPEST_RESEARCH_TOOL_PLAN.md, R2), reached only by the research_deep
         # persona allowlist, never the curator wildcard.
@@ -1251,6 +1254,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "deep_research",
             3,
             "02b5cd095009da92c5b4bd1bbe23a3fb38db047611062e77f22084a9f2fd4548",
+        ),
+        "deep_produce.tool": (
+            "deep_produce",
+            1,
+            "50a21ee6e1332be342f3057d1956746dcc2350437f689cfedd4305cef1f29ef4",
         ),
         "decompose_research.tool": (
             "decompose_research",

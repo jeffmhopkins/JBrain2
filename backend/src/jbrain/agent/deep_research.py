@@ -1505,3 +1505,17 @@ class DeepResearchRef:
         if self.service is None:
             return _refuse("deep research is not available in this configuration.")
         return await self.service.research(ctx, args)
+
+
+class DeepProduceRef:
+    """Late-bound handler for the `deep_produce` tool. Shares the DeepResearchService with
+    `deep_research` (one engine, two verbs — DEEP_PRODUCE_PLAN.md); it only routes to the
+    `produce` entrypoint, which builds a Directive/SourcePlan from the caller args."""
+
+    def __init__(self) -> None:
+        self.service: DeepResearchService | None = None
+
+    async def __call__(self, args: dict, ctx: ToolContext) -> str:
+        if self.service is None:
+            return _refuse("deep produce is not available in this configuration.")
+        return await self.service.produce(ctx, args)

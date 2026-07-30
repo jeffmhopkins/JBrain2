@@ -30,7 +30,7 @@ from jbrain.agent.charttools import build_chart_handlers
 from jbrain.agent.clock import build_clock_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
-from jbrain.agent.deep_research import DeepResearchRef, DeepResearchService
+from jbrain.agent.deep_research import DeepProduceRef, DeepResearchRef, DeepResearchService
 from jbrain.agent.deepest_lane import DeepestRunLane
 from jbrain.agent.deepest_progress import DeepestProgressChannel
 from jbrain.agent.deepest_tool import (
@@ -673,6 +673,9 @@ def build_registry(
     # service (which needs the very registry being built), so it is wired below once both
     # exist (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
     deep_research_ref = DeepResearchRef()
+    # The deep_produce verb shares the same DeepResearchService (one engine, two verbs);
+    # late-bound below alongside deep_research (DEEP_PRODUCE_PLAN.md, W1).
+    deep_produce_ref = DeepProduceRef()
     # The two-tier decomposition primitive (a task agent's one-shot sub-fan), late-bound
     # to the same spawn service (DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
     decompose_ref = DecomposeRef()
@@ -758,6 +761,9 @@ def build_registry(
             # (curator's tools=None never absorbs it), wired below once the spawn
             # service exists (deep research runs its fans through it).
             "deep_research": deep_research_ref,
+            # The deep-produce verb — the same engine as deep_research, jerv-only +
+            # NEVER_DEFAULT, wired to the shared service below (DEEP_PRODUCE_PLAN.md, W1).
+            "deep_produce": deep_produce_ref,
             # The task-agent decomposition tool: a research_deep child reaches it by
             # allowlist (jerv holds it only for the parent⊆child clamp); NEVER_DEFAULT, so
             # curator's tools=None never absorbs it. Wired below with the spawn service.
@@ -794,6 +800,8 @@ def build_registry(
         deep_research_ref.service = DeepResearchService(
             router=router, spawn=spawn_ref.service, maker=maker
         )
+        # deep_produce is the same engine, a different verb: share the one service instance.
+        deep_produce_ref.service = deep_research_ref.service
         # decompose_research forwards to the same spawn service (it spawns the sub-fan).
         decompose_ref.service = spawn_ref.service
 
