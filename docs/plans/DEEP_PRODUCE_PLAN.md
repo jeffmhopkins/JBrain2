@@ -252,11 +252,19 @@ narrow, owner-only case, recorded rather than silently overridden:
 
 ## Prompt versioning  [R]
 
-The `.tool` digest guard (`toolfile.py:47-51`) covers `.tool` files **only** — so
-templating `deep_research_synthesize.prompt` is **not** caught by the "version bump forced"
-guard (contra `DEVELOPMENT.md:28`). Before templating, add a content/version pin for the
-synth prompt (sha256 of the report-path body + a `_SYNTH.version` assert, mirroring
-`test_promptfile.py:123`) and bump `dr-synth-v6 → v7` in the same PR.
+**W1 avoids this entirely.** Artifact shaping rides in the synth **user** message
+(`_shape_directive` + an `OBJECTIVE` block) — the version-pinned
+`deep_research_synthesize.prompt` **system** prompt is never templated or touched, so its
+v10–v14 citation / quantitative-provenance / attribution discipline is invariant across
+every `output_kind` by construction (the cleanest possible B3 fix) and no prompt version
+pin or `dr-synth` bump is needed. The note below stands only as a **guard for a future
+wave** that ever does template the system prompt:
+
+> The `.tool` digest guard (`toolfile.py`) covers `.tool` files only — templating a
+> `.prompt` is **not** caught by the "version bump forced" guard. Any wave that templates
+> `deep_research_synthesize.prompt` must add a content/version pin (sha256 of the body + a
+> `_SYNTH.version` assert, mirroring `test_promptfile.py`) and bump `dr-synth-v6 → v7` in
+> the same PR.
 
 ## Waves
 
