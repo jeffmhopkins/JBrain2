@@ -820,6 +820,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             agent_session_id=session.id,
             system=profile.prompt,
             tools_allow=profile.tools,
+            # A per-persona grant of otherwise-excluded tools (curator's deep_produce),
+            # admitted ahead of the registry's web/NEVER_DEFAULT gates (DEEP_PRODUCE_PLAN W2).
+            extra_tools=profile.extra_tools,
             # The "from general knowledge — not your notes" label only makes sense
             # for an agent that reads notes; a non-KB agent (jerv, teacher) has
             # none to contrast with, so suppress it.
