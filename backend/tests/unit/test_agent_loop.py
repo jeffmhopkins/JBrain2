@@ -341,6 +341,47 @@ async def test_persisted_step_summary_is_capped() -> None:
     assert len(summary) < len(big)
 
 
+async def test_child_tool_step_text_offset_is_zero_before_the_final_answer() -> None:
+    # The persisted child `content` is its FINAL answer; a tool call in an earlier turn (even
+    # one that emitted preamble prose the final content doesn't carry) precedes that answer,
+    # so its split point is 0 — not an offset past the end of the shown content.
+    turns = [
+        LlmTurn("Let me start. ", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("Final answer", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    result = await run(loop)
+
+    assert result.text == "Final answer"
+    assert result.tool_steps[0]["text_offset"] == 0
+
+
+async def test_forced_final_answer_carries_tool_steps_and_reasoning() -> None:
+    # A capped sub-agent lands its answer via the forced-final synthesis path; that path must
+    # still emit the run's tool steps + full reasoning, not only the happy end_turn path.
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {"q": "a"}),), "tool_use", LlmUsage(1, 1), "r1"),
+        LlmTurn("", (ToolCall("c2", "search", {"q": "b"}),), "tool_use", LlmUsage(1, 1), "r2"),
+        LlmTurn("synthesized", (), "end_turn", LlmUsage(1, 1), "rf"),  # the forced final
+    ]
+    router, _ = router_with(turns)
+    loop = AgentLoop(
+        router, registry_with(make_tool("search", search)), guardrails=Guardrails(max_steps=2)
+    )
+    result = await loop.run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="q")],
+        force_final_answer=True,
+    )
+
+    assert result.stop_reason == "max_steps"
+    assert result.text == "synthesized"
+    assert [s["name"] for s in result.tool_steps] == ["search", "search"]
+    assert result.reasoning == "r1r2rf"
+
+
 async def test_force_final_answer_synthesizes_on_step_exhaustion() -> None:
     # A child that keeps tool-calling hits max_steps; with force_final_answer the loop
     # makes one final no-tools turn so the caller gets a real answer, not an empty one.

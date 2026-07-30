@@ -541,11 +541,10 @@ class AgentLoop:
         # The run's persisted tool steps + reasoning, folded into the transcript shape a
         # caller (the spawn service) records to the child's own session so its work replays
         # and is debuggable. Accumulated here so every return path carries them (via
-        # `_result`); inert when the caller never persists. `answer_parts`/`reasoning_parts`
-        # track the streamed prose/thinking lengths for each step's interleave offsets.
+        # `_result`); inert when the caller never persists. `reasoning_parts` tracks the
+        # streamed thinking length for each step's interleave offset into the reasoning trace.
         tool_steps: list[dict[str, Any]] = []
         reasoning_parts: list[str] = []
-        answer_parts: list[str] = []
 
         def _result(text: str, stop_reason: str, step_count: int) -> AgentResult:
             """Every `run` exit builds its AgentResult here so the accumulated tool steps +
@@ -587,7 +586,6 @@ class AgentLoop:
                 on_usage(final.usage.input_tokens, final.usage.output_tokens)
             await self._record(idx, "model", "converse", ok=True, cost_tokens=spent_final)
             reasoning_parts.append(final.reasoning)
-            answer_parts.append(final.text)
             return _result(final.text, stop_reason, step_count)
 
         for step in range(self._g.max_steps):
@@ -614,12 +612,10 @@ class AgentLoop:
                 cost_tokens=spent_call,
             )
             idx += 1
-            # Accumulate this turn's thinking + prose so each tool step below records the
-            # interleave offset (reasoning/answer length at the moment it was called), and so
-            # the full reasoning trace persists — the same interleave the streamed parent turn
-            # stores.
+            # Accumulate this turn's thinking so each tool step below records its interleave
+            # offset (reasoning length at the moment it was called) and the full reasoning
+            # trace persists — the same interleave the streamed parent turn stores.
             reasoning_parts.append(turn.reasoning)
-            answer_parts.append(turn.text)
             # Per-step progress hook (Wave S2 follow-up): the spawn service uses it to
             # stream a live subagent_progress per child step so the UI's budget meter
             # and step count move while a child works (children run non-streaming).
@@ -658,15 +654,18 @@ class AgentLoop:
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
                 )
-                # Fold the call into the persisted step shape (offsets against the reasoning
-                # + prose streamed so far this run) so a caller can record the child's work to
-                # its own transcript and it's debuggable; the live `on_tool` forward below is
-                # unchanged.
+                # Fold the call into the persisted step shape so a caller can record the
+                # child's work to its own transcript and it's debuggable; the live `on_tool`
+                # forward below is unchanged. `reasoning_offset` indexes the full persisted
+                # reasoning trace (exact). `text_offset` is 0: the caller persists the child's
+                # FINAL answer as `content`, and every tool call happens in an earlier ReAct
+                # turn — before any of that answer is emitted — so each step's split point in
+                # the shown answer is its start.
                 tool_steps.append(
                     _persisted_step(
                         call,
                         dispatched,
-                        text_offset=sum(len(p) for p in answer_parts),
+                        text_offset=0,
                         reasoning_offset=sum(len(p) for p in reasoning_parts),
                     )
                 )
