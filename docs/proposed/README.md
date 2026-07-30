@@ -25,17 +25,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   tool, and a MusicScreen — mirroring the shipped image stack. Backend (Waves M0–M3) +
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
-- `DEEP_PRODUCE_PLAN.md` — generalize the `deep_research` pipeline into one **produce
-  engine** behind an abstraction layer, surfaced as two verbs: `deep_research`
-  (research→report, unchanged) and `deep_produce` (a caller-supplied Directive —
-  objective + output_kind — producing a plan/table/brief/…). Access (sources, seed, web,
-  sink) is resolved from the calling persona: a jerv call reaches web/library→external; a
-  curator call reaches library + EMR/health seed (read under RLS), web-forbidden,
-  ephemeral. One `deep_produce` tool serves both; the `seed ⇒ no-web ∧ no-external-sink`
-  invariant is the single enforced access-control point. Motivating recipe: a hypothetical
-  treatment plan grounded in a medical-history date range + a library category. Waves
-  W1–W3 (+ deferred health-scoped persistence W4), with a documented narrow carve-out to
-  the `EMR_IMPORT_PLAN.md` no-clinical-decision-support line.
 - `TEACHER_MODE_AGENTS_PLAN.md` — split the `teacher` persona into two agents:
   an owner **instructor** (authors/approves lessons + curricula, assigns to a
   child, reviews results) and a sandboxed non-owner **student** behind an
@@ -49,4 +38,5 @@ promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_P
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `DEEP_RESEARCH_TOOL_PLAN.md`, `DEEPEST_RESEARCH_TOOL_PLAN.md`, and
 `VIDEO_IMAGE_TOOLS_PLAN.md` were promoted to `../plans/` and are in progress.
-`ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (Scheduled).)_
+`ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (Scheduled).
+`DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (Scheduled).)_

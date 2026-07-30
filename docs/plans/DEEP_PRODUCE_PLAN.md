@@ -1,6 +1,6 @@
 # Deep Produce — one produce engine, two verbs
 
-> **Status:** Proposed · **Last verified:** 2026-07-29
+> **Status:** Scheduled · **Last verified:** 2026-07-30 · **Waves:** W1◻️ W2◻️ W3◻️
 
 Generalize the `deep_research` pipeline into a single **produce engine** behind an
 abstraction layer, surfaced as two verbs:

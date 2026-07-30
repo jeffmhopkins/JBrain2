@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-07-28
+> **Status:** Living · **Last verified:** 2026-07-30
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -319,6 +319,24 @@ stay out of scope); the video corpus is non-sensitive third-party content jerv a
 personas, and per-mode gather/refill/review routing) and DV2 (jerv steering, `source_mode` persistence via
 migration 0142, and the report-view provenance chip) landed on-branch; a conditional DV3 (owner GUI-gate
 sign-off on the trivial-reuse chip) remains.
+
+**Scheduled:** Deep produce (build plan: `docs/plans/DEEP_PRODUCE_PLAN.md`) — generalize the shipped
+`deep_research` pipeline into one `produce()` engine behind an abstraction layer, surfaced as two
+verbs: `deep_research` (the report preset, behavior-preserving) and `deep_produce` (a caller-supplied
+`Directive` — objective + `output_kind` — producing a plan/table/brief/differential/timeline). Access
+is a seed-keyed `SourcePlan`, not a persona field the engine cannot read: the engine branches on whether
+it assembled a health/KB seed, giving a three-way seeded / refuse / plain-produce split that makes the
+`seed ⇒ ¬web ∧ ¬external-sink` exfiltration invariant self-enforcing. **W1 delivers a standalone jerv
+capability** — `deep_produce` over web/library to any artifact, external sink — whose value is
+independent of the health use case, gated only by `deep_research`/`deepest` byte-stable regression (both
+drive the same `research()` method, so the refactor keeps one `_run` implementation with `on_round`/
+`require_persist` intact). W2 adds the curator seeded path (EMR facts seeded under RLS in the parent,
+web-fan suppression, fail-closed grounding refusal, `external`-write suppression, non-report render) under
+a narrow, documented carve-out to `EMR_IMPORT_PLAN.md`'s no-clinical-decision-support line; W3 is the
+recipe registry + owner UI. Adversarially reviewed (42 findings, 19 confirmed after verification) and
+hardened before scheduling. W1–W3 open. The motivating recipe: `deep_produce(output_kind=plan)` from a
+curator call — a hypothetical treatment plan grounded in a medical-history date range and a library
+category, if symptoms were to recur.
 
 **In progress:** Video/image inspection tools (build plan: `docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md`) —
 give jerv eyes on a specific still so a visual question is answered from pixels it actually saw, not a
