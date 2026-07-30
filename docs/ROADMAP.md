@@ -320,7 +320,7 @@ personas, and per-mode gather/refill/review routing) and DV2 (jerv steering, `so
 migration 0142, and the report-view provenance chip) landed on-branch; a conditional DV3 (owner GUI-gate
 sign-off on the trivial-reuse chip) remains.
 
-**Scheduled:** Deep produce (build plan: `docs/plans/DEEP_PRODUCE_PLAN.md`) — generalize the shipped
+**In progress:** Deep produce (build plan: `docs/plans/DEEP_PRODUCE_PLAN.md`) — generalize the shipped
 `deep_research` pipeline into one `produce()` engine behind an abstraction layer, surfaced as two
 verbs: `deep_research` (the report preset, behavior-preserving) and `deep_produce` (a caller-supplied
 `Directive` — objective + `output_kind` — producing a plan/table/brief/differential/timeline). Access
@@ -334,7 +334,9 @@ drive the same `research()` method, so the refactor keeps one `_run` implementat
 web-fan suppression, fail-closed grounding refusal, `external`-write suppression, non-report render) under
 a narrow, documented carve-out to `EMR_IMPORT_PLAN.md`'s no-clinical-decision-support line; W3 is the
 recipe registry + owner UI. Adversarially reviewed (42 findings, 19 confirmed after verification) and
-hardened before scheduling. W1–W3 open. The motivating recipe: `deep_produce(output_kind=plan)` from a
+hardened before scheduling. **W1 shipped** (PR #965 — the standalone jerv `deep_produce` verb, the
+single-`_run` refactor, `output_kind` shaping byte-stable for reports); W2 (curator seed) + W3 open.
+The motivating recipe: `deep_produce(output_kind=plan)` from a
 curator call — a hypothetical treatment plan grounded in a medical-history date range and a library
 category, if symptoms were to recur.
 
