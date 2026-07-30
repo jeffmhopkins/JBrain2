@@ -242,9 +242,14 @@ narrow, owner-only case, recorded rather than silently overridden:
 - Curator runs at `budget_multiplier=1` (~2.5M pool) vs. jerv's 6 (`agents.py:298,310`),
   but the review reserves are absolute jerv-sized constants — `DR_ANALYST_RESERVE=1_125_000`
   + `DR_CRITIQUE_RESERVE=375_000` (`:194-196`), set with no clamp (`:527`). ~1.5M is ~60% of
-  curator's pool, starving a curator fan (~200k/child). W2 must either raise the
-  produce-holding curator's multiplier or make `DR_*_RESERVE` **proportional to**
-  `tree.children_budget()`, with a seatability unit test.
+  curator's pool, starving a curator fan (~200k/child).
+  - **W2 decision (2026-07-30): no multiplier change.** A *seeded* run — the W2 case — is
+    pinned to `library` mode over the (usually small) analysed-video corpus and carries its
+    substance in the EMR seed, so its gather fan is light; the ~1M left after the reserve
+    seats it. Raising curator's global `budget_multiplier` would inflate *every* curator turn's
+    guardrail, a broad behaviour change unjustified by the seeded case. If real usage shows a
+    heavy *general* (no-seed, web) curator produce clamping breadth, revisit with a proportional
+    `DR_*_RESERVE` (keyed on `tree.children_budget()`) rather than a blanket multiplier bump.
 - **Relocated cost profile:** a curator produce can peg the box for the full
   `TREE_WALL_CLOCK_S=6600s` deadline (`tree.py:114`, persona-agnostic) inside one
   interactive turn. Decide a lower ceiling for the curator verb, or route heavy runs to a
@@ -267,6 +272,19 @@ wave** that ever does template the system prompt:
 > the same PR.
 
 ## Waves
+
+> **W2 progress (on branch, 2026-07-30).** Landed + unit-tested: the seed-keyed `produce()`
+> split (seeded / refuse / plain), `_assemble_emr_seed` (reads labs+encounters on the caller's
+> own health-scoped session, reusing the read_labs/read_encounters RLS path), the `_run` seed
+> injection + web-fan-impossible (`library` pin) + external-write suppression + defense-in-depth
+> invariant, the `extra_tools` admission gate + curator grant, and the frontend fix so
+> `deep_produce` drives the deep-research timeline (not a stray fan card). **Remaining before
+> W2 merges:** the B3 critic decoupling for seeded runs (the citation/quantitative check is
+> gated on `_can_open_sources`, which is false for `library` — the writer prompt still grounds,
+> but the critic should verify a seeded plan against the record); an on-box curator run; and
+> CI's integration suite (the seed read reuses the already-RLS-tested lab_results path, and the
+> zero-`research_reports`-rows property is unit-covered via persist-suppression, so no NEW table
+> or RLS isolation test is required — CLAUDE.md #3).
 
 **W1 stands alone.** W1 delivers a complete, shippable jerv capability — a standalone
 `deep_produce` verb that turns web/library research into a caller-chosen artifact (plan,

@@ -1,6 +1,6 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-29 · **Waves:** W0✅ W1✅ W2◻️ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+> **Status:** In progress · **Last verified:** 2026-07-30 · **Waves:** W0✅ W1✅ W2◻️ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Wave 0
 (gates + fixtures) and Wave 1 (storage bedrock — schema defs, the `fhir_status`/supersession
@@ -52,6 +52,15 @@ RLS** (the corpus is a single patient — a Phase-7 guided-intake follow-on, §5
 **The safety frame (binding, not a footer):** JBrain is *personal record-keeping, not medical
 advice*. The tools and wiki return **what the record says**, cited; they never synthesize a
 diagnosis, never present an inference as fact, and never recommend action.
+
+> **Narrow carve-out — `deep_produce` records-grounded mode** (`docs/plans/DEEP_PRODUCE_PLAN.md`,
+> W2): the one place the owner may ask for a *hypothetical, prospective* plan grounded in and
+> cited to their record ("an idealized plan **if** these symptoms recur, given my history from
+> X to Y"). It is owner-invoked only (never auto-run or wiki-surfaced), stays entirely local
+> (no web egress of health text), never persists to the shareable corpus, never writes a
+> committed health fact, and carries a not-medical-advice disclaimer. It relaxes "never
+> recommend action" for that single, explicitly-hypothetical, cited case — and nothing else in
+> this plan's tools/wiki does.
 
 ---
 
