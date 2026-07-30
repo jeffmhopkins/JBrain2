@@ -120,6 +120,21 @@ describe("Markdown", () => {
     expect(out).toContain("Here is the forecast:");
   });
 
+  it("renders <br> in a table cell as a real line break, not literal text", () => {
+    // A GFM cell can't hold a literal newline, so models emit <br> to break lines
+    // inside one — it must become a real <br>, not the leaked text "<br>".
+    const out = html("| Item | Details |\n|------|------|\n| Flour | 2 cups<br>5 tsp powder |");
+    expect(out).toContain("<td>Flour</td>");
+    expect(out).toContain("2 cups<br>5 tsp powder");
+    expect(out).not.toContain("&lt;br&gt;");
+  });
+
+  it("honours <br/> and <br /> variants, any case", () => {
+    expect(html("a<br/>b")).toContain("a<br>b");
+    expect(html("a<br />b")).toContain("a<br>b");
+    expect(html("a<BR>b")).toContain("a<br>b");
+  });
+
   it("does not treat a horizontal-rule-like line as a table", () => {
     // A pipe-free line followed by dashes is not a table (no header pipe).
     const out = html("just prose\n---\nmore prose");

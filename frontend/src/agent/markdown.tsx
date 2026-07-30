@@ -52,8 +52,12 @@ const DATE = new RegExp(
 // fullwidth form a browsing model (gpt-oss) emits instead — recognized here (digits
 // only, so CJK content like 【重要】 is untouched) so a disobedient turn's citation
 // still becomes a tappable chip rather than leaking the raw token as prose.
+// `<br>` (and `<br/>`/`<br />`, any case) is the one raw-HTML tag we honour: a GFM
+// table cell can't hold a literal newline, so models emit `<br>` to break lines
+// inside a cell — without this it leaks as the literal text "<br>". It renders to a
+// real `<br>` node in every inline context (cells, list items, headings, prose).
 const INLINE =
-  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(【\^?\d+】)|(【\s*https?:\/\/[^】\n]+】)/;
+  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(【\^?\d+】)|(【\s*https?:\/\/[^】\n]+】)|(<[bB][rR]\s*\/?>)/;
 
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
@@ -570,6 +574,10 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
           {tok.slice(1, -1)}
         </code>,
       );
+    } else if (tok[0] === "<") {
+      // A `<br>` line break — the only raw HTML tag we honour (models emit it to
+      // break lines inside a table cell, where a literal newline is impossible).
+      out.push(<br key={k} />);
     } else if (tok.startsWith("$$")) {
       out.push(<MathPart key={k} latex={tok.slice(2, -2)} display streaming={ctx.streaming} />);
     } else if (tok.startsWith("$")) {
