@@ -1,6 +1,6 @@
 # Deep Research — staged single-source pipeline (the interview fix)
 
-> **Status:** Scheduled · **Last verified:** 2026-07-30 · **Waves:** W1◻️ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-30 · **Waves:** W1✅ W2◻️ W3◻️
 
 Teach the shipped `deep_research` / `deep_produce` engine to run a **staged,
 dependency-aware** pipeline so it can process a *single known source* — the motivating
@@ -192,7 +192,7 @@ feed-forward + per-stage egress) gets a red-team pass.
 
 | Wave | Scope | Gate |
 |---|---|---|
-| **W1 — child tool-call + reasoning persistence** | `loop.py` accumulate `tool_steps`+reasoning on `AgentResult` (additive fields, capped step summaries); `spawn.py` `_persist_child` threads them into `record_exchange`; frontend sub-agent-session replay renders persisted steps (verify/extend the load mapping). No migration. | A child with N tool steps persists N `tools` entries + reasoning (today `[]`); `load` round-trip; step-summary cap holds; existing `deep_research`/spawn suites green; a reopened sub-agent session replays its Worked list. |
+| **W1 — child tool-call + reasoning persistence ✅ (landed on-branch)** | `loop.py` accumulates `tool_steps`+reasoning on `AgentResult` (additive fields, per-step summary capped at 4 KB — the model still sees the full result in-context); `spawn.py` `_persist_child` threads them into `record_exchange`; frontend needs **no change** — `fromTurn` (`useFullBrain.ts:168`) already hydrates any session's stored `tools`/`reasoning`. `text_offset` is 0 for a child step (the persisted content is the final answer, which every call precedes); `reasoning_offset` indexes the full reasoning trace. No migration. Independently reviewed (reviewer ≠ builder); one low-severity `text_offset` fidelity finding fixed. | A child with N tool steps persists N `tools` entries + reasoning (was `[]`); `load` round-trip; step-summary cap holds; the forced-final path carries the trace; existing `deep_research`/spawn suites green (134 unit). |
 | **W2 — staged gather + feed-forward + per-stage persona** | additive `stages` plan schema (single-stage ≡ today, byte-stable); sequential staged runner feeding each stage forward via the inert-data envelope; per-stage persona from source mode + role (extract=library, answer/fact-check=web under `library_first`); stage/convergence bounds; `dr-plan-v6` prompt. | single-stage plan runs byte-identically to today's flat gather; a 2-stage plan feeds stage 1 → stage 2 (no re-derivation); `library_first` extract stage holds no web, answer stage holds web; `library` mode issues zero `web_*` on every stage (exclusive guarantee); injection: a poisoned stage-1 finding cannot steer stage 2; tree bounds honored. |
 | **W3 — single-source primitives + table + routing** | windowed/uncapped single-video read (`read_external_video` `.tool` bump); enumeration-mode clause; `deep_produce(output_kind=table)` for the interview shape; `jerv.prompt` routing bump. | a windowed read returns the whole 80k transcript across calls; an enumeration brief sweeps the full source; a table run emits the `deep_research_report` view with a Markdown table keyed per item; jerv routes a single-source extract request to the staged `table` path; `.prompt`/`.tool` digest pins. |
 
