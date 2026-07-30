@@ -138,19 +138,23 @@ The exfiltration property is enforced, **not** "by construction":
   persona is `review_library` (no web tool). So "no web-capable agent receives seed text"
   holds — but see the critic gap in B3 below, which is about *discipline*, not egress.
 
-## Output surfacing — a first-class wave  [R]
+## Output surfacing — a first-class W1 deliverable  [R]
 
-The original plan omitted this entirely; it is the feature's primary deliverable.
+The original plan omitted this entirely; it is the feature's primary deliverable, and it
+lands in W1 because W1 already ships a non-report artifact that must render.
 
 - `_frame` hardcodes `header = "DEEP RESEARCH REPORT — {question}"` (`deep_research.py:1234`);
   `_report_view` emits `view="deep_research_report"` with report-shaped slots (`:1259-1290`);
   the frontend registry maps only that name and returns `null` for unknown views
   (`registry.tsx:~2419-2457`).
-- **W2 task:** parameterize `_frame`'s title and `_report_view` (a generic `produce` view,
-  or a per-`output_kind` view name), register the frontend component(s), and specify what
-  `view` a plan/table/brief returns and what its provenance strip shows (a library/seed run
-  has no web-sources strip). Any new/changed view is a GUI surface under the `PROCESS.md`
-  **mock gate**.
+- **W1 task (core render).** Because W1 ships a jerv non-report artifact end-to-end, the
+  render path is a **W1** deliverable, not W2: parameterize `_frame`'s title and
+  `_report_view` (a generic `produce` view, or a per-`output_kind` view name), register the
+  frontend component(s), and specify what `view` a plan/table/brief returns. Any new/changed
+  view is a GUI surface under the `PROCESS.md` **mock gate**. A `plan` must never render in
+  the report card titled "DEEP RESEARCH REPORT" with an empty web-sources strip.
+- **W2 refinement (seed-specific).** The provenance strip for a seeded/library run (which has
+  no web sources — it cites library reports + EMR facts) is a W2 refinement of the W1 view.
 - **Report regression pin:** golden `ViewPayload.data` dict + persisted row for a report
   run, plus a smoke assertion it still emits stream steps 6/8 (`_WRITE_STEP`/`_REVISE_STEP`,
   `:266-267`) and `view="deep_research_report"`.
@@ -256,10 +260,19 @@ synth prompt (sha256 of the report-path body + a `_SYNTH.version` assert, mirror
 
 ## Waves
 
+**W1 stands alone.** W1 delivers a complete, shippable jerv capability — a standalone
+`deep_produce` verb that turns web/library research into a caller-chosen artifact (plan,
+table, brief, differential, timeline), not only the report `deep_research` already gives.
+This value is **independent of the health/curator use case**: it lands even if W2 (the
+seeded curator path) is never built. W1 touches **no** health, seed, firewall, or
+medical-safety surface — it is a pure generalization of a shipped jerv tool, gated only by
+`deep_research`/`deepest` behavior-preservation. Treat W2 as an optional consumer of the
+W1 engine, not a dependency of it.
+
 | Wave | Scope | Gate |
 |---|---|---|
-| **W1** | Single-impl refactor: `_run(directive, source_plan, on_round, require_persist)`; `deep_research`/`deepest` as thin adapters (both kwargs threaded); byte-stable report rule (no OBJECTIVE block; `_shape_directive`); `output_kind` plumbing; `extra_tools` gate. **No** curator/seed/non-report render yet. Ship a jerv non-report produce recipe end-to-end. | `deep_research` **and** `deepest` regression: golden `ViewPayload` + persisted row + step 6/8 + `deepest_run.py:165`/`resume_deepest` exercised; `_admits` byte-identical for jerv/teacher; directive-fidelity (report run's plan/reflect/synth/critique inputs identical pre/post) |
-| **W2** | curator `deep_produce`: seed-keyed SourcePlan (D5) — the three-way seeded/refuse/plain split; health seed + fail-closed grounding refusal; `_persist` external-write suppression (D6); web-fan suppression; output-surfacing (`_frame`/`_report_view` + frontend + mock gate); budget decision; treatment-plan recipe; document the owner-wide `agent_turns` property. | RLS isolation (health read health-scoped; zero `research_reports` rows written); exfiltration property test (no web persona spawns, no seed reaches a fan child); non-health session **refuses**; sandbox-untouched; on-box run; mock-gate sign-off |
+| **W1 — jerv `deep_produce` (standalone value)** | Single-impl refactor: `_run(directive, source_plan, on_round, require_persist)`; `deep_research`/`deepest` as thin adapters (both kwargs threaded); byte-stable report rule (no OBJECTIVE block; `_shape_directive`); `output_kind` plumbing; `extra_tools` gate; **core output-surfacing** (parameterized `_frame` title + generic/per-kind view + frontend component + mock gate). Ship a **jerv-facing `deep_produce`** with ≥1 non-report `output_kind` (e.g. `plan`) end-to-end over web/library, external sink — a self-contained jerv feature that renders correctly. **No** curator/seed/health surface. B3 discipline applies here too: jerv's non-report output keeps the v10–v14 provenance block (invariant) with only the artifact-shape section templated. | `deep_research` **and** `deepest` regression: golden `ViewPayload` + persisted row + step 6/8 + `deepest_run.py:165`/`resume_deepest` exercised; `_admits` byte-identical for jerv/teacher; directive-fidelity (report run's plan/reflect/synth/critique inputs identical pre/post); a jerv non-report run produces the requested artifact, rendered in its own view, with the provenance block intact; W1 mock-gate sign-off for the new view |
+| **W2** | curator `deep_produce`: seed-keyed SourcePlan (D5) — the three-way seeded/refuse/plain split; health seed + fail-closed grounding refusal; `_persist` external-write suppression (D6); web-fan suppression; seed-specific view refinement (library/EMR provenance strip); budget decision; treatment-plan recipe; document the owner-wide `agent_turns` property. | RLS isolation (health read health-scoped; zero `research_reports` rows written); exfiltration property test (no web persona spawns, no seed reaches a fan child); non-health session **refuses**; sandbox-untouched; on-box run; mock-gate sign-off |
 | **W3** | Recipe registry (named `objective` + `output_kind` presets) and owner UI (recipe / date range / category). | Recipe round-trip; mock-gate |
 | **W4** *(systemic follow-up, not a v1 blocker — see D6)* | Domain-tag the agent transcript so health turns (all of them, not just `deep_produce`) are firewalled; optionally a revisitable health-scoped saved-artifact store under `domain_code='health'`. Promotes to a W2 prerequisite only if the owner requires cross-scope isolation of health output within their own sessions. | New/changed RLS + isolation test on `agent_turns`; artifact-store isolation test |
 
