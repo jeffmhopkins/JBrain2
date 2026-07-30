@@ -51,6 +51,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.briefs import compose_feed_block, prepend_feed
@@ -58,6 +59,7 @@ from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.spawn import SpawnService, _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
+from jbrain.db.session import scoped_session
 from jbrain.external.research_corpus import persist_report
 from jbrain.llm import LlmBadResponseError, LlmRouter
 from jbrain.llm.promptfile import load_prompt
@@ -115,7 +117,13 @@ _DEFAULT_OUTPUT_KIND = "report"
 # Where a finished artifact is persisted. `external` is the owner-wide research corpus jerv
 # reads back and shares; a seeded (health/KB) deep_produce run uses a non-external sink so a
 # seed run never lands in the shareable corpus (the exfiltration invariant's sink half).
+# `ephemeral` = returned into the owner's turn transcript only (agent_turns, owner-wide, NOT
+# health-firewalled in v1 — DEEP_PRODUCE_PLAN.md D6), never the external corpus.
 _SINK_EXTERNAL = "external"
+_SINK_EPHEMERAL = "ephemeral"
+
+# How many EMR labs / encounters to pull into a health seed (a bounded, recent-first window).
+_EMR_SEED_LIMIT = 200
 
 
 @dataclass(frozen=True)
@@ -474,6 +482,27 @@ def _findings_block(results: list[_ChildResult]) -> str:
     return compose_feed_block(fed)
 
 
+def _opt_str(v: object) -> str | None:
+    """A non-blank string argument, else None — for optional string params like the EMR
+    seed's `emr_since`/`emr_until` date bounds."""
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _emr_seed_child(seed: str) -> _ChildResult:
+    """The owner's EMR facts wrapped as a synthetic gather finding so the pipeline weaves them
+    into the analyst cross-check and the synthesized artifact. persona `research_library` (a
+    no-web corpus family) so it counts as a finding AND no web-capable agent ever handles it;
+    it is not a spawned agent (blank session_id — never deep-linked in the roster)."""
+    return _ChildResult(
+        label="medical history (your records)",
+        persona="research_library",
+        summary=seed,
+        ok=True,
+        session_id="",
+        web_sources=(),
+    )
+
+
 class DeepResearchService:
     """Drives one deep-research run in-request, reusing the spawn fan for every stage."""
 
@@ -591,10 +620,40 @@ class DeepResearchService:
         if mode not in _MODES:
             return _refuse(f"unknown mode {mode!r}; choose one of {list(_MODES)}.")
         deepest = mode == "deepest"
+
+        # Seed-keyed SourcePlan (DEEP_PRODUCE_PLAN.md, D5): the engine branches on whether a
+        # health/KB seed is ASSEMBLED, never on persona. An EMR date range (`emr_since` /
+        # `emr_until`) is the request for a records-grounded run; the three-way split is
+        # (1) seeded, (2) refuse (requested but ungrounded), (3) plain produce (no seed = W1).
+        emr_since, emr_until = _opt_str(args.get("emr_since")), _opt_str(args.get("emr_until"))
+        seed: str | None = None
+        sink = _SINK_EXTERNAL
+        if emr_since or emr_until:
+            # Fail closed: a records-grounded plan needs a health-scoped OWNER session. RLS is
+            # the real gate on the read; this check turns "no rows" into an honest refusal
+            # rather than an ungrounded "treatment plan" (the worst failure mode).
+            sess = ctx.session
+            if sess.principal_kind != "owner" or "health" not in tuple(sess.domain_scopes):
+                return _refuse(
+                    "a records-grounded plan needs a health-scoped owner session — this "
+                    "session can't read your medical records."
+                )
+            # Seeded ⇒ local only: reject an explicit web/library_first ask so health-derived
+            # text never becomes a web query (the exfiltration invariant, enforced at source).
+            if args.get("sources") in ("web", "library_first"):
+                return _refuse(
+                    "a records-grounded plan stays on your local library — it can't reach the web."
+                )
+            seed = await self._assemble_emr_seed(ctx, since=emr_since, until=emr_until)
+            if not seed.strip():
+                return _refuse(
+                    "no medical records found in that date range — nothing to ground a plan on."
+                )
+            source_mode = "library"  # no web persona ever spawns for a seeded run
+            sink = _SINK_EPHEMERAL  # never the shareable external corpus (turn transcript only)
+
         directive = Directive(objective=objective, output_kind=output_kind)
-        # W1: the plain path only — no seed, external sink (the jerv verb). The seed-keyed
-        # curator SourcePlan (seed present ⇒ local + non-external sink) is W2.
-        source_plan = SourcePlan(source_mode=source_mode, seed=None, sink=_SINK_EXTERNAL)
+        source_plan = SourcePlan(source_mode=source_mode, seed=seed, sink=sink)
         return await self._run(
             ctx,
             question=question,
@@ -605,6 +664,50 @@ class DeepResearchService:
             on_round=on_round,
             require_persist=require_persist,
         )
+
+    async def _assemble_emr_seed(
+        self, ctx: ToolContext, *, since: str | None, until: str | None
+    ) -> str:
+        """Read the owner's EMR labs + encounters in [since, until] under the caller's OWN
+        health RLS scope and return them as a prose block to seed the run. The read runs on
+        `ctx.session`, so Postgres RLS is the firewall — a non-health session sees nothing and
+        this returns "" (the caller then refuses). Reuses the read_labs/read_encounters
+        formatting so the seed reads exactly like those tools' output."""
+        if self._maker is None:
+            return ""
+        from jbrain.agent.labtools import _LAB_COLS, _encounter_line, format_labs
+
+        lab_where, enc_where = ["is_current"], []
+        params: dict = {"limit": _EMR_SEED_LIMIT}
+        if since:
+            lab_where.append("collected_at >= :since")
+            enc_where.append("admitted_at >= :since")
+            params["since"] = since
+        if until:
+            lab_where.append("collected_at <= :until")
+            enc_where.append("admitted_at <= :until")
+            params["until"] = until
+        lab_sql = (
+            f"SELECT {_LAB_COLS} FROM app.lab_results WHERE {' AND '.join(lab_where)}"
+            " ORDER BY collected_at DESC LIMIT :limit"
+        )
+        enc_clause = f" WHERE {' AND '.join(enc_where)}" if enc_where else ""
+        enc_sql = (
+            "SELECT entity_id, class, facility, care_unit, admitted_at, discharged_at,"
+            f" los_days, disposition FROM app.encounters{enc_clause}"
+            " ORDER BY admitted_at DESC NULLS LAST LIMIT :limit"
+        )
+        async with scoped_session(self._maker, ctx.session) as s:
+            lab_rows = list((await s.execute(text(lab_sql), params)).mappings().all())
+            enc_rows = list((await s.execute(text(enc_sql), params)).mappings().all())
+        parts: list[str] = []
+        if lab_rows:
+            parts.append("Lab results on record:\n" + format_labs(lab_rows))
+        if enc_rows:
+            parts.append(
+                "Encounters on record:\n" + "\n".join(_encounter_line(r) for r in enc_rows)
+            )
+        return "\n\n".join(parts)
 
     async def _run(
         self,
@@ -639,6 +742,16 @@ class DeepResearchService:
         # decompose twin — and gather only: a refill gap is already narrow.
         if deepest and source_mode == "web" and ctx.tree.max_depth > MAX_DEPTH:
             gather_persona = "research_deep"
+
+        # Exfiltration invariant (DEEP_PRODUCE_PLAN.md): a seeded run is pinned to the
+        # library (no-web) personas and a non-external sink, so health-derived text never
+        # reaches a web-capable agent nor the shareable corpus. produce() enforces this at the
+        # entrypoint; re-assert here so no future caller can slip a seed onto a web run.
+        if source_plan.seed is not None and (
+            source_mode != "library" or source_plan.sink == _SINK_EXTERNAL
+        ):
+            log.error("deep_produce.seed_invariant", source_mode=source_mode, sink=source_plan.sink)
+            return _refuse("a records-grounded run must stay on the local library.")
 
         # --- (1) PLAN (+ complexity) ----------------------------------------------
         self._phase(ctx, 1, "Planning the investigation")
@@ -687,6 +800,13 @@ class DeepResearchService:
                 # children (analyst, critique) keep medium — that's where the thinking is.
                 effort="low",
             )
+            # A seeded run (deep_produce with an EMR/KB seed) weaves the owner's records in as
+            # a synthetic gather finding: it makes gather non-empty (so an owner with no
+            # analysed videos still produces a grounded artifact), and the seed then flows to
+            # the analyst cross-check and the synthesizer. It only ever reaches library-family
+            # (no-web) agents — the invariant above pins a seeded run to `library`.
+            if source_plan.seed:
+                gather = [_emr_seed_child(source_plan.seed), *gather]
             gather_ok = any(r.ok for r in gather)
             # An empty gather is fatal for `web`/`library` (there is nothing to synthesize
             # from, and a dry library must not silently reach the web). `library_first`
@@ -855,25 +975,29 @@ class DeepResearchService:
         )
         # Persist the finished report to the library (best-effort): a follow-up turn reads it
         # back through the report tools, and it joins the browsable research corpus. A DB/write
-        # failure never fails the report the owner already sees.
-        await self._persist(
-            ctx,
-            question=question,
-            report=report,
-            complexity=complexity,
-            rounds=rounds,
-            roster=roster,
-            sources=sources,
-            analyzed=analyzed,
-            revised=revised,
-            coverage_limited=coverage_limited,
-            source_mode=source_mode,
-            # Tag the library row so a deepest report doesn't clobber a deep one — or a
-            # deep_produce artifact a report — on the same question (0148 tool-aware dedup).
-            tool=_tool_tag(directive.output_kind, deepest),
-            # A background run has no inline delivery, so a lost write is a failed run.
-            require_persist=require_persist,
-        )
+        # failure never fails the report the owner already sees. A SEEDED run has a non-external
+        # sink — its output must NEVER land in the shareable corpus (health-derived), so persist
+        # is skipped entirely and the artifact lives only in the owner's turn (the sink half of
+        # the exfiltration invariant, DEEP_PRODUCE_PLAN.md).
+        if source_plan.sink == _SINK_EXTERNAL:
+            await self._persist(
+                ctx,
+                question=question,
+                report=report,
+                complexity=complexity,
+                rounds=rounds,
+                roster=roster,
+                sources=sources,
+                analyzed=analyzed,
+                revised=revised,
+                coverage_limited=coverage_limited,
+                source_mode=source_mode,
+                # Tag the library row so a deepest report doesn't clobber a deep one — or a
+                # deep_produce artifact a report — on the same question (0148 tool-aware dedup).
+                tool=_tool_tag(directive.output_kind, deepest),
+                # A background run has no inline delivery, so a lost write is a failed run.
+                require_persist=require_persist,
+            )
         return ToolOutput(
             _frame(
                 report,

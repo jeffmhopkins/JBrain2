@@ -225,6 +225,20 @@ def _ctx(
     )
 
 
+def _health_ctx(*, kind: str = "owner", scopes: tuple[str, ...] = ("health",)) -> ToolContext:
+    """A health-scoped owner ToolContext — the shape a curator seeded deep_produce runs
+    under (principal_kind='owner' + 'health' in domain_scopes)."""
+    return ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind=kind, domain_scopes=scopes),
+        scopes=scopes,
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=frozenset({"deep_produce"}),
+        tree=TreeState.rooted(800_000),
+        run_id="parent-run",
+    )
+
+
 def _svc(router: _FakeRouter, spawn: _FakeSpawn) -> DeepResearchService:
     return DeepResearchService(router=router, spawn=spawn)  # type: ignore[arg-type]
 
@@ -1291,3 +1305,128 @@ async def test_produce_refuses_a_child_turn_and_empty_question() -> None:
     child = await svc.produce(_ctx(depth=MAX_DEPTH), {"question": "x"})
     empty = await svc.produce(_ctx(), {"question": "  "})
     assert "refused" in child.lower() and "refused" in empty.lower()
+
+
+# --- W2: seeded curator deep_produce (EMR/health seed, local-pinned) (DEEP_PRODUCE_PLAN) ---
+
+
+def _seed_svc(router: _FakeRouter, spawn: _FakeSpawn, seed: str) -> DeepResearchService:
+    """A service whose EMR read is stubbed to `seed` (no DB), so the seed-path decisions are
+    testable with the fake router/fan."""
+    import types
+
+    svc = _svc(router, spawn)
+
+    async def _fake_seed(self, ctx, *, since, until):  # noqa: ANN001
+        return seed
+
+    svc._assemble_emr_seed = types.MethodType(_fake_seed, svc)  # type: ignore[method-assign]
+    return svc
+
+
+async def test_seeded_produce_refuses_a_non_health_session() -> None:
+    """An EMR date range from a session that is not a health-scoped owner fails closed —
+    RLS would return nothing, so an ungrounded 'plan' must never be produced."""
+    svc = _seed_svc(_FakeRouter(), _FakeSpawn(), "SEED")
+    # owner but no health scope
+    out1 = await svc.produce(_ctx(), {"question": "plan", "emr_since": "2026-01-01"})
+    # health scope but not owner
+    out2 = await svc.produce(
+        _health_ctx(kind="intake"), {"question": "plan", "emr_since": "2026-01-01"}
+    )
+    assert "refused" in out1.lower() and "refused" in out2.lower()
+    assert "health-scoped owner" in out1
+
+
+async def test_seeded_produce_refuses_when_no_records_in_range() -> None:
+    """A health-owner asking for a range with no records is refused (grounded-or-refused),
+    not synthesized from nothing."""
+    svc = _seed_svc(_FakeRouter(), _FakeSpawn(), "   ")  # empty seed
+    out = await svc.produce(
+        _health_ctx(), {"question": "plan", "output_kind": "plan", "emr_since": "2026-01-01"}
+    )
+    assert "refused" in out.lower() and "no medical records" in out.lower()
+
+
+async def test_seeded_produce_refuses_an_explicit_web_source() -> None:
+    """A seeded run may not reach the web — an explicit web/library_first ask is refused so
+    health-derived text never becomes a web query."""
+    svc = _seed_svc(_FakeRouter(), _FakeSpawn(), "SEED")
+    out = await svc.produce(
+        _health_ctx(),
+        {"question": "plan", "emr_since": "2026-01-01", "sources": "web"},
+    )
+    assert "refused" in out.lower() and "local library" in out.lower()
+
+
+async def test_seeded_produce_pins_library_injects_seed_and_skips_persist() -> None:
+    """A seeded run: forces library mode (no web persona EVER spawns), weaves the EMR seed in
+    as a finding so the synthesizer sees it, and NEVER persists to the external corpus."""
+    import types
+
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    spawn = _FakeSpawn()
+    svc = _seed_svc(router, spawn, "PLATELET COUNT 20 (2026-01-05); Hgb 7.1")
+    persisted: list = []
+
+    async def _spy_persist(self, ctx, **kw):  # noqa: ANN001
+        persisted.append(kw)
+
+    svc._persist = types.MethodType(_spy_persist, svc)  # type: ignore[method-assign]
+
+    out = await svc.produce(
+        _health_ctx(),
+        {
+            "question": "how should a recurrence be treated?",
+            "output_kind": "plan",
+            "objective": "an idealized treatment plan if the symptoms were to recur",
+            "emr_since": "2026-01-01",
+            "emr_until": "2026-06-30",
+        },
+    )
+
+    # No web persona ever ran — only the library (no-web) family.
+    personas = {f["persona"] for f in spawn.fans}
+    assert personas and not ({"research", "review"} & personas)  # zero web personas
+    assert personas <= {"research_library", "review_library"}
+    # The EMR seed reached the synthesizer as a finding (grounding the plan).
+    assert any("PLATELET COUNT 20" in uw for uw in router.synth_calls)
+    assert all("PRODUCE A PLAN" in uw for uw in router.synth_calls)  # shaped as a plan
+    # Sink is ephemeral → the external-corpus write is skipped entirely (never shareable).
+    assert persisted == []
+    # Still renders through the shared report view (the artifact is a .md document).
+    assert out.view is not None and out.view.view == "deep_research_report"  # type: ignore[attr-defined]
+
+
+async def test_run_rejects_a_seed_on_a_web_run_defense_in_depth() -> None:
+    """The engine re-asserts the invariant: even if a caller hands `_run` a seeded SourcePlan
+    on a web source mode, it refuses rather than letting the seed reach a web fan."""
+    from jbrain.agent.deep_research import Directive, SourcePlan
+
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    out = await svc._run(
+        _ctx(),
+        question="q",
+        breadth=4,
+        deepest=False,
+        directive=Directive(objective="q", output_kind="plan"),
+        source_plan=SourcePlan(source_mode="web", seed="HEALTH SEED", sink="ephemeral"),
+    )
+    assert "refused" in out.lower()
+
+
+async def test_plain_produce_still_persists_external_no_seed() -> None:
+    """A no-seed (W1) produce is unchanged: external sink, so persist IS attempted."""
+    import types
+
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    svc = _svc(router, _FakeSpawn())
+    persisted: list = []
+
+    async def _spy_persist(self, ctx, **kw):  # noqa: ANN001
+        persisted.append(kw)
+
+    svc._persist = types.MethodType(_spy_persist, svc)  # type: ignore[method-assign]
+    await svc.produce(_ctx(), {"question": "how does X work?", "output_kind": "plan"})
+    assert len(persisted) == 1  # external sink → persisted (tagged deep_produce)
+    assert persisted[0]["tool"] == "deep_produce"

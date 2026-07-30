@@ -1,6 +1,6 @@
 ---
 name: deep_produce
-version: 1
+version: 2
 permission: read
 cost_class: expensive
 params:
@@ -50,6 +50,22 @@ params:
         `deepest` keeps looping the gap-filling round until the topic is genuinely covered and
         the findings stop changing (or a large internal ceiling is hit) — materially more
         thorough and more expensive. Reserve `deepest` for a big, open topic; omit for `standard`.
+    emr_since:
+      type: string
+      description: >-
+        Optional (owner only). An ISO date — start of a window of the owner's OWN medical
+        records (labs + encounters) to GROUND the artifact in. Providing `emr_since` and/or
+        `emr_until` switches the run into records-grounded mode: it reads that window of the
+        owner's health record, weaves it in as source material, stays entirely on the local
+        library (never the web), and its output is NOT saved to the shareable research library.
+        Use it for "an idealized plan for me if these symptoms recur, given my history from X".
+        Requires a health-scoped owner session; otherwise the run is refused. Omit for a
+        general (non-personal) run.
+    emr_until:
+      type: string
+      description: >-
+        Optional (owner only). An ISO date — end of the medical-records window (see
+        `emr_since`). Either bound alone is allowed (open-ended on the other side).
   required: [question]
 ---
 Research a topic in depth and get back a structured, cited artifact of the kind you ask for —
@@ -70,3 +86,10 @@ and wait for the finished artifact rather than steering it mid-run.
 By default it researches the open web. Set `sources` to draw on the owner's analysed-video
 library instead (`library` for library-only, `library_first` to prefer the library and let the
 web fill gaps), for a topic the owner wants answered against their videos.
+
+To ground the artifact in the owner's OWN medical history, pass `emr_since`/`emr_until` (a date
+window). The run then reads that window of the owner's health record, uses it as source material,
+stays entirely local (no web), and does not save the result to the shareable research library —
+the "an idealized plan for me if these symptoms recur, given my records from X to Y" case. It is a
+hypothetical, educational plan grounded in and cited to the record, not medical advice and never a
+diagnosis, and it requires a health-scoped owner session (otherwise it is refused).
