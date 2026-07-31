@@ -1,0 +1,33 @@
+# The `rapidocr` sidecar: deterministic CPU OCR (PP-OCR via ONNX Runtime), the swap-free
+# counterpart to the VLM `vision.ocr` path. Cross-validates the model's text extraction and
+# backs the direct `ocr` tools (jerv + the jcode sandbox). Internal-only; the api is the
+# sole caller. The engine lazy-loads on first call and idle-unloads (server.py), so an idle
+# box pays only the process baseline. docs/plans/RAPIDOCR_PLAN.md.
+FROM python:3.12-slim
+
+# opencv needs libGL + libglib at runtime even in the headless wheel; nothing else is
+# required (onnxruntime is CPU, no GPU/driver deps).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Pin the OCR stack. rapidocr-onnxruntime bundles the PP-OCR det/cls/rec ONNX models
+# (~15 MB); onnxruntime + opencv-headless + numpy are its inference deps; fastapi/uvicorn
+# serve the one route.
+RUN pip install --no-cache-dir \
+      "rapidocr-onnxruntime==1.4.4" \
+      "onnxruntime==1.20.1" \
+      "opencv-python-headless==4.11.0.86" \
+      "numpy==2.2.6" \
+      "fastapi==0.115.6" \
+      "uvicorn==0.34.0"
+
+WORKDIR /app
+COPY deploy/rapidocr/server.py ./server.py
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]

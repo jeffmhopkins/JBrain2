@@ -144,6 +144,7 @@ from jbrain.tasks.scheduler import run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
+from jbrain.vision import RapidOcrClient
 from jbrain.web import (
     FaviconFetcher,
     HurricaneClient,
@@ -375,6 +376,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # one peer on both networks — is its only path (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
         app.state.searxng = searxng
         app.state.web_fetcher = web_fetcher
+        # The deterministic OCR sidecar client (docs/plans/RAPIDOCR_PLAN.md): shared on
+        # app.state so the ingest cross-validation, the jerv `ocr` tool, and the jcode `ocr`
+        # bridge all reach the one pinned instance. Empty url ⇒ degrade to VLM-only OCR.
+        app.state.rapidocr = RapidOcrClient(settings.rapidocr_url)
         web_handlers = build_web_handlers(
             searxng,
             web_fetcher,
