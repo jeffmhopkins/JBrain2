@@ -1,6 +1,6 @@
-"""The web-search / web-fetch shell helpers the sandbox CLIs call: the JCODE_INTERNET_SEARCH
-gate, and the request they POST to the api bridge. A localhost stub stands in for the api
-(no external network) — docs/plans/JCODE_GROK_INTERNET_PLAN.md.
+"""The web-search / web-fetch shell helpers the sandbox CLIs call: the
+JCODE_INTERNET_SEARCH gate, and the request they POST to the api bridge. A localhost
+stub stands in for the api (no external network) — JCODE_GROK_INTERNET_PLAN.md.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def _serve(recorder: _Recorder) -> ThreadingHTTPServer:
             self.end_headers()
             self.wfile.write(payload)
 
-        def log_message(self, *_a: object) -> None:  # silence the stub
+        def log_message(self, format: str, *args: object) -> None:  # silence the stub
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)

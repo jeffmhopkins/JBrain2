@@ -285,8 +285,8 @@ def test_spawn_shell_applies_model_env_overrides(tmp_path) -> None:
 
 
 def test_internet_env_marks_the_two_optins() -> None:
-    # Both flags are exported ALWAYS (like the planner pin) so a non-opted session clears
-    # any inherited image default rather than keeping it: "1" when on, "" when off.
+    # Both flags are exported ALWAYS (like the planner pin) so a non-opted session
+    # clears any inherited image default rather than keeping it: "1" on, "" off.
     assert internet_env(True, False) == {
         "JCODE_INTERNET_SEARCH": "1",
         "JCODE_INTERNET_EGRESS": "",

@@ -95,8 +95,8 @@ class CreateSessionRequest(BaseModel):
     # The planner served-model for grok's ``plan`` subagent (JCODE_GROK_PLAN_MODEL).
     # Empty = single-model (the executor plans too). The api resolves the owner's split.
     planner: str = ""
-    # Per-session internet capability (docs/plans/JCODE_GROK_INTERNET_PLAN.md), fixed at
-    # create. ``internet_search`` exposes the SearXNG helpers; ``internet_egress`` is the
+    # Per-session internet capability (JCODE_GROK_INTERNET_PLAN.md), fixed at create.
+    # ``internet_search`` exposes the SearXNG helpers; ``internet_egress`` is the
     # separate raw-outbound opt-in. The owner sets both per session.
     internet_search: bool = False
     internet_egress: bool = False

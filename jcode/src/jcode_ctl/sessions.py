@@ -56,9 +56,9 @@ class Session:
     # ``JCODE_GROK_PLAN_MODEL`` (empty = single-model: the executor plans too). Fixed at
     # create, so a mid-session settings change never re-points a live session.
     planner: str = ""
-    # Per-session internet capability, fixed at create (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
-    # ``internet_search`` exposes the SearXNG-backed ``web-search`` / ``web-fetch`` helpers
-    # (no raw egress). ``internet_egress`` is the separate raw-outbound opt-in.
+    # Per-session internet capability, fixed at create (JCODE_GROK_INTERNET_PLAN.md).
+    # ``internet_search`` exposes the SearXNG-backed web-search / web-fetch helpers (no
+    # raw egress); ``internet_egress`` is the separate raw-outbound opt-in.
     internet_search: bool = False
     internet_egress: bool = False
 
