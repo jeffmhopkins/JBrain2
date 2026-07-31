@@ -120,6 +120,23 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
     from jbrain.agent.toolregistry import NEVER_DEFAULT
 
     assert "deep_produce" in NEVER_DEFAULT
+    # jerv has no extra_tools grant (it holds deep_produce via its explicit allowlist).
+    assert jerv.extra_tools == frozenset()
+
+
+def test_curator_holds_deep_produce_via_extra_tools_only() -> None:
+    """The Full Brain curator is a `tools=None` wildcard, so it holds `deep_produce` (a
+    NEVER_DEFAULT tool) ONLY through the per-persona `extra_tools` grant (DEEP_PRODUCE_PLAN
+    W2) — the wildcard itself never absorbs it, and no other wildcard persona gains it."""
+    from jbrain.agent.agents import AGENTS, agent_for
+
+    curator = agent_for("curator")
+    assert curator.tools is None  # the wildcard is intact (not converted to an allowlist)
+    assert curator.extra_tools == frozenset({"deep_produce"})
+    # No other persona carries an extra_tools grant — the grant does not leak.
+    for name, profile in AGENTS.items():
+        if name != "curator":
+            assert profile.extra_tools == frozenset(), name
 
 
 def test_image_tools_are_jerv_only() -> None:

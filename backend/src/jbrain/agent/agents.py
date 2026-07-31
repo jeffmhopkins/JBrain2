@@ -281,6 +281,12 @@ class AgentProfile:
     tools: frozenset[str] | None
     reads_knowledge_base: bool
     budget_multiplier: int = 1
+    # A per-persona grant of otherwise-excluded tools, admitted ahead of the registry's
+    # web/NEVER_DEFAULT gates (toolregistry._admits `extra`). Lets a `tools=None` wildcard
+    # agent hold ONE such tool without widening the wildcard for every web/spawn tool —
+    # curator holds `deep_produce` this way (DEEP_PRODUCE_PLAN.md, D1). Empty for everyone
+    # else, so no other persona's admitted set changes.
+    extra_tools: frozenset[str] = frozenset()
 
 
 def _profile(
@@ -290,6 +296,7 @@ def _profile(
     tools: frozenset[str] | None,
     reads_knowledge_base: bool,
     budget_multiplier: int = 1,
+    extra_tools: frozenset[str] = frozenset(),
 ) -> AgentProfile:
     pf = load_prompt(_PROMPTS / filename)
     return AgentProfile(
@@ -300,6 +307,7 @@ def _profile(
         tools=tools,
         reads_knowledge_base=reads_knowledge_base,
         budget_multiplier=budget_multiplier,
+        extra_tools=extra_tools,
     )
 
 
@@ -307,7 +315,16 @@ def _profile(
 # co-located .prompt files"). `curator` reuses the original Full Brain system
 # prompt unchanged, so its persona and pinned version are exactly as before.
 AGENTS: dict[str, AgentProfile] = {
-    "curator": _profile("curator", "system.prompt", tools=None, reads_knowledge_base=True),
+    # curator holds `deep_produce` via extra_tools (ahead of the NEVER_DEFAULT gate) so a
+    # health-scoped Full Brain session can run a records-grounded produce (DEEP_PRODUCE_PLAN
+    # W2) — without widening its wildcard to any web/spawn tool.
+    "curator": _profile(
+        "curator",
+        "system.prompt",
+        tools=None,
+        reads_knowledge_base=True,
+        extra_tools=frozenset({DEEP_PRODUCE_TOOL}),
+    ),
     "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
     "jerv": _profile(
         "jerv",

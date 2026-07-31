@@ -697,6 +697,7 @@ class AgentLoop:
         agent_session_id: str | None = None,
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
+        extra_tools: frozenset[str] = frozenset(),
         general_knowledge_label: bool = True,
         here: tuple[float, float] | None = None,
         here_as_of: datetime | None = None,
@@ -740,6 +741,7 @@ class AgentLoop:
                 agent_session_id,
                 system,
                 tools_allow,
+                extra_tools,
                 general_knowledge_label,
                 here,
                 here_as_of,
@@ -754,8 +756,8 @@ class AgentLoop:
         # The selected agent supplies its persona prompt and tool allowlist
         # (docs/reference/ASSISTANT.md "Agent selection"); the default is the Full Brain curator.
         system_prompt = system or SYSTEM_PROMPT
-        tools = self._registry.schemas_for(scopes, tools_allow)
-        allowed = self._registry.allowed_names(scopes, tools_allow)
+        tools = self._registry.schemas_for(scopes, tools_allow, extra_tools)
+        allowed = self._registry.allowed_names(scopes, tools_allow, extra_tools)
         messages: list[LlmMessage] = list(conversation)
         # A tool may emit live items mid-execution onto one queue the per-call dispatch
         # below drains: a (step, total, preview, label) tuple becomes a ToolProgressEvent
@@ -1012,6 +1014,7 @@ class AgentLoop:
         agent_session_id: str | None = None,
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
+        extra_tools: frozenset[str] = frozenset(),
         general_knowledge_label: bool = True,
         here: tuple[float, float] | None = None,
         here_as_of: datetime | None = None,
@@ -1048,6 +1051,7 @@ class AgentLoop:
                 agent_session_id,
                 system,
                 tools_allow,
+                extra_tools,
                 here,
                 here_as_of,
                 context_window,
@@ -1115,6 +1119,7 @@ class AgentLoop:
         agent_session_id: str | None = None,
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
+        extra_tools: frozenset[str] = frozenset(),
         here: tuple[float, float] | None = None,
         here_as_of: datetime | None = None,
         context_window: int | None = None,
@@ -1127,8 +1132,8 @@ class AgentLoop:
         discarded retry never reaches the user). Shares the remaining cost cap in
         `budget` so retries cannot overspend the per-turn guardrail."""
         system_prompt = system or SYSTEM_PROMPT
-        tools = self._registry.schemas_for(scopes, tools_allow)
-        allowed = self._registry.allowed_names(scopes, tools_allow)
+        tools = self._registry.schemas_for(scopes, tools_allow, extra_tools)
+        allowed = self._registry.allowed_names(scopes, tools_allow, extra_tools)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session,

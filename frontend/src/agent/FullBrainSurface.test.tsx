@@ -400,6 +400,42 @@ describe("FullBrainSurface", () => {
     act(() => resolve());
   });
 
+  it("drives deep_produce through the deep-research timeline with the fan nested", async () => {
+    // deep_produce is the same engine/pipeline as deep_research (DEEP_PRODUCE_PLAN.md), so a
+    // live deep_produce turn must render the DeepResearchProgress checklist and NEST its fan
+    // inside the active stage — never the generic LiveToolStatus + a standalone fan block.
+    let resolve: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      resolve = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "dp1", name: "deep_produce", arguments: { question: "q" } };
+      yield { type: "tool_progress", tool_call_id: "dp1", step: 2, total: 0, label: "Researching" };
+      yield {
+        type: "subagent_spawned",
+        tool_call_id: "dp1",
+        child_id: "k1",
+        persona: "research",
+        label: "Homemade Biscuits",
+        depth: 1,
+      };
+      await gate; // hold the turn open mid-run so the live surface is what renders
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const { container } = render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "make a plan" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The deep-research pipeline checklist renders (the timeline), not a bare status line.
+    await waitFor(() => expect(container.querySelector(".fb-drp-step")).not.toBeNull());
+    expect(screen.getByText("Plan")).toBeInTheDocument();
+    // The fan is nested inside the timeline — no standalone fan block below the answer.
+    expect(screen.getByText("Homemade Biscuits")).toBeInTheDocument();
+    expect(container.querySelector(".fb-drp .fb-sa, .fb-drp-step .fb-sa")).not.toBeNull();
+    act(() => resolve());
+  });
+
   it("follows the stream only while the reader is pinned to the bottom", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "reply" };

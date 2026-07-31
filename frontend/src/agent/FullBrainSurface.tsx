@@ -621,8 +621,13 @@ function Bubble({
   // A deep_research turn owns BOTH the phase checklist and the fan it spawns: nest the fan
   // inside the active stage's slot (DeepResearchProgress) instead of dropping it below the
   // bubble, so the roster reads as part of the stage that's spending the budget. Other spawn
-  // turns (no deep_research tool) keep the fan as its own block under the answer.
-  const nestFanInDr = fanBlocks.length > 0 && liveStatuses.some((t) => t.name === "deep_research");
+  // turns (no deep-research-family tool) keep the fan as its own block under the answer.
+  // `deep_produce` is the same engine/pipeline as `deep_research` (DEEP_PRODUCE_PLAN.md), so
+  // it drives the identical streaming timeline — recognise both tool names.
+  const isDeepResearchProgress = (name: string) =>
+    name === "deep_research" || name === "deep_produce";
+  const nestFanInDr =
+    fanBlocks.length > 0 && liveStatuses.some((t) => isDeepResearchProgress(t.name));
   const standaloneFanBlocks = nestFanInDr ? null : fanBlocks;
 
   // The answer side: the prose, any tool-result views, and the proposal affordance.
@@ -645,7 +650,7 @@ function Bubble({
         <GeneratingPreview key={t.id} tool={t} />
       ))}
       {liveStatuses.map((t) =>
-        t.name === "deep_research" ? (
+        isDeepResearchProgress(t.name) ? (
           <DeepResearchProgress key={t.id} tool={t} fan={nestFanInDr ? fanBlocks : undefined} />
         ) : (
           <LiveToolStatus key={t.id} tool={t} />

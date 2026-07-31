@@ -168,3 +168,53 @@ def test_load_registry_fails_on_handler_without_sidecar(tmp_path: Path) -> None:
 
 def test_load_tool_returns_toolfile_type(tmp_path: Path) -> None:
     assert isinstance(load_tool(write_tool(tmp_path, "search.tool", SEARCH_TOOL)), ToolFile)
+
+
+# --- extra_tools: the per-agent grant ahead of the web/NEVER_DEFAULT gates (DEEP_PRODUCE W2) --
+
+_WEB_TOOL = """\
+---
+name: web
+version: 1
+permission: web
+params: {type: object}
+---
+A web tool.
+"""
+
+
+def test_extra_tools_admits_ahead_of_web_and_never_default_gates(tmp_path: Path) -> None:
+    """A wildcard (allow=None) agent excludes web-class and NEVER_DEFAULT tools; a per-agent
+    `extra` grant admits a named one ahead of BOTH gates, still bounded by domain visibility,
+    without widening the wildcard for the rest."""
+    # A read-class tool whose NAME is in NEVER_DEFAULT (deep_produce), a web tool, and a plain
+    # read tool — the last always visible to the wildcard.
+    dp = registered(SEARCH_TOOL.replace("name: search", "name: deep_produce"), tmp_path, "dp.tool")
+    web = registered(_WEB_TOOL, tmp_path, "web.tool")
+    plain = registered(SEARCH_TOOL, tmp_path, "search.tool")
+    registry = ToolRegistry([dp, web, plain])
+
+    # Wildcard WITHOUT the grant: NEVER_DEFAULT deep_produce + web both excluded.
+    base = registry.allowed_names({"general"}, None)
+    assert base == {"search"}
+    # WITH extra={deep_produce}: admitted ahead of the NEVER_DEFAULT gate; web still excluded;
+    # the rest of the wildcard is unchanged (no widening).
+    grant = frozenset({"deep_produce"})
+    granted = registry.allowed_names({"general"}, None, grant)
+    assert granted == {"search", "deep_produce"}
+    assert {t.name for t in registry.schemas_for({"general"}, None, grant)} == granted
+    # extra also beats the web gate when a web tool is the granted one.
+    assert "web" in registry.allowed_names({"general"}, None, frozenset({"web"}))
+    # An explicit-allow agent is unaffected by extra it doesn't need (allow gates first).
+    assert registry.allowed_names({"general"}, frozenset({"search"}), grant) == {"search"}
+
+
+def test_extra_tools_still_respects_domain_visibility(tmp_path: Path) -> None:
+    """A granted tool is still bounded by its declared domains — a health-domain grant is
+    invisible to a session that doesn't hold `health`."""
+    health_dp = registered(
+        LAB_TOOL.replace("name: read_lab", "name: deep_produce"), tmp_path, "dp.tool"
+    )
+    registry = ToolRegistry([health_dp])
+    assert registry.allowed_names({"general"}, None, frozenset({"deep_produce"})) == set()
+    assert registry.allowed_names({"health"}, None, frozenset({"deep_produce"})) == {"deep_produce"}

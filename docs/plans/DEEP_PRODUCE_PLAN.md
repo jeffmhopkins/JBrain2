@@ -1,6 +1,6 @@
 # Deep Produce — one produce engine, two verbs
 
-> **Status:** Scheduled · **Last verified:** 2026-07-30 · **Waves:** W1◻️ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-30 · **Waves:** W1✅ W2◻️ W3◻️
 
 Generalize the `deep_research` pipeline into a single **produce engine** behind an
 abstraction layer, surfaced as two verbs:
@@ -242,9 +242,14 @@ narrow, owner-only case, recorded rather than silently overridden:
 - Curator runs at `budget_multiplier=1` (~2.5M pool) vs. jerv's 6 (`agents.py:298,310`),
   but the review reserves are absolute jerv-sized constants — `DR_ANALYST_RESERVE=1_125_000`
   + `DR_CRITIQUE_RESERVE=375_000` (`:194-196`), set with no clamp (`:527`). ~1.5M is ~60% of
-  curator's pool, starving a curator fan (~200k/child). W2 must either raise the
-  produce-holding curator's multiplier or make `DR_*_RESERVE` **proportional to**
-  `tree.children_budget()`, with a seatability unit test.
+  curator's pool, starving a curator fan (~200k/child).
+  - **W2 decision (2026-07-30): no multiplier change.** A *seeded* run — the W2 case — is
+    pinned to `library` mode over the (usually small) analysed-video corpus and carries its
+    substance in the EMR seed, so its gather fan is light; the ~1M left after the reserve
+    seats it. Raising curator's global `budget_multiplier` would inflate *every* curator turn's
+    guardrail, a broad behaviour change unjustified by the seeded case. If real usage shows a
+    heavy *general* (no-seed, web) curator produce clamping breadth, revisit with a proportional
+    `DR_*_RESERVE` (keyed on `tree.children_budget()`) rather than a blanket multiplier bump.
 - **Relocated cost profile:** a curator produce can peg the box for the full
   `TREE_WALL_CLOCK_S=6600s` deadline (`tree.py:114`, persona-agnostic) inside one
   interactive turn. Decide a lower ceiling for the curator verb, or route heavy runs to a
@@ -268,6 +273,20 @@ wave** that ever does template the system prompt:
 
 ## Waves
 
+> **W2 progress (on branch, 2026-07-30).** Landed + unit-tested: the seed-keyed `produce()`
+> split (seeded / refuse / plain), `_assemble_emr_seed` (reads labs+encounters on the caller's
+> own health-scoped session, reusing the read_labs/read_encounters RLS path), the `_run` seed
+> injection + web-fan-impossible (`library` pin) + external-write suppression + defense-in-depth
+> invariant, the `extra_tools` admission gate + curator grant, and the frontend fix so
+> `deep_produce` drives the deep-research timeline (not a stray fan card). **Remaining before
+> `deep_produce` drives the deep-research timeline (not a stray fan card); and **B3 —
+> the critic now verifies a seeded plan against the record** (`_critique(record=…)`, a
+> record-verification clause that fires regardless of `_can_open_sources`). **Remaining before
+> W2 merges:** an on-box curator run and CI's integration suite (the seed read reuses the
+> already-RLS-tested lab_results path, and the zero-`research_reports`-rows property is
+> unit-covered via persist-suppression, so no NEW table or RLS isolation test is required —
+> CLAUDE.md #3).
+
 **W1 stands alone.** W1 delivers a complete, shippable jerv capability — a standalone
 `deep_produce` verb that turns web/library research into a caller-chosen artifact (plan,
 table, brief, differential, timeline), not only the report `deep_research` already gives.
@@ -279,7 +298,7 @@ W1 engine, not a dependency of it.
 
 | Wave | Scope | Gate |
 |---|---|---|
-| **W1 — jerv `deep_produce` (standalone value)** | Single-impl refactor: `_run(directive, source_plan, on_round, require_persist)`; `deep_research`/`deepest` as thin adapters (both kwargs threaded); byte-stable report rule (no OBJECTIVE block; `_shape_directive`); `output_kind` plumbing; `extra_tools` gate. Ship a **jerv-facing `deep_produce`** with ≥1 non-report `output_kind` (e.g. `plan`) end-to-end over web/library, external sink — reusing the shipped `deep_research_report` view (the artifact is a `.md` document; **no new GUI surface, no mock gate**). **No** curator/seed/health surface. B3 discipline applies here too: jerv's non-report output keeps the v10–v14 provenance block (invariant) with only the artifact-shape section templated. | `deep_research` **and** `deepest` regression: golden `ViewPayload` + persisted row + step 6/8 + `deepest_run.py:165`/`resume_deepest` exercised; `_admits` byte-identical for jerv/teacher; directive-fidelity (report run's plan/reflect/synth/critique inputs identical pre/post); a jerv non-report run produces the requested artifact and emits the *same* `deep_research_report` view, with the provenance block intact |
+| **W1 — jerv `deep_produce` (standalone value)** ✅ *(shipped, PR #965)* | Single-impl refactor: `_run(directive, source_plan, on_round, require_persist)`; `deep_research`/`deepest` as thin adapters (both kwargs threaded); byte-stable report rule (no OBJECTIVE block; `_shape_directive`); `output_kind` plumbing; `extra_tools` gate. Ship a **jerv-facing `deep_produce`** with ≥1 non-report `output_kind` (e.g. `plan`) end-to-end over web/library, external sink — reusing the shipped `deep_research_report` view (the artifact is a `.md` document; **no new GUI surface, no mock gate**). **No** curator/seed/health surface. B3 discipline applies here too: jerv's non-report output keeps the v10–v14 provenance block (invariant) with only the artifact-shape section templated. | `deep_research` **and** `deepest` regression: golden `ViewPayload` + persisted row + step 6/8 + `deepest_run.py:165`/`resume_deepest` exercised; `_admits` byte-identical for jerv/teacher; directive-fidelity (report run's plan/reflect/synth/critique inputs identical pre/post); a jerv non-report run produces the requested artifact and emits the *same* `deep_research_report` view, with the provenance block intact |
 | **W2** | curator `deep_produce`: seed-keyed SourcePlan (D5) — the three-way seeded/refuse/plain split; health seed + fail-closed grounding refusal; `_persist` external-write suppression (D6); web-fan suppression; budget decision; treatment-plan recipe; document the owner-wide `agent_turns` property. (Output still renders through the shipped report view — a seeded run simply shows no web-sources strip, as `library` mode already does.) | RLS isolation (health read health-scoped; zero `research_reports` rows written); exfiltration property test (no web persona spawns, no seed reaches a fan child); non-health session **refuses**; sandbox-untouched; on-box run |
 | **W3** | Recipe registry (named `objective` + `output_kind` presets) and owner UI (recipe / date range / category). | Recipe round-trip; mock-gate |
 | **W4** *(systemic follow-up, not a v1 blocker — see D6)* | Domain-tag the agent transcript so health turns (all of them, not just `deep_produce`) are firewalled; optionally a revisitable health-scoped saved-artifact store under `domain_code='health'`. Promotes to a W2 prerequisite only if the owner requires cross-scope isolation of health output within their own sessions. | New/changed RLS + isolation test on `agent_turns`; artifact-store isolation test |
