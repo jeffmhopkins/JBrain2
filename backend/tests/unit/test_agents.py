@@ -93,6 +93,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "grab_frame",
             "fetch_image",
             "compare_images",
+            "ocr",
             "search_external_video",
             "list_external_video",
             "read_external_video",
