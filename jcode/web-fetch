@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Fetch-and-extract a URL for the sandbox coding CLIs (grok / claude).
+
+Mirrors web-search: the CLIs call it through their shell tool, and it POSTs to the api's
+jcode bridge (api.jcode_llm web_fetch), which runs the on-box fetcher/reader — the sandbox
+can't reach the wider internet directly. Part of the same SearXNG capability, so it shares
+the JCODE_INTERNET_SEARCH gate (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
+
+  web-fetch <url>                 fetch a page, print its readable text + on-page links
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+_DEFAULT_BASE = "http://api:8000/api/jcode/llm/v1"
+
+
+def _die(msg: str, code: int = 1) -> None:
+    print(f"web-fetch: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def _post(route: str, payload: dict) -> None:
+    base = os.environ.get("GROK_MODELS_BASE_URL", _DEFAULT_BASE).rstrip("/")
+    token = os.environ.get("GROK_API_KEY", "")
+    req = urllib.request.Request(
+        f"{base}/{route}",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            sys.stdout.write(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace").strip()
+        _die(f"request failed ({exc.code}): {detail or exc.reason}")
+    except urllib.error.URLError as exc:
+        _die(f"could not reach the fetch bridge (api unreachable): {exc.reason}")
+
+
+def main() -> None:
+    if os.environ.get("JCODE_INTERNET_SEARCH") != "1":
+        _die(
+            "web fetch is not enabled for this session — the owner turns it on with the "
+            "'Web search' checkbox when creating the session",
+            2,
+        )
+    args = sys.argv[1:]
+    url = args[0].strip() if len(args) == 1 else ""
+    if not url:
+        _die("usage: web-fetch <url>", 2)
+    _post("web_fetch", {"url": url})
+
+
+if __name__ == "__main__":
+    main()

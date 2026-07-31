@@ -24,7 +24,15 @@ class JcodeApi(Protocol):
     """What the api routes depend on — satisfied by the real client and the fake."""
 
     async def create_session(
-        self, repo: str, branch: str, work_branch: str, model: str = "", planner: str = ""
+        self,
+        repo: str,
+        branch: str,
+        work_branch: str,
+        model: str = "",
+        planner: str = "",
+        *,
+        internet_search: bool = False,
+        internet_egress: bool = False,
     ) -> dict[str, Any]: ...
 
     async def list_sessions(self) -> list[dict[str, Any]]: ...
@@ -78,7 +86,15 @@ class JcodeClient:
             raise JcodeError(f"jcode control server error: {exc}") from exc
 
     async def create_session(
-        self, repo: str, branch: str, work_branch: str, model: str = "", planner: str = ""
+        self,
+        repo: str,
+        branch: str,
+        work_branch: str,
+        model: str = "",
+        planner: str = "",
+        *,
+        internet_search: bool = False,
+        internet_egress: bool = False,
     ) -> dict[str, Any]:
         return await self._json(
             "POST",
@@ -89,6 +105,8 @@ class JcodeClient:
                 "work_branch": work_branch,
                 "model": model,
                 "planner": planner,
+                "internet_search": internet_search,
+                "internet_egress": internet_egress,
             },
         )
 
@@ -140,16 +158,28 @@ class FakeJcodeClient:
         # api resolved + forwarded both halves of the owner's selection.
         self.created_models: list[str] = []
         self.created_planners: list[str] = []
+        # The (internet_search, internet_egress) pair passed to each create_session, in
+        # order — tests assert the api forwarded the owner's per-session opt-ins.
+        self.created_internet: list[tuple[bool, bool]] = []
         self._preview_enabled = preview_enabled
         self._previews: dict[str, str] = {}
 
     async def create_session(
-        self, repo: str, branch: str, work_branch: str, model: str = "", planner: str = ""
+        self,
+        repo: str,
+        branch: str,
+        work_branch: str,
+        model: str = "",
+        planner: str = "",
+        *,
+        internet_search: bool = False,
+        internet_egress: bool = False,
     ) -> dict[str, Any]:
         self._n += 1
         sid = f"sess{self._n}"
         self.created_models.append(model)
         self.created_planners.append(planner)
+        self.created_internet.append((internet_search, internet_egress))
         s = {
             "id": sid,
             "repo": repo,
@@ -157,6 +187,8 @@ class FakeJcodeClient:
             "work_branch": work_branch or f"jcode/{sid}",
             "model": model,
             "planner": planner,
+            "internet_search": internet_search,
+            "internet_egress": internet_egress,
             "status": "ready",
             "created_at": "2026-06-25T00:00:00+00:00",
             "last_active_at": "2026-06-25T00:00:00+00:00",

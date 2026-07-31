@@ -95,6 +95,11 @@ class CreateSessionRequest(BaseModel):
     # The planner served-model for grok's ``plan`` subagent (JCODE_GROK_PLAN_MODEL).
     # Empty = single-model (the executor plans too). The api resolves the owner's split.
     planner: str = ""
+    # Per-session internet capability (JCODE_GROK_INTERNET_PLAN.md), fixed at create.
+    # ``internet_search`` exposes the SearXNG helpers; ``internet_egress`` is the
+    # separate raw-outbound opt-in. The owner sets both per session.
+    internet_search: bool = False
+    internet_egress: bool = False
 
 
 class PreviewRequest(BaseModel):
@@ -185,6 +190,8 @@ def create_app(
             body.work_branch,
             model=body.model,
             planner=body.planner,
+            internet_search=body.internet_search,
+            internet_egress=body.internet_egress,
         )
         return session.public()
 
@@ -335,6 +342,8 @@ def create_app(
             session.workspace,
             model=session.model or settings.model,
             planner=session.planner,
+            internet_search=session.internet_search,
+            internet_egress=session.internet_egress,
             preview_port=preview_port,
             home=str(sessions.home_for(sid)),
             on_open=lambda pid: sessions.terminal_opened(sid, pid),

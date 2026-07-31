@@ -35,6 +35,8 @@ from fastapi.responses import StreamingResponse
 
 from jbrain.llm import local_catalog
 from jbrain.llm.residency import ResidencyError
+from jbrain.web.fetch import WebFetchError
+from jbrain.web.search import WebSearchError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -183,3 +185,81 @@ async def chat_completions(request: Request) -> Response:
 
     media = "text/event-stream" if payload.get("stream") else "application/json"
     return StreamingResponse(relay(), media_type=media)
+
+
+# --- SearXNG search bridge (docs/plans/JCODE_GROK_INTERNET_PLAN.md) -----------------------
+#
+# The sandbox's grok/claude reach the box's SearXNG through here: the sandbox sits on the
+# `jcode` network and can't touch searxng (on `internal`), but this api is the one peer on
+# both, so it bridges. Shell helpers on PATH (web-search / web-fetch) POST to these routes
+# with the same shared bearer the model calls already use. Only the model-supplied query /
+# URL leaves — through the owner's own searxng — the same no-owner-data posture as jerv's
+# web tools. Responses are pre-rendered text so the helper just prints them to the shell.
+
+_SEARCH_MAX = 10
+_SEARCH_DEFAULT = 6
+
+
+def _json_body(raw: bytes) -> dict:
+    try:
+        payload = json.loads(raw or b"{}")
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid JSON body") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    return payload
+
+
+@router.post("/jcode/llm/v1/web_search")
+async def web_search(request: Request) -> Response:
+    """SearXNG-backed web search for the in-sandbox CLIs. 503 when searxng isn't configured,
+    400 for an empty query, 502 when the search service is unreachable."""
+    _authorize(request)
+    client = getattr(request.app.state, "searxng", None)
+    if client is None or not (getattr(request.app.state.settings, "searxng_url", "") or ""):
+        raise HTTPException(status_code=503, detail="web search is not configured")
+    payload = _json_body(await request.body())
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+    try:
+        limit = int(payload.get("limit") or _SEARCH_DEFAULT)
+    except (TypeError, ValueError):
+        limit = _SEARCH_DEFAULT
+    limit = max(1, min(limit, _SEARCH_MAX))
+    try:
+        hits = await client.search(query, limit)
+    except WebSearchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not hits:
+        return Response(content=f"No web results for '{query}'.\n", media_type="text/plain")
+    body = "Web results:\n" + "\n".join(f"- {h.title}\n  {h.url}\n  {h.snippet}" for h in hits)
+    return Response(content=body + "\n", media_type="text/plain")
+
+
+@router.post("/jcode/llm/v1/web_fetch")
+async def web_fetch(request: Request) -> Response:
+    """Fetch-and-extract a URL for the in-sandbox CLIs, mirroring jerv's web_fetch. 503 when
+    the fetcher isn't configured, 400 for a missing url, 502 when the fetch fails."""
+    _authorize(request)
+    fetcher = getattr(request.app.state, "web_fetcher", None)
+    if fetcher is None:
+        raise HTTPException(status_code=503, detail="web fetch is not configured")
+    payload = _json_body(await request.body())
+    url = str(payload.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    try:
+        result = await fetcher.fetch(url)
+    except WebFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not result.text:
+        return Response(
+            content=f"That page ({url}) had no readable text.\n", media_type="text/plain"
+        )
+    header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
+    body = header + result.text
+    if result.links:
+        links = "\n".join(f"- {u}" for u in result.links)
+        body += f"\n\nLinks on this page (web-fetch any of these to follow it):\n{links}"
+    return Response(content=body + "\n", media_type="text/plain")

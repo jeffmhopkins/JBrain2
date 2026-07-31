@@ -86,6 +86,22 @@ async def test_model_defaults_to_empty_when_unset() -> None:
     assert s.model == ""
 
 
+async def test_records_the_internet_optins() -> None:
+    # The owner's per-session internet opt-ins are recorded on the session (fixed at
+    # create) and surface in public() so the terminal exports them (docs plan).
+    mgr = _mgr()
+    s = await mgr.create("r", internet_search=True)
+    assert s.internet_search is True and s.internet_egress is False
+    pub = s.public()
+    assert pub["internet_search"] is True and pub["internet_egress"] is False
+
+
+async def test_internet_optins_default_off() -> None:
+    mgr = _mgr()
+    s = await mgr.create("r")
+    assert s.internet_search is False and s.internet_egress is False
+
+
 # --- Stop / restart (the terminal-exit pause) -------------------------------------
 
 

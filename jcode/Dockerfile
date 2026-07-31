@@ -45,7 +45,18 @@ COPY jcode-grok /usr/local/bin/jcode-grok
 # Same, for claude — installs into the session's npm prefix ($NPM_CONFIG_PREFIX), so a
 # session can pin its own claude without touching the image default.
 COPY jcode-claude /usr/local/bin/jcode-claude
-RUN chmod +x /usr/local/bin/jcode-grok /usr/local/bin/jcode-claude
+# SearXNG-backed web search/fetch for the session CLIs (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
+# On the shared PATH; each is a no-op that self-explains unless the session opted in
+# (JCODE_INTERNET_SEARCH=1, set by the terminal from the owner's checkbox). They reach the
+# api's jcode bridge — the sandbox can't touch searxng directly.
+COPY web-search /usr/local/bin/web-search
+COPY web-fetch /usr/local/bin/web-fetch
+RUN chmod +x /usr/local/bin/jcode-grok /usr/local/bin/jcode-claude \
+    /usr/local/bin/web-search /usr/local/bin/web-fetch
+
+# Login-shell hint: announce the web helpers in a session that opted into web search, so the
+# owner (and the agent's own shell output) sees the capability. Silent otherwise.
+COPY web-tools.sh /etc/profile.d/jcode-web.sh
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \

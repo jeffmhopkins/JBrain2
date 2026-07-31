@@ -194,6 +194,11 @@ class CreateSessionBody(BaseModel):
     repo: str = ""
     branch: str = "main"
     work_branch: str = ""
+    # Per-session internet capability (docs/plans/JCODE_GROK_INTERNET_PLAN.md). Fixed at
+    # create. `internet_search` exposes the SearXNG-backed web-search/web-fetch helpers to
+    # the sandbox CLIs; `internet_egress` is the separate raw-outbound opt-in.
+    internet_search: bool = False
+    internet_egress: bool = False
 
 
 class RenameBody(BaseModel):
@@ -216,7 +221,13 @@ async def create_session(
     planner = await _resolve_planner_model(request, owner.id)
     try:
         session = await client.create_session(
-            body.repo, body.branch, body.work_branch, model, planner
+            body.repo,
+            body.branch,
+            body.work_branch,
+            model,
+            planner,
+            internet_search=body.internet_search,
+            internet_egress=body.internet_egress,
         )
     except JcodeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

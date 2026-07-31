@@ -479,6 +479,11 @@ accepted this narrow location-into-jerv flow when enabling it. The ambient date/
 is non-personal. Search still goes through a **self-hosted SearXNG**
 instance (pinned base URL from config, query text only) — local-first like the
 on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams.
+The same SearXNG also backs the **jcode sandbox's `web-search` / `web-fetch`
+helpers**, bridged through the api (the sandbox is on the `jcode` network and can't
+reach searxng directly) and gated per session by the owner's opt-in — the identical
+no-owner-data bound applies, since the sandbox holds none
+(`docs/plans/JCODE_GROK_INTERNET_PLAN.md`).
 A short in-process **repeat-search cache** (TTL, LRU-bounded, non-empty results only)
 sits in front of it so a deep-research fan's identical re-queries across rounds and runs
 don't re-hit those upstreams — the volume that gets the box's IP rate-limited (429/403). A

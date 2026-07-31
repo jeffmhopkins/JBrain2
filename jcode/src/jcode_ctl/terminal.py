@@ -63,6 +63,20 @@ def model_env(model: str, planner: str = "") -> dict[str, str]:
     }
 
 
+def internet_env(search: bool, egress: bool) -> dict[str, str]:
+    """Per-session internet capability, exported ALWAYS (like the planner pin) so a
+    session that did NOT opt in explicitly clears any image-level default rather than
+    inheriting one. ``JCODE_INTERNET_SEARCH`` gates the ``web-search`` / ``web-fetch``
+    shell helpers (SearXNG via the api bridge, no raw egress); ``JCODE_INTERNET_EGRESS``
+    is the separate, riskier raw-outbound opt-in whose real enforcement depends on
+    per-session containers, so today it only marks intent (see
+    docs/plans/JCODE_GROK_INTERNET_PLAN.md)."""
+    return {
+        "JCODE_INTERNET_SEARCH": "1" if search else "",
+        "JCODE_INTERNET_EGRESS": "1" if egress else "",
+    }
+
+
 def home_env(home: str) -> dict[str, str]:
     """Give the session its OWN ``$HOME`` and a private, PATH-leading bin dir.
 
@@ -388,6 +402,8 @@ async def serve_terminal(
     *,
     model: str = "",
     planner: str = "",
+    internet_search: bool = False,
+    internet_egress: bool = False,
     preview_port: int = 0,
     home: str = "",
     on_open: Callable[[int], None] | None = None,
@@ -413,6 +429,8 @@ async def serve_terminal(
         overrides.update(home_env(home))
     if model:
         overrides.update(model_env(model, planner))
+    # Always set — a non-opted session must clear any inherited default, not keep it.
+    overrides.update(internet_env(internet_search, internet_egress))
     if preview_port:
         overrides.update(preview_env(preview_port))
 

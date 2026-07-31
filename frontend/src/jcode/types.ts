@@ -65,6 +65,11 @@ export interface NewSessionInput {
   repo: string;
   branch: string;
   work_branch: string;
+  // Per-session internet opt-ins (docs/plans/JCODE_GROK_INTERNET_PLAN.md). `internet_search`
+  // exposes the SearXNG-backed web-search/web-fetch helpers to the session's coding CLIs;
+  // `internet_egress` is the separate raw-outbound opt-in (gated until per-session containers).
+  internet_search: boolean;
+  internet_egress: boolean;
 }
 
 // The per-session web preview: `enabled` is the server feature flag; `url` is the live

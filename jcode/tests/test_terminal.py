@@ -30,6 +30,7 @@ from jcode_ctl.terminal import (
     _close_child,
     _set_winsize,
     home_env,
+    internet_env,
     kill_processes_in_dir,
     model_env,
     preview_env,
@@ -281,6 +282,23 @@ def test_spawn_shell_applies_model_env_overrides(tmp_path) -> None:
         assert b"G=qwen3-coder-next-q8" in out
     finally:
         _close_child(pid, fd)
+
+
+def test_internet_env_marks_the_two_optins() -> None:
+    # Both flags are exported ALWAYS (like the planner pin) so a non-opted session
+    # clears any inherited image default rather than keeping it: "1" on, "" off.
+    assert internet_env(True, False) == {
+        "JCODE_INTERNET_SEARCH": "1",
+        "JCODE_INTERNET_EGRESS": "",
+    }
+    assert internet_env(False, True) == {
+        "JCODE_INTERNET_SEARCH": "",
+        "JCODE_INTERNET_EGRESS": "1",
+    }
+    assert internet_env(False, False) == {
+        "JCODE_INTERNET_SEARCH": "",
+        "JCODE_INTERNET_EGRESS": "",
+    }
 
 
 def test_model_env_pins_every_tier() -> None:

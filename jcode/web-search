@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""SearXNG-backed web search for the sandbox coding CLIs (grok / claude).
+
+The CLIs invoke this through their shell tool. It POSTs the query to the api's jcode
+search bridge (api.jcode_llm web_search): the sandbox sits on the `jcode` network and
+CANNOT reach searxng (on `internal`), so the api — the one peer on both — bridges.
+Only the query text leaves, through the owner's own searxng, so no owner data rides
+along (the same posture as jerv's web tools). Gated on the session's
+JCODE_INTERNET_SEARCH opt-in, set by the terminal from the owner's "Web search"
+checkbox (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
+
+  web-search <query...>          search, print ranked results
+  web-search -n <k> <query...>   cap at k results (1-10, default 6)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+_DEFAULT_BASE = "http://api:8000/api/jcode/llm/v1"
+
+
+def _die(msg: str, code: int = 1) -> None:
+    print(f"web-search: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def _post(route: str, payload: dict) -> None:
+    """POST the payload to the api bridge and stream the pre-rendered text to stdout."""
+    base = os.environ.get("GROK_MODELS_BASE_URL", _DEFAULT_BASE).rstrip("/")
+    token = os.environ.get("GROK_API_KEY", "")
+    req = urllib.request.Request(
+        f"{base}/{route}",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            sys.stdout.write(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace").strip()
+        _die(f"request failed ({exc.code}): {detail or exc.reason}")
+    except urllib.error.URLError as exc:
+        _die(f"could not reach the search bridge (api unreachable): {exc.reason}")
+
+
+def main() -> None:
+    if os.environ.get("JCODE_INTERNET_SEARCH") != "1":
+        _die(
+            "web search is not enabled for this session — the owner turns it on with the "
+            "'Web search' checkbox when creating the session",
+            2,
+        )
+    args = sys.argv[1:]
+    limit = 6
+    if args and args[0] == "-n":
+        if len(args) < 3:
+            _die("usage: web-search [-n k] <query>", 2)
+        try:
+            limit = int(args[1])
+        except ValueError:
+            _die("-n needs a number", 2)
+        args = args[2:]
+    query = " ".join(args).strip()
+    if not query:
+        _die("usage: web-search [-n k] <query>", 2)
+    _post("web_search", {"query": query, "limit": limit})
+
+
+if __name__ == "__main__":
+    main()
