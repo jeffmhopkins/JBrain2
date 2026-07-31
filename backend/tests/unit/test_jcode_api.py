@@ -246,18 +246,18 @@ def _power_app(
 
 
 def test_power_status_reports_on_when_all_services_running() -> None:
-    sup = _FakeSupervisor({"local-llm": "running", "claude-shim": "running", "jcode": "running"})
+    sup = _FakeSupervisor({"local-llm": "running", "jcode": "running"})
     client = TestClient(_power_app(OWNER, sup))
     body = client.get("/api/jcode/power").json()
     assert body["on"] is True
     assert body["provisioned"] is True
     # The switch's status is scoped to the jcode-only services — the shared gateway is not
     # part of code mode's on/off (chat/vision own its lifecycle separately).
-    assert {s["name"] for s in body["services"]} == {"claude-shim", "jcode"}
+    assert {s["name"] for s in body["services"]} == {"jcode"}
 
 
 def test_power_status_off_when_a_service_is_down() -> None:
-    sup = _FakeSupervisor({"local-llm": "running", "claude-shim": "exited", "jcode": "running"})
+    sup = _FakeSupervisor({"local-llm": "running", "jcode": "exited"})
     body = TestClient(_power_app(OWNER, sup)).get("/api/jcode/power").json()
     assert body["on"] is False
     assert body["provisioned"] is True
@@ -275,27 +275,27 @@ def test_power_status_counts_live_sessions() -> None:
 
     fake = FakeJcodeClient()
     asyncio.run(fake.create_session("r", "main", ""))  # a ready (live) session
-    sup = _FakeSupervisor({"local-llm": "running", "claude-shim": "running", "jcode": "running"})
+    sup = _FakeSupervisor({"local-llm": "running", "jcode": "running"})
     body = TestClient(_power_app(OWNER, sup, jcode_client=fake)).get("/api/jcode/power").json()
     assert body["live_sessions"] == 1
 
 
 def test_power_on_starts_services_in_order() -> None:
-    sup = _FakeSupervisor({"local-llm": "exited", "claude-shim": "exited", "jcode": "exited"})
+    sup = _FakeSupervisor({"local-llm": "exited", "jcode": "exited"})
     client = TestClient(_power_app(OWNER, sup))
     body = client.post("/api/jcode/power", json={"on": True}).json()
-    # Gateway first, then shim, then the control server.
-    assert sup.calls == [("start", "local-llm"), ("start", "claude-shim"), ("start", "jcode")]
+    # Gateway first, then the control server.
+    assert sup.calls == [("start", "local-llm"), ("start", "jcode")]
     assert body["on"] is True
 
 
 def test_power_off_stops_only_jcode_services_in_reverse_order() -> None:
-    sup = _FakeSupervisor({"local-llm": "running", "claude-shim": "running", "jcode": "running"})
+    sup = _FakeSupervisor({"local-llm": "running", "jcode": "running"})
     client = TestClient(_power_app(OWNER, sup))
     body = client.post("/api/jcode/power", json={"on": False}).json()
     # Only the jcode-only services stop (control server first); the shared local-llm gateway
     # is left running so chat/vision keep working.
-    assert sup.calls == [("stop", "jcode"), ("stop", "claude-shim")]
+    assert sup.calls == [("stop", "jcode")]
     assert ("stop", "local-llm") not in sup.calls
     assert body["on"] is False
 
@@ -303,7 +303,7 @@ def test_power_off_stops_only_jcode_services_in_reverse_order() -> None:
 def test_power_off_unloads_coder_and_rewarms_general_without_stopping_gateway() -> None:
     # The decoupled OFF path: instead of stopping local-llm, free the coder by unloading it
     # from the still-running gateway and re-warm the general hot set (gpt-oss-120b + vision).
-    sup = _FakeSupervisor({"local-llm": "running", "claude-shim": "running", "jcode": "running"})
+    sup = _FakeSupervisor({"local-llm": "running", "jcode": "running"})
     gw = _FakeGateway(running={"qwen3-coder-next"})
     res = _FakeResidency()
     client = TestClient(_power_app(OWNER, sup, local_llm_enabled=True, gateway=gw, residency=res))
@@ -316,7 +316,7 @@ def test_power_off_unloads_coder_and_rewarms_general_without_stopping_gateway() 
 def test_power_off_skips_model_housekeeping_when_local_hosting_off() -> None:
     # A cloud-only box has no coder to unload: OFF just stops the jcode services and never
     # touches a gateway (there isn't one to hit).
-    sup = _FakeSupervisor({"claude-shim": "running", "jcode": "running"})
+    sup = _FakeSupervisor({"jcode": "running"})
     gw = _FakeGateway(running={"qwen3-coder-next"})
     res = _FakeResidency()
     client = TestClient(_power_app(OWNER, sup, local_llm_enabled=False, gateway=gw, residency=res))
@@ -328,7 +328,7 @@ def test_power_off_skips_model_housekeeping_when_local_hosting_off() -> None:
 def test_power_on_skips_unprovisioned_service() -> None:
     # A box without the jcode profile (only the coder gateway): starting the missing
     # services 404s and is skipped, not fatal.
-    sup = _FakeSupervisor({"local-llm": "exited"}, start_404=("claude-shim", "jcode"))
+    sup = _FakeSupervisor({"local-llm": "exited"}, start_404=("jcode",))
     client = TestClient(_power_app(OWNER, sup))
     assert client.post("/api/jcode/power", json={"on": True}).status_code == 200
     assert ("start", "local-llm") in sup.calls

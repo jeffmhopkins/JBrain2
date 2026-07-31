@@ -323,14 +323,14 @@ async def warm_model(owner: OwnerDep, request: Request) -> dict[str, object]:
 # (the only holder of the Docker socket); we proxy start/stop exactly as api/image_settings
 # does for comfyui.
 
-# The jcode-only services the switch's on/off STATUS and its OFF action are scoped to: the
-# shim that translates Anthropic<->OpenAI for the coder, then the control server that drives
-# sandboxes. OFF stops them in reverse (control server first).
-_JCODE_SERVICES: tuple[str, ...] = ("claude-shim", "jcode")
+# The jcode-only service the switch's on/off STATUS and its OFF action are scoped to: the
+# control server that drives sandboxes. OFF stops it (the shared gateway stays up — that's
+# what unloading the coder is for).
+_JCODE_SERVICES: tuple[str, ...] = ("jcode",)
 
 # Powering ON also ensures the shared gateway is up first (idempotent when it already is) so
 # the coder has somewhere to load — but OFF never stops it (that's what unloading the coder
-# is for). Gateway, then the shim, then the control server.
+# is for). Gateway, then the control server.
 _POWER_ON_SERVICES: tuple[str, ...] = ("local-llm", *_JCODE_SERVICES)
 
 

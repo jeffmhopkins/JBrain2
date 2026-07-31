@@ -122,10 +122,9 @@ services:
       # Shares the .env var with the jcode service; empty fail-closes the proxy.
       JBRAIN_JCODE_PREVIEW_BASE_HOST: ${JCODE_PREVIEW_BASE_HOST:-}
       # The external-LLM proxy (owner-minted public endpoints exposing the on-box coder)
-      # forwards to the same claude-shim the sandbox uses, with its master key. The api
-      # already joins the `jcode` network, so it reaches the shim directly. Both empty
-      # off the jcode profile → the proxy fail-closes (no external sessions can connect).
-      JBRAIN_JCODE_SHIM_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://claude-shim:4000}
+      # forwards straight to the local-llm gateway's OpenAI endpoint (JBRAIN_LOCAL_LLM_URL
+      # above) — the api already reaches it on the `jcode` network. Off the jcode profile
+      # the coder isn't resident, so the proxy fail-closes (no external sessions connect).
       JBRAIN_JCODE_GATEWAY_TOKEN: ${JCODE_GATEWAY_TOKEN:-}
       # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
@@ -427,14 +426,14 @@ services:
     networks: [internal]
 
   # OPT-IN code mode (docs/archive/JCODE_PLAN.md): a sandboxed coding-session
-  # service running Claude Code's agent engine against an ON-BOX coder model, fronted
+  # service running xAI's Grok Build (`grok`) against an ON-BOX coder model, fronted
   # by the PWA. Guarded by the `jcode` compose profile so it NEVER starts on a stock
   # deploy — `scripts/jcode-setup.sh` provisions it and flips the profile on. It reads
   # NO knowledge base and holds NO owner data: its only state is per-session git
-  # checkouts on the `jcode_work` volume. The model is local — ANTHROPIC_BASE_URL
-  # points the Agent SDK at the local-llm gateway's Anthropic-compatible endpoint, so
-  # no code leaves the box (the on-box smoke test in the plan decides native vs a
-  # shim). It has NO published port and mounts NO Docker socket.
+  # checkouts on the `jcode_work` volume. The model is local — `grok` reaches the
+  # local-llm gateway over an OpenAI-compatible base_url (the api's residency-aware
+  # jcode proxy), so no code leaves the box. It has NO published port and mounts NO
+  # Docker socket.
   #
   # ISOLATION: the sandbox runs arbitrary agent-driven shell, so it sits on its OWN
   # `jcode` network — NOT the shared `internal` — and is therefore unable to reach
@@ -457,41 +456,16 @@ services:
       JCODE_TOKEN: ${JCODE_TOKEN:-}
       JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       JCODE_MODEL_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}
-      # What the Claude Agent SDK + its `claude` CLI read to reach the model. The SDK
-      # speaks the Anthropic Messages API (/v1/messages); llama.cpp/llama-swap speak
-      # OpenAI, so jcode points at the `claude-shim` (LiteLLM) translator by default —
-      # on-box-confirmed the gateway has no native /v1/messages. Auth is the shim's
-      # master key sent as a Bearer token via ANTHROPIC_AUTH_TOKEN — the documented way
-      # to point Claude Code at a gateway base URL. ANTHROPIC_API_KEY is deliberately
-      # NOT set: with both present the CLI warns "auth may not work as expected" and the
-      # x-api-key path can win, breaking the turn. Override JCODE_ANTHROPIC_BASE_URL to
-      # bypass the shim.
-      ANTHROPIC_BASE_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://claude-shim:4000}
-      ANTHROPIC_AUTH_TOKEN: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
-      # Pin every model tier to the on-box coder. Without this the bundled `claude`
-      # CLI (and the Agent SDK's background summariser) default to a cloud model
-      # (claude-opus-4-…) the local gateway has no route for, so every interactive CLI
-      # session errored "the selected model may not exist". The headless agent passes
-      # the model explicitly; the interactive terminal further overrides ANTHROPIC_MODEL
-      # per session with the owner's selected model (which may be a different quant than
-      # JCODE_MODEL). These are the baseline so no path ever requests a cloud model.
-      ANTHROPIC_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      ANTHROPIC_DEFAULT_OPUS_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      ANTHROPIC_DEFAULT_SONNET_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      ANTHROPIC_DEFAULT_FABLE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      # Grok Build (`grok`, xAI's official CLI) the owner can run in the session shell
-      # alongside `claude`. A login-shell hook (/etc/profile.d/grok-config.sh) renders
-      # ~/.grok/config.toml from these vars so `grok` targets the on-box models over an
-      # OpenAI-compatible base_url — NO claude-shim (that exists only for Claude Code's
-      # Anthropic API). base_url points at the api's residency-aware jcode proxy (NOT the
-      # gateway directly): the hook fetches every installed tool-capable model from its
-      # /models endpoint so `grok`'s `/model` switches between them live, and every
-      # completion flows through it so a plan↔execute switch evicts-to-budget (cold swap)
-      # instead of stacking two large models and freezing the box. GROK_API_KEY is the
-      # shared jcode token the proxy checks (sent as Authorization: Bearer). GROK_MODEL is
-      # the session's DEFAULT model; the interactive terminal pins it per session with the
-      # owner's selection, like the ANTHROPIC_* tiers.
+      # Grok Build (`grok`, xAI's official CLI) is the session harness. A login-shell hook
+      # (/etc/profile.d/grok-config.sh) renders ~/.grok/config.toml from these vars so
+      # `grok` targets the on-box models over an OpenAI-compatible base_url. base_url
+      # points at the api's residency-aware jcode proxy (NOT the gateway directly): the
+      # hook fetches every installed tool-capable model from its /models endpoint so
+      # `grok`'s `/model` switches between them live, and every completion flows through it
+      # so a plan↔execute switch evicts-to-budget (cold swap) instead of stacking two large
+      # models and freezing the box. GROK_API_KEY is the shared jcode token the proxy
+      # checks (sent as Authorization: Bearer). GROK_MODEL is the session's DEFAULT model;
+      # the interactive terminal pins it per session with the owner's selection.
       GROK_MODELS_BASE_URL: ${JCODE_GROK_MODELS_URL:-http://api:8000/api/jcode/llm/v1}
       GROK_API_KEY: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
       GROK_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
@@ -500,19 +474,9 @@ services:
       # coder's native 256k (the gateway serves it at full native context); override if a
       # different served `-c` is configured.
       GROK_CONTEXT_WINDOW: ${JCODE_GROK_CONTEXT_WINDOW:-262144}
-      # Headless-sandbox hardening for the bundled Claude Code CLI the Agent SDK spawns:
-      # a writable config dir (it persists onboarding/ToS state there — a non-writable
-      # ~/.claude exits 1), suppress first-run/update/telemetry traffic that fails
-      # non-interactively, and clear any inherited nested-session marker (CLAUDECODE).
-      CLAUDE_CONFIG_DIR: ${JCODE_CLAUDE_CONFIG_DIR:-/tmp/claude}
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
-      CLAUDECODE: ""
-      # The CLI refuses --dangerously-skip-permissions (our bypassPermissions mode) as
-      # root: "cannot be used with root/sudo privileges for security reasons". This
-      # container runs as root but IS a genuine sandbox — isolated `jcode` network (no
-      # host, db, or notes) + a throwaway per-session checkout — which is exactly the
-      # case the CLI's IS_SANDBOX escape hatch exists for. Without it every turn exits 1
-      # before any model call (confirmed on-box via the captured CLI stderr).
+      # Mark the container as a genuine sandbox — isolated `jcode` network (no host, db,
+      # or notes) + a throwaway per-session checkout — so a CLI's root-user permission
+      # guard treats it as the sandbox it is rather than refusing to run.
       IS_SANDBOX: "1"
       # Per-session web preview: the capability flag for the host-served preview
       # (JCODE_PREVIEW_BASE_HOST below) — a session's dev server is reachable at
@@ -549,48 +513,18 @@ services:
       # over a proxy needs on-box verification, so strict egress is opt-in, not default.
       HTTP_PROXY: ${JCODE_EGRESS_PROXY:-}
       HTTPS_PROXY: ${JCODE_EGRESS_PROXY:-}
-      # Never proxy the on-box peers on the jcode network: the shim, the model gateway, and
-      # `api` (grok's model calls go to the api's residency-aware jcode proxy).
-      NO_PROXY: ${JCODE_NO_PROXY:-api,claude-shim,local-llm,localhost,127.0.0.1}
+      # Never proxy the on-box peers on the jcode network: the model gateway and `api`
+      # (grok's model calls go to the api's residency-aware jcode proxy).
+      NO_PROXY: ${JCODE_NO_PROXY:-api,local-llm,localhost,127.0.0.1}
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
     networks: [jcode]
-    # Start the shim first so the first turn doesn't race a not-yet-listening proxy
-    # (the SDK also retries, but this closes the window). Also pulls claude-shim into
-    # any `up -d jcode`, so the two always come up together.
-    depends_on:
-      claude-shim:
-        condition: service_started
     # Resource caps (Wave J5): an arbitrary-code sandbox must not be able to starve the
     # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs.
     mem_limit: ${JCODE_MEM_LIMIT:-4g}
     cpus: ${JCODE_CPUS:-2.0}
     pids_limit: ${JCODE_PIDS_LIMIT:-512}
-
-  # Anthropic<->OpenAI shim for code mode: a LiteLLM proxy that serves the Anthropic
-  # /v1/messages API the Claude Agent SDK calls and translates it to the on-box
-  # llama-swap gateway's OpenAI API. Opt-in with the `jcode` profile, internal-only on
-  # the `jcode` network (no published port) — reachable only by the jcode sandbox and
-  # able to reach only `local-llm`. Config is baked into the image (deploy/claude-shim).
-  claude-shim:
-    profiles: [jcode]
-    image: jbrain2-claude-shim:local
-    build:
-      context: ./src/deploy/claude-shim
-    restart: unless-stopped
-    environment:
-      # The proxy's master key; jcode presents it as ANTHROPIC_AUTH_TOKEN. A shared
-      # secret on an internal network — scripts/jcode-setup.sh mints a real one; the
-      # default keeps the matched pair working if it's unset. LiteLLM wants an sk- key.
-      LITELLM_MASTER_KEY: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
-      # Shim log verbosity: INFO, or DEBUG for the full Anthropic<->OpenAI request/
-      # response trace (pull via /debug/logs/claude-shim). DEBUG is loud — turn it on
-      # only while diagnosing the translation.
-      LITELLM_LOG: ${JCODE_SHIM_LOG_LEVEL:-INFO}
-    networks: [jcode]
-    # A translator, not a model host — a small cap is plenty and bounds a runaway.
-    mem_limit: ${JCODE_SHIM_MEM_LIMIT:-1g}
 
   embed:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest

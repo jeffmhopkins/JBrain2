@@ -268,17 +268,12 @@ def test_spawn_shell_runs_in_the_session_cwd(tmp_path) -> None:
 
 
 def test_spawn_shell_applies_model_env_overrides(tmp_path) -> None:
-    # The session's model is pinned into the child env so the interactive `claude` CLI
+    # The session's model is pinned into the child env so the interactive `grok` CLI
     # never defaults to a cloud model the on-box gateway can't serve.
     pid, fd = spawn_shell(str(tmp_path), env_overrides=model_env("qwen3-coder-next-q8"))
     try:
-        os.write(
-            fd,
-            b"echo M=$ANTHROPIC_MODEL H=$ANTHROPIC_DEFAULT_HAIKU_MODEL G=$GROK_MODEL\n",
-        )
-        out = _read_until(fd, b"M=qwen3-coder-next-q8")
-        assert b"M=qwen3-coder-next-q8" in out
-        assert b"H=qwen3-coder-next-q8" in out
+        os.write(fd, b"echo G=$GROK_MODEL P=$JCODE_GROK_PLAN_MODEL\n")
+        out = _read_until(fd, b"G=qwen3-coder-next-q8")
         assert b"G=qwen3-coder-next-q8" in out
     finally:
         _close_child(pid, fd)
@@ -301,25 +296,15 @@ def test_internet_env_marks_the_two_optins() -> None:
     }
 
 
-def test_model_env_pins_every_tier() -> None:
-    # All four Claude tier aliases (opus/sonnet/haiku/fable) + the main model, plus the
-    # Grok CLI's GROK_MODEL, resolve to the one served route — no CLI may ever request a
-    # tier/model the single-model gateway lacks. JCODE_GROK_PLAN_MODEL is exported too
+def test_model_env_pins_the_grok_model() -> None:
+    # The Grok CLI's GROK_MODEL resolves to the served route — the CLI may never request
+    # a model the single-model gateway lacks. JCODE_GROK_PLAN_MODEL is exported too
     # (empty here — single-model), so the plan subagent stays on the executor.
     env = model_env("qwen3-coder-next")
-    assert set(env) == {
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "ANTHROPIC_DEFAULT_FABLE_MODEL",
-        "GROK_MODEL",
-        "JCODE_GROK_PLAN_MODEL",
-    }
-    # Every tier pins to the served route; the empty planner clears the plan pin.
+    assert set(env) == {"GROK_MODEL", "JCODE_GROK_PLAN_MODEL"}
+    # The executor pins to the served route; the empty planner clears the plan pin.
+    assert env["GROK_MODEL"] == "qwen3-coder-next"
     assert env["JCODE_GROK_PLAN_MODEL"] == ""
-    tiers = {k: v for k, v in env.items() if k != "JCODE_GROK_PLAN_MODEL"}
-    assert all(v == "qwen3-coder-next" for v in tiers.values())
 
 
 def test_model_env_exports_the_planner_when_split() -> None:
@@ -403,7 +388,7 @@ def test_spawn_shell_applies_preview_env(tmp_path) -> None:
     overrides = {**model_env("qwen3-coder-next-q8"), **preview_env(5173)}
     pid, fd = spawn_shell(str(tmp_path), env_overrides=overrides)
     try:
-        os.write(fd, b"echo P=$PORT M=$ANTHROPIC_MODEL\n")
+        os.write(fd, b"echo P=$PORT M=$GROK_MODEL\n")
         out = _read_until(fd, b"P=5173")
         assert b"P=5173" in out
         assert b"M=qwen3-coder-next-q8" in out

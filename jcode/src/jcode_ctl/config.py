@@ -27,19 +27,19 @@ class Settings(BaseSettings):
 
     # Root of per-session $HOME dirs, on the SAME volume as the checkouts so they
     # persist across a pause and are purged with the session on delete. Each session
-    # gets its own $HOME — own ~/.grok, ~/.claude, history, npm prefix, a private bin
+    # gets its own $HOME — own ~/.grok, history, npm prefix, a private bin
     # on the front of PATH — so per-session tool versions never collide (see
     # JCODE_SESSION_TOOLS_PLAN). Dotted so it's not a checkout sibling a lister sees.
     home_root: str = "/work/.home"
 
-    # The Anthropic-compatible base URL the terminal's ``claude`` CLI is pointed at —
-    # the on-box gateway's /v1/messages (or a thin shim in front of it). Informational
-    # here; the CLI reads ANTHROPIC_BASE_URL from the process environment (set by the
-    # Dockerfile/compose).
+    # The OpenAI-compatible base URL the terminal's ``grok`` CLI is pointed at — the
+    # on-box gateway (or the api's residency-aware jcode proxy in front of it).
+    # Informational here; the CLI reads its base_url from ~/.grok/config.toml, which
+    # ``grok-config.sh`` renders from the process env (set by the Dockerfile/compose).
     model_base_url: str = "http://local-llm:8080"
 
     # The served model name the gateway resolves (llama-swap id). Local-only. Pins the
-    # terminal's ``claude`` CLI to the on-box coder.
+    # terminal's ``grok`` CLI to the on-box coder.
     model: str = "qwen3-coder-next"
 
     # Outbound hosts the sandbox may reach for git/package work (no LLM egress —

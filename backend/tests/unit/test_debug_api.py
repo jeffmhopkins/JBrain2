@@ -77,7 +77,7 @@ class _FakeResp:
 class _FakeSupervisor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
-        # Service names (e.g. "claude-shim") whose /logs return 404 — a not-running peer.
+        # Service names (e.g. "jcode") whose /logs return 404 — a not-running peer.
         self.down: set[str] = set()
 
     async def get(
@@ -528,27 +528,27 @@ def test_logs_unknown_service_404s(debug_client: tuple[TestClient, str]) -> None
 
 
 def test_jcode_logs_aggregates_the_system(debug_client: tuple[TestClient, str]) -> None:
-    # One pull returns the whole code-mode system — control server + shim + gateway —
-    # labeled, so debugging a turn doesn't need three round-trips.
+    # One pull returns the whole code-mode system — control server + gateway — labeled,
+    # so debugging a turn doesn't need separate round-trips.
     client, key = debug_client
     resp = client.get("/api/debug/jcode/logs", headers=_auth(key), params={"tail": 100})
     assert resp.status_code == 200
-    for svc in ("jcode", "claude-shim", "local-llm"):
+    for svc in ("jcode", "local-llm"):
         assert f"===== {svc} =====" in resp.text
     assert "log line one" in resp.text
     calls = [u for u, _ in _state(client).supervisor_client.calls]
-    assert calls == ["/logs/jcode", "/logs/claude-shim", "/logs/local-llm"]
+    assert calls == ["/logs/jcode", "/logs/local-llm"]
 
 
 def test_jcode_logs_tolerates_a_not_running_service(debug_client: tuple[TestClient, str]) -> None:
-    # Mid-bring-up the shim may be down — its section reads "(service not running)" and
-    # the pull still succeeds with the others.
+    # Mid-bring-up the control server may be down — its section reads "(service not running)"
+    # and the pull still succeeds with the others.
     client, key = debug_client
-    _state(client).supervisor_client.down = {"claude-shim"}
+    _state(client).supervisor_client.down = {"jcode"}
     resp = client.get("/api/debug/jcode/logs", headers=_auth(key))
     assert resp.status_code == 200
-    assert "===== claude-shim =====\n(service not running)" in resp.text
-    assert "log line one" in resp.text  # jcode + local-llm still came through
+    assert "===== jcode =====\n(service not running)" in resp.text
+    assert "log line one" in resp.text  # local-llm still came through
 
 
 def test_update_status_proxies_to_supervisor(debug_client: tuple[TestClient, str]) -> None:

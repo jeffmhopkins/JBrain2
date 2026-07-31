@@ -1,6 +1,6 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-07-28
+> **Status:** Living · **Last verified:** 2026-07-31
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Over
@@ -30,7 +30,7 @@ dials out (no static IP or port-forwarding) — see `CLOUDFLARE_TUNNEL.md`.
 This is the core subset. Other always-on services (`searxng` + `reader` for the
 web tools, `wall` for the display, `tts-stt` for speech) run stock too, and an **opt-in
 fleet** lives behind compose profiles — the on-box model services (`local-llm`,
-`comfyui`), the coding sandbox (`jcode` + `claude-shim`), the
+`comfyui`), the coding sandbox (`jcode`), the
 family-location spine (`mqtt` + `mqtt-ingest`), and the tunnel (`cloudflared`).
 `SERVICES.md` is the full inventory.
 

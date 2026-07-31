@@ -291,7 +291,7 @@ class Settings(BaseSettings):
     gmail_token_url: str = "https://oauth2.googleapis.com/token"
 
     # OPT-IN code mode (docs/archive/JCODE_PLAN.md): a sandboxed coding-session
-    # SIDECAR running Claude Code's agent engine against an on-box coder model, fronted
+    # SIDECAR running xAI's Grok Build (`grok`) against an on-box coder model, fronted
     # by the PWA. NOT a knowledge agent — it reads no notes and is not in the agent
     # loop; the api only PROXIES its control surface to the owner (Wave J2). EMPTY
     # `jcode_url` DISABLES the feature (fail-closed): no jcode routes, no launcher tile
@@ -316,12 +316,10 @@ class Settings(BaseSettings):
     # `<slug>-preview.<base>`) so a sandbox-run dev app can never be served on the owner
     # origin even if the edge is misconfigured. Empty (the default) fail-closes the proxy.
     jcode_preview_base_host: str = ""
-    # The Anthropic<->OpenAI shim (LiteLLM) the external-LLM proxy forwards to, and its
-    # master key (the same JCODE_GATEWAY_TOKEN the jcode sandbox presents). Used ONLY by
-    # the token-gated external-LLM endpoint that exposes the on-box coder to a remote
-    # Claude — reachable on the `jcode` network the api already joins. An empty token
-    # fail-closes the proxy (external sessions can't reach the model).
-    jcode_shim_url: str = "http://claude-shim:4000"
+    # The shared jcode token the in-sandbox grok CLI presents to the api's residency-aware
+    # jcode LLM proxy (Authorization: Bearer). The external-LLM endpoint forwards straight
+    # to the local-llm gateway (JBRAIN_LOCAL_LLM_URL), so it needs no separate shim URL;
+    # off the jcode profile the coder isn't resident and that endpoint fail-closes.
     jcode_gateway_token: str = ""
 
     # JPet — the family wall pet (docs/plans/JPET_PLAN.md). The drives tick runs in

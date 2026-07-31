@@ -3212,7 +3212,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       jcodePowerOn = pbody.on ?? jcodePowerOn;
       if (!jcodePowerOn) jcodeWarmStarted = false; // powering off unloads the coder
     }
-    const services = ["local-llm", "claude-shim", "jcode"].map((name) => ({
+    const services = ["local-llm", "jcode"].map((name) => ({
       name,
       running: jcodePowerOn,
     }));

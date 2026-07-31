@@ -10,7 +10,6 @@ function powerStatus(over: Partial<JcodePowerStatus> = {}): JcodePowerStatus {
     provisioned: true,
     services: [
       { name: "local-llm", running: true },
-      { name: "claude-shim", running: true },
       { name: "jcode", running: true },
     ],
     coder_loaded: true,

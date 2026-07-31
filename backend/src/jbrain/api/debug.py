@@ -581,8 +581,8 @@ async def logs(
 
 
 # The code-mode (jcode) services, in the order most useful for debugging a turn: the
-# control server, then its Anthropic<->OpenAI shim, then the model gateway.
-_JCODE_LOG_SERVICES = ("jcode", "claude-shim", "local-llm")
+# control server, then the model gateway.
+_JCODE_LOG_SERVICES = ("jcode", "local-llm")
 
 
 @router.get("/jcode/logs", response_class=PlainTextResponse)
@@ -592,9 +592,9 @@ async def jcode_logs(
     _p: DebugDep,
     tail: Annotated[int, Query(ge=1, le=2000)] = 200,
 ) -> PlainTextResponse:
-    """All code-mode logs in one pull — the control server, the shim, and the model
-    gateway, each tailed and labeled. A not-running service is noted, not fatal, so this
-    works mid-bring-up. Saves three round-trips when chasing a jcode turn failure."""
+    """All code-mode logs in one pull — the control server and the model gateway, each
+    tailed and labeled. A not-running service is noted, not fatal, so this works
+    mid-bring-up. Saves round-trips when chasing a jcode turn failure."""
     request.state.debug_detail = f"jcode-system (tail {tail})"
     client = _supervisor(request)
     headers = {"Authorization": f"Bearer {settings.supervisor_token}"}

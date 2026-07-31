@@ -1,7 +1,8 @@
 // The external-LLM session screen: a token-gated public endpoint that exposes the
-// on-box coder to a remote Claude. Shows the endpoint URL + how to wire it, the secret
-// (only right after minting — never recoverable), live token-usage stats, an on/off
-// toggle, and delete. Opened from the jcode launcher (a new "External" session type).
+// on-box coder to a remote OpenAI-compatible client (grok build). Shows the endpoint URL
+// + how to wire it, the secret (only right after minting — never recoverable), live
+// token-usage stats, an on/off toggle, and delete. Opened from the jcode launcher (a
+// new "External" session type).
 
 import { useState } from "react";
 import { api } from "../api/client";
@@ -22,7 +23,7 @@ export function ExternalSessionScreen({
   session: ExternalSession;
   // The bearer secret, present ONLY immediately after minting (shown once).
   secret?: string | null;
-  // The endpoint base URL the remote points ANTHROPIC_BASE_URL at.
+  // The endpoint base URL the remote points OPENAI_BASE_URL at (append `/v1`).
   url: string;
   onClose: () => void;
   // Called after a toggle/delete so the launcher's list refreshes.
@@ -34,10 +35,9 @@ export function ExternalSessionScreen({
   const [copied, setCopied] = useState<string | null>(null);
 
   // The bearer secret is shown only at mint; afterwards the recipes carry a placeholder
-  // the owner fills in. OpenAI clients want the `/v1` suffix on the base URL (the SDK
-  // appends `/chat/completions`); the Anthropic SDK appends `/v1/messages` to the bare url.
+  // the owner fills in. OpenAI clients want the `/v1` suffix on the base URL (the client
+  // appends `/chat/completions`).
   const tok = secret ?? "<token>";
-  const claudeCmd = `ANTHROPIC_BASE_URL=${url} \\\n  ANTHROPIC_AUTH_TOKEN=${tok} \\\n  claude`;
   const grokCmd = `OPENAI_BASE_URL=${url}/v1 \\\n  OPENAI_API_KEY=${tok} \\\n  grok`;
   // Windows has no easy inline env-var form, so we host a setup script (api/install.py)
   // that installs the CLI and prompts for this URL + token. Derive the host from the
@@ -135,7 +135,7 @@ export function ExternalSessionScreen({
           </div>
         )}
 
-        {/* The endpoint + how to wire a remote Claude to it. */}
+        {/* The endpoint + how to wire a remote grok build client to it. */}
         <div className="jcode-extcard">
           <span className="jcode-extlabel">Endpoint</span>
           <input
@@ -153,14 +153,7 @@ export function ExternalSessionScreen({
             coder, whatever model the client asks for.
           </p>
 
-          {/* Wire-up recipes — Anthropic (Claude) and OpenAI (grok build), each copyable. */}
-          <details className="jcode-extrecipe">
-            <summary>Spin up Claude</summary>
-            <pre className="jcode-extcode">{claudeCmd}</pre>
-            <button type="button" className="jcode-act" onClick={() => copy("claude", claudeCmd)}>
-              {copied === "claude" ? "Copied ✓" : "Copy"}
-            </button>
-          </details>
+          {/* Wire-up recipe — OpenAI (grok build), copyable. */}
           <details className="jcode-extrecipe">
             <summary>grok build (OpenAI)</summary>
             <span className="jcode-extlabel">macOS / Linux</span>

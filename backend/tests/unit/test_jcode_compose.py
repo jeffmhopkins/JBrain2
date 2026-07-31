@@ -27,24 +27,21 @@ def test_api_joins_the_jcode_network() -> None:
     )
 
 
-def test_jcode_and_shim_are_isolated_on_the_jcode_network_only() -> None:
-    # The sandbox + its shim stay OFF `internal`: they must not reach db/worker/blobs.
+def test_jcode_is_isolated_on_the_jcode_network_only() -> None:
+    # The sandbox stays OFF `internal`: it must not reach db/worker/blobs.
     services = _spec()["services"]
     assert services["jcode"]["networks"] == ["jcode"]
-    assert services["claude-shim"]["networks"] == ["jcode"]
-    # Both are profile-gated so a stock deploy never starts the sandbox.
+    # Profile-gated so a stock deploy never starts the sandbox.
     assert services["jcode"]["profiles"] == ["jcode"]
-    assert services["claude-shim"]["profiles"] == ["jcode"]
 
 
 def test_jcode_marks_itself_a_sandbox_so_the_cli_runs_as_root() -> None:
-    # The container runs as root; the bundled CLI refuses --dangerously-skip-permissions
-    # (our bypassPermissions mode) as root unless IS_SANDBOX=1. Without this every turn
-    # exits 1 before any model call — guard the escape hatch the on-box bring-up needed.
+    # The container runs as root; a coding CLI's root-user permission guard treats it as a
+    # sandbox only with IS_SANDBOX=1. Guard the escape hatch the on-box bring-up needed.
     env = _spec()["services"]["jcode"]["environment"]
     assert env.get("IS_SANDBOX") == "1", (
-        "jcode runs the Claude CLI as root with bypassPermissions — it needs IS_SANDBOX=1 "
-        "or the CLI refuses to start and every turn exits 1"
+        "jcode runs a coding CLI as root — it needs IS_SANDBOX=1 or the CLI's root guard "
+        "refuses to start"
     )
 
 

@@ -9,6 +9,6 @@ cancel, reset, and delete.
 
 It reads **no** knowledge base and holds **no** owner data — its only state is
 the per-session workspaces under the sandbox volume. The coder model is on-box:
-the Claude Agent SDK is pointed at the local gateway via ``ANTHROPIC_BASE_URL``,
-so no code leaves the box.
+the ``grok`` CLI is pointed at the local gateway over an OpenAI-compatible
+base_url, so no code leaves the box.
 """

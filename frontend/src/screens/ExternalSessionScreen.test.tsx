@@ -32,7 +32,7 @@ describe("ExternalSessionScreen", () => {
     expect(screen.getByDisplayValue("https://box.example/api/ext/llm/ext-1")).toBeInTheDocument();
   });
 
-  it("offers Claude (Anthropic) and grok (OpenAI) wire-up recipes", () => {
+  it("offers the grok (OpenAI) wire-up recipe", () => {
     render(
       <ExternalSessionScreen
         session={SESSION}
@@ -42,12 +42,8 @@ describe("ExternalSessionScreen", () => {
         onChanged={vi.fn()}
       />,
     );
-    expect(screen.getByText("Spin up Claude")).toBeInTheDocument();
     expect(screen.getByText("grok build (OpenAI)")).toBeInTheDocument();
-    // The Anthropic recipe uses the bare base URL; the OpenAI one appends /v1.
-    expect(
-      screen.getByText(/ANTHROPIC_BASE_URL=https:\/\/box\.example\/api\/ext\/llm\/ext-1/),
-    ).toBeInTheDocument();
+    // The OpenAI recipe appends /v1 to the base URL.
     expect(
       screen.getByText(/OPENAI_BASE_URL=https:\/\/box\.example\/api\/ext\/llm\/ext-1\/v1/),
     ).toBeInTheDocument();
