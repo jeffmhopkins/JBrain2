@@ -1220,13 +1220,26 @@ function OnBoxModelsCard({
   const imgName =
     (image?.models?.find((m) => m.enabled) ?? image?.models?.[0])?.label.split(" ")[0] ?? "Image";
 
+  // Real system memory pressure the residency floor is enforced against (/proc/meminfo used,
+  // reclaimable cache excluded) — what the evictor actually sees. The bar MUST show it: the
+  // per-model segments alone omit the OS + the other on-box containers (postgres/api/worker/
+  // embed…), so without this the bar looks half-empty while a load still evicts.
+  const usedGb = hostMemory?.used_gb ?? null;
+  // The used memory the per-model + image segments don't account for: OS + other containers,
+  // plus any drift between catalog footprints and real RSS. Drawn as its own segment so the
+  // bar fills to the SAME `used` the floor budgets against — a staged eviction then lines up
+  // with the bar instead of looking like free room. Clamped at 0 (estimates can run over RSS).
+  const systemGb = usedGb !== null ? Math.max(usedGb - residentGb - imgUsedGb, 0) : 0;
+  // Honest "used" for the caption: measured used when we have it, else what we can see.
+  const shownUsedGb = usedGb ?? residentGb + imgUsedGb;
+
   const anyOn = hostingEnabled || (image?.reachable ?? false);
   const summary = [
     hostingEnabled
       ? `${loaded.length} resident${stagedProjected !== null ? " · previewing" : ""}`
       : "",
     image?.reachable ? (imgActive ? "image resident" : "image idle") : "",
-    anyOn ? `${Math.round(residentGb + imgUsedGb)} GB` : "",
+    anyOn ? `${Math.round(shownUsedGb)} GB` : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1275,6 +1288,20 @@ function OnBoxModelsCard({
         {meterShown ? (
           <div className="llm-mem" aria-label="unified memory in use">
             <div className="llm-mem-bar">
+              {/* The OS + non-LLM containers the evictor counts but the model segments don't —
+                  drawn first so the bar's fill matches the real `used` the floor budgets on. */}
+              {systemGb > 0.5 && (
+                <div
+                  className="llm-mem-seg llm-mem-sys"
+                  style={{ width: `${(systemGb / total) * 100}%` }}
+                  title={`System + other containers — ${Math.round(systemGb)} GB (OS, database, on-box services)`}
+                >
+                  <div className="llm-mem-w" style={{ width: "100%" }} />
+                  <span className="llm-mem-label">
+                    system <span className="gb">{Math.round(systemGb)}G</span>
+                  </span>
+                </div>
+              )}
               {onBar.map((m, i) => {
                 const weights = m.disk_gb ?? m.size_gb;
                 const res = weights + m.kv_gb;
@@ -1329,7 +1356,13 @@ function OnBoxModelsCard({
               )}
             </div>
             <div className="llm-mem-cap">
-              <span>{Math.round(residentGb + imgUsedGb)} GB resident</span>
+              <span>{Math.round(shownUsedGb)} GB used</span>
+              {systemGb > 0.5 && (
+                <span className="onbox-mem-key">
+                  <span className="onbox-mem-sw sys" />
+                  system {Math.round(systemGb)} GB
+                </span>
+              )}
               {imgActive && (
                 <span className="onbox-mem-key">
                   <span className="onbox-mem-sw" />
