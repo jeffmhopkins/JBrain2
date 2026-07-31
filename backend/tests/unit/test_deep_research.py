@@ -1430,3 +1430,46 @@ async def test_plain_produce_still_persists_external_no_seed() -> None:
     await svc.produce(_ctx(), {"question": "how does X work?", "output_kind": "plan"})
     assert len(persisted) == 1  # external sink → persisted (tagged deep_produce)
     assert persisted[0]["tool"] == "deep_produce"
+
+
+def _critique_brief(spawn: _FakeSpawn) -> str:
+    fan = next(
+        f
+        for f in spawn.fans
+        if f["persona"] in ("review", "review_library") and f["briefs"][0][0] == "critique"
+    )
+    return fan["briefs"][0][1]
+
+
+async def test_seeded_produce_critic_verifies_against_the_record_b3() -> None:
+    """B3: a seeded (library) run is STILL faithfulness-checked — the critic is fed the
+    owner's record and told to verify the plan against it (even though _can_open_sources is
+    false for library), so an invented lab value / date / history detail is caught."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    spawn = _FakeSpawn()
+    svc = _seed_svc(router, spawn, "PLATELET COUNT 20 (2026-01-05); Hgb 7.1")
+    await svc.produce(
+        _health_ctx(), {"question": "plan", "output_kind": "plan", "emr_since": "2026-01-01"}
+    )
+    brief = _critique_brief(spawn)
+    assert "RECORDS-GROUNDED" in brief  # the record-verification clause fires
+    assert "PLATELET COUNT 20" in brief  # the record itself is fed to the critic to check against
+    assert "record does NOT contain" in brief
+
+
+async def test_library_run_without_seed_has_no_record_clause() -> None:
+    """A plain (no-seed) library run is unchanged — no record-verification clause, since
+    there is no owner record grounding it."""
+    router, spawn = _FakeRouter(complexity="deep", covered=True, gaps=()), _FakeSpawn()
+    await _svc(router, spawn).produce(_ctx(), {"question": "q", "sources": "library"})
+    assert "RECORDS-GROUNDED" not in _critique_brief(spawn)
+
+
+async def test_web_critique_unchanged_no_record_clause() -> None:
+    """A web deep_research run's critique keeps its citation-faithfulness brief and gains no
+    record clause (record defaults to empty) — byte-stable for the shipped path."""
+    router, spawn = _FakeRouter(complexity="deep", covered=True, gaps=()), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "how does X work?"})
+    brief = _critique_brief(spawn)
+    assert "RECORDS-GROUNDED" not in brief
+    assert "citation faithfulness" in brief.lower()  # the web citation check still fires
