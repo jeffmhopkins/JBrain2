@@ -245,6 +245,34 @@ describe("LLMSettingsScreen", () => {
     await screen.findByRole("button", { name: "Reset" });
   });
 
+  it("shows real system usage on the meter, not just the model footprints", async () => {
+    // The box reports 76 GB used with one ~64 GB model resident — the other ~12 GB is the OS +
+    // on-box containers the evictor counts against the floor. The meter must surface that (as a
+    // system segment + honest used total), so the displayed usage matches what an eviction
+    // preview enforces instead of looking like free room.
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 121, used_gb: 76 };
+    s.local_models = [
+      lm({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: true,
+        loaded: true,
+        size_gb: 60,
+        disk_gb: 60,
+        kv_gb: 4,
+      }),
+    ];
+    stubLlmFetch(s);
+    render(<LLMSettingsScreen />);
+    // The caption reports the real used (76), not the 64 GB model footprint.
+    expect(await screen.findByText("76 GB used")).toBeInTheDocument();
+    expect(screen.getByText("121 GB total")).toBeInTheDocument();
+    // The ~12 GB of OS + containers is surfaced as its own system key.
+    expect(screen.getByText(/system 12 GB/)).toBeInTheDocument();
+  });
+
   it("clears the free-RAM override with Reset", async () => {
     const seed = initialSettings();
     seed.local_hosting_enabled = true;
@@ -527,7 +555,9 @@ describe("LLMSettingsScreen", () => {
   it("shows loaded models and unloads them from memory", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
-    s.host_memory = { total_gb: 128, used_gb: 92 };
+    // Real used ≈ the lone resident model's footprint (no other containers), so the meter has
+    // no separate system chunk here.
+    s.host_memory = { total_gb: 128, used_gb: 34 };
     s.local_models = [
       lm({
         id: "qwen3-vl-30b",
@@ -573,8 +603,8 @@ describe("LLMSettingsScreen", () => {
     // The resident model reads "resident" and offers an Unload button. It lives in both the
     // Resident and Available tabs; the Available tab is the default.
     expect(await screen.findByText("resident")).toBeInTheDocument();
-    // The always-visible shared meter sums the resident footprint (32 weights + 2 KV).
-    expect(screen.getByText("34 GB resident")).toBeInTheDocument();
+    // The always-visible shared meter shows the real used memory (here == the 34 GB model).
+    expect(screen.getByText("34 GB used")).toBeInTheDocument();
     expect(screen.getByText("128 GB total")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Unload" }));
 
@@ -1152,7 +1182,7 @@ describe("LLMSettingsScreen", () => {
     // Both section toggles are present; the shared meter is visible without expanding.
     expect(await screen.findByRole("button", { name: /On-box LLMs/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Image models/i })).toBeInTheDocument();
-    expect(screen.getByText("34 GB resident")).toBeInTheDocument();
+    expect(screen.getByText("34 GB used")).toBeInTheDocument();
 
     // The LLM section (open by default) carries Resident / Available / Catalogue tabs
     // (reversed order); Available is the active segment.

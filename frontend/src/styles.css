@@ -1491,6 +1491,12 @@ h3 {
 .llm-mem-img .llm-mem-w {
   border-radius: inherit;
 }
+/* The system / other-containers segment: a muted, de-emphasized fill (it's not a model, just
+   the real OS + container usage the floor counts) so the models still read as the focus. */
+.llm-mem-sys .llm-mem-w {
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text-3) 42%, transparent);
+}
 .llm-local-state {
   font-size: var(--fs-micro);
   color: var(--text-3);
@@ -1755,6 +1761,10 @@ h3 {
   height: 8px;
   border-radius: 2px;
   background: var(--violet);
+}
+/* The muted swatch for the system / other-containers key (matches the .llm-mem-sys fill). */
+.onbox-mem-sw.sys {
+  background: color-mix(in srgb, var(--text-3) 42%, transparent);
 }
 /* The amber "staged" dot state on the shared meter's status light. */
 .onbox-status .llm-local-dot.amber {
