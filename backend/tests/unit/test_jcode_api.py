@@ -64,6 +64,31 @@ def test_owner_but_unconfigured_is_404() -> None:
     assert "not enabled" in r.json()["detail"]
 
 
+def test_create_forwards_the_internet_optins(_no_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The owner's per-session Web-search / raw-egress checkboxes ride the create body
+    # through to the control server (docs/plans/JCODE_GROK_INTERNET_PLAN.md). Stub the
+    # model/planner resolution + owner-index upsert so the happy path runs pool-free.
+    fake = FakeJcodeClient()
+
+    async def _model(*_a: object, **_k: object) -> str:
+        return "qwen3-coder-next"
+
+    async def _planner(*_a: object, **_k: object) -> str:
+        return ""
+
+    async def _noop(*_a: object, **_k: object) -> None:
+        return None
+
+    monkeypatch.setattr(jcode, "_resolve_model", _model)
+    monkeypatch.setattr(jcode, "_resolve_planner_model", _planner)
+    monkeypatch.setattr(jcode._REPO, "upsert", _noop)
+    client = TestClient(_app(OWNER, jcode_client=fake))
+    r = client.post("/api/jcode/sessions", json={"repo": "r", "internet_search": True})
+    assert r.status_code == 201
+    assert fake.created_internet == [(True, False)]  # egress defaults off
+    assert r.json()["internet_search"] is True
+
+
 def test_stop_and_restart_proxy_the_control_server(_no_db: None) -> None:
     import asyncio
 

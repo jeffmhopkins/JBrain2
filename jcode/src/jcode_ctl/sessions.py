@@ -56,6 +56,11 @@ class Session:
     # ``JCODE_GROK_PLAN_MODEL`` (empty = single-model: the executor plans too). Fixed at
     # create, so a mid-session settings change never re-points a live session.
     planner: str = ""
+    # Per-session internet capability, fixed at create (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
+    # ``internet_search`` exposes the SearXNG-backed ``web-search`` / ``web-fetch`` helpers
+    # (no raw egress). ``internet_egress`` is the separate raw-outbound opt-in.
+    internet_search: bool = False
+    internet_egress: bool = False
 
     def public(self) -> dict[str, object]:
         return asdict(self)
@@ -102,6 +107,8 @@ class SessionManager:
         *,
         model: str = "",
         planner: str = "",
+        internet_search: bool = False,
+        internet_egress: bool = False,
     ) -> Session:
         if self._max > 0 and len(self._sessions) >= self._max:
             raise SessionError(f"at capacity ({self._max} sessions) — close one first")
@@ -123,16 +130,21 @@ class SessionManager:
             last_active_at=now,
             model=model,
             planner=planner,
+            internet_search=internet_search,
+            internet_egress=internet_egress,
         )
         self._sessions[sid] = session
         _log.info(
-            "session create sid=%s repo=%s branch=%s wb=%s model=%s planner=%s",
+            "session create sid=%s repo=%s branch=%s wb=%s model=%s planner=%s "
+            "internet_search=%s internet_egress=%s",
             sid,
             repo,
             branch,
             work_branch,
             model or "<default>",
             planner or "<single-model>",
+            internet_search,
+            internet_egress,
         )
         return session
 
