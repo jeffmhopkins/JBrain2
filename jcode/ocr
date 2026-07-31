@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Deterministic OCR for the sandbox coding CLIs (grok / claude).
+
+Reads a local image or PDF and prints its exact text, via the api's jcode OCR bridge — the
+sandbox can't reach the on-box RapidOCR sidecar directly, so the api (the one peer on both
+networks) bridges. Unlike web-search this is ALWAYS available: OCR of a local file is an
+offline read, so there's no internet opt-in to gate it (docs/plans/RAPIDOCR_PLAN.md).
+
+  ocr <file>                     print the exact text in an image or PDF
+"""
+
+from __future__ import annotations
+
+import mimetypes
+import os
+import sys
+import urllib.error
+import urllib.request
+
+_DEFAULT_BASE = "http://api:8000/api/jcode/llm/v1"
+
+
+def _die(msg: str, code: int = 1) -> None:
+    print(f"ocr: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if len(args) != 1 or not args[0].strip():
+        _die("usage: ocr <image-or-pdf-file>", 2)
+    path = args[0]
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError as exc:
+        _die(f"cannot read {path}: {exc}", 2)
+    if not data:
+        _die(f"{path} is empty", 2)
+    base = os.environ.get("GROK_MODELS_BASE_URL", _DEFAULT_BASE).rstrip("/")
+    token = os.environ.get("GROK_API_KEY", "")
+    content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    req = urllib.request.Request(
+        f"{base}/ocr",
+        data=data,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": content_type},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            sys.stdout.write(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace").strip()
+        _die(f"request failed ({exc.code}): {detail or exc.reason}")
+    except urllib.error.URLError as exc:
+        _die(f"could not reach the OCR bridge (api unreachable): {exc.reason}")
+
+
+if __name__ == "__main__":
+    main()

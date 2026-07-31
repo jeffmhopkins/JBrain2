@@ -24,6 +24,7 @@ load — that is the whole point.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -33,8 +34,10 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
+from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.llm import local_catalog
 from jbrain.llm.residency import ResidencyError
+from jbrain.vision import OcrServiceError
 from jbrain.web.fetch import WebFetchError
 from jbrain.web.search import WebSearchError
 
@@ -263,3 +266,40 @@ async def web_fetch(request: Request) -> Response:
         links = "\n".join(f"- {u}" for u in result.links)
         body += f"\n\nLinks on this page (web-fetch any of these to follow it):\n{links}"
     return Response(content=body + "\n", media_type="text/plain")
+
+
+async def _ocr_pdf_bytes(client: object, data: bytes) -> str:
+    """OCR a PDF page by page (rasterize in the api, one image per page to the sidecar)."""
+    images = await asyncio.to_thread(pdf_page_images, data)
+    parts: list[str] = []
+    for number, png in enumerate(images, start=1):
+        page = (await client.ocr(png, "image/png")).text.strip()  # type: ignore[attr-defined]
+        if page:
+            parts.append(f"[page {number}]\n{page}")
+    return "\n\n".join(parts)
+
+
+@router.post("/jcode/llm/v1/ocr")
+async def ocr(request: Request) -> Response:
+    """Deterministic OCR for the sandbox CLIs via the on-box RapidOCR sidecar — the sandbox
+    can't reach it directly (it's on `internal`), so this api bridges. Raw image/PDF bytes in
+    the body; a PDF is rasterized and read page by page. Unlike web-search this has no
+    per-session gate — it's an offline, local read (docs/plans/RAPIDOCR_PLAN.md)."""
+    _authorize(request)
+    client = getattr(request.app.state, "rapidocr", None)
+    if client is None:
+        raise HTTPException(status_code=503, detail="OCR is not configured")
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty body")
+    content_type = request.headers.get("content-type", "")
+    is_pdf = content_type.startswith("application/pdf") or data[:5] == b"%PDF-"
+    try:
+        text = await _ocr_pdf_bytes(client, data) if is_pdf else (await client.ocr(data)).text
+    except OcrServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    text = text.strip()
+    return Response(
+        content=(text + "\n") if text else "No legible text was found.\n",
+        media_type="text/plain",
+    )
