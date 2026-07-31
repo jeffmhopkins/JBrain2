@@ -485,6 +485,9 @@ async def run() -> None:
         models_dir=settings.local_models_dir,
         enabled=settings.local_llm_enabled,
         free_ram_fraction=settings.local_llm_free_ram_fraction,
+        # Same live floor override the api reads (Settings → LLM), so a change applies to
+        # background jobs' model loads too — the worker is the second place this takes effect.
+        fraction_loader=lambda: worker_settings_store.llm_local_free_ram_fraction(queue.SYSTEM_CTX),
         # Serialize evict+load against the api process (which runs its own coordinator over
         # the same box) so a background job's model swap can't co-load past the free-RAM
         # floor while the api is loading for a chat turn — the cross-process double-load.

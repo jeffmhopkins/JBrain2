@@ -83,6 +83,10 @@ def pg_box_lock(maker: async_sessionmaker[AsyncSession]) -> BoxLock:
 # Loads the live per-model context-window overrides (catalog id → tokens), so the memory
 # budget sizes each model's KV against the window it actually serves.
 WindowsLoader = Callable[[], Awaitable[Mapping[str, int]]]
+# Reads the operator's live free-RAM floor override (fraction kept free), or None to use the
+# construction-time config default. Called before every load so a settings-screen change
+# takes effect with no restart; a read failure or junk value degrades to the config default.
+FractionLoader = Callable[[], Awaitable[float | None]]
 
 
 class ResidencyError(Exception):
@@ -135,6 +139,7 @@ class ResidencyCoordinator:
         models_dir: str = "",
         enabled: bool = False,
         free_ram_fraction: float = 0.25,
+        fraction_loader: FractionLoader | None = None,
         box_lock: BoxLock | None = None,
     ) -> None:
         self._gateway = gateway
@@ -143,7 +148,11 @@ class ResidencyCoordinator:
         self._enabled = enabled
         self._windows_loader = windows_loader
         self._models_dir = models_dir
+        # The config-default floor. The live operator override (fraction_loader) wins over it
+        # per load when wired and valid; this is the fallback when there's no override, no
+        # loader, or the read fails — so the budget always has a floor.
         self._free_ram_fraction = free_ram_fraction
+        self._fraction_loader = fraction_loader
         # Cross-process serialization of the evict+load path (pg_box_lock in production).
         # None → single-process behavior: evict only, and let the client trigger the load.
         # Set → hold the lock across evict AND the target load, so the loaded model's memory
@@ -191,6 +200,20 @@ class ResidencyCoordinator:
             return await self._windows_loader()
         return {}
 
+    async def _fraction(self) -> float:
+        """The live free-RAM floor (fraction kept free): the operator's stored override when
+        wired and valid, else the construction-time config default. Read per-plan so a
+        settings-screen change applies to the next load without a restart; a missing loader,
+        a read failure, or a junk value (not in (0, 1)) all degrade to the config default —
+        the budget must never lose its floor."""
+        if self._fraction_loader is None:
+            return self._free_ram_fraction
+        with contextlib.suppress(Exception):
+            override = await self._fraction_loader()
+            if override is not None and 0.0 < override < 1.0:
+                return override
+        return self._free_ram_fraction
+
     async def _footprint(self, served_model: str, windows: Mapping[str, int]) -> float:
         """A resident model's unified-memory footprint (GiB) at its served window — measured
         weights + KV. 0.0 for a served name outside the catalog: we can't size it, so it never
@@ -216,7 +239,7 @@ class ResidencyCoordinator:
         if mem is None:
             return None
         total, used = mem
-        ceiling = total * (1.0 - self._free_ram_fraction)  # keep used at/under this
+        ceiling = total * (1.0 - await self._fraction())  # keep used at/under this
         windows = await self._windows()
         if served_model in running:
             return EvictionPlan(
@@ -409,7 +432,7 @@ class ResidencyCoordinator:
         if mem is None:
             return  # can't budget the restore — leave cold members to load on demand
         total, used = mem
-        ceiling = total * (1.0 - self._free_ram_fraction)
+        ceiling = total * (1.0 - await self._fraction())
         windows = await self._windows()
         # Deterministic order when not everything fits: biggest footprint first, so we bring
         # back the model the turn was actually using before a smaller one. A bare set would

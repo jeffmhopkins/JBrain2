@@ -63,6 +63,14 @@ _VALID_REASONING_EFFORTS = ("none", "low", "medium", "high")
 # a non-int / non-positive / bool value is dropped — a junk value must never read
 # as a window.
 LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
+# The residency free-RAM floor as a FRACTION of physical RAM kept free (0.15 = 15%),
+# a per-owner runtime override of the JBRAIN_LOCAL_LLM_FREE_RAM_FRACTION config default.
+# The evictor reads it live before every load (jbrain.llm.residency), so a change takes
+# effect on the next model load in BOTH the api and worker processes with no restart.
+# Absent = use the config default. Defensive on read: only a real number strictly between
+# 0 and 1 (bool excluded) is honored — a junk value falls back to the config default rather
+# than reading as a floor.
+LLM_LOCAL_FREE_RAM_FRACTION_KEY = "llm_local_free_ram_fraction"
 # Catalog ids the operator has marked UNAVAILABLE — installed (provisioned) models the
 # router may NOT swap in, without deleting their weights. A per-owner runtime override on
 # top of LOCAL_MODELS: effective-available = local_models − this set. Read live, so a toggle
@@ -557,6 +565,30 @@ class SqlSettingsStore:
             current[model_id] = window
         await self.upsert(ctx, LLM_LOCAL_CONTEXT_WINDOWS_KEY, current)
         return current
+
+    async def llm_local_free_ram_fraction(self, ctx: SessionContext) -> float | None:
+        """The operator's residency free-RAM floor override (fraction kept free), or None
+        to fall back to the config default. Defensive on read — this bounds every model
+        load, so anything that isn't a real number strictly in (0, 1) (bool excluded) is
+        dropped rather than trusted as a floor. Bounds tighter than (0, 1) are the API's
+        job; the store stays a dumb sanitizer."""
+        raw = await self.get(ctx, LLM_LOCAL_FREE_RAM_FRACTION_KEY, None)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return None
+        return float(raw) if 0.0 < raw < 1.0 else None
+
+    async def set_llm_local_free_ram_fraction(
+        self, ctx: SessionContext, fraction: float | None
+    ) -> float | None:
+        """Set (a fraction in (0, 1)) or clear (None → revert to the config default) the
+        residency free-RAM floor override; returns the sanitized value. Validity/bounds are
+        the API's job — the store only refuses to persist a value it wouldn't read back."""
+        if fraction is None or isinstance(fraction, bool) or not (0.0 < fraction < 1.0):
+            await self.upsert(ctx, LLM_LOCAL_FREE_RAM_FRACTION_KEY, None)
+            return None
+        clean = float(fraction)
+        await self.upsert(ctx, LLM_LOCAL_FREE_RAM_FRACTION_KEY, clean)
+        return clean
 
     async def llm_local_unavailable(self, ctx: SessionContext) -> list[str]:
         """Catalog ids the operator has marked unavailable to the router, sanitized

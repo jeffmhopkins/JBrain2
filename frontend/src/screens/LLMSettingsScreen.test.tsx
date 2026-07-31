@@ -76,6 +76,7 @@ function initialSettings(): LlmSettings {
       }),
     ],
     host_memory: null,
+    free_ram: { fraction: 0.15, default: 0.15, override: null },
     jcode: {
       enabled: false,
       model: "",
@@ -107,8 +108,24 @@ function stubLlmFetch(seed?: LlmSettings) {
   const puts: { tasks: Record<string, { provider: string; reasoning_effort?: string }> }[] = [];
   const jcodePuts: string[] = [];
   const jcodePlannerPuts: string[] = [];
+  const freeRamPuts: (number | null)[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
+    // The free-RAM headroom control PUTs the fraction (or null to clear) and gets the
+    // full snapshot back, mirroring the backend's effective/override resolution.
+    if (path === "/api/settings/llm/free-ram-fraction") {
+      const body = JSON.parse(String(init?.body)) as { fraction: number | null };
+      freeRamPuts.push(body.fraction);
+      state.free_ram = {
+        fraction: body.fraction ?? state.free_ram.default,
+        default: state.free_ram.default,
+        override: body.fraction,
+      };
+      return new Response(JSON.stringify(state), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     // The code-mode executor selector PUTs here and gets the full snapshot back.
     if (path === "/api/settings/llm/jcode-model") {
       const body = JSON.parse(String(init?.body)) as { model: string };
@@ -180,7 +197,7 @@ function stubLlmFetch(seed?: LlmSettings) {
     });
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { puts, jcodePuts, jcodePlannerPuts, state };
+  return { puts, jcodePuts, jcodePlannerPuts, freeRamPuts, state };
 }
 
 beforeEach(() => stubLlmFetch());
@@ -211,6 +228,38 @@ describe("LLMSettingsScreen", () => {
     render(<LLMSettingsScreen />);
     await screen.findByText("High reasoning");
     expect(screen.queryByLabelText("Code mode executor model")).not.toBeInTheDocument();
+  });
+
+  it("shows the free-RAM headroom control and PUTs a chosen fraction (hosting on)", async () => {
+    const seed = initialSettings();
+    seed.local_hosting_enabled = true;
+    const { freeRamPuts } = stubLlmFetch(seed);
+    render(<LLMSettingsScreen />);
+    const select = (await screen.findByLabelText("Free-RAM headroom")) as HTMLSelectElement;
+    // Effective value is the 15% config default; no Reset shown while it isn't overridden.
+    expect(select.value).toBe("0.15");
+    expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "0.25" } });
+    await waitFor(() => expect(freeRamPuts).toEqual([0.25]));
+    // The snapshot echo flips it to an override, surfacing the Reset affordance.
+    await screen.findByRole("button", { name: "Reset" });
+  });
+
+  it("clears the free-RAM override with Reset", async () => {
+    const seed = initialSettings();
+    seed.local_hosting_enabled = true;
+    seed.free_ram = { fraction: 0.25, default: 0.15, override: 0.25 };
+    const { freeRamPuts } = stubLlmFetch(seed);
+    render(<LLMSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(freeRamPuts).toEqual([null]));
+  });
+
+  it("hides the free-RAM headroom control when hosting is off", async () => {
+    // Default fixture has local_hosting_enabled = false.
+    render(<LLMSettingsScreen />);
+    await screen.findByText("High reasoning");
+    expect(screen.queryByLabelText("Free-RAM headroom")).not.toBeInTheDocument();
   });
 
   function jcodeSeed(): LlmSettings {

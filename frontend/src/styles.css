@@ -1696,6 +1696,53 @@ h3 {
   color: var(--text-3);
   margin: 10px 0 2px;
 }
+/* Box-wide residency free-RAM floor control, under the meter (hosting on only). Mirrors the
+   per-model context-window select's look. */
+.onbox-freeram {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 2px;
+}
+.onbox-freeram-label {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.onbox-freeram-select {
+  font: inherit;
+  font-size: var(--fs-micro);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.onbox-freeram-select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.onbox-freeram-reset {
+  font: inherit;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.onbox-freeram-reset:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.onbox-freeram-hint {
+  flex-basis: 100%;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
 /* The image-VRAM key swatch in the meter caption (violet, matching the segment). */
 .onbox-mem-key {
   display: inline-flex;

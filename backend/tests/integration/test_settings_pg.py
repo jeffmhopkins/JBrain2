@@ -83,6 +83,30 @@ async def test_store_defaults_and_upsert_round_trip(
     assert await store.image_analysis_mode(OWNER) == "full"
 
 
+async def test_free_ram_fraction_round_trips_and_sanitizes(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_FREE_RAM_FRACTION_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → None (the caller falls back to the config default floor).
+    assert await store.llm_local_free_ram_fraction(OWNER) is None
+
+    # A valid fraction round-trips.
+    assert await store.set_llm_local_free_ram_fraction(OWNER, 0.2) == 0.2
+    assert await store.llm_local_free_ram_fraction(OWNER) == 0.2
+
+    # Clearing (None) reverts to the config default (stored as null, read as None).
+    assert await store.set_llm_local_free_ram_fraction(OWNER, None) is None
+    assert await store.llm_local_free_ram_fraction(OWNER) is None
+
+    # Junk in the row never reads as a floor — out of (0, 1), a bool, or a non-number all
+    # fall back to None rather than budgeting the box off a bad value.
+    for junk in (1.5, 0.0, 1.0, True, "lots"):
+        await store.upsert(OWNER, LLM_LOCAL_FREE_RAM_FRACTION_KEY, junk)
+        assert await store.llm_local_free_ram_fraction(OWNER) is None, junk
+
+
 async def test_brain_llm_stream_defaults_off_and_round_trips(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

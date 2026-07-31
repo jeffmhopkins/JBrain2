@@ -345,6 +345,20 @@ export function LLMSettingsScreen() {
       .finally(() => unmark(id));
   }
 
+  // Set (or clear, with null) the box-wide residency free-RAM floor. Keyed on a fixed busy
+  // id (not a model id) since it's a global knob, not a per-row action.
+  function setFreeRam(fraction: number | null) {
+    mark("free-ram");
+    const seq = ++putSeq.current;
+    api
+      .setFreeRamFraction(fraction)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark("free-ram"));
+  }
+
   // Toggle a provisioned model available/unavailable to the router (keeps the weights). A
   // model made unavailable can't be staged, so drop any open preview of it.
   function setAvailable(id: string, on: boolean) {
@@ -606,6 +620,9 @@ export function LLMSettingsScreen() {
         hostingEnabled={settings.local_hosting_enabled}
         models={settings.local_models}
         hostMemory={settings.host_memory}
+        freeRam={settings.free_ram}
+        onSetFreeRam={setFreeRam}
+        freeRamBusy={busy.has("free-ram")}
         image={image}
         busy={busy}
         stagedId={stagedId}
@@ -1045,6 +1062,64 @@ function SectionToggle({
   );
 }
 
+// Presets for the residency free-RAM floor (fraction kept free). 12.5% / 15% are the tuned
+// runbook values; the wider band lets a box trade co-residence room against freeze safety.
+const FREE_RAM_PRESETS = [0.05, 0.1, 0.125, 0.15, 0.2, 0.25, 0.3];
+const freeRamPct = (f: number) => `${+(f * 100).toFixed(1)}%`;
+
+// The box-wide free-RAM headroom control shown under the memory meter (hosting on only). The
+// evictor keeps this fraction of RAM free before every local load; lowering it lets more
+// models co-reside, raising it keeps more margin against the kernel-reclaim freeze.
+function FreeRamControl({
+  freeRam,
+  busy,
+  onChange,
+}: {
+  freeRam: { fraction: number; default: number; override: number | null };
+  busy: boolean;
+  onChange: (fraction: number | null) => void;
+}) {
+  // Always fold in the effective + default values so the current one is selectable even if
+  // it isn't a preset (e.g. a hand-set env value).
+  const options = Array.from(
+    new Set([...FREE_RAM_PRESETS, freeRam.fraction, freeRam.default]),
+  ).sort((a, b) => a - b);
+  return (
+    <div className="onbox-freeram">
+      <label className="onbox-freeram-label" htmlFor="free-ram-select">
+        Free-RAM headroom
+      </label>
+      <select
+        id="free-ram-select"
+        className="onbox-freeram-select"
+        value={String(freeRam.fraction)}
+        disabled={busy}
+        onChange={(e) => onChange(Number(e.target.value))}
+      >
+        {options.map((f) => (
+          <option key={f} value={f}>
+            {freeRamPct(f)}
+            {f === freeRam.default ? " · default" : ""}
+          </option>
+        ))}
+      </select>
+      {freeRam.override !== null && (
+        <button
+          type="button"
+          className="onbox-freeram-reset"
+          disabled={busy}
+          onClick={() => onChange(null)}
+        >
+          Reset
+        </button>
+      )}
+      <span className="onbox-freeram-hint">
+        kept free before each model load — lower to co-reside more, raise for freeze safety
+      </span>
+    </div>
+  );
+}
+
 // One card, a shared always-visible unified-memory meter, then two independently
 // collapsible sections (On-box LLMs / Image models). The meter is fed BOTH the LLM
 // (loaded + staged) and the image-VRAM segments since the box shares one RAM pool.
@@ -1060,6 +1135,9 @@ function OnBoxModelsCard({
   hostingEnabled,
   models,
   hostMemory,
+  freeRam,
+  onSetFreeRam,
+  freeRamBusy,
   image,
   busy,
   stagedId,
@@ -1090,6 +1168,9 @@ function OnBoxModelsCard({
   hostingEnabled: boolean;
   models: LocalModelInfo[];
   hostMemory: { total_gb: number; used_gb: number } | null;
+  freeRam: { fraction: number; default: number; override: number | null };
+  onSetFreeRam: (fraction: number | null) => void;
+  freeRamBusy: boolean;
   image: ImageSettings | null;
   busy: Set<string>;
   stagedId: string | null;
@@ -1273,6 +1354,9 @@ function OnBoxModelsCard({
           <p className="onbox-mem-empty">
             Nothing resident — load a model, or run image generation, to fill the bar.
           </p>
+        )}
+        {hostingEnabled && (
+          <FreeRamControl freeRam={freeRam} busy={freeRamBusy} onChange={onSetFreeRam} />
         )}
       </div>
 
