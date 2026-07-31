@@ -401,7 +401,7 @@ so backends are config, not code:
 |---|---|
 | `text/*` | decode |
 | `application/pdf` | per-page text layer (PyMuPDF); pages without one render to images → image chain |
-| `image/*` | OCR backend (Tesseract local / vision-LLM via the adapter) **and** captioning (vision-LLM) as separate products |
+| `image/*` | OCR (vision-LLM via the adapter, cross-validated by the deterministic RapidOCR sidecar) **and** captioning (vision-LLM) as separate products |
 | `video/*` | ffmpeg → audio track → transcription backend; keyframes → image chain (fast-follow; needs ffmpeg) |
 | `audio/*` | **shipped:** whisper.cpp via the on-box llama-swap gateway, an async `transcribe_attachment` job → `kind='transcript'` cache row (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md) |
 
@@ -437,6 +437,17 @@ transcription call only with no caption row. The job payload's optional
 re-run path — the handler re-describes via delete+insert of the caption row
 and re-runs OCR only if its cache row is missing, then re-ingests).
 Confidence caps are unchanged: OCR 0.7, description 0.6.
+
+**Dual-engine OCR cross-validation** (`../plans/RAPIDOCR_PLAN.md`): the
+`vision.ocr` call now runs alongside the deterministic **RapidOCR** sidecar
+(`asyncio.gather`), and **both** readings are stored as `kind='ocr'` rows,
+distinguished by `tool` (`rapidocr` vs the VLM's `provider:model`). The chunker
+(`image_segments`) prefers the RapidOCR row per anchor — falling back to the VLM
+row when RapidOCR is empty — so the fact pipeline reads verbatim OCR, not the
+model's reading, and divergence is logged (`ocr.crosscheck` agreement). Both
+rows keep the **0.7 cap regardless of engine** — the cross-check raises trust in
+the string, never a fact's auto-supersede power. A sidecar that's off/unreachable
+degrades to VLM-only; the cross-check never fails the OCR job.
 
 **Analysis gating [decided: keyed on outstanding vision work]**: ingest
 enqueues `integrate_note` only when no `ocr_attachment` job is queued or

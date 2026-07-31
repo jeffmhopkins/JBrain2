@@ -26,6 +26,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `supervisor` | minimal socket-mounted service | Holds the Docker socket; a fixed command set (status/restart/start/stop/logs/update/rebuild/provision/export/import/reset) behind an internal token. Drives the Ops screen. | internal |
 | `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search`/`web_fetch`. Only the KB-blind `jerv` reaches it. | internal |
 | `reader` | headless-Chromium reader (r.jina.ai-compatible) | `web_fetch` fallback renderer for bot-walled / JS-only pages. | internal |
+| `rapidocr` | RapidOCR (PP-OCR / ONNX, CPU) | Deterministic OCR: cross-validates the VLM `vision.ocr` extraction (stores a `tool="rapidocr"` row) and backs the direct `ocr` tools (jerv + the jcode sandbox, which reaches it via the api bridge). Default-on; the engine lazy-loads on first call and idle-unloads. See `../plans/RAPIDOCR_PLAN.md`. | internal |
 | `wall` | stdlib Python | Unauthenticated **neural-wall display** for the host's own monitor / a LAN kiosk — host vitals only (GPU %, RAM, power), no DB, its own LAN port :8800; forwards read-aloud to `tts-stt`. | internal |
 | `tts-stt` | whisper.cpp + piper + kokoro | The box's **speech I/O**: warm text-to-speech (:8801, the read-aloud renderer — piper voices plus baked-in Kokoro-82M voices) + whisper.cpp speech-to-text (:8080). Default-on; both TTS engines' voices ride the image build, so no provisioning step — the STT model is the one opt-in (`jbrain enable-whisper`). | internal |
 

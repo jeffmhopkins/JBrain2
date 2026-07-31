@@ -1,6 +1,6 @@
 # RapidOCR — deterministic CPU OCR: sidecar, cross-validation, jerv + sandbox tools
 
-> **Status:** In progress · **Last verified:** 2026-07-31 · **Waves:** R0✅ R1◻️ R2◻️ R3◻️ R4◻️ (R0 = this plan; R1 sidecar+client; R2 cross-validation in the ingest pipeline; R3 jerv `ocr` tool; R4 sandbox `ocr` shell tool)
+> **Status:** In progress · **Last verified:** 2026-07-31 · **Waves:** R0✅ R1✅ R2✅ R3✅ R4✅ R5◻️ (R1–R4 all shipped on-branch; CI covers the client/pipeline/tools/bridge with fakes + a localhost stub and real-Postgres for the store-both round trip. R5 = on-box sign-off against the live RapidOCR sidecar — image + PDF quality, idle load/unload timing — plus a decision on whether to build the `rapidocr` image in CI, deliberately left out for now to keep the image job light.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the sidecar is reached only
 > through a pinned-URL client on the api (no model-supplied host); OCR text is written
@@ -134,6 +134,13 @@ service stays a dumb, stateless OCR box. The `api` is the sole caller (pinned
   gate** (it's an offline, local read).
 - **Tests**: helper request shape (localhost stub) + no-file usage error; bridge endpoint
   (fake client, auth reject, service-off).
+
+### R5 — on-box sign-off (pending)
+Validate against the live sidecar on the box: OCR quality on real captures (dark-mode
+terminals, receipts, scanned PDFs) vs. the VLM, the idle load/unload timing under
+`RAPIDOCR_IDLE_TTL_SECONDS`, and the cross-check agreement distribution in the logs. Decide
+whether to add `rapidocr` to the CI image-build matrix (left out for now — the onnxruntime/
+opencv build is heavy and the logic is covered by fakes).
 
 ## 5. Docs to reconcile on merge
 `docs/reference/ANALYSIS.md` (the OCR pipeline now cross-validates + stores both rows),

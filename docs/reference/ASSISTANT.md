@@ -446,6 +446,16 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   each tool takes `show: false` to suppress its card when it's only an intermediate step — the
   same suppression `analyze_video`/`analyze_stream` now accept for a mid-reasoning read.
 
+  **`ocr`** (`../plans/RAPIDOCR_PLAN.md`) is the deterministic, verbatim counterpart to
+  `analyze_image`: it reads the **exact text** out of an attached image or PDF via the on-box
+  RapidOCR sidecar — no vision model, no interpretation, no model swap, so it never invents or
+  paraphrases text the way a model reading can. jerv prefers it over `analyze_image` whenever it
+  needs the literal text (an error/terminal screenshot, a receipt, a scanned document, a code
+  snippet); `analyze_image` stays the tool for describing what an image *shows*. A PDF is read
+  page by page. It reads no KB data and surfaces no card — jerv reports the text directly. The
+  same RapidOCR engine also backs the ingest OCR cross-validation and the jcode sandbox's
+  always-on `ocr` shell helper (bridged through the api, like `web-search`).
+
   **Web citations.** jerv cites a web claim with an inline `[^n]` footnote marker
   (the same convention the curator uses for notes), numbered in the order the
   sources appeared across its `web_search` / `web_fetch` calls. Each call surfaces a
