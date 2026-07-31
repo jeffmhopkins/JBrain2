@@ -253,8 +253,15 @@ services:
       COMPOSE_PROJECT: jbrain
       SELF_SERVICE: supervisor
       PROJECT_DIR: /opt/jbrain2
+      # /proc/net/dev is network-namespace-scoped, so the container's own copy sees
+      # only its veth — the box's real Wi-Fi/ethernet uplink is invisible. Read the
+      # host's file (bind-mounted below) so net counters span every interface.
+      HOST_NET_DEV: /host/net/dev
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Docker resolves this source in the host's net namespace, so the mount pins
+      # the host's interface counters (read-only) regardless of the container netns.
+      - /proc/net/dev:/host/net/dev:ro
     networks: [internal]
 
   # Neural wall display for the host's own (otherwise-blank) monitor or a LAN
@@ -279,8 +286,12 @@ services:
       BRAIN_PORT: "8800"
       BRAIN_POWER_MAX_W: ${BRAIN_POWER_MAX_W:-90}
       BRAIN_TTS_URL: ${BRAIN_TTS_URL:-http://tts-stt:8801}
+      # See supervisor: read the host's netns-scoped /proc/net/dev so the wall's
+      # network throughput reflects the box's real uplink, not this container's veth.
+      HOST_NET_DEV: /host/net/dev
     volumes:
       - ./src/deploy/wall:/app:ro
+      - /proc/net/dev:/host/net/dev:ro
     ports:
       - "${BRAIN_HOST_BIND:-0.0.0.0}:8800:8800"
     networks: [internal]

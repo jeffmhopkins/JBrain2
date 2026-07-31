@@ -144,17 +144,42 @@ veth1a2b: 8 8 0 0 0 0 0 0 8 8 0 0 0 0 0 0
 
 
 def test_read_net_counters_sums_physical_only(tmp_path: Path) -> None:
-    (tmp_path / "net").mkdir()
-    (tmp_path / "net" / "dev").write_text(NET_DEV)
-    net = host_metrics.read_net_counters(tmp_path)
+    net_dev = tmp_path / "net" / "dev"
+    net_dev.parent.mkdir()
+    net_dev.write_text(NET_DEV)
+    net = host_metrics.read_net_counters(net_dev)
     assert net is not None
-    # eth0 + wlan0 only; lo, docker0, veth* excluded.
+    # eth0 + wlan0 (Wi-Fi) both counted; lo, docker0, veth* excluded.
     assert net.rx_bytes == 1500
     assert net.tx_bytes == 2700
 
 
 def test_read_net_counters_is_none_without_procfile(tmp_path: Path) -> None:
-    assert host_metrics.read_net_counters(tmp_path) is None
+    assert host_metrics.read_net_counters(tmp_path / "net" / "dev") is None
+
+
+def test_read_host_metrics_prefers_host_net_dev_over_local(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    # The container's own proc/net/dev sees only its veth; the host's (bind-mounted
+    # and named by HOST_NET_DEV) carries the real Wi-Fi/ethernet uplink. The env
+    # path must win so the counters aren't stuck on the container-internal number.
+    (tmp_path / "meminfo").write_text(MEMINFO)
+    (tmp_path / "loadavg").write_text("0.1 0.1 0.1 1/1 1\n")
+    (tmp_path / "uptime").write_text("100.0 100.0\n")
+    (tmp_path / "net").mkdir()
+    (tmp_path / "net" / "dev").write_text(
+        "  eth0: 1 0 0 0 0 0 0 0 2 0 0 0 0 0 0 0\n"  # container veth only
+    )
+    host_net = tmp_path / "host_net_dev"
+    host_net.write_text(NET_DEV)  # host file: eth0 + wlan0
+    monkeypatch.setenv("HOST_NET_DEV", str(host_net))
+
+    m = host_metrics.read_host_metrics(proc=tmp_path, drm=tmp_path, hwmon=tmp_path)
+
+    assert m.net is not None
+    assert m.net.rx_bytes == 1500  # from the host file, not the container's eth0=1
+    assert m.net.tx_bytes == 2700
 
 
 # /proc/diskstats cols: major minor name reads merged sectors_read ... sectors_written
