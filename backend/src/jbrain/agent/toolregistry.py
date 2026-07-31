@@ -162,9 +162,7 @@ class ToolRegistry:
         or an injection) is refused, not run — the allowlist is a boundary, not a
         hint (closes the `curator`-can't-reach-`web` invariant structurally)."""
         return frozenset(
-            name
-            for name, tool in self._by_name.items()
-            if self._admits(tool, scopes, allow, extra)
+            name for name, tool in self._by_name.items() if self._admits(tool, scopes, allow, extra)
         )
 
 
