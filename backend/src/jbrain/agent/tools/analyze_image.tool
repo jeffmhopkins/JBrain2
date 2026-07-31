@@ -1,6 +1,6 @@
 ---
 name: analyze_image
-version: 2
+version: 3
 permission: web
 cost_class: standard
 params:
