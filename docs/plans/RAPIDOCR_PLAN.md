@@ -37,14 +37,19 @@ deterministic engine gives us three things a VLM can't:
 |---|---|
 | Container | **Standalone `rapidocr` service** (internal sidecar, mirrors `searxng`/`reader`) |
 | Pipeline role | **Store both rows** — keep the VLM `ocr` row, add a RapidOCR row; downstream picks (§R2) |
-| Availability | **Stock always-on** — up on every deploy like `searxng` |
+| Availability | **Stock always-up container**, but the **engine lazy-loads + idle-unloads** (§R1) so idle RAM is just the process baseline |
 | Sandbox tool gate | **Always-on** — OCR of a local file touches no internet, so no gate (like `git`) |
 | jerv tool | **Yes** — a direct `ocr` tool, separate from `analyze_image` |
 
-**Footprint note (the one real cost of always-on):** RapidOCR's ONNX models sit resident
-(~300–500 MB RAM, CPU-only, no GPU). On the 4 GB box that's a standing cost — but it's
-*separate* from the LLM residency budget (not a swap model), so it never fights the coder.
-`mem_limit` bounds it.
+**Footprint (lazy-loaded, not always-resident).** The container is stock/always-*up*, but
+the OCR **engine lazy-loads on the first `/ocr` and unloads after an idle TTL** — mirroring
+the LLM gateway's residency eviction, far cheaper here (§R1). So idle RAM is just the
+process baseline (~150–200 MB: Python + onnxruntime + opencv), not the loaded inference
+sessions; the first OCR after a quiet spell pays a ~1–2 s cold start. The weights are tiny
+(~15 MB PP-OCR models) — the runtime baseline dominates, which is *why* unloading the model
+reclaims only the variable part; true zero-when-idle would need scale-to-zero or in-process,
+both rejected as over-engineering at this size (§6). Separate from the LLM residency budget
+(not a swap model), so it never fights the coder; `mem_limit` bounds it.
 
 ## 3. Architecture — where it slots
 
@@ -67,6 +72,12 @@ service stays a dumb, stateless OCR box. The `api` is the sole caller (pinned
   `uvicorn`. One route: `POST /ocr` (base64 or multipart image) → `{text, lines:[{text,
   box, score}], mean_score}`. Internal network, no published port, **no profile** (stock).
   `mem_limit` ~1 GB. Compose comment mirrors `searxng`'s.
+- **Lazy engine (load/unload on demand).** The RapidOCR engine instantiates on the first
+  `/ocr` and is freed after `RAPIDOCR_IDLE_TTL_SECONDS` (default 300) of no calls, so idle
+  RAM is the process baseline, not the loaded sessions — the JBrain residency idiom, applied
+  to a ~15 MB engine. A per-process lock serializes (re)load so concurrent calls don't
+  double-instantiate; the container **health check must not touch the engine** (or it would
+  defeat the idle-unload). Cold start after idle is ~1–2 s, folded into that first call.
 - **Config**: `rapidocr_url: str = "http://rapidocr:8000"` (empty ⇒ degrade to VLM-only,
   same fail-open-to-old-behavior as `reader_url`).
 - **Client** `jbrain/vision/rapidocr.py` (`RapidOcrClient`, mirroring `SearxngClient`):
@@ -137,3 +148,8 @@ it over `analyze_image`), `docs/reference/SERVICES.md` (the new `rapidocr` servi
 - Non-English language packs (RapidOCR ships multilingual PP-OCR models; wiring a language
   selector is a follow-on).
 - Replacing the VLM `vision.caption` (description) path — untouched; only OCR is dual-engine.
+- **Zero-when-idle** beyond the lazy-unload: **scale-to-zero** (an on-demand container
+  activator) and **in-process OCR in the api** both reclaim the ~150–200 MB baseline that
+  lazy-unload leaves resident, but one adds an activator and the other folds opencv/
+  onnxruntime into the api (OCR then competing with request handling). Rejected as
+  over-engineering for a ~200 MB sidecar — revisit only if box RAM gets tight.
