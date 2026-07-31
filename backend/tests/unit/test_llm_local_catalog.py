@@ -85,6 +85,35 @@ def test_manifest_is_json_with_provisioning_fields() -> None:
     assert entry["served_model"] == "qwen3-vl-30b-a3b"
 
 
+def test_qwen3_vl_q4_is_a_memory_saver_vision_alt() -> None:
+    # The Q4_K_M twin of the recommended Q8 Qwen3-VL: same model + repo, half the weights,
+    # so it co-resides beside gpt-oss-120b instead of evicting it. Opt-in, lower OCR fidelity.
+    m = local_catalog.get("qwen3-vl-30b-q4")
+    assert m is not None
+    assert m.tiers == ("vision", "low")
+    # Vision-capable, and the projector stays F16 (fine text degrades first at low quant).
+    assert m.supports_vision and m.mmproj_include == "mmproj-F16.gguf"
+    assert m.supports_tools
+    # Non-thinking, like the Q8 sibling — not in the reasoning gating set.
+    assert not m.supports_reasoning
+    assert not m.reasoning_format
+    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
+    # The Q4_K_M quant, pulled from the SAME official Qwen repo as the Q8 default.
+    assert m.quant == "Q4_K_M"
+    assert "Q4_K_M" in m.gguf_include
+    assert m.hf_repo == "Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF"
+    # A distinct served name from the Q8 entry (both can be provisioned side by side).
+    assert m.spec == "local:qwen3-vl-30b-a3b-q4"
+    assert m.served_model != local_catalog.get("qwen3-vl-30b").served_model  # type: ignore[union-attr]
+    # Materially lighter than the ~32 GiB Q8 entry — the whole point is co-residence headroom.
+    assert m.size_gb < local_catalog.get("qwen3-vl-30b").size_gb  # type: ignore[union-attr]
+    # Serves the conservative gateway default with the native 256k as the ceiling.
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144
+    # Opt-in: the Q8 entry stays the recommended default, this is never auto-provisioned.
+    assert m.id not in local_catalog.recommended_ids()
+
+
 def test_llama_4_scout_is_a_vision_alt_at_int4() -> None:
     # Meta's Scout — a 109B/17B multimodal MoE at Unsloth's int4 dynamic quant, an
     # opt-in vision alternate to qwen3-vl-30b. Non-thinking (no reasoning channel).

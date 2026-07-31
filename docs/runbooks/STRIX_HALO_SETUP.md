@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-07-26
+> **Status:** Living · **Last verified:** 2026-07-31
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -144,7 +144,7 @@ and starts the gateway.
 **The app is the box's sole model evictor, and it restores.** Every model is a llama-swap
 non-swapping group member, so the gateway never auto-evicts anyone — instead, before a
 model loads, the app (`jbrain.llm.residency`) frees the **fewest** resident models needed to
-keep **≥12.5% of RAM free** after it's resident (weights + KV, measured against live
+keep **≥15% of RAM free** after it's resident (weights + KV, measured against live
 `/proc/meminfo` so image-gen and OS pressure count too), evicting biggest-first. So you can
 **load any model**: a small model (Qwen3.5-0.8B/4B) stays hot beside gpt-oss-120b, requesting
 the coder evicts the *big* model — not the tiny one — and a model too large to co-reside
@@ -153,7 +153,7 @@ freeing the LLMs, or a code session giving the coder the box) is **remembered an
 end of turn**, so the box drifts back to its prior steady state instead of cold-loading on
 demand. This replaced the old all-or-nothing pin that co-resided ~91 GB with no headroom and
 drove kernel-reclaim hard-freezes (see "Stability — hard-freeze / OOM hardening" below); the
-budget is what makes it safe. The 12.5% floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`.
+budget is what makes it safe. The 15% floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`.
 The Settings → On-box models screen exposes the same rule: **Staging** an available model is a
 transient *preview* — it dry-runs the eviction (`plan-load`) so you can see what loading it
 would evict before you commit, and **Load** applies exactly that. (There is no persisted
@@ -209,7 +209,12 @@ per-model download log stream into the queue banner. **Removing** is symmetric:
 an installed model's **Uninstall** button (on the Installed or Catalog tab) applies
 through the same sync one-shot, dropping it from `LOCAL_MODELS` and pruning its
 weights. A model too large to co-reside (the 235B) simply evicts
-everything else when loaded — it ends up with the box to itself. First-time host prep (GPU GIDs, the gateway image,
+everything else when loaded — it ends up with the box to itself. Going the other way,
+**Qwen3-VL 30B at Q4_K_M (~18 GB)** sits in the catalog beside the recommended Q8 vision
+model as a memory-saver twin: half the weights, so it co-resides with gpt-oss-120b under the
+free-RAM floor instead of evicting it — at some OCR-fidelity cost on dense/small text (its
+vision projector stays F16, so the fine-text hit is limited). Install it when co-residence
+headroom matters more than the last bit of transcription accuracy. First-time host prep (GPU GIDs, the gateway image,
 kernel params) still needs Phases 1–6 on the box; the PWA path only *adds/removes
 models* on an already-enabled stack.
 
@@ -304,7 +309,7 @@ comfyui`) for the submitted graph.
 
 ## Expected performance
 ~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. Models co-reside up to the RAM
-budget: as many stay hot as fit under the ≥12.5%-free floor, and a load evicts the fewest
+budget: as many stay hot as fit under the ≥15%-free floor, and a load evicts the fewest
 others needed to make room (so a text↔vision switch only cold-loads if both don't fit).
 Tune the headroom with `LOCAL_LLM_FREE_RAM_FRACTION`.
 
@@ -353,7 +358,7 @@ below are what it does and how to verify:
    # vm.min_free_kbytes = 2097152 · vm.watermark_scale_factor = 200 · vm.swappiness = 10
    ```
 3. **The app evicts to a RAM budget, so nothing over-commits the box** — every load frees
-   the fewest resident models needed to keep ≥12.5% of RAM free (`LOCAL_LLM_FREE_RAM_FRACTION`)
+   the fewest resident models needed to keep ≥15% of RAM free (`LOCAL_LLM_FREE_RAM_FRACTION`)
    before it loads, and nothing is ever pinned beyond that floor. There is no keep-hot pin to
    over-commit: a manual **Load** (Settings → LLM → On-box models) evicts to the same budget —
    the **Stage** preview shows what it will evict first — and models you use stay warm via the

@@ -123,6 +123,41 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=6.0,
     ),
     LocalModel(
+        id="qwen3-vl-30b-q4",
+        label="Qwen3-VL 30B · vision (Q4, memory-saver)",
+        served_model="qwen3-vl-30b-a3b-q4",
+        tiers=("vision", "low"),
+        supports_vision=True,
+        supports_tools=True,
+        # Opt-in memory-saver twin of the recommended Q8 entry — same model and repo, half
+        # the weights, so it co-resides beside gpt-oss-120b with real headroom under the
+        # free-RAM floor instead of evicting it. A plain local-hosting enable never pulls it
+        # (Q8 is the recommended default); the operator installs it when co-residence matters
+        # more than the last bit of OCR fidelity.
+        recommended=False,
+        hf_repo="Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF",
+        gguf_include="*Q4_K_M*.gguf",
+        # Keep the F16 projector — name it exactly (not mmproj*) so the vision tower stays
+        # full precision even at Q4 weights (fine text degrades first under quantization,
+        # docs/reference/MODEL_PROMPTING.md), and the pull skips the redundant mmproj-Q8_0.
+        mmproj_include="mmproj-F16.gguf",
+        quant="Q4_K_M",
+        # GiB on disk (the catalog's unit): HF lists Q4_K_M at ~18.6 decimal GB (~17.3 GiB)
+        # plus the ~1.0 GiB F16 projector = ~18.3 GiB — an ESTIMATE until measured on-box,
+        # kept at the GiB (not decimal-GB) sum so the install bar doesn't cap early (the
+        # Nemotron note). ~14 GiB lighter than the Q8 entry: that gap is the co-residence win.
+        size_gb=18.3,
+        note="Vision + a capable cheap text model at Q4_K_M — the memory-saver twin of the "
+        "recommended Q8 entry. ~18 GiB vs ~32, so it co-resides beside gpt-oss-120b with room "
+        "to spare under the free-RAM floor rather than evicting it. The projector stays F16, "
+        "but the Q4 weights trade some OCR fidelity on dense/small text — prefer the Q8 entry "
+        "when transcription accuracy matters, this one when co-residence headroom does.",
+        # Same architecture as the Q8 entry: native 256k, served at the gateway default, and
+        # the same KV estimate (quantizing the weights doesn't shrink the KV cache).
+        native_context_window=262144,
+        kv_gb_per_128k=6.0,
+    ),
+    LocalModel(
         id="llama-4-scout-int4",
         label="Llama 4 Scout · vision (int4)",
         served_model="llama-4-scout-int4",

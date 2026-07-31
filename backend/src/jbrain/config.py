@@ -243,10 +243,12 @@ class Settings(BaseSettings):
     # + KV, biggest-first, staged last), so any model loads by unloading others until it fits.
     # Measured against live /proc/meminfo `used`, so image-gen and OS pressure count too. This
     # replaced the old all-or-nothing pin that hard-locked the host by co-residing ~91 GB with
-    # no headroom (docs/runbooks/STRIX_HALO_SETUP.md "hard-freeze / OOM hardening"). 0.125 =
-    # keep 12.5% headroom — a tighter floor that buys more co-residence room on the box, at a
-    # smaller margin against the kernel-reclaim freeze the floor exists to prevent.
-    local_llm_free_ram_fraction: float = 0.125
+    # no headroom (docs/runbooks/STRIX_HALO_SETUP.md "hard-freeze / OOM hardening"). 0.15 =
+    # keep 15% free — low enough to co-reside the recommended gpt-oss-120b + Qwen3-VL set on a
+    # 128 GB box, high enough to hold a real margin against the kernel-reclaim freeze the floor
+    # exists to prevent. Lower it (e.g. 0.125) for more co-residence room at a thinner margin;
+    # raise it for more safety at the cost of more eviction.
+    local_llm_free_ram_fraction: float = 0.15
     # OPT-IN on-box speech-to-text: whisper.cpp served by the same llama-swap
     # gateway the local-llm profile runs (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md), so
     # it loads on first request and the gateway frees it when idle — and the
