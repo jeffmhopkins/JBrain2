@@ -161,6 +161,45 @@ def test_jcode_planner_selector_round_trips_and_takes_the_same_sentinel() -> Non
     assert reset.json()["jcode"]["planner"] == "gpt-oss-120b"
 
 
+def test_free_ram_fraction_defaults_to_config_and_round_trips(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, _ = client
+    # No override stored → effective == the config default, override null.
+    assert c.get("/api/settings/llm").json()["free_ram"] == {
+        "fraction": 0.15,
+        "default": 0.15,
+        "override": None,
+    }
+    # Setting an override surfaces it as both the effective value and the override.
+    picked = c.put("/api/settings/llm/free-ram-fraction", json={"fraction": 0.25})
+    assert picked.status_code == 200
+    assert picked.json()["free_ram"] == {"fraction": 0.25, "default": 0.15, "override": 0.25}
+    # It persists across a fresh GET.
+    assert c.get("/api/settings/llm").json()["free_ram"]["fraction"] == 0.25
+    # null clears back to the config default.
+    cleared = c.put("/api/settings/llm/free-ram-fraction", json={"fraction": None})
+    assert cleared.json()["free_ram"] == {"fraction": 0.15, "default": 0.15, "override": None}
+
+
+def test_free_ram_fraction_rejects_out_of_band_values(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, _ = client
+    # Below 5% (invites the reclaim freeze) and above 50% (nothing worthwhile co-resides)
+    # are refused, as are the (0, 1) edges; a non-number is a schema 422.
+    for bad in (0.04, 0.51, 0.0, 1.0, -0.1):
+        assert (
+            c.put("/api/settings/llm/free-ram-fraction", json={"fraction": bad}).status_code == 422
+        )
+    assert (
+        c.put("/api/settings/llm/free-ram-fraction", json={"fraction": "lots"}).status_code == 422
+    )
+    # The band edges are accepted.
+    assert c.put("/api/settings/llm/free-ram-fraction", json={"fraction": 0.05}).status_code == 200
+    assert c.put("/api/settings/llm/free-ram-fraction", json={"fraction": 0.5}).status_code == 200
+
+
 def test_put_round_trips_effective_values(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:

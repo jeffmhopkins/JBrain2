@@ -567,6 +567,11 @@ export interface LlmSettings {
   local_models: LocalModelInfo[];
   /** Live unified-memory gauge for the drawer meter; null when hosting is off / off-Linux. */
   host_memory: { total_gb: number; used_gb: number } | null;
+  /** The residency free-RAM floor (headroom the evictor keeps free). `fraction` is the
+   * effective value (override when set, else `default`); `override` is null when the
+   * effective value is the config default. Always present; the card shows only when hosting
+   * is on. */
+  free_ram: { fraction: number; default: number; override: number | null };
   /** Code mode's model selector. Always present; `enabled` gates the card. */
   jcode: JcodeModelInfo;
 }
@@ -2038,6 +2043,17 @@ export const api = {
     const response = await request(
       `/api/settings/llm/local-models/${encodeURIComponent(id)}/context-window`,
       jsonInit("PUT", { context_window: window }),
+    );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Set (or clear, with null) the residency free-RAM floor — the fraction of RAM the
+   * evictor keeps free before each local model load. null reverts to the config default;
+   * else 0.05..0.5. Returns the full snapshot. */
+  async setFreeRamFraction(fraction: number | null): Promise<LlmSettings> {
+    const response = await request(
+      "/api/settings/llm/free-ram-fraction",
+      jsonInit("PUT", { fraction }),
     );
     return (await response.json()) as LlmSettings;
   },

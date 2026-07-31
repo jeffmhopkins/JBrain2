@@ -510,6 +510,21 @@ class FakeSettingsStore:
         self.values["llm_local_context_windows"] = current
         return current
 
+    async def llm_local_free_ram_fraction(self, ctx: object) -> float | None:
+        raw = self.values.get("llm_local_free_ram_fraction")
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return None
+        return float(raw) if 0.0 < raw < 1.0 else None
+
+    async def set_llm_local_free_ram_fraction(
+        self, ctx: object, fraction: float | None
+    ) -> float | None:
+        if fraction is None or isinstance(fraction, bool) or not (0.0 < fraction < 1.0):
+            self.values["llm_local_free_ram_fraction"] = None
+            return None
+        self.values["llm_local_free_ram_fraction"] = float(fraction)
+        return float(fraction)
+
     async def llm_local_unavailable(self, ctx: object) -> list[str]:
         raw = self.values.get("llm_local_unavailable", [])
         if not isinstance(raw, list):

@@ -518,6 +518,7 @@ const LLM_SETTINGS: LlmSettings = {
     },
   ],
   host_memory: null,
+  free_ram: { fraction: 0.15, default: 0.15, override: null },
   jcode: {
     enabled: true,
     model: "qwen3-coder-next",

@@ -24,6 +24,7 @@ def _coord(
     total: float,
     used: float,
     enabled: bool = True,
+    fraction_loader: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -33,6 +34,7 @@ def _coord(
         models_dir="",  # nominal catalog size_gb, no filesystem read
         enabled=enabled,
         free_ram_fraction=0.25,
+        fraction_loader=fraction_loader,  # type: ignore[arg-type]
     )
 
 
@@ -72,6 +74,59 @@ async def test_ensure_room_evicts_nothing_when_it_fits(monkeypatch: pytest.Monke
     await coord.ensure_room("qwen3.5-4b")  # 4.6 → 44.6, well under the 96 ceiling
     assert gw.unloaded == []
     assert coord._displaced == set()  # noqa: SLF001
+
+
+# --- the live free-RAM floor override (fraction_loader) ----------------------
+
+
+@pytest.mark.asyncio
+async def test_fraction_loader_override_lowers_the_floor_and_co_resides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # gpt-oss (63.5) resident; loading qwen3-vl (33.5) → used 97. At the 0.25 config default
+    # the ceiling is 96, so it would evict gpt-oss — but the operator's live 0.15 override
+    # (ceiling 108.8) lets the two co-reside. This is exactly the "adjust the floor instead of
+    # a lower quant" case the settings card enables.
+    async def loader() -> float:
+        return 0.15
+
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=63.5, fraction_loader=loader)
+    await coord.ensure_room("qwen3-vl-30b-a3b")
+    assert gw.unloaded == []
+    assert coord._displaced == set()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_without_override_the_config_default_floor_evicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same box with NO override: the 0.25 config default applies (ceiling 96), so
+    # gpt-oss is evicted to make room for qwen3-vl — the behavior the override changes.
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=63.5)
+    await coord.ensure_room("qwen3-vl-30b-a3b")
+    assert gw.unloaded == ["gpt-oss-120b"]
+
+
+@pytest.mark.asyncio
+async def test_fraction_loader_invalid_or_failing_falls_back_to_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A junk override (outside (0, 1)) and a loader that raises both degrade to the config
+    # default floor — the budget must never lose its floor — so gpt-oss is evicted as in the
+    # no-override case.
+    async def junk() -> float:
+        return 1.5
+
+    async def boom() -> float:
+        raise RuntimeError("settings store down")
+
+    for loader in (junk, boom):
+        gw = FakeLocalGateway(running={"gpt-oss-120b"})
+        coord = _coord(gw, monkeypatch, total=128.0, used=63.5, fraction_loader=loader)
+        await coord.ensure_room("qwen3-vl-30b-a3b")
+        assert gw.unloaded == ["gpt-oss-120b"], f"loader={loader.__name__}"
 
 
 @pytest.mark.asyncio

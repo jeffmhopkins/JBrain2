@@ -153,7 +153,11 @@ freeing the LLMs, or a code session giving the coder the box) is **remembered an
 end of turn**, so the box drifts back to its prior steady state instead of cold-loading on
 demand. This replaced the old all-or-nothing pin that co-resided ~91 GB with no headroom and
 drove kernel-reclaim hard-freezes (see "Stability — hard-freeze / OOM hardening" below); the
-budget is what makes it safe. The 15% floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`.
+budget is what makes it safe. The 15% floor is tunable **live from Settings → LLM → On-box
+memory** (the "Free-RAM headroom" control, 5–50%, read by the evictor in both the api and
+worker on the next load with no restart) or, at deploy time, via `LOCAL_LLM_FREE_RAM_FRACTION`;
+the stored control value overrides the env default. Lower it to co-reside more (e.g. keep the
+Q8 vision model hot beside gpt-oss-120b) at a thinner margin; raise it for more freeze safety.
 The Settings → On-box models screen exposes the same rule: **Staging** an available model is a
 transient *preview* — it dry-runs the eviction (`plan-load`) so you can see what loading it
 would evict before you commit, and **Load** applies exactly that. (There is no persisted
@@ -311,7 +315,8 @@ comfyui`) for the submitted graph.
 ~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. Models co-reside up to the RAM
 budget: as many stay hot as fit under the ≥15%-free floor, and a load evicts the fewest
 others needed to make room (so a text↔vision switch only cold-loads if both don't fit).
-Tune the headroom with `LOCAL_LLM_FREE_RAM_FRACTION`.
+Tune the headroom from **Settings → LLM → On-box memory** (live) or with
+`LOCAL_LLM_FREE_RAM_FRACTION` (deploy default).
 
 ## Switching to ROCm (optional, faster)
 The ROCm/rocWMMA path is often faster on gfx1151 and is the better route for

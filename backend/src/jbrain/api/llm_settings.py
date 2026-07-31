@@ -241,6 +241,20 @@ class HostMemory(BaseModel):
     used_gb: float
 
 
+class FreeRamInfo(BaseModel):
+    """The residency free-RAM floor for the settings card: the EFFECTIVE fraction kept
+    free (the operator override when set, else the config default), the config default
+    itself (so the card can offer a 'revert to default' and label it), and whether an
+    override is in force. A change re-budgets every subsequent local model load."""
+
+    # Effective fraction kept free (0.15 = 15% headroom): `override` when set, else `default`.
+    fraction: float
+    # The JBRAIN_LOCAL_LLM_FREE_RAM_FRACTION config default — the value when nothing is stored.
+    default: float
+    # The operator's stored override, or null when the effective value is the config default.
+    override: float | None
+
+
 class JcodeModelChoice(BaseModel):
     id: str
     label: str
@@ -282,6 +296,10 @@ class LlmSettingsOut(BaseModel):
     local_models: list[LocalModelInfo]
     # Live host memory for the drawer meter; None when hosting is off or off-Linux.
     host_memory: HostMemory | None = None
+    # The residency free-RAM floor (headroom the evictor keeps free) — the card's current
+    # value + config default. Always present; the screen renders its card only when hosting
+    # is on (it's meaningless without a box to budget).
+    free_ram: FreeRamInfo
     # Code mode's model selector (the dropdown card). Always present; `enabled`
     # gates whether the screen renders it.
     jcode: JcodeModelInfo
@@ -343,6 +361,7 @@ async def _snapshot(
 ) -> LlmSettingsOut:
     overrides = await store.llm_task_overrides(ctx)
     windows = await store.llm_local_context_windows(ctx)
+    free_ram_override = await store.llm_local_free_ram_fraction(ctx)
     unavailable = set(await store.llm_local_unavailable(ctx))
     requested = set(await store.llm_local_provision_requested(ctx))
     removing = set(await store.llm_local_remove_requested(ctx))
@@ -374,6 +393,13 @@ async def _snapshot(
             for m in local_catalog.CATALOG
         ],
         host_memory=_host_memory(settings),
+        free_ram=FreeRamInfo(
+            fraction=free_ram_override
+            if free_ram_override is not None
+            else settings.local_llm_free_ram_fraction,
+            default=settings.local_llm_free_ram_fraction,
+            override=free_ram_override,
+        ),
         jcode=await _jcode_info(settings, store, ctx),
     )
 
@@ -703,6 +729,48 @@ async def set_local_context_window(
     )
     _try_regenerate(settings, windows)
     await _unload_if_loaded(settings, gateway, model)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+# The operator may set the floor between 5% and 50% free. Below 5% invites the
+# kernel-reclaim hard-freeze the floor exists to prevent (STRIX_HALO_SETUP.md); above 50%
+# leaves too little of the box usable to co-reside anything worthwhile. Outside this band the
+# knob does more harm than good, so the API refuses it (the store would still sanitize (0,1),
+# but the UI never offers out-of-band values and a hand-rolled request shouldn't foot-gun).
+FREE_RAM_FRACTION_MIN = 0.05
+FREE_RAM_FRACTION_MAX = 0.5
+
+
+class FreeRamFractionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # null clears the override (revert to the config default); else 0.05..0.5.
+    fraction: float | None = None
+
+
+@router.put("/settings/llm/free-ram-fraction")
+async def set_free_ram_fraction(
+    body: FreeRamFractionIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Set (or clear, with null) the residency free-RAM floor — the fraction of RAM the
+    evictor keeps free before every local model load. null reverts to the config default;
+    else the fraction must be 0.05..0.5 (422 otherwise). Persisted and read live by the
+    evictor in both the api and worker processes, so it takes effect on the next model load
+    with no restart — no gateway restamp or unload is needed (the floor only sizes evictions,
+    not any model's `-c`)."""
+    if body.fraction is not None and not (
+        FREE_RAM_FRACTION_MIN <= body.fraction <= FREE_RAM_FRACTION_MAX
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=f"fraction must be {FREE_RAM_FRACTION_MIN}..{FREE_RAM_FRACTION_MAX}",
+        )
+    ctx = ctx_for(principal)
+    await store.set_llm_local_free_ram_fraction(ctx, body.fraction)
     return await _snapshot(settings, store, ctx, gateway)
 
 

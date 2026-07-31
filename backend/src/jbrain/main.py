@@ -312,6 +312,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             models_dir=settings.local_models_dir,
             enabled=settings.local_llm_enabled,
             free_ram_fraction=settings.local_llm_free_ram_fraction,
+            # The live operator override of the floor (Settings → LLM); falls back to the
+            # free_ram_fraction config default above when unset. Read per load, so a change
+            # applies with no restart. Wired identically in the worker (jbrain.worker).
+            fraction_loader=lambda: settings_store.llm_local_free_ram_fraction(SYSTEM_CTX),
             # Serialize evict+load against the worker process (which runs its own coordinator
             # over the same box) so a deferred worker load can't co-load past the floor here.
             box_lock=pg_box_lock(maker),
