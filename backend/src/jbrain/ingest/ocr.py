@@ -28,6 +28,7 @@ written until every call succeeds, so a failed run never half-fills the cache.
 
 import asyncio
 import base64
+import difflib
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -45,6 +46,7 @@ from jbrain.models.notes import Attachment, AttachmentExtract, Note
 from jbrain.queue import SYSTEM_CTX
 from jbrain.settings_store import IMAGE_ANALYSIS_MODES
 from jbrain.storage import BlobStore
+from jbrain.vision import OcrResult, OcrServiceError, RapidOcrClient
 
 log = structlog.get_logger()
 
@@ -59,6 +61,25 @@ OCR_CONFIDENCE = 0.7
 # A description describes; it does not transcribe.
 DESCRIPTION_CONFIDENCE = 0.6
 EXTRACT_CONFIDENCE = {"ocr": OCR_CONFIDENCE, "caption": DESCRIPTION_CONFIDENCE}
+
+# The deterministic RapidOCR engine's `tool` tag. Its transcription is stored as a SECOND
+# `kind="ocr"` row (same 0.7 health-safety confidence cap as the VLM row — the cross-check
+# raises trust in the string, never a fact's auto-supersede power); the chunker prefers it
+# per anchor (jbrain.ingest.extract.image_segments). docs/plans/RAPIDOCR_PLAN.md.
+RAPIDOCR_TOOL = "rapidocr"
+
+
+def _agreement(vlm_text: str, rapid_text: str) -> float:
+    """Normalized similarity of the two OCR readings (whitespace-collapsed, case-folded),
+    0..1 — the divergence signal logged for the dual-engine cross-check."""
+    a = " ".join(vlm_text.split()).lower()
+    b = " ".join(rapid_text.split()).lower()
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
 
 # The vision prompts (system text, token budget, capability tier) are each one
 # co-located .prompt artifact (docs/reference/DEVELOPMENT.md); these constants are the
@@ -173,11 +194,16 @@ class OcrPipeline:
         blobs: BlobStore,
         router: LlmRouter,
         modes: ModeSource,
+        rapidocr: RapidOcrClient | None = None,
     ):
         self._maker = maker
         self._blobs = blobs
         self._router = router
         self._modes = modes
+        # The deterministic OCR cross-check (docs/plans/RAPIDOCR_PLAN.md). None ⇒ VLM-only
+        # (the sidecar isn't configured); a per-call failure also degrades to VLM-only —
+        # the cross-check never fails the OCR job.
+        self._rapidocr = rapidocr
 
     async def ocr_attachment(self, payload: dict[str, Any]) -> None:
         """Handle an ocr_attachment job: {attachment_id, mode?}; gone rows no-op."""
@@ -239,14 +265,21 @@ class OcrPipeline:
         data, media_type = downscale_for_vision(data, media_type)
         image = LlmImage(media_type=media_type, data=base64.b64encode(data).decode("ascii"))
         if "ocr" in run_kinds:
-            ocr = await self._router.complete(
-                "vision.ocr",
-                system=OCR_SYSTEM,
-                user_text=f"Transcribe this image (file: {filename}).",
-                images=[image],
-                max_tokens=OCR_MAX_TOKENS,
-                strength=OCR_STRENGTH,
-            )
+
+            async def _vlm_ocr() -> str:
+                result = await self._router.complete(
+                    "vision.ocr",
+                    system=OCR_SYSTEM,
+                    user_text=f"Transcribe this image (file: {filename}).",
+                    images=[image],
+                    max_tokens=OCR_MAX_TOKENS,
+                    strength=OCR_STRENGTH,
+                )
+                return result.text
+
+            # The VLM reading and the deterministic RapidOCR transcription run concurrently;
+            # RapidOCR degrades to None (VLM-only) when the sidecar is off/unreachable.
+            vlm_text, rapid = await asyncio.gather(_vlm_ocr(), self._rapid_ocr(data, media_type))
             spec = await self._router.effective_spec("vision.ocr", OCR_STRENGTH)
             flow_trace.vision(
                 attachment_id,
@@ -255,7 +288,7 @@ class OcrPipeline:
                 provider=spec[0],
                 model=spec[1],
                 filename=filename,
-                text=ocr.text,
+                text=vlm_text,
             )
             rows.append(
                 build_extract(
@@ -263,10 +296,16 @@ class OcrPipeline:
                     domain=domain,
                     filename=filename,
                     kind="ocr",
-                    text=ocr.text,
+                    text=vlm_text,
                     tool=":".join(spec),
                 )
             )
+            if rapid is not None:
+                self._log_crosscheck(attachment_id, note_id, filename, vlm_text, rapid.text)
+                if rapid.text.strip():
+                    rows.append(
+                        self._rapid_row(att.id, domain, filename, note_id, rapid.text, anchor=None)
+                    )
         if "caption" in run_kinds:
             description = await self._router.complete(
                 "vision.caption",
@@ -328,7 +367,81 @@ class OcrPipeline:
                     anchor=f"page {number}",
                 )
             )
+        # Deterministic per-page cross-check (skipped when the sidecar is off).
+        for number, rtext in enumerate(await self._rapid_pdf_pages(data), start=1):
+            if not rtext.strip():
+                continue
+            if number <= len(texts):
+                self._log_crosscheck(
+                    str(att_id), note_id, f"page {number}", texts[number - 1], rtext
+                )
+            rows.append(
+                self._rapid_row(att_id, domain, filename, note_id, rtext, anchor=f"page {number}")
+            )
         return rows
+
+    async def _rapid_ocr(self, data: bytes, media_type: str) -> OcrResult | None:
+        """The deterministic cross-check for one image, or None when the sidecar is off or the
+        call fails — the cross-check never fails the OCR job."""
+        if self._rapidocr is None:
+            return None
+        try:
+            return await self._rapidocr.ocr(data, media_type)
+        except OcrServiceError as exc:
+            log.warning("ocr.rapidocr_unavailable", error=str(exc))
+            return None
+
+    async def _rapid_pdf_pages(self, data: bytes) -> list[str]:
+        """RapidOCR each rasterized PDF page ([] when the sidecar is off). A per-page failure
+        yields "" for that page (the VLM row stands)."""
+        if self._rapidocr is None:
+            return []
+        try:
+            images = await asyncio.to_thread(pdf_page_images, data)
+        except Exception:  # noqa: BLE001 - a rasterization hiccup degrades to VLM-only
+            return []
+        texts: list[str] = []
+        for png in images:
+            result = await self._rapid_ocr(png, "image/png")
+            texts.append(result.text if result is not None else "")
+        return texts
+
+    def _rapid_row(
+        self, att_id: Any, domain: str, filename: str, note_id: str, text: str, anchor: str | None
+    ) -> AttachmentExtract:
+        """The deterministic transcription as a `kind="ocr"` row tagged `tool="rapidocr"` —
+        what the chunker prefers, at the same 0.7 health cap as the VLM row."""
+        flow_trace.vision(
+            str(att_id),
+            note_id=note_id,
+            kind="ocr",
+            provider=RAPIDOCR_TOOL,
+            model=RAPIDOCR_TOOL,
+            filename=filename if anchor is None else f"{filename}#{anchor}",
+            text=text,
+        )
+        return build_extract(
+            attachment_id=att_id,
+            domain=domain,
+            filename=filename,
+            kind="ocr",
+            text=text,
+            tool=RAPIDOCR_TOOL,
+            anchor=anchor,
+        )
+
+    def _log_crosscheck(
+        self, attachment_id: str, note_id: str, anchor: str, vlm_text: str, rapid_text: str
+    ) -> None:
+        log.info(
+            "ocr.crosscheck",
+            attachment_id=attachment_id,
+            note_id=note_id,
+            anchor=anchor,
+            agreement=round(_agreement(vlm_text, rapid_text), 3),
+            vlm_chars=len(vlm_text),
+            rapid_chars=len(rapid_text),
+        )
 
     async def _persist_extracts(
         self, attachment_id: str, note_id: str, mode: str, run_kinds: list[str], rows: list

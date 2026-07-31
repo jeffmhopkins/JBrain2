@@ -228,6 +228,7 @@ class IngestPipeline:
                     text=row.text,
                     anchor=row.source_anchor,
                     confidence=row.confidence if row.confidence is not None else 0.0,
+                    tool=row.tool,
                 )
             )
         return extracts

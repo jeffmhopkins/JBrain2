@@ -105,3 +105,61 @@ def test_image_segments_skip_empty_text_rows() -> None:
     # become a chunk.
     rows = [CachedExtract(kind=KIND_OCR, text="  \n", anchor="blur.jpg", confidence=0.0)]
     assert image_segments(rows) == []
+
+
+# --- dual-engine OCR selection (docs/plans/RAPIDOCR_PLAN.md) ------------------------------
+
+
+def test_image_segments_prefers_the_rapidocr_row_per_anchor() -> None:
+    # The cross-validation stores both readings; the deterministic one chunks.
+    rows = [
+        CachedExtract(
+            kind=KIND_OCR, text="vlm reading", anchor="f.png", confidence=0.7, tool="local:vlm"
+        ),
+        CachedExtract(
+            kind=KIND_OCR, text="rapid reading", anchor="f.png", confidence=0.7, tool="rapidocr"
+        ),
+    ]
+    assert [s.text for s in image_segments(rows)] == ["rapid reading"]
+
+
+def test_image_segments_falls_back_to_vlm_when_rapidocr_is_empty() -> None:
+    # Never drop a text-bearing VLM row for an empty RapidOCR one.
+    rows = [
+        CachedExtract(
+            kind=KIND_OCR, text="vlm reading", anchor="f.png", confidence=0.7, tool="local:vlm"
+        ),
+        CachedExtract(kind=KIND_OCR, text="   ", anchor="f.png", confidence=0.0, tool="rapidocr"),
+    ]
+    assert [s.text for s in image_segments(rows)] == ["vlm reading"]
+
+
+def test_image_segments_keeps_captions_and_preserves_order() -> None:
+    rows = [
+        CachedExtract(kind=KIND_CAPTION, text="a photo", anchor="f.png", confidence=0.6),
+        CachedExtract(kind=KIND_OCR, text="vlm", anchor="f.png", confidence=0.7, tool="local:vlm"),
+        CachedExtract(kind=KIND_OCR, text="rapid", anchor="f.png", confidence=0.7, tool="rapidocr"),
+    ]
+    pairs = [(s.kind, s.text) for s in image_segments(rows)]
+    assert pairs[0] == (KIND_CAPTION, "a photo")  # order preserved
+    assert (KIND_OCR, "rapid") in pairs and (KIND_OCR, "vlm") not in pairs
+
+
+def test_image_segments_dedups_each_anchor_independently() -> None:
+    rows = [
+        CachedExtract(kind=KIND_OCR, text="v1", anchor="page 1", confidence=0.7, tool="local:vlm"),
+        CachedExtract(kind=KIND_OCR, text="r1", anchor="page 1", confidence=0.7, tool="rapidocr"),
+        CachedExtract(kind=KIND_OCR, text="v2", anchor="page 2", confidence=0.7, tool="local:vlm"),
+        CachedExtract(kind=KIND_OCR, text="r2", anchor="page 2", confidence=0.7, tool="rapidocr"),
+    ]
+    assert [s.text for s in image_segments(rows)] == ["r1", "r2"]
+
+
+def test_image_segments_single_vlm_row_is_unchanged() -> None:
+    # VLM-only (the sidecar off) behaves exactly as before the cross-validation.
+    rows = [
+        CachedExtract(
+            kind=KIND_OCR, text="only vlm", anchor="f.png", confidence=0.7, tool="local:vlm"
+        )
+    ]
+    assert [s.text for s in image_segments(rows)] == ["only vlm"]

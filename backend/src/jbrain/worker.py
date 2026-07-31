@@ -59,6 +59,7 @@ from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder, TokenScope
+from jbrain.vision import RapidOcrClient
 from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
 from jbrain.wiki.lint import WIKI_LINT_SPEC, wiki_lint_handler
 from jbrain.wiki.rewriter import LlmRewriter
@@ -535,7 +536,9 @@ async def run() -> None:
         "title_research_report": research_report_titler.title_research_report,
         "integrate_note": analyzer.integrate_note,
         # The vision handler reads the image-analysis mode setting per job.
-        "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
+        "ocr_attachment": OcrPipeline(
+            maker, blobs, router, SqlSettingsStore(maker), RapidOcrClient(settings.rapidocr_url)
+        ).ocr_attachment,
         # The audio sibling: transcribe an audio attachment via the whisper model in
         # the local gateway, unloading it after (load-on-demand / unload-after). The
         # handler is always wired so the action registry pairs; when whisper is

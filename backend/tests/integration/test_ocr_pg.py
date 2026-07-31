@@ -27,6 +27,7 @@ from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
+from jbrain.vision import OcrResult, OcrServiceError
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
@@ -473,3 +474,72 @@ async def test_on_demand_full_override_round_trip(
         assert len(await extract_rows(maker, attachment_id)) == 2
     finally:
         await store.upsert(OWNER, "image_analysis_mode", "full")
+
+
+class _StoreRapid:
+    """A fake RapidOcrClient for the cross-validation tests: one canned transcription, or
+    an OcrServiceError to exercise the degrade-to-VLM-only path."""
+
+    def __init__(self, result: OcrResult | None = None, *, error: bool = False) -> None:
+        self._result = result
+        self._error = error
+        self.calls = 0
+
+    async def ocr(self, data: bytes, media_type: str = "application/octet-stream") -> OcrResult:
+        self.calls += 1
+        if self._error:
+            raise OcrServiceError("sidecar down")
+        assert self._result is not None
+        return self._result
+
+
+async def test_ocr_cross_validation_stores_both_rows(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    # Dual-engine OCR (docs/plans/RAPIDOCR_PLAN.md): the VLM reading and RapidOCR's
+    # deterministic transcription are BOTH persisted as kind="ocr", distinguished by tool.
+    note_id, attachment_id = await make_note_with_image(
+        maker, blobs, body="the receipt", filename="receipt.png", domain="general"
+    )
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    fake = FakeLlmClient(["VLM: Total 41.20", "A grocery receipt."])
+    rapid = _StoreRapid(OcrResult(text="RAPID: Total 41.20", mean_score=0.95))
+    await OcrPipeline(
+        maker,
+        blobs,
+        vision_router(fake),
+        SqlSettingsStore(maker),
+        rapid,  # type: ignore[arg-type]
+    ).ocr_attachment({"attachment_id": attachment_id})
+
+    assert rapid.calls == 1  # the cross-check ran alongside the VLM call
+    rows = await extract_rows(maker, attachment_id)
+    ocr_rows = [r for r in rows if r["kind"] == "ocr"]
+    assert sorted(r["tool"] for r in ocr_rows) == ["rapidocr", "xai:grok-4.3"]
+    # Both capped at the 0.7 Guards cap regardless of engine — the cross-check raises trust
+    # in the string, never a fact's auto-supersede power.
+    assert all(r["confidence"] == pytest.approx(0.7) for r in ocr_rows)
+    rapid_row = next(r for r in ocr_rows if r["tool"] == "rapidocr")
+    assert rapid_row["text"] == "RAPID: Total 41.20"
+
+
+async def test_ocr_cross_validation_degrades_when_sidecar_down(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    # A sidecar failure must never fail the OCR job — it degrades to VLM-only.
+    note_id, attachment_id = await make_note_with_image(
+        maker, blobs, body="the receipt", filename="receipt.png", domain="general"
+    )
+    await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
+    fake = FakeLlmClient(["VLM: Total 41.20", "A grocery receipt."])
+    rapid = _StoreRapid(error=True)
+    await OcrPipeline(
+        maker,
+        blobs,
+        vision_router(fake),
+        SqlSettingsStore(maker),
+        rapid,  # type: ignore[arg-type]
+    ).ocr_attachment({"attachment_id": attachment_id})
+
+    ocr_rows = [r for r in await extract_rows(maker, attachment_id) if r["kind"] == "ocr"]
+    assert [r["tool"] for r in ocr_rows] == ["xai:grok-4.3"]  # only the VLM row, no rapid row
