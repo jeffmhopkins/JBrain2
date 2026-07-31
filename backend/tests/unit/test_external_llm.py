@@ -3,7 +3,7 @@
 The service contract (mint binds a secret, the on/off toggle and revoke fail auth
 closed, usage accrues) runs against the fake repo; the proxy's security gates
 (bad/disabled token → 401, coder not loaded → 503) and a metered happy path run
-against the real app with the upstream shim faked.
+against the real app with the upstream gateway faked.
 """
 
 import asyncio
@@ -71,32 +71,19 @@ async def test_wrong_kind_key_never_authenticates_as_external() -> None:
 # --- the usage parser (pure) ---
 
 
-def test_usage_from_chunks_parses_json_and_sse() -> None:
-    whole = b'{"type":"message","usage":{"input_tokens":11,"output_tokens":22}}'
-    assert external_llm._usage_from_chunks([whole]) == (11, 22)
-
-    sse = (
-        b"event: message_start\n"
-        b'data: {"message":{"usage":{"input_tokens":7,"output_tokens":1}}}\n\n'
-        b"event: message_delta\n"
-        b'data: {"usage":{"output_tokens":40}}\n\n'
-    )
-    # input from message_start, output is the running max from message_delta.
-    assert external_llm._usage_from_chunks([sse]) == (7, 40)
-    assert external_llm._usage_from_chunks([b"not json"]) == (0, 0)
-
-
-def test_usage_from_chunks_parses_openai_shape() -> None:
-    # OpenAI names the fields differently and carries the full usage on a final chunk.
+def test_usage_from_chunks_parses_openai_json_and_sse() -> None:
+    # Non-streaming: a single JSON object with a top-level OpenAI usage.
     whole = b'{"choices":[],"usage":{"prompt_tokens":33,"completion_tokens":99}}'
     assert external_llm._usage_from_chunks([whole]) == (33, 99)
 
+    # Streaming: OpenAI carries the full usage on the final chunk (include_usage).
     sse = (
         b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
         b'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34}}\n\n'
         b"data: [DONE]\n\n"
     )
     assert external_llm._usage_from_chunks([sse]) == (12, 34)
+    assert external_llm._usage_from_chunks([b"not json"]) == (0, 0)
 
 
 # --- routes (real app, faked upstream) ---
@@ -118,7 +105,7 @@ def app_repo() -> Iterator[tuple[FastAPI, FakeAuthRepo]]:
             database_url=_DB,
             session_cookie=_COOKIE,
             jcode_model="qwen3-coder-next",
-            jcode_shim_url="http://shim:4000",
+            local_llm_url="http://gw:8080/v1",
             jcode_gateway_token="sk-test",
             public_base_url="https://box.example",
         )
@@ -173,9 +160,12 @@ def test_proxy_rejects_bad_or_disabled_token(app_repo: tuple[FastAPI, FakeAuthRe
 
     # No / wrong token → 401.
     body = {"model": "ignored", "messages": []}
-    assert caller.post(f"/api/ext/llm/{sid}/v1/messages", json=body).status_code == 401
+    assert caller.post(f"/api/ext/llm/{sid}/v1/chat/completions", json=body).status_code == 401
     bad = {"Authorization": "Bearer nope"}
-    assert caller.post(f"/api/ext/llm/{sid}/v1/messages", json=body, headers=bad).status_code == 401
+    assert (
+        caller.post(f"/api/ext/llm/{sid}/v1/chat/completions", json=body, headers=bad).status_code
+        == 401
+    )
 
 
 def test_proxy_503_when_coder_not_loaded(app_repo: tuple[FastAPI, FakeAuthRepo]) -> None:
@@ -185,61 +175,10 @@ def test_proxy_503_when_coder_not_loaded(app_repo: tuple[FastAPI, FakeAuthRepo])
     app.state.local_gateway = _FakeGateway(set())  # nothing resident
     caller = TestClient(app)
     auth = {"Authorization": f"Bearer {minted['token']}"}
-    r = caller.post(f"/api/ext/llm/{minted['id']}/v1/messages", json={"messages": []}, headers=auth)
-    assert r.status_code == 503
-
-
-def test_proxy_pins_model_forwards_and_meters(
-    app_repo: tuple[FastAPI, FakeAuthRepo], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, repo = app_repo
-    owner = _owner(app, repo)
-    minted = owner.post("/api/jcode/external", json={}).json()
-    sent: dict[str, object] = {}
-
-    # Fake the upstream shim: capture the forwarded body, return a usage-bearing JSON.
-    class _FakeStream:
-        def __init__(self, payload: object, headers: dict[str, str]) -> None:
-            sent["payload"] = payload
-            sent["headers"] = headers
-
-        async def __aenter__(self) -> "_FakeStream":
-            return self
-
-        async def __aexit__(self, *a: object) -> None:
-            return None
-
-        async def aiter_raw(self):  # noqa: ANN202
-            yield b'{"type":"message","usage":{"input_tokens":100,"output_tokens":250}}'
-
-    class _FakeClient:
-        def __init__(self, *a: object, **k: object) -> None:
-            pass
-
-        def stream(self, _method: str, _path: str, *, json: object, headers: dict[str, str]):  # noqa: ANN202
-            return _FakeStream(json, headers)
-
-        async def aclose(self) -> None:
-            return None
-
-    monkeypatch.setattr(external_llm.httpx, "AsyncClient", _FakeClient)
-    caller = TestClient(app)
-    auth = {"Authorization": f"Bearer {minted['token']}"}
     r = caller.post(
-        f"/api/ext/llm/{minted['id']}/v1/messages",
-        json={
-            "model": "whatever-the-caller-asked",
-            "messages": [{"role": "user", "content": "hi"}],
-        },
-        headers=auth,
+        f"/api/ext/llm/{minted['id']}/v1/chat/completions", json={"messages": []}, headers=auth
     )
-    assert r.status_code == 200
-    # The model was PINNED to the on-box coder, not the caller's choice; shim auth attached.
-    assert sent["payload"]["model"] == "qwen3-coder-next"  # type: ignore[index]
-    assert sent["headers"]["Authorization"] == "Bearer sk-test"  # type: ignore[index]
-    # Usage was metered onto the session.
-    listed = owner.get("/api/jcode/external").json()[0]
-    assert (listed["in_tokens"], listed["out_tokens"], listed["requests"]) == (100, 250, 1)
+    assert r.status_code == 503
 
 
 def test_openai_chat_completions_forwards_pins_and_meters(
@@ -250,6 +189,8 @@ def test_openai_chat_completions_forwards_pins_and_meters(
     minted = owner.post("/api/jcode/external", json={}).json()
     sent: dict[str, object] = {}
 
+    # Fake the upstream gateway: capture the base URL, forwarded path + body, and return a
+    # usage-bearing OpenAI JSON. No auth header is forwarded — the gateway is unauthed.
     class _FakeStream:
         def __init__(self, path: str, payload: object) -> None:
             sent["path"] = path
@@ -265,10 +206,10 @@ def test_openai_chat_completions_forwards_pins_and_meters(
             yield b'{"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":60}}'
 
     class _FakeClient:
-        def __init__(self, *a: object, **k: object) -> None:
-            pass
+        def __init__(self, *a: object, base_url: str = "", **k: object) -> None:
+            sent["base_url"] = base_url
 
-        def stream(self, _method: str, path: str, *, json: object, headers: dict[str, str]):  # noqa: ANN202
+        def stream(self, _method: str, path: str, *, json: object):  # noqa: ANN202
             return _FakeStream(path, json)
 
         async def aclose(self) -> None:
@@ -283,8 +224,9 @@ def test_openai_chat_completions_forwards_pins_and_meters(
         headers=auth,
     )
     assert r.status_code == 200
-    # Forwarded to the OpenAI route on the shim, pinned to the on-box coder.
-    assert sent["path"] == "/v1/chat/completions"
+    # Forwarded straight to the gateway's OpenAI endpoint, pinned to the on-box coder.
+    assert sent["base_url"] == "http://gw:8080/v1"
+    assert sent["path"] == "/chat/completions"
     assert sent["payload"]["model"] == "qwen3-coder-next"  # type: ignore[index]
     # OpenAI-shaped usage was metered onto the session.
     listed = owner.get("/api/jcode/external").json()[0]

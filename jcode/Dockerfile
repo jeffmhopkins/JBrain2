@@ -1,16 +1,16 @@
 # The jcode control server: a Python service (mirroring the supervisor) that
 # manages sandboxed coding sessions driven through an interactive terminal. Each
-# session is a git checkout with a shell; the owner runs a coding CLI — `claude`
-# (Claude Code) or `grok` (xAI's official Grok Build) — against an on-box coder model. It
-# needs Node (for `claude`) + `git` for the per-session checkouts; `grok` is a standalone
-# binary (no runtime). `claude` reaches the model over ANTHROPIC_BASE_URL (the claude-shim
-# translator); `grok` over an OpenAI-compatible base_url (~/.grok/config.toml, written from
-# env by /etc/profile.d/grok-config.sh) straight at the gateway — both local, no cloud.
+# session is a git checkout with a shell; the owner runs xAI's official Grok Build
+# CLI (`grok`) against an on-box coder model. `grok` is a standalone binary (no
+# runtime) that reaches the model over an OpenAI-compatible base_url
+# (~/.grok/config.toml, written from env by /etc/profile.d/grok-config.sh) straight at
+# the gateway — local, no cloud. `git` handles the per-session checkouts; Node/npm are
+# kept for in-sandbox JavaScript tooling the owner may run.
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
 
-# git: per-session checkouts. nodejs/npm: the `@anthropic-ai/claude-code` (`claude`) CLI.
+# git: per-session checkouts. nodejs/npm: in-sandbox JavaScript tooling (not the harness).
 # Grok Build (`grok`) is xAI's official agent — a standalone precompiled binary (no Node
 # or Bun), installed below into /usr/local/bin (on PATH for the login shell). The
 # per-session web preview is host-served (no `cloudflared` in the image since the Wave P5b
@@ -22,7 +22,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g @anthropic-ai/claude-code \
     && GROK_BIN_DIR=/usr/local/bin curl -fsSL https://x.ai/cli/install.sh | bash -s -- "${GROK_BUILD_VERSION}" \
     && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
@@ -42,9 +41,6 @@ COPY jcode-path.sh /etc/profile.d/jcode-path.sh
 # private $JCODE_TOOLS_BIN (shadowing the pinned image copy for that session only); the image
 # default stays pinned at GROK_BUILD_VERSION. On the shared PATH so every session shell has it.
 COPY jcode-grok /usr/local/bin/jcode-grok
-# Same, for claude — installs into the session's npm prefix ($NPM_CONFIG_PREFIX), so a
-# session can pin its own claude without touching the image default.
-COPY jcode-claude /usr/local/bin/jcode-claude
 # SearXNG-backed web search/fetch for the session CLIs (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
 # On the shared PATH; each is a no-op that self-explains unless the session opted in
 # (JCODE_INTERNET_SEARCH=1, set by the terminal from the owner's checkbox). They reach the
@@ -54,7 +50,7 @@ COPY web-fetch /usr/local/bin/web-fetch
 # Deterministic OCR of a local image/PDF (docs/plans/RAPIDOCR_PLAN.md). Always available —
 # an offline read via the api's OCR bridge, no internet opt-in to gate it.
 COPY ocr /usr/local/bin/ocr
-RUN chmod +x /usr/local/bin/jcode-grok /usr/local/bin/jcode-claude \
+RUN chmod +x /usr/local/bin/jcode-grok \
     /usr/local/bin/web-search /usr/local/bin/web-fetch /usr/local/bin/ocr
 
 # Login-shell hint: announce the web helpers in a session that opted into web search, so the

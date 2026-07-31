@@ -1,16 +1,14 @@
 """External LLM sessions: a token-gated public proxy to the on-box coder.
 
 The owner mints an external session (owner-gated CRUD here) and hands its URL +
-secret to a remote coder. Two wire protocols are served off the same endpoint:
-a remote Claude points ANTHROPIC_BASE_URL at ``/api/ext/llm/<id>`` (the SDK then
-hits ``/v1/messages``); an OpenAI-compatible client (grok-cli, etc.) points
+secret to a remote coder. An OpenAI-compatible client (grok build, etc.) points
 OPENAI_BASE_URL at ``/api/ext/llm/<id>/v1`` (the client then hits
-``/v1/chat/completions``). Both set their auth token to the secret. The public
+``/v1/chat/completions``) with its auth token set to the secret. The public
 proxy (no owner gate — the bearer IS the credential) authenticates the secret,
 refuses when the session is toggled off or the coder isn't resident on the box,
-pins every request to the on-box coder, forwards to the LiteLLM shim (which
-serves both ``/v1/messages`` and ``/v1/chat/completions``), and meters the token
-usage back onto the session so the owner's screen shows consumption.
+pins every request to the on-box coder, forwards straight to the local-llm
+gateway's OpenAI endpoint, and meters the token usage back onto the session so
+the owner's screen shows consumption.
 
 The credential reuses the capability-token machinery (a `principals` row, kind
 ``external_llm``; the on/off toggle is the suspend flag). The model is the
@@ -57,8 +55,8 @@ class MintOut(BaseModel):
     id: str
     label: str
     expires_at: str | None
-    # The bearer secret + the base URL the remote points ANTHROPIC_BASE_URL at. Shown
-    # EXACTLY once — never recoverable from the list.
+    # The bearer secret + the base URL the remote client uses (append ``/v1`` for
+    # OPENAI_BASE_URL). Shown EXACTLY once — never recoverable from the list.
     token: str
     url: str
 
@@ -84,8 +82,8 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _public_base(request: Request, settings: object) -> str:
-    """The internet-reachable base the remote points at: the configured public base URL,
-    else the origin this request arrived on (LAN/dev)."""
+    """The internet-reachable base the remote client points at: the configured public
+    base URL, else the origin this request arrived on (LAN/dev)."""
     configured = getattr(settings, "public_base_url", "") or ""
     return configured.rstrip("/") or str(request.base_url).rstrip("/")
 
@@ -153,24 +151,24 @@ def _served_model(model_id: str) -> str:
 
 def _bearer(request: Request) -> str:
     header = request.headers.get("authorization", "")
-    # Claude Code sends a Bearer token (ANTHROPIC_AUTH_TOKEN); also accept x-api-key.
+    # OpenAI-compatible clients send the secret as a Bearer token (OPENAI_API_KEY); also
+    # accept x-api-key.
     if header.lower().startswith("bearer "):
         return header[7:].strip()
     return request.headers.get("x-api-key", "").strip()
 
 
 def _tokens(usage: dict) -> tuple[int, int]:
-    """(input, output) from a usage object in either dialect: Anthropic names them
-    ``input_tokens``/``output_tokens``, OpenAI ``prompt_tokens``/``completion_tokens``."""
-    in_tok = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-    out_tok = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    """(input, output) from an OpenAI usage object (``prompt_tokens``/``completion_tokens``)."""
+    in_tok = int(usage.get("prompt_tokens") or 0)
+    out_tok = int(usage.get("completion_tokens") or 0)
     return in_tok, out_tok
 
 
 def _usage_from_chunks(chunks: list[bytes]) -> tuple[int, int]:
-    """Best-effort (input, output) token counts from a buffered upstream response —
-    Anthropic or OpenAI, streaming (SSE) or whole JSON. Returns (0, 0) when usage can't
-    be parsed; metering must never break the proxy."""
+    """Best-effort (input, output) token counts from a buffered OpenAI response —
+    streaming (SSE) or whole JSON. Returns (0, 0) when usage can't be parsed; metering
+    must never break the proxy."""
     in_tok = out_tok = 0
     try:
         body = b"".join(chunks)
@@ -182,10 +180,8 @@ def _usage_from_chunks(chunks: list[bytes]) -> tuple[int, int]:
                 return _tokens(usage)
         except (json.JSONDecodeError, ValueError):
             pass
-        # Streaming: scan every `data:` line for a usage object. Anthropic carries input
-        # on message_start and a running output on message_delta; OpenAI carries the full
-        # usage on the final chunk (with stream_options.include_usage). Take the max
-        # across all of them, in either dialect.
+        # Streaming: OpenAI carries the full usage on the final chunk (with
+        # stream_options.include_usage). Take the max across every `data:` line.
         for raw in body.split(b"\n"):
             line = raw.strip()
             if not line.startswith(b"data:"):
@@ -194,13 +190,9 @@ def _usage_from_chunks(chunks: list[bytes]) -> tuple[int, int]:
                 evt = json.loads(line[5:].strip())
             except (json.JSONDecodeError, ValueError):
                 continue
-            if not isinstance(evt, dict):
-                continue
-            msg = evt.get("message")
-            for usage in (evt.get("usage"), msg.get("usage") if isinstance(msg, dict) else None):
-                if isinstance(usage, dict):
-                    i, o = _tokens(usage)
-                    in_tok, out_tok = max(in_tok, i), max(out_tok, o)
+            if isinstance(evt, dict) and isinstance(evt.get("usage"), dict):
+                i, o = _tokens(evt["usage"])
+                in_tok, out_tok = max(in_tok, i), max(out_tok, o)
     except Exception:  # noqa: BLE001 - metering is best-effort, never fatal
         log.debug("external-llm usage parse failed", exc_info=True)
     return in_tok, out_tok
@@ -219,9 +211,8 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
     # 2. The coder must be resident — never trigger an on-demand load for a remote caller.
     served = _served_model(getattr(settings, "jcode_model", ""))
     gateway = getattr(request.app.state, "local_gateway", None)
-    shim_url = getattr(settings, "jcode_shim_url", "")
-    shim_key = getattr(settings, "jcode_gateway_token", "")
-    if gateway is None or not shim_url or not shim_key:
+    gateway_url = getattr(settings, "local_llm_url", "") or ""
+    if gateway is None or not gateway_url:
         raise HTTPException(status_code=503, detail="on-box LLM is not configured")
     try:
         resident = await gateway.running()
@@ -230,8 +221,9 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
     if served not in resident:
         raise HTTPException(status_code=503, detail="the coder model is not loaded")
 
-    # 3. Pin the model and forward to the shim, streaming the response back verbatim while
-    #    teeing it for usage metering.
+    # 3. Pin the model and forward straight to the gateway's OpenAI endpoint, streaming the
+    #    response back verbatim while teeing it for usage metering. The gateway is
+    #    unauthenticated on the internal network — no upstream credential.
     try:
         payload = json.loads(await request.body() or b"{}")
     except (json.JSONDecodeError, ValueError):
@@ -239,16 +231,13 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
     payload["model"] = served  # pin to the on-box coder; ignore the caller's choice
-    headers = {"Authorization": f"Bearer {shim_key}", "Content-Type": "application/json"}
-    client = httpx.AsyncClient(base_url=shim_url.rstrip("/"), timeout=httpx.Timeout(600.0))
+    client = httpx.AsyncClient(base_url=gateway_url.rstrip("/"), timeout=httpx.Timeout(600.0))
 
     captured: list[bytes] = []
 
     async def relay() -> AsyncIterator[bytes]:
         try:
-            async with client.stream(
-                "POST", upstream_path, json=payload, headers=headers
-            ) as upstream:
+            async with client.stream("POST", upstream_path, json=payload) as upstream:
                 async for chunk in upstream.aiter_raw():
                     if meter:
                         captured.append(chunk)
@@ -267,25 +256,13 @@ async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool)
     return StreamingResponse(relay(), media_type=media)
 
 
-@router.post("/ext/llm/{sid}/v1/messages")
-async def proxy_messages(sid: str, request: Request) -> Response:
-    """Proxy an Anthropic Messages call to the on-box coder (token-gated, metered)."""
-    return await _proxy(request, sid, "/v1/messages", meter=True)
-
-
-@router.post("/ext/llm/{sid}/v1/messages/count_tokens")
-async def proxy_count_tokens(sid: str, request: Request) -> Response:
-    """Proxy a token-count call (token-gated, not metered — it runs no completion)."""
-    return await _proxy(request, sid, "/v1/messages/count_tokens", meter=False)
-
-
 @router.post("/ext/llm/{sid}/v1/chat/completions")
 async def proxy_chat_completions(sid: str, request: Request) -> Response:
     """Proxy an OpenAI Chat Completions call to the on-box coder (token-gated, metered).
 
-    Lets an OpenAI-compatible client (grok-cli, etc.) target the coder the same way a
-    remote Claude targets ``/v1/messages`` — same auth, same model pin, same metering."""
-    return await _proxy(request, sid, "/v1/chat/completions", meter=True)
+    Lets an OpenAI-compatible client (grok build, etc.) target the on-box coder — the
+    bearer secret authenticates, the model is pinned, and token usage is metered back."""
+    return await _proxy(request, sid, "/chat/completions", meter=True)
 
 
 @router.get("/ext/llm/{sid}/v1/models")

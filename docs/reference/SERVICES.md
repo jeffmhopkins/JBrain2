@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-21
+> **Status:** Living · **Last verified:** 2026-07-31
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -37,8 +37,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `cloudflared` | `tunnel` | `install.sh` (dial-out tunnel mode) | Cloudflare Tunnel connector — public reachability with no static IP / port-forward, works behind CGNAT. See `../runbooks/CLOUDFLARE_TUNNEL.md`. |
 | `local-llm` | `local-llm` | `jbrain enable-local-models` | llama-swap fronting llama.cpp (Vulkan) — several GGUF models on one OpenAI-compatible endpoint, loaded/swapped on demand. |
 | `comfyui` | `comfyui` | `scripts/comfyui-setup.sh` | ROCm ComfyUI serving Qwen-Image (gen + edit) for the image tools. |
-| `jcode` | `jcode` | `scripts/jcode-setup.sh` | Sandboxed coding sessions: Claude Code's agent engine + `grok` CLI against on-box models. `grok`'s `/model` switches live between every installed tool-capable model (plan on the reasoner, execute on the coder) via the api's residency-aware jcode proxy (`api.jcode_llm`), which evicts-to-budget and serializes swaps so one model loads at a time — no unified-memory thrash. KB-blind, isolated `jcode` network, resource-capped. See `../archive/JCODE_PLAN.md`. |
-| `claude-shim` | `jcode` | (with `jcode`) | LiteLLM Anthropic↔OpenAI translator so the Claude Agent SDK can talk to the OpenAI-speaking local gateway. |
+| `jcode` | `jcode` | `scripts/jcode-setup.sh` | Sandboxed coding sessions: xAI's Grok Build (`grok`) CLI against on-box models. `grok`'s `/model` switches live between every installed tool-capable model (plan on the reasoner, execute on the coder) via the api's residency-aware jcode proxy (`api.jcode_llm`), which evicts-to-budget and serializes swaps so one model loads at a time — no unified-memory thrash. KB-blind, isolated `jcode` network, resource-capped. See `../archive/JCODE_PLAN.md`. |
 | `mqtt` | `mqtt` | JBrain360 setup | Mosquitto + go-auth broker (auth delegated to the API's `/internal/mqtt-*`) — the secure spine for family location. |
 | `mqtt-ingest` | `mqtt` | (with `mqtt`) | Server-side subscriber streaming published OwnTracks fixes into the location hypertable. |
 
@@ -52,7 +51,7 @@ runs piper only, so a stock box still serves read-aloud.
 
 **One-shot (`tools` profile):** `migrate` (`alembic upgrade head`, the only container with DDL rights) · `wipe` (destructive first-install reset, double-guarded).
 
-**Networks:** `edge` (proxy ↔ api ↔ tunnel) · `internal` (the shared backbone) · `jcode` (isolates the arbitrary-code sandbox — only `jcode`, `claude-shim`, `local-llm`, and `api` join it; no route to `db`/`worker`/`supervisor`/blobs).
+**Networks:** `edge` (proxy ↔ api ↔ tunnel) · `internal` (the shared backbone) · `jcode` (isolates the arbitrary-code sandbox — only `jcode`, `local-llm`, and `api` join it; no route to `db`/`worker`/`supervisor`/blobs).
 
 **Volumes:** `blobs` (content-addressed attachments) · `db_data` · `caddy_data`/`caddy_config` · `embed_models` · `tiles` (basemap cache) · `jcode_work` (per-session scratch checkouts, never backed up). Host binds: `./backups`, `./local-models`, `./comfyui-models`, `./whisper-models`.
 

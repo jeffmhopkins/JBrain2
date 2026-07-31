@@ -10,7 +10,7 @@
 > default is added (§4). All new outbound stays behind the api bridge — the
 > sandbox itself gains no raw internet from the search path.
 
-Give the in-sandbox **grok Build** CLI (and `claude`) the ability to **search the
+Give the in-sandbox **grok Build** CLI the ability to **search the
 web**, backed by the box's existing self-hosted **SearXNG** — and, separately and
 explicitly, an opt-in to let a session's own shell reach the **raw internet**.
 
@@ -44,13 +44,12 @@ calls the api, the api calls SearXNG.
 grok is driven purely by `~/.grok/config.toml` (models + subagents), rendered by
 `jcode/grok-config.sh`. There is **no MCP or custom-tool surface** in the jcode
 code; grok's non-model extension points here are its built-in tools and **shell
-helpers on `PATH`** (`jcode-grok`, `jcode-claude`, installed in `jcode/Dockerfile`
-`:44-48`). A shell-driven coding agent uses its bash tool for exactly this.
+helpers on `PATH`** (`jcode-grok`, installed in `jcode/Dockerfile`). A
+shell-driven coding agent uses its bash tool for exactly this.
 
 **Decision (owner, 2026-07-31): shell helpers on `PATH`.** Ship `web-search` and
 `web-fetch` scripts (mirroring `jcode-grok`) that curl the api bridge. This works
-regardless of what the pinned grok binary's tool system supports, and serves
-`claude` in the same session too.
+regardless of what the pinned grok binary's tool system supports.
 
 ## 4. The two checkboxes — decision (owner, 2026-07-31: two separate)
 
@@ -63,7 +62,7 @@ live session:
 (`jcode/sessions.py:43`) → `terminal.py model_env()` → env into the login shell.
 
 1. **SearXNG search** (`internet_search`) — exposes `web-search`/`web-fetch` to
-   grok/claude. Sandbox egress stays locked; only query text / target URLs leave,
+   grok. Sandbox egress stays locked; only query text / target URLs leave,
    through the owner's own searxng. **This is the safe default and covers the
    reported failure.**
 2. **Raw egress** (`internet_egress`) — lets the session's own shell reach the

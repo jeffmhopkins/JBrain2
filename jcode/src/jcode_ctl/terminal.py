@@ -7,8 +7,8 @@ owner's browser (xterm.js); this server stays internal + token-authed.
 
 Safe by construction: the sandbox is an isolated, throwaway per-session checkout
 on its own network (no host, no notes, no other services), so a shell in it — and
-the ``claude`` CLI the owner runs inside it — can do no more than that isolated
-checkout allows. The child inherits the process env (so ``claude``, git, etc.
+the ``grok`` CLI the owner runs inside it — can do no more than that isolated
+checkout allows. The child inherits the process env (so ``grok``, git, etc.
 resolve the on-box gateway) plus a real ``TERM``.
 """
 
@@ -39,25 +39,15 @@ _READ_BYTES = 65536
 
 
 def model_env(model: str, planner: str = "") -> dict[str, str]:
-    """Env that pins every model tier the interactive coding CLIs might pick to the
-    session's on-box model. Without it ``claude`` defaults to a cloud model
-    (``claude-opus-4-…``) the local gateway has no route for, and every session errors
-    "the selected model may not exist". ``claude`` resolves its ``/model`` aliases
-    (opus/sonnet/haiku/fable) and its background summariser through the ANTHROPIC_*
-    vars, so on a single-model gateway they must ALL map to the one served route;
-    ``GROK_MODEL`` does the same for the Grok CLI (``grok``). This pins the model for
-    the shell's CLIs so the per-session quant the owner picked is what each requests.
+    """Env that pins the Grok CLI to the session's on-box model. ``GROK_MODEL`` is the
+    session's default served route so the per-session quant the owner picked is what
+    ``grok`` requests (``grok-config.sh`` renders it into ``~/.grok/config.toml``).
 
     ``planner`` is the served-model for grok's ``plan`` subagent (``[subagents.models]
     plan``); it is exported as ``JCODE_GROK_PLAN_MODEL`` — ALWAYS, even when empty, so a
     single-model session (planner == executor) explicitly clears any image-level default
     and ``grok-config.sh`` omits the plan pin instead of inheriting one."""
     return {
-        "ANTHROPIC_MODEL": model,
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
-        "ANTHROPIC_DEFAULT_FABLE_MODEL": model,
         "GROK_MODEL": model,
         "JCODE_GROK_PLAN_MODEL": planner,
     }
@@ -80,9 +70,9 @@ def internet_env(search: bool, egress: bool) -> dict[str, str]:
 def home_env(home: str) -> dict[str, str]:
     """Give the session its OWN ``$HOME`` and a private, PATH-leading bin dir.
 
-    A per-session HOME gives per-session ``~/.grok`` (via ``grok-config.sh``),
-    ``~/.claude``, and shell history; ``NPM_CONFIG_PREFIX`` sends a per-session
-    ``npm i -g`` to ``$HOME/.npm-global`` too. A binary in ``$HOME/.local/bin``
+    A per-session HOME gives per-session ``~/.grok`` (via ``grok-config.sh``) and
+    shell history; ``NPM_CONFIG_PREFIX`` sends a per-session ``npm i -g`` to
+    ``$HOME/.npm-global`` too. A binary in ``$HOME/.local/bin``
     shadows the image's ``/usr/local/bin`` copy for THIS session only — that
     shadowing IS the per-session tool-version mechanism (see JCODE_SESSION_TOOLS_PLAN).
 
@@ -114,7 +104,7 @@ def preview_env(port: int) -> dict[str, str]:
 
 def _set_winsize(fd: int, rows: int, cols: int) -> None:
     """Push the browser terminal's size onto the PTY so full-screen TUIs (vim, and
-    the ``claude`` CLI itself) lay out correctly. Clamped to sane bounds."""
+    the ``grok`` CLI itself) lay out correctly. Clamped to sane bounds."""
     rows = max(1, min(rows, 1000))
     cols = max(1, min(cols, 1000))
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -150,7 +140,7 @@ def spawn_shell(
 def kill_process_group(pid: int) -> None:
     """SIGKILL a PTY shell's whole process group (the shell + anything it runs). The
     group (not the bare pid) matters: pty.fork makes the shell a session leader, so a
-    running ``claude``/``vim``/bg job is in its group and would otherwise survive.
+    running ``grok``/``vim``/bg job is in its group and would otherwise survive.
     Called on session delete to stop the sandbox's shells before the checkout goes."""
     with contextlib.suppress(OSError):
         os.killpg(os.getpgid(pid), signal.SIGKILL)
@@ -160,7 +150,7 @@ def kill_process_group(pid: int) -> None:
 
 def kill_processes_in_dir(path: str) -> list[int]:
     """SIGKILL every process whose working directory is inside ``path`` — the guaranteed
-    hard-kill backstop on session delete/stop. It catches the shell's ``claude`` CLI and
+    hard-kill backstop on session delete/stop. It catches the shell's ``grok`` CLI and
     ANY tool subprocess it started (a build, a script) even while blocked mid-tool,
     because they all run with cwd inside the session's checkout. Run just before the
     checkout is removed (delete) so nothing keeps executing in (or writing to) a deleted
@@ -232,7 +222,7 @@ class PtyTerminal:
     """A persistent shell PTY bound to a jcode session, decoupled from any one socket.
 
     The shell keeps running while no client is attached — you leave the app and your
-    build / ``claude`` run keeps going — and a reconnecting client reattaches and is
+    build / ``grok`` run keeps going — and a reconnecting client reattaches and is
     replayed the recent scrollback so it sees the current screen. A loop reader drains
     the PTY continuously (independent of any socket) so output is never lost and the
     shell never blocks on a full PTY buffer while detached. Torn down only when the
@@ -416,7 +406,7 @@ async def serve_terminal(
     The shell outlives the socket: a browser disconnect (tab close, leaving the app)
     detaches but leaves the PTY running, so work in progress keeps going and the session
     is NOT paused. A second connect takes over — the previous socket is closed so a
-    single client drives at a time. ``model`` pins the ``claude`` CLI's model tiers (no
+    single client drives at a time. ``model`` pins the ``grok`` CLI's model (no
     cloud default the on-box gateway can't serve); ``preview_port`` exports ``PORT`` so
     a ``$PORT``-aware dev server binds the preview port. ``on_open`` registers the pid
     the first time the shell is created (an open shell counts as activity and

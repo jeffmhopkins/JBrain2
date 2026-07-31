@@ -74,7 +74,7 @@ async def test_reset_and_delete() -> None:
 
 async def test_session_model_is_recorded() -> None:
     # The model chosen at create (the owner's Settings → LLM selection) is recorded on
-    # the session so the terminal can pin the `claude` CLI to it.
+    # the session so the terminal can pin the `grok` CLI to it.
     mgr = _mgr()
     s = await mgr.create("r", model="qwen3-coder-next")
     assert s.model == "qwen3-coder-next"

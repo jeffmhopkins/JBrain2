@@ -110,7 +110,7 @@ const SERVICE_GROUPS: { label: string; services: string[] }[] = [
   // Opt-in extras guarded by compose profiles (comfyui, jcode) — off by default
   // and typically stopped, so they get their own card and don't drag the AI
   // group's roll-up to "down" when they're not running.
-  { label: "AI - Optional", services: ["comfyui", "jcode", "claude-shim"] },
+  { label: "AI - Optional", services: ["comfyui", "jcode"] },
   // Outward networking + web access.
   {
     label: "Infra",
@@ -794,7 +794,7 @@ type MemItem = { service: string; rss_bytes: number; command: string };
 
 const MEM_GROUPS: { services: string[]; cls: string }[] = [
   { services: ["local-llm", "embed", "comfyui", "tts-stt"], cls: "ai" },
-  { services: ["jcode", "claude-shim"], cls: "code" },
+  { services: ["jcode"], cls: "code" },
   { services: ["api", "worker", "supervisor", "db", "postgres", "web"], cls: "core" },
 ];
 function memGroup(service: string): string {

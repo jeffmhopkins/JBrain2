@@ -40,11 +40,11 @@ if ! grep -q '^JCODE_TOKEN=.\+' .env; then
   say "minted a new JCODE_TOKEN"
 fi
 
-# The Anthropic<->OpenAI shim's master key, shared with the sandbox (it presents it
-# as ANTHROPIC_AUTH_TOKEN). LiteLLM wants an sk- key. Mint once; don't rotate on re-run.
+# The shared jcode token the in-sandbox grok CLI presents to the api's jcode LLM proxy
+# (as Authorization: Bearer). Mint once; don't rotate on re-run.
 if ! grep -q '^JCODE_GATEWAY_TOKEN=.\+' .env; then
   set_env JCODE_GATEWAY_TOKEN "sk-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-  say "minted a new JCODE_GATEWAY_TOKEN (shim master key)"
+  say "minted a new JCODE_GATEWAY_TOKEN (jcode LLM proxy token)"
 fi
 
 # The served model id jcode asks the gateway for — also the catalog id whose GGUF
@@ -77,24 +77,19 @@ else
   say "         to provision the coder model, then re-run this script."
 fi
 
-say "building the jcode + shim images and starting the profile"
-# Build/start BOTH the sandbox and its Anthropic<->OpenAI shim — jcode points its
-# ANTHROPIC_BASE_URL at claude-shim, so the shim must be up or the first turn fails.
-docker compose --profile jcode build jcode claude-shim
-docker compose --profile jcode up -d jcode claude-shim
+say "building the jcode image and starting the profile"
+docker compose --profile jcode build jcode
+docker compose --profile jcode up -d jcode
 
 # The api must be recreated to pick up the new JBRAIN_JCODE_* env (a restart reuses
 # the old environment) — same caveat as the debug-access flag.
 say "recreating the api to pick up JBRAIN_JCODE_* (Wave J2 routes)"
 docker compose up -d api
 
-say "done — code mode enabled. ON-BOX VERIFICATION still required (JCODE_PLAN.md"
-say "open decision 1): confirm the gateway serves an Anthropic /v1/messages endpoint"
-say "(or add a shim) and that a coding turn drives Qwen3-Coder-Next end to end."
+say "done — code mode enabled."
 say ""
-say "Two coding CLIs are installed in the session shell, both pinned to the on-box coder:"
-say "  - claude (Claude Code) → via the claude-shim Anthropic<->OpenAI translator"
-say "  - grok   (xAI Grok Build) → straight at the gateway's OpenAI /v1 (no shim)"
+say "The session shell runs xAI's Grok Build (grok), pinned to the on-box coder — it"
+say "reaches the gateway's OpenAI /v1 through the api's residency-aware jcode proxy."
 say ""
 say "This is a ONE-TIME enable. From now on the normal update (the PWA's Update"
 say "button or 'jbrain update') rebuilds and recreates jcode automatically and"

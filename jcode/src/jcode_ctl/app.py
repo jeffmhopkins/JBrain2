@@ -89,7 +89,7 @@ class CreateSessionRequest(BaseModel):
     repo: str = ""
     branch: str = "main"
     work_branch: str = ""
-    # The served-model id the terminal pins the ``claude`` CLI to. Empty = the server's
+    # The served-model id the terminal pins the ``grok`` CLI to. Empty = the server's
     # configured default (settings.model). The api resolves the owner's selection.
     model: str = ""
     # The planner served-model for grok's ``plan`` subagent (JCODE_GROK_PLAN_MODEL).
@@ -314,7 +314,7 @@ def create_app(
             return
         await websocket.accept()
 
-        # Pin the shell's `claude` CLI to this session's model (falling back to the
+        # Pin the shell's `grok` CLI to this session's model (falling back to the
         # server default) so it doesn't default to a cloud model the on-box gateway has
         # no route for. The shell is persistent — it outlives this socket (leaving the
         # app keeps it running) and is reattached on reconnect; on_open registers its

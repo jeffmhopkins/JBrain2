@@ -49,7 +49,7 @@ class Session:
     status: Status
     created_at: str
     last_active_at: str
-    # The served-model id the session's terminal pins the ``claude`` CLI to (empty =
+    # The served-model id the session's terminal pins the ``grok`` CLI to (empty =
     # the server's configured default). Fixed at create.
     model: str = ""
     # The planner served-model for grok's ``plan`` subagent, exported as

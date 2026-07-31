@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-27
+> **Status:** Living · **Last verified:** 2026-07-31
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1581,7 +1581,7 @@ launcher → live session). The two surfaces went through the mock-first gate
   (owner decision, build plan `docs/archive/JCODE_2TAB_PLAN.md`): the PWA chat, the diff
   placeholder, and the read-only terminal-log view are gone. One session, **two views:
   Terminal · Preview**. The Terminal is the workhorse — a real shell in the sandbox
-  (xterm.js) where the owner runs `claude` against the on-box coder; Preview is the
+  (xterm.js) where the owner runs `grok` against the on-box coder; Preview is the
   ephemeral tunnel. **Variant A — full-bleed** maximizes the terminal: a slim one-line
   header (back · status dot · `repo @ branch` · model chip `qwen3-coder · 256k · on-box`),
   owner actions (Reset / Share / **Stop** / Delete) in a `⋯` menu, two compact labelled
