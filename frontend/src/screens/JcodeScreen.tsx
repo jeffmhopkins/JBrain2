@@ -811,6 +811,8 @@ function NewSessionSheet({
   const [repo, setRepo] = useState("");
   const [workBranch, setWorkBranch] = useState("");
   const [extLabel, setExtLabel] = useState("");
+  const [internetSearch, setInternetSearch] = useState(false);
+  const [internetEgress, setInternetEgress] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -825,6 +827,8 @@ function NewSessionSheet({
           repo: mode === "clone" ? repo.trim() : "",
           branch: "main",
           work_branch: workBranch.trim(),
+          internet_search: internetSearch,
+          internet_egress: internetEgress,
         });
       }
     } catch {
@@ -892,6 +896,51 @@ function NewSessionSheet({
           <p className="jcode-mcnote">
             Fresh isolated checkout · no host access · reads no notes · completions on-box.
           </p>
+          {/* Web search: exposes the SearXNG-backed web-search / web-fetch helpers to the
+              session's grok/claude. Only the query leaves the box (via the owner's own
+              searxng) — no raw internet (docs/plans/JCODE_GROK_INTERNET_PLAN.md). */}
+          <div className="jcode-extrow">
+            <div>
+              <span className="jcode-extlabel">Web search (SearXNG)</span>
+              <p className="jcode-empty">
+                Let the coding CLIs search this box's SearXNG (<code>web-search</code> /{" "}
+                <code>web-fetch</code>). Only the query leaves — no raw internet, no notes.
+              </p>
+            </div>
+            <button
+              type="button"
+              className={`jcode-toggle${internetSearch ? " on" : ""}`}
+              role="switch"
+              aria-checked={internetSearch}
+              aria-label="Web search"
+              onClick={() => setInternetSearch((v) => !v)}
+            >
+              <span className="jcode-toggle-knob" />
+            </button>
+          </div>
+          {/* Raw egress: a separate, riskier opt-in. Disabled until per-session containers
+              land — egress is a property of the shared jcode container, so it can't be
+              granted to one session today (see the plan doc §6). */}
+          <div className="jcode-extrow">
+            <div>
+              <span className="jcode-extlabel">Raw internet access</span>
+              <p className="jcode-empty">
+                Full outbound from the session's shell. Needs per-session containers — coming later;
+                search covers most needs.
+              </p>
+            </div>
+            <button
+              type="button"
+              className={`jcode-toggle${internetEgress ? " on" : ""}`}
+              role="switch"
+              aria-checked={internetEgress}
+              aria-label="Raw internet access"
+              disabled
+              onClick={() => setInternetEgress((v) => !v)}
+            >
+              <span className="jcode-toggle-knob" />
+            </button>
+          </div>
         </>
       )}
 

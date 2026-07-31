@@ -28,7 +28,7 @@ class _Recorder:
 
 def _serve(recorder: _Recorder) -> ThreadingHTTPServer:
     class _Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             recorder.path = self.path
             recorder.auth = self.headers.get("Authorization", "")
             length = int(self.headers.get("Content-Length", "0"))
@@ -48,7 +48,9 @@ def _serve(recorder: _Recorder) -> ThreadingHTTPServer:
     return server
 
 
-def _run(script: Path, *args: str, search: str | None = "1", base: str = "") -> subprocess.CompletedProcess:
+def _run(
+    script: Path, *args: str, search: str | None = "1", base: str = ""
+) -> subprocess.CompletedProcess:
     env = {"GROK_API_KEY": "tok-123", "PATH": "/usr/bin:/bin"}
     if search is not None:
         env["JCODE_INTERNET_SEARCH"] = search

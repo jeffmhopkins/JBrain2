@@ -595,8 +595,10 @@ services:
   # flag for it, and the api's JBRAIN_SEARXNG_URL points here by default, so a
   # gated service would just leave jerv reporting "unavailable". It needs its own
   # egress to query upstream engines, so it sits on `internal` (api/worker reach it
-  # there at http://searxng:8080). Only jerv — which holds no knowledge-base tools
-  # and reads no owner data — can call it, so no personal context ever rides a query.
+  # there at http://searxng:8080). Callers hold no owner data: jerv (no knowledge-base
+  # tools), and the api's jcode search bridge on behalf of the sandbox CLIs (the sandbox
+  # can't reach searxng directly) — so no personal context ever rides a query
+  # (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
   searxng:
     image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}
     restart: unless-stopped

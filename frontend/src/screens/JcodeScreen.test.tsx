@@ -82,10 +82,33 @@ describe("JcodeScreen (launcher)", () => {
         repo: "https://github.com/me/new",
         branch: "main",
         work_branch: "",
+        internet_search: false,
+        internet_egress: false,
       }),
     );
     // The session screen is now stacked over the list (the stubbed screen shows the repo).
     expect(await screen.findByText(/opened github.com\/me\/new/)).toBeInTheDocument();
+  });
+
+  it("sends internet_search when the Web search toggle is on", async () => {
+    vi.spyOn(api, "jcodeSessions").mockResolvedValue([]);
+    const create = vi
+      .spyOn(api, "jcodeCreateSession")
+      .mockResolvedValue(session({ id: "j9", repo: "github.com/me/new" }));
+    render(<JcodeScreen onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByText("New session"));
+    fireEvent.change(screen.getByPlaceholderText(/github.com/i), {
+      target: { value: "https://github.com/me/new" },
+    });
+    fireEvent.click(screen.getByRole("switch", { name: "Web search" }));
+    fireEvent.click(screen.getByText("Start session →"));
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ internet_search: true, internet_egress: false }),
+      ),
+    );
   });
 
   it("mints an external endpoint and opens its screen with the one-time secret", async () => {

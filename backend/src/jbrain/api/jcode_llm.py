@@ -254,7 +254,9 @@ async def web_fetch(request: Request) -> Response:
     except WebFetchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not result.text:
-        return Response(content=f"That page ({url}) had no readable text.\n", media_type="text/plain")
+        return Response(
+            content=f"That page ({url}) had no readable text.\n", media_type="text/plain"
+        )
     header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
     body = header + result.text
     if result.links:

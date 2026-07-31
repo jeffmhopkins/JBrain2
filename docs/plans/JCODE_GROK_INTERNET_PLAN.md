@@ -1,6 +1,6 @@
 # jcode grok Internet Access — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-07-31 · **Waves:** S0✅ S1◻️ S2◻️ S3◻️ S4◻️ E1◻️ (S0 = this plan; S1–S4 = SearXNG search for grok; E1 = raw-egress toggle, gated on the shared-container caveat in §6)
+> **Status:** In progress · **Last verified:** 2026-07-31 · **Waves:** S0✅ S1✅ S2✅ S3✅ S4✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped on-branch; CI covers the bridge/helpers/plumbing with fakes + a localhost stub, on-box sign-off against the live searxng/grok pending. E1 = raw-egress toggle, deferred on the shared-container caveat in §6 — the UI toggle ships disabled)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the search bridge runs
 > the same on-box SearXNG discipline jerv already uses (invariant #9 — no owner
