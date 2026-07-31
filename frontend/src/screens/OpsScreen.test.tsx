@@ -206,6 +206,41 @@ describe("OpsScreen", () => {
     expect(screen.queryByRole("button", { name: /Other/ })).toBeNull();
   });
 
+  it("files rapidocr under the Infra group, not Other", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/ops/status") {
+        return json({
+          containers: [
+            {
+              service: "api",
+              state: "running",
+              health: "healthy",
+              started_at: "2026-06-10T08:00:00Z",
+              image: "jbrain2-api:local",
+            },
+            {
+              service: "rapidocr",
+              state: "running",
+              health: "healthy",
+              started_at: "2026-06-10T08:00:00Z",
+              image: "jbrain2-rapidocr:local",
+            },
+          ],
+        });
+      }
+      if (path === "/api/ops/metrics") return json(METRICS);
+      if (path.startsWith("/api/ops/metrics/history")) return json(HISTORY);
+      return new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+    // OCR is infra tooling, so it belongs in "Infra", not orphaned in "Other".
+    fireEvent.click(await screen.findByRole("button", { name: /Infra/ }));
+    expect(screen.getByText("rapidocr")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Other/ })).toBeNull();
+  });
+
   it("the History card is expanded by default on the 6h window and switches range", async () => {
     fetchMock.mockImplementation(
       async (input) => baseMock(input) ?? new Response(null, { status: 404 }),

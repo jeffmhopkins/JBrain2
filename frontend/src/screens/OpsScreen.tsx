@@ -114,7 +114,7 @@ const SERVICE_GROUPS: { label: string; services: string[] }[] = [
   // Outward networking + web access.
   {
     label: "Infra",
-    services: ["proxy", "cloudflared", "reader", "searxng", "mqtt", "mqtt-ingest"],
+    services: ["proxy", "cloudflared", "reader", "searxng", "rapidocr", "mqtt", "mqtt-ingest"],
   },
   // The on-box neural wall display that renders read-aloud (piper TTS).
   { label: "Display", services: ["wall"] },
