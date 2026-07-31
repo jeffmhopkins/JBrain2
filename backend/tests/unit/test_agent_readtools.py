@@ -1172,8 +1172,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "analyze_image.tool": (
             "analyze_image",
-            1,
-            "e20ed2107fb866bf2f5d09357f63317146e4604780274796105ea68eae76bdc0",
+            2,
+            "5993c5b0f2fc771d8c2344e34d735fa6ce5c9c40b641ff05286938dbe8588260",
         ),
         "transcribe.tool": (
             "transcribe",
