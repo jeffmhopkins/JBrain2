@@ -5,6 +5,12 @@ These reflect the HOST, not the container: /proc/meminfo, /proc/loadavg and
 overlayfs, and Docker mounts the host's /sys read-only (so the amdgpu driver's
 load attribute is readable without /dev/dri — that device is only needed to
 USE the GPU, not to read its telemetry). Paths are injectable for tests.
+
+The one exception is /proc/net/dev, which IS network-namespace-scoped: inside
+the supervisor's own netns it lists only this container's veth, not the box's
+real uplink (Wi-Fi, ethernet). Compose bind-mounts the host's /proc/net/dev and
+points HOST_NET_DEV at it so the byte counters cover every host interface — see
+read_net_counters.
 """
 
 from __future__ import annotations
@@ -133,16 +139,22 @@ _MEMINFO_BREAKDOWN = (
 _NET_SKIP_PREFIXES = ("lo", "veth", "docker", "br-")
 
 
-def read_net_counters(proc: Path = Path("/proc")) -> NetCounters | None:
-    """Cumulative rx/tx bytes summed over physical interfaces from /proc/net/dev,
-    or None if it can't be read. Skips loopback and Docker veth/bridge devices (see
+def read_net_counters(net_dev: Path = Path("/proc/net/dev")) -> NetCounters | None:
+    """Cumulative rx/tx bytes summed over every physical interface in net/dev, or
+    None if it can't be read. Skips loopback and Docker veth/bridge devices (see
     _NET_SKIP_PREFIXES) so the total reflects the box's real uplink, not the
     container-internal traffic that also crosses a veth.
+
+    `net_dev` is the /proc/net/dev to parse. It matters WHICH one: that file is
+    network-namespace-scoped, so the container's own copy sees only its veth and
+    misses the host's Wi-Fi/ethernet entirely. read_host_metrics resolves it from
+    HOST_NET_DEV (the bind-mounted host file) so the counters span all of the box's
+    interfaces — the same host namespace the veth/bridge denylist was written for.
 
     The counters are monotonic (since boot); the throughput a graph wants is their
     delta over time, which the sampler computes — this only exposes the raw totals."""
     try:
-        lines = (proc / "net" / "dev").read_text().splitlines()
+        lines = net_dev.read_text().splitlines()
     except OSError:
         return None
     rx_total = tx_total = 0
@@ -358,7 +370,14 @@ def read_host_metrics(
     drm: Path = Path("/sys/class/drm"),
     hwmon: Path = Path("/sys/class/hwmon"),
     sysblock: Path = Path("/sys/block"),
+    net_dev: Path | None = None,
 ) -> HostMetrics:
+    # /proc/net/dev is netns-scoped, so the container's own copy misses the host's
+    # real interfaces. Prefer the bind-mounted host file named by HOST_NET_DEV;
+    # fall back to proc-relative so tests (which build proc/net/dev) stay hermetic.
+    if net_dev is None:
+        override = os.environ.get("HOST_NET_DEV")
+        net_dev = Path(override) if override else proc / "net" / "dev"
     mem = _meminfo_kb((proc / "meminfo").read_text())
     load_parts = (proc / "loadavg").read_text().split()
     uptime = float((proc / "uptime").read_text().split()[0])
@@ -380,6 +399,6 @@ def read_host_metrics(
         apu_power_w=read_apu_power_w(hwmon),
         gpu_mem=read_amdgpu_mem(drm),
         mem_breakdown=breakdown or None,
-        net=read_net_counters(proc),
+        net=read_net_counters(net_dev),
         disk_io=read_disk_counters(proc, sysblock),
     )
