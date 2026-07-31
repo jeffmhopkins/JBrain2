@@ -83,6 +83,27 @@ class CachedExtract:
     text: str
     anchor: str | None
     confidence: float
+    # provider:model provenance (`"rapidocr"` for the deterministic engine). Drives the
+    # dual-engine OCR selection below (docs/plans/RAPIDOCR_PLAN.md).
+    tool: str = ""
+
+
+# The deterministic RapidOCR engine's tool tag — the cross-validation stores its
+# transcription as a second `kind="ocr"` row alongside the VLM's.
+_RAPIDOCR_TOOL = "rapidocr"
+
+
+def _prefer_ocr(candidate: CachedExtract, current: CachedExtract) -> bool:
+    """Between two `ocr` rows for the same anchor (the VLM's reading and RapidOCR's
+    deterministic transcription), which chunks? Prefer text over empty first — never drop a
+    text-bearing VLM row for an empty RapidOCR one — then prefer the deterministic engine."""
+    cand_text, cur_text = bool(candidate.text.strip()), bool(current.text.strip())
+    if cand_text != cur_text:
+        return cand_text
+    cand_rapid = candidate.tool == _RAPIDOCR_TOOL
+    if cand_rapid != (current.tool == _RAPIDOCR_TOOL):
+        return cand_rapid
+    return False  # stable — keep the first seen
 
 
 def image_segments(extracts: Iterable[CachedExtract]) -> list[Segment]:
@@ -92,12 +113,30 @@ def image_segments(extracts: Iterable[CachedExtract]) -> list[Segment]:
     calls a vision model. An empty-text row (an image with no legible text)
     yields no segment, but its presence in the cache is still what keeps
     re-ingest from re-enqueueing OCR.
+
+    Dual-engine OCR (docs/plans/RAPIDOCR_PLAN.md): the cross-validation stores BOTH the VLM
+    `ocr` row and RapidOCR's `tool="rapidocr"` row. Exactly one is chunked per anchor —
+    `_prefer_ocr` picks the deterministic transcription when it has text, so the fact
+    pipeline reads verbatim OCR, not the model's reading — while preserving original order.
     """
-    return [
-        Segment(kind=e.kind, text=e.text.strip(), anchor=e.anchor, confidence=e.confidence)
-        for e in extracts
-        if e.text.strip()
-    ]
+    rows = list(extracts)
+    winner: dict[str | None, CachedExtract] = {}
+    for e in rows:
+        if e.kind != "ocr":
+            continue
+        current = winner.get(e.anchor)
+        if current is None or _prefer_ocr(e, current):
+            winner[e.anchor] = e
+    segments: list[Segment] = []
+    for e in rows:
+        if not e.text.strip():
+            continue
+        if e.kind == "ocr" and winner.get(e.anchor) is not e:
+            continue  # a non-chosen duplicate OCR row (the VLM row when RapidOCR won)
+        segments.append(
+            Segment(kind=e.kind, text=e.text.strip(), anchor=e.anchor, confidence=e.confidence)
+        )
+    return segments
 
 
 class ExtractorRegistry:

@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     # absent and falls back to this default, so it does NOT disable it. To turn the
     # fallback off, remove the reader service or point this at a non-serving endpoint.
     reader_url: str = "http://reader:3000"
+    # The on-box RapidOCR sidecar — deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md). It
+    # cross-validates the VLM text extraction (both an `ocr` VLM row and a `tool="rapidocr"`
+    # row are stored) and backs the direct `ocr` tools for jerv and the jcode sandbox. Part
+    # of the stock stack, so this default points at the running service; empty degrades to
+    # VLM-only OCR (the cross-check is skipped and the `ocr` tools report unavailable). The
+    # base URL is pinned here, never model-supplied.
+    rapidocr_url: str = "http://rapidocr:8000"
     # The neural wall display (deploy/wall) draws a reach-out tendril when jerv runs a web
     # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —
     # best-effort, no owner data, failures ignored. Empty disables the emit (no web tendrils).

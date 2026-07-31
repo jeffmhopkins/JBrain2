@@ -646,6 +646,28 @@ services:
     shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
     networks: [internal]
 
+  # Deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md): a RapidOCR (PP-OCR / ONNX) sidecar,
+  # the swap-free counterpart to the VLM `vision.ocr` path. The api reaches it at
+  # http://rapidocr:8000 (JBRAIN_RAPIDOCR_URL default) to cross-validate the model's text
+  # extraction and to serve the direct `ocr` tools (jerv + the jcode sandbox — the sandbox
+  # can't reach it directly, the api bridges). Part of the stock stack (no profile) like
+  # searxng/reader, so it comes up on every deploy; empty JBRAIN_RAPIDOCR_URL degrades to
+  # VLM-only OCR. It holds NO owner data and reasons about nothing but pixels, so it sits on
+  # `internal`. The engine LAZY-loads on first call and idle-unloads (server.py), so an idle
+  # box pays only the ~150-200 MB process baseline, not the loaded sessions — mem_limit caps
+  # a burst. CPU-only (onnxruntime), no GPU.
+  rapidocr:
+    image: jbrain2-rapidocr:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.rapidocr
+    restart: unless-stopped
+    mem_limit: ${RAPIDOCR_MEM_LIMIT:-1g}
+    environment:
+      # Free the engine after this many idle seconds (0 keeps it resident once loaded).
+      RAPIDOCR_IDLE_TTL_SECONDS: ${RAPIDOCR_IDLE_TTL_SECONDS:-300}
+    networks: [internal]
+
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
   # in HTTP-backend mode, delegating every connect/publish/subscribe to the API's
   # /internal/mqtt-* endpoints (it reuses the shipped device_key model; the plugin

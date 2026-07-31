@@ -126,6 +126,10 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # Compare two or more chat images (grabbed frames, fetched web images, attachments)
         # and show the owner a side-by-side (VIDEO_IMAGE_TOOLS_PLAN.md).
         "compare_images",
+        # Deterministic, verbatim OCR of an attached image/PDF via the on-box RapidOCR
+        # sidecar — the hallucination-free counterpart to analyze_image, preferred for
+        # literal text (error screenshots, receipts, scanned docs) (RAPIDOCR_PLAN.md).
+        "ocr",
         # Search the external-source video corpus (analysed YouTube videos). Sandboxed
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).

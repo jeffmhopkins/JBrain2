@@ -5,15 +5,84 @@ override — is integration-tested (test_ocr_pg) with the LLM faked."""
 
 import uuid
 
+import pytest
+
 from jbrain.ingest.ocr import (
     DESCRIPTION_CONFIDENCE,
     DESCRIPTION_SYSTEM,
     MAX_OCR_BYTES,
     OCR_CONFIDENCE,
     OCR_SYSTEM,
+    RAPIDOCR_TOOL,
+    OcrPipeline,
+    _agreement,
     build_extract,
     resolve_mode,
 )
+from jbrain.vision import OcrResult, OcrServiceError
+
+
+class _FakeRapid:
+    """A stand-in RapidOcrClient: returns a canned result, or raises OcrServiceError."""
+
+    def __init__(self, result: OcrResult | None = None, *, error: bool = False) -> None:
+        self._result = result
+        self._error = error
+        self.calls = 0
+
+    async def ocr(self, data: bytes, media_type: str = "application/octet-stream") -> OcrResult:
+        self.calls += 1
+        if self._error:
+            raise OcrServiceError("sidecar down")
+        assert self._result is not None
+        return self._result
+
+
+def _pipeline(rapid: object | None) -> OcrPipeline:
+    # Only the RapidOCR helpers are exercised here — the DB/router deps aren't touched, so
+    # None is fine (the full round trip is integration-tested in test_ocr_pg).
+    return OcrPipeline(None, None, None, None, rapid)  # type: ignore[arg-type]
+
+
+def test_agreement_is_whitespace_and_case_insensitive() -> None:
+    assert _agreement("Total: $41.20", "total:  $41.20\n") == pytest.approx(1.0)
+    assert _agreement("", "") == 1.0
+    assert _agreement("abc", "") == 0.0
+    assert 0.0 < _agreement("hello world", "hello xorld") < 1.0
+
+
+async def test_rapid_ocr_none_when_sidecar_unconfigured() -> None:
+    assert await _pipeline(None)._rapid_ocr(b"img", "image/png") is None
+
+
+async def test_rapid_ocr_degrades_to_none_on_service_error() -> None:
+    fake = _FakeRapid(error=True)
+    assert await _pipeline(fake)._rapid_ocr(b"img", "image/png") is None
+    assert fake.calls == 1  # it tried, then degraded
+
+
+async def test_rapid_ocr_returns_the_result() -> None:
+    result = OcrResult(text="hello", mean_score=0.9)
+    assert await _pipeline(_FakeRapid(result))._rapid_ocr(b"img", "image/png") is result
+
+
+def test_rapid_row_is_capped_ocr_tagged_rapidocr() -> None:
+    row = _pipeline(None)._rapid_row(
+        uuid.uuid4(), "personal", "shot.png", "note-1", "exact text", anchor=None
+    )
+    assert row.kind == "ocr"
+    assert row.tool == RAPIDOCR_TOOL
+    assert row.confidence == OCR_CONFIDENCE  # health-safety cap preserved regardless of engine
+    assert row.text == "exact text"
+
+
+async def test_rapid_pdf_pages_empty_without_sidecar() -> None:
+    assert await _pipeline(None)._rapid_pdf_pages(b"%PDF-1.4 not really") == []
+
+
+async def test_rapid_pdf_pages_degrades_on_unrasterizable_bytes() -> None:
+    # A bad PDF can't rasterize; the cross-check degrades to VLM-only rather than raising.
+    assert await _pipeline(_FakeRapid(OcrResult("x", 0.9)))._rapid_pdf_pages(b"not a pdf") == []
 
 
 def test_ocr_prompt_demands_verbatim_plain_text_and_honesty() -> None:

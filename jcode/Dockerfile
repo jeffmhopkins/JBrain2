@@ -51,8 +51,11 @@ COPY jcode-claude /usr/local/bin/jcode-claude
 # api's jcode bridge — the sandbox can't touch searxng directly.
 COPY web-search /usr/local/bin/web-search
 COPY web-fetch /usr/local/bin/web-fetch
+# Deterministic OCR of a local image/PDF (docs/plans/RAPIDOCR_PLAN.md). Always available —
+# an offline read via the api's OCR bridge, no internet opt-in to gate it.
+COPY ocr /usr/local/bin/ocr
 RUN chmod +x /usr/local/bin/jcode-grok /usr/local/bin/jcode-claude \
-    /usr/local/bin/web-search /usr/local/bin/web-fetch
+    /usr/local/bin/web-search /usr/local/bin/web-fetch /usr/local/bin/ocr
 
 # Login-shell hint: announce the web helpers in a session that opted into web search, so the
 # owner (and the agent's own shell output) sees the capability. Silent otherwise.
