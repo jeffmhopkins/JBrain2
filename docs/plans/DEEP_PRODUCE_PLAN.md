@@ -279,12 +279,13 @@ wave** that ever does template the system prompt:
 > injection + web-fan-impossible (`library` pin) + external-write suppression + defense-in-depth
 > invariant, the `extra_tools` admission gate + curator grant, and the frontend fix so
 > `deep_produce` drives the deep-research timeline (not a stray fan card). **Remaining before
-> W2 merges:** the B3 critic decoupling for seeded runs (the citation/quantitative check is
-> gated on `_can_open_sources`, which is false for `library` — the writer prompt still grounds,
-> but the critic should verify a seeded plan against the record); an on-box curator run; and
-> CI's integration suite (the seed read reuses the already-RLS-tested lab_results path, and the
-> zero-`research_reports`-rows property is unit-covered via persist-suppression, so no NEW table
-> or RLS isolation test is required — CLAUDE.md #3).
+> `deep_produce` drives the deep-research timeline (not a stray fan card); and **B3 —
+> the critic now verifies a seeded plan against the record** (`_critique(record=…)`, a
+> record-verification clause that fires regardless of `_can_open_sources`). **Remaining before
+> W2 merges:** an on-box curator run and CI's integration suite (the seed read reuses the
+> already-RLS-tested lab_results path, and the zero-`research_reports`-rows property is
+> unit-covered via persist-suppression, so no NEW table or RLS isolation test is required —
+> CLAUDE.md #3).
 
 **W1 stands alone.** W1 delivers a complete, shippable jerv capability — a standalone
 `deep_produce` verb that turns web/library research into a caller-chosen artifact (plan,
