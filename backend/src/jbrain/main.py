@@ -368,8 +368,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.brain_tts_base_url = tts_base
         app.state.brain_tts_flag_emit = build_flag_emitter(f"{tts_base}/event" if tts_base else "")
         web_fetcher = WebFetcher(reader_url=settings.reader_url)
+        searxng = SearxngClient(settings.searxng_url)
+        # Shared on app.state so the jcode search bridge (api.jcode_llm web_search /
+        # web_fetch) reaches the SAME cached instances jerv uses. The sandbox can't touch
+        # searxng directly (it's on `internal`, the sandbox on `jcode`), so this api — the
+        # one peer on both networks — is its only path (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
+        app.state.searxng = searxng
+        app.state.web_fetcher = web_fetcher
         web_handlers = build_web_handlers(
-            SearxngClient(settings.searxng_url),
+            searxng,
             web_fetcher,
             emit=brain_emit,
         )
