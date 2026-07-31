@@ -103,6 +103,10 @@ OPTIONAL_FETCH_IMAGE_TOOL = frozenset({"fetch_image"})
 # jerv's multi-image compare (VIDEO_IMAGE_TOOLS_PLAN.md), dropped when no vision router
 # is configured. Router-gated, NOT ComfyUI-gated — a vision read needs no image-gen.
 OPTIONAL_COMPARE_TOOL = frozenset({"compare_images"})
+
+# jerv's deterministic OCR read (docs/plans/RAPIDOCR_PLAN.md), present only when the
+# RapidOCR sidecar is configured; otherwise the `ocr` sidecar is dropped.
+OPTIONAL_OCR_TOOL = frozenset({"ocr"})
 # jerv's URL-sourced stream/video analysis sidecar, dropped from the registry when
 # ffmpeg OR yt-dlp is absent (docs/archive/STREAM_ANALYSIS_PLAN.md).
 OPTIONAL_STREAM_TOOL = frozenset({"analyze_stream"})
@@ -683,6 +687,7 @@ def build_registry(
     grab_handlers: dict[str, ToolHandler] | None = None,
     fetch_image_handlers: dict[str, ToolHandler] | None = None,
     compare_handlers: dict[str, ToolHandler] | None = None,
+    ocr_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
     research_report_handlers: dict[str, ToolHandler] | None = None,
@@ -773,6 +778,10 @@ def build_registry(
             # jerv's multi-image compare (`web`-gated, vision-router-backed): compare N chat
             # images and show the owner a side-by-side. Not ComfyUI-gated (a vision read).
             **(compare_handlers or {}),
+            # jerv's deterministic OCR read (`web`-gated, on-box RapidOCR): the verbatim,
+            # hallucination-free counterpart to analyze_image. Present only when the sidecar
+            # is configured; otherwise dropped below (docs/plans/RAPIDOCR_PLAN.md).
+            **(ocr_handlers or {}),
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
             # general-domain corpus via a purpose-built scope (EXTERNAL_VIDEO_INGESTION_PLAN.md).
             **(external_handlers or {}),
@@ -814,6 +823,7 @@ def build_registry(
             | OPTIONAL_GRAB_TOOL
             | OPTIONAL_FETCH_IMAGE_TOOL
             | OPTIONAL_COMPARE_TOOL
+            | OPTIONAL_OCR_TOOL
             | OPTIONAL_GMAIL_TOOLS
         ),
     )

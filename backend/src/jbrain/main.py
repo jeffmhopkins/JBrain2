@@ -21,6 +21,7 @@ from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
+from jbrain.agent.ocrtools import build_ocr_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
@@ -619,6 +620,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.turn_attachments,
             maker,
         )
+        # jerv's deterministic OCR read (docs/plans/RAPIDOCR_PLAN.md) — the verbatim
+        # counterpart to analyze_image, over the on-box RapidOCR sidecar.
+        ocr_handlers = build_ocr_handlers(
+            app.state.rapidocr, app.state.blob_store, app.state.turn_attachments
+        )
         deepest_handle = DeepestHandle()
         app.state.agent_registry = build_registry(
             app.state.search_service,
@@ -646,6 +652,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             grab_handlers=grab_handlers,
             fetch_image_handlers=fetch_image_handlers,
             compare_handlers=compare_handlers,
+            ocr_handlers=ocr_handlers,
             gmail_handlers=gmail_handlers,
             external_handlers=build_external_handlers(
                 maker,
