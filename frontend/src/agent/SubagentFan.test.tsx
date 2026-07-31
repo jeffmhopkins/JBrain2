@@ -201,6 +201,30 @@ describe("SubagentFan", () => {
     expect(glyph?.className.split(/\s+/)).not.toContain("run");
   });
 
+  it("drops the per-row bar for a cleanly-done child (the ✓ glyph carries the state)", () => {
+    const { container } = render(
+      <SubagentFan
+        fan={fan([child({ childId: "k1", label: "Done", status: "done" })])}
+        running={false}
+      />,
+    );
+    // No full-width green bar under a finished row…
+    expect(container.querySelector(".fb-sa-bar")).toBeNull();
+    // …but the ✓ glyph is still there.
+    expect(container.querySelector(".fb-sa-g.done")).not.toBeNull();
+  });
+
+  it("keeps the per-row bar for a failed child (the rose bar reinforces the error)", () => {
+    const { container } = render(
+      <SubagentFan
+        fan={fan([child({ childId: "k1", label: "Broke", status: "failed" })])}
+        running={false}
+      />,
+    );
+    const bar = container.querySelector(".fb-sa-bar");
+    expect(bar?.className).toContain("failed");
+  });
+
   it("auto-collapses a child on settle, even if it was expanded while running", () => {
     const { rerender } = render(
       <SubagentFan

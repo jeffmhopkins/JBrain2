@@ -8541,10 +8541,6 @@ button.small {
   border-radius: 999px;
   animation: fb-sa-sweep 1.1s ease-in-out infinite;
 }
-.fb-shell .fb-sa-bar.done i {
-  width: 100%;
-  background: var(--green);
-}
 .fb-shell .fb-sa-bar.failed i {
   width: 100%;
   background: var(--rose);

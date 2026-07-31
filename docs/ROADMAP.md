@@ -340,6 +340,24 @@ The motivating recipe: `deep_produce(output_kind=plan)` from a
 curator call — a hypothetical treatment plan grounded in a medical-history date range and a library
 category, if symptoms were to recur.
 
+**Shipped:** Deep research staged single-source pipeline (build record:
+`docs/archive/DEEP_RESEARCH_STAGED_PIPELINE_PLAN.md`) — teach the shipped `deep_research`/`deep_produce`
+engine a **staged, dependency-aware** pipeline so it can process a *single known source*, the motivating
+case being "extract every question from this interview, answer each, fact-check each against the web, and
+tabulate." Today the engine flattens that sequential job into a **parallel fan of independent angles**
+(`deep_research_plan.prompt` even mandates sibling independence), which fails three ways on a real run over
+the 85-minute *Economist* Elon Musk interview: no coordination (the answers agent re-derived its own
+divergent question list, re-searching the same transcript), fact-check reached no web (`library_first` runs
+the whole gather fan corpus-only — the fact-check child literally returned "I can only access the video
+library"), and extraction stopped at 41:30 of 85 min (the 60k `read_external_video` cap plus a "stop early"
+persona prompt). **W1 lands the observability first** — child sub-agent tool-call + reasoning persistence
+(`_persist_child` writes `tools=[]` today, so none of this was visible from storage); it is the instrument
+that verifies W2. W2 adds the staged/feed-forward runner (reusing the inert-data feeding-waves envelope
+gather→gather) with a per-stage persona (extract=library, answer/fact-check=web under `library_first`); W3
+adds the single-source primitives (windowed transcript read, enumeration mode, `output_kind=table`, jerv
+routing). Additive throughout — a single-stage plan is byte-identical to today's flat gather, so the report
+path cannot regress. W1–W3 shipped (PR #966); each wave independently adversarially reviewed.
+
 **In progress:** Video/image inspection tools (build plan: `docs/plans/VIDEO_IMAGE_TOOLS_PLAN.md`) —
 give jerv eyes on a specific still so a visual question is answered from pixels it actually saw, not a
 guess. `grab_frame` (persist a frame from a video URL/attachment at time T, optional inline `question`

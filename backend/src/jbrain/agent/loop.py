@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import structlog
 
@@ -316,6 +316,53 @@ class AgentResult:
     # AgentResult (a spawned sub-agent) can still recover the sources behind the answer —
     # otherwise a child's citations die at its boundary (deep_research's global registry).
     web_sources: tuple[WebSource, ...] = ()
+    # The run's tool steps and reasoning trace, folded into the SAME persisted-transcript
+    # shape the streaming parent turn produces (transcript_accumulator.py) — so a spawned
+    # child's work can be recorded to its own `agent_turns` row and replay through the
+    # identical `fromTurn` path (and be read back in debug SQL). Empty for a run whose caller
+    # never persists them; additive, so every existing `AgentResult(...)` call is unaffected.
+    tool_steps: tuple[dict[str, Any], ...] = ()
+    reasoning: str = ""
+
+
+# Cap a persisted child tool-step's result text so a run's stored trace stays bounded: a
+# research child can read a 60k-char transcript, and persisting that verbatim per step per
+# child would balloon the `agent_turns` JSONB. Display/debug only — the model still saw the
+# full result in-context this turn; only the STORED copy is capped, with a marker.
+_CHILD_STEP_SUMMARY_MAX = 4000
+
+
+def _persisted_step(
+    call: ToolCall, dispatched: "_Dispatched", *, text_offset: int, reasoning_offset: int
+) -> dict[str, Any]:
+    """One tool call folded into the persisted-transcript step shape — the SAME dict the
+    parent's `TranscriptAccumulator` builds (transcript_accumulator.py), so a spawned
+    child's steps replay through the identical `fromTurn` hydration and read back in debug
+    SQL. The result text is capped (see `_CHILD_STEP_SUMMARY_MAX`); empty/absent surfaced
+    data is omitted so a plain search step stays small."""
+    summary = dispatched.result.content or ""
+    if len(summary) > _CHILD_STEP_SUMMARY_MAX:
+        summary = summary[:_CHILD_STEP_SUMMARY_MAX] + "\n[truncated]"
+    step: dict[str, Any] = {
+        "id": call.id,
+        "name": call.name,
+        "ok": not dispatched.result.is_error,
+        "sources": [s.model_dump() for s in dispatched.sources],
+        "text_offset": text_offset,
+        "reasoning_offset": reasoning_offset,
+        "summary": summary,
+    }
+    if call.arguments:
+        step["args"] = call.arguments
+    if dispatched.web_sources:
+        step["web_sources"] = [s.model_dump() for s in dispatched.web_sources]
+    if dispatched.proposal is not None:
+        step["proposal"] = dispatched.proposal.model_dump()
+    if dispatched.entities:
+        step["entities"] = [e.model_dump() for e in dispatched.entities]
+    if dispatched.view is not None:
+        step["view"] = dispatched.view.model_dump()
+    return step
 
 
 @dataclass(frozen=True)
@@ -491,6 +538,26 @@ class AgentLoop:
         # returned AgentResult carries them (a spawned child's only channel out — see the
         # AgentResult.web_sources doc).
         web_sources: list[WebSource] = []
+        # The run's persisted tool steps + reasoning, folded into the transcript shape a
+        # caller (the spawn service) records to the child's own session so its work replays
+        # and is debuggable. Accumulated here so every return path carries them (via
+        # `_result`); inert when the caller never persists. `reasoning_parts` tracks the
+        # streamed thinking length for each step's interleave offset into the reasoning trace.
+        tool_steps: list[dict[str, Any]] = []
+        reasoning_parts: list[str] = []
+
+        def _result(text: str, stop_reason: str, step_count: int) -> AgentResult:
+            """Every `run` exit builds its AgentResult here so the accumulated tool steps +
+            reasoning ride out on all of them, not just the happy path."""
+            return AgentResult(
+                text,
+                stop_reason,
+                step_count,
+                cost,
+                tuple(web_sources),
+                tuple(tool_steps),
+                "".join(reasoning_parts),
+            )
 
         async def _forced_final(stop_reason: str, step_count: int) -> AgentResult:
             """One final, tool-free synthesis turn so a force_final_answer run (a
@@ -518,7 +585,8 @@ class AgentLoop:
             if on_usage is not None:
                 on_usage(final.usage.input_tokens, final.usage.output_tokens)
             await self._record(idx, "model", "converse", ok=True, cost_tokens=spent_final)
-            return AgentResult(final.text, stop_reason, step_count, cost, tuple(web_sources))
+            reasoning_parts.append(final.reasoning)
+            return _result(final.text, stop_reason, step_count)
 
         for step in range(self._g.max_steps):
             # Soft landing (sub-agents only): a few steps before the hard cap, ask the
@@ -544,6 +612,10 @@ class AgentLoop:
                 cost_tokens=spent_call,
             )
             idx += 1
+            # Accumulate this turn's thinking so each tool step below records its interleave
+            # offset (reasoning length at the moment it was called) and the full reasoning
+            # trace persists — the same interleave the streamed parent turn stores.
+            reasoning_parts.append(turn.reasoning)
             # Per-step progress hook (Wave S2 follow-up): the spawn service uses it to
             # stream a live subagent_progress per child step so the UI's budget meter
             # and step count move while a child works (children run non-streaming).
@@ -561,17 +633,15 @@ class AgentLoop:
                 # to force_final_answer (sub-agents); the root's empty turn is handled upstream.
                 if force_final_answer and not turn.text.strip():
                     return await _forced_final("end_turn", step + 1)
-                return AgentResult(turn.text, "end_turn", step + 1, cost, tuple(web_sources))
+                return _result(turn.text, "end_turn", step + 1)
             if self._tree_exhausted(tree, depth):
                 if force_final_answer:
                     return await _forced_final("tree_budget_exhausted", step + 1)
-                return AgentResult(
-                    turn.text, "tree_budget_exhausted", step + 1, cost, tuple(web_sources)
-                )
+                return _result(turn.text, "tree_budget_exhausted", step + 1)
             if cost >= self._g.max_cost_tokens:
                 if force_final_answer:
                     return await _forced_final("budget", step + 1)
-                return AgentResult(turn.text, "budget", step + 1, cost, tuple(web_sources))
+                return _result(turn.text, "budget", step + 1)
 
             messages.append(AssistantMessage(text=turn.text, tool_calls=turn.tool_calls))
             results: list[ToolResult] = []
@@ -584,6 +654,21 @@ class AgentLoop:
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
                 )
+                # Fold the call into the persisted step shape so a caller can record the
+                # child's work to its own transcript and it's debuggable; the live `on_tool`
+                # forward below is unchanged. `reasoning_offset` indexes the full persisted
+                # reasoning trace (exact). `text_offset` is 0: the caller persists the child's
+                # FINAL answer as `content`, and every tool call happens in an earlier ReAct
+                # turn — before any of that answer is emitted — so each step's split point in
+                # the shown answer is its start.
+                tool_steps.append(
+                    _persisted_step(
+                        call,
+                        dispatched,
+                        text_offset=0,
+                        reasoning_offset=sum(len(p) for p in reasoning_parts),
+                    )
+                )
                 # Surface the tool step to a caller streaming the run (the sub-agent fan's
                 # live "Worked" list); the args go too so it can show what was searched.
                 if on_tool is not None:
@@ -593,13 +678,13 @@ class AgentLoop:
 
             consecutive_errors = consecutive_errors + 1 if any_error else 0
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
-                return AgentResult(turn.text, "too_many_errors", step + 1, cost, tuple(web_sources))
+                return _result(turn.text, "too_many_errors", step + 1)
 
         if force_final_answer:
             # Out of steps mid-chain — synthesize from what's gathered rather than
             # reporting nothing. Still flagged `max_steps` so the caller knows why.
             return await _forced_final("max_steps", self._g.max_steps)
-        return AgentResult("", "max_steps", self._g.max_steps, cost, tuple(web_sources))
+        return _result("", "max_steps", self._g.max_steps)
 
     async def run_stream(
         self,

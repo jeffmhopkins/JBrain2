@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 3
+version: 4
 permission: web
 cost_class: expensive
 params:
@@ -27,7 +27,9 @@ params:
         web. `library` researches ONLY the owner's analysed-video library (the corpus
         of videos they've analysed) — no web at all; use it for "what do my videos say
         about X". `library_first` makes the library the primary pass and lets the web
-        fill only what the library is missing. Omit for `web`.
+        fill only what the library is missing. Omit for `web`. To research a question
+        ABOUT a specific analysed video (its transcript lives only in the library, not on
+        the web), use `library_first` (or `library`) — never `web`, which cannot read it.
     mode:
       type: string
       enum: [standard, deepest]

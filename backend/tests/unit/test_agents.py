@@ -318,8 +318,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v27",
-            "1ea2c81876267b7e1b6607da61327c0f80fb5154ebe177b81a8007932d58fb46",
+            "agent-jerv-v28",
+            "2788aed2191b8c15edcd7f3edb02461adf8605db654222c70186588a1d88a4a1",
         ),
         "archivist": (
             "agent-archivist-v6",
@@ -342,8 +342,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "fb03cdd6ff8198855e006cf0ee22de93d2384457cd23fe4f25607ef207f31c38",
         ),
         "research_library": (
-            "agent-research-library-v1",
-            "425c7857526130dc25873a7fd9cb8b8652074b45a4fa157087333ad87d3212d3",
+            "agent-research-library-v2",
+            "d6420ca2f0af7979204d6cc92f3528bd55818e63290cb3eae60c0d885705e0c3",
         ),
         "review_library": (
             "agent-review-library-v1",

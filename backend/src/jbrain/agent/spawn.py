@@ -1162,7 +1162,15 @@ class SpawnService:
                     tree_budget=tree.children_budget(),
                 ),
             )
-            await self._persist_child(owner_ctx, child.id, child_run, brief_text, summary)
+            await self._persist_child(
+                owner_ctx,
+                child.id,
+                child_run,
+                brief_text,
+                summary,
+                tool_steps=list(result.tool_steps),
+                reasoning=result.reasoning,
+            )
             return _ChildResult(
                 label,
                 persona,
@@ -1176,13 +1184,23 @@ class SpawnService:
             )
 
     async def _persist_child(
-        self, owner_ctx: SessionContext, child_id: str, run_id: str, brief: str, answer: str
+        self,
+        owner_ctx: SessionContext,
+        child_id: str,
+        run_id: str,
+        brief: str,
+        answer: str,
+        *,
+        tool_steps: list[dict] | None = None,
+        reasoning: str = "",
     ) -> None:
-        """Record the child's brief→answer to its own transcript so opening the child
-        in the sessions rail replays its work instead of an empty conversation. Gated
-        on a configured store (headless/test callers may omit it) and best-effort — a
-        write failure never breaks the fan. Tool steps aren't replayed (the
-        non-streaming child loop doesn't surface them); the brief and answer are."""
+        """Record the child's brief→answer AND its tool steps + reasoning to its own
+        transcript, so opening the child in the sessions rail replays its full work — the
+        "Worked" list and thinking, not just the answer — and the trace is readable in debug
+        SQL. The child loop folds each step into the same persisted shape the streamed parent
+        turn uses (`AgentResult.tool_steps`), so it replays through the identical `fromTurn`
+        hydration. Gated on a configured store (headless/test callers may omit it) and
+        best-effort — a write failure never breaks the fan."""
         if self._transcript is None:
             return
         with contextlib.suppress(Exception):
@@ -1192,7 +1210,8 @@ class SpawnService:
                 run_id=run_id,
                 user_text=brief,
                 assistant_text=answer,
-                tools=[],
+                tools=tool_steps or [],
+                reasoning=reasoning,
             )
 
 
