@@ -359,9 +359,7 @@ def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
-async def _read_capped(
-    resp: httpx.Response, *, max_bytes: int = _MAX_BYTES
-) -> tuple[bytes, bool]:
+async def _read_capped(resp: httpx.Response, *, max_bytes: int = _MAX_BYTES) -> tuple[bytes, bool]:
     """Read a streamed response body up to `max_bytes` and stop — so an oversized
     or endless response is truncated, never buffered whole into memory (DoS guard).
     Returns (body, truncated) where `truncated` is True when the cap was hit and the
