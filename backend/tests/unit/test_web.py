@@ -611,6 +611,79 @@ async def test_web_fetch_tool_omits_the_notice_for_a_whole_page() -> None:
     assert "truncated" not in str(out).lower()
 
 
+# --- find: jump the window to a keyword on a big page --------------------------
+
+
+def _plain_body(content: str):  # type: ignore[no-untyped-def]
+    data = content.encode()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=data, headers={"content-type": "text/plain"})
+
+    return handle
+
+
+async def test_fetch_find_positions_the_window_on_the_keyword() -> None:
+    from jbrain.web.fetch import _FIND_LEAD
+
+    needle = "MARKER2026"
+    content = ("H" * 40_000) + needle + ("Z" * 5_000)  # keyword buried deep in the page
+    result = await WebFetcher(transport=httpx.MockTransport(_plain_body(content))).fetch(
+        "https://x.example/big", find=needle
+    )
+    assert result.match_offsets == (40_000,)
+    assert result.match_count == 1
+    assert result.offset == 40_000 - _FIND_LEAD  # a little lead-in before the match
+    assert needle in result.text  # the window actually contains the section we searched for
+
+
+async def test_fetch_find_counts_all_matches_but_caps_the_offset_list() -> None:
+    from jbrain.web.fetch import _MAX_MATCH_OFFSETS
+
+    block = "q" * 100 + "ROW"  # "ROW" every 103 chars
+    content = block * 30  # 30 occurrences
+    result = await WebFetcher(transport=httpx.MockTransport(_plain_body(content))).fetch(
+        "https://x.example/rows",
+        find="row",  # case-insensitive
+    )
+    assert result.match_count == 30
+    assert len(result.match_offsets) == _MAX_MATCH_OFFSETS  # capped, but the true count is kept
+    assert result.match_offsets[0] == 100
+
+
+async def test_fetch_find_after_offset_skips_earlier_matches() -> None:
+    content = ("A" * 1_000) + "NEEDLE" + ("B" * 10_000) + "NEEDLE" + ("C" * 1_000)
+    fetcher = WebFetcher(transport=httpx.MockTransport(_plain_body(content)))
+    # With an offset past the first hit, find lands on the SECOND occurrence.
+    result = await fetcher.fetch("https://x.example/p", offset=2_000, find="NEEDLE")
+    assert result.match_offsets[0] == 1_000 + 6 + 10_000  # the second NEEDLE
+    assert result.match_count == 1  # only matches at/after the offset are counted
+
+
+async def test_web_fetch_tool_find_jumps_and_lists_other_matches() -> None:
+    block = "q" * 100 + "2026"
+    content = block * 5  # five "2026" hits
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain_body(content)))
+    )
+    out = str(
+        await handlers["web_fetch"]({"url": "https://x.example/list", "find": "2026"}, _fresh_ctx())
+    )
+    assert "found 5 match" in out.lower()
+    assert "other matches for '2026' at offsets:" in out.lower()
+
+
+async def test_web_fetch_tool_find_no_match_says_so() -> None:
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain_body("no digits here")))
+    )
+    out = str(
+        await handlers["web_fetch"]({"url": "https://x.example/p", "find": "2026"}, _fresh_ctx())
+    )
+    assert "no match for '2026'" in out.lower()
+    assert "14 chars" in out  # reports the page length so the model can decide what to do
+
+
 # --- repeated-failed-fetch backstop (don't burn the budget on a dead URL) ------
 
 

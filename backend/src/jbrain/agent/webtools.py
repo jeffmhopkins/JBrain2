@@ -79,6 +79,7 @@ def build_web_handlers(
         if not url:
             return "web_fetch needs a url."
         offset = _coerce_offset(arguments.get("offset"))
+        find = str(arguments.get("find", "")).strip()
         # Break the re-fetch loop: a URL that already failed this turn (a 404 the model
         # keeps reconstructing, a bot-wall) will keep failing, so refuse it without a
         # network call and point at web_search instead of burning the budget on it. Keyed
@@ -95,11 +96,19 @@ def build_web_handlers(
         if emit:
             emit("web_fetch", url)
         try:
-            result = await fetcher.fetch(url, offset=offset)
+            result = await fetcher.fetch(url, offset=offset, find=find)
         except WebFetchError as exc:
             # Remember the miss so an identical re-fetch this turn short-circuits above.
             ctx.failed_fetches[key] = exc.status or 0
             return str(exc)
+        # A `find` that matched nothing: don't dump an irrelevant window — tell the model the
+        # term isn't on the page (with its length) so it retries a different term or reads plainly.
+        if find and not result.match_offsets:
+            return (
+                f"No match for '{find}' in {result.url} ({result.total_chars} chars). Try a"
+                " different term (check spelling/phrasing), or web_fetch with offset=0 to read"
+                " from the top."
+            )
         if not result.text:
             # An empty window at offset>0 means the model paged past the end — a normal
             # stop, not a dead page — so say so with the real length instead of "no text".
@@ -110,7 +119,14 @@ def build_web_handlers(
                 )
             return f"That page ({url}) had no readable text."
         header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
-        if offset:
+        if find and result.match_offsets:
+            # Jumped straight to the keyword — say where, so the model knows this window is the
+            # matched SECTION (positioned at the first hit), not the top of the page.
+            header += (
+                f"[found {result.match_count} match(es) for '{find}'; window positioned at the"
+                f" first, near offset {result.match_offsets[0]}]\n\n"
+            )
+        elif offset:
             header += f"[continued from offset {offset} of {result.total_chars} chars]\n\n"
         body = header + result.text
         # Links only on the first page — they don't change across windows, and repeating
@@ -137,6 +153,19 @@ def build_web_handlers(
                 "\n\n[This page was too large to download in full (over the size cap), so the"
                 " end of it is not available here. If you need content past this point, look for"
                 " a more specific URL/section or web_search for the exact item.]"
+            )
+        # When a term appears more than once, surface the other match offsets so the model can
+        # jump to a specific later hit instead of paging there — the whole point of `find`.
+        if find and result.match_count > 1:
+            shown = ", ".join(str(o) for o in result.match_offsets)
+            more = (
+                f" (+{result.match_count - len(result.match_offsets)} more)"
+                if result.match_count > len(result.match_offsets)
+                else ""
+            )
+            body += (
+                f"\n\n[Other matches for '{find}' at offsets: {shown}{more}. To read around a"
+                " specific one, web_fetch the SAME url with offset set to that number.]"
             )
         # The fetched page is itself a citable source — title from the page, url the
         # FINAL url after redirects (what the favicon + link should point at).

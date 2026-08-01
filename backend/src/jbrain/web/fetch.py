@@ -67,14 +67,21 @@ _MAX_BYTES = 5_000_000
 # be buffered whole. The decoded-pixel cap (agent.chat_images) is the memory bound;
 # this bounds the encoded transfer.
 _MAX_IMAGE_BYTES = 10_000_000
-# Cap the extracted text handed to the model. ~50k chars ≈ ~14k tokens ≈ ~10% of the
-# 128k-token agent window — one page can coexist with several other fetches, history,
-# and the model's own reasoning/output in a single research run. A larger blob crowds
-# the turn for diminishing returns; the tool marks the result truncated so the model
-# knows to fetch a narrower URL for the rest rather than answer from the head alone.
-_MAX_CHARS = 50_000
+# Cap the extracted text handed to the model — one page window. ~30k chars ≈ ~8k tokens,
+# a small enough slice that several fetches, history, and the model's own reasoning coexist
+# in the agent window AND the local model's prompt-processing stays fast (a big window tanks
+# throughput on the box as context grows). A long page is paged over via `offset`, and `find`
+# jumps the window straight to a keyword so the model targets the right section instead of
+# reading (or blindly guessing an offset into) the whole thing.
+_MAX_CHARS = 30_000
 _MAX_LINKS = 40  # cap the links surfaced for navigation; a link-heavy page is trimmed
 _MAX_REDIRECTS = 4
+# When `find` lands the window on a keyword, start a little before the match so the model
+# sees the lead-in (a table header, the sentence introducing the row), not a mid-line cut.
+_FIND_LEAD = 200
+# Cap the match-offset map surfaced for `find` — enough to navigate a clustered term without
+# flooding the reply when a word appears hundreds of times; the full count is reported too.
+_MAX_MATCH_OFFSETS = 20
 
 # Present as an ordinary browser, not a bot. A bare custom User-Agent (and httpx's
 # minimal default headers) is the single biggest reason a fetch comes back 403/429
@@ -144,6 +151,67 @@ class FetchResult:
     # just flagged as dropped.
     offset: int = 0
     total_chars: int = 0
+    # Keyword locate (`find`): when the caller passes a term, the window is positioned at the first
+    # occurrence at/after the requested offset so the model reads the right SECTION of a big page
+    # instead of guessing an offset. `match_offsets` is the (capped) list of match positions from
+    # there on and `match_count` the true total — the tool surfaces them so the model can jump to a
+    # specific later hit with `offset=`. `find_term` echoes the query for the reply text.
+    find_term: str = ""
+    match_offsets: tuple[int, ...] = ()
+    match_count: int = 0
+
+
+def _find_offsets(text: str, needle: str, *, at_least: int) -> tuple[tuple[int, ...], int]:
+    """Character offsets of `needle` (case-insensitive) in `text` at/after `at_least`, as
+    (capped_list, total_count). Non-overlapping scan; the capped list bounds the tokens the
+    match map costs while `total_count` still reports the true number of hits."""
+    hay = text.lower()
+    pin = needle.lower()
+    step = max(1, len(pin))
+    offsets: list[int] = []
+    total = 0
+    i = hay.find(pin, at_least)
+    while i != -1:
+        total += 1
+        if len(offsets) < _MAX_MATCH_OFFSETS:
+            offsets.append(i)
+        i = hay.find(pin, i + step)
+    return tuple(offsets), total
+
+
+def _window_and_find(
+    text: str,
+    *,
+    url: str,
+    title: str,
+    links: tuple[str, ...],
+    offset: int,
+    find: str,
+    body_truncated: bool,
+) -> FetchResult:
+    """Build the FetchResult: window `text` at `offset` (pagination) and, when `find` is
+    given, re-anchor the window on the first keyword match at/after `offset` (so the model
+    lands on the right SECTION, not a guessed offset) and attach the match map. Shared by
+    the direct and reader paths so both page and locate identically."""
+    match_offsets: tuple[int, ...] = ()
+    match_count = 0
+    start = offset
+    if find:
+        match_offsets, match_count = _find_offsets(text, find, at_least=offset)
+        if match_offsets:
+            start = max(0, match_offsets[0] - _FIND_LEAD)
+    return FetchResult(
+        url=url,
+        title=title,
+        text=text[start : start + _MAX_CHARS],
+        links=links,
+        truncated=body_truncated,
+        offset=start,
+        total_chars=len(text),
+        find_term=find,
+        match_offsets=match_offsets,
+        match_count=match_count,
+    )
 
 
 def _collect_links(hrefs: list[str], *, base: str) -> tuple[str, ...]:
@@ -183,14 +251,15 @@ class WebFetcher:
         self._transport = transport
         self._reader_url = reader_url.rstrip("/")
 
-    async def fetch(self, url: str, *, offset: int = 0) -> FetchResult:
-        """Fetch `url` and return the extracted text windowed at `offset` (pagination:
-        the window is `full_text[offset : offset+_MAX_CHARS]`). `offset=0` is the first
-        page; the caller advances by the previous window's length to read a long page's
-        tail."""
+    async def fetch(self, url: str, *, offset: int = 0, find: str = "") -> FetchResult:
+        """Fetch `url` and return one window of its extracted text. `offset` pages through a
+        long page (window = `full_text[offset : offset+_MAX_CHARS]`). `find`, if given, jumps
+        the window to the first occurrence of that keyword at/after `offset` and attaches the
+        match map — so the model targets the right SECTION of a big page instead of reading
+        (or blindly guessing an offset into) the whole thing."""
         offset = max(0, offset)
         try:
-            result = await self._fetch_direct(url, offset=offset)
+            result = await self._fetch_direct(url, offset=offset, find=find)
         except WebFetchError as exc:
             # A bot-wall (403/429) or unreachable host: the reader, if configured,
             # renders the page from a real browser and gets past what blocked us. But a
@@ -199,16 +268,18 @@ class WebFetcher:
             # as a successful fetch and hide the miss. Re-raise so the model SEES the 404
             # and corrects the URL instead of quietly reading an empty stub.
             if exc.status not in _GONE_STATUSES and self._reader_url:
-                reader = await self._fetch_via_reader(url, offset=offset)
+                reader = await self._fetch_via_reader(url, offset=offset, find=find)
                 if reader is not None:
                     return reader
             raise
-        # Only the FIRST page's emptiness signals a JS-rendered shell worth the reader; an
-        # empty window at offset>0 just means we paged past the end, not a shell.
-        if offset == 0 and not result.text.strip() and self._reader_url:
+        # Only the FIRST page's emptiness (with no keyword miss) signals a JS-rendered shell
+        # worth the reader; an empty window at offset>0, or a `find` that just didn't match,
+        # is not a shell.
+        empty_shell = offset == 0 and not find and not result.text.strip()
+        if empty_shell and self._reader_url:
             # A JS-rendered shell our static extractor can't see — the reader runs the
             # page's scripts and returns the content that wasn't in the served HTML.
-            reader = await self._fetch_via_reader(url, offset=offset)
+            reader = await self._fetch_via_reader(url, offset=offset, find=find)
             if reader is not None and reader.text.strip():
                 return reader
         return result
@@ -236,7 +307,7 @@ class WebFetcher:
             raise WebFetchError(_fetch_error_message(status), status=status) from exc
         return content_type, body
 
-    async def _fetch_direct(self, url: str, *, offset: int = 0) -> FetchResult:
+    async def _fetch_direct(self, url: str, *, offset: int = 0, find: str = "") -> FetchResult:
         try:
             async with httpx.AsyncClient(
                 timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
@@ -267,21 +338,23 @@ class WebFetcher:
         else:
             text = body.decode(_charset(content_type) or "utf-8", errors="replace").strip()
             title, links = "", ()
-        # Window the full text at `offset` (pagination); `total_chars` lets the tool tell
-        # the model whether more remains. `truncated` means the FULL text is itself short of
-        # the real page because the download hit the byte cap — not recoverable by paging.
-        window = text[offset : offset + _MAX_CHARS]
-        return FetchResult(
+        # Window the full text at `offset` (pagination), or jump it to a `find` keyword;
+        # `total_chars` lets the tool tell the model whether more remains. `truncated` means
+        # the FULL text is itself short of the real page because the download hit the byte
+        # cap — not recoverable by paging.
+        return _window_and_find(
+            text,
             url=final_url,
             title=title,
-            text=window,
             links=links,
-            truncated=body_truncated,
             offset=offset,
-            total_chars=len(text),
+            find=find,
+            body_truncated=body_truncated,
         )
 
-    async def _fetch_via_reader(self, url: str, *, offset: int = 0) -> FetchResult | None:
+    async def _fetch_via_reader(
+        self, url: str, *, offset: int = 0, find: str = ""
+    ) -> FetchResult | None:
         """Re-fetch `url` through the pinned reader endpoint, which renders the page
         and returns clean markdown. The reader base URL is owner-configured and trusted
         (like SearXNG), so it is NOT run through the SSRF guard — a self-hosted reader
@@ -306,14 +379,14 @@ class WebFetcher:
             log.warning("web.reader_failed", error=repr(exc))
             return None
         clean = text.strip()
-        return FetchResult(
+        return _window_and_find(
+            clean,
             url=url,
             title="",
-            text=clean[offset : offset + _MAX_CHARS],
             links=(),
-            truncated=body_truncated,
             offset=offset,
-            total_chars=len(clean),
+            find=find,
+            body_truncated=body_truncated,
         )
 
     async def _get_following_safe_redirects(
