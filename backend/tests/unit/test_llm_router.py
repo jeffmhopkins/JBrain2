@@ -695,3 +695,82 @@ def test_toks_per_s_is_end_to_end_throughput() -> None:
     assert LlmRouter._toks_per_s(0, 2.0) == 0.0
     assert LlmRouter._toks_per_s(120, 0.0) is None
     assert LlmRouter._toks_per_s(50, -1.0) is None
+
+
+# --- titles follow the primary chat model (agent.turn) -----------------------
+
+
+def _title_router(clients, overrides, *, pinned=frozenset()):  # type: ignore[no-untyped-def]
+    async def load():  # type: ignore[no-untyped-def]
+        return overrides
+
+    return LlmRouter(
+        clients,
+        {
+            "agent.turn": ("xai", "grok-4.3"),
+            "session.title": ("xai", "grok-4.3"),
+            "research.title": ("xai", "grok-4.3"),
+        },
+        tiers={"high": ("xai", "grok-strong"), "low": ("xai", "grok-cheap")},
+        pinned=pinned,
+        overrides_loader=load,
+        local_enabled=True,
+    )
+
+
+async def test_title_follows_a_re_routed_agent_model() -> None:
+    # agent.turn re-routed to a local model; a title with no override of its own moves with it
+    # (the fix: no separate title override to remember on a local-only box).
+    router = _title_router(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": {"spec": "local:gpt-oss-120b"}},
+    )
+    assert await router.effective_spec("research.title") == ("local", "gpt-oss-120b")
+    assert await router.effective_spec("session.title") == ("local", "gpt-oss-120b")
+
+
+async def test_title_default_unchanged_without_an_agent_override() -> None:
+    # No overrides at all: a fresh box still runs the title on the shipped default.
+    router = _title_router({"xai": FakeLlmClient()}, {})
+    assert await router.effective_spec("session.title") == ("xai", "grok-4.3")
+
+
+async def test_explicit_title_pin_wins_over_the_follow() -> None:
+    # An operator who explicitly pins the title task beats the agent.turn follow.
+    router = _title_router(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient(), "anthropic": FakeLlmClient()},
+        {
+            "agent.turn": {"spec": "local:gpt-oss-120b"},
+            "research.title": {"spec": "anthropic:claude-x"},
+        },
+    )
+    assert await router.effective_spec("research.title") == ("anthropic", "claude-x")
+
+
+async def test_title_keeps_its_own_low_effort_when_following() -> None:
+    # Following agent.turn's model, the title keeps its OWN low effort — not agent.turn's medium.
+    router = _title_router(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": {"spec": "local:gpt-oss-120b"}},
+    )
+    assert await router.effective_reasoning_effort("research.title") == "low"
+
+
+async def test_title_with_a_strength_tier_opts_out_of_the_follow() -> None:
+    # A caller that passes a strength tier resolves by tier, not the followed agent model.
+    router = _title_router(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": {"spec": "local:gpt-oss-120b"}},
+    )
+    assert await router.effective_spec("research.title", "low") == ("xai", "grok-cheap")
+
+
+async def test_non_title_task_does_not_follow_the_agent_model() -> None:
+    # A normal task keeps its own routing; only the title tasks follow agent.turn.
+    router = LlmRouter(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": ("xai", "grok-4.3"), "note.extract": ("xai", "grok-4.3")},
+        overrides_loader=_loader({"agent.turn": {"spec": "local:gpt-oss-120b"}}),
+        local_enabled=True,
+    )
+    assert await router.effective_spec("note.extract") == ("xai", "grok-4.3")
