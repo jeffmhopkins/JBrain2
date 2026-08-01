@@ -15,6 +15,15 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `CROSS_TURN_TOOL_RESULTS_PLAN.md` — give jerv durable memory of expensive tool
+  results so a `web_fetch` page (and its paging position) survives across turns
+  instead of evaporating at turn's end. A prompt/description stopgap ships first
+  (Wave 0, stands alone); the real fix is a generic, opt-in **tool-result artifact**
+  substrate modeled on the turn-attachment subsystem (session-scoped RLS-firewalled
+  row + blob, a DATA-framed cross-turn reference line, a `read_artifact` pager),
+  adopted by the only tools with no persistence today (`web_fetch`/YouTube, then
+  `ocr` / `gmail_read`). Motivated by an observed jerv failure (repeated/fabricated
+  YouTube-transcript sections).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
