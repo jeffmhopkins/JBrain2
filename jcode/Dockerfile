@@ -57,6 +57,11 @@ RUN chmod +x /usr/local/bin/jcode-grok \
 # owner (and the agent's own shell output) sees the capability. Silent otherwise.
 COPY web-tools.sh /etc/profile.d/jcode-web.sh
 
+# Login-shell hook: write an AGENTS.md / CLAUDE.md to the workspace root so the in-sandbox
+# grok/claude actually DISCOVER the shell tools (they read those memory files, not the login
+# banner). Above every checkout, so it never dirties the owner's repo.
+COPY agents-md.sh /etc/profile.d/jcode-agents.sh
+
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy

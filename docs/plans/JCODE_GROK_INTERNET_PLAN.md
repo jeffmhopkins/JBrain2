@@ -1,6 +1,6 @@
 # jcode grok Internet Access — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-07-31 · **Waves:** S0✅ S1✅ S2✅ S3✅ S4✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped on-branch; CI covers the bridge/helpers/plumbing with fakes + a localhost stub, on-box sign-off against the live searxng/grok pending. E1 = raw-egress toggle, deferred on the shared-container caveat in §6 — the UI toggle ships disabled)
+> **Status:** In progress · **Last verified:** 2026-07-31 · **Waves:** S0✅ S1✅ S2✅ S3✅ S4✅ S5✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped; S5 = the AGENTS.md/CLAUDE.md discovery hook so grok/claude actually reach for the shell helpers — the on-box banner alone didn't. CI covers the bridge/helpers/plumbing with fakes + a localhost stub; final on-box sign-off that the CLIs read the workspace-root memory file is pending. E1 = raw-egress toggle, deferred on the shared-container caveat in §6 — the UI toggle ships disabled)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the search bridge runs
 > the same on-box SearXNG discipline jerv already uses (invariant #9 — no owner
@@ -86,9 +86,17 @@ defense-in-depth logging.
   handlers build. Tests: fake transport, 200/empty/unavailable, auth reject.
 - **S2 — sandbox helpers + env.** `web-search`/`web-fetch` scripts curling the
   bridge (base URL from the same `GROK_MODELS_BASE_URL` root); `COPY` + `chmod`
-  in `jcode/Dockerfile`; only advertised when `JCODE_INTERNET_SEARCH=1` (context
-  hint / MOTD — verify grok's context-file honoring on-box). Test: helper renders
-  and points at the bridge; no-op when the flag is off.
+  in `jcode/Dockerfile`. Test: helper renders and points at the bridge; no-op when
+  the flag is off.
+- **S5 — discovery (resolved on-box).** A login banner (`web-tools.sh`) alone did
+  NOT make grok use the helpers: on-box it inspected only its MCP tool registry,
+  found nothing, and told the owner it had no web access. Fix: a `jcode-agents.sh`
+  login hook writes an `AGENTS.md` + `CLAUDE.md` to the workspace root (the parent
+  of every checkout, so it never dirties the owner's repo) — grok and claude both
+  read those memory files, so they now discover `web-search` / `web-fetch` / `ocr`
+  as shell commands. Static content (the helpers self-gate). Verify on the next
+  deploy that the CLIs traverse *above* the git root to find it; the fallback is to
+  write it inside the checkout with a `.git/info/exclude` entry.
 - **S3 — flag plumbing.** `internet_search: bool` through `CreateSessionBody` →
   `JcodeApi.create_session` → `SessionManager.create` → `Session.internet_search`
   → `model_env()` → `JCODE_INTERNET_SEARCH`. Tests updated at each seam.
