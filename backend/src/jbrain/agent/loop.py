@@ -10,7 +10,7 @@ the loop's concern; what a tool *does* is the handler's.
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -223,6 +223,12 @@ class ToolContext:
     # injects the dispatching call's id so the events anchor under it. Sync +
     # fire-and-forget; None for the batch path and tools that emit no events.
     emit_event: Callable[[ChatEvent], None] | None = None
+    # Per-turn memo of URLs whose fetch already FAILED this turn (dedup key → HTTP status,
+    # 0 when unknown). A tool consults it to refuse re-fetching a known-dead URL instead of
+    # burning the budget re-requesting it (esp. a 404 the model keeps reconstructing). The
+    # loop reuses one ToolContext for a whole turn, and the default_factory gives each turn
+    # its own memo, so the scope is exactly "this run"; only failed fetches ever land here.
+    failed_fetches: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

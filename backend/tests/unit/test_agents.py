@@ -319,16 +319,16 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v29",
-            "0209280c486fa50ca61fc62e9e5225b965e254044617bf8a5f2571ac5dfa1533",
+            "agent-jerv-v30",
+            "b11cfff6aa1adbb3d7ed12e3a15d1c28be078b8c49f89825e6c513f219635aca",
         ),
         "archivist": (
             "agent-archivist-v6",
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
         ),
         "research": (
-            "agent-research-v9",
-            "36b760be5aad1d12d13c7b3653e2de6220aeee06a68759d7fc7f9a8d5cd75c8e",
+            "agent-research-v10",
+            "25d755e4543b7e4fa60b81c68581266e3063642a9d23cfe4ff45d106adaa1b7a",
         ),
         "review": (
             "agent-review-v5",
@@ -351,8 +351,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "dfe6a297ac32de73ffafbb2f3910e47698698268d64787b8d744cb44c56a010c",
         ),
         "research_deep": (
-            "agent-research-deep-v1",
-            "42f217d5e32431c24555753a6b96ea18773689bc1d7ff705b4e4c5d20970f150",
+            "agent-research-deep-v2",
+            "f155cd5e2a114c3403c295801e6080a7de3c632030ccff81e49ebf0bc166d643",
         ),
     }
     assert set(pins) == AGENT_NAMES

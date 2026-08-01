@@ -487,6 +487,211 @@ async def test_no_reader_configured_surfaces_the_block() -> None:
         await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/walled")
 
 
+async def test_a_404_does_not_fall_back_to_the_reader() -> None:
+    # A definitive 404 means the page does not exist — the reader would only render the
+    # origin's soft "no such page" stub (enough text to read as success, hiding the miss).
+    # So the fetch re-raises the 404 instead of returning the reader's stub, even though a
+    # reader is configured and would answer (it's what recovers a 403 bot-wall).
+    gone = httpx.Response(404, headers={"content-type": "text/html"})
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_reader_handler(gone)),
+        reader_url="http://reader:3000",
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://en.wikipedia.org/wiki/Nonexistent_(2026)")
+    assert excinfo.value.status == 404
+    assert "404" in str(excinfo.value)  # the model sees the real status, not a glitch
+
+
+async def test_a_403_still_falls_back_to_the_reader() -> None:
+    # The reader guard is scoped to 404/410 only: a bot-wall 403 still gets the reader.
+    blocked = httpx.Response(403, headers={"content-type": "text/html"})
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_reader_handler(blocked)),
+        reader_url="http://reader:3000",
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Rendered by the reader" in result.text
+
+
+# --- truncation + pagination (a long page's tail is fetchable, not just flagged) ----
+
+
+def _plain(n_chars: int):  # type: ignore[no-untyped-def]
+    """A MockTransport serving `n_chars` of plain text (distinct start/end markers so a
+    window can be told apart from the whole)."""
+    body = ("S" + "x" * (n_chars - 2) + "E").encode()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": "text/plain"})
+
+    return handle
+
+
+async def test_fetch_windows_a_long_page_and_reports_the_total() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    total = _MAX_CHARS + 12_345
+    fetcher = WebFetcher(transport=httpx.MockTransport(_plain(total)))
+    first = await fetcher.fetch("https://x.example/big")
+    assert first.offset == 0
+    assert len(first.text) == _MAX_CHARS  # first window is exactly one cap
+    assert first.total_chars == total
+    assert first.text.startswith("S")  # the head
+    assert first.truncated is False  # sub-cap download: the full text IS available, via paging
+
+    tail = await fetcher.fetch("https://x.example/big", offset=_MAX_CHARS)
+    assert tail.offset == _MAX_CHARS
+    assert len(tail.text) == 12_345
+    assert tail.text.endswith("E")  # the tail we couldn't see in the first window
+
+
+async def test_fetch_short_page_is_a_single_whole_window() -> None:
+    result = await WebFetcher(transport=httpx.MockTransport(_plain(200))).fetch(
+        "https://x.example/p"
+    )
+    assert result.offset == 0
+    assert result.total_chars == 200
+    assert result.truncated is False
+
+
+async def test_web_fetch_tool_gives_an_actionable_next_offset() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    total = _MAX_CHARS + 12_345
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain(total)))
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://x.example/big"}, _fresh_ctx()))
+    assert "truncated" in out.lower()
+    # The notice names the EXACT next call so the model can page, not just "it's cut off".
+    assert f"offset={_MAX_CHARS}" in out
+
+
+async def test_web_fetch_tool_second_page_reads_the_tail_without_a_notice() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    total = _MAX_CHARS + 12_345
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain(total)))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/big", "offset": _MAX_CHARS}, _fresh_ctx()
+        )
+    )
+    assert out.rstrip().endswith("E")  # the real end of the page
+    assert "offset=" not in out  # nothing left to page to
+    assert f"continued from offset {_MAX_CHARS}" in out
+
+
+async def test_web_fetch_tool_offset_past_the_end_says_so() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain(1000)))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/p", "offset": _MAX_CHARS}, _fresh_ctx()
+        )
+    )
+    assert "no more content" in out.lower()
+    assert "1000 characters" in out
+
+
+async def test_web_fetch_tool_omits_the_notice_for_a_whole_page() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = await handlers["web_fetch"]({"url": "https://x.example/p"}, _fresh_ctx())
+    assert "truncated" not in str(out).lower()
+
+
+# --- repeated-failed-fetch backstop (don't burn the budget on a dead URL) ------
+
+
+def _fresh_ctx() -> ToolContext:
+    # A per-turn context (fresh failed-fetch memo), so the guard's state doesn't leak
+    # across tests the way the shared module-level CTX would.
+    return ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+
+
+async def test_web_fetch_refuses_to_refetch_a_url_that_already_404d_this_turn() -> None:
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(404, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    ctx = _fresh_ctx()
+    url = "https://en.wikipedia.org/wiki/List_of_Falcon_9_and_Falcon_Heavy_launches_(2026)"
+    first = await handlers["web_fetch"]({"url": url}, ctx)
+    assert "404" in str(first)
+    # The identical re-fetch is short-circuited BEFORE any network call — the backstop
+    # that stops the model burning its whole budget re-requesting one dead URL.
+    second = await handlers["web_fetch"]({"url": url}, ctx)
+    assert calls["n"] == 1  # no second request was made
+    assert "already fetched" in str(second).lower()
+    assert "web_search" in str(second)
+
+
+async def test_web_fetch_refetch_guard_ignores_a_fragment_and_trailing_slash() -> None:
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(404, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    ctx = _fresh_ctx()
+    await handlers["web_fetch"]({"url": "https://x.example/gone/"}, ctx)
+    # Same page, differing only by a fragment and the trailing slash — still recognized.
+    again = await handlers["web_fetch"]({"url": "https://x.example/gone#section"}, ctx)
+    assert calls["n"] == 1
+    assert "already fetched" in str(again).lower()
+
+
+async def test_web_fetch_guard_does_not_block_a_different_url() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("gone"):
+            return httpx.Response(404, headers={"content-type": "text/html"})
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    ctx = _fresh_ctx()
+    await handlers["web_fetch"]({"url": "https://x.example/gone"}, ctx)
+    # A genuinely different path (the real page) is NOT blocked by the failed one.
+    ok = await handlers["web_fetch"]({"url": "https://x.example/real"}, ctx)
+    assert "Hi There" in str(ok)
+
+
+async def test_web_fetch_guard_is_scoped_to_one_turn() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    url = "https://x.example/gone"
+    await handlers["web_fetch"]({"url": url}, _fresh_ctx())
+    # A different turn (fresh context) starts with a clean memo — the failure from another
+    # turn must not suppress this one's first attempt.
+    retry = await handlers["web_fetch"]({"url": url}, _fresh_ctx())
+    assert "already fetched" not in str(retry).lower()
+    assert "404" in str(retry)
+
+
 async def test_reader_still_refuses_a_non_public_target() -> None:
     # The reader path guards the TARGET host the same way: a model-supplied private URL
     # can't be laundered off-box through the reader. (Real DNS — no transport.)
