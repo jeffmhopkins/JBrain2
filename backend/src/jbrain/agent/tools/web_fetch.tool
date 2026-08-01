@@ -1,6 +1,6 @@
 ---
 name: web_fetch
-version: 6
+version: 7
 permission: web
 params:
   type: object
@@ -22,6 +22,14 @@ params:
         this term (and the reply lists the offsets of the other occurrences), so on a big
         page you land on the SECTION you want — e.g. find="2026" on a long launch list —
         instead of reading from the top or guessing an offset. Use this first on a large page.
+        Matched case-insensitively as a literal substring unless regex=true.
+    regex:
+      type: boolean
+      description: >-
+        If true, treat find as a case-insensitive regular expression instead of a literal
+        substring — e.g. find="202[56]-\\d\\d-\\d\\d", regex=true to jump to the first ISO date
+        in 2025 or 2026. An invalid pattern returns an error you can correct. Leave unset for a
+        plain text search (the default), so characters like . + ( ) are matched literally.
     offset:
       type: integer
       description: >-

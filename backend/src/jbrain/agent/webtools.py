@@ -10,6 +10,7 @@ the on-box SearXNG client and the URL fetcher; they surface no NoteSources (a we
 result is not an owner note).
 """
 
+import re
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit, urlunsplit
 
@@ -86,16 +87,19 @@ def _present_outline(result: FetchResult) -> str:
     )
 
 
-def _present_fetch(result: FetchResult, url: str, offset: int, find: str) -> str:
+def _present_fetch(
+    result: FetchResult, url: str, offset: int, find: str, find_regex: bool = False
+) -> str:
     """Render a windowed FetchResult for the model: the title/url header, the text window, the
     keyword/pagination notices, and the match map. Shared by the HTML-fetch and YouTube paths so
     both page and keyword-jump identically. `url` is the model's original request URL, for the
     'no readable text' message when the result carries no final URL of its own."""
+    label = f"regex '{find}'" if find_regex else f"'{find}'"
     # A `find` that matched nothing: don't dump an irrelevant window — tell the model the term
     # isn't on the page (with its length) so it retries a different term or reads plainly.
     if find and not result.match_offsets:
         return (
-            f"No match for '{find}' in {result.url} ({result.total_chars} chars). Try a"
+            f"No match for {label} in {result.url} ({result.total_chars} chars). Try a"
             " different term (check spelling/phrasing), or web_fetch with offset=0 to read"
             " from the top."
         )
@@ -113,7 +117,7 @@ def _present_fetch(result: FetchResult, url: str, offset: int, find: str) -> str
         # Jumped straight to the keyword — say where, so the model knows this window is the
         # matched SECTION (positioned at the first hit), not the top of the page.
         header += (
-            f"[found {result.match_count} match(es) for '{find}'; window positioned at the"
+            f"[found {result.match_count} match(es) for {label}; window positioned at the"
             f" first, near offset {result.match_offsets[0]}]\n\n"
         )
     elif offset:
@@ -154,7 +158,7 @@ def _present_fetch(result: FetchResult, url: str, offset: int, find: str) -> str
             else ""
         )
         body += (
-            f"\n\n[Other matches for '{find}' at offsets: {shown}{more}. To read around a"
+            f"\n\n[Other matches for {label} at offsets: {shown}{more}. To read around a"
             " specific one, web_fetch the SAME url with offset set to that number.]"
         )
     # On a page too big for one window, surface its section map up front so the model can jump
@@ -214,6 +218,17 @@ def build_web_handlers(
         offset = _coerce_offset(arguments.get("offset"))
         find = str(arguments.get("find", "")).strip()
         outline_only = _coerce_bool(arguments.get("outline"))
+        find_regex = _coerce_bool(arguments.get("regex"))
+        # Validate a regex `find` up front — before any fetch or the failed-fetch memo — so a bad
+        # pattern gives a clean, correctable error rather than a dead-URL mark or an empty result.
+        if find and find_regex:
+            try:
+                re.compile(find)
+            except re.error as exc:
+                return (
+                    f"Invalid regex for find: {exc}. Fix the pattern, or drop regex=true to search"
+                    " for the text literally."
+                )
         # A YouTube URL reads as a lightweight title+channel+description+captions view (no media
         # download, no GPU) that pages/keyword-jumps like any page. A None result (unresolvable —
         # private, geo-blocked, not really a video) falls through to a normal HTML fetch.
@@ -223,11 +238,13 @@ def build_web_handlers(
             rendered = await youtube(url)
             if rendered is not None:
                 title, markdown = rendered
-                result = window_text(markdown, url=url, title=title, offset=offset, find=find)
+                result = window_text(
+                    markdown, url=url, title=title, offset=offset, find=find, find_regex=find_regex
+                )
                 return (
                     _present_outline(result)
                     if outline_only
-                    else _present_fetch(result, url, offset, find)
+                    else _present_fetch(result, url, offset, find, find_regex)
                 )
         # Break the re-fetch loop: a URL that already failed this turn (a 404 the model
         # keeps reconstructing, a bot-wall) will keep failing, so refuse it without a
@@ -245,13 +262,13 @@ def build_web_handlers(
         if emit:
             emit("web_fetch", url)
         try:
-            result = await fetcher.fetch(url, offset=offset, find=find)
+            result = await fetcher.fetch(url, offset=offset, find=find, find_regex=find_regex)
         except WebFetchError as exc:
             # Remember the miss so an identical re-fetch this turn short-circuits above.
             ctx.failed_fetches[key] = exc.status or 0
             return str(exc)
         if outline_only:
             return _present_outline(result)
-        return _present_fetch(result, url, offset, find)
+        return _present_fetch(result, url, offset, find, find_regex)
 
     return {"web_search": web_search_tool, "web_fetch": web_fetch_tool}
