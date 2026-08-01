@@ -8,9 +8,12 @@ USE the GPU, not to read its telemetry). Paths are injectable for tests.
 
 The one exception is /proc/net/dev, which IS network-namespace-scoped: inside
 the supervisor's own netns it lists only this container's veth, not the box's
-real uplink (Wi-Fi, ethernet). Compose bind-mounts the host's /proc/net/dev and
-points HOST_NET_DEV at it so the byte counters cover every host interface — see
-read_net_counters.
+real uplink (Wi-Fi, ethernet). It can't be reached by bind-mounting the file
+either — /proc/net is a symlink to self/net, so it always resolves to the
+reader's netns. Compose bind-mounts the host's /proc read-only and points
+HOST_NET_DEV at /host/proc/1/net/dev: files under /proc/<pid>/net/ reflect the
+target pid's netns, and host PID 1 is in the root netns, so the byte counters
+cover every host interface — see read_net_counters.
 """
 
 from __future__ import annotations
@@ -145,11 +148,13 @@ def read_net_counters(net_dev: Path = Path("/proc/net/dev")) -> NetCounters | No
     _NET_SKIP_PREFIXES) so the total reflects the box's real uplink, not the
     container-internal traffic that also crosses a veth.
 
-    `net_dev` is the /proc/net/dev to parse. It matters WHICH one: that file is
-    network-namespace-scoped, so the container's own copy sees only its veth and
-    misses the host's Wi-Fi/ethernet entirely. read_host_metrics resolves it from
-    HOST_NET_DEV (the bind-mounted host file) so the counters span all of the box's
-    interfaces — the same host namespace the veth/bridge denylist was written for.
+    `net_dev` is the net/dev to parse. It matters WHICH one: that file is
+    network-namespace-scoped, so the container's own copy (and /proc/net, a symlink
+    to self/net) sees only its veth and misses the host's Wi-Fi/ethernet entirely.
+    read_host_metrics resolves it from HOST_NET_DEV, which in deployment points at
+    the host's /host/proc/1/net/dev — PID 1's netns is the root netns, so the
+    counters span all of the box's interfaces regardless of this container's netns
+    (the same host namespace the veth/bridge denylist was written for).
 
     The counters are monotonic (since boot); the throughput a graph wants is their
     delta over time, which the sampler computes — this only exposes the raw totals."""
@@ -372,9 +377,11 @@ def read_host_metrics(
     sysblock: Path = Path("/sys/block"),
     net_dev: Path | None = None,
 ) -> HostMetrics:
-    # /proc/net/dev is netns-scoped, so the container's own copy misses the host's
-    # real interfaces. Prefer the bind-mounted host file named by HOST_NET_DEV;
-    # fall back to proc-relative so tests (which build proc/net/dev) stay hermetic.
+    # /proc/net/dev is netns-scoped (and /proc/net is a self/net symlink), so the
+    # container's own copy misses the host's real interfaces. Prefer the host file
+    # named by HOST_NET_DEV (/host/proc/1/net/dev in deployment — host PID 1's root
+    # netns); fall back to proc-relative so tests (which build proc/net/dev) stay
+    # hermetic.
     if net_dev is None:
         override = os.environ.get("HOST_NET_DEV")
         net_dev = Path(override) if override else proc / "net" / "dev"

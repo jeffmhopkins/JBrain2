@@ -238,9 +238,10 @@ def uptime_hours() -> float:
 def read_net_bytes() -> tuple[int, int]:
     """(rx, tx) total bytes across real interfaces (lo / virtual excluded).
 
-    /proc/net/dev is netns-scoped, so this container's own copy sees only its veth,
-    not the box's Wi-Fi/ethernet uplink. HOST_NET_DEV points at the bind-mounted
-    host file (see docker-compose) so the totals span every host interface."""
+    /proc/net/dev is netns-scoped (and /proc/net is a self/net symlink), so this
+    container's own copy sees only its veth, not the box's Wi-Fi/ethernet uplink.
+    HOST_NET_DEV points at /host/proc/1/net/dev (see docker-compose) — host PID 1's
+    root netns — so the totals span every host interface."""
     rx = tx = 0
     net_dev = os.environ.get("HOST_NET_DEV", "/proc/net/dev")
     try:

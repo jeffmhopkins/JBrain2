@@ -158,7 +158,7 @@ deployed box the compose service (above) runs it for you.
 - **GPU util** (`gpu_busy_percent`) → neural activity / cascade routing
 - **RAM + VRAM** (`/proc/meminfo` + amdgpu `mem_info_vram_used`) → active density
 - **APU power** (`power1_average`) → bloom heat
-- **Net in / out** (`/proc/net/dev` rx/tx deltas) → blue / coral rim aura
+- **Net in / out** (host PID 1's `net/dev` via `HOST_NET_DEV` rx/tx deltas) → blue / coral rim aura
 - **Disk read** (`/proc/diskstats` sector deltas) → violet rim aura
 
 Still quiet (zeros): `llm`, `api`, `db` — fill them in `snapshot()` when you want
