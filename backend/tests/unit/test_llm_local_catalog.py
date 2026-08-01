@@ -91,8 +91,11 @@ def test_qwen3_vl_q4_is_a_memory_saver_vision_alt() -> None:
     m = local_catalog.get("qwen3-vl-30b-q4")
     assert m is not None
     assert m.tiers == ("vision", "low")
-    # Vision-capable, and the projector stays F16 (fine text degrades first at low quant).
-    assert m.supports_vision and m.mmproj_include == "mmproj-F16.gguf"
+    # Vision-capable, and the projector stays F16 (fine text degrades first at low quant). The
+    # include is a GLOB matching this repo's `mmproj-Qwen3VL-...-F16.gguf` (not the bare
+    # `mmproj-F16.gguf` name) so the projector actually downloads — and it excludes the Q8_0 one.
+    assert m.supports_vision and m.mmproj_include == "mmproj*F16.gguf"
+    assert "Q8_0" not in m.mmproj_include  # the F16-only glob must not pull the Q8 projector
     assert m.supports_tools
     # Non-thinking, like the Q8 sibling — not in the reasoning gating set.
     assert not m.supports_reasoning
@@ -112,6 +115,24 @@ def test_qwen3_vl_q4_is_a_memory_saver_vision_alt() -> None:
     assert m.native_context_window == 262144
     # Opt-in: the Q8 entry stays the recommended default, this is never auto-provisioned.
     assert m.id not in local_catalog.recommended_ids()
+
+
+def test_qwen3_vl_q4_includes_match_the_real_repo_filenames() -> None:
+    # Regression: the bare string "mmproj-F16.gguf" matched NOTHING in the Qwen GGUF repo
+    # (its projector is "mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf"), so `hf download --include`
+    # and resolve_weight's glob pulled/resolved no projector — the install stuck at ~95% and the
+    # gateway config would fail "download incomplete". The include feeds both, so it must fnmatch
+    # the real F16 projector and the Q4_K_M weights, while excluding the Q8_0 projector/weights.
+    from fnmatch import fnmatch
+
+    m = local_catalog.get("qwen3-vl-30b-q4")
+    assert m is not None and m.mmproj_include is not None
+    f16 = "mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf"
+    q8_proj = "mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf"
+    assert fnmatch(f16, m.mmproj_include), "F16 projector must match — else it never downloads"
+    assert not fnmatch(q8_proj, m.mmproj_include), "must not pull the redundant Q8_0 projector"
+    assert fnmatch("Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf", m.gguf_include)
+    assert not fnmatch("Qwen3VL-30B-A3B-Instruct-Q8_0.gguf", m.gguf_include)
 
 
 def test_llama_4_scout_is_a_vision_alt_at_int4() -> None:

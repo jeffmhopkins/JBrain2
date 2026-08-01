@@ -137,10 +137,14 @@ CATALOG: tuple[LocalModel, ...] = (
         recommended=False,
         hf_repo="Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF",
         gguf_include="*Q4_K_M*.gguf",
-        # Keep the F16 projector — name it exactly (not mmproj*) so the vision tower stays
-        # full precision even at Q4 weights (fine text degrades first under quantization,
-        # docs/reference/MODEL_PROMPTING.md), and the pull skips the redundant mmproj-Q8_0.
-        mmproj_include="mmproj-F16.gguf",
+        # Keep the F16 projector so the vision tower stays full precision even at Q4 weights
+        # (fine text degrades first under quantization, docs/reference/MODEL_PROMPTING.md). This
+        # repo names it `mmproj-Qwen3VL-30B-A3B-Instruct-F16.gguf`, so a glob (not the bare
+        # `mmproj-F16.gguf` name Unsloth repos use) is required — it matches the F16 projector
+        # while skipping the redundant `...-Q8_0.gguf` one. The include feeds BOTH `hf download
+        # --include` and resolve_weight's glob, so a mismatch pulls no projector and the install
+        # sticks partway (bar caps < 100%, resolve fails "download incomplete").
+        mmproj_include="mmproj*F16.gguf",
         quant="Q4_K_M",
         # GiB on disk (the catalog's unit): HF lists Q4_K_M at ~18.6 decimal GB (~17.3 GiB)
         # plus the ~1.0 GiB F16 projector = ~18.3 GiB — an ESTIMATE until measured on-box,
