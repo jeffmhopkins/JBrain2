@@ -104,11 +104,12 @@ class ToolArtifactRepo:
         sha256: str,
         total_chars: int,
         domain_code: str,
-    ) -> ToolArtifact | None:
+    ) -> ToolArtifact:
         """Upsert the artifact for (session, source_url): a re-fetch of the same URL this
         session REFRESHES the one row (new text/length, cursor reset to 0) rather than
-        piling up. RLS-scoped — a session that can't write this domain inserts nothing
-        (returns None). Returns the stored artifact."""
+        piling up. RLS-scoped — a session that can't write this domain has its INSERT
+        rejected by the WITH CHECK clause (raises), so a returned value is always a real
+        row. Returns the stored artifact."""
         async with scoped_session(self._maker, ctx) as session:
             row = (
                 await session.execute(

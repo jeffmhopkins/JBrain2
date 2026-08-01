@@ -109,10 +109,12 @@ async def test_set_offset_cannot_advance_across_the_firewall(
     # A general-scoped session can't see the health artifact, so its cursor update matches
     # nothing — the RLS predicate hides the row, not just the read.
     await repo.set_offset(general, art.id, 999)
-    assert (await repo.get(health, art.id)).last_offset == 0
+    unchanged = await repo.get(health, art.id)
+    assert unchanged is not None and unchanged.last_offset == 0
     # The in-scope update lands.
     await repo.set_offset(health, art.id, 500)
-    assert (await repo.get(health, art.id)).last_offset == 500
+    updated = await repo.get(health, art.id)
+    assert updated is not None and updated.last_offset == 500
 
 
 async def test_empty_scope_session_round_trips_its_general_artifact(
@@ -158,5 +160,6 @@ async def test_remember_upserts_the_same_url(
     )
     assert second.id == first.id
     assert second.total_chars == 99
-    assert (await repo.get(general, first.id)).last_offset == 0
+    refreshed = await repo.get(general, first.id)
+    assert refreshed is not None and refreshed.last_offset == 0
     assert len(await repo.list_for_session(general, session_id, limit=10)) == 1
