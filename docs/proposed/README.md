@@ -39,4 +39,5 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `DEEP_RESEARCH_TOOL_PLAN.md`, `DEEPEST_RESEARCH_TOOL_PLAN.md`, and
 `VIDEO_IMAGE_TOOLS_PLAN.md` were promoted to `../plans/` and are in progress.
 `ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (Scheduled).
-`DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (Scheduled).)_
+`DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (Scheduled).
+`CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).)_

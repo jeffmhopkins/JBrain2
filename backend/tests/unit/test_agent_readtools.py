@@ -1163,8 +1163,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_fetch.tool": (
             "web_fetch",
-            7,
-            "080c664865a49f7e0b963e9badbf94c6aabf9ac036ae632fbd9e5fa432778c9f",
+            8,
+            "518fd9e634add430ae8a6d4a4257ba7c7d56815c132b7041c3cab7f212035da4",
+        ),
+        "read_artifact.tool": (
+            "read_artifact",
+            1,
+            "d8ac9d5aeb6dd3326d0a45e2824a9120466c0ec5a577176a56749f3aae7c925e",
         ),
         "generate_image.tool": (
             "generate_image",
@@ -1298,8 +1303,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "search_external_video.tool": (
             "search_external_video",
-            1,
-            "9bdd5b5f8906de816abdcbfd750cf1abb67e48482d2af7adde9dc641416e71d5",
+            2,
+            "35980730d691617a57fde6bc07a112ccb8db0ba49b071e4c274f1fb0aeb0251c",
         ),
         "list_external_video.tool": (
             "list_external_video",
@@ -1308,8 +1313,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "read_external_video.tool": (
             "read_external_video",
-            2,
-            "4a16825b58ef4a3983f1be7c2944887e7e62487ebce810e783d46940c7867c8c",
+            3,
+            "b5318150729b5e701ab90a1887c84b66c5c973bab78816df7c554d2735b2b23d",
         ),
         "show_external_video.tool": (
             "show_external_video",

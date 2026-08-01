@@ -111,6 +111,10 @@ OPTIONAL_OCR_TOOL = frozenset({"ocr"})
 # jerv's URL-sourced stream/video analysis sidecar, dropped from the registry when
 # ffmpeg OR yt-dlp is absent (docs/archive/STREAM_ANALYSIS_PLAN.md).
 OPTIONAL_STREAM_TOOL = frozenset({"analyze_stream"})
+# jerv's cross-turn re-read of a fetched page (docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md),
+# present only when the artifact store + blob store are wired into build_web_handlers;
+# otherwise its sidecar has no handler and is dropped.
+OPTIONAL_READ_ARTIFACT_TOOL = frozenset({"read_artifact"})
 # The archivist persona's Gmail sidecars (`web`-class, opt-in), dropped from the
 # registry when Gmail is unconfigured — no refresh token, so no handlers are passed
 # (graceful degrade, docs/archive/EMAIL_ARCHIVIST_PLAN.md).
@@ -828,6 +832,7 @@ def build_registry(
             | OPTIONAL_FETCH_IMAGE_TOOL
             | OPTIONAL_COMPARE_TOOL
             | OPTIONAL_OCR_TOOL
+            | OPTIONAL_READ_ARTIFACT_TOOL
             | OPTIONAL_GMAIL_TOOLS
         ),
     )

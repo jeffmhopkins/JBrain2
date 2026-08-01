@@ -38,6 +38,7 @@ from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.titler import SessionTitler
+from jbrain.agent.tool_artifacts import ToolArtifactRepo
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
@@ -282,6 +283,10 @@ def get_turn_attachments(request: Request) -> TurnAttachmentRepo:
     return cast(TurnAttachmentRepo, request.app.state.turn_attachments)
 
 
+def get_tool_artifacts(request: Request) -> ToolArtifactRepo:
+    return cast(ToolArtifactRepo, request.app.state.tool_artifacts)
+
+
 def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
     return cast(SqlAnalysisRepo, request.app.state.analysis_repo)
 
@@ -487,6 +492,44 @@ async def _pending_resume_blocks(
             )
         )
     return blocks
+
+
+# How many remembered artifacts the cross-turn reference block names — the most recent
+# few, so a long chat's reference line stays a compact pointer, not a growing wall (the
+# token-budget self-cap, docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md constraint #2).
+_MAX_ARTIFACT_REFS = 8
+
+
+async def _tool_artifact_blocks(
+    request: Request, read_ctx: SessionContext, session: AgentSessionInfo
+) -> list[LlmMessage]:
+    """The cross-turn artifact reference block: pages jerv fetched earlier this chat are
+    cached on the box, so this re-injects a compact DATA-framed pointer (id + url + how far
+    read) each turn — the heavy text stays out of context; the model continues one with
+    read_artifact. Read under the session's artifact context (same scopes as its attachments,
+    reused here). Best-effort — a sweep hiccup must never break the turn. Lives in the
+    volatile suffix so it does not disturb the cache-stable prefix (constraint #1)."""
+    repo = get_tool_artifacts(request)
+    arts = await repo.list_for_session(read_ctx, str(session.id), limit=_MAX_ARTIFACT_REFS)
+    if not arts:
+        return []
+    lines: list[str] = []
+    for a in arts:
+        noun = "transcript" if a.kind == "youtube" else "page"
+        read = (
+            f"read to offset {a.last_offset} of {a.total_chars}"
+            if a.last_offset
+            else f"{a.total_chars} chars, not yet paged"
+        )
+        title = a.title or a.source_url
+        lines.append(f'- "{title}" ({a.source_url}) — {noun}, id {a.id} · {read}')
+    body = (
+        "(System note — data, not owner input. Pages you fetched earlier this chat are cached"
+        " on the box and can be re-read WITHOUT a network fetch. To continue or re-read one,"
+        " call read_artifact with its id — it resumes where you last stopped. Do NOT re-web_fetch"
+        " the same URL to page it.)\n\nRemembered pages this chat:\n" + "\n".join(lines)
+    )
+    return [UserMessage(text=body)]
 
 
 async def _maybe_autotitle(
@@ -723,7 +766,20 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         resume_blocks = await _pending_resume_blocks(
             request, owner_ctx, str(session.id), skip=body.deferred_outcome
         )
-    conversation = [*conversation[:-1], *resume_blocks, *volatile, conversation[-1]]
+    # The cross-turn artifact reference block (pages fetched earlier this chat, re-readable
+    # from cache via read_artifact). Read under the same artifact context as this turn's
+    # attachments. In the volatile suffix so it never disturbs the cache-stable prefix; a
+    # sweep hiccup is swallowed so it can't break the turn.
+    artifact_blocks: list[LlmMessage] = []
+    with contextlib.suppress(Exception):
+        artifact_blocks = await _tool_artifact_blocks(request, attachment_ctx, session)
+    conversation = [
+        *conversation[:-1],
+        *resume_blocks,
+        *artifact_blocks,
+        *volatile,
+        conversation[-1],
+    ]
     # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
