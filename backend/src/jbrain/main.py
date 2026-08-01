@@ -29,6 +29,7 @@ from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.runlog import AgentRunLog, RunLogReader, reap_stranded_loop
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.streamtools import build_stream_handlers
+from jbrain.agent.tool_artifacts import ToolArtifactRepo
 from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
@@ -402,11 +403,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if ytdlp_available()
             else None
         )
+        # Cross-turn tool-result store (docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md): a fetched
+        # page's full text is persisted (heavy text in the blob store, metadata + paging cursor
+        # in the row) so a follow-up turn re-reads/continues it via read_artifact instead of a
+        # network re-fetch. Its own AgentSessionRepo (app.state.agent_sessions is built later).
+        app.state.tool_artifacts = ToolArtifactRepo(maker, AgentSessionRepo(maker))
         web_handlers = build_web_handlers(
             searxng,
             web_fetcher,
             emit=brain_emit,
             youtube=youtube_fetch,
+            artifacts=app.state.tool_artifacts,
+            blobs=app.state.blob_store,
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).

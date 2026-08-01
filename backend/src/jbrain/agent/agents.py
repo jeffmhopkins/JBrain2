@@ -128,6 +128,11 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # Fetch a web image's bytes so jerv can actually SEE it (web_fetch is text-only) —
         # persisted as a chat image analyze_image/compare_images read by id.
         "fetch_image",
+        # Re-read/continue a page or transcript jerv fetched earlier this chat, served from
+        # the on-box cache (no network re-fetch) with a remembered paging cursor — so a long
+        # YouTube transcript can be paged section-by-section across turns instead of
+        # re-fetched from the top (CROSS_TURN_TOOL_RESULTS_PLAN.md).
+        "read_artifact",
         # Compare two or more chat images (grabbed frames, fetched web images, attachments)
         # and show the owner a side-by-side (VIDEO_IMAGE_TOOLS_PLAN.md).
         "compare_images",

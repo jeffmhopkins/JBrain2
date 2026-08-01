@@ -1063,3 +1063,185 @@ async def test_web_fetch_tool_rejects_an_invalid_regex_without_fetching() -> Non
     )
     assert "invalid regex" in out.lower()
     assert calls["n"] == 0  # bailed before any fetch, so no dead-URL memo either
+
+
+# --- cross-turn tool-result artifacts (CROSS_TURN_TOOL_RESULTS_PLAN.md) ---------
+
+import hashlib  # noqa: E402
+from dataclasses import replace  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import cast  # noqa: E402
+
+from jbrain.agent.tool_artifacts import ToolArtifact, ToolArtifactRepo  # noqa: E402
+
+
+class _FakeBlobs:
+    """An in-memory content-addressed store — a structural BlobStore stand-in."""
+
+    def __init__(self) -> None:
+        self.blobs: dict[str, bytes] = {}
+
+    async def put(self, data: bytes) -> str:
+        digest = hashlib.sha256(data).hexdigest()
+        self.blobs[digest] = data
+        return digest
+
+    async def get(self, sha256: str) -> bytes:
+        try:
+            return self.blobs[sha256]
+        except KeyError:
+            raise FileNotFoundError(sha256) from None
+
+    def path_for(self, sha256: str) -> Path:
+        return Path(sha256)
+
+    async def exists(self, sha256: str) -> bool:
+        return sha256 in self.blobs
+
+    def usage(self) -> tuple[int, int]:
+        return (len(self.blobs), sum(len(b) for b in self.blobs.values()))
+
+
+class _FakeArtifacts:
+    """An in-memory ToolArtifactRepo: upsert-by-url, get, cursor-advance, list — the
+    firewall is Postgres RLS in prod, so the fake just tracks rows."""
+
+    def __init__(self) -> None:
+        self.by_id: dict[str, ToolArtifact] = {}
+        self._by_url: dict[tuple[str, str], str] = {}
+
+    async def session_context(self, session, session_id):  # type: ignore[no-untyped-def]
+        return (session, "general")
+
+    async def remember(  # type: ignore[no-untyped-def]
+        self, ctx, session_id, *, kind, source_url, title, sha256, total_chars, domain_code
+    ):
+        key = (session_id, source_url)
+        if key in self._by_url:
+            aid = self._by_url[key]
+            art = replace(
+                self.by_id[aid],
+                kind=kind,
+                title=title,
+                sha256=sha256,
+                total_chars=total_chars,
+                last_offset=0,
+            )
+        else:
+            aid = f"art-{len(self.by_id) + 1}"
+            art = ToolArtifact(
+                id=aid,
+                kind=kind,
+                source_url=source_url,
+                title=title,
+                sha256=sha256,
+                total_chars=total_chars,
+                last_offset=0,
+                domain_code=domain_code,
+            )
+            self._by_url[key] = aid
+        self.by_id[aid] = art
+        return art
+
+    async def get(self, ctx, artifact_id):  # type: ignore[no-untyped-def]
+        return self.by_id.get(artifact_id)
+
+    async def set_offset(self, ctx, artifact_id, last_offset):  # type: ignore[no-untyped-def]
+        art = self.by_id.get(artifact_id)
+        if art is not None:
+            self.by_id[artifact_id] = replace(art, last_offset=max(0, last_offset))
+
+    async def list_for_session(self, ctx, session_id, *, limit):  # type: ignore[no-untyped-def]
+        return list(self.by_id.values())[:limit]
+
+
+def _chat_ctx() -> ToolContext:
+    # A jerv chat turn: an agent_session_id is what lets a tool persist a cross-turn artifact.
+    return ToolContext(
+        session=SessionContext(principal_kind="owner"), scopes=(), agent_session_id="sess-1"
+    )
+
+
+async def test_fetch_result_carries_the_whole_text_for_persistence() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    total = _MAX_CHARS + 1_000
+    result = await WebFetcher(transport=httpx.MockTransport(_plain(total))).fetch(
+        "https://x.example/big"
+    )
+    assert len(result.text) == _MAX_CHARS  # the window
+    assert len(result.full_text) == total  # the WHOLE text, for cross-turn persistence
+    assert result.full_text.startswith("S") and result.full_text.endswith("E")
+
+
+async def test_web_fetch_persists_a_cross_turn_artifact() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    total = _MAX_CHARS + 5_000
+    arts, blobs = _FakeArtifacts(), _FakeBlobs()
+    handlers = build_web_handlers(
+        SearxngClient(""),
+        WebFetcher(transport=httpx.MockTransport(_plain(total))),
+        artifacts=cast(ToolArtifactRepo, arts),
+        blobs=blobs,
+    )
+    await handlers["web_fetch"]({"url": "https://x.example/big"}, _chat_ctx())
+    assert len(arts.by_id) == 1
+    art = next(iter(arts.by_id.values()))
+    assert art.kind == "web_fetch"
+    assert art.total_chars == total  # the whole page cached, not just the first window
+    cached = (await blobs.get(art.sha256)).decode()
+    assert cached.startswith("S") and cached.endswith("E")
+    assert "read_artifact" in handlers  # the re-read tool is offered when a store is wired
+
+
+async def test_web_fetch_does_not_persist_a_tiny_page() -> None:
+    arts, blobs = _FakeArtifacts(), _FakeBlobs()
+    handlers = build_web_handlers(
+        SearxngClient(""),
+        WebFetcher(transport=httpx.MockTransport(_plain(200))),
+        artifacts=cast(ToolArtifactRepo, arts),
+        blobs=blobs,
+    )
+    await handlers["web_fetch"]({"url": "https://x.example/small"}, _chat_ctx())
+    assert arts.by_id == {}  # below the min-size threshold — cheaper to re-fetch than remember
+
+
+async def test_web_fetch_without_a_store_is_a_plain_fetch() -> None:
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher())
+    assert "read_artifact" not in handlers  # no store wired → the re-read tool isn't registered
+
+
+async def test_read_artifact_pages_from_cache_and_continues_across_calls() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    total = _MAX_CHARS + 5_000
+    arts, blobs = _FakeArtifacts(), _FakeBlobs()
+    handlers = build_web_handlers(
+        SearxngClient(""),
+        WebFetcher(transport=httpx.MockTransport(_plain(total))),
+        artifacts=cast(ToolArtifactRepo, arts),
+        blobs=blobs,
+    )
+    await handlers["web_fetch"]({"url": "https://x.example/big"}, _chat_ctx())
+    aid = next(iter(arts.by_id))
+
+    first = str(await handlers["read_artifact"]({"id": aid}, _chat_ctx()))
+    assert "cached text" in first.lower()  # DATA fence
+    assert "more remain" in first.lower()  # an actionable continue note
+    assert arts.by_id[aid].last_offset == _MAX_CHARS  # cursor advanced by one window
+
+    # A bare second call CONTINUES from the cursor to the tail — no network, no re-fetch.
+    second = str(await handlers["read_artifact"]({"id": aid}, _chat_ctx()))
+    assert second.rstrip().endswith("E")  # the real end of the page
+    assert "continued from offset" in second.lower()
+    assert "more remain" not in second.lower()  # nothing left to page
+
+
+async def test_read_artifact_unknown_id_is_a_clean_message() -> None:
+    arts, blobs = _FakeArtifacts(), _FakeBlobs()
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(), artifacts=cast(ToolArtifactRepo, arts), blobs=blobs
+    )
+    out = str(await handlers["read_artifact"]({"id": "nope"}, _chat_ctx()))
+    assert "no page or transcript" in out.lower()

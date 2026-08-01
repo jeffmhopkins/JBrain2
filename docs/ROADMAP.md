@@ -370,6 +370,21 @@ fabricated an image comparison it had no way to perform; reconciled with a four-
 `analyze_stream` `single`-mode `seek` fix — it dropped `seek` and always sampled t=0) shipped
 on-branch; V1–V6 open.
 
+**In progress:** Cross-turn tool results (build plan: `docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`) —
+give jerv durable, referenceable memory of an expensive tool result so a `web_fetch` page (and its
+paging position) survives across conversation turns instead of evaporating at turn's end. Motivated by
+an observed session where jerv, asked for a fetched YouTube transcript, re-fetched the top each turn,
+re-emitted the same section, reached for the wrong (library-only) tools, and fabricated between
+windows — all because chat history carries only text. A generic, opt-in **tool-result artifact**
+substrate modeled on the turn-attachment subsystem: a session-scoped RLS-firewalled row + a
+content-addressed blob for the heavy text (migration 0151), a DATA-framed cross-turn reference line
+injected in the volatile suffix, and a `read_artifact` tool that pages the cached text from a
+remembered cursor (so "next section" works). W0 (a prompt/description stopgap that stops the
+tool-confusion + fabrication) and W1 (the substrate + `web_fetch`/YouTube adoption) landed together;
+W2 (`ocr` / `gmail_read` adoption — proving the base is generic) + W3 (polish, owner artifact chip,
+optional turn-binding replay) open. A separately-tracked de-dup the research surfaced — unifying the
+near-identical research-report library and external-video corpus — is out of scope here.
+
 **Shipped:** Research Library (build record: `docs/archive/RESEARCH_LIBRARY_PLAN.md`, PR #907) — the
 owner's card-launcher browse door to the two `external`-corpus artifacts jerv produces on its own
 turns: deep-research reports (`research_reports`) and video analyses (`external_sources`). A

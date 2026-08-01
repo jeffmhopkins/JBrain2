@@ -1,6 +1,6 @@
 ---
 name: read_external_video
-version: 2
+version: 3
 permission: web
 params:
   type: object
@@ -24,6 +24,11 @@ search_external_video when the best-matching excerpt isn't enough and you need t
 content — to summarize the whole thing, answer a question that spans it, or pull a detail from a
 part search didn't surface. Pass the video's URL (the same link a search_external_video result points
 at; a timestamp on it is fine and ignored).
+
+This reads ONLY a video that has ALREADY been analysed into the owner's library — NOT an arbitrary
+URL the owner just gave you. Passing a URL that isn't in the library returns "no analysed video
+matches"; to read the transcript of a fresh YouTube/web URL, web_fetch the URL instead — it returns
+the caption transcript directly.
 
 Returns the video title, channel, length, publication date/time, the full summary, and the
 timestamped transcript (each passage prefixed with its moment, e.g. `[12:03]`), plus whether the

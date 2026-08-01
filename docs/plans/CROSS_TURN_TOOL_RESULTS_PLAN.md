@@ -1,6 +1,6 @@
 # Cross-Turn Tool Results (Fetched-Document Artifacts) — Design Spec
 
-> **Status:** Proposed · **Last verified:** 2026-08-01
+> **Status:** In progress · **Last verified:** 2026-08-01 · **Waves:** W0✅ W1✅ W2◻️ W3◻️
 
 Give jerv durable, referenceable memory of expensive tool results — starting with
 `web_fetch` (and its YouTube/transcript branch) — so a fetched page and its paging
@@ -113,16 +113,22 @@ so Postgres RLS enforces the firewall (invariant #3): `add`, `get`, `result`
 `list_for_session` (active artifacts for reference-line injection) / `list_for_turns`
 (replay on reopen). Heavy text loads via the storage abstraction (invariant #2).
 
-### 4.3 Write path — one funnel, opt-in
+### 4.3 Write path — opt-in, in the handler
 
-- Add `ToolOutput.artifact: ArtifactSpec | None`, mirroring how `view` / `job` /
-  `deferred` were added to `ToolOutput` (`backend/src/jbrain/agent/loop.py:259-296`). A
-  handler *chooses* to populate it — **opt-in per tool**.
-- Persist it in the single funnel every tool result passes through on all three loop
-  paths: **`AgentLoop._dispatch`, `loop.py:1365-1376`**, immediately after the
-  `ToolOutput` is detected. `ctx` there carries `session` (RLS), `agent_session_id`, and
-  `run_id` — everything the row needs. Skip when `agent_session_id` is None (non-chat
-  callers) or the tool didn't opt in.
+**As built (W1):** the `web_fetch` handler persists its own result via an injected
+`ToolArtifactRepo` + `BlobStore` (`build_web_handlers(..., artifacts=, blobs=)`), after a
+successful fetch, best-effort (a persistence hiccup never sinks the fetch). This matches
+the established house pattern — every cross-turn-persisting tool (`persist_chat_image`,
+`set_analysis`, `persist_report`) persists inside its handler — and keeps the generic
+loop free of DB/repo dependencies. A tiny page (< 2k chars) is skipped (cheaper to
+re-fetch than remember). Opt-in per tool *by construction*: a tool adopts the base by
+calling `artifacts.remember(...)`.
+
+An alternative considered — a generic `ToolOutput.artifact` sidecar persisted centrally in
+`AgentLoop._dispatch` (`loop.py:1365-1376`) — was **deferred** (§9): it would require
+threading a repo + blob store + write-context resolution into the persona-agnostic loop,
+which the handler-side approach avoids. Revisit if a third/fourth client makes the
+per-handler wiring feel repetitive.
 
 ### 4.4 Read path — `read_artifact`
 
@@ -214,18 +220,20 @@ contract, and both already work).
 
 ## 7. Waves
 
-- **W0 — Stopgap.** The §3 prompt/description edits + test version bumps. No migration.
-  Ships first, stands alone.
-- **W1 — Substrate + `web_fetch`/YouTube.** Table + migration + RLS isolation test (§4.1);
-  repo (§4.2); `ToolOutput.artifact` + `_dispatch` persist hook (§4.3); `read_artifact`
-  tool (§4.4); the volatile-suffix reference-line injection + reopen replay (§4.5); `web_fetch`
-  and the YouTube branch opt in. Update `jerv.prompt` (v31→v32) to flip the W0 "position not
-  remembered" note and teach `read_artifact` / "continue where you left off".
-- **W2 — Generalize.** `ocr` and `gmail_read`/`gmail_search` opt in (proves the base is
+- **W0 — Stopgap ✅.** The §3 prompt/description edits + test version bumps (web_fetch v8,
+  read/search_external_video v3/v2, jerv v31). No migration. Shipped in this PR.
+- **W1 — Substrate + `web_fetch`/YouTube ✅.** Shipped in this PR: table + migration 0151 +
+  RLS isolation test (§4.1); `ToolArtifactRepo` (§4.2); the persist call inside the
+  `web_fetch` handler (§4.3 — implemented in the handler, the house pattern, rather than a
+  generic `_dispatch` hook; see §10); `read_artifact` tool (§4.4); the volatile-suffix
+  reference-line injection (§4.5); `web_fetch` and the YouTube branch opt in;
+  `FetchResult.full_text` exposes the whole extracted text for persistence. `jerv.prompt`
+  v31 already teaches `read_artifact` / "continue where you left off".
+- **W2 — Generalize ◻️.** `ocr` and `gmail_read`/`gmail_search` opt in (proves the base is
   generic); archivist-persona reference injection.
-- **W3 — Polish.** Reference-line/`read_artifact` on-box tuning with the debug console
+- **W3 — Polish ◻️.** Reference-line/`read_artifact` on-box tuning with the debug console
   against the local model; owner-visible artifact chip (optional, mirroring the proposal
-  chip).
+  chip); optional turn-binding + reopen replay via `list_for_turns`.
 
 ## 8. Docs to reconcile when this lands
 
@@ -236,16 +244,23 @@ contract, and both already work).
   add a `ROADMAP.md` entry (and a note tracking Cluster A as a future de-dup).
 - `scripts/dev-setup.sh` — only if a new dependency lands (none expected).
 
-## 9. Open decisions
+## 9. Decisions (resolved in W1) + open items
 
-1. **`read_artifact` vs. cache-aware `web_fetch`.** A dedicated `read_artifact(id)` gives
-   clean "continue where I left off" semantics and avoids re-resolving YouTube; making
-   `web_fetch` serve a known session URL from cache needs no new tool but muddies the
-   network/cache boundary. Leaning `read_artifact`.
-2. **Artifact TTL / cap.** Ephemeral (reaped with the session, like `media_results`) vs. a
-   fixed count/age cap. Leaning session-scoped + a small active-count cap for the reference
-   block.
-3. **Dedup within a session.** Re-fetching the same URL should update the existing row
-   (advance/refresh) rather than pile up — key on `(session_id, kind, source_url)`.
-4. **Reference-block placement.** Volatile-suffix (recommended, §5.1) vs. frozen
-   append-only history; the KV-cache tension favors the volatile suffix.
+Resolved as built:
+1. **`read_artifact` vs. cache-aware `web_fetch`** → dedicated `read_artifact(id)`: clean
+   "continue where I left off" semantics (a remembered `last_offset`), no re-resolving
+   YouTube, and a clear network/cache boundary.
+2. **Reference-block placement** → the volatile suffix (rebuilt each turn from the session's
+   rows), so it never disturbs the cache-stable prefix (§5.1).
+3. **Dedup within a session** → unique `(session_id, source_url)`; a re-fetch upserts the
+   one row (refresh text/length, reset cursor).
+4. **Write path** → in the handler, not a generic `_dispatch` hook (§4.3).
+
+Open:
+- **Artifact TTL / lifecycle (W3).** Today an artifact lives with its session (CASCADE) and
+  the reference block replays the most-recent `_MAX_ARTIFACT_REFS` (8). Consider an age/size
+  reap if a long-lived session accumulates many.
+- **Generic `ToolOutput.artifact` sidecar (deferred).** Promote the per-handler call to a
+  central `_dispatch` persist hook if a third/fourth client makes the wiring repetitive.
+- **Turn binding / reopen replay (W3).** `turn_id` is nullable and unused today; bind on
+  record + replay via `list_for_turns` if the owner UI wants per-turn artifact chips.

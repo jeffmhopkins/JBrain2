@@ -95,6 +95,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "fetch_image",
             "compare_images",
             "ocr",
+            "read_artifact",
             "search_external_video",
             "list_external_video",
             "read_external_video",
@@ -320,8 +321,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v30",
-            "b11cfff6aa1adbb3d7ed12e3a15d1c28be078b8c49f89825e6c513f219635aca",
+            "agent-jerv-v31",
+            "2599c73c7502801ba2d97933caec9be55861607572f51b12dabd54519526eb60",
         ),
         "archivist": (
             "agent-archivist-v6",

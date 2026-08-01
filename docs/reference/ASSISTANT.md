@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-31
+> **Status:** Living · **Last verified:** 2026-08-01
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -445,6 +445,20 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   owner-only `generated_images` rows (a `provenance` stamp keeps them out of the gallery), and
   each tool takes `show: false` to suppress its card when it's only an intermediate step — the
   same suppression `analyze_video`/`analyze_stream` now accept for a mid-reasoning read.
+
+  **`web_fetch` results are remembered across turns.** A jerv chat carries only text
+  between turns (a tool result normally dies with its turn-loop), so a follow-up "keep going"
+  used to re-fetch the top of a page and lose its paging place — the failure that produced
+  repeated, fabricated YouTube-transcript sections. A `web_fetch` (incl. its YouTube caption
+  view) now persists its **full** text as a session-scoped **tool artifact** — the heavy text
+  content-addressed in the blob store, the row (`app.turn_tool_artifacts`, migration 0151)
+  carrying only metadata + a paging cursor, `domain_code`-firewalled exactly like a chat
+  attachment (jerv → `general`). Each later turn re-injects a compact **DATA-framed reference
+  line** (id + url + how far read) in the volatile suffix — never the text — and the
+  `web`-gated **`read_artifact`** tool pages the *cached* text from the remembered cursor, so
+  jerv continues a long transcript section-by-section (or re-reads a page) with no network
+  re-fetch and no lost place. The store is a generic, opt-in base (`ToolArtifactRepo`); `ocr`
+  and `gmail_read` are the next intended clients (`docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`).
 
   **`analyze_image` also returns the text.** Beyond describing what an image *shows*,
   `analyze_image` now hands back the image's **verbatim text as Markdown** (headings, tables,

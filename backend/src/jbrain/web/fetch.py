@@ -171,6 +171,10 @@ class FetchResult:
     # big page so the model can jump straight to a section by `offset` instead of paging blindly.
     outline: tuple[tuple[int, int, str], ...] = ()
     outline_count: int = 0
+    # The WHOLE extracted text (not just the `text` window) — what a caller persists so a
+    # long page/transcript can be re-read and paged across turns without a network re-fetch
+    # (docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md). Empty on a result built without it.
+    full_text: str = ""
 
 
 def _find_offsets(
@@ -259,6 +263,7 @@ def _window_and_find(
         match_count=match_count,
         outline=outline,
         outline_count=outline_count,
+        full_text=text,
     )
 
 

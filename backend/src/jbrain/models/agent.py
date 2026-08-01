@@ -210,6 +210,40 @@ class TurnAttachment(Base):
     analysis: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
 
+class TurnToolArtifact(Base):
+    """An expensive/large tool result jerv can reference across turns (a fetched web
+    page, a YouTube caption transcript) — docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md.
+
+    The agent analogue of a cache: a NEW table (not `turn_attachments`, whose payload
+    is an uploaded file) modeled on the same by-reference shape. The heavy text lives
+    content-addressed in the blob store (`sha256`); the row holds only metadata + the
+    paging cursor (`last_offset`) so a `read_artifact` continues where it stopped.
+    `domain_code` is the firewall scope, stamped from the session's scopes at creation
+    (jerv, empty-scoped, stamps 'general') so `has_domain_scope` needs no join.
+    `session_id` cascades; `turn_id` is nullable (created during the assistant turn,
+    session-scoped). `(session_id, source_url)` is unique so a re-fetch refreshes the
+    one row."""
+
+    __tablename__ = "turn_tool_artifacts"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="CASCADE")
+    )
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_turns.id", ondelete="SET NULL"), nullable=True
+    )
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    kind: Mapped[str] = mapped_column(Text)
+    source_url: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text, default="", server_default="")
+    sha256: Mapped[str] = mapped_column(Text)
+    total_chars: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    last_offset: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AgentMemory(Base):
     """Working/behavioral memory as rows rendered as MD (docs/reference/ASSISTANT.md
     "Memory model"). Owner-only, domain-narrowed; behavioral tiers are
