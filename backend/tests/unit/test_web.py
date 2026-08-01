@@ -890,3 +890,116 @@ async def test_invalid_web_calls_do_not_emit() -> None:
     await handlers["web_search"]({"query": "  "}, CTX)
     await handlers["web_fetch"]({}, CTX)
     assert fired == []
+
+
+# --- YouTube view (lightweight title/channel/description/captions via web_fetch) ----
+
+
+async def _fake_youtube(url: str):  # type: ignore[no-untyped-def]
+    md = (
+        "**Channel:** Space Channel\n\n"
+        "## Description\n\nA recap of the launch.\n\n"
+        "## Transcript (captions)\n\nten nine eight liftoff"
+    )
+    return ("Rocket Launch Recap", md)
+
+
+async def test_web_fetch_renders_a_youtube_url_as_the_video_view() -> None:
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), youtube=_fake_youtube)
+    out = str(await handlers["web_fetch"]({"url": "https://youtu.be/abc"}, _fresh_ctx()))
+    assert "Rocket Launch Recap" in out
+    assert "Space Channel" in out
+    assert "## Transcript (captions)" in out
+    assert "ten nine eight liftoff" in out
+
+
+async def test_web_fetch_youtube_supports_find() -> None:
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), youtube=_fake_youtube)
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://youtu.be/abc", "find": "liftoff"}, _fresh_ctx()
+        )
+    )
+    assert "found 1 match(es) for 'liftoff'" in out
+
+
+async def test_web_fetch_youtube_falls_back_to_html_when_unresolvable() -> None:
+    async def yt_none(url: str):  # type: ignore[no-untyped-def]
+        return None  # unresolvable video → fall through to a normal HTML fetch
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle)), youtube=yt_none
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://youtu.be/gone"}, _fresh_ctx()))
+    assert "Hi There" in out  # the HTML fetch ran instead
+
+
+async def test_web_fetch_youtube_not_wired_uses_normal_fetch() -> None:
+    # No youtube resolver injected (e.g. yt-dlp absent): a youtube URL just gets a plain fetch.
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://youtu.be/abc"}, _fresh_ctx()))
+    assert "Hi There" in out
+
+
+# --- outline: a section map for a big page ------------------------------------
+
+_OUTLINE_PAGE = (
+    "## Intro\n"
+    + ("a" * 20_000)
+    + "\n## History\n"
+    + ("b" * 20_000)
+    + "\n## Y2026\n"
+    + ("c" * 5_000)
+).encode()
+
+
+def _outline_handlers():  # type: ignore[no-untyped-def]
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_OUTLINE_PAGE, headers={"content-type": "text/plain"})
+
+    return build_web_handlers(SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle)))
+
+
+async def test_web_fetch_appends_a_section_outline_on_a_big_page() -> None:
+    out = str(
+        await _outline_handlers()["web_fetch"]({"url": "https://x.example/big"}, _fresh_ctx())
+    )
+    assert "Sections on this page" in out
+    assert "History → offset" in out
+    assert "Y2026 → offset" in out  # the far section is reachable by the offset given
+
+
+async def test_web_fetch_outline_true_returns_only_the_outline() -> None:
+    out = str(
+        await _outline_handlers()["web_fetch"](
+            {"url": "https://x.example/big", "outline": True}, _fresh_ctx()
+        )
+    )
+    assert "Outline — 3 sections" in out
+    assert "History → offset" in out
+    assert "a" * 100 not in out  # the body text is NOT included in the outline-only view
+
+
+async def test_web_fetch_outline_true_on_a_flat_page_says_no_sections() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"just prose, no headings", headers={"content-type": "text/plain"}
+        )
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/flat", "outline": True}, _fresh_ctx()
+        )
+    )
+    assert "no section headings" in out.lower()

@@ -44,6 +44,7 @@ bounded stream, so an oversized response cannot be buffered whole into memory.
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 from dataclasses import dataclass
 from typing import cast
@@ -82,6 +83,12 @@ _FIND_LEAD = 200
 # Cap the match-offset map surfaced for `find` — enough to navigate a clustered term without
 # flooding the reply when a word appears hundreds of times; the full count is reported too.
 _MAX_MATCH_OFFSETS = 20
+# Cap the section outline (markdown headings + offsets) surfaced for a large page — enough to
+# navigate a long article's structure without a heading line per row of a giant table.
+_MAX_OUTLINE = 50
+# A markdown heading line: 1–6 '#', a space, the title (trailing '#'s tolerated). The extracted
+# text is markdown (trafilatura / the fallback), so section headings are exactly these lines.
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(\S.*?)[ \t#]*$", re.MULTILINE)
 
 # Present as an ordinary browser, not a bot. A bare custom User-Agent (and httpx's
 # minimal default headers) is the single biggest reason a fetch comes back 403/429
@@ -159,6 +166,11 @@ class FetchResult:
     find_term: str = ""
     match_offsets: tuple[int, ...] = ()
     match_count: int = 0
+    # Section outline of the FULL page: (offset, heading level, title) per markdown heading,
+    # capped at `_MAX_OUTLINE`, with `outline_count` the true total. The tool surfaces it on a
+    # big page so the model can jump straight to a section by `offset` instead of paging blindly.
+    outline: tuple[tuple[int, int, str], ...] = ()
+    outline_count: int = 0
 
 
 def _find_offsets(text: str, needle: str, *, at_least: int) -> tuple[tuple[int, ...], int]:
@@ -179,6 +191,19 @@ def _find_offsets(text: str, needle: str, *, at_least: int) -> tuple[tuple[int, 
     return tuple(offsets), total
 
 
+def _outline(text: str) -> tuple[tuple[tuple[int, int, str], ...], int]:
+    """The page's section outline as ((offset, level, title), …), capped, plus the true total.
+    Each markdown heading in the FULL text becomes one entry whose offset the model can pass as
+    `offset` to jump to that section — a table of contents for a page too big for one window."""
+    entries: list[tuple[int, int, str]] = []
+    total = 0
+    for m in _HEADING_RE.finditer(text):
+        total += 1
+        if len(entries) < _MAX_OUTLINE:
+            entries.append((m.start(), len(m.group(1)), m.group(2).strip()))
+    return tuple(entries), total
+
+
 def _window_and_find(
     text: str,
     *,
@@ -191,8 +216,8 @@ def _window_and_find(
 ) -> FetchResult:
     """Build the FetchResult: window `text` at `offset` (pagination) and, when `find` is
     given, re-anchor the window on the first keyword match at/after `offset` (so the model
-    lands on the right SECTION, not a guessed offset) and attach the match map. Shared by
-    the direct and reader paths so both page and locate identically."""
+    lands on the right SECTION, not a guessed offset) and attach the match map + section
+    outline. Shared by the direct and reader paths so both page and locate identically."""
     match_offsets: tuple[int, ...] = ()
     match_count = 0
     start = offset
@@ -200,6 +225,7 @@ def _window_and_find(
         match_offsets, match_count = _find_offsets(text, find, at_least=offset)
         if match_offsets:
             start = max(0, match_offsets[0] - _FIND_LEAD)
+    outline, outline_count = _outline(text)
     return FetchResult(
         url=url,
         title=title,
@@ -211,7 +237,30 @@ def _window_and_find(
         find_term=find,
         match_offsets=match_offsets,
         match_count=match_count,
+        outline=outline,
+        outline_count=outline_count,
     )
+
+
+def window_text(text: str, *, url: str, title: str, offset: int = 0, find: str = "") -> FetchResult:
+    """Wrap ready-made text (not fetched HTML — e.g. a composed YouTube view) in a FetchResult
+    with the SAME offset/find windowing a fetched page gets, so the tool pages and keyword-jumps
+    it identically. `truncated` is False: the caller already holds the whole text."""
+    return _window_and_find(
+        text, url=url, title=title, links=(), offset=max(0, offset), find=find, body_truncated=False
+    )
+
+
+_YOUTUBE_HOSTS = frozenset(
+    {"youtube.com", "m.youtube.com", "music.youtube.com", "youtube-nocookie.com", "youtu.be"}
+)
+
+
+def is_youtube_url(url: str) -> bool:
+    """Whether `url` is a YouTube watch/short/share link — the pages web_fetch reads as a
+    lightweight title+channel+description+captions view instead of scraping the JS shell."""
+    host = (urlparse(url).hostname or "").lower()
+    return host.removeprefix("www.") in _YOUTUBE_HOSTS
 
 
 def _collect_links(hrefs: list[str], *, base: str) -> tuple[str, ...]:
