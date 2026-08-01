@@ -19,7 +19,7 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useId, useMemo, useState } from "react";
 import { faviconUrl } from "../api/client";
 import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
@@ -963,6 +963,116 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
   }
 }
 
+/** The heading tag for a markdown level, shifted down two so an answer's `#` is an
+ * `h3` under the bubble's own heading level (matches the flat renderer). */
+const headingTag = (level: number): "h3" | "h4" | "h5" | "h6" =>
+  `h${Math.min(level + 2, 6)}` as "h3" | "h4" | "h5" | "h6";
+
+/** A heading plus every block that follows it, up to the next heading of equal or
+ * higher level — so a `##` section owns its `###` subsections and collapsing the
+ * parent folds the children with it. */
+type Section = { kind: "section"; heading: Extract<Block, { kind: "h" }>; children: MdNode[] };
+type MdNode = Block | Section;
+
+/** Fold the flat block list into a (possibly nested) section tree keyed off heading
+ * level. Blocks before the first heading stay at the top level (an answer's lead
+ * paragraph is never tucked under a fold). */
+function groupBlocks(blocks: Block[]): MdNode[] {
+  const root: MdNode[] = [];
+  const stack: { level: number; children: MdNode[] }[] = [{ level: 0, children: root }];
+  const top = (): { level: number; children: MdNode[] } =>
+    stack[stack.length - 1] as { level: number; children: MdNode[] };
+  for (const b of blocks) {
+    if (b.kind === "h") {
+      while (stack.length > 1 && top().level >= b.level) stack.pop();
+      const section: Section = { kind: "section", heading: b, children: [] };
+      top().children.push(section);
+      stack.push({ level: b.level, children: section.children });
+    } else {
+      top().children.push(b);
+    }
+  }
+  return root;
+}
+
+/** A collapsible section: its heading is a disclosure toggle (a `<button>` inside
+ * the real heading element — the WAI-ARIA accordion shape, so the outline and
+ * screen-reader semantics survive), and a short tap folds or unfolds the body. Open
+ * by default so a streaming answer reads top-to-bottom; a folded body is `hidden`,
+ * which drops its links from the tab order too. A heading with no body renders plain
+ * (nothing to fold). Collapse state is per-instance and resets if the turn re-renders
+ * from scratch. */
+function MdSection({
+  level,
+  label,
+  hiddenCount,
+  children,
+}: {
+  level: number;
+  label: ReactNode;
+  hiddenCount: number;
+  children: ReactNode;
+}): ReactNode {
+  const [collapsed, setCollapsed] = useState(false);
+  const bodyId = useId();
+  const Tag = headingTag(level);
+  if (hiddenCount === 0) return <Tag className="md-h">{label}</Tag>;
+  return (
+    <section className="md-section">
+      <Tag className="md-h">
+        <button
+          type="button"
+          className="md-h-toggle"
+          aria-expanded={!collapsed}
+          aria-controls={bodyId}
+          onClick={() => setCollapsed((c) => !c)}
+        >
+          <span className="md-h-caret">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="M4 6l4 4 4-4"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="md-h-label">{label}</span>
+          {collapsed && (
+            <span className="md-h-count">
+              {hiddenCount} {hiddenCount === 1 ? "item" : "items"}
+            </span>
+          )}
+        </button>
+      </Tag>
+      <div className="md-body" id={bodyId} hidden={collapsed}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** Render one node of the section tree. Blocks defer to `renderBlock`; a section
+ * renders its heading and children EAGERLY here (not lazily inside `MdSection`), so
+ * the flag scanner's `placed` set is fully populated before the caller reads it for
+ * the end-of-bubble fallback. */
+function renderNode(node: MdNode, key: string, ctx: Ctx): ReactNode {
+  if (node.kind !== "section") return renderBlock(node, key, ctx);
+  const label = inline(node.heading.text, `${key}-h`, ctx);
+  const children = node.children.map((c, i) => renderNode(c, `${key}-${i}`, ctx));
+  return (
+    <MdSection
+      key={key}
+      level={node.heading.level}
+      label={label}
+      hiddenCount={node.children.length}
+    >
+      {children}
+    </MdSection>
+  );
+}
+
 export function Markdown({
   text,
   onCite,
@@ -1018,7 +1128,8 @@ export function Markdown({
     flags: flagIndex,
     streaming,
   };
-  const rendered = blocks.map((b, i) => renderBlock(b, `b${i}`, ctx));
+  const tree = useMemo(() => groupBlocks(blocks), [blocks]);
+  const rendered = tree.map((n, i) => renderNode(n, `b${i}`, ctx));
   // Graceful fallback: any flagged claim the scanner couldn't anchor in the prose
   // (a markdown split, a reworded sentence) degrades to a single end-of-bubble
   // flag that opens the same note — never crash, never mis-anchor.

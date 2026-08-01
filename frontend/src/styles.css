@@ -7736,6 +7736,83 @@ button.small {
   font-size: 15px;
   font-weight: 600;
 }
+/* Collapsible section: the heading holds a disclosure button (WAI-ARIA accordion
+   shape), a short tap folds the body. Section + body stack their children on the
+   same 8px rhythm as the flat `.md`. */
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-section,
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h:has(.md-h-toggle) {
+  margin: 2px 0 0;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-toggle {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin: 0;
+  padding: 3px 6px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-toggle:hover {
+  background: var(--surface-2);
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-caret {
+  flex: none;
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  transition: transform 0.2s ease, color 0.15s ease;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-toggle:hover .md-h-caret {
+  color: var(--text-2);
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-caret svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* Folded: the twisty points right and a quiet count stands in for the hidden body. */
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-toggle[aria-expanded="false"] .md-h-caret {
+  transform: rotate(-90deg);
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-toggle[aria-expanded="false"] {
+  color: var(--text-2);
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-h-count {
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.fb-shell, .jcode-bubble, .rl-md) .md-h-caret {
+    transition: color 0.15s ease;
+  }
+}
 :is(.fb-shell, .jcode-bubble, .rl-md) .md-ul,
 :is(.fb-shell, .jcode-bubble, .rl-md) .md-ol {
   margin: 0;
