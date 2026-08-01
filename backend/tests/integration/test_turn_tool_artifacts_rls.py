@@ -6,7 +6,6 @@ scoped principal cannot stamp an out-of-scope domain_code, and the empty-scoped 
 session round-trips its own 'general'-stamped artifacts.
 """
 
-
 import pytest
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -61,7 +60,9 @@ async def _remember(
 
 
 async def test_artifact_domain_firewall(
-    repo: ToolArtifactRepo, sessions: AgentSessionRepo, maker: async_sessionmaker  # noqa: F811
+    repo: ToolArtifactRepo,
+    sessions: AgentSessionRepo,
+    maker: async_sessionmaker,  # noqa: F811
 ) -> None:
     pid = await _owner_principal(maker)
     owner = SessionContext(principal_id=pid, principal_kind="owner")  # full owner, all scopes
@@ -79,7 +80,9 @@ async def test_artifact_domain_firewall(
 
 
 async def test_scoped_principal_cannot_stamp_out_of_scope_domain(
-    repo: ToolArtifactRepo, sessions: AgentSessionRepo, maker: async_sessionmaker  # noqa: F811
+    repo: ToolArtifactRepo,
+    sessions: AgentSessionRepo,
+    maker: async_sessionmaker,  # noqa: F811
 ) -> None:
     pid = await _owner_principal(maker)
     owner = SessionContext(principal_id=pid, principal_kind="owner")
@@ -92,7 +95,9 @@ async def test_scoped_principal_cannot_stamp_out_of_scope_domain(
 
 
 async def test_set_offset_cannot_advance_across_the_firewall(
-    repo: ToolArtifactRepo, sessions: AgentSessionRepo, maker: async_sessionmaker  # noqa: F811
+    repo: ToolArtifactRepo,
+    sessions: AgentSessionRepo,
+    maker: async_sessionmaker,  # noqa: F811
 ) -> None:
     pid = await _owner_principal(maker)
     owner = SessionContext(principal_id=pid, principal_kind="owner")
@@ -111,7 +116,9 @@ async def test_set_offset_cannot_advance_across_the_firewall(
 
 
 async def test_empty_scope_session_round_trips_its_general_artifact(
-    repo: ToolArtifactRepo, sessions: AgentSessionRepo, maker: async_sessionmaker  # noqa: F811
+    repo: ToolArtifactRepo,
+    sessions: AgentSessionRepo,
+    maker: async_sessionmaker,  # noqa: F811
 ) -> None:
     """jerv is empty-scoped: its artifact is stamped 'general', and it reads/writes it
     under artifact_scopes(()) = ('general',) — the same asymmetry chat attachments use."""
@@ -132,7 +139,9 @@ async def test_empty_scope_session_round_trips_its_general_artifact(
 
 
 async def test_remember_upserts_the_same_url(
-    repo: ToolArtifactRepo, sessions: AgentSessionRepo, maker: async_sessionmaker  # noqa: F811
+    repo: ToolArtifactRepo,
+    sessions: AgentSessionRepo,
+    maker: async_sessionmaker,  # noqa: F811
 ) -> None:
     pid = await _owner_principal(maker)
     owner = SessionContext(principal_id=pid, principal_kind="owner")

@@ -149,9 +149,7 @@ class ToolArtifactRepo:
             return None
         async with scoped_session(self._maker, ctx) as session:
             row = (
-                await session.execute(
-                    select(TurnToolArtifact).where(TurnToolArtifact.id == aid)
-                )
+                await session.execute(select(TurnToolArtifact).where(TurnToolArtifact.id == aid))
             ).scalar_one_or_none()
             return None if row is None else _info(row)
 
