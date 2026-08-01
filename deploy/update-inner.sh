@@ -96,14 +96,13 @@ docker compose $JCODE_PROFILE build
 echo "[update] running migrations"
 docker compose run --rm migrate
 
-# The wall/tts-stt split RENAMED two services (server-brain->wall, whisper->tts-stt). Compose
-# leaves a renamed service's old container running as an orphan; the old server-brain keeps host
-# port 8800 bound, so the new `wall` can't start and the `up -d` below aborts mid-recreate — which
-# is what took the tunnel down after the split update. Drop the stale pair by name, NOT with
-# `--remove-orphans`: this one-shot doesn't activate the tunnel/local-llm/comfyui profiles, so
-# `--remove-orphans` would reap those running services too.
-echo "[update] clearing renamed-service orphans (server-brain->wall, whisper->tts-stt)"
-docker rm -f jbrain-server-brain-1 jbrain-whisper-1 2>/dev/null || true
+# Clear containers left behind by a renamed (server-brain->wall, whisper->tts-stt) or removed
+# (claude-shim) service before the `up -d` below — an old server-brain holding host port 8800
+# blocks the new `wall` (which is what took the tunnel down after the split update), and any such
+# labeled orphan lingers on the Ops screen. The helper sweeps by comparing labels against the
+# file's full service set, so profile-gated services `--remove-orphans` would wrongly reap are kept.
+echo "[update] clearing renamed/removed-service orphans"
+sh src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
 
 echo "[update] restarting stack"
 docker compose $JCODE_PROFILE up -d

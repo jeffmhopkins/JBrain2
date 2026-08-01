@@ -112,13 +112,12 @@ case "${1:-}" in
     fi
     docker compose "${PROFILE[@]}" build
     docker compose run --rm migrate
-    # The wall/tts-stt split RENAMED two services (server-brain->wall, whisper->tts-stt).
-    # Compose leaves a renamed service's old container running as an orphan; the old
-    # server-brain keeps host port 8800 bound, so the new `wall` can't start and `up -d`
-    # aborts mid-recreate (which left the proxy + tunnel down after the split update).
-    # Drop the stale pair by name — NOT `--remove-orphans`, which would also reap the
-    # profile-gated services (tunnel, local-llm, comfyui) this command doesn't activate.
-    docker rm -f jbrain-server-brain-1 jbrain-whisper-1 2>/dev/null || true
+    # Clear containers left behind by a renamed (server-brain->wall, whisper->tts-stt)
+    # or removed (claude-shim) service before recreating the stack — an old server-brain
+    # holding host port 8800 blocks the new `wall`, and any such labeled orphan lingers on
+    # the Ops screen. The helper sweeps by comparing labels against the file's full service
+    # set, so profile-gated services `--remove-orphans` would wrongly reap are kept.
+    bash /opt/jbrain2/src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
     docker compose "${PROFILE[@]}" up -d
     # When on-box image generation is enabled, re-sync its models so an update that adds
     # newly-recommended models (or new weight files for existing ones) downloads them without a
