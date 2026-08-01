@@ -690,11 +690,15 @@ describe("Markdown collapsible sections", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".md-body")).toHaveAttribute("hidden");
+    // Regression: folding must actually remove the body text, not just flip a
+    // flag — a collapsed section is unmounted, so its prose leaves the DOM.
+    expect(container.querySelector(".md-body")?.textContent).not.toContain("It came to");
     // a quiet count stands in for the hidden body
     expect(screen.getByText(/^1 item$/)).toBeInTheDocument();
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".md-body")).not.toHaveAttribute("hidden");
+    expect(container.querySelector(".md-body")?.textContent).toContain("It came to $41,200.");
   });
 
   it("folds a nested subsection together with its parent", () => {
@@ -706,7 +710,9 @@ describe("Markdown collapsible sections", () => {
     fireEvent.click(parent);
     const parentBody = container.querySelector(".md-body");
     expect(parentBody).toHaveAttribute("hidden");
-    expect(parentBody?.textContent).toContain("child line");
+    // the whole nested subtree is gone from the DOM, not merely styled hidden
+    expect(parentBody?.textContent).not.toContain("child line");
+    expect(screen.queryByRole("button", { name: /Child/ })).toBeNull();
     // the parent owns a lead paragraph AND the nested section — two items
     expect(screen.getByText(/^2 items$/)).toBeInTheDocument();
   });
@@ -722,5 +728,19 @@ describe("Markdown collapsible sections", () => {
     expect(screen.getByRole("button", { name: /Summary/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Trailing/ })).toBeNull();
     expect(screen.getByRole("heading", { name: "Trailing" })).toBeInTheDocument();
+  });
+
+  it("re-mounts the body content unchanged after an unfold", () => {
+    // Folding unmounts children; unfolding must bring the exact prose back,
+    // including inline structure (a link here), not a degraded copy.
+    const { container } = render(
+      <Markdown text={"## Refs\n\nsee [docs](https://example.com) for more"} />,
+    );
+    const toggle = screen.getByRole("button", { name: /Refs/ });
+    fireEvent.click(toggle); // fold
+    fireEvent.click(toggle); // unfold
+    const link = container.querySelector(".md-body a.md-link");
+    expect(link).toHaveAttribute("href", "https://example.com");
+    expect(link?.textContent).toBe("docs");
   });
 });

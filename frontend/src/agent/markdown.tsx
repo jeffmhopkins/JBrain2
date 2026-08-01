@@ -1046,8 +1046,14 @@ function MdSection({
           )}
         </button>
       </Tag>
+      {/* Collapsed content is unmounted, not just visually hidden (the repo's
+          disclosure convention), so a fold can't be defeated by a display-rule
+          collision. `hidden` marks the empty region; the `.md-body[hidden]` rule
+          then removes it so no stray section gap remains. The children were
+          already built eagerly in `renderNode`, so the flag `placed` set is
+          populated regardless of collapse state. */}
       <div className="md-body" id={bodyId} hidden={collapsed}>
-        {children}
+        {collapsed ? null : children}
       </div>
     </section>
   );
