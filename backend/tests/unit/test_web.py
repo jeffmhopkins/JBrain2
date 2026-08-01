@@ -514,53 +514,100 @@ async def test_a_403_still_falls_back_to_the_reader() -> None:
     assert "Rendered by the reader" in result.text
 
 
-# --- truncation signalling (the model must know it saw only the page head) -----
+# --- truncation + pagination (a long page's tail is fetchable, not just flagged) ----
 
 
-async def test_fetch_flags_a_clipped_page_as_truncated() -> None:
+def _plain(n_chars: int):  # type: ignore[no-untyped-def]
+    """A MockTransport serving `n_chars` of plain text (distinct start/end markers so a
+    window can be told apart from the whole)."""
+    body = ("S" + "x" * (n_chars - 2) + "E").encode()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": "text/plain"})
+
+    return handle
+
+
+async def test_fetch_windows_a_long_page_and_reports_the_total() -> None:
     from jbrain.web.fetch import _MAX_CHARS
 
-    big = ("word " * ((_MAX_CHARS // 5) + 1000)).encode()
+    total = _MAX_CHARS + 12_345
+    fetcher = WebFetcher(transport=httpx.MockTransport(_plain(total)))
+    first = await fetcher.fetch("https://x.example/big")
+    assert first.offset == 0
+    assert len(first.text) == _MAX_CHARS  # first window is exactly one cap
+    assert first.total_chars == total
+    assert first.text.startswith("S")  # the head
+    assert first.truncated is False  # sub-cap download: the full text IS available, via paging
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=big, headers={"content-type": "text/plain"})
-
-    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/big")
-    assert result.truncated is True
-    assert len(result.text) == _MAX_CHARS  # clipped exactly to the cap
+    tail = await fetcher.fetch("https://x.example/big", offset=_MAX_CHARS)
+    assert tail.offset == _MAX_CHARS
+    assert len(tail.text) == 12_345
+    assert tail.text.endswith("E")  # the tail we couldn't see in the first window
 
 
-async def test_fetch_does_not_flag_a_short_page() -> None:
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b"a short page", headers={"content-type": "text/plain"})
-
-    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/p")
+async def test_fetch_short_page_is_a_single_whole_window() -> None:
+    result = await WebFetcher(transport=httpx.MockTransport(_plain(200))).fetch(
+        "https://x.example/p"
+    )
+    assert result.offset == 0
+    assert result.total_chars == 200
     assert result.truncated is False
 
 
-async def test_web_fetch_tool_warns_when_the_page_is_truncated() -> None:
+async def test_web_fetch_tool_gives_an_actionable_next_offset() -> None:
     from jbrain.web.fetch import _MAX_CHARS
 
-    big = ("word " * ((_MAX_CHARS // 5) + 1000)).encode()
+    total = _MAX_CHARS + 12_345
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain(total)))
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://x.example/big"}, _fresh_ctx()))
+    assert "truncated" in out.lower()
+    # The notice names the EXACT next call so the model can page, not just "it's cut off".
+    assert f"offset={_MAX_CHARS}" in out
 
-    def handle(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=big, headers={"content-type": "text/plain"})
+
+async def test_web_fetch_tool_second_page_reads_the_tail_without_a_notice() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    total = _MAX_CHARS + 12_345
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain(total)))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/big", "offset": _MAX_CHARS}, _fresh_ctx()
+        )
+    )
+    assert out.rstrip().endswith("E")  # the real end of the page
+    assert "offset=" not in out  # nothing left to page to
+    assert f"continued from offset {_MAX_CHARS}" in out
+
+
+async def test_web_fetch_tool_offset_past_the_end_says_so() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
 
     handlers = build_web_handlers(
-        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain(1000)))
     )
-    out = await handlers["web_fetch"]({"url": "https://x.example/big"}, CTX)
-    assert "truncated" in str(out).lower()
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/p", "offset": _MAX_CHARS}, _fresh_ctx()
+        )
+    )
+    assert "no more content" in out.lower()
+    assert "1000 characters" in out
 
 
-async def test_web_fetch_tool_omits_the_warning_for_a_whole_page() -> None:
+async def test_web_fetch_tool_omits_the_notice_for_a_whole_page() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
 
     handlers = build_web_handlers(
         SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
     )
-    out = await handlers["web_fetch"]({"url": "https://x.example/p"}, CTX)
+    out = await handlers["web_fetch"]({"url": "https://x.example/p"}, _fresh_ctx())
     assert "truncated" not in str(out).lower()
 
 

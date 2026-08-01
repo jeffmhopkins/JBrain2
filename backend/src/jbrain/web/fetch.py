@@ -25,8 +25,11 @@ Empty `reader_url` disables the fallback. A definitive 404/410 is NOT retried th
 reader — the page does not exist, and the reader would only render the origin's soft
 "no such page" stub (enough text to read as a successful fetch and hide the miss); the
 real status rides back on `WebFetchError.status` so the model sees the 404 and corrects
-the URL. A page clipped to the size caps returns `FetchResult.truncated=True`, so the
-tool can tell the model it saw only the page head (not the whole thing).
+the URL. A long page is returned in windows: `fetch(url, offset=…)` returns
+`full_text[offset : offset+_MAX_CHARS]` alongside `FetchResult.total_chars`, so the tool
+can page the model through the tail (the most recent rows of a long list) instead of
+silently dropping it; `FetchResult.truncated` flags only the rarer case where the raw
+download itself hit the byte cap, so even the full text is short of the real page.
 
 SSRF guard: the URL is model-supplied, and api/worker share an internal Docker
 network with Postgres, the embedder, SearXNG, and the MQTT auth endpoints — so a
@@ -130,11 +133,17 @@ class FetchResult:
     # capped — what lets the agent navigate (fetch one to follow it) instead of being
     # stuck on a single page. Empty for a non-HTML body.
     links: tuple[str, ...] = ()
-    # True when the page was clipped to fit the caps (the raw body hit `_MAX_BYTES` or
-    # the extracted text exceeded `_MAX_CHARS`) — so the tool can TELL the model it is
-    # seeing only the head of the page, not the whole thing (a long list's tail is the
-    # part most likely to be dropped, and the model must not answer as if it saw it).
+    # True when even the FULL extracted text is itself incomplete because the raw body hit
+    # `_MAX_BYTES` — the page was too large to download whole, so pagination cannot reach
+    # past it. (Clipping to `_MAX_CHARS` is NOT this: that tail is recoverable via `offset`.)
     truncated: bool = False
+    # Pagination over the extracted text. `text` is the window `full[offset : offset+_MAX_CHARS]`;
+    # `offset` is where this window starts and `total_chars` is the length of the FULL extracted
+    # text. The tool compares `offset + len(text)` against `total_chars` to tell the model whether
+    # more remains and, if so, the next `offset` to pass — so a long list's tail is fetchable, not
+    # just flagged as dropped.
+    offset: int = 0
+    total_chars: int = 0
 
 
 def _collect_links(hrefs: list[str], *, base: str) -> tuple[str, ...]:
@@ -174,9 +183,14 @@ class WebFetcher:
         self._transport = transport
         self._reader_url = reader_url.rstrip("/")
 
-    async def fetch(self, url: str) -> FetchResult:
+    async def fetch(self, url: str, *, offset: int = 0) -> FetchResult:
+        """Fetch `url` and return the extracted text windowed at `offset` (pagination:
+        the window is `full_text[offset : offset+_MAX_CHARS]`). `offset=0` is the first
+        page; the caller advances by the previous window's length to read a long page's
+        tail."""
+        offset = max(0, offset)
         try:
-            result = await self._fetch_direct(url)
+            result = await self._fetch_direct(url, offset=offset)
         except WebFetchError as exc:
             # A bot-wall (403/429) or unreachable host: the reader, if configured,
             # renders the page from a real browser and gets past what blocked us. But a
@@ -185,14 +199,16 @@ class WebFetcher:
             # as a successful fetch and hide the miss. Re-raise so the model SEES the 404
             # and corrects the URL instead of quietly reading an empty stub.
             if exc.status not in _GONE_STATUSES and self._reader_url:
-                reader = await self._fetch_via_reader(url)
+                reader = await self._fetch_via_reader(url, offset=offset)
                 if reader is not None:
                     return reader
             raise
-        if not result.text.strip() and self._reader_url:
+        # Only the FIRST page's emptiness signals a JS-rendered shell worth the reader; an
+        # empty window at offset>0 just means we paged past the end, not a shell.
+        if offset == 0 and not result.text.strip() and self._reader_url:
             # A JS-rendered shell our static extractor can't see — the reader runs the
             # page's scripts and returns the content that wasn't in the served HTML.
-            reader = await self._fetch_via_reader(url)
+            reader = await self._fetch_via_reader(url, offset=offset)
             if reader is not None and reader.text.strip():
                 return reader
         return result
@@ -220,7 +236,7 @@ class WebFetcher:
             raise WebFetchError(_fetch_error_message(status), status=status) from exc
         return content_type, body
 
-    async def _fetch_direct(self, url: str) -> FetchResult:
+    async def _fetch_direct(self, url: str, *, offset: int = 0) -> FetchResult:
         try:
             async with httpx.AsyncClient(
                 timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
@@ -251,15 +267,21 @@ class WebFetcher:
         else:
             text = body.decode(_charset(content_type) or "utf-8", errors="replace").strip()
             title, links = "", ()
-        # The page is clipped if the raw body hit the byte cap (extraction saw only the
-        # head) OR the extracted text overran the char cap — either way the model is
-        # seeing the head of the page, not the whole thing.
-        truncated = body_truncated or len(text) > _MAX_CHARS
+        # Window the full text at `offset` (pagination); `total_chars` lets the tool tell
+        # the model whether more remains. `truncated` means the FULL text is itself short of
+        # the real page because the download hit the byte cap — not recoverable by paging.
+        window = text[offset : offset + _MAX_CHARS]
         return FetchResult(
-            url=final_url, title=title, text=text[:_MAX_CHARS], links=links, truncated=truncated
+            url=final_url,
+            title=title,
+            text=window,
+            links=links,
+            truncated=body_truncated,
+            offset=offset,
+            total_chars=len(text),
         )
 
-    async def _fetch_via_reader(self, url: str) -> FetchResult | None:
+    async def _fetch_via_reader(self, url: str, *, offset: int = 0) -> FetchResult | None:
         """Re-fetch `url` through the pinned reader endpoint, which renders the page
         and returns clean markdown. The reader base URL is owner-configured and trusted
         (like SearXNG), so it is NOT run through the SSRF guard — a self-hosted reader
@@ -287,9 +309,11 @@ class WebFetcher:
         return FetchResult(
             url=url,
             title="",
-            text=clean[:_MAX_CHARS],
+            text=clean[offset : offset + _MAX_CHARS],
             links=(),
-            truncated=body_truncated or len(clean) > _MAX_CHARS,
+            truncated=body_truncated,
+            offset=offset,
+            total_chars=len(clean),
         )
 
     async def _get_following_safe_redirects(
