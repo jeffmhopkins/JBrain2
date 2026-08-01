@@ -10,15 +10,21 @@ the on-box SearXNG client and the URL fetcher; they surface no NoteSources (a we
 result is not an owner note).
 """
 
+from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
-from jbrain.web.fetch import WebFetcher, WebFetchError
+from jbrain.web.fetch import FetchResult, WebFetcher, WebFetchError, is_youtube_url, window_text
 from jbrain.web.search import SearxngClient, WebSearchError
 
 _MAX_LIMIT = 10
+
+# Builds the (title, markdown) YouTube view for a URL, or None to fall back to a normal HTML
+# fetch. Injected (jbrain.web.youtube.youtube_page bound to the resolver + caption fetcher) so
+# webtools carries no yt-dlp/stream import weight and unit-tests with a plain fake.
+YoutubeFetch = Callable[[str], Awaitable[tuple[str, str] | None]]
 
 
 def _fetch_key(url: str) -> str:
@@ -44,15 +50,142 @@ def _coerce_offset(raw: object) -> int:
         return 0
 
 
+def _coerce_bool(raw: object) -> bool:
+    """A boolean tool arg the model may send as a real bool or a string ("true"/"1")."""
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in {"true", "1", "yes"}
+
+
+def _outline_lines(result: FetchResult) -> str:
+    """The section outline as indented bullets, each with the offset to jump to it. Capped by
+    the fetcher; a '+N more' tail is added when the page has more headings than were surfaced."""
+    lines = [
+        f"{'  ' * (level - 1)}- {title} → offset {off}" for off, level, title in result.outline
+    ]
+    if result.outline_count > len(result.outline):
+        lines.append(f"  (+{result.outline_count - len(result.outline)} more sections)")
+    return "\n".join(lines)
+
+
+def _present_outline(result: FetchResult) -> str:
+    """The outline-only reply (`outline=true`): a table of contents for a big page, no body —
+    the cheapest way to see structure before choosing a section to read by offset."""
+    header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
+    if not result.outline:
+        return (
+            f"{header}This page has no section headings ({result.total_chars} chars). Read it"
+            ' with offset to page through, or find="<keyword>" to jump to a term.'
+        )
+    body = (
+        f"{header}Outline — {result.outline_count} sections, {result.total_chars} chars total."
+        " web_fetch the SAME url with offset=<n> to read a section:\n\n" + _outline_lines(result)
+    )
+    return ToolOutput(
+        body, web_sources=(WebSource(url=result.url, title=result.title or result.url),)
+    )
+
+
+def _present_fetch(result: FetchResult, url: str, offset: int, find: str) -> str:
+    """Render a windowed FetchResult for the model: the title/url header, the text window, the
+    keyword/pagination notices, and the match map. Shared by the HTML-fetch and YouTube paths so
+    both page and keyword-jump identically. `url` is the model's original request URL, for the
+    'no readable text' message when the result carries no final URL of its own."""
+    # A `find` that matched nothing: don't dump an irrelevant window — tell the model the term
+    # isn't on the page (with its length) so it retries a different term or reads plainly.
+    if find and not result.match_offsets:
+        return (
+            f"No match for '{find}' in {result.url} ({result.total_chars} chars). Try a"
+            " different term (check spelling/phrasing), or web_fetch with offset=0 to read"
+            " from the top."
+        )
+    if not result.text:
+        # An empty window at offset>0 means the model paged past the end — a normal stop, not a
+        # dead page — so say so with the real length instead of "no text".
+        if offset > 0 and result.total_chars:
+            return (
+                f"No more content at offset {offset}: {result.url} has"
+                f" {result.total_chars} characters, which you've already read past."
+            )
+        return f"That page ({url}) had no readable text."
+    header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
+    if find and result.match_offsets:
+        # Jumped straight to the keyword — say where, so the model knows this window is the
+        # matched SECTION (positioned at the first hit), not the top of the page.
+        header += (
+            f"[found {result.match_count} match(es) for '{find}'; window positioned at the"
+            f" first, near offset {result.match_offsets[0]}]\n\n"
+        )
+    elif offset:
+        header += f"[continued from offset {offset} of {result.total_chars} chars]\n\n"
+    body = header + result.text
+    # Links only on the first page — they don't change across windows, and repeating the whole
+    # list on every continuation is noise.
+    if result.links and offset == 0:
+        links = "\n".join(f"- {u}" for u in result.links)
+        body += f"\n\nLinks on this page (web_fetch any of these to follow it):\n{links}"
+    next_offset = result.offset + len(result.text)
+    if next_offset < result.total_chars:
+        # More text remains below this window — tell the model the exact next call so a long
+        # list's tail (the most recent rows) is fetchable, not just flagged as dropped.
+        remaining = result.total_chars - next_offset
+        body += (
+            f"\n\n[Truncated: showing chars {result.offset}–{next_offset} of"
+            f" {result.total_chars}; {remaining} more remain below. To read the rest, call"
+            f" web_fetch again with the SAME url and offset={next_offset} (repeat, advancing"
+            " the offset, until you reach the end). Don't answer from this window alone if"
+            " what you need — e.g. the last rows of a long list — may be further down.]"
+        )
+    elif result.truncated:
+        # We reached the end of what we HAVE, but the raw download hit the byte cap, so the real
+        # page is even longer than we could fetch — paging can't recover that tail.
+        body += (
+            "\n\n[This page was too large to download in full (over the size cap), so the"
+            " end of it is not available here. If you need content past this point, look for"
+            " a more specific URL/section or web_search for the exact item.]"
+        )
+    # When a term appears more than once, surface the other match offsets so the model can jump
+    # to a specific later hit instead of paging there — the whole point of `find`.
+    if find and result.match_count > 1:
+        shown = ", ".join(str(o) for o in result.match_offsets)
+        more = (
+            f" (+{result.match_count - len(result.match_offsets)} more)"
+            if result.match_count > len(result.match_offsets)
+            else ""
+        )
+        body += (
+            f"\n\n[Other matches for '{find}' at offsets: {shown}{more}. To read around a"
+            " specific one, web_fetch the SAME url with offset set to that number.]"
+        )
+    # On a page too big for one window, surface its section map up front so the model can jump
+    # straight to the right section by offset — one call, no blind paging (the fix for a huge
+    # page where the part wanted sits far down). Spans-more-than-this-window = there's content
+    # before or after the current window.
+    spans_more = result.offset > 0 or (result.offset + len(result.text)) < result.total_chars
+    if result.outline and spans_more:
+        body += (
+            "\n\n[Sections on this page — web_fetch the SAME url with offset=<n> to jump:\n"
+            + _outline_lines(result)
+            + "]"
+        )
+    # The fetched page is itself a citable source — title from the page, url the FINAL url after
+    # redirects (what the favicon + link should point at).
+    source = WebSource(url=result.url, title=result.title or result.url)
+    return ToolOutput(body, web_sources=(source,))
+
+
 def build_web_handlers(
     search: SearxngClient,
     fetcher: WebFetcher,
     emit: BrainEmit | None = None,
+    youtube: YoutubeFetch | None = None,
 ) -> dict[str, ToolHandler]:
     """`emit(kind, text)`, if given, fires a best-effort wall-display tendril event the
     moment jerv reaches out to the web (see jbrain.agent.brainevents). The query / URL
     text rides the tendril only when the turn opted into text streaming; otherwise the
-    marker is content-free."""
+    marker is content-free. `youtube`, if given, renders a YouTube URL as a lightweight
+    title+channel+description+captions view instead of scraping its JS shell; None (or a
+    resolve that returns None) falls back to a normal HTML fetch."""
 
     async def web_search_tool(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
@@ -79,6 +212,23 @@ def build_web_handlers(
         if not url:
             return "web_fetch needs a url."
         offset = _coerce_offset(arguments.get("offset"))
+        find = str(arguments.get("find", "")).strip()
+        outline_only = _coerce_bool(arguments.get("outline"))
+        # A YouTube URL reads as a lightweight title+channel+description+captions view (no media
+        # download, no GPU) that pages/keyword-jumps like any page. A None result (unresolvable —
+        # private, geo-blocked, not really a video) falls through to a normal HTML fetch.
+        if youtube is not None and is_youtube_url(url):
+            if emit:
+                emit("web_fetch", url)
+            rendered = await youtube(url)
+            if rendered is not None:
+                title, markdown = rendered
+                result = window_text(markdown, url=url, title=title, offset=offset, find=find)
+                return (
+                    _present_outline(result)
+                    if outline_only
+                    else _present_fetch(result, url, offset, find)
+                )
         # Break the re-fetch loop: a URL that already failed this turn (a 404 the model
         # keeps reconstructing, a bot-wall) will keep failing, so refuse it without a
         # network call and point at web_search instead of burning the budget on it. Keyed
@@ -95,52 +245,13 @@ def build_web_handlers(
         if emit:
             emit("web_fetch", url)
         try:
-            result = await fetcher.fetch(url, offset=offset)
+            result = await fetcher.fetch(url, offset=offset, find=find)
         except WebFetchError as exc:
             # Remember the miss so an identical re-fetch this turn short-circuits above.
             ctx.failed_fetches[key] = exc.status or 0
             return str(exc)
-        if not result.text:
-            # An empty window at offset>0 means the model paged past the end — a normal
-            # stop, not a dead page — so say so with the real length instead of "no text".
-            if offset > 0 and result.total_chars:
-                return (
-                    f"No more content at offset {offset}: {result.url} has"
-                    f" {result.total_chars} characters, which you've already read past."
-                )
-            return f"That page ({url}) had no readable text."
-        header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
-        if offset:
-            header += f"[continued from offset {offset} of {result.total_chars} chars]\n\n"
-        body = header + result.text
-        # Links only on the first page — they don't change across windows, and repeating
-        # the whole list on every continuation is noise.
-        if result.links and offset == 0:
-            links = "\n".join(f"- {u}" for u in result.links)
-            body += f"\n\nLinks on this page (web_fetch any of these to follow it):\n{links}"
-        next_offset = result.offset + len(result.text)
-        if next_offset < result.total_chars:
-            # More text remains below this window — tell the model the exact next call so a
-            # long list's tail (the most recent rows) is fetchable, not just flagged as dropped.
-            remaining = result.total_chars - next_offset
-            body += (
-                f"\n\n[Truncated: showing chars {result.offset}–{next_offset} of"
-                f" {result.total_chars}; {remaining} more remain below. To read the rest, call"
-                f" web_fetch again with the SAME url and offset={next_offset} (repeat, advancing"
-                " the offset, until you reach the end). Don't answer from this window alone if"
-                " what you need — e.g. the last rows of a long list — may be further down.]"
-            )
-        elif result.truncated:
-            # We reached the end of what we HAVE, but the raw download hit the byte cap, so the
-            # real page is even longer than we could fetch — paging can't recover that tail.
-            body += (
-                "\n\n[This page was too large to download in full (over the size cap), so the"
-                " end of it is not available here. If you need content past this point, look for"
-                " a more specific URL/section or web_search for the exact item.]"
-            )
-        # The fetched page is itself a citable source — title from the page, url the
-        # FINAL url after redirects (what the favicon + link should point at).
-        source = WebSource(url=result.url, title=result.title or result.url)
-        return ToolOutput(body, web_sources=(source,))
+        if outline_only:
+            return _present_outline(result)
+        return _present_fetch(result, url, offset, find)
 
     return {"web_search": web_search_tool, "web_fetch": web_fetch_tool}

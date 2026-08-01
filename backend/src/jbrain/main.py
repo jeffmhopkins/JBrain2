@@ -1,4 +1,5 @@
 import asyncio
+import functools
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -97,6 +98,7 @@ from jbrain.api.debug_activity import DebugActivity
 from jbrain.api.research_service import ResearchLibrary
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
+from jbrain.captions import fetch_caption_transcript
 from jbrain.citygeocode import CityGeocoder
 from jbrain.config import Settings, get_settings
 from jbrain.connectors.base import ConnectorRegistry
@@ -138,7 +140,7 @@ from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
-from jbrain.stream import ytdlp_available
+from jbrain.stream import resolve_stream, ytdlp_available
 from jbrain.tasks.repo import TaskGroupRepo, TaskRepo, TaskRunRepo
 from jbrain.tasks.runner import LoopTurnExecutor, TaskRunner
 from jbrain.tasks.scheduler import run_tasks_loop
@@ -157,6 +159,7 @@ from jbrain.web import (
     WeatherHistoryClient,
     WebFetcher,
 )
+from jbrain.web.youtube import youtube_page
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.lint import WIKI_LINT_SPEC
 from jbrain.wiki.readstore import WikiReadStore
@@ -385,10 +388,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # app.state so the ingest cross-validation, the jerv `ocr` tool, and the jcode `ocr`
         # bridge all reach the one pinned instance. Empty url ⇒ degrade to VLM-only OCR.
         app.state.rapidocr = RapidOcrClient(settings.rapidocr_url)
+        # A YouTube URL through web_fetch reads as a lightweight title+channel+description+
+        # captions view (jbrain.web.youtube) — no media download or GPU, unlike analyze_video.
+        # Bound to the tested yt-dlp resolver + caption fetcher; the blocking resolve runs off
+        # the loop. Gated on yt-dlp: a stripped env falls back to a normal HTML fetch.
+        youtube_fetch = (
+            functools.partial(
+                youtube_page,
+                resolver=resolve_stream,
+                caption_fetcher=fetch_caption_transcript,
+                run_blocking=asyncio.to_thread,
+            )
+            if ytdlp_available()
+            else None
+        )
         web_handlers = build_web_handlers(
             searxng,
             web_fetcher,
             emit=brain_emit,
+            youtube=youtube_fetch,
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).

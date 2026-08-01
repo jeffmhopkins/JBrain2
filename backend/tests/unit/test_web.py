@@ -611,6 +611,79 @@ async def test_web_fetch_tool_omits_the_notice_for_a_whole_page() -> None:
     assert "truncated" not in str(out).lower()
 
 
+# --- find: jump the window to a keyword on a big page --------------------------
+
+
+def _plain_body(content: str):  # type: ignore[no-untyped-def]
+    data = content.encode()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=data, headers={"content-type": "text/plain"})
+
+    return handle
+
+
+async def test_fetch_find_positions_the_window_on_the_keyword() -> None:
+    from jbrain.web.fetch import _FIND_LEAD
+
+    needle = "MARKER2026"
+    content = ("H" * 40_000) + needle + ("Z" * 5_000)  # keyword buried deep in the page
+    result = await WebFetcher(transport=httpx.MockTransport(_plain_body(content))).fetch(
+        "https://x.example/big", find=needle
+    )
+    assert result.match_offsets == (40_000,)
+    assert result.match_count == 1
+    assert result.offset == 40_000 - _FIND_LEAD  # a little lead-in before the match
+    assert needle in result.text  # the window actually contains the section we searched for
+
+
+async def test_fetch_find_counts_all_matches_but_caps_the_offset_list() -> None:
+    from jbrain.web.fetch import _MAX_MATCH_OFFSETS
+
+    block = "q" * 100 + "ROW"  # "ROW" every 103 chars
+    content = block * 30  # 30 occurrences
+    result = await WebFetcher(transport=httpx.MockTransport(_plain_body(content))).fetch(
+        "https://x.example/rows",
+        find="row",  # case-insensitive
+    )
+    assert result.match_count == 30
+    assert len(result.match_offsets) == _MAX_MATCH_OFFSETS  # capped, but the true count is kept
+    assert result.match_offsets[0] == 100
+
+
+async def test_fetch_find_after_offset_skips_earlier_matches() -> None:
+    content = ("A" * 1_000) + "NEEDLE" + ("B" * 10_000) + "NEEDLE" + ("C" * 1_000)
+    fetcher = WebFetcher(transport=httpx.MockTransport(_plain_body(content)))
+    # With an offset past the first hit, find lands on the SECOND occurrence.
+    result = await fetcher.fetch("https://x.example/p", offset=2_000, find="NEEDLE")
+    assert result.match_offsets[0] == 1_000 + 6 + 10_000  # the second NEEDLE
+    assert result.match_count == 1  # only matches at/after the offset are counted
+
+
+async def test_web_fetch_tool_find_jumps_and_lists_other_matches() -> None:
+    block = "q" * 100 + "2026"
+    content = block * 5  # five "2026" hits
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain_body(content)))
+    )
+    out = str(
+        await handlers["web_fetch"]({"url": "https://x.example/list", "find": "2026"}, _fresh_ctx())
+    )
+    assert "found 5 match" in out.lower()
+    assert "other matches for '2026' at offsets:" in out.lower()
+
+
+async def test_web_fetch_tool_find_no_match_says_so() -> None:
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain_body("no digits here")))
+    )
+    out = str(
+        await handlers["web_fetch"]({"url": "https://x.example/p", "find": "2026"}, _fresh_ctx())
+    )
+    assert "no match for '2026'" in out.lower()
+    assert "14 chars" in out  # reports the page length so the model can decide what to do
+
+
 # --- repeated-failed-fetch backstop (don't burn the budget on a dead URL) ------
 
 
@@ -817,3 +890,116 @@ async def test_invalid_web_calls_do_not_emit() -> None:
     await handlers["web_search"]({"query": "  "}, CTX)
     await handlers["web_fetch"]({}, CTX)
     assert fired == []
+
+
+# --- YouTube view (lightweight title/channel/description/captions via web_fetch) ----
+
+
+async def _fake_youtube(url: str):  # type: ignore[no-untyped-def]
+    md = (
+        "**Channel:** Space Channel\n\n"
+        "## Description\n\nA recap of the launch.\n\n"
+        "## Transcript (captions)\n\nten nine eight liftoff"
+    )
+    return ("Rocket Launch Recap", md)
+
+
+async def test_web_fetch_renders_a_youtube_url_as_the_video_view() -> None:
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), youtube=_fake_youtube)
+    out = str(await handlers["web_fetch"]({"url": "https://youtu.be/abc"}, _fresh_ctx()))
+    assert "Rocket Launch Recap" in out
+    assert "Space Channel" in out
+    assert "## Transcript (captions)" in out
+    assert "ten nine eight liftoff" in out
+
+
+async def test_web_fetch_youtube_supports_find() -> None:
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), youtube=_fake_youtube)
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://youtu.be/abc", "find": "liftoff"}, _fresh_ctx()
+        )
+    )
+    assert "found 1 match(es) for 'liftoff'" in out
+
+
+async def test_web_fetch_youtube_falls_back_to_html_when_unresolvable() -> None:
+    async def yt_none(url: str):  # type: ignore[no-untyped-def]
+        return None  # unresolvable video → fall through to a normal HTML fetch
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle)), youtube=yt_none
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://youtu.be/gone"}, _fresh_ctx()))
+    assert "Hi There" in out  # the HTML fetch ran instead
+
+
+async def test_web_fetch_youtube_not_wired_uses_normal_fetch() -> None:
+    # No youtube resolver injected (e.g. yt-dlp absent): a youtube URL just gets a plain fetch.
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://youtu.be/abc"}, _fresh_ctx()))
+    assert "Hi There" in out
+
+
+# --- outline: a section map for a big page ------------------------------------
+
+_OUTLINE_PAGE = (
+    "## Intro\n"
+    + ("a" * 20_000)
+    + "\n## History\n"
+    + ("b" * 20_000)
+    + "\n## Y2026\n"
+    + ("c" * 5_000)
+).encode()
+
+
+def _outline_handlers():  # type: ignore[no-untyped-def]
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_OUTLINE_PAGE, headers={"content-type": "text/plain"})
+
+    return build_web_handlers(SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle)))
+
+
+async def test_web_fetch_appends_a_section_outline_on_a_big_page() -> None:
+    out = str(
+        await _outline_handlers()["web_fetch"]({"url": "https://x.example/big"}, _fresh_ctx())
+    )
+    assert "Sections on this page" in out
+    assert "History → offset" in out
+    assert "Y2026 → offset" in out  # the far section is reachable by the offset given
+
+
+async def test_web_fetch_outline_true_returns_only_the_outline() -> None:
+    out = str(
+        await _outline_handlers()["web_fetch"](
+            {"url": "https://x.example/big", "outline": True}, _fresh_ctx()
+        )
+    )
+    assert "Outline — 3 sections" in out
+    assert "History → offset" in out
+    assert "a" * 100 not in out  # the body text is NOT included in the outline-only view
+
+
+async def test_web_fetch_outline_true_on_a_flat_page_says_no_sections() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"just prose, no headings", headers={"content-type": "text/plain"}
+        )
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/flat", "outline": True}, _fresh_ctx()
+        )
+    )
+    assert "no section headings" in out.lower()

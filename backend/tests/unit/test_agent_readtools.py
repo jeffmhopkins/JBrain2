@@ -1157,8 +1157,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_fetch.tool": (
             "web_fetch",
-            3,
-            "fb6963b83d171d17a63c57ddae754cbeb3e74faefb005e496d8973e0eea07374",
+            6,
+            "44bc80504eb403ef1eb2401d4d3befb823629dcfe1910acc566dfa64a75fd194",
         ),
         "generate_image.tool": (
             "generate_image",
