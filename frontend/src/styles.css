@@ -7746,6 +7746,11 @@ button.small {
   gap: 8px;
   min-width: 0;
 }
+/* `display: flex` above outranks the UA `[hidden] { display: none }`, so a folded
+   body would stay visible without this — restore the hide with matching specificity. */
+:is(.fb-shell, .jcode-bubble, .rl-md) .md-body[hidden] {
+  display: none;
+}
 :is(.fb-shell, .jcode-bubble, .rl-md) .md-h:has(.md-h-toggle) {
   margin: 2px 0 0;
 }
