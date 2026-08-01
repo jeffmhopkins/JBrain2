@@ -509,6 +509,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 settings.comfyui_models,
                 # The handlers are a thin adapter over the shared service.
                 render=app.state.image_render,
+                # The deterministic OCR sidecar, used by analyze_image as a fast CPU
+                # text-detector: it gates the verbatim vision-OCR pass so a document/screenshot
+                # comes back with its exact text appended, and a text-less photo doesn't.
+                rapidocr=app.state.rapidocr,
             )
         else:
             app.state.image_gen = None

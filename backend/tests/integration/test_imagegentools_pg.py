@@ -27,6 +27,7 @@ from jbrain.image_gen.fake import FakeImageGen
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter, resolve_tasks
 from jbrain.models.images import GeneratedImageRepo
+from jbrain.vision import OcrResult, OcrServiceError
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 from tests.unit.fakes import FakeComfyUiGateway, FakeLocalGateway
@@ -110,6 +111,23 @@ def _router(answer: str = "an analysis of the image") -> LlmRouter:
     return LlmRouter({"xai": FakeLlmClient(responses=[answer])}, resolve_tasks({}))
 
 
+class _FakeRapidOcr:
+    """A fake RapidOcrClient standing in for the on-box text-DETECTOR analyze_image uses:
+    a canned transcription (any non-empty text ⇒ "there is text"), or an OcrServiceError to
+    exercise the degrade-to-run-the-OCR-pass-anyway path. Records the bytes it saw."""
+
+    def __init__(self, text: str = "", *, error: bool = False) -> None:
+        self._text = text
+        self._error = error
+        self.calls: list[bytes] = []
+
+    async def ocr(self, data: bytes, media_type: str = "application/octet-stream") -> OcrResult:
+        self.calls.append(data)
+        if self._error:
+            raise OcrServiceError("sidecar down")
+        return OcrResult(text=self._text, mean_score=0.9)
+
+
 async def _handlers(
     maker: async_sessionmaker,
     owner: SessionContext,
@@ -122,6 +140,7 @@ async def _handlers(
         "qwen-image-edit",
         "qwen-image-edit-lightning",
     ),
+    rapidocr: _FakeRapidOcr | None = None,
 ):
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
@@ -135,6 +154,7 @@ async def _handlers(
         comfy or FakeComfyUiGateway(),
         router or _router(),
         provisioned,
+        rapidocr=rapidocr,
     )
 
 
@@ -739,3 +759,101 @@ async def test_non_uuid_source_id_is_a_clean_miss_not_a_db_error(maker: async_se
     # A non-uuid generated id is the same clean miss (no DB argument error).
     bad_gen = await handlers["analyze_image"]({"prompt": "describe", "source_image_id": "x"}, ctx)
     assert bad_gen == "No generated image with that id is in this chat."
+
+
+async def _analyzable_source(maker: async_sessionmaker, owner, handlers) -> str:
+    """Generate an image and return its id — a resolvable analyze_image source (generate
+    drives only the FakeImageGen, so the vision router stays untouched for the analyze call)."""
+    gen = await handlers["generate_image"]({"prompt": "a document"}, _ctx(owner))
+    assert isinstance(gen, ToolOutput) and gen.view is not None
+    return gen.view.data["image_id"]
+
+
+async def test_analyze_appends_verbatim_markdown_when_text_detected(
+    maker: async_sessionmaker,
+) -> None:
+    """When RapidOCR detects text, analyze_image runs the second vision pass and appends its
+    verbatim Markdown transcription under a heading — description + exact text in one call. The
+    OCR pass carries the Markdown system prompt and the wide OCR token budget."""
+    from jbrain.ingest.ocr import OCR_MAX_TOKENS
+
+    owner = await _owner(maker)
+    router = LlmRouter(
+        {"xai": FakeLlmClient(["A one-page offering document.", "# Offering\n\n**Adopted** 2024"])},
+        resolve_tasks({}),
+    )
+    rapid = _FakeRapidOcr("offering document 2024")  # non-empty ⇒ "there is text"
+    handlers = await _handlers(maker, owner, FakeImageGen(), router=router, rapidocr=rapid)
+    source_id = await _analyzable_source(maker, owner, handlers)
+
+    out = await handlers["analyze_image"](
+        {"prompt": "what is this document?", "source_image_id": source_id}, _ctx(owner)
+    )
+
+    assert out == (
+        "A one-page offering document.\n\n"
+        "--- Full text (verbatim) ---\n"
+        "# Offering\n\n**Adopted** 2024"
+    )
+    calls = router._clients["xai"].calls  # type: ignore[attr-defined]
+    assert len(calls) == 2  # describe pass, then the verbatim-OCR pass
+    assert calls[0]["user_text"] == "what is this document?"  # the describe pass
+    assert "markdown" in calls[1]["system"].lower()  # the OCR pass carries the Markdown prompt
+    assert calls[1]["max_tokens"] == OCR_MAX_TOKENS  # …at the wide transcription budget
+    assert len(rapid.calls) == 1  # the detector ran once, on the image bytes
+
+
+async def test_analyze_skips_ocr_pass_when_no_text_detected(maker: async_sessionmaker) -> None:
+    """A text-less image (RapidOCR finds nothing) gets the description only — the second vision
+    pass never runs, so a photo doesn't pay for a transcription it has no text to produce."""
+    owner = await _owner(maker)
+    router = LlmRouter(
+        {"xai": FakeLlmClient(["A golden retriever on a beach."])}, resolve_tasks({})
+    )
+    rapid = _FakeRapidOcr("")  # no legible text
+    handlers = await _handlers(maker, owner, FakeImageGen(), router=router, rapidocr=rapid)
+    source_id = await _analyzable_source(maker, owner, handlers)
+
+    out = await handlers["analyze_image"](
+        {"prompt": "what is this?", "source_image_id": source_id}, _ctx(owner)
+    )
+
+    assert out == "A golden retriever on a beach."  # description only, no verbatim block
+    assert len(router._clients["xai"].calls) == 1  # type: ignore[attr-defined] - OCR pass skipped
+    assert len(rapid.calls) == 1  # the detector still ran
+
+
+async def test_analyze_without_rapidocr_stays_description_only(maker: async_sessionmaker) -> None:
+    """No detector wired (rapidocr=None) ⇒ analyze_image is the pre-existing description-only
+    read — the OCR augmentation needs the gate, and jerv still has the dedicated `ocr` tool."""
+    owner = await _owner(maker)
+    router = LlmRouter({"xai": FakeLlmClient(["Just a description."])}, resolve_tasks({}))
+    handlers = await _handlers(maker, owner, FakeImageGen(), router=router)  # rapidocr=None
+    source_id = await _analyzable_source(maker, owner, handlers)
+
+    out = await handlers["analyze_image"](
+        {"prompt": "describe it", "source_image_id": source_id}, _ctx(owner)
+    )
+
+    assert out == "Just a description."
+    assert len(router._clients["xai"].calls) == 1  # type: ignore[attr-defined] - no second pass
+
+
+async def test_analyze_runs_ocr_pass_when_detector_unavailable(maker: async_sessionmaker) -> None:
+    """A wired-but-unreachable detector degrades to running the OCR pass anyway — the Markdown
+    prompt self-gates (empty on a text-less image), so a transient sidecar outage never hides
+    text that is there."""
+    owner = await _owner(maker)
+    router = LlmRouter(
+        {"xai": FakeLlmClient(["A form.", "## Form\n\n| a | b |\n|---|---|"])}, resolve_tasks({})
+    )
+    rapid = _FakeRapidOcr(error=True)  # sidecar down ⇒ OcrServiceError
+    handlers = await _handlers(maker, owner, FakeImageGen(), router=router, rapidocr=rapid)
+    source_id = await _analyzable_source(maker, owner, handlers)
+
+    out = await handlers["analyze_image"](
+        {"prompt": "read it", "source_image_id": source_id}, _ctx(owner)
+    )
+
+    assert out == "A form.\n\n--- Full text (verbatim) ---\n## Form\n\n| a | b |\n|---|---|"
+    assert len(router._clients["xai"].calls) == 2  # type: ignore[attr-defined] - OCR pass ran

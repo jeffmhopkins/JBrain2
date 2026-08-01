@@ -1,6 +1,6 @@
 ---
 name: analyze_image
-version: 2
+version: 3
 permission: web
 cost_class: standard
 params:
@@ -21,9 +21,13 @@ Look at an image and answer a question about what it SHOWS, using the owner's lo
 vision model. Give EXACTLY ONE source: source_image_id (an image you generated
 earlier this chat) or source_attachment_id (an image the owner attached this chat)
 — not both, not neither. Use this to DESCRIBE an image, judge a visual detail, or
-decide how to edit it, when you cannot see it yourself. For the LITERAL text in an
-image or PDF — a screenshot of an error, a receipt, a scanned document, a code
-snippet, anything the owner asks you to "read" or "transcribe" — use the `ocr` tool
-instead: it is exact and will not misread or invent text the way a vision model can.
-Returns the vision model's text answer; it inserts nothing and shows the owner
-nothing, so report what you learned in your own words.
+decide how to edit it, when you cannot see it yourself. When the image contains
+text (a screenshot, a document, a receipt, a slide), this ALSO returns a verbatim
+transcription of that text as Markdown — headings, tables, lists, and emphasis
+preserved — appended after the description under a "Full text (verbatim)" heading,
+so a single call gives you both a reading of the image and its exact words, and you
+do NOT need a separate call to get the text. Use the `ocr`
+tool instead only when you need a deterministic, hallucination-proof transcription
+and no description (or for a PDF, which this tool does not read). Returns the vision
+model's text answer; it inserts nothing and shows the owner nothing, so report what
+you learned in your own words.

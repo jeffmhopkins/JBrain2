@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-28
+> **Status:** Living · **Last verified:** 2026-07-31
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -446,15 +446,26 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   each tool takes `show: false` to suppress its card when it's only an intermediate step — the
   same suppression `analyze_video`/`analyze_stream` now accept for a mid-reasoning read.
 
-  **`ocr`** (`../plans/RAPIDOCR_PLAN.md`) is the deterministic, verbatim counterpart to
-  `analyze_image`: it reads the **exact text** out of an attached image or PDF via the on-box
-  RapidOCR sidecar — no vision model, no interpretation, no model swap, so it never invents or
-  paraphrases text the way a model reading can. jerv prefers it over `analyze_image` whenever it
-  needs the literal text (an error/terminal screenshot, a receipt, a scanned document, a code
-  snippet); `analyze_image` stays the tool for describing what an image *shows*. A PDF is read
-  page by page. It reads no KB data and surfaces no card — jerv reports the text directly. The
-  same RapidOCR engine also backs the ingest OCR cross-validation and the jcode sandbox's
-  always-on `ocr` shell helper (bridged through the api, like `web-search`).
+  **`analyze_image` also returns the text.** Beyond describing what an image *shows*,
+  `analyze_image` now hands back the image's **verbatim text as Markdown** (headings, tables,
+  lists preserved) appended after the description — so a screenshot or document comes back with
+  both a reading and its exact words in a single call. It does this with a **second vision pass**
+  (the `vision.ocr` route + budget, a Markdown transcription prompt), gated by the on-box
+  RapidOCR sidecar used purely as a fast CPU **text detector**: RapidOCR runs concurrently with
+  the description and, only when it finds text, the verbatim pass runs — so a text-less photo
+  never pays for one. With no detector wired the tool stays description-only; a
+  configured-but-unreachable detector degrades to running the pass anyway (its prompt self-gates,
+  emitting nothing when there is no text).
+
+  **`ocr`** (`../plans/RAPIDOCR_PLAN.md`) remains the deterministic, verbatim counterpart: it
+  reads the **exact text** out of an attached image or PDF via the on-box RapidOCR sidecar — no
+  vision model, no interpretation, no model swap, so it never invents or paraphrases text the way
+  a model reading can. jerv prefers it over `analyze_image` when it needs a
+  **hallucination-proof** transcription with no description, or the text of a **PDF** (which
+  `analyze_image` does not read; a PDF is OCR'd page by page). It reads no KB data and surfaces no
+  card — jerv reports the text directly. The same RapidOCR engine also backs the ingest OCR
+  cross-validation, the `analyze_image` text-detector gate, and the jcode sandbox's always-on
+  `ocr` shell helper (bridged through the api, like `web-search`).
 
   **Web citations.** jerv cites a web claim with an inline `[^n]` footnote marker
   (the same convention the curator uses for notes), numbered in the order the
