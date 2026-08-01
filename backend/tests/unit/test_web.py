@@ -487,6 +487,83 @@ async def test_no_reader_configured_surfaces_the_block() -> None:
         await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/walled")
 
 
+async def test_a_404_does_not_fall_back_to_the_reader() -> None:
+    # A definitive 404 means the page does not exist — the reader would only render the
+    # origin's soft "no such page" stub (enough text to read as success, hiding the miss).
+    # So the fetch re-raises the 404 instead of returning the reader's stub, even though a
+    # reader is configured and would answer (it's what recovers a 403 bot-wall).
+    gone = httpx.Response(404, headers={"content-type": "text/html"})
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_reader_handler(gone)),
+        reader_url="http://reader:3000",
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://en.wikipedia.org/wiki/Nonexistent_(2026)")
+    assert excinfo.value.status == 404
+    assert "404" in str(excinfo.value)  # the model sees the real status, not a glitch
+
+
+async def test_a_403_still_falls_back_to_the_reader() -> None:
+    # The reader guard is scoped to 404/410 only: a bot-wall 403 still gets the reader.
+    blocked = httpx.Response(403, headers={"content-type": "text/html"})
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_reader_handler(blocked)),
+        reader_url="http://reader:3000",
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Rendered by the reader" in result.text
+
+
+# --- truncation signalling (the model must know it saw only the page head) -----
+
+
+async def test_fetch_flags_a_clipped_page_as_truncated() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    big = ("word " * ((_MAX_CHARS // 5) + 1000)).encode()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=big, headers={"content-type": "text/plain"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/big")
+    assert result.truncated is True
+    assert len(result.text) == _MAX_CHARS  # clipped exactly to the cap
+
+
+async def test_fetch_does_not_flag_a_short_page() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"a short page", headers={"content-type": "text/plain"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/p")
+    assert result.truncated is False
+
+
+async def test_web_fetch_tool_warns_when_the_page_is_truncated() -> None:
+    from jbrain.web.fetch import _MAX_CHARS
+
+    big = ("word " * ((_MAX_CHARS // 5) + 1000)).encode()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=big, headers={"content-type": "text/plain"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = await handlers["web_fetch"]({"url": "https://x.example/big"}, CTX)
+    assert "truncated" in str(out).lower()
+
+
+async def test_web_fetch_tool_omits_the_warning_for_a_whole_page() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = await handlers["web_fetch"]({"url": "https://x.example/p"}, CTX)
+    assert "truncated" not in str(out).lower()
+
+
 async def test_reader_still_refuses_a_non_public_target() -> None:
     # The reader path guards the TARGET host the same way: a model-supplied private URL
     # can't be laundered off-box through the reader. (Real DNS — no transport.)

@@ -68,6 +68,16 @@ def build_web_handlers(
             # rather than stopping at this page (web_fetch any of them to follow it).
             links = "\n".join(f"- {u}" for u in result.links)
             body += f"\n\nLinks on this page (web_fetch any of these to follow it):\n{links}"
+        if result.truncated:
+            # The page was clipped to fit the size caps — the model is seeing only its
+            # head. Say so explicitly so it does not answer as though it read the whole
+            # page (a long list's tail, the most recent rows, is what gets dropped).
+            body += (
+                "\n\n[This page was truncated — you are seeing only the beginning. If what"
+                " you need isn't above (e.g. the most recent / last rows of a long list or"
+                " table), it may be further down: fetch a more specific URL or section, or"
+                " web_search for the exact item, rather than answering from this excerpt.]"
+            )
         # The fetched page is itself a citable source — title from the page, url the
         # FINAL url after redirects (what the favicon + link should point at).
         source = WebSource(url=result.url, title=result.title or result.url)
