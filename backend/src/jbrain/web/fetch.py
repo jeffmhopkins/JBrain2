@@ -173,15 +173,31 @@ class FetchResult:
     outline_count: int = 0
 
 
-def _find_offsets(text: str, needle: str, *, at_least: int) -> tuple[tuple[int, ...], int]:
-    """Character offsets of `needle` (case-insensitive) in `text` at/after `at_least`, as
-    (capped_list, total_count). Non-overlapping scan; the capped list bounds the tokens the
-    match map costs while `total_count` still reports the true number of hits."""
+def _find_offsets(
+    text: str, needle: str, *, at_least: int, find_regex: bool = False
+) -> tuple[tuple[int, ...], int]:
+    """Character offsets of `needle` in `text` at/after `at_least`, as (capped_list,
+    total_count). Case-insensitive. `find_regex` treats `needle` as a regular expression
+    (the caller validates it compiles first); otherwise it is a literal substring. Both scan
+    non-overlapping; the capped list bounds the match-map tokens while `total_count` still
+    reports the true number of hits."""
+    offsets: list[int] = []
+    total = 0
+    if find_regex:
+        try:
+            pattern = re.compile(needle, re.IGNORECASE)
+        except re.error:
+            return (), 0  # a bad pattern is caught+reported by the tool; defensive here
+        for m in pattern.finditer(text, at_least):
+            if m.start() == m.end():
+                continue  # skip zero-width matches (e.g. `a*`) so they don't flood the map
+            total += 1
+            if len(offsets) < _MAX_MATCH_OFFSETS:
+                offsets.append(m.start())
+        return tuple(offsets), total
     hay = text.lower()
     pin = needle.lower()
     step = max(1, len(pin))
-    offsets: list[int] = []
-    total = 0
     i = hay.find(pin, at_least)
     while i != -1:
         total += 1
@@ -212,17 +228,21 @@ def _window_and_find(
     links: tuple[str, ...],
     offset: int,
     find: str,
+    find_regex: bool = False,
     body_truncated: bool,
 ) -> FetchResult:
     """Build the FetchResult: window `text` at `offset` (pagination) and, when `find` is
     given, re-anchor the window on the first keyword match at/after `offset` (so the model
     lands on the right SECTION, not a guessed offset) and attach the match map + section
-    outline. Shared by the direct and reader paths so both page and locate identically."""
+    outline. `find_regex` matches `find` as a regular expression. Shared by the direct and
+    reader paths so both page and locate identically."""
     match_offsets: tuple[int, ...] = ()
     match_count = 0
     start = offset
     if find:
-        match_offsets, match_count = _find_offsets(text, find, at_least=offset)
+        match_offsets, match_count = _find_offsets(
+            text, find, at_least=offset, find_regex=find_regex
+        )
         if match_offsets:
             start = max(0, match_offsets[0] - _FIND_LEAD)
     outline, outline_count = _outline(text)
@@ -242,12 +262,21 @@ def _window_and_find(
     )
 
 
-def window_text(text: str, *, url: str, title: str, offset: int = 0, find: str = "") -> FetchResult:
+def window_text(
+    text: str, *, url: str, title: str, offset: int = 0, find: str = "", find_regex: bool = False
+) -> FetchResult:
     """Wrap ready-made text (not fetched HTML — e.g. a composed YouTube view) in a FetchResult
     with the SAME offset/find windowing a fetched page gets, so the tool pages and keyword-jumps
     it identically. `truncated` is False: the caller already holds the whole text."""
     return _window_and_find(
-        text, url=url, title=title, links=(), offset=max(0, offset), find=find, body_truncated=False
+        text,
+        url=url,
+        title=title,
+        links=(),
+        offset=max(0, offset),
+        find=find,
+        find_regex=find_regex,
+        body_truncated=False,
     )
 
 
@@ -300,7 +329,9 @@ class WebFetcher:
         self._transport = transport
         self._reader_url = reader_url.rstrip("/")
 
-    async def fetch(self, url: str, *, offset: int = 0, find: str = "") -> FetchResult:
+    async def fetch(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> FetchResult:
         """Fetch `url` and return one window of its extracted text. `offset` pages through a
         long page (window = `full_text[offset : offset+_MAX_CHARS]`). `find`, if given, jumps
         the window to the first occurrence of that keyword at/after `offset` and attaches the
@@ -308,7 +339,7 @@ class WebFetcher:
         (or blindly guessing an offset into) the whole thing."""
         offset = max(0, offset)
         try:
-            result = await self._fetch_direct(url, offset=offset, find=find)
+            result = await self._fetch_direct(url, offset=offset, find=find, find_regex=find_regex)
         except WebFetchError as exc:
             # A bot-wall (403/429) or unreachable host: the reader, if configured,
             # renders the page from a real browser and gets past what blocked us. But a
@@ -317,7 +348,9 @@ class WebFetcher:
             # as a successful fetch and hide the miss. Re-raise so the model SEES the 404
             # and corrects the URL instead of quietly reading an empty stub.
             if exc.status not in _GONE_STATUSES and self._reader_url:
-                reader = await self._fetch_via_reader(url, offset=offset, find=find)
+                reader = await self._fetch_via_reader(
+                    url, offset=offset, find=find, find_regex=find_regex
+                )
                 if reader is not None:
                     return reader
             raise
@@ -328,7 +361,9 @@ class WebFetcher:
         if empty_shell and self._reader_url:
             # A JS-rendered shell our static extractor can't see — the reader runs the
             # page's scripts and returns the content that wasn't in the served HTML.
-            reader = await self._fetch_via_reader(url, offset=offset, find=find)
+            reader = await self._fetch_via_reader(
+                url, offset=offset, find=find, find_regex=find_regex
+            )
             if reader is not None and reader.text.strip():
                 return reader
         return result
@@ -356,7 +391,9 @@ class WebFetcher:
             raise WebFetchError(_fetch_error_message(status), status=status) from exc
         return content_type, body
 
-    async def _fetch_direct(self, url: str, *, offset: int = 0, find: str = "") -> FetchResult:
+    async def _fetch_direct(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> FetchResult:
         try:
             async with httpx.AsyncClient(
                 timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
@@ -398,11 +435,12 @@ class WebFetcher:
             links=links,
             offset=offset,
             find=find,
+            find_regex=find_regex,
             body_truncated=body_truncated,
         )
 
     async def _fetch_via_reader(
-        self, url: str, *, offset: int = 0, find: str = ""
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
     ) -> FetchResult | None:
         """Re-fetch `url` through the pinned reader endpoint, which renders the page
         and returns clean markdown. The reader base URL is owner-configured and trusted
@@ -435,6 +473,7 @@ class WebFetcher:
             links=(),
             offset=offset,
             find=find,
+            find_regex=find_regex,
             body_truncated=body_truncated,
         )
 

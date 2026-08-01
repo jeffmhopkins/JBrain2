@@ -1003,3 +1003,63 @@ async def test_web_fetch_outline_true_on_a_flat_page_says_no_sections() -> None:
         )
     )
     assert "no section headings" in out.lower()
+
+
+# --- find with regex ----------------------------------------------------------
+
+
+async def test_fetch_find_regex_matches_a_pattern() -> None:
+    from jbrain.web.fetch import _FIND_LEAD
+
+    content = ("H" * 5_000) + "seen 2026-07-04 launch and 2026-07-30 launch" + ("Z" * 500)
+    first_match = 5_000 + len("seen ")  # where "2026-07-04" begins
+    result = await WebFetcher(transport=httpx.MockTransport(_plain_body(content))).fetch(
+        "https://x.example/dates", find=r"2026-\d\d-\d\d", find_regex=True
+    )
+    assert result.match_count == 2  # both ISO dates matched
+    assert result.offset == first_match - _FIND_LEAD  # window jumped to the match (with lead-in)
+    assert "2026-07-04" in result.text  # positioned at the first match
+
+
+async def test_fetch_find_literal_does_not_treat_dot_as_wildcard() -> None:
+    # Default (literal) mode: "a.c" matches the literal string, not "abc".
+    fetcher = WebFetcher(transport=httpx.MockTransport(_plain_body("abc and a.c here")))
+    assert (await fetcher.fetch("https://x.example/p", find="a.c")).match_count == 1
+    # As a regex, "a.c" matches both "abc" and "a.c".
+    assert (
+        await fetcher.fetch("https://x.example/p", find="a.c", find_regex=True)
+    ).match_count == 2
+
+
+async def test_web_fetch_tool_regex_reports_and_labels_matches() -> None:
+    content = ("q" * 200) + "2025-01-01" + ("q" * 200) + "2026-12-31"
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain_body(content)))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/d", "find": r"202[56]-\d\d-\d\d", "regex": True},
+            _fresh_ctx(),
+        )
+    )
+    assert "regex '202[56]-\\d\\d-\\d\\d'" in out
+    assert "found 2 match(es)" in out
+
+
+async def test_web_fetch_tool_rejects_an_invalid_regex_without_fetching() -> None:
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, content=b"whatever", headers={"content-type": "text/plain"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/p", "find": "a(b", "regex": True}, _fresh_ctx()
+        )
+    )
+    assert "invalid regex" in out.lower()
+    assert calls["n"] == 0  # bailed before any fetch, so no dead-URL memo either
