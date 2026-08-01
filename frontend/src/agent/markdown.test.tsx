@@ -27,7 +27,11 @@ describe("Markdown", () => {
     const out = html(
       "# Title\n\n- one\n- two\n\n1. first\n2. second\n\n> a quote\n\n```\ncode line\n```",
     );
-    expect(out).toMatch(/<h3 class="md-h">Title<\/h3>/);
+    // The heading owns the blocks that follow it, so it renders as a collapsible
+    // section: a disclosure button inside the real <h3>, open by default.
+    expect(out).toMatch(/<h3 class="md-h"><button[^>]*class="md-h-toggle"/);
+    expect(out).toMatch(/aria-expanded="true"/);
+    expect(out).toContain('<span class="md-h-label">Title</span>');
     expect(out).toContain('<ul class="md-ul">');
     expect((out.match(/<li>/g) ?? []).length).toBe(4);
     expect(out).toContain('<ol class="md-ol">');
@@ -665,5 +669,58 @@ describe("Markdown", () => {
     fireEvent.click(screen.getByRole("button", { name: "Celine Hopkins" }));
     expect(onEntity).toHaveBeenCalledWith("long");
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+});
+
+describe("Markdown collapsible sections", () => {
+  it("renders a heading with a body as a disclosure, open by default", () => {
+    const { container } = render(<Markdown text={"## Budget\n\nIt came to $41,200."} />);
+    const toggle = screen.getByRole("button", { name: /Budget/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    // the heading element stays a real heading so the document outline survives
+    expect(screen.getByRole("heading", { name: /Budget/ })).toBeInTheDocument();
+    const body = container.querySelector(".md-body");
+    expect(body).not.toHaveAttribute("hidden");
+    expect(body?.textContent).toContain("It came to $41,200.");
+  });
+
+  it("folds and unfolds the body on tap", () => {
+    const { container } = render(<Markdown text={"## Budget\n\nIt came to $41,200."} />);
+    const toggle = screen.getByRole("button", { name: /Budget/ });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".md-body")).toHaveAttribute("hidden");
+    // a quiet count stands in for the hidden body
+    expect(screen.getByText(/^1 item$/)).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".md-body")).not.toHaveAttribute("hidden");
+  });
+
+  it("folds a nested subsection together with its parent", () => {
+    const { container } = render(
+      <Markdown text={"## Parent\n\nlead line\n\n### Child\n\nchild line"} />,
+    );
+    const parent = screen.getByRole("button", { name: /Parent/ });
+    expect(screen.getByRole("button", { name: /Child/ })).toBeInTheDocument();
+    fireEvent.click(parent);
+    const parentBody = container.querySelector(".md-body");
+    expect(parentBody).toHaveAttribute("hidden");
+    expect(parentBody?.textContent).toContain("child line");
+    // the parent owns a lead paragraph AND the nested section — two items
+    expect(screen.getByText(/^2 items$/)).toBeInTheDocument();
+  });
+
+  it("keeps content before the first heading out of any section", () => {
+    const { container } = render(<Markdown text={"intro line\n\n## Later\n\nbody"} />);
+    expect(screen.getByText("intro line").closest(".md-section")).toBeNull();
+    expect(container.querySelectorAll(".md-section")).toHaveLength(1);
+  });
+
+  it("renders a bodyless heading as a plain heading, not a toggle", () => {
+    render(<Markdown text={"## Summary\n\nbody here\n\n## Trailing"} />);
+    expect(screen.getByRole("button", { name: /Summary/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Trailing/ })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Trailing" })).toBeInTheDocument();
   });
 });
