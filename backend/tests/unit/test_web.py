@@ -564,6 +564,87 @@ async def test_web_fetch_tool_omits_the_warning_for_a_whole_page() -> None:
     assert "truncated" not in str(out).lower()
 
 
+# --- repeated-failed-fetch backstop (don't burn the budget on a dead URL) ------
+
+
+def _fresh_ctx() -> ToolContext:
+    # A per-turn context (fresh failed-fetch memo), so the guard's state doesn't leak
+    # across tests the way the shared module-level CTX would.
+    return ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
+
+
+async def test_web_fetch_refuses_to_refetch_a_url_that_already_404d_this_turn() -> None:
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(404, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    ctx = _fresh_ctx()
+    url = "https://en.wikipedia.org/wiki/List_of_Falcon_9_and_Falcon_Heavy_launches_(2026)"
+    first = await handlers["web_fetch"]({"url": url}, ctx)
+    assert "404" in str(first)
+    # The identical re-fetch is short-circuited BEFORE any network call — the backstop
+    # that stops the model burning its whole budget re-requesting one dead URL.
+    second = await handlers["web_fetch"]({"url": url}, ctx)
+    assert calls["n"] == 1  # no second request was made
+    assert "already fetched" in str(second).lower()
+    assert "web_search" in str(second)
+
+
+async def test_web_fetch_refetch_guard_ignores_a_fragment_and_trailing_slash() -> None:
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(404, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    ctx = _fresh_ctx()
+    await handlers["web_fetch"]({"url": "https://x.example/gone/"}, ctx)
+    # Same page, differing only by a fragment and the trailing slash — still recognized.
+    again = await handlers["web_fetch"]({"url": "https://x.example/gone#section"}, ctx)
+    assert calls["n"] == 1
+    assert "already fetched" in str(again).lower()
+
+
+async def test_web_fetch_guard_does_not_block_a_different_url() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("gone"):
+            return httpx.Response(404, headers={"content-type": "text/html"})
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    ctx = _fresh_ctx()
+    await handlers["web_fetch"]({"url": "https://x.example/gone"}, ctx)
+    # A genuinely different path (the real page) is NOT blocked by the failed one.
+    ok = await handlers["web_fetch"]({"url": "https://x.example/real"}, ctx)
+    assert "Hi There" in str(ok)
+
+
+async def test_web_fetch_guard_is_scoped_to_one_turn() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    url = "https://x.example/gone"
+    await handlers["web_fetch"]({"url": url}, _fresh_ctx())
+    # A different turn (fresh context) starts with a clean memo — the failure from another
+    # turn must not suppress this one's first attempt.
+    retry = await handlers["web_fetch"]({"url": url}, _fresh_ctx())
+    assert "already fetched" not in str(retry).lower()
+    assert "404" in str(retry)
+
+
 async def test_reader_still_refuses_a_non_public_target() -> None:
     # The reader path guards the TARGET host the same way: a model-supplied private URL
     # can't be laundered off-box through the reader. (Real DNS — no transport.)
