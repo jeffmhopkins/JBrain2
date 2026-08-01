@@ -31,7 +31,13 @@ from jbrain.llm.providers import (
     supports_reasoning,
 )
 from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
-from jbrain.llm.router import TASK_DEFAULTS, TASK_REASONING_BUCKET, _split_spec
+from jbrain.llm.router import (
+    _FOLLOW_PRIMARY_MODEL,
+    _PRIMARY_MODEL_TASK,
+    TASK_DEFAULTS,
+    TASK_REASONING_BUCKET,
+    _split_spec,
+)
 from jbrain.settings_store import (
     JCODE_PLANNER_SAME,
     LLM_TASK_OVERRIDES_KEY,
@@ -329,7 +335,15 @@ def _effective(settings: Settings, task: str, overrides: dict[str, dict[str, str
     """The EFFECTIVE provider/effort for a task after merging stored overrides
     over the task default — the same precedence the router applies."""
     entry = overrides.get(task) or {}
-    spec = entry.get("spec") or TASK_DEFAULTS[task]
+    spec = entry.get("spec")
+    if spec is None and task in _FOLLOW_PRIMARY_MODEL:
+        # A title with no override of its own FOLLOWS the primary chat model (agent.turn) at the
+        # router, so the screen shows THAT route, not the raw title default — otherwise it would
+        # claim the title runs somewhere it doesn't. An explicit title override (handled above)
+        # still wins. (Env pins aren't reflected here, the same simplification every task has.)
+        agent_entry = overrides.get(_PRIMARY_MODEL_TASK) or {}
+        spec = agent_entry.get("spec") or TASK_DEFAULTS[_PRIMARY_MODEL_TASK]
+    spec = spec or TASK_DEFAULTS[task]
     provider_id = id_for_spec(settings, spec)
     # Off-menu spec (e.g. an env pin to a model the UI doesn't list): surface the
     # provider half so the screen shows something truthful rather than crashing.

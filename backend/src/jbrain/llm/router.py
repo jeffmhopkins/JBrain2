@@ -70,14 +70,15 @@ TASK_DEFAULTS: dict[str, str] = {
     # captioning is the separate `agent.vision` route. Individually routable so the
     # summary can run on a cheaper/local model than the vision pass.
     "video.summarize": "xai:grok-4.3",
-    # Auto-titling a chat from its first exchange — a cheap one-shot summary; the
-    # prompt declares the `low` tier (a reasoning model, so its prompt budgets
-    # tokens for the thinking trace, not just the title). This default is just the
-    # operator-override hook.
+    # Auto-titling a chat from its first exchange — a cheap one-shot summary; the prompt
+    # declares the `low` tier. This value is only the fresh-box fallback: session.title
+    # FOLLOWS agent.turn (`_FOLLOW_PRIMARY_MODEL`), so it runs on whatever model the operator
+    # is using and needs no separate override; an explicit per-task pin still wins.
     "session.title": "xai:grok-4.3",
-    # The report sibling of session.title (external.report_titler): distill a
-    # deep-research report's raw question into a short Research Library heading. A
-    # cheap one-shot; individually routable so an on-box operator can point it local.
+    # The report sibling of session.title (external.report_titler): distill a deep-research
+    # report's raw question into a short Research Library heading. Like session.title it FOLLOWS
+    # agent.turn, so this default is just the fresh-box fallback — a re-routed agent.turn (e.g. to
+    # a local model) carries the title with it, closing the "off-box title on a local box" gap.
     "research.title": "xai:grok-4.3",
     # The Phase-6 wiki builder (docs/plans/PHASE6_WIKI_PLAN.md): `wiki.rewrite` drafts a
     # type-guided article from an entity's cited facts; `wiki.ground` is the strict
@@ -148,6 +149,17 @@ TASK_REASONING_BUCKET: dict[str, str] = {
 TASK_REASONING_DEFAULTS: dict[str, str] = {
     task: effort for task, effort in TASK_REASONING_BUCKET.items() if effort != "medium"
 }
+
+# The one task whose model is "the model the operator is using" — the chat agent's turn.
+_PRIMARY_MODEL_TASK = "agent.turn"
+# Tasks that FOLLOW the primary chat model instead of carrying their own routing. Both are
+# cheap one-shot titles: a fresh box runs them wherever `agent.turn` runs (same TASK_DEFAULTS
+# spec, so unchanged out of the box), and the moment the operator re-routes `agent.turn` — e.g.
+# points it at a local model — the titles move with it, with no separate override to remember
+# (the gap that left `research.title` alone on the off-box default on a local-only box). They
+# keep their OWN low/none reasoning effort, and an explicit per-task pin still wins over the
+# follow (see `_resolve_live`). A prompt that passes a `strength` tier opts out.
+_FOLLOW_PRIMARY_MODEL = frozenset({"session.title", "research.title"})
 
 # Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a
 # tier, never a model, so swapping the model behind a tier is config, not a
@@ -326,6 +338,28 @@ class LlmRouter:
         except KeyError:
             raise LlmError(f"unknown LLM task: {task!r}") from None
 
+    def _followed_primary_model(
+        self, overrides: Mapping[str, Mapping[str, str]]
+    ) -> tuple[str, str]:
+        """The (provider, model) `agent.turn` resolves to from PERSISTENT config — its env
+        pin/default plus a stored DB override, but NOT a per-call `spec_override` (a title is a
+        background job with no per-conversation model pick). This is the route the title tasks
+        follow. A malformed or can't-serve-local `agent.turn` override degrades to its static
+        route, exactly as a direct call to `agent.turn` would, so a title never breaks."""
+        provider, model = self._resolve(_PRIMARY_MODEL_TASK, None)
+        spec = (overrides.get(_PRIMARY_MODEL_TASK) or {}).get("spec")
+        if spec is not None:
+            try:
+                sp, sm = _split_spec(_PRIMARY_MODEL_TASK, spec)
+            except LlmError:
+                log.warning("llm.override_bad_spec", task=_PRIMARY_MODEL_TASK, spec=spec)
+            else:
+                if sp == "local" and not self._local_enabled:
+                    log.warning("llm.local_override_ignored", task=_PRIMARY_MODEL_TASK, spec=spec)
+                else:
+                    provider, model = sp, sm
+        return provider, model
+
     async def _resolve_live(
         self, task: str, strength: str | None, spec_override: str | None = None
     ) -> tuple[str, str, str | None]:
@@ -351,6 +385,18 @@ class LlmRouter:
         reasoning_effort: str | None = TASK_REASONING_DEFAULTS.get(task)
         if self._overrides_loader is not None:
             overrides = await self._overrides_loader()
+            # A title follows the primary chat model (agent.turn) rather than its own default, so
+            # re-routing agent.turn moves the titles with it and no title needs separate config. A
+            # prompt tier (strength) or an env pin on the title opts out; an explicit per-task pin
+            # below still wins over the follow. Skipped when agent.turn isn't a configured task
+            # (a minimal/test router), so the title just keeps its own route.
+            if (
+                task in _FOLLOW_PRIMARY_MODEL
+                and strength is None
+                and task not in self._pinned
+                and _PRIMARY_MODEL_TASK in self._tasks
+            ):
+                provider, model = self._followed_primary_model(overrides)
             entry = overrides.get(task) or {}
             spec = entry.get("spec")
             if spec is not None:

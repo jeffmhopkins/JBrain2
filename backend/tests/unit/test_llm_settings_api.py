@@ -326,6 +326,53 @@ def test_put_routes_a_task_to_an_enabled_local_model() -> None:
     assert stored["vision.ocr"] == {"spec": "local:qwen3-vl-30b-a3b"}
 
 
+def test_titles_follow_the_agent_model_in_the_snapshot() -> None:
+    # A title with no override of its own follows agent.turn's route — so re-routing the chat
+    # model to local shows the titles running there too, not on their raw off-box default.
+    settings = Settings(
+        secure_cookies=False,
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        xai_api_key="test-xai",
+        anthropic_api_key="test-anthropic",
+        local_llm_enabled=True,
+        local_models=["gpt-oss-120b"],
+    )
+    c, _ = _authed_client(settings)
+    resp = c.put(
+        "/api/settings/llm",
+        json={"tasks": {"agent.turn": {"provider": "gpt-oss-120b", "reasoning_effort": "medium"}}},
+    )
+    assert resp.status_code == 200
+    tasks = {t["id"]: t for t in resp.json()["tasks"]}
+    assert (
+        tasks["agent.turn"]["provider"] == "gpt-oss-120b"
+    )  # the operator re-routed the chat model
+    # research.title / session.title carry no override, so the screen shows them following it...
+    assert tasks["research.title"]["provider"] == "gpt-oss-120b"
+    assert tasks["session.title"]["provider"] == "gpt-oss-120b"
+    # ...while keeping their OWN low effort, not agent.turn's medium.
+    assert tasks["research.title"]["reasoning_effort"] == "low"
+
+
+def test_an_explicit_title_override_still_shows_over_the_follow() -> None:
+    settings = Settings(
+        secure_cookies=False,
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        xai_api_key="test-xai",
+        anthropic_api_key="test-anthropic",
+        local_llm_enabled=True,
+        local_models=["gpt-oss-120b"],
+    )
+    c, _ = _authed_client(settings)
+    c.put("/api/settings/llm", json={"tasks": {"agent.turn": {"provider": "gpt-oss-120b"}}})
+    resp = c.put("/api/settings/llm", json={"tasks": {"research.title": {"provider": "grok"}}})
+    assert resp.status_code == 200
+    tasks = {t["id"]: t for t in resp.json()["tasks"]}
+    # An explicit pin wins over the follow: research.title shows grok, session.title still follows.
+    assert tasks["research.title"]["provider"] == "grok"
+    assert tasks["session.title"]["provider"] == "gpt-oss-120b"
+
+
 def test_put_accepts_non_grok_provider_without_reasoning_effort() -> None:
     # The screen sends just `{provider}` for non-reasoning providers (local
     # models, Claude) — no reasoning_effort. The request model must accept that;
