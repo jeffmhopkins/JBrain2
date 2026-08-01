@@ -1,0 +1,238 @@
+<!doctype html>
+<!--
+  bar-graph tool-view mock · VARIANT B — "Direct inline ranked bars"
+  ============================================================================================
+  The chart IS the message: fully interactive HORIZONTAL bars right inside the chat bubble, no
+  sheet, no tabs. Horizontal is the natural shape for a categorical ranking — long labels read
+  left-to-right, and the eye compares bar lengths down a column. Tap a bar to read its exact
+  value + share of total; a sort control flips value↔label↔original; a "show all / top N"
+  expander keeps a long list from dominating the transcript.
+
+    • ranked single series (top tags)        → steel bars, tap-to-read
+    • per-bar tone (notes by domain)          → one bar per domain, each toned by its own accent
+
+  Data-only (invariants #1/#9): payload is category labels (+ note) and numbers; each bar's color
+  comes from a closed `key` the component maps to a token — never a model-authored hex.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Bar graphs — B — direct inline ranked</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.15);
+    --rose:#cf8a8f;--rose-tint:rgba(207,138,143,.15);
+    --violet:#a493c9;--violet-tint:rgba(164,147,201,.13);
+    --teal:#6fb6b1;--teal-tint:rgba(111,182,177,.13);
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{position:relative;width:390px;height:820px;background:var(--bg);border-radius:34px;
+    overflow:hidden;border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{stroke-linecap:round;stroke-linejoin:round}
+  .ic{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);
+    border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* ---- inline ranked-bar card ---- */
+  .bc{align-self:flex-start;max-width:96%;width:100%;border:1px solid var(--border);
+    border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .bc-cap{display:flex;align-items:center;gap:7px;padding:9px 13px 0;font-size:10.5px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+  .bc-cap .vi{display:flex;color:var(--steel)}
+  .bc-head{display:flex;align-items:baseline;gap:8px;padding:5px 14px 2px}
+  .bc-title{font-size:16px;font-weight:600}
+  .bc-tot{margin-left:auto;font-size:12px;color:var(--text-2)}
+  .bc-tot b{color:var(--text)}
+  .bar-sort{display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-input);padding:3px;margin:8px 14px 4px;width:max-content}
+  .bar-sort button{border:0;background:transparent;color:var(--text-2);font:inherit;font-size:11.5px;
+    padding:5px 10px;border-radius:8px;cursor:pointer;font-weight:500}
+  .bar-sort button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.15)}
+
+  /* the rows */
+  .rows{padding:4px 14px 8px;display:flex;flex-direction:column;gap:2px}
+  .row{display:grid;grid-template-columns:96px 1fr auto;align-items:center;gap:10px;
+    padding:6px 6px;border-radius:10px;cursor:pointer;transition:background .12s}
+  .row:hover{background:var(--surface-2)}
+  .row.sel{background:var(--steel-tint)}
+  .row .rl{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .rl .rk{color:var(--text-3);font-size:11px;margin-right:5px;font-variant-numeric:tabular-nums}
+  .track{position:relative;height:16px;border-radius:5px;background:var(--surface-2);overflow:hidden}
+  .fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px;transition:width .32s cubic-bezier(.22,1,.36,1)}
+  .k0{background:var(--steel)} .k1{background:var(--rose)} .k2{background:var(--violet)}
+  .k3{background:var(--teal)} .k4{background:var(--green)} .k5{background:var(--amber)}
+  .row .rv{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;min-width:30px;text-align:right}
+  .row.sel .rv{color:var(--steel)}
+  .row .rv small{font-weight:400;color:var(--text-3);font-size:11px}
+
+  /* selected-bar readout */
+  .ro{margin:2px 14px 4px;padding:9px 12px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-input);font-size:12.5px;color:var(--text-2);display:none}
+  .ro.show{display:block} .ro b{color:var(--text)} .ro .cite{color:var(--steel);font-size:11px}
+  .ro .sh{display:inline-block;margin-left:6px}
+
+  .more{margin:2px 14px 12px;text-align:center}
+  .more button{background:transparent;border:1px solid var(--border);border-radius:var(--r-pill);
+    color:var(--text-2);font:inherit;font-size:12px;padding:6px 14px;cursor:pointer}
+  .more button:hover{color:var(--text);border-color:var(--text-3)}
+  .foot{font-size:11.5px;color:var(--text-3);padding:0 14px 12px;line-height:1.5}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{width:20px;height:20px;stroke:#10141a;fill:none;stroke-width:1.7}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.5;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">Full Brain<small>me · all domains</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">Which tags do I use most?</div>
+      <div class="bubble ai">Recipes leads by a wide margin. Tap any bar for its exact count and share; sort by value or name, and show the whole list if you want.</div>
+      <div class="bc" id="card-tags" data-key="tags"></div>
+
+      <div class="bubble me">And how do my notes split across domains?</div>
+      <div class="bubble ai">General is most of it; health is the next chunk. Each bar carries its domain's color.</div>
+      <div class="bc" id="card-domain" data-key="domain"></div>
+
+      <div class="bubble me">Handy — I can read it without leaving the chat.</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask about your notes…" />
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">B · <b>Direct inline ranked bars.</b> The chart <b>is</b> the message —
+  interactive <b>horizontal</b> bars right in the bubble, no sheet, no tabs. Tap a bar to read
+  its exact value + share; a <i>sort</i> control flips value↔name↔original; a <i>show-all</i>
+  expander keeps long lists tidy. Horizontal is the natural shape for a categorical ranking.</p>
+</div>
+
+<script>
+/* ============================ data-only payloads ============================ */
+// Single series of {label, value, key(color), note}. `key` picks a component-owned token.
+const DATA = {
+  tags:{
+    title:'Top tags', unit:'notes', collapseAt:5,
+    items:[
+      {label:'recipes',v:61,key:0,note:'q:tag0'},
+      {label:'workout',v:54,key:0,note:'q:tag1'},
+      {label:'work',   v:48,key:0,note:'q:tag2'},
+      {label:'travel', v:39,key:0,note:'q:tag3'},
+      {label:'books',  v:33,key:0,note:'q:tag4'},
+      {label:'finance',v:27,key:0,note:'q:tag5'},
+      {label:'garden', v:21,key:0,note:'q:tag6'},
+      {label:'ideas',  v:14,key:0,note:'q:tag7'},
+    ],
+    foot:'Counted from tags on your notes. A note can carry several tags, so shares sum past 100%. Traces to the note store.'
+  },
+  domain:{
+    title:'Notes by domain', unit:'notes', collapseAt:6,
+    // one bar per domain, each toned by its own accent (steel/rose/violet/teal/green)
+    items:[
+      {label:'General', v:143,key:0,note:'q:dom0'},
+      {label:'Health',  v: 49,key:1,note:'q:dom1'},
+      {label:'Finance', v: 39,key:2,note:'q:dom2'},
+      {label:'Location',v: 25,key:3,note:'q:dom3'},
+      {label:'Personal',v: 18,key:4,note:'q:dom4'},
+    ],
+    foot:'Notes grouped by the domain firewall that scoped each. Aggregate counts only — no domain content leaves its boundary.'
+  }
+};
+const KEYVAR=['--steel','--rose','--violet','--teal','--green','--amber'];
+
+/* ============================ inline ranked-bar card ============================ */
+function render(id){
+  const el=document.getElementById(id); const cfg=DATA[el.dataset.key];
+  const state={sort:'value', expanded:false, sel:null};
+  const total=cfg.items.reduce((a,it)=>a+it.v,0);
+  el.innerHTML=`
+    <div class="bc-cap"><span class="vi"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M3 5h13M3 12h9M3 19h16"/></svg></span> ${cfg.title.toLowerCase()} · ${cfg.items.length} categories</div>
+    <div class="bc-head"><span class="bc-title">${cfg.title}</span><span class="bc-tot"><b>${total}</b> ${cfg.unit}</span></div>
+    <div class="bar-sort">
+      <button class="on" data-v="value">Value</button>
+      <button data-v="label">Name</button>
+      <button data-v="original">Original</button>
+    </div>
+    <div class="ro"></div>
+    <div class="rows"></div>
+    ${cfg.items.length>cfg.collapseAt?`<div class="more"><button></button></div>`:''}
+    <div class="foot">${cfg.foot}</div>`;
+
+  const rowsEl=el.querySelector('.rows'), roEl=el.querySelector('.ro'), moreBtn=el.querySelector('.more button');
+  function ordered(){
+    const a=cfg.items.map((it,i)=>({...it,orig:i}));
+    if(state.sort==='value') a.sort((x,y)=>y.v-x.v);
+    else if(state.sort==='label') a.sort((x,y)=>x.label.localeCompare(y.label));
+    else a.sort((x,y)=>x.orig-y.orig);
+    return a;
+  }
+  function draw(){
+    const list=ordered(); const max=Math.max(...cfg.items.map(it=>it.v));
+    const shown = state.expanded ? list : list.slice(0, cfg.collapseAt);
+    rowsEl.innerHTML=shown.map((it,i)=>{
+      const rank = state.sort==='value' ? `<span class="rk">${i+1}</span>` : '';
+      return `<div class="row ${state.sel===it.orig?'sel':''}" data-i="${it.orig}">
+        <div class="rl">${rank}${it.label}</div>
+        <div class="track"><div class="fill k${it.key}" style="width:${(it.v/max*100).toFixed(1)}%;background:var(${KEYVAR[it.key]})"></div></div>
+        <div class="rv">${it.v}<small> ${cfg.unit==='notes'?'':cfg.unit}</small></div>
+      </div>`;
+    }).join('');
+    rowsEl.querySelectorAll('.row').forEach(r=>r.onclick=()=>{
+      const i=+r.dataset.i; state.sel=state.sel===i?null:i; draw(); });
+    if(state.sel!=null){ const it=cfg.items[state.sel];
+      roEl.classList.add('show');
+      roEl.innerHTML=`<b>${it.label}</b> — <b>${it.v}</b> ${cfg.unit} · <span class="sh">${(it.v/total*100).toFixed(0)}% of ${total}</span> · <span class="cite">${it.note}</span>`;
+    } else roEl.classList.remove('show');
+    if(moreBtn) moreBtn.textContent = state.expanded ? 'Show top '+cfg.collapseAt : `Show all ${cfg.items.length}`;
+  }
+  el.querySelector('.bar-sort').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    el.querySelectorAll('.bar-sort button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    state.sort=b.dataset.v; draw();};
+  if(moreBtn) moreBtn.onclick=()=>{state.expanded=!state.expanded;draw();};
+  draw();
+}
+render('card-tags'); render('card-domain');
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==='light'?'dark':'light';};
+</script>
+</body>
+</html>

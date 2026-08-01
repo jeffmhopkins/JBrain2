@@ -1,0 +1,345 @@
+<!doctype html>
+<!--
+  bar-graph tool-view mock · VARIANT A — "Answer-first card → fullscreen explorer"
+  ============================================================================================
+  Mirrors the settled `location_map` / chat-chart-A pattern. The chat bubble shows a COMPACT,
+  glanceable bar chart (the answer, sized to be read at a glance). "Tap to explore" opens a
+  FULLSCREEN sheet with the heavy controls: sort (value · label · original), a grouped↔stacked
+  toggle for multi-series, value-label toggle, a per-bar readout, and a Table toggle.
+
+    • generic card (notes per month)     → single series, steel
+    • multi-series card (notes by domain) → grouped/stacked, one color per domain
+
+  Data-only (invariants #1/#9): the payload carries NUMBERS + closed keys (a series `key` and a
+  category `note`), never markup, URLs, or color. The component owns the palette — series map to
+  the domain accents (steel/rose/violet/teal/green), never a model-authored hex.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Bar graphs — A — answer-first + explorer</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;--scrim:rgba(14,15,17,.6);
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.15);
+    --rose:#cf8a8f;--rose-tint:rgba(207,138,143,.15);
+    --violet:#a493c9;--violet-tint:rgba(164,147,201,.13);
+    --teal:#6fb6b1;--teal-tint:rgba(111,182,177,.13);
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;--scrim:rgba(20,20,22,.5);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{position:relative;width:390px;height:820px;background:var(--bg);border-radius:34px;
+    overflow:hidden;border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{stroke-linecap:round;stroke-linejoin:round}
+  .ic{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);
+    border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* ---- compact inline card (the answer) ---- */
+  .bc{align-self:flex-start;max-width:96%;width:100%;border:1px solid var(--border);
+    border-radius:var(--r-card);background:var(--surface);overflow:hidden;cursor:pointer;
+    transition:border-color .15s}
+  .bc:hover{border-color:color-mix(in srgb,var(--steel) 40%,var(--border))}
+  .bc-cap{display:flex;align-items:center;gap:7px;padding:9px 13px 0;font-size:10.5px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+  .bc-cap .vi{display:flex;color:var(--steel)}
+  .bc-head{display:flex;align-items:baseline;gap:8px;padding:5px 14px 2px}
+  .bc-now{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1}
+  .bc-unit{font-size:13px;color:var(--text-2);font-weight:500}
+  .bc-sub{padding:0 14px 6px;font-size:12px;color:var(--text-2)}
+  .bc-legend{display:flex;flex-wrap:wrap;gap:5px 12px;padding:2px 14px 4px;font-size:11px;color:var(--text-2)}
+  .bc-legend span{display:flex;align-items:center;gap:5px}
+  .bc-legend i{width:9px;height:9px;border-radius:3px;display:inline-block}
+  .bc-plot{padding:2px 12px 6px}
+  .bc-plot svg{width:100%;height:auto;display:block}
+  .bc-explore{display:flex;align-items:center;justify-content:center;gap:6px;
+    padding:9px;border-top:1px solid var(--border);font-size:12.5px;font-weight:500;color:var(--steel);
+    background:var(--steel-tint)}
+
+  /* series palette (component-owned) */
+  .s0{fill:var(--steel)} .s1{fill:var(--rose)} .s2{fill:var(--violet)}
+  .s3{fill:var(--teal)} .s4{fill:var(--green)} .s5{fill:var(--amber)}
+  .bar{transition:opacity .12s} .bar.dim{opacity:.32}
+  .blab{font-size:9.5px;fill:var(--text-3)} .vlab{font-size:10px;fill:var(--text-2);font-weight:600}
+  .axz{stroke:color-mix(in srgb,var(--text-3) 55%,transparent);stroke-width:1}
+  .grid{stroke:var(--border);stroke-width:1} .ytick{font-size:9px;fill:var(--text-3)}
+
+  /* ---- fullscreen explorer sheet ---- */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;
+    transition:opacity .2s;z-index:5}
+  .scrim.open{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;bottom:0;top:44px;background:var(--bg);z-index:6;
+    border-radius:20px 20px 0 0;border:1px solid var(--border);transform:translateY(102%);
+    transition:transform .26s cubic-bezier(.22,1,.36,1);display:flex;flex-direction:column}
+  .sheet.open{transform:translateY(0)}
+  .sheet-grip{width:38px;height:4px;border-radius:2px;background:var(--border);margin:8px auto 2px}
+  .sheet-head{display:flex;align-items:center;gap:10px;padding:6px 16px 10px;border-bottom:1px solid var(--border)}
+  .sheet-head .st{font-size:16px;font-weight:600;flex:1} .sheet-head .st small{display:block;font-size:11px;color:var(--text-3);font-weight:400}
+  .sheet-body{flex:1;overflow-y:auto;padding:14px 16px 28px}
+  .ctl{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;gap:2px}
+  .seg button{border:0;background:transparent;color:var(--text-2);font:inherit;font-size:12px;
+    padding:6px 11px;border-radius:9px;cursor:pointer;font-weight:500}
+  .seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.15)}
+  .toggle{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2)}
+  .toggle input{accent-color:var(--steel);width:16px;height:16px}
+  .big-plot{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);
+    padding:10px 8px 4px;user-select:none}
+  .big-plot svg{width:100%;height:auto;display:block}
+  .readout{display:flex;align-items:center;gap:10px;margin:12px 0 0;padding:10px 12px;min-height:44px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);font-size:13px}
+  .readout .rd{font-weight:600;color:var(--steel);min-width:78px}
+  .readout .rv{color:var(--text-2);flex:1} .readout .rv b{color:var(--text)}
+  .readout .rv .chip{display:inline-flex;align-items:center;gap:4px;margin-right:8px}
+  .readout .rv .chip i{width:8px;height:8px;border-radius:2px;display:inline-block}
+  .tbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
+  .tbl th{text-align:left;color:var(--text-3);font-weight:500;font-size:11px;padding:6px 8px;
+    border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.04em}
+  .tbl td{padding:8px;border-bottom:1px solid var(--border);color:var(--text-2)}
+  .tbl td b{color:var(--text)} .tbl td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tbl .cite{color:var(--steel);font-size:11px}
+  .foot{font-size:11.5px;color:var(--text-3);padding:14px 2px 2px;line-height:1.5}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{width:20px;height:20px;stroke:#10141a;fill:none;stroke-width:1.7}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.5;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">Full Brain<small>me · all domains</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">How many notes did I add each month this year?</div>
+      <div class="bubble ai">A steady climb — 61 in June was your busiest month. Tap the chart to sort, add value labels, or see the table.</div>
+      <div class="bc" id="card-notes" data-key="notes"></div>
+
+      <div class="bubble me">Break that down by domain.</div>
+      <div class="bubble ai">General notes lead every month; health picked up in spring. Open it to flip between stacked totals and a grouped side-by-side.</div>
+      <div class="bc" id="card-domain" data-key="domain"></div>
+
+      <div class="bubble me">Nice — the stacked view makes the totals obvious.</div>
+    </div>
+
+    <div class="scrim" id="scrim"></div>
+    <div class="sheet" id="sheet">
+      <div class="sheet-grip"></div>
+      <div class="sheet-head">
+        <div class="st" id="sheet-title">—</div>
+        <button class="icon-btn" id="sheet-close"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="sheet-body" id="sheet-body"></div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask about your notes…" />
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">A · <b>Answer-first card → fullscreen explorer.</b> The bubble shows a
+  compact, glanceable bar chart; <b>tap to explore</b> opens a full-screen sheet with the heavy
+  controls — <i>sort</i> (value · label · original), a <i>stacked↔grouped</i> toggle,
+  value labels, a tap-a-bar readout, and a <i>Table</i> view. Keeps the transcript calm, puts
+  interaction one tap away — mirrors the settled <i>location_map</i> pattern.</p>
+</div>
+
+<script>
+/* ============================ data-only payloads ============================ */
+// Each is what the model fills: category labels (+ a citation note) and one or more
+// named series of NUMBERS. `key` picks the component-owned color; no hex crosses the wire.
+const DATA = {
+  notes:{
+    title:'Notes captured', sub:'me · general', unit:'notes', domain:'general',
+    categories:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug'].map((m,i)=>({label:m,note:'q:month'+i})),
+    series:[{name:'Notes', key:0, values:[18,24,31,22,40,52,44,49]}],
+    foot:'Counted from your captured notes, one bar per month. Traces to the note store; a record of what you saved, nothing inferred.'
+  },
+  domain:{
+    title:'Notes by domain', sub:'me · all domains', unit:'notes', domain:'general',
+    categories:['Mar','Apr','May','Jun','Jul','Aug'].map((m,i)=>({label:m,note:'q:dm'+i})),
+    // series map to domain accents: general steel(0), health rose(1), finance violet(2), location teal(3)
+    series:[
+      {name:'General',  key:0, values:[19,12,22,30,26,28]},
+      {name:'Health',   key:1, values:[ 6,14, 9, 8, 5, 7]},
+      {name:'Finance',  key:2, values:[ 4, 5, 6, 9, 8, 7]},
+      {name:'Location', key:3, values:[ 2, 3, 3, 5, 5, 7]},
+    ],
+    foot:'Notes grouped by the domain firewall that scoped each one. Health/finance/location counts are aggregate only — no content leaves its domain.'
+  }
+};
+const KEYCLASS=['s0','s1','s2','s3','s4','s5'];
+const KEYVAR  =['--steel','--rose','--violet','--teal','--green','--amber'];
+
+/* ============================ bar engine ============================ */
+// Vertical bars, single or multi-series, grouped or stacked, with sort + value labels.
+// Returns {redraw, setState}. onPick(catIndex) fires on tap.
+function makeBars(host, cfg, W, H, state, onPick){
+  const L=32,R=12,T=16,B=40;
+  const multi=cfg.series.length>1;
+  function order(){
+    const idx=cfg.categories.map((_,i)=>i);
+    const tot=i=>cfg.series.reduce((a,s)=>a+s.values[i],0);
+    if(state.sort==='value') idx.sort((a,b)=>tot(b)-tot(a));
+    else if(state.sort==='label') idx.sort((a,b)=>cfg.categories[a].label.localeCompare(cfg.categories[b].label));
+    return idx;
+  }
+  function niceMax(v){ if(v<=0)return 1; const p=Math.pow(10,Math.floor(Math.log10(v)));
+    const n=v/p; const step=n<=1?1:n<=2?2:n<=5?5:10; return step*p; }
+  function draw(){
+    const idx=order();
+    const stacked=state.stacked && multi;
+    const maxV = stacked
+      ? Math.max(...cfg.categories.map((_,i)=>cfg.series.reduce((a,s)=>a+s.values[i],0)))
+      : Math.max(...cfg.series.flatMap(s=>s.values));
+    const ymax=niceMax(maxV);
+    const py=v=>T+(1-v/ymax)*(H-T-B);
+    const bandW=(W-L-R)/idx.length;
+    const gy=[0,ymax/2,ymax].map(v=>`<line class="grid" x1="${L}" y1="${py(v).toFixed(1)}" x2="${W-R}" y2="${py(v).toFixed(1)}"/><text class="ytick" x="${L-4}" y="${(py(v)+3).toFixed(1)}" text-anchor="end">${Math.round(v)}</text>`).join('');
+    let bars='',labels='',vlabs='';
+    idx.forEach((ci,slot)=>{
+      const cx=L+slot*bandW, inner=bandW*0.62, ix=cx+(bandW-inner)/2;
+      const sel = state.sel===ci;
+      if(stacked){
+        let acc=0;
+        cfg.series.forEach(s=>{ const v=s.values[ci]; const y0=py(acc), y1=py(acc+v); acc+=v;
+          bars+=`<rect class="bar ${KEYCLASS[s.key]} ${state.sel!=null&&!sel?'dim':''}" data-ci="${ci}" x="${ix.toFixed(1)}" y="${y1.toFixed(1)}" width="${inner.toFixed(1)}" height="${Math.max(0,y0-y1).toFixed(1)}" rx="2"/>`; });
+        if(state.values){ const tot=cfg.series.reduce((a,s)=>a+s.values[ci],0);
+          vlabs+=`<text class="vlab" x="${(ix+inner/2).toFixed(1)}" y="${(py(tot)-4).toFixed(1)}" text-anchor="middle">${tot}</text>`; }
+      } else {
+        const gw=inner/cfg.series.length;
+        cfg.series.forEach((s,si)=>{ const v=s.values[ci]; const y1=py(v);
+          bars+=`<rect class="bar ${KEYCLASS[s.key]} ${state.sel!=null&&!sel?'dim':''}" data-ci="${ci}" x="${(ix+si*gw).toFixed(1)}" y="${y1.toFixed(1)}" width="${(gw*0.86).toFixed(1)}" height="${Math.max(0,py(0)-y1).toFixed(1)}" rx="2"/>`;
+          if(state.values && (!multi)) vlabs+=`<text class="vlab" x="${(ix+si*gw+gw*0.43).toFixed(1)}" y="${(y1-4).toFixed(1)}" text-anchor="middle">${v}</text>`; });
+      }
+      labels+=`<text class="blab" x="${(cx+bandW/2).toFixed(1)}" y="${H-B+15}" text-anchor="middle">${cfg.categories[ci].label}</text>`;
+    });
+    host.innerHTML=`<svg viewBox="0 0 ${W} ${H}">${gy}<line class="axz" x1="${L}" y1="${py(0).toFixed(1)}" x2="${W-R}" y2="${py(0).toFixed(1)}"/>${bars}${vlabs}${labels}</svg>`;
+    host.querySelectorAll('.bar').forEach(r=>r.addEventListener('pointerdown',()=>{
+      const ci=+r.dataset.ci; state.sel = state.sel===ci?null:ci; draw(); onPick&&onPick(state.sel); }));
+  }
+  draw();
+  return { redraw:draw };
+}
+
+/* ============================ compact inline card ============================ */
+function renderCompact(id){
+  const el=document.getElementById(id); const cfg=DATA[el.dataset.key];
+  const multi=cfg.series.length>1;
+  const total=cfg.series.reduce((a,s)=>a+s.values.reduce((x,y)=>x+y,0),0);
+  const legend = multi ? `<div class="bc-legend">${cfg.series.map(s=>`<span><i style="background:var(${KEYVAR[s.key]})"></i>${s.name}</span>`).join('')}</div>` : '';
+  el.innerHTML=`
+    <div class="bc-cap"><span class="vi"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span> ${cfg.title.toLowerCase()} · ${cfg.categories.length} ${cfg.categories.length===1?'bar':'bars'}</div>
+    <div class="bc-head"><span class="bc-now">${total}</span><span class="bc-unit">${cfg.unit} total</span></div>
+    <div class="bc-sub">${cfg.sub}</div>
+    ${legend}
+    <div class="bc-plot"></div>
+    <div class="bc-explore"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg> Tap to explore</div>`;
+  // compact chart: always original order, stacked if multi, no labels
+  makeBars(el.querySelector('.bc-plot'), cfg, 340, 150, {sort:'original',stacked:true,values:false,sel:null});
+  el.onclick=()=>openSheet(el.dataset.key);
+}
+
+/* ============================ fullscreen explorer ============================ */
+const sheet=document.getElementById('sheet'), scrim=document.getElementById('scrim');
+let engine=null, curCfg=null, curState=null;
+function openSheet(key){
+  const cfg=DATA[key]; curCfg=cfg; const multi=cfg.series.length>1;
+  curState={sort:'original', stacked:true, values:false, sel:null};
+  document.getElementById('sheet-title').innerHTML=`${cfg.title}<small>${cfg.sub} · ${cfg.unit}</small>`;
+  const body=document.getElementById('sheet-body');
+  body.innerHTML=`
+    <div class="ctl">
+      <div class="seg" id="sort">
+        <button class="on" data-v="original">Original</button>
+        <button data-v="value">Value</button>
+        <button data-v="label">Label</button>
+      </div>
+      ${multi?`<div class="seg" id="mode"><button class="on" data-v="stacked">Stacked</button><button data-v="grouped">Grouped</button></div>`:''}
+      <label class="toggle"><input type="checkbox" id="vals"> Values</label>
+    </div>
+    <div class="big-plot" id="bigplot"></div>
+    <div class="readout" id="ro"><span class="rd">Tap a bar</span><span class="rv">to read its exact value and share of the total.</span></div>
+    <div style="margin-top:14px"><div class="seg" id="view" style="width:max-content"><button class="on" data-v="chart">Chart</button><button data-v="table">Table</button></div></div>
+    <div id="tblwrap" style="display:none"></div>
+    <div class="foot">${cfg.foot}</div>`;
+  const plot=document.getElementById('bigplot');
+  engine=makeBars(plot, cfg, 352, 300, curState, onPick);
+  document.getElementById('sort').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    setOn('sort',b);curState.sort=b.dataset.v;engine.redraw();};
+  const mode=document.getElementById('mode');
+  if(mode)mode.onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    setOn('mode',b);curState.stacked=b.dataset.v==='stacked';engine.redraw();};
+  document.getElementById('vals').onchange=e=>{curState.values=e.target.checked;engine.redraw();};
+  document.getElementById('view').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    setOn('view',b); const t=b.dataset.v;
+    document.getElementById('bigplot').style.display=t==='chart'?'':'none';
+    document.querySelector('#sheet-body .ctl').style.display=t==='chart'?'':'none';
+    document.getElementById('ro').style.display=t==='chart'?'':'none';
+    document.getElementById('tblwrap').style.display=t==='table'?'':'none';
+    if(t==='table')document.getElementById('tblwrap').innerHTML=tableHTML(cfg);};
+  requestAnimationFrame(()=>{scrim.classList.add('open');sheet.classList.add('open');});
+}
+function setOn(id,b){document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');}
+function onPick(ci){
+  const ro=document.getElementById('ro'); if(ci==null){ro.innerHTML='<span class="rd">Tap a bar</span><span class="rv">to read its exact value and share of the total.</span>';return;}
+  const cfg=curCfg, tot=cfg.series.reduce((a,s)=>a+s.values.reduce((x,y)=>x+y,0),0);
+  const catTot=cfg.series.reduce((a,s)=>a+s.values[ci],0);
+  const parts = cfg.series.length>1
+    ? cfg.series.map(s=>`<span class="chip"><i style="background:var(${KEYVAR[s.key]})"></i><b>${s.values[ci]}</b> ${s.name}</span>`).join('')
+    : `<b>${cfg.series[0].values[ci]}</b> ${cfg.unit} `;
+  ro.innerHTML=`<span class="rd">${cfg.categories[ci].label}</span><span class="rv">${parts}· ${(catTot/tot*100).toFixed(0)}% of total · <span style="color:var(--steel)">${cfg.categories[ci].note}</span></span>`;
+}
+function tableHTML(cfg){
+  const multi=cfg.series.length>1;
+  const head=`<tr><th>${multi?'Month':'Category'}</th>${cfg.series.map(s=>`<th class="num">${s.name}</th>`).join('')}${multi?'<th class="num">Total</th>':''}<th>Source</th></tr>`;
+  const rows=cfg.categories.map((c,i)=>{
+    const cells=cfg.series.map(s=>`<td class="num"><b>${s.values[i]}</b></td>`).join('');
+    const tot=multi?`<td class="num"><b>${cfg.series.reduce((a,s)=>a+s.values[i],0)}</b></td>`:'';
+    return `<tr><td>${c.label}</td>${cells}${tot}<td class="cite">${c.note}</td></tr>`;
+  }).join('');
+  return `<table class="tbl"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+}
+function closeSheet(){scrim.classList.remove('open');sheet.classList.remove('open');}
+scrim.onclick=closeSheet; document.getElementById('sheet-close').onclick=closeSheet;
+
+renderCompact('card-notes'); renderCompact('card-domain');
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==='light'?'dark':'light';};
+</script>
+</body>
+</html>

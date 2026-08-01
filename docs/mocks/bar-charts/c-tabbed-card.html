@@ -1,0 +1,305 @@
+<!doctype html>
+<!--
+  bar-graph tool-view mock · VARIANT C — "Tabbed multi-view card"
+  ============================================================================================
+  The paradigm already proven for weather_card / hurricane_card / chat-chart-C: the bars stay
+  INLINE in the bubble — no fullscreen sheet — but the card carries a TAB ROW switching among
+  views of the SAME data. One card, many lenses:
+
+    • Chart  — vertical bars with a grouped↔stacked toggle (multi-series) + tap-a-bar readout
+    • Table  — the raw counts, one row per category, per-series columns + total
+    • Stats  — total · biggest · smallest · mean · top category (token-only stat grid)
+
+  Data-only (invariants #1/#9): the payload is category labels (+ note) and named number series;
+  each series' color comes from a closed `key` mapped to a token — never a model-authored hex.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Bar graphs — C — tabbed multi-view card</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.15);
+    --rose:#cf8a8f;--rose-tint:rgba(207,138,143,.15);
+    --violet:#a493c9;--violet-tint:rgba(164,147,201,.13);
+    --teal:#6fb6b1;--teal-tint:rgba(111,182,177,.13);
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{position:relative;width:390px;height:820px;background:var(--bg);border-radius:34px;
+    overflow:hidden;border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{stroke-linecap:round;stroke-linejoin:round}
+  .ic{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);
+    border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* ---- inline tabbed bar card ---- */
+  .cc{align-self:flex-start;max-width:96%;width:100%;border:1px solid var(--border);
+    border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .cc-cap{display:flex;align-items:center;gap:7px;padding:9px 13px 0;font-size:10.5px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+  .cc-cap .vi{display:flex;color:var(--steel)}
+  .cc-head{display:flex;align-items:baseline;gap:8px;padding:5px 14px 2px}
+  .cc-now{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1}
+  .cc-unit{font-size:13px;color:var(--text-2);font-weight:500}
+  .cc-sub{padding:0 14px 6px;font-size:12px;color:var(--text-2)}
+  .cc-legend{display:flex;flex-wrap:wrap;gap:5px 12px;padding:2px 14px 2px;font-size:11px;color:var(--text-2)}
+  .cc-legend span{display:flex;align-items:center;gap:5px}
+  .cc-legend i{width:9px;height:9px;border-radius:3px;display:inline-block}
+  .cc-body{padding:0 12px 12px}
+
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:3px;gap:2px;margin:8px 14px 10px}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font:inherit;font-size:12.5px;
+    padding:6px;border-radius:9px;cursor:pointer;font-weight:500}
+  .seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.15)}
+
+  /* chart tab */
+  .mode{display:flex;justify-content:flex-end;margin:0 2px 6px}
+  .mode .seg{margin:0;width:max-content;padding:2px}
+  .mode .seg button{flex:0 0 auto;font-size:11.5px;padding:5px 10px}
+  .plot{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);
+    padding:8px 6px 4px;user-select:none}
+  .plot svg{width:100%;height:auto;display:block}
+  .s0{fill:var(--steel)} .s1{fill:var(--rose)} .s2{fill:var(--violet)} .s3{fill:var(--teal)} .s4{fill:var(--green)}
+  .bar{transition:opacity .12s} .bar.dim{opacity:.32}
+  .blab{font-size:9.5px;fill:var(--text-3)} .vlab{font-size:10px;fill:var(--text-2);font-weight:600}
+  .axz{stroke:color-mix(in srgb,var(--text-3) 55%,transparent);stroke-width:1}
+  .grid{stroke:var(--border);stroke-width:1} .ytick{font-size:9px;fill:var(--text-3)}
+  .readout{display:flex;align-items:center;gap:8px;margin:9px 0 0;padding:9px 12px;min-height:42px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);font-size:12.5px}
+  .readout .rd{font-weight:600;color:var(--steel);min-width:44px}
+  .readout .rv{color:var(--text-2)} .readout .rv b{color:var(--text)}
+  .readout .rv .chip{display:inline-flex;align-items:center;gap:4px;margin-right:7px}
+  .readout .rv .chip i{width:8px;height:8px;border-radius:2px;display:inline-block}
+
+  /* table tab */
+  .tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .tbl th{text-align:left;color:var(--text-3);font-weight:500;font-size:11px;padding:6px 8px;
+    border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.04em}
+  .tbl th.num,.tbl td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tbl td{padding:8px;border-bottom:1px solid var(--border);color:var(--text-2)}
+  .tbl td b{color:var(--text)} .tbl .cite{color:var(--steel);font-size:11px}
+
+  /* stats tab */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .stat{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:10px 11px}
+  .stat .k{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em}
+  .stat .v{font-size:19px;font-weight:600;letter-spacing:-.01em;margin-top:3px}
+  .stat .v small{font-size:11px;color:var(--text-2);font-weight:500}
+  .stat.wide{grid-column:span 3}
+  .foot{font-size:11.5px;color:var(--text-3);padding:12px 4px 2px;line-height:1.5}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{width:20px;height:20px;stroke:#10141a;fill:none;stroke-width:1.7}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.5;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">Full Brain<small>me · all domains</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">How many notes did I add each month this year?</div>
+      <div class="bubble ai">June was your peak at 61. Flip to Table for the raw counts or Stats for the summary.</div>
+      <div class="cc" id="card-notes" data-key="notes"></div>
+
+      <div class="bubble me">Break that down by domain.</div>
+      <div class="bubble ai">General leads every month. Use the grouped/stacked toggle on the Chart tab, and Stats calls out the top domain.</div>
+      <div class="cc" id="card-domain" data-key="domain"></div>
+
+      <div class="bubble me">The Stats tab is exactly the summary I wanted.</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask about your notes…" />
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">C · <b>Tabbed multi-view card.</b> The bars stay <b>inline</b> — no
+  fullscreen sheet — and a <b>tab row</b> switches views of the same data: <i>Chart</i>
+  (vertical bars, grouped↔stacked toggle, tap-a-bar readout), <i>Table</i> (raw counts), and
+  <i>Stats</i> (total · biggest · smallest · mean · top category). Mirrors the settled
+  <i>weather_card / hurricane_card</i> pattern — one card, many lenses in place.</p>
+</div>
+
+<script>
+/* ============================ data-only payloads ============================ */
+const DATA = {
+  notes:{
+    title:'Notes captured', sub:'me · general', unit:'notes',
+    categories:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug'].map((m,i)=>({label:m,note:'q:month'+i})),
+    series:[{name:'Notes', key:0, values:[18,24,31,22,40,52,44,49]}],
+    foot:'Counted from your captured notes, one bar per month. A record of what you saved.'
+  },
+  domain:{
+    title:'Notes by domain', sub:'me · all domains', unit:'notes',
+    categories:['Mar','Apr','May','Jun','Jul','Aug'].map((m,i)=>({label:m,note:'q:dm'+i})),
+    series:[
+      {name:'General',  key:0, values:[19,12,22,30,26,28]},
+      {name:'Health',   key:1, values:[ 6,14, 9, 8, 5, 7]},
+      {name:'Finance',  key:2, values:[ 4, 5, 6, 9, 8, 7]},
+      {name:'Location', key:3, values:[ 2, 3, 3, 5, 5, 7]},
+    ],
+    foot:'Notes grouped by the domain firewall that scoped each. Aggregate counts only — no domain content leaves its boundary.'
+  }
+};
+const KEYVAR=['--steel','--rose','--violet','--teal','--green'];
+const KEYCLASS=['s0','s1','s2','s3','s4'];
+
+/* ============================ bar engine (grouped/stacked, tap-to-read) ============================ */
+function makeBars(host, cfg, state, onPick){
+  const W=352,H=280,L=30,R=12,T=16,B=38;
+  const multi=cfg.series.length>1;
+  function niceMax(v){ if(v<=0)return 1; const p=Math.pow(10,Math.floor(Math.log10(v)));
+    const n=v/p; const step=n<=1?1:n<=2?2:n<=5?5:10; return step*p; }
+  function draw(){
+    const stacked=state.stacked && multi;
+    const maxV = stacked
+      ? Math.max(...cfg.categories.map((_,i)=>cfg.series.reduce((a,s)=>a+s.values[i],0)))
+      : Math.max(...cfg.series.flatMap(s=>s.values));
+    const ymax=niceMax(maxV), py=v=>T+(1-v/ymax)*(H-T-B);
+    const bandW=(W-L-R)/cfg.categories.length;
+    const gy=[0,ymax/2,ymax].map(v=>`<line class="grid" x1="${L}" y1="${py(v).toFixed(1)}" x2="${W-R}" y2="${py(v).toFixed(1)}"/><text class="ytick" x="${L-4}" y="${(py(v)+3).toFixed(1)}" text-anchor="end">${Math.round(v)}</text>`).join('');
+    let bars='',labels='',vlabs='';
+    cfg.categories.forEach((c,ci)=>{
+      const cx=L+ci*bandW, inner=bandW*0.64, ix=cx+(bandW-inner)/2, sel=state.sel===ci;
+      if(stacked){ let acc=0;
+        cfg.series.forEach(s=>{const v=s.values[ci];const y0=py(acc),y1=py(acc+v);acc+=v;
+          bars+=`<rect class="bar ${KEYCLASS[s.key]} ${state.sel!=null&&!sel?'dim':''}" data-ci="${ci}" x="${ix.toFixed(1)}" y="${y1.toFixed(1)}" width="${inner.toFixed(1)}" height="${Math.max(0,y0-y1).toFixed(1)}" rx="2"/>`;});
+        vlabs+=`<text class="vlab" x="${(ix+inner/2).toFixed(1)}" y="${(py(acc)-4).toFixed(1)}" text-anchor="middle">${cfg.series.reduce((a,s)=>a+s.values[ci],0)}</text>`;
+      } else { const gw=inner/cfg.series.length;
+        cfg.series.forEach((s,si)=>{const v=s.values[ci];const y1=py(v);
+          bars+=`<rect class="bar ${KEYCLASS[s.key]} ${state.sel!=null&&!sel?'dim':''}" data-ci="${ci}" x="${(ix+si*gw).toFixed(1)}" y="${y1.toFixed(1)}" width="${(gw*0.84).toFixed(1)}" height="${Math.max(0,py(0)-y1).toFixed(1)}" rx="2"/>`;
+          if(!multi) vlabs+=`<text class="vlab" x="${(ix+inner/2).toFixed(1)}" y="${(y1-4).toFixed(1)}" text-anchor="middle">${v}</text>`;});
+      }
+      labels+=`<text class="blab" x="${(cx+bandW/2).toFixed(1)}" y="${H-B+15}" text-anchor="middle">${c.label}</text>`;
+    });
+    host.querySelector('svg').innerHTML=`${gy}<line class="axz" x1="${L}" y1="${py(0).toFixed(1)}" x2="${W-R}" y2="${py(0).toFixed(1)}"/>${bars}${vlabs}${labels}`;
+    host.querySelectorAll('.bar').forEach(r=>r.addEventListener('pointerdown',()=>{
+      const ci=+r.dataset.ci; state.sel=state.sel===ci?null:ci; draw(); onPick&&onPick(state.sel);}));
+  }
+  host.innerHTML='<svg viewBox="0 0 '+W+' '+H+'"></svg>';
+  draw(); return {redraw:draw};
+}
+
+/* ============================ table + stats ============================ */
+function tableHTML(cfg){
+  const multi=cfg.series.length>1;
+  const head=`<tr><th>${multi?'Month':'Month'}</th>${cfg.series.map(s=>`<th class="num">${s.name}</th>`).join('')}${multi?'<th class="num">Total</th>':''}<th>Source</th></tr>`;
+  const rows=cfg.categories.map((c,i)=>{
+    const cells=cfg.series.map(s=>`<td class="num"><b>${s.values[i]}</b></td>`).join('');
+    const tot=multi?`<td class="num"><b>${cfg.series.reduce((a,s)=>a+s.values[i],0)}</b></td>`:'';
+    return `<tr><td>${c.label}</td>${cells}${tot}<td class="cite">${c.note}</td></tr>`;
+  }).join('');
+  return `<table class="tbl"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+}
+function statsHTML(cfg){
+  const totals=cfg.categories.map((_,i)=>cfg.series.reduce((a,s)=>a+s.values[i],0));
+  const grand=totals.reduce((a,b)=>a+b,0);
+  const maxi=totals.indexOf(Math.max(...totals)), mini=totals.indexOf(Math.min(...totals));
+  const mean=Math.round(grand/totals.length*10)/10;
+  const cell=(k,v,extra='')=>`<div class="stat ${extra}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  let top='';
+  if(cfg.series.length>1){ const st=cfg.series.map(s=>({n:s.name,t:s.values.reduce((a,b)=>a+b,0)})).sort((a,b)=>b.t-a.t)[0];
+    top=cell('Top domain', `${st.n} <small>${st.t} ${cfg.unit}</small>`, 'wide'); }
+  return `<div class="stats">
+    ${cell('Total', `${grand}<small> ${cfg.unit}</small>`)}
+    ${cell('Biggest', `${cfg.categories[maxi].label} <small>${totals[maxi]}</small>`)}
+    ${cell('Smallest', `${cfg.categories[mini].label} <small>${totals[mini]}</small>`)}
+    ${cell('Mean / mo', `${mean}<small> ${cfg.unit}</small>`)}
+    ${cell('Months', `${totals.length}`)}
+    ${cell('Peak share', `${Math.round(totals[maxi]/grand*100)}<small>%</small>`)}
+    ${top}
+  </div>`;
+}
+
+/* ============================ tabbed card ============================ */
+function mountChart(card, cfg){
+  const state={stacked:true, sel:null};
+  const plot=card.querySelector('.plot'), ro=card.querySelector('.readout');
+  const setRO=ci=>{ if(ci==null){ro.innerHTML='<span class="rd">Tap</span><span class="rv">a bar to read its exact value and share.</span>';return;}
+    const grand=cfg.categories.reduce((a,_,i)=>a+cfg.series.reduce((x,s)=>x+s.values[i],0),0);
+    const catTot=cfg.series.reduce((a,s)=>a+s.values[ci],0);
+    const parts=cfg.series.length>1
+      ? cfg.series.map(s=>`<span class="chip"><i style="background:var(${KEYVAR[s.key]})"></i><b>${s.values[ci]}</b> ${s.name}</span>`).join('')
+      : `<b>${cfg.series[0].values[ci]}</b> ${cfg.unit} `;
+    ro.innerHTML=`<span class="rd">${cfg.categories[ci].label}</span><span class="rv">${parts}· ${Math.round(catTot/grand*100)}% of total</span>`;};
+  const eng=makeBars(plot, cfg, state, setRO); setRO(null);
+  const mode=card.querySelector('.mode .seg');
+  if(mode)mode.onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    mode.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    state.stacked=b.dataset.v==='stacked';state.sel=null;eng.redraw();setRO(null);};
+}
+function renderCard(id){
+  const card=document.getElementById(id), cfg=DATA[card.dataset.key], multi=cfg.series.length>1;
+  const grand=cfg.categories.reduce((a,_,i)=>a+cfg.series.reduce((x,s)=>x+s.values[i],0),0);
+  const legend=multi?`<div class="cc-legend">${cfg.series.map(s=>`<span><i style="background:var(${KEYVAR[s.key]})"></i>${s.name}</span>`).join('')}</div>`:'';
+  card.innerHTML=`
+    <div class="cc-cap"><span class="vi"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span> ${cfg.title.toLowerCase()} · ${cfg.categories.length} bars</div>
+    <div class="cc-head"><span class="cc-now">${grand}</span><span class="cc-unit">${cfg.unit} total</span></div>
+    <div class="cc-sub">${cfg.sub}</div>
+    ${legend}
+    <div class="seg" data-role="tabs">
+      <button class="on" data-tab="chart">Chart</button>
+      <button data-tab="table">Table</button>
+      <button data-tab="stats">Stats</button>
+    </div>
+    <div class="cc-body">
+      <div data-panel="chart">
+        ${multi?`<div class="mode"><div class="seg"><button class="on" data-v="stacked">Stacked</button><button data-v="grouped">Grouped</button></div></div>`:''}
+        <div class="plot"></div>
+        <div class="readout"></div>
+      </div>
+      <div data-panel="table" style="display:none">${tableHTML(cfg)}</div>
+      <div data-panel="stats" style="display:none">${statsHTML(cfg)}</div>
+      <div class="foot">${cfg.foot}</div>
+    </div>`;
+  const panels=card.querySelectorAll('[data-panel]');
+  card.querySelector('[data-role=tabs]').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    card.querySelectorAll('[data-role=tabs] button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    panels.forEach(p=>p.style.display=p.dataset.panel===b.dataset.tab?'':'none');};
+  mountChart(card, cfg);
+}
+renderCard('card-notes'); renderCard('card-domain');
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==='light'?'dark':'light';};
+</script>
+</body>
+</html>
