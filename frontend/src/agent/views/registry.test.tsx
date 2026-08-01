@@ -1338,3 +1338,78 @@ describe("chart & lab_chart views", () => {
     expect(area?.getAttribute("d") ?? "").toMatch(/Z$/);
   });
 });
+
+describe("bar_chart view", () => {
+  const singlePayload = payload({
+    view: "bar_chart",
+    data: {
+      title: "Notes captured",
+      unit: "notes",
+      domain: "general",
+      categories: [{ label: "Jan" }, { label: "Feb" }, { label: "Mar" }],
+      series: [{ name: "Notes", key: 0, values: [18, 24, 31] }],
+    },
+  });
+  const multiPayload = payload({
+    view: "bar_chart",
+    data: {
+      title: "Notes by domain",
+      unit: "notes",
+      domain: "general",
+      stacked: true,
+      categories: [{ label: "Mar", note: "q:dm0" }, { label: "Apr" }],
+      series: [
+        { name: "General", key: 0, values: [19, 12] },
+        { name: "Health", key: 1, values: [6, 14] },
+      ],
+    },
+  });
+
+  it("registers the bar_chart view name", () => {
+    expect(isKnownView("bar_chart")).toBe(true);
+  });
+
+  it("renders the total headline and one bar per category, no legend for one series", () => {
+    const { container } = render(<ToolView payload={singlePayload} />);
+    expect(container.querySelector(".tv-cc-now")?.textContent).toBe("73"); // 18+24+31
+    expect(container.querySelectorAll("rect.tv-bar").length).toBe(3);
+    expect(container.querySelector(".tv-bar-legend")).toBeNull();
+  });
+
+  it("selects a category on tap and reads its value + share", () => {
+    const { container } = render(<ToolView payload={singlePayload} />);
+    const bands = container.querySelectorAll(".tv-bar-cat");
+    fireEvent.pointerDown(bands[2] as Element); // Mar = 31
+    const rv = container.querySelector(".tv-bar-readout .tv-cc-rv")?.textContent ?? "";
+    expect(rv).toContain("31");
+    expect(rv).toContain("42%"); // 31 / 73
+  });
+
+  it("shows a legend and the grouped/stacked toggle for a multi-series chart", () => {
+    render(<ToolView payload={multiPayload} />);
+    expect(screen.getByText("General")).toBeInTheDocument();
+    const grouped = screen.getByRole("tab", { name: "Grouped" });
+    expect(grouped.getAttribute("aria-selected")).toBe("false"); // defaults to stacked
+    fireEvent.click(grouped);
+    expect(grouped.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("shows the Table tab with per-series columns, a total, and the category citation", () => {
+    render(<ToolView payload={multiPayload} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Table" }));
+    expect(screen.getByText("q:dm0")).toBeInTheDocument(); // note pointer, not copied data
+    expect(screen.getByText("25")).toBeInTheDocument(); // Mar total 19+6
+  });
+
+  it("summarizes biggest/smallest/top-series in the Stats tab", () => {
+    render(<ToolView payload={multiPayload} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Stats" }));
+    expect(screen.getByText("Top series")).toBeInTheDocument();
+    expect(screen.getByText("Peak share")).toBeInTheDocument();
+  });
+
+  it("renders a calm empty state when there are no categories", () => {
+    render(<ToolView payload={payload({ view: "bar_chart", data: { series: [] } })} />);
+    expect(screen.getByText(/No data to plot/)).toBeInTheDocument();
+  });
+});

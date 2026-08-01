@@ -120,6 +120,11 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # first-class chat image analyze_image/compare_images can read by id
         # (VIDEO_IMAGE_TOOLS_PLAN.md) — the "screenshot the video at this moment" step.
         "grab_frame",
+        # Render a categorical breakdown/ranking jerv assembled (from the web, a count it
+        # tallied) as the general-domain `bar_chart` view — "how many X by Y", "compare X
+        # across Y". The KB-grounded chart tools stay out of jerv's KB-blind set; this one
+        # plots only numbers jerv passes, so it needs no notes (DESIGN.md "bar_chart tool-view").
+        "render_bars",
         # Fetch a web image's bytes so jerv can actually SEE it (web_fetch is text-only) —
         # persisted as a chat image analyze_image/compare_images read by id.
         "fetch_image",

@@ -1,6 +1,6 @@
 # Bar graphs — GUI-gate mockups
 
-> **Status:** Living · **Last verified:** 2026-08-01
+> **Status:** Settled (C chosen) · **Last verified:** 2026-08-01
 
 Three interactive mockups for a **bar-graph tool-view** — the card `jerv` shows when an answer
 is a categorical breakdown or ranking (counts per month, notes by domain, top tags) rather than
@@ -34,6 +34,10 @@ citation pointer (pointers-not-copies). A single-series payload renders one bar 
 multi-series payload renders grouped or stacked. This is a **new registered component** (a
 deliberate registry addition, like a tool), not a generic chart kitchen-sink — bars only.
 
-The owner picks one; the choice + reasoning is then recorded in `docs/reference/DESIGN.md`
-("Agent tool views"), the chosen file becomes the binding spec the React port mirrors 1:1, and the
-`bar_chart` view is registered in `frontend/src/agent/views/registry.tsx`.
+**Chosen: C — tabbed multi-view card** (`c-tabbed-card.html`), mirroring the settled
+`chart`/`weather_card`/`hurricane_card` decision so the bar view reads as one system with the line
+view. The choice + reasoning is recorded in `docs/reference/DESIGN.md` ("`bar_chart` tool-view");
+`c-tabbed-card.html` is the binding spec the React port mirrors. Shipped: the `bar_chart` component
+in `frontend/src/agent/views/registry.tsx` (`.tv-bar-*` styles in `frontend/src/styles.css`) and the
+`render_bars` tool (`backend/src/jbrain/agent/bartools.py` + `tools/render_bars.tool`). A and B are
+retained here as the record.

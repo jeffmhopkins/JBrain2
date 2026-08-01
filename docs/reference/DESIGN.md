@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-31
+> **Status:** Living · **Last verified:** 2026-08-01
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1271,6 +1271,39 @@ data (a non-health scope reaches no lab rows and emits no `lab_chart`); the view
 render of an already-firewalled read. Tokens-only `.tv-cc-*`/`.tv-plot-*` classes; the
 frame matches the live `.tool-view`. Owner-facing chat artifact; never a note, never
 RAG-indexed.
+
+### `bar_chart` tool-view (settled in a three-way GUI review — binding mock: `docs/mocks/bar-charts/c-tabbed-card.html`)
+
+The categorical sibling of `chart`: the answer when a "how many X by Y", "compare X across
+Y", or "which Y has the most X" question is a **breakdown or ranking**, not a value over
+time (counts per month, notes by domain, top tags). One registered, data-only view; the
+model authors **no markup, URL, or color** — it fills labels + numbers only (invariants
+#1/#9): `{title, unit, domain, stacked?, categories:[{label, note?}], series:[{name, key,
+values:[…]}]}`. One series draws one bar per category; several series draw **grouped**
+(side-by-side) or **stacked** bars. Each series is colored by its **`key`** (0→steel,
+1→rose, 2→violet, 3→teal, 4→green, 5→amber) — a component-owned index into the domain
+accents, assigned by the producer, never a model hex; the palette caps at six series. The
+bar canvas is zero-baselined (the axis only dips below zero if a value is negative); a
+value label rides each single-series bar and each stacked total.
+
+Chosen **C — tabbed multi-view card** (`docs/mocks/bar-charts/c-tabbed-card.html`) over
+**A** answer-first card → fullscreen explorer and **B** direct-inline ranked horizontal
+bars, mirroring the `chart`/`hurricane_card`/`weather_card` decision so the bar view reads
+as one system with the line view. One inline card: a total headline over a **Chart · Table
+· Stats** tab row. **Chart** is vertical bars with a **grouped↔stacked** toggle (multi-
+series) and a tap-a-bar readout (value · per-series split · share of total · the category's
+`note` citation when present); **Table** is the raw counts (category · per-series columns ·
+total · source); **Stats** is a total/biggest/smallest/mean/peak-share grid plus the top
+series. B was the strongest for a pure ranking but the weakest for grouped/stacked multi-
+series; A hid the raw counts behind a tap the line view already settled against. A and B are
+retained as the record in `docs/mocks/bar-charts/README.md`.
+
+Produced by **`render_bars`** — the categorical twin of `render_chart`: a **general-domain**
+artifact for a breakdown the model assembled itself (it renders exactly the numbers passed,
+so provenance is model-retyped and the reply must say where they came from). It carries no
+`fact_id` refs; a cited count-by-category producer over `app.facts` is a possible follow-up.
+Tokens-only `.tv-cc-*`/`.tv-bar-*` classes; the frame matches the live `.tool-view`. Owner-
+facing chat artifact; never a note, never RAG-indexed.
 
 ### `deep_research_report` tool-view (build plan `docs/plans/DEEP_RESEARCH_TOOL_PLAN.md`, Wave D3 — **mock-gate sign-off pending**)
 
