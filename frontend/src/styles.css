@@ -20785,6 +20785,148 @@ button.task-band:active {
   margin-top: 2px;
 }
 
+/* ===== bar_chart tool-view (docs/reference/DESIGN.md "bar_chart tool-view";
+   binding mock docs/mocks/bar-charts/c-tabbed-card.html). Reuses the .tv-cc tabbed
+   shell — only the bar SVG, legend, readout chips, and stat widths are new. Series
+   are keyed s0..s5 → the domain accents (component-owned, never a model hex). ===== */
+.fb-shell .tv-bar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 2px 14px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.fb-shell .tv-bar-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.fb-shell .tv-bar-key {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.fb-shell .tv-bar-body {
+  padding: 0 12px 4px;
+}
+.fb-shell .tv-bar-mode {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 2px 4px;
+}
+.fb-shell .tv-bar-mode .tv-cc-seg {
+  margin: 0;
+  width: max-content;
+  padding: 2px;
+}
+.fb-shell .tv-bar-mode .tv-cc-seg button {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  min-height: 32px;
+  font-size: 11.5px;
+}
+.fb-shell .tv-bar-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 6px 4px 2px;
+  touch-action: pan-y;
+}
+.fb-shell .tv-bar-cat {
+  cursor: pointer;
+}
+.fb-shell .tv-bar-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.fb-shell .tv-bar-zero {
+  stroke: color-mix(in srgb, var(--text-3) 55%, transparent);
+  stroke-width: 1;
+}
+.fb-shell .tv-bar-ytick {
+  font-size: 9px;
+  fill: var(--text-3);
+}
+.fb-shell .tv-bar-xlab {
+  font-size: 9.5px;
+  fill: var(--text-3);
+}
+.fb-shell .tv-bar-vlab {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--text-2);
+}
+.fb-shell .tv-bar {
+  transition: opacity 0.12s;
+}
+.fb-shell .tv-bar.dim {
+  opacity: 0.32;
+}
+.fb-shell .tv-bar.s0 {
+  fill: var(--steel);
+}
+.fb-shell .tv-bar.s1 {
+  fill: var(--rose);
+}
+.fb-shell .tv-bar.s2 {
+  fill: var(--violet);
+}
+.fb-shell .tv-bar.s3 {
+  fill: var(--teal);
+}
+.fb-shell .tv-bar.s4 {
+  fill: var(--green);
+}
+.fb-shell .tv-bar.s5 {
+  fill: var(--amber);
+}
+.fb-shell .tv-bar-key.s0 {
+  background: var(--steel);
+}
+.fb-shell .tv-bar-key.s1 {
+  background: var(--rose);
+}
+.fb-shell .tv-bar-key.s2 {
+  background: var(--violet);
+}
+.fb-shell .tv-bar-key.s3 {
+  background: var(--teal);
+}
+.fb-shell .tv-bar-key.s4 {
+  background: var(--green);
+}
+.fb-shell .tv-bar-key.s5 {
+  background: var(--amber);
+}
+.fb-shell .tv-bar-readout .tv-cc-rv {
+  flex: 1;
+}
+.fb-shell .tv-bar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+.fb-shell .tv-bar-tbl td.num,
+.fb-shell .tv-bar-tbl th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.fb-shell .tv-bar-stats .tv-cc-stat-v small {
+  color: var(--text-2);
+  font-weight: 500;
+  font-size: 11px;
+}
+.fb-shell .tv-bar-stat-wide {
+  grid-column: span 3;
+}
+
 /* ===== Research Library (docs/reference/DESIGN.md "Research Library"; binding mock
    docs/mocks/research-library/b-segmented-tabs.html). Amber research accent. ===== */
 .rl-screen {

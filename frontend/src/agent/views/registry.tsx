@@ -2416,6 +2416,466 @@ function ChartCard({ data }: ViewProps): ReactNode {
   );
 }
 
+// ---------------------------------------------------------------------------
+// bar_chart tool-view (DESIGN.md "bar_chart tool-view"; binding mock
+// docs/mocks/bar-charts/c-tabbed-card.html). Data-only (#1/#9): the model fills
+// category labels + named number series; the component assigns each series its
+// color key (s0..s5 → the domain accents) and owns the grouped/stacked
+// interaction. Same tabbed shell as ChartCard, reusing the .tv-cc-* chrome.
+
+interface BarCategory {
+  label: string;
+  note?: string;
+}
+interface BarSeries {
+  name: string;
+  key: number;
+  values: number[];
+}
+
+/** ~5-interval ceiling on a 1/2/5 × 10ⁿ step, so the top gridline is a round number. */
+function niceMax(v: number): number {
+  if (v <= 0) return 1;
+  const p = 10 ** Math.floor(Math.log10(v));
+  const n = v / p;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * p;
+}
+
+function parseBars(data: Record<string, unknown>): { cats: BarCategory[]; series: BarSeries[] } {
+  const cats = Array.isArray(data.categories)
+    ? (data.categories as Record<string, unknown>[]).map((c) => {
+        const o = c ?? {};
+        return {
+          label: String(o.label ?? ""),
+          ...(typeof o.note === "string" ? { note: o.note } : {}),
+        };
+      })
+    : [];
+  const series = Array.isArray(data.series)
+    ? (data.series as Record<string, unknown>[]).map((s, i) => {
+        const o = s ?? {};
+        // Color key comes from the payload but is clamped to the palette size — the
+        // model never authors a color, only picks a slot (usually the series index).
+        const key = Number.isFinite(Number(o.key)) ? ((Number(o.key) % 6) + 6) % 6 : i % 6;
+        return {
+          name: String(o.name ?? `Series ${i + 1}`),
+          key,
+          values: Array.isArray(o.values) ? (o.values as unknown[]).map((v) => Number(v) || 0) : [],
+        };
+      })
+    : [];
+  return { cats, series };
+}
+
+function barTotals(cats: BarCategory[], series: BarSeries[]): number[] {
+  return cats.map((_, i) => series.reduce((a, s) => a + (s.values[i] ?? 0), 0));
+}
+
+function fmtBar(v: number): string {
+  return Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+}
+
+type BarTab = "chart" | "table" | "stats";
+
+/** The bar canvas: single or multi-series, grouped or stacked, zero-baselined (the
+ * axis extends below zero only if a value is negative). Tapping a band selects it. */
+function BarPlot({
+  cats,
+  series,
+  stacked,
+  sel,
+  onSel,
+}: {
+  cats: BarCategory[];
+  series: BarSeries[];
+  stacked: boolean;
+  sel: number | null;
+  onSel: (i: number | null) => void;
+}): ReactNode {
+  const W = 352;
+  const H = 260;
+  const L = 30;
+  const R = 12;
+  const T = 16;
+  const B = 34;
+  const multi = series.length > 1;
+  const useStack = stacked && multi;
+  const totals = barTotals(cats, series);
+  const flat = series.flatMap((s) => s.values);
+  const dataMax = useStack ? Math.max(0, ...totals) : Math.max(0, ...flat);
+  const dataMin = Math.min(0, ...flat);
+  const ymax = niceMax(dataMax);
+  const ymin = dataMin < 0 ? -niceMax(-dataMin) : 0;
+  const span = ymax - ymin || 1;
+  const py = (v: number) => T + (1 - (v - ymin) / span) * (H - T - B);
+  const band = (W - L - R) / Math.max(1, cats.length);
+  const ticks = ymin < 0 ? [ymin, 0, ymax] : [0, ymax / 2, ymax];
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="tv-bar-svg" role="img" aria-label="bar chart">
+      {ticks.map((v) => (
+        <g key={`g${v}`}>
+          <line className="tv-bar-grid" x1={L} y1={py(v)} x2={W - R} y2={py(v)} />
+          <text className="tv-bar-ytick" x={L - 4} y={py(v) + 3} textAnchor="end">
+            {fmtBar(Math.round(v * 100) / 100)}
+          </text>
+        </g>
+      ))}
+      <line className="tv-bar-zero" x1={L} y1={py(0)} x2={W - R} y2={py(0)} />
+      {cats.map((c, ci) => {
+        const cx = L + ci * band;
+        const inner = band * 0.64;
+        const ix = cx + (band - inner) / 2;
+        const dim = sel != null && sel !== ci;
+        const rects: ReactNode[] = [];
+        if (useStack) {
+          let acc = 0;
+          for (const s of series) {
+            const v = s.values[ci] ?? 0;
+            const y0 = py(acc);
+            const y1 = py(acc + v);
+            acc += v;
+            rects.push(
+              <rect
+                key={s.name}
+                className={`tv-bar s${s.key}${dim ? " dim" : ""}`}
+                x={ix}
+                y={Math.min(y0, y1)}
+                width={inner}
+                height={Math.abs(y0 - y1)}
+                rx={2}
+              />,
+            );
+          }
+        } else {
+          const gw = inner / series.length;
+          for (const [si, s] of series.entries()) {
+            const v = s.values[ci] ?? 0;
+            const y0 = py(0);
+            const y1 = py(v);
+            rects.push(
+              <rect
+                key={s.name}
+                className={`tv-bar s${s.key}${dim ? " dim" : ""}`}
+                x={ix + si * gw}
+                y={Math.min(y0, y1)}
+                width={gw * 0.84}
+                height={Math.abs(y0 - y1)}
+                rx={2}
+              />,
+            );
+          }
+        }
+        // A value label rides the tallest mark: the stacked total, or (single series)
+        // the bar's own value. Grouped multi-series stays unlabeled to avoid clutter.
+        const labelTop = useStack
+          ? (totals[ci] ?? 0)
+          : Math.max(0, ...series.map((s) => s.values[ci] ?? 0));
+        return (
+          <g
+            key={`${c.label}-${ci}`}
+            className="tv-bar-cat"
+            onPointerDown={() => onSel(sel === ci ? null : ci)}
+          >
+            {/* full-height hit target so a tap anywhere in the band selects it */}
+            <rect x={cx} y={T} width={band} height={H - T - B} fill="transparent" />
+            {rects}
+            {(useStack || !multi) && (
+              <text
+                className="tv-bar-vlab"
+                x={ix + inner / 2}
+                y={py(labelTop) - 4}
+                textAnchor="middle"
+              >
+                {fmtBar(useStack ? (totals[ci] ?? 0) : (series[0]?.values[ci] ?? 0))}
+              </text>
+            )}
+            <text className="tv-bar-xlab" x={cx + band / 2} y={H - B + 15} textAnchor="middle">
+              {c.label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function BarReadout({
+  cats,
+  series,
+  unit,
+  sel,
+  grand,
+}: {
+  cats: BarCategory[];
+  series: BarSeries[];
+  unit: string;
+  sel: number | null;
+  grand: number;
+}): ReactNode {
+  if (sel == null) {
+    return (
+      <div className="tv-cc-readout tv-bar-readout">
+        <span className="tv-cc-rd">Tap</span>
+        <span className="tv-cc-rv">a bar to read its value and share of the total.</span>
+      </div>
+    );
+  }
+  const catTot = series.reduce((a, s) => a + (s.values[sel] ?? 0), 0);
+  const share = grand ? Math.round((catTot / grand) * 100) : 0;
+  const note = cats[sel]?.note;
+  return (
+    <div className="tv-cc-readout tv-bar-readout">
+      <span className="tv-cc-rd">{cats[sel]?.label}</span>
+      <span className="tv-cc-rv">
+        {series.length > 1 ? (
+          series.map((s) => (
+            <span className="tv-bar-chip" key={s.name}>
+              <i className={`tv-bar-key s${s.key}`} />
+              <b>{fmtBar(s.values[sel] ?? 0)}</b> {s.name}{" "}
+            </span>
+          ))
+        ) : (
+          <>
+            <b>{fmtBar(series[0]?.values[sel] ?? 0)}</b> {unit}{" "}
+          </>
+        )}
+        · {share}% of total
+        {note ? (
+          <>
+            {" "}
+            · <span className="tv-cc-cite">{note}</span>
+          </>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+function BarTable({
+  cats,
+  series,
+  totals,
+}: {
+  cats: BarCategory[];
+  series: BarSeries[];
+  totals: number[];
+}): ReactNode {
+  const multi = series.length > 1;
+  return (
+    <table className="tv-cc-tbl tv-bar-tbl">
+      <thead>
+        <tr>
+          <th>Category</th>
+          {series.map((s) => (
+            <th key={s.name} className="num">
+              {s.name}
+            </th>
+          ))}
+          {multi && <th className="num">Total</th>}
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {cats.map((c, i) => (
+          <tr key={`${c.label}-${i}`}>
+            <td>{c.label}</td>
+            {series.map((s) => (
+              <td key={s.name} className="num">
+                <b>{fmtBar(s.values[i] ?? 0)}</b>
+              </td>
+            ))}
+            {multi && (
+              <td className="num">
+                <b>{fmtBar(totals[i] ?? 0)}</b>
+              </td>
+            )}
+            <td className="tv-cc-cite">{c.note ?? "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function BarStats({
+  cats,
+  series,
+  unit,
+  totals,
+  grand,
+}: {
+  cats: BarCategory[];
+  series: BarSeries[];
+  unit: string;
+  totals: number[];
+  grand: number;
+}): ReactNode {
+  const maxTot = Math.max(...totals);
+  const minTot = Math.min(...totals);
+  const maxi = totals.indexOf(maxTot);
+  const mini = totals.indexOf(minTot);
+  const mean = Math.round((grand / Math.max(1, cats.length)) * 10) / 10;
+  const u = unit ? ` ${unit}` : "";
+  const top =
+    series.length > 1
+      ? [...series]
+          .map((s) => ({ n: s.name, t: s.values.reduce((a, b) => a + b, 0) }))
+          .sort((a, b) => b.t - a.t)[0]
+      : null;
+  const cell = (label: string, value: ReactNode) => (
+    <div className="tv-cc-stat" key={label}>
+      <div className="tv-cc-stat-v">{value}</div>
+      <div className="tv-cc-stat-l">{label}</div>
+    </div>
+  );
+  return (
+    <div className="tv-cc-stats tv-bar-stats">
+      {cell(
+        "Total",
+        <>
+          {fmtBar(grand)}
+          <small>{u}</small>
+        </>,
+      )}
+      {cell(
+        "Biggest",
+        <>
+          {cats[maxi]?.label} <small>{fmtBar(maxTot)}</small>
+        </>,
+      )}
+      {cell(
+        "Smallest",
+        <>
+          {cats[mini]?.label} <small>{fmtBar(minTot)}</small>
+        </>,
+      )}
+      {cell(
+        "Mean",
+        <>
+          {fmtBar(mean)}
+          <small>{u}</small>
+        </>,
+      )}
+      {cell("Bars", cats.length)}
+      {cell(
+        "Peak share",
+        <>
+          {grand ? Math.round((maxTot / grand) * 100) : 0}
+          <small>%</small>
+        </>,
+      )}
+      {top && (
+        <div className="tv-cc-stat tv-bar-stat-wide">
+          <div className="tv-cc-stat-v">
+            {top.n}{" "}
+            <small>
+              {fmtBar(top.t)}
+              {u}
+            </small>
+          </div>
+          <div className="tv-cc-stat-l">Top series</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BarChartCard({ data }: ViewProps): ReactNode {
+  const { cats, series } = useMemo(() => parseBars(data), [data]);
+  const unit = typeof data.unit === "string" ? data.unit : "";
+  const title = typeof data.title === "string" ? data.title : "Chart";
+  const domain = data.domain === "health" ? "health" : "general";
+  const multi = series.length > 1;
+  const [tab, setTab] = useState<BarTab>("chart");
+  // Multi-series defaults to stacked (the totals read at a glance); a single series
+  // ignores the flag. `data.stacked === false` is the only thing that opts out.
+  const [stacked, setStacked] = useState<boolean>(data.stacked !== false);
+  const [sel, setSel] = useState<number | null>(null);
+
+  const totals = barTotals(cats, series);
+  const grand = totals.reduce((a, b) => a + b, 0);
+  if (cats.length === 0 || series.length === 0) {
+    return <div className="tv-cc-empty">No data to plot.</div>;
+  }
+
+  return (
+    <div className={`tv-cc tv-bar dom-${domain}`}>
+      <div className="tv-cc-cap">
+        {title.toLowerCase()} · {cats.length} {cats.length === 1 ? "bar" : "bars"}
+      </div>
+      <div className="tv-cc-head">
+        <span className="tv-cc-now">{fmtBar(grand)}</span>
+        <span className="tv-cc-unit">{unit ? `${unit} total` : "total"}</span>
+      </div>
+      {multi && (
+        <div className="tv-bar-legend">
+          {series.map((s) => (
+            <span key={s.name}>
+              <i className={`tv-bar-key s${s.key}`} /> {s.name}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="tv-cc-seg" role="tablist" aria-label={`${title} views`}>
+        {(["chart", "table", "stats"] as BarTab[]).map((t) => (
+          <button
+            type="button"
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            className={tab === t ? "on" : ""}
+            onClick={() => setTab(t)}
+          >
+            {t === "chart" ? "Chart" : t === "table" ? "Table" : "Stats"}
+          </button>
+        ))}
+      </div>
+      {tab === "chart" && (
+        <div className="tv-bar-body">
+          {multi && (
+            <div className="tv-bar-mode">
+              <div className="tv-cc-seg" role="tablist" aria-label="bar layout">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={stacked}
+                  className={stacked ? "on" : ""}
+                  onClick={() => {
+                    setStacked(true);
+                    setSel(null);
+                  }}
+                >
+                  Stacked
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={!stacked}
+                  className={!stacked ? "on" : ""}
+                  onClick={() => {
+                    setStacked(false);
+                    setSel(null);
+                  }}
+                >
+                  Grouped
+                </button>
+              </div>
+            </div>
+          )}
+          <BarPlot cats={cats} series={series} stacked={stacked} sel={sel} onSel={setSel} />
+          <BarReadout cats={cats} series={series} unit={unit} sel={sel} grand={grand} />
+        </div>
+      )}
+      {tab === "table" && <BarTable cats={cats} series={series} totals={totals} />}
+      {tab === "stats" && (
+        <BarStats cats={cats} series={series} unit={unit} totals={totals} grand={grand} />
+      )}
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -2436,6 +2896,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   deepest_run: DeepestRun,
   chart: ChartCard,
   lab_chart: ChartCard,
+  bar_chart: BarChartCard,
 };
 
 export function isKnownView(name: string): boolean {
