@@ -386,7 +386,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         stub,  # device repo
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
-            **build_grokipedia_handlers(GrokipediaClient()),  # the grok_* sidecars' handlers
+            **build_grokipedia_handlers(GrokipediaClient()),  # the grokipedia_* sidecars' handlers
             **build_weather_handlers(WeatherClient("", ""), stub),
             **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(

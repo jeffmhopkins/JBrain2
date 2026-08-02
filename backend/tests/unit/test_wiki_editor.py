@@ -151,7 +151,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
         stub,  # device repo
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
-            **build_grokipedia_handlers(GrokipediaClient()),  # grok_* sidecars
+            **build_grokipedia_handlers(GrokipediaClient()),  # grokipedia_* sidecars
             **build_weather_handlers(WeatherClient("", ""), stub),
             **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(

@@ -816,11 +816,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "archivist_memory_write",
         # The Grokipedia tools are `web`-classed (jerv-only): search/traverse xAI's
         # encyclopedia and pull citations, never offered to the curator wildcard.
-        "grok_search",
-        "grok_outline",
-        "grok_section",
-        "grok_citations",
-        "grok_related",
+        "grokipedia_search",
+        "grokipedia_outline",
+        "grokipedia_section",
+        "grokipedia_citations",
+        "grokipedia_related",
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
@@ -941,30 +941,30 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "b67c76b8f8bf8a7a0910fbbaed57d35332c787bec7c9408c07219b3acc982ac4",
         ),
-        "grok_search.tool": (
-            "grok_search",
+        "grokipedia_search.tool": (
+            "grokipedia_search",
             1,
-            "62581ea3aa33ac631bc343b0aab36eef39f9c53195eb4fa89b96e17d723c8177",
+            "c5d376f1f08c5097273db93e53f84ab5e0a968217191cbf70438dc18a1e55de6",
         ),
-        "grok_outline.tool": (
-            "grok_outline",
+        "grokipedia_outline.tool": (
+            "grokipedia_outline",
             1,
-            "cacf340909144f4e4429fe2c570da175f093e5a69dbff079c4cd16de1fc9ed51",
+            "f364b023c27a6ea8e348d3b0401214e932c046004aeddfb699b54dc4cd6cc4cf",
         ),
-        "grok_section.tool": (
-            "grok_section",
+        "grokipedia_section.tool": (
+            "grokipedia_section",
             1,
-            "dd7cd933343ccf55f7fe9a2ae5cea9b8133e836edb15b9b463af9fe23995b0cd",
+            "fcdf6485b1de9156c8e80f3658b01bb729f850f3437ca55da41bda28d2dc4cb5",
         ),
-        "grok_citations.tool": (
-            "grok_citations",
+        "grokipedia_citations.tool": (
+            "grokipedia_citations",
             1,
-            "eff6a71dc44c5c26527e5c29ed9e32934b78fffe0ac51bdd1e23fd8ec8e0ffa0",
+            "144cb472fd75fe3a0318efa07b957f3b7d10a517062e45f9ea79187e3a557624",
         ),
-        "grok_related.tool": (
-            "grok_related",
+        "grokipedia_related.tool": (
+            "grokipedia_related",
             1,
-            "e209ad48d36a2672c2e3d3bf879689c2247b815088575d2b4b24eb1b34cda759",
+            "e20ede495b4a2a5f2aa5c66a3e083402ebd853b4a8f89c5296936e3e50c4764d",
         ),
         "read_note.tool": (
             "read_note",
