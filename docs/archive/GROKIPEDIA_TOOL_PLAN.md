@@ -1,6 +1,9 @@
 # Grokipedia Tool — Implementation Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-02 · **Waves:** W1✅ W2◻️ W3◻️
+> **Status:** Shipped 2026-08 · no migration · **Waves:** W1✅ W2✅ W3✅
+
+Landed in PR #993 (all three waves in one PR). CI green; unit suites cover the client,
+the parser, and the five tool handlers.
 
 Give the `jerv` persona a small set of tools to search Grokipedia, traverse an
 article by its table of contents, drill into individual sections without dumping
@@ -9,10 +12,9 @@ to primary sources**. The purpose is fast, cheap access to information on any
 subject, news, or current event — with a clear path from a Grokipedia claim to
 the source that backs it.
 
-**W1 has landed** (the `jbrain.web.grokipedia` client + parser). It is the
-implementation companion to the research in `../research/grokipedia-tool/RESEARCH.md`
-(verified public surface, prior art, JBrain2 fit, tool-design rationale) — read
-that first for the evidence behind the choices here.
+Implementation companion to the research in `research/grokipedia-tool/RESEARCH.md`
+(verified public surface, prior art, JBrain2 fit, tool-design rationale) — read that
+first for the evidence behind the choices here.
 
 **Access constraint:** no xAI/Grok API key. All access is open-internet. Verified:
 this is comfortable — Grokipedia's own first-party endpoints and SSR pages give
@@ -103,15 +105,20 @@ agent knows staleness (Grokipedia pages can be months old); actionable errors
   Unit tests (`backend/tests/unit/test_grokipedia.py`, injected transport, no
   network) cover both surfaces, the fallback path, the 404 no-fallback rule, and
   cookie persistence. No agent wiring yet.
-- **W2 — Tools.** The five `.tool` sidecars + handlers, `ToolOutput`/`WebSource`
-  citations, registry wiring, added to `JERV_TOOLS`. Sidecar-validity test + a
-  multi-turn loop test driving search→outline→section→citations with the fake
-  adapter.
-- **W3 — Caching + polish + docs.** Cross-turn artifact caching, outline TTL
-  cache, `response_format` toggle, freshness surfacing, actionable errors.
-  Reconcile `docs/reference/ASSISTANT.md` (jerv tool inventory) +
-  `docs/reference/SERVICES.md`; on ship, `git mv` this plan to `archive/` and carry
-  residuals to `ROADMAP.md`.
+- **W2 — Tools.** ✅ The five `.tool` sidecars + `build_grokipedia_handlers`
+  (`backend/src/jbrain/agent/grokipediatools.py`), each returning `ToolOutput` with
+  `WebSource` citation chips (grok_citations' point at the primary sources, not
+  Grokipedia). Wired into `web_handlers` in `main.py` and the wiki-talk test fixture,
+  and added to `JERV_TOOLS`. Tests (`test_grokipediatools.py`, injected transport)
+  cover each tool, the primary-source hand-off, and a sidecar-validity check.
+- **W3 — Caching + polish + docs.** ✅ Per-slug parsed-article TTL cache in the client
+  so a drill-down (outline→section→citations→related on one slug) costs a single
+  fetch — the bounded, within-turn drill-down needs no cross-turn artifact/blob cache
+  (sections are size-capped, unlike a full `web_fetch` page). `grok_section`'s
+  `response_format=detailed` toggle (adds section citations + linked articles),
+  `last_modified` freshness surfaced on the outline, and actionable errors that steer
+  back to `grok_outline`/`grok_search`. Reconciled `docs/reference/ASSISTANT.md` (jerv
+  tool inventory); no new service, so `SERVICES.md` is unchanged.
 
 ---
 
@@ -144,7 +151,7 @@ added, an RLS isolation test is mandatory.
 
 ## 7. Sources
 
-Companion research: `../research/grokipedia-tool/RESEARCH.md` (Grokipedia public
+Companion research: `research/grokipedia-tool/RESEARCH.md` (Grokipedia public
 surface verified 2026-08-01; prior art — `wikipedia-mcp`, Grokipedia clients,
 MediaWiki TOC pattern, Anthropic tool-design guidance; JBrain2 codebase fit).
 Governing precedent for a direct `web`-class tool: `docs/reference/ASSISTANT.md`

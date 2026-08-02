@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-01
+> **Status:** Living · **Last verified:** 2026-08-02
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -373,6 +373,14 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   one owner-approved exception: a `web`-gated, jerv-only on-box read of the owner's
   **coarse, coordinate-free presence** (a place name + freshness), which jerv's prompt
   forbids volunteering or sending to the web. See the sandbox bound below. The
+  **Grokipedia tools** (`grok_search` / `grok_outline` / `grok_section` /
+  `grok_citations` / `grok_related`) are `web`-gated, jerv-only reads of xAI's
+  encyclopedia over the **open internet — no xAI key** (API-first via Grokipedia's own
+  `/api/typeahead` + `/api/page-preview`, server-rendered `/page/<slug>` HTML as the
+  fallback; `jbrain.web.grokipedia`). They let jerv find an article, traverse it by its
+  table of contents, read a single section without loading the whole page, and pull the
+  article's citations as followable primary-source URLs — same sandboxed-web posture as
+  `web_search` (a pinned public site, no owner data). The
   **`weather`** tool is a `web`-gated, jerv-only forecast lookup over a pinned
   Open-Meteo upstream (free, no key, run directly like search): it replaces the
   multi-step search-and-scrape weather flow with one call returning a summary plus a

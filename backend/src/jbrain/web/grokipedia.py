@@ -30,12 +30,15 @@ so the `__cf_bm` bot cookie persists.
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import quote, urlparse
 
 import httpx
 import structlog
+from cachetools import TTLCache
 
 from jbrain.htmltext import extract_page
 from jbrain.web.fetch import BROWSER_HEADERS
@@ -47,6 +50,12 @@ _TIMEOUT = 20.0
 _DEFAULT_LIMIT = 6
 _MAX_LIMIT = 10
 _MAX_RELATED = 20  # cap the traversal links surfaced from a page's inline wiki-links
+# Cache the parsed article per slug: the agent's outline→section→citations→related loop
+# hits the same page repeatedly, and a Grokipedia page changes at most a few times a year,
+# so one fetch serves the whole drill-down. In-process + per-slug, like the SearXNG
+# repeat-search cache; adequate at personal scale (one API process).
+_CACHE_TTL_S = 900.0  # 15 min: long enough to fold a turn's drill-down, short enough to stay fresh
+_CACHE_MAX_ENTRIES = 128
 # A definitive "no such page" — not retried through the SSR fallback (which would only
 # render the origin's soft "page not found" stub). The real status rides back to the caller.
 _GONE_STATUSES = frozenset({404, 410})
@@ -365,12 +374,22 @@ class GrokipediaClient:
         self,
         base_url: str = DEFAULT_BASE_URL,
         transport: httpx.AsyncBaseTransport | None = None,
+        *,
+        cache_ttl_s: float = _CACHE_TTL_S,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._transport = transport
         # One cookie jar reused across calls so Cloudflare's `__cf_bm` bot cookie set on
         # the first response rides on the next request instead of re-triggering a challenge.
         self._cookies = httpx.Cookies()
+        # Per-slug parsed-article cache (None when disabled with cache_ttl_s <= 0). `timer`
+        # threads an injectable clock for deterministic expiry tests.
+        self._article_cache: TTLCache[str, GrokArticle] | None = (
+            TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
+            if cache_ttl_s > 0
+            else None
+        )
 
     async def search(self, query: str, limit: int = _DEFAULT_LIMIT) -> list[GrokSearchHit]:
         cleaned = query.strip()
@@ -387,11 +406,13 @@ class GrokipediaClient:
         slug = slug.strip()
         if not slug:
             raise GrokipediaError("a Grokipedia page slug is required")
+        if self._article_cache is not None and (hit := self._article_cache.get(slug)) is not None:
+            return hit
         try:
             body = await self._get_json("/api/page-preview", {"slug": slug})
             article = article_from_preview(body, slug)
             if article is not None:
-                return article
+                return self._cache(slug, article)
             log.warning("grokipedia.preview_unparseable", slug=slug)
         except GrokipediaError as exc:
             if exc.status in _GONE_STATUSES:
@@ -401,6 +422,11 @@ class GrokipediaClient:
         article = article_from_html(html, slug)
         if not article.content.strip():
             raise GrokipediaError(f"could not read the Grokipedia page for '{slug}'")
+        return self._cache(slug, article)
+
+    def _cache(self, slug: str, article: GrokArticle) -> GrokArticle:
+        if self._article_cache is not None:
+            self._article_cache[slug] = article
         return article
 
     async def _request(

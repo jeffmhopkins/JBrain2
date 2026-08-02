@@ -385,15 +385,14 @@ W2 (`ocr` / `gmail_read` adoption — proving the base is generic) + W3 (polish,
 optional turn-binding replay) open. A separately-tracked de-dup the research surfaced — unifying the
 near-identical research-report library and external-video corpus — is out of scope here.
 
-**In progress:** Grokipedia tool (build plan: `docs/plans/GROKIPEDIA_TOOL_PLAN.md`) — a jerv tool set
-(`grok_search`/`outline`/`section`/`citations`/`related`) to search Grokipedia, traverse a page by its
-table of contents, drill into single sections without loading the whole article, and pull citations the
-agent can follow to primary sources. Open-internet access only (no xAI key): **API-first** via
-Grokipedia's own `/api/typeahead` + `/api/page-preview`, with the server-rendered `/page/<slug>` HTML as
-the automatic fallback. Backed by `docs/research/grokipedia-tool/RESEARCH.md`. W1 (the client + parser
-producing the surface-agnostic `{outline, section, citations}` model, `jbrain.web.grokipedia`) landed
-on-branch; W2 (the five `.tool` sidecars + handlers, wired into jerv) + W3 (caching, polish, doc
-reconciliation) open.
+**Shipped:** Grokipedia tool (build record: `docs/archive/GROKIPEDIA_TOOL_PLAN.md`, PR #993) — a jerv
+tool set (`grok_search`/`outline`/`section`/`citations`/`related`) to search Grokipedia, traverse a page
+by its table of contents, drill into single sections without loading the whole article, and pull
+citations the agent can follow to primary sources. Open-internet access only (no xAI key): **API-first**
+via Grokipedia's own `/api/typeahead` + `/api/page-preview`, with the server-rendered `/page/<slug>` HTML
+as the automatic fallback, both parsed into one surface-agnostic `{outline, section, citations}` model
+(`jbrain.web.grokipedia`) with a per-slug cache. Research dossier:
+`docs/archive/research/grokipedia-tool/RESEARCH.md`. W1–W3 landed together in PR #993.
 
 **Shipped:** Research Library (build record: `docs/archive/RESEARCH_LIBRARY_PLAN.md`, PR #907) — the
 owner's card-launcher browse door to the two `external`-corpus artifacts jerv produces on its own
