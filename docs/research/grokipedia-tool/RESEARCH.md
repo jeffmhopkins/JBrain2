@@ -295,19 +295,16 @@ actionable errors ("no page named X; try grok_search").
 
 There is **no robots-allowed on-site search** — search forces the choice.
 
-**Recommendation:** ship the **robots-compliant path as the default** —
-`grok_search` = SearXNG `site:grokipedia.com` (reuses `SearxngClient`, zero new
-surface), and outline/section/citations = parse the SSR `/page/<slug>` HTML (it
-carries everything: `data-toc-id` TOC, `#ref-N` primary-source URLs). Then make
-the `/api/` JSON endpoints an **operator-gated fast path** (config flag) that
-improves search recall and gives cleaner structured citations, clearly documented
-as robots-disallowed first-party endpoints. This respects the repo's politeness
-ethos while capturing the higher-quality path when the owner opts in.
-
-This is genuinely the requester's / owner's call (it's a personal system, and
-`jerv` already fetches arbitrary web pages directly). Flagging it explicitly
-rather than deciding it silently. **Open question for sign-off: default to the
-robots-compliant path, or enable the `/api/` fast path from day one?**
+**Decision (ratified 2026-08-02): API-first.** Default to the `/api/` JSON
+endpoints — `/api/typeahead` for `grok_search`, `/api/page-preview` for
+outline/section/citations — with **SSR `/page/<slug>` parsing as the automatic
+fallback** when an API call fails, drifts, or is Cloudflare-challenged. Rationale:
+jerv makes a handful of targeted, human-triggered lookups (not bulk crawling —
+the concern `Disallow: /api/` protects against), the same posture as its existing
+direct web fetches on the owner's personal system; the `/api/` path gives real
+full-corpus search and pre-structured citations, directly serving the primary goal
+(fast citation extraction). The robots-compliant SSR path is retained as
+belt-and-suspenders, not discarded. See `../../proposed/GROKIPEDIA_TOOL_PLAN.md`.
 
 ---
 
@@ -350,7 +347,7 @@ Not a committed plan — a sketch of how it would decompose:
 
 ## 9. Open questions / uncertainties
 
-- **Access-surface decision** (§6) — needs owner sign-off.
+- **Access-surface decision** (§6) — resolved: API-first with SSR fallback.
 - `/api/typeahead` max `limit` and total-count semantics unverified; whether
   `citations[].title/description` are ever populated (empty on the one page
   inspected).

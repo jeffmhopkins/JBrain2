@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-07-24
+> **Status:** Living · **Last verified:** 2026-08-02
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -33,6 +33,12 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   state machine + two-sided child-safety layer + two UIs. Waves W1–W8 with a hard
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
+- `GROKIPEDIA_TOOL_PLAN.md` — a Grokipedia search/traversal tool set for the `jerv`
+  persona (`grok_search`/`outline`/`section`/`citations`/`related`): open-internet
+  access only (no xAI key), **API-first** (`/api/typeahead` + `/api/page-preview`)
+  with SSR-HTML fallback, TOC-then-section drill-down, and structured citation
+  extraction so the agent can follow sources to primary material. Waves W1–W3.
+  Backed by `../research/grokipedia-tool/RESEARCH.md`.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
