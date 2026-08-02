@@ -9,7 +9,7 @@ the loop's concern; what a tool *does* is the handler's.
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -424,17 +424,34 @@ class AgentLoop:
         guardrails: Guardrails | None = None,
         task: str = "agent.turn",
         model_override: str | None = None,
+        hidden_tools_provider: Callable[[], Awaitable[Collection[str]]] | None = None,
     ):
         self._router = router
         self._registry = registry
         self._recorder = recorder
         self._g = guardrails or Guardrails()
         self._task = task
+        # Runtime, per-turn tool exclusion: a backend outage hides the tools that need
+        # it (ComfyUI down → the image-gen tools). Awaited once per turn (the provider
+        # caches its probe), folded into every schemas_for / allowed_names call.
+        self._hidden_tools_provider = hidden_tools_provider
         # A per-conversation model pick (the omnibox long-press sheet): a "provider:model"
         # spec every model call this loop makes runs on, outranking the task's resolved
         # route. None = the resolved default. Scoped to THIS loop (the /chat turn), so a
         # sub-agent the turn spawns still runs on its own configured model.
         self._model_override = model_override
+
+    async def _hidden(self) -> Collection[str]:
+        """Tool names hidden this turn by a runtime backend outage (empty when no
+        provider is wired or every backend is healthy). Never raises — a probe
+        failure must not break a turn, so it degrades to hiding nothing."""
+        if self._hidden_tools_provider is None:
+            return ()
+        try:
+            return await self._hidden_tools_provider()
+        except Exception:  # noqa: BLE001 — liveness is best-effort; a probe error hides nothing
+            log.warning("agent.hidden_tools_probe_failed", exc_info=True)
+            return ()
 
     @staticmethod
     def _tree_exhausted(tree: TreeState | None, depth: int) -> bool:
@@ -519,8 +536,9 @@ class AgentLoop:
         on_usage: Callable[[int, int], None] | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
-        tools = self._registry.schemas_for(scopes, tools_allow)
-        allowed = self._registry.allowed_names(scopes, tools_allow)
+        hidden = await self._hidden()
+        tools = self._registry.schemas_for(scopes, tools_allow, hidden=hidden)
+        allowed = self._registry.allowed_names(scopes, tools_allow, hidden=hidden)
         messages: list[LlmMessage] = list(conversation)
         # `agent_tools=allowed` is this turn's effective ceiling — a child this turn
         # spawns is clamped to it (docs/archive/SUBAGENT_SPAWNING_PLAN.md, the parent⊆child clamp).
@@ -762,8 +780,9 @@ class AgentLoop:
         # The selected agent supplies its persona prompt and tool allowlist
         # (docs/reference/ASSISTANT.md "Agent selection"); the default is the Full Brain curator.
         system_prompt = system or SYSTEM_PROMPT
-        tools = self._registry.schemas_for(scopes, tools_allow, extra_tools)
-        allowed = self._registry.allowed_names(scopes, tools_allow, extra_tools)
+        hidden = await self._hidden()
+        tools = self._registry.schemas_for(scopes, tools_allow, extra_tools, hidden)
+        allowed = self._registry.allowed_names(scopes, tools_allow, extra_tools, hidden)
         messages: list[LlmMessage] = list(conversation)
         # A tool may emit live items mid-execution onto one queue the per-call dispatch
         # below drains: a (step, total, preview, label) tuple becomes a ToolProgressEvent
@@ -1138,8 +1157,9 @@ class AgentLoop:
         discarded retry never reaches the user). Shares the remaining cost cap in
         `budget` so retries cannot overspend the per-turn guardrail."""
         system_prompt = system or SYSTEM_PROMPT
-        tools = self._registry.schemas_for(scopes, tools_allow, extra_tools)
-        allowed = self._registry.allowed_names(scopes, tools_allow, extra_tools)
+        hidden = await self._hidden()
+        tools = self._registry.schemas_for(scopes, tools_allow, extra_tools, hidden)
+        allowed = self._registry.allowed_names(scopes, tools_allow, extra_tools, hidden)
         messages: list[LlmMessage] = list(conversation)
         tool_ctx = ToolContext(
             session=session,

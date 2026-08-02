@@ -35,6 +35,7 @@ from jbrain.agent.identity import me_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryService
+from jbrain.agent.readtools import IMAGE_TOOL_NAMES
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.titler import SessionTitler
@@ -691,12 +692,21 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # UsageEvent so the meter never has to know the route.
     context_window = await router.context_window("agent.turn", spec_override=model_override)
     guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier)
+    # Hide the image-GEN tools when ComfyUI is down — but only for a persona that
+    # actually holds them (jerv), so a curator turn never probes a backend it can't use.
+    liveness = getattr(request.app.state, "image_liveness", None)
+    hidden_provider = (
+        liveness.hidden_tools
+        if liveness is not None and profile.tools and (profile.tools & IMAGE_TOOL_NAMES)
+        else None
+    )
     loop = AgentLoop(
         router,
         get_agent_registry(request),
         recorder=tally,
         guardrails=guardrails,
         model_override=model_override,
+        hidden_tools_provider=hidden_provider,
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain

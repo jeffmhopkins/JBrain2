@@ -1,6 +1,6 @@
 ---
 name: generate_image
-version: 6
+version: 7
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -42,3 +42,8 @@ app renders the finished image inline in the chat for the owner; you do NOT
 receive the image bytes or any link, so never paste a URL or claim to show the
 image yourself — just describe in a sentence what you made. To change an existing
 image instead of making a new one, use edit_image.
+
+This makes a PICTURE — a photo, illustration, or artwork from your imagination. It is NOT for
+plotting data: to plot / graph / chart / visualize numbers (a trend, a breakdown, a comparison), use
+`render_chart` (a line/area time-series) or `render_bars` (a bar graph), never this tool. "Plot
+these", "graph that", "make a chart" mean a data plot, not a generated image.

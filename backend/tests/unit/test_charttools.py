@@ -17,6 +17,7 @@ from jbrain.agent.charttools import (
     _parse_x,
     build_chart_handlers,
     measurement_chart_view,
+    multi_series_chart_view,
     series_chart_view,
 )
 from jbrain.agent.contracts import FactRef
@@ -60,6 +61,72 @@ def test_series_chart_view_drops_bad_points_and_needs_two() -> None:
     assert series_chart_view("x", "", "line", [{"x": "2025-01", "y": 1}]) is None
     assert series_chart_view("x", "", "line", [{"x": "bad", "y": 1}, {"x": "2025", "y": 2}]) is None
     assert series_chart_view("x", "", "line", "not-a-list") is None
+
+
+def test_series_chart_view_tags_the_single_series_with_key_zero() -> None:
+    view = series_chart_view(
+        "W", "lb", "line", [{"x": "2025-01", "y": 1}, {"x": "2025-02", "y": 2}]
+    )
+    assert view is not None
+    assert view.data["series"][0]["key"] == 0
+
+
+# --- render_chart (multi_series_chart_view) ---------------------------------
+
+
+def test_multi_series_chart_view_overlays_named_lines_keyed_by_index() -> None:
+    view = multi_series_chart_view(
+        "SpaceX launches",
+        "launches",
+        "line",
+        [
+            {"name": "Falcon 9", "points": [{"x": "2025-08", "y": 12}, {"x": "2025-09", "y": 10}]},
+            {"name": "Starship", "points": [{"x": "2025-08", "y": 1}, {"x": "2025-09", "y": 0}]},
+        ],
+    )
+    assert view is not None
+    assert view.view == "chart"
+    assert view.data["domain"] == "general"
+    assert [s["label"] for s in view.data["series"]] == ["Falcon 9", "Starship"]
+    assert [s["key"] for s in view.data["series"]] == [0, 1]
+    # the y-scale spans BOTH series (Starship's 0 pulls the floor down)
+    assert view.data["y"]["min"] <= 0
+
+
+def test_multi_series_chart_view_drops_empty_series_and_needs_two_points() -> None:
+    # a lone series with one point is not a trend
+    assert (
+        multi_series_chart_view("x", "", "line", [{"name": "a", "points": [{"x": "2025", "y": 1}]}])
+        is None
+    )
+    # an empty / unparseable series drops; what survives must still reach two points
+    view = multi_series_chart_view(
+        "x",
+        "",
+        "line",
+        [
+            {"name": "keep", "points": [{"x": "2025-01", "y": 1}, {"x": "2025-02", "y": 2}]},
+            {"name": "drop", "points": []},
+            "not-a-dict",
+        ],
+    )
+    assert view is not None
+    assert [s["label"] for s in view.data["series"]] == ["keep"]
+    assert multi_series_chart_view("x", "", "line", "nope") is None
+
+
+def test_multi_series_chart_view_caps_at_six_lines() -> None:
+    view = multi_series_chart_view(
+        "x",
+        "",
+        "line",
+        [
+            {"name": f"s{i}", "points": [{"x": "2025-01", "y": i}, {"x": "2025-02", "y": i + 1}]}
+            for i in range(8)
+        ],
+    )
+    assert view is not None
+    assert len(view.data["series"]) == 6
 
 
 # --- chart_measurements (measurement_chart_view) ----------------------------
@@ -125,6 +192,51 @@ def test_measurement_chart_view_skips_nonnumeric_and_needs_two() -> None:
         _row(id="y", value_json=None),  # no value -> skipped
     ]
     assert measurement_chart_view(rows, title="weight") is None  # only one numeric point left
+
+
+# --- render_chart handler (single vs. multi) --------------------------------
+
+
+def test_render_chart_handler_uses_series_when_present() -> None:
+    import asyncio
+
+    handler = build_chart_handlers(maker=None)["render_chart"]  # type: ignore[arg-type]
+    out = asyncio.run(
+        handler(
+            {
+                "title": "SpaceX launches",
+                "unit": "launches",
+                "series": [
+                    {
+                        "name": "Falcon 9",
+                        "points": [{"x": "2025-08", "y": 12}, {"x": "2025-09", "y": 10}],
+                    },
+                    {
+                        "name": "Starship",
+                        "points": [{"x": "2025-08", "y": 1}, {"x": "2025-09", "y": 0}],
+                    },
+                ],
+            },
+            None,  # type: ignore[arg-type]
+        )
+    )
+    assert out.view is not None
+    assert len(out.view.data["series"]) == 2
+    assert "2 series" in out and "Falcon 9" in out
+
+
+def test_render_chart_handler_still_plots_a_single_points_list() -> None:
+    import asyncio
+
+    handler = build_chart_handlers(maker=None)["render_chart"]  # type: ignore[arg-type]
+    out = asyncio.run(
+        handler(
+            {"title": "W", "points": [{"x": "2025-01", "y": 1}, {"x": "2025-02", "y": 2}]},
+            None,  # type: ignore[arg-type]
+        )
+    )
+    assert out.view is not None
+    assert len(out.view.data["series"]) == 1
 
 
 # --- sidecar wiring ---------------------------------------------------------

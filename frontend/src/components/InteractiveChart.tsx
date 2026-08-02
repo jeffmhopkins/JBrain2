@@ -25,6 +25,14 @@ export interface RefBand {
   label: string;
 }
 
+/** One additional overlaid line (multi-series `chart`). `keyIndex` picks its color
+ * from the shared s0..s5 palette; the primary `points` line is s0. */
+export interface ExtraLine {
+  points: ChartPoint[];
+  keyIndex: number;
+  label: string;
+}
+
 export interface InteractiveChartProps {
   points: ChartPoint[];
   y: { min: number; max: number; ticks: number[] };
@@ -34,6 +42,10 @@ export interface InteractiveChartProps {
   kind?: "line" | "area";
   /** A reference band drawn as a tinted zone with a dashed lower edge (lab plots). */
   refBand?: RefBand;
+  /** Extra lines overlaid on the same axes (multi-series `chart`). When present the
+   * primary line is keyed s0 and flag toning is off — colors come from the series key,
+   * not a lab flag. Empty for a single-series or lab plot (unchanged behavior). */
+  extraSeries?: ExtraLine[];
   /** Called when the selection changes (tap / keyboard), for the parent's readout. */
   onScrub?: (point: ChartPoint, index: number) => void;
   /** Accessible name for the plot (e.g. "Platelet count over time"). */
@@ -67,9 +79,11 @@ export function InteractiveChart({
   domain,
   kind = "line",
   refBand,
+  extraSeries,
   onScrub,
   label,
 }: InteractiveChartProps): ReactNode {
+  const multi = !!extraSeries && extraSeries.length > 0;
   // Points are immutable for the chart's life; sort once and derive the full bounds.
   const pts = useMemo(() => points.slice().sort((a, b) => a.x - b.x), [points]);
   const bounds = useMemo(() => {
@@ -323,13 +337,50 @@ export function InteractiveChart({
             <line className="tv-plot-vrule" x1={px(selPt.x)} y1={T} x2={px(selPt.x)} y2={H - B} />
           )}
           {area && <path className="tv-plot-area" d={area} />}
-          <path className="tv-plot-line" d={line} />
+          {/* Extra overlaid series (drawn under the primary line). */}
+          {multi &&
+            extraSeries?.map((s) => {
+              const sp = s.points.slice().sort((a, b) => a.x - b.x);
+              let a = 0;
+              let b = sp.length - 1;
+              for (let i = 0; i < sp.length; i++) {
+                const p = sp[i];
+                if (!p) continue;
+                if (p.x < vs) a = i;
+                if (p.x > ve) {
+                  b = i;
+                  break;
+                }
+              }
+              const d = sp
+                .slice(a, b + 1)
+                .map((p, i) => `${i ? "L" : "M"}${px(p.x).toFixed(1)} ${py(p.y).toFixed(1)}`)
+                .join(" ");
+              return (
+                <g key={s.label}>
+                  <path className={`tv-plot-line s${s.keyIndex}`} d={d} />
+                  {sp.map((p, i) =>
+                    p.x < vs - DAY || p.x > ve + DAY ? null : (
+                      <circle
+                        // biome-ignore lint/suspicious/noArrayIndexKey: points are a stable ordered series
+                        key={i}
+                        className={`tv-plot-pt s${s.keyIndex}`}
+                        cx={px(p.x)}
+                        cy={py(p.y)}
+                        r={4}
+                      />
+                    ),
+                  )}
+                </g>
+              );
+            })}
+          <path className={`tv-plot-line${multi ? " s0" : ""}`} d={line} />
           {pts.map((p, i) =>
             p.x < vs - DAY || p.x > ve + DAY ? null : (
               <circle
                 // biome-ignore lint/suspicious/noArrayIndexKey: points are a stable ordered series
                 key={i}
-                className={`tv-plot-pt ${p.flag ?? "normal"}${i === sel ? " sel" : ""}`}
+                className={`tv-plot-pt ${multi ? "s0" : (p.flag ?? "normal")}${i === sel ? " sel" : ""}`}
                 cx={px(p.x)}
                 cy={py(p.y)}
                 r={i === sel ? 5.5 : 4}

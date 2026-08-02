@@ -115,6 +115,7 @@ from jbrain.gmail import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
+from jbrain.image_gen.liveness import ImageGenLiveness
 from jbrain.image_gen.render import ImageRenderService
 from jbrain.intake.repo import SqlIntakeRepo
 from jbrain.intake.sweep import intake_reaper_loop
@@ -497,6 +498,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # The management client (status/free) for the owner image-settings surface
             # — the sibling of app.state.local_gateway, wired on the same gate.
             app.state.comfyui_gateway = ComfyUiGatewayClient(settings.comfyui_url)
+            # Caches ComfyUI reachability so a jerv turn hides generate_image/edit_image
+            # when the server is configured but down (analyze_image stays — it degrades to
+            # OCR). The agent loop awaits its hidden_tools() each turn.
+            app.state.image_liveness = ImageGenLiveness(app.state.comfyui_gateway)
             # The shared render core (Wave L2): the jerv handlers AND the direct owner API
             # (api/images_render) drive this one path, so behavior never diverges. It owns the
             # unified-memory time-share (free the LLM before / ComfyUI after a render), the
@@ -544,6 +549,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.image_gen = None
             app.state.comfyui_gateway = None
             app.state.image_render = None
+            app.state.image_liveness = None
         # jerv's on-box audio transcription (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md).
         # Wired only when the whisper gateway is configured; the registry drops the
         # `transcribe` sidecar otherwise (graceful degrade, like the image tools).

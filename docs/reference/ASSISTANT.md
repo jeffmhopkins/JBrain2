@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-01
+> **Status:** Living · **Last verified:** 2026-08-02
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -397,7 +397,13 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   image tools (`generate_image`/`edit_image`/`analyze_image`), and **`analyze_video`**
   (read an attached video by sampling frames + transcribing audio) — each resolves a
   chat attachment by id under the session scope, runs an on-box model, and is dropped
-  from the registry when its backend is unconfigured (graceful degrade). Its URL-sourced
+  from the registry when its backend is unconfigured (graceful degrade). Configured but
+  **down** goes a step further for the image *generators*: a cached ComfyUI liveness probe
+  (`ImageGenLiveness`) hides `generate_image`/`edit_image` from a jerv turn when the server
+  is unreachable, so the model reaches for a chart tool rather than a dead generator;
+  `analyze_image` stays (it degrades to the on-box OCR pass, so it's still useful). The gate
+  is the registry's per-turn `hidden` set, computed once per turn from the throttled probe.
+  Its URL-sourced
   sibling **`analyze_stream`** reads a video **URL** — a live stream or an on-demand
   video — the same way, resolving it with yt-dlp and sampling frames (+ optional audio)
   with ffmpeg; because that URL is model-supplied and off-box, it is a second sanctioned
