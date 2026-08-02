@@ -108,6 +108,22 @@ def test_schemas_for_filters_by_scope(tmp_path: Path) -> None:
     assert health == {"search", "read_lab"}
 
 
+def test_hidden_removes_a_tool_from_visibility_and_dispatch(tmp_path: Path) -> None:
+    # A runtime outage (e.g. ComfyUI down) hides a tool for the turn: it is neither
+    # offered (schemas_for) nor callable (allowed_names), ahead of every other rule.
+    registry = ToolRegistry(
+        [
+            registered(SEARCH_TOOL, tmp_path, "search.tool"),
+            registered(LAB_TOOL, tmp_path, "lab.tool"),
+        ]
+    )
+    scopes = {"general", "health"}
+    assert {t.name for t in registry.schemas_for(scopes)} == {"search", "read_lab"}
+    offered = {t.name for t in registry.schemas_for(scopes, hidden={"read_lab"})}
+    assert offered == {"search"}
+    assert registry.allowed_names(scopes, hidden={"read_lab"}) == frozenset({"search"})
+
+
 def test_schemas_for_is_stable_order(tmp_path: Path) -> None:
     registry = ToolRegistry(
         [

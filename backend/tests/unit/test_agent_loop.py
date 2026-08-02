@@ -163,6 +163,40 @@ async def test_answers_immediately_without_tools() -> None:
     assert result.steps == 1
 
 
+async def test_hidden_tools_provider_removes_a_tool_from_the_offer() -> None:
+    # A runtime outage (ComfyUI down) hides a tool for the turn: it never reaches the model.
+    router, fake = router_with([LlmTurn("ok", (), "end_turn", LlmUsage(1, 1))])
+
+    async def hide() -> frozenset[str]:
+        return frozenset({"genimage"})
+
+    loop = AgentLoop(
+        router,
+        registry_with(make_tool("search", search), make_tool("genimage", search)),
+        hidden_tools_provider=hide,
+    )
+    await run(loop)
+    offered = {t.name for t in fake.converse_calls[0]["tools"]}
+    assert offered == {"search"}  # genimage hidden this turn
+
+
+async def test_hidden_tools_probe_failure_degrades_to_hiding_nothing() -> None:
+    # Liveness is best-effort: a probe that raises must not break the turn or drop a tool.
+    router, fake = router_with([LlmTurn("ok", (), "end_turn", LlmUsage(1, 1))])
+
+    async def boom_provider() -> frozenset[str]:
+        raise RuntimeError("probe down")
+
+    loop = AgentLoop(
+        router,
+        registry_with(make_tool("search", search), make_tool("genimage", search)),
+        hidden_tools_provider=boom_provider,
+    )
+    await run(loop)
+    offered = {t.name for t in fake.converse_calls[0]["tools"]}
+    assert offered == {"search", "genimage"}
+
+
 async def test_runs_a_tool_then_answers() -> None:
     turns = [
         LlmTurn("", (ToolCall("c1", "search", {"q": "x"}),), "tool_use", LlmUsage(10, 5)),

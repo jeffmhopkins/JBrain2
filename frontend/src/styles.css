@@ -20690,9 +20690,48 @@ button.task-band:active {
 .fb-shell .tv-plot.dom-health .tv-plot-area {
   fill: color-mix(in srgb, var(--rose) 16%, transparent);
 }
+/* Multi-series chart: per-line colors keyed s0..s5 (component-owned), used when
+   render_chart carries several series. s0 is steel (matches the single-series line).
+   Placed after the domain-toned line rules so equal-specificity keys win. */
+.fb-shell .tv-plot-line.s0 {
+  stroke: var(--steel);
+}
+.fb-shell .tv-plot-line.s1 {
+  stroke: var(--rose);
+}
+.fb-shell .tv-plot-line.s2 {
+  stroke: var(--violet);
+}
+.fb-shell .tv-plot-line.s3 {
+  stroke: var(--teal);
+}
+.fb-shell .tv-plot-line.s4 {
+  stroke: var(--green);
+}
+.fb-shell .tv-plot-line.s5 {
+  stroke: var(--amber);
+}
 .fb-shell .tv-plot-pt {
   stroke: var(--surface);
   stroke-width: 2;
+}
+.fb-shell .tv-plot-pt.s0 {
+  fill: var(--steel);
+}
+.fb-shell .tv-plot-pt.s1 {
+  fill: var(--rose);
+}
+.fb-shell .tv-plot-pt.s2 {
+  fill: var(--violet);
+}
+.fb-shell .tv-plot-pt.s3 {
+  fill: var(--teal);
+}
+.fb-shell .tv-plot-pt.s4 {
+  fill: var(--green);
+}
+.fb-shell .tv-plot-pt.s5 {
+  fill: var(--amber);
 }
 .fb-shell .tv-plot-pt.normal {
   fill: var(--text-3);

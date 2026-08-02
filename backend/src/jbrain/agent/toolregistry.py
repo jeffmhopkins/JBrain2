@@ -109,6 +109,7 @@ class ToolRegistry:
         scopes: Collection[str],
         allow: Collection[str] | None,
         extra: Collection[str] = (),
+        hidden: Collection[str] = (),
     ) -> bool:
         """Whether a session holding `scopes` under the agent's `allow` list may use
         this tool. `allow=None` is the default knowledge agent (every in-scope tool
@@ -118,7 +119,12 @@ class ToolRegistry:
         internet access. `extra` is a per-agent grant of otherwise-excluded tools (a
         wildcard agent's `extra_tools`): a name in `extra` is admitted ahead of the
         web/NEVER_DEFAULT rejections, so e.g. curator can hold `deep_produce` without
-        widening its wildcard for every other web/spawn tool (DEEP_PRODUCE_PLAN.md, D1)."""
+        widening its wildcard for every other web/spawn tool (DEEP_PRODUCE_PLAN.md, D1).
+        `hidden` is a per-turn runtime exclusion (a backend the tool needs is down —
+        e.g. ComfyUI unreachable hides the image-gen tools) applied ahead of every
+        other rule, so an unavailable tool is neither offered nor callable this turn."""
+        if tool.name in hidden:
+            return False
         if allow is not None and tool.name not in allow:
             return False
         # A per-agent extra grant admits an otherwise-excluded tool AHEAD of the web /
@@ -140,14 +146,16 @@ class ToolRegistry:
         scopes: Collection[str],
         allow: Collection[str] | None = None,
         extra: Collection[str] = (),
+        hidden: Collection[str] = (),
     ) -> list[LlmTool]:
         """The adapter tool definitions a session may see — visibility only; RLS at
         the DB layer is the boundary, and `allowed_names` is the dispatch-time gate.
-        Stable order so a prompt's tool list does not churn between turns."""
+        Stable order so a prompt's tool list does not churn between turns. `hidden`
+        names tools a runtime backend outage removes for this turn (see `_admits`)."""
         return [
             self._by_name[name].as_llm_tool()
             for name in sorted(self._by_name)
-            if self._admits(self._by_name[name], scopes, allow, extra)
+            if self._admits(self._by_name[name], scopes, allow, extra, hidden)
         ]
 
     def allowed_names(
@@ -155,14 +163,18 @@ class ToolRegistry:
         scopes: Collection[str],
         allow: Collection[str] | None = None,
         extra: Collection[str] = (),
+        hidden: Collection[str] = (),
     ) -> frozenset[str]:
         """The names a session may actually call — the dispatch-time enforcement of
         the same gate `schemas_for` applies to visibility. The loop checks a tool
         call against THIS, so a model that names a tool it was never offered (a slip
         or an injection) is refused, not run — the allowlist is a boundary, not a
-        hint (closes the `curator`-can't-reach-`web` invariant structurally)."""
+        hint (closes the `curator`-can't-reach-`web` invariant structurally). `hidden`
+        matches `schemas_for` so a tool an outage hid is refused, not just unlisted."""
         return frozenset(
-            name for name, tool in self._by_name.items() if self._admits(tool, scopes, allow, extra)
+            name
+            for name, tool in self._by_name.items()
+            if self._admits(tool, scopes, allow, extra, hidden)
         )
 
 

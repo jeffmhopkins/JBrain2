@@ -1,6 +1,6 @@
 ---
 name: render_bars
-version: 1
+version: 2
 permission: read
 params:
   type: object
@@ -41,10 +41,12 @@ Render a categorical breakdown or ranking you have already gathered as an intera
 labels and one or more named series of numbers, one value per category. A single series draws one
 bar each; several series draw grouped (side-by-side) or, with `stacked: true`, stacked bars.
 
-Use this for "how many X by Y", "compare X across Y", "which Y has the most X" — counts per month,
-notes by tag, visits by place, a this-vs-last comparison. Prefer it over `render_chart` when the
-x-axis is a set of categories rather than a time line (for a value trending over dates, use a
-chart).
+Use this for "plot / graph / chart this by Y", "how many X by Y", "compare X across Y", "which Y has
+the most X" — counts per month, notes by tag, visits by place, a this-vs-last comparison. When the
+owner says "plot / graph / chart / visualize this data", use this or `render_chart`, never
+`generate_image` (that draws a picture, not a data plot). Prefer `render_bars` over `render_chart`
+when the x-axis is a set of categories rather than a time line; for a value trending over dates (one
+or several lines) use `render_chart`.
 
 It renders exactly the numbers you pass, so this is a **general** artifact for figures you
 assembled yourself — a tally you counted, a public breakdown you looked up. Those numbers must come

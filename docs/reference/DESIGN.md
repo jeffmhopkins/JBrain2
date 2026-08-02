@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-01
+> **Status:** Living · **Last verified:** 2026-08-02
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1240,8 +1240,14 @@ never traps vertical scroll). The model authors **no markup, URL, or color** —
 numbers + closed enums only (invariants #1/#9):
 
 - **`chart`** (generic) — `{kind:('line'|'area'), unit, x_kind:'time', title, sub,
-  series:[{label, points:[{x:epoch_ms, y, flag?}]}], y:{min,max,ticks:[…]}}`. The component
+  series:[{label, key?, points:[{x:epoch_ms, y, flag?}]}], y:{min,max,ticks:[…]}}`. The component
   owns the palette from the categorical token order (the general domain reads **steel**).
+  **Multi-series:** more than one `series` entry overlays several lines on one card — a legend
+  appears, each line is colored by its `key` (0→steel…5→amber, component-owned), the y-scale spans
+  every series, a tap reads all lines at the selected date, and the Table/Stats tabs go per-line
+  (one column / one tile each). `render_chart` emits this when handed `series:[{name, points}]`
+  instead of a lone `points` list (e.g. launches per month split by vehicle). Single-series and
+  `lab_chart` render exactly as before (flag toning + reference band are single-series only).
 - **`lab_chart`** — `chart` + `ref:{lo,hi,label}` (the reference band, drawn as a
   `--green-tint` zone with a dashed edge) and per-point `flag ∈ {normal,low,high,critical}`
   (a closed enum the component tones: **amber** low/high, **rose** critical). Health-domain,

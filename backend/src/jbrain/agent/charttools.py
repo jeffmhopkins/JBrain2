@@ -71,6 +71,29 @@ def _parse_x(v: Any) -> int | None:
     return int(dt.timestamp() * 1000)
 
 
+# The chart component owns six line-color keys (the domain accents); more series than
+# that would collide, so a multi-series `render_chart` caps here.
+_MAX_SERIES = 6
+
+
+def _parse_points(raw_points: Any) -> list[dict[str, Any]]:
+    """A model-supplied `[{x, y}]` list → sorted `[{x:epoch_ms, y:float}]`. x is an ISO
+    date or epoch-ms; unparseable / non-numeric points drop. Pure, reused per series."""
+    if not isinstance(raw_points, list):
+        return []
+    pts: list[dict[str, Any]] = []
+    for p in raw_points:
+        if not isinstance(p, dict):
+            continue
+        x = _parse_x(p.get("x"))
+        y = _as_number(p.get("y"))
+        if x is None or y is None:
+            continue
+        pts.append({"x": x, "y": y})
+    pts.sort(key=lambda p: p["x"])
+    return pts
+
+
 def _chart_payload(
     *,
     title: str,
@@ -91,7 +114,9 @@ def _chart_payload(
             "kind": kind if kind in ("line", "area") else "line",
             "x_kind": "time",
             "y": {"min": y_min, "max": y_max, "ticks": ticks},
-            "series": [{"label": title, "points": points}],
+            # A single series is `key: 0` (steel); a multi-series view keys each line by
+            # index. The component owns the palette from the key — never a model color.
+            "series": [{"label": title, "key": 0, "points": points}],
         },
         refs=refs,
     )
@@ -101,22 +126,49 @@ def series_chart_view(title: str, unit: str, kind: str, raw_points: Any) -> View
     """Build a `chart` view from a model-supplied series (`render_chart`). Points are
     `{x, y}` with x an ISO date or epoch-ms; unparseable / non-numeric points drop.
     Returns None if fewer than two points survive (nothing to trend). General-domain."""
-    if not isinstance(raw_points, list):
-        return None
-    pts: list[dict[str, Any]] = []
-    for p in raw_points:
-        if not isinstance(p, dict):
-            continue
-        x = _parse_x(p.get("x"))
-        y = _as_number(p.get("y"))
-        if x is None or y is None:
-            continue
-        pts.append({"x": x, "y": y})
+    pts = _parse_points(raw_points)
     if len(pts) < 2:
         return None
-    pts.sort(key=lambda p: p["x"])
     return _chart_payload(
         title=title or "Chart", unit=unit, domain="general", kind=kind, points=pts, refs=[]
+    )
+
+
+def multi_series_chart_view(
+    title: str, unit: str, kind: str, raw_series: Any
+) -> ViewPayload | None:
+    """Build a multi-line `chart` view from several model-supplied named series
+    (`render_chart` with `series`). Each `{name, points:[{x,y}]}` becomes one line,
+    colored by index (component-owned). Series with no valid point drop; returns None
+    unless a series survives and ≥2 points remain in total. General-domain, no refs."""
+    if not isinstance(raw_series, list):
+        return None
+    out: list[dict[str, Any]] = []
+    for s in raw_series[:_MAX_SERIES]:
+        if not isinstance(s, dict):
+            continue
+        pts = _parse_points(s.get("points"))
+        if not pts:
+            continue
+        name = str(s.get("name", "") or "").strip() or f"Series {len(out) + 1}"
+        out.append({"label": name, "key": len(out), "points": pts})
+    total = sum(len(s["points"]) for s in out)
+    if not out or total < 2:
+        return None
+    y_min, y_max, ticks = nice_scale([float(p["y"]) for s in out for p in s["points"]])
+    return ViewPayload(
+        view="chart",
+        surface="inline",
+        data={
+            "domain": "general",
+            "unit": unit,
+            "title": title or "Chart",
+            "kind": kind if kind in ("line", "area") else "line",
+            "x_kind": "time",
+            "y": {"min": y_min, "max": y_max, "ticks": ticks},
+            "series": out,
+        },
+        refs=[],
     )
 
 
@@ -204,6 +256,16 @@ def build_chart_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, T
         title = str(arguments.get("title", "") or "").strip() or "Chart"
         unit = str(arguments.get("unit", "") or "")
         kind = str(arguments.get("kind", "line") or "line")
+        # `series` (several named lines) takes precedence over a lone `points` list.
+        raw_series = arguments.get("series")
+        if isinstance(raw_series, list) and raw_series:
+            view = multi_series_chart_view(title, unit, kind, raw_series)
+            if view is None:
+                return ToolOutput(
+                    "I need at least one series with two or more points, each a date (x)"
+                    " and a number (y), to plot."
+                )
+            return ToolOutput(_series_summary(view, title), view=view)
         view = series_chart_view(title, unit, kind, arguments.get("points"))
         if view is None:
             return ToolOutput(
@@ -213,6 +275,13 @@ def build_chart_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, T
         return ToolOutput(f"Charted {n} points — {title}.", view=view)
 
     return {"chart_measurements": chart_measurements_tool, "render_chart": render_chart_tool}
+
+
+def _series_summary(view: ViewPayload, title: str) -> str:
+    series = view.data["series"]
+    names = ", ".join(s["label"] for s in series)
+    total = sum(len(s["points"]) for s in series)
+    return f"Charted {len(series)} series ({names}), {total} points — {title}."
 
 
 def _measurement_summary(view: ViewPayload, measurement: str) -> str:

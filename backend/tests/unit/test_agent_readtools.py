@@ -1048,13 +1048,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "render_chart.tool": (
             "render_chart",
-            1,
-            "5cb07e3d02da5315d269ff62ee3e2b80884c9f5f35b8ce64b3de4e376ac58540",
+            2,
+            "06f5703b02f5d1354f7bedc0a25bf098d1c8b7764777980ae829a5208dbb806b",
         ),
         "render_bars.tool": (
             "render_bars",
-            1,
-            "58df0af28ba469e7ff81d40ab1d11fac737c32ddd87034bbcb6333b48dc68c1b",
+            2,
+            "42ce8bbd8ea4f1272d039ef368e3547c03a45cf4c6d483efdbc246a05323fbf4",
         ),
         "read_encounters.tool": (
             "read_encounters",
@@ -1173,8 +1173,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "generate_image.tool": (
             "generate_image",
-            6,
-            "95ea01195ec987596896de7d1e38da19fbe2ebca9b6434659cbb85d8e31bb4d6",
+            7,
+            "4f7eca6de02755a147a218bfdcb987bfd6561d321f876e8204014594901f6b67",
         ),
         "edit_image.tool": (
             "edit_image",

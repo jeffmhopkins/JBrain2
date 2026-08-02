@@ -2341,16 +2341,154 @@ function ChartTable({
   );
 }
 
-function ChartCard({ data }: ViewProps): ReactNode {
-  const pts = useMemo(
-    () => parsePoints((data.series as Record<string, unknown>[])?.[0]?.points),
-    [data.series],
+/** A named line in a multi-series `chart`. `key` picks its color (s0..s5). */
+interface LineSeries {
+  label: string;
+  key: number;
+  points: CardPoint[];
+}
+
+/** Read every series (not just the first) as colored lines. A single-series payload
+ * yields one entry; the color key is the payload's `key` clamped to the palette. */
+function parseSeriesList(data: Record<string, unknown>): LineSeries[] {
+  const raw = Array.isArray(data.series) ? (data.series as Record<string, unknown>[]) : [];
+  return raw
+    .map((s, i) => {
+      const o = s ?? {};
+      return {
+        label: typeof o.label === "string" ? o.label : `Series ${i + 1}`,
+        key: Number.isFinite(Number(o.key)) ? ((Number(o.key) % 6) + 6) % 6 : i % 6,
+        points: parsePoints(o.points),
+      };
+    })
+    .filter((s) => s.points.length > 0);
+}
+
+/** The point of `pts` nearest x (for a shared-x readout across series). */
+function pointAtX(pts: CardPoint[], x: number): CardPoint | null {
+  let best: CardPoint | null = null;
+  let bd = Number.POSITIVE_INFINITY;
+  for (const p of pts) {
+    const d = Math.abs(p.x - x);
+    if (d < bd) {
+      bd = d;
+      best = p;
+    }
+  }
+  return best;
+}
+
+/** Multi-series scrub readout: every line's value at the selected date. */
+function MultiReadout({
+  series,
+  unit,
+  selX,
+}: {
+  series: LineSeries[];
+  unit: string;
+  selX: number | null;
+}): ReactNode {
+  if (selX == null) {
+    return (
+      <div className="tv-cc-readout tv-bar-readout">
+        <span className="tv-cc-rd">Tap</span>
+        <span className="tv-cc-rv">a point to read every line at that date.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="tv-cc-readout tv-bar-readout">
+      <span className="tv-cc-rd">{fmtLong(selX)}</span>
+      <span className="tv-cc-rv">
+        {series.map((s) => {
+          const p = pointAtX(s.points, selX);
+          return (
+            <span className="tv-bar-chip" key={s.label}>
+              <i className={`tv-bar-key s${s.key}`} />
+              <b>{p ? fmtNum(p.y) : "—"}</b> {s.label}{" "}
+            </span>
+          );
+        })}
+        {unit ? `· ${unit}` : null}
+      </span>
+    </div>
   );
-  const ref = readRefBand(data);
+}
+
+/** Multi-series table: one row per date, one column per line. */
+function MultiTable({ series }: { series: LineSeries[] }): ReactNode {
+  const xs = Array.from(new Set(series.flatMap((s) => s.points.map((p) => p.x)))).sort(
+    (a, b) => b - a,
+  );
+  return (
+    <table className="tv-cc-tbl tv-bar-tbl">
+      <thead>
+        <tr>
+          <th>Date</th>
+          {series.map((s) => (
+            <th key={s.label} className="num">
+              {s.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {xs.map((x) => (
+          // x is unique here — xs is the deduped union of every series' dates.
+          <tr key={x}>
+            <td>{fmtLong(x)}</td>
+            {series.map((s) => {
+              const p = s.points.find((pp) => pp.x === x);
+              return (
+                <td key={s.label} className="num">
+                  {p ? <b>{fmtNum(p.y)}</b> : "—"}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** Multi-series stats: each line's latest value + net change. */
+function MultiStats({ series }: { series: LineSeries[] }): ReactNode {
+  return (
+    <div className="tv-cc-stats tv-bar-stats">
+      {series.map((s) => {
+        const ys = s.points.map((p) => p.y);
+        const first = ys[0] ?? 0;
+        const last = ys.at(-1) ?? 0;
+        const change = Math.round((last - first) * 100) / 100;
+        return (
+          <div className="tv-cc-stat" key={s.label}>
+            <div className="tv-cc-stat-v">
+              {fmtNum(last)}{" "}
+              <small>
+                {change > 0 ? "+" : ""}
+                {fmtNum(change)}
+              </small>
+            </div>
+            <div className="tv-cc-stat-l">{s.label}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChartCard({ data }: ViewProps): ReactNode {
+  const seriesList = useMemo(() => parseSeriesList(data), [data]);
+  const multi = seriesList.length > 1;
+  const pts = seriesList[0]?.points ?? [];
+  const ref = multi ? null : readRefBand(data);
   const domain = data.domain === "health" ? "health" : "general";
   const unit = typeof data.unit === "string" ? data.unit : "";
   const title = typeof data.title === "string" ? data.title : ref ? "Lab result" : "Chart";
-  const yScale = useMemo(() => readYScale(data, pts), [data, pts]);
+  // The y-scale spans EVERY series so no line clips off the top or bottom.
+  const allPts = useMemo(() => seriesList.flatMap((s) => s.points), [seriesList]);
+  const yScale = useMemo(() => readYScale(data, multi ? allPts : pts), [data, multi, allPts, pts]);
   const tabs: CardTab[] = ref ? ["trend", "table", "range"] : ["trend", "table", "stats"];
   const [tab, setTab] = useState<CardTab>("trend");
   const [sel, setSel] = useState<CardPoint | null>(() => pts.at(-1) ?? null);
@@ -2363,21 +2501,36 @@ function ChartCard({ data }: ViewProps): ReactNode {
 
   const delta = Math.round((last.y - first.y) * 100) / 100;
   const dir = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const extraSeries = seriesList.slice(1).map((s) => ({
+    points: s.points,
+    keyIndex: s.key,
+    label: s.label,
+  }));
 
   return (
     <div className={`tv-cc dom-${domain}`}>
       <div className="tv-cc-cap">
         {ref ? "lab · " : ""}
-        {title.toLowerCase()} · {pts.length} points
+        {title.toLowerCase()} · {multi ? `${seriesList.length} lines` : `${pts.length} points`}
       </div>
-      <div className="tv-cc-head">
-        <span className="tv-cc-now">{fmtNum(last.y)}</span>
-        <span className="tv-cc-unit">{unit}</span>
-        <span className={`tv-cc-delta ${dir}`}>
-          {delta > 0 ? "▲" : delta < 0 ? "▼" : "—"} {fmtNum(Math.abs(delta))} {unit} since{" "}
-          {fmtLong(first.x)}
-        </span>
-      </div>
+      {multi ? (
+        <div className="tv-bar-legend">
+          {seriesList.map((s) => (
+            <span key={s.label}>
+              <i className={`tv-bar-key s${s.key}`} /> {s.label}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="tv-cc-head">
+          <span className="tv-cc-now">{fmtNum(last.y)}</span>
+          <span className="tv-cc-unit">{unit}</span>
+          <span className={`tv-cc-delta ${dir}`}>
+            {delta > 0 ? "▲" : delta < 0 ? "▼" : "—"} {fmtNum(Math.abs(delta))} {unit} since{" "}
+            {fmtLong(first.x)}
+          </span>
+        </div>
+      )}
       <div className="tv-cc-seg" role="tablist" aria-label={`${title} views`}>
         {tabs.map((t) => (
           <button
@@ -2394,7 +2547,11 @@ function ChartCard({ data }: ViewProps): ReactNode {
       </div>
       {tab === "trend" && (
         <div className="tv-cc-trend">
-          {sel && <ReadoutLine point={sel} unit={unit} band={ref} />}
+          {multi ? (
+            <MultiReadout series={seriesList} unit={unit} selX={sel?.x ?? null} />
+          ) : (
+            sel && <ReadoutLine point={sel} unit={unit} band={ref} />
+          )}
           <InteractiveChart
             // Remount on (re)entering Trend so pointer listeners bind once and the view resets.
             key="trend"
@@ -2405,13 +2562,20 @@ function ChartCard({ data }: ViewProps): ReactNode {
             label={`${title} over time`}
             onScrub={(p) => setSel(p as CardPoint)}
             {...(ref ? { refBand: ref } : {})}
+            {...(multi ? { extraSeries } : {})}
           />
           <div className="tv-cc-hint">pinch or scroll to zoom · drag to pan · tap a point</div>
         </div>
       )}
-      {tab === "table" && <ChartTable pts={pts} unit={unit} band={ref} />}
+      {tab === "table" &&
+        (multi ? (
+          <MultiTable series={seriesList} />
+        ) : (
+          <ChartTable pts={pts} unit={unit} band={ref} />
+        ))}
       {tab === "range" && ref && <RangeView pts={pts} unit={unit} band={ref} />}
-      {tab === "stats" && <StatsView pts={pts} unit={unit} />}
+      {tab === "stats" &&
+        (multi ? <MultiStats series={seriesList} /> : <StatsView pts={pts} unit={unit} />)}
     </div>
   );
 }

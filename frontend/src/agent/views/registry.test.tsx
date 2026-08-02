@@ -1337,6 +1337,66 @@ describe("chart & lab_chart views", () => {
     expect(area).toBeInTheDocument();
     expect(area?.getAttribute("d") ?? "").toMatch(/Z$/);
   });
+
+  const multiChart = payload({
+    view: "chart",
+    data: {
+      domain: "general",
+      unit: "launches",
+      title: "SpaceX launches",
+      kind: "line",
+      y: { min: 0, max: 15, ticks: [0, 5, 10, 15] },
+      series: [
+        {
+          label: "Falcon 9",
+          key: 0,
+          points: [
+            { x: Date.UTC(2025, 7, 1), y: 12 },
+            { x: Date.UTC(2025, 8, 1), y: 10 },
+          ],
+        },
+        {
+          label: "Starship",
+          key: 1,
+          points: [
+            { x: Date.UTC(2025, 7, 1), y: 1 },
+            { x: Date.UTC(2025, 8, 1), y: 0 },
+          ],
+        },
+      ],
+    },
+  });
+
+  it("renders a multi-series chart: a legend + one line per series", () => {
+    const { container } = render(<ToolView payload={multiChart} />);
+    const legend = container.querySelector(".tv-bar-legend");
+    expect(legend).toBeInTheDocument();
+    expect(legend?.textContent).toContain("Falcon 9");
+    expect(legend?.textContent).toContain("Starship");
+    // primary line (s0) + one extra line (s1)
+    expect(container.querySelectorAll(".tv-plot-line").length).toBe(2);
+    expect(container.querySelector(".tv-plot-line.s1")).toBeInTheDocument();
+  });
+
+  it("multi-series scrub reads every line at the selected date", () => {
+    const { container } = render(<ToolView payload={multiChart} />);
+    const plot = container.querySelector(".tv-plot-wrap");
+    // starts on the last date (Sep): Falcon 9 = 10, Starship = 0
+    const rv = container.querySelector(".tv-bar-readout .tv-cc-rv")?.textContent ?? "";
+    expect(rv).toContain("10");
+    expect(rv).toContain("Falcon 9");
+    if (plot) fireEvent.keyDown(plot, { key: "ArrowLeft" }); // step to Aug: Falcon 9 = 12
+    expect(container.querySelector(".tv-bar-readout .tv-cc-rv")?.textContent ?? "").toContain("12");
+  });
+
+  it("multi-series Table has a column per line and Stats a tile per line", () => {
+    render(<ToolView payload={multiChart} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Table" }));
+    // two dates × two series columns; the Aug Falcon 9 value shows
+    expect(screen.getAllByText("Falcon 9").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("tab", { name: "Stats" }));
+    expect(screen.queryByRole("tab", { name: "Range" })).toBeNull(); // multi has no ref band
+  });
 });
 
 describe("bar_chart view", () => {
