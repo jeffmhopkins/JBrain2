@@ -107,9 +107,7 @@ async def test_grok_outline_returns_numbered_toc_without_body() -> None:
 
 
 async def test_grok_section_reads_one_section_by_number() -> None:
-    out = await _handlers(_ok_handler())["grok_section"](
-        {"slug": "Elon_Musk", "section": "1"}, CTX
-    )
+    out = await _handlers(_ok_handler())["grok_section"]({"slug": "Elon_Musk", "section": "1"}, CTX)
     assert "Born in 1971" in out
     assert "Built companies" not in out  # only the requested section
 
