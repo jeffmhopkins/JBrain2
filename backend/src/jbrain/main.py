@@ -17,6 +17,7 @@ from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.grabtools import build_grab_frame_handlers
+from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
@@ -152,6 +153,7 @@ from jbrain.usage import SqlUsageRecorder
 from jbrain.vision import RapidOcrClient
 from jbrain.web import (
     FaviconFetcher,
+    GrokipediaClient,
     HurricaneClient,
     NhcGisClient,
     NhcSurgeClient,
@@ -462,6 +464,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # owner-configured external geocoder is the direct street-address fallback for
         # jerv (default off when external_geocoder_url is unset).
         app.state.city_geocoder = CityGeocoder()
+        # jerv's Grokipedia tools (GROKIPEDIA_TOOL_PLAN.md) — search/outline/section/
+        # citations/related over xAI's encyclopedia. Open-internet only (no xAI key):
+        # API-first via Grokipedia's own endpoints, SSR-HTML fallback. Merged into the web
+        # handlers so they ride the existing `web` permission gate, the same sandboxed-web
+        # posture as web_search; a browser UA + cookie jar handle Cloudflare, per-slug cache
+        # collapses a drill-down to one fetch.
+        web_handlers.update(build_grokipedia_handlers(GrokipediaClient(), emit=brain_emit))
         web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
         web_handlers.update(
             build_weather_history_handlers(

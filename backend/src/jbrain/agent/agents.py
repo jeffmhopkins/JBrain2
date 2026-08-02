@@ -140,6 +140,16 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # sidecar — the hallucination-free counterpart to analyze_image, preferred for
         # literal text (error screenshots, receipts, scanned docs) (RAPIDOCR_PLAN.md).
         "ocr",
+        # Grokipedia tools (GROKIPEDIA_TOOL_PLAN.md): search xAI's encyclopedia, traverse
+        # an article by its table of contents, read a single section without loading the
+        # whole page, pull citations to follow to primary sources, and traverse to linked
+        # articles. `web`-gated like web_search/web_fetch — a pinned public site, no owner
+        # data — and always wired (no config gate).
+        "grok_search",
+        "grok_outline",
+        "grok_section",
+        "grok_citations",
+        "grok_related",
         # Search the external-source video corpus (analysed YouTube videos). Sandboxed
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).

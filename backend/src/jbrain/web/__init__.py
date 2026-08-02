@@ -6,6 +6,7 @@ jerv agent may call.
 
 from jbrain.web.favicon import FaviconFetcher, FaviconResult
 from jbrain.web.fetch import FetchResult, WebFetcher, WebFetchError
+from jbrain.web.grokipedia import GrokipediaClient, GrokipediaError
 from jbrain.web.hurricane import HurricaneClient, HurricaneError
 from jbrain.web.nhc_gis import NhcGisClient, NhcGisError
 from jbrain.web.nhc_surge import NhcSurgeClient, NhcSurgeError
@@ -18,6 +19,8 @@ __all__ = [
     "FaviconFetcher",
     "FaviconResult",
     "FetchResult",
+    "GrokipediaClient",
+    "GrokipediaError",
     "HistoryStats",
     "HurricaneClient",
     "HurricaneError",
