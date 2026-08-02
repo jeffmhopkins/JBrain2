@@ -47,26 +47,26 @@ layer is surface-agnostic.
 
 ## 2. The tool set (5 tools + escape hatch)
 
-Namespaced `grok_*`, `permission: web`, added to `JERV_TOOLS`. Drill-in key is the
+Namespaced `grokipedia_*`, `permission: web`, added to `JERV_TOOLS`. Drill-in key is the
 heading title/number (human-readable, per Anthropic tool-design guidance). The
 agentic loop is **search → outline → section → citations**, with related-links for
 traversal.
 
 | Tool | Params | Returns |
 |---|---|---|
-| `grok_search` | `query`, `limit=6` | `[{slug, title, snippet, view_count, last_modified}]`, popularity-ranked |
-| `grok_outline` | `slug` | flat tree `[{number, level, title, anchor}]` + `{title, last_modified, categories[]}` — **no body text** |
-| `grok_section` | `slug`, `section`, `response_format=concise\|detailed` | section Markdown; `detailed` adds that section's citations + outgoing wiki-links |
-| `grok_citations` | `slug`, `section?`, `limit` | `[{ref, title, url, publisher, date?}]` (`publisher` derived from URL domain when blank) |
-| `grok_related` | `slug`, `limit` | `[{slug, title}]` linked / same-category pages |
+| `grokipedia_search` | `query`, `limit=6` | `[{slug, title, snippet, view_count, last_modified}]`, popularity-ranked |
+| `grokipedia_outline` | `slug` | flat tree `[{number, level, title, anchor}]` + `{title, last_modified, categories[]}` — **no body text** |
+| `grokipedia_section` | `slug`, `section`, `response_format=concise\|detailed` | section Markdown; `detailed` adds that section's citations + outgoing wiki-links |
+| `grokipedia_citations` | `slug`, `section?`, `limit` | `[{ref, title, url, publisher, date?}]` (`publisher` derived from URL domain when blank) |
+| `grokipedia_related` | `slug`, `limit` | `[{slug, title}]` linked / same-category pages |
 
-Plus `grok_article(slug)` — full-dump escape hatch, discouraged in the tool prose
+Plus `grokipedia_article(slug)` — full-dump escape hatch, discouraged in the tool prose
 (steer the agent to outline + section).
 
 **Response discipline:** per-section length cap (~5–10k chars) with pagination and
 helpful truncation messages; `last_modified` surfaced on outline/section so the
 agent knows staleness (Grokipedia pages can be months old); actionable errors
-("no page named X; try grok_search"). Citations surface through `ToolOutput`'s
+("no page named X; try grokipedia_search"). Citations surface through `ToolOutput`'s
 `web_sources` channel so the UI renders them as followable chips.
 
 ---
@@ -107,17 +107,17 @@ agent knows staleness (Grokipedia pages can be months old); actionable errors
   cookie persistence. No agent wiring yet.
 - **W2 — Tools.** ✅ The five `.tool` sidecars + `build_grokipedia_handlers`
   (`backend/src/jbrain/agent/grokipediatools.py`), each returning `ToolOutput` with
-  `WebSource` citation chips (grok_citations' point at the primary sources, not
+  `WebSource` citation chips (grokipedia_citations' point at the primary sources, not
   Grokipedia). Wired into `web_handlers` in `main.py` and the wiki-talk test fixture,
   and added to `JERV_TOOLS`. Tests (`test_grokipediatools.py`, injected transport)
   cover each tool, the primary-source hand-off, and a sidecar-validity check.
 - **W3 — Caching + polish + docs.** ✅ Per-slug parsed-article TTL cache in the client
   so a drill-down (outline→section→citations→related on one slug) costs a single
   fetch — the bounded, within-turn drill-down needs no cross-turn artifact/blob cache
-  (sections are size-capped, unlike a full `web_fetch` page). `grok_section`'s
+  (sections are size-capped, unlike a full `web_fetch` page). `grokipedia_section`'s
   `response_format=detailed` toggle (adds section citations + linked articles),
   `last_modified` freshness surfaced on the outline, and actionable errors that steer
-  back to `grok_outline`/`grok_search`. Reconciled `docs/reference/ASSISTANT.md` (jerv
+  back to `grokipedia_outline`/`grokipedia_search`. Reconciled `docs/reference/ASSISTANT.md` (jerv
   tool inventory); no new service, so `SERVICES.md` is unchanged.
 
 ---

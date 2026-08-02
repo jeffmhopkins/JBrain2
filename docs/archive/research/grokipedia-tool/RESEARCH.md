@@ -39,9 +39,9 @@ plan would draw on.
   community Grokipedia clients converge on the same small tool set. Anthropic's
   own tool-design guidance says the same: few high-leverage tools, human-readable
   drill-in keys, token-bounded responses.
-- **Recommended tool set (5 tools), namespaced `grok_*`:**
-  `grok_search` → `grok_outline` → `grok_section` → `grok_citations` →
-  `grok_related`, with a rarely-used `grok_article` full-dump escape hatch. This
+- **Recommended tool set (5 tools), namespaced `grokipedia_*`:**
+  `grokipedia_search` → `grokipedia_outline` → `grokipedia_section` → `grokipedia_citations` →
+  `grokipedia_related`, with a rarely-used `grokipedia_article` full-dump escape hatch. This
   is the TOC-then-section-then-citations loop the requester described.
 - **It fits JBrain2 cleanly.** It is a `web`-permission tool set for `jerv`
   (which already fetches arbitrary web content directly, no egress Proposal),
@@ -198,7 +198,7 @@ drill-in ID). Grokipedia hands us exactly this via `data-toc-id` / `data-toc-dep
 ### Agent tool-design guidance (Anthropic, "Writing effective tools for agents")
 - **Few, high-leverage tools**, not one-per-endpoint. "More tools don't always
   lead to better outcomes."
-- **Namespace** tool names (`grok_search`, `grok_section`) to cut selection
+- **Namespace** tool names (`grokipedia_search`, `grokipedia_section`) to cut selection
   confusion.
 - **Return human-readable identifiers** (title, heading number/anchor, url) — not
   opaque UUIDs. The section drill-in key should be the heading title/number.
@@ -267,19 +267,19 @@ key = heading title/number (human-readable). This is the agentic loop:
 
 | Tool | Params | Returns | Notes |
 |---|---|---|---|
-| `grok_search` | `query`, `limit=6` | ranked `[{slug, title, snippet, view_count, last_modified}]` | Entry point. Rank/annotate with `view_count` + freshness so the agent picks well. |
-| `grok_outline` | `slug` | flat tree `[{number, level, title, anchor}]` + `{title, last_modified, category[]}` | The cheap TOC. **Never returns body text.** Cache aggressively. |
-| `grok_section` | `slug`, `section` (title/number/anchor), `response_format=concise\|detailed` | section Markdown; `detailed` also returns that section's citations + outgoing wiki-links | The workhorse — pull one node, not the article. Paginate if a section is huge. |
-| `grok_citations` | `slug`, `section?`, `limit` | `[{ref, title, url, publisher, date?}]` | The requester's #1 goal. `publisher` derived from URL domain when blank. Agent then `web_fetch`es the `url` to reach the primary source. |
-| `grok_related` | `slug`, `limit` | `[{slug, title}]` (linked / same-category pages) | Corpus traversal. |
+| `grokipedia_search` | `query`, `limit=6` | ranked `[{slug, title, snippet, view_count, last_modified}]` | Entry point. Rank/annotate with `view_count` + freshness so the agent picks well. |
+| `grokipedia_outline` | `slug` | flat tree `[{number, level, title, anchor}]` + `{title, last_modified, category[]}` | The cheap TOC. **Never returns body text.** Cache aggressively. |
+| `grokipedia_section` | `slug`, `section` (title/number/anchor), `response_format=concise\|detailed` | section Markdown; `detailed` also returns that section's citations + outgoing wiki-links | The workhorse — pull one node, not the article. Paginate if a section is huge. |
+| `grokipedia_citations` | `slug`, `section?`, `limit` | `[{ref, title, url, publisher, date?}]` | The requester's #1 goal. `publisher` derived from URL domain when blank. Agent then `web_fetch`es the `url` to reach the primary source. |
+| `grokipedia_related` | `slug`, `limit` | `[{slug, title}]` (linked / same-category pages) | Corpus traversal. |
 
-Plus `grok_article(slug)` — full-dump escape hatch, discouraged in the tool prose
+Plus `grokipedia_article(slug)` — full-dump escape hatch, discouraged in the tool prose
 (steer the agent to outline+section instead).
 
 **Response discipline:** default per-section length cap (~5–10k chars, matching
 the Grokipedia MCP), pagination + helpful truncation messages, freshness
 (`last_modified`) surfaced on outline/section so the agent knows staleness, and
-actionable errors ("no page named X; try grok_search").
+actionable errors ("no page named X; try grokipedia_search").
 
 ---
 
@@ -296,7 +296,7 @@ actionable errors ("no page named X; try grok_search").
 There is **no robots-allowed on-site search** — search forces the choice.
 
 **Decision (ratified 2026-08-02): API-first.** Default to the `/api/` JSON
-endpoints — `/api/typeahead` for `grok_search`, `/api/page-preview` for
+endpoints — `/api/typeahead` for `grokipedia_search`, `/api/page-preview` for
 outline/section/citations — with **SSR `/page/<slug>` parsing as the automatic
 fallback** when an API call fails, drifts, or is Cloudflare-challenged. Rationale:
 jerv makes a handful of targeted, human-triggered lookups (not bulk crawling —
@@ -335,7 +335,7 @@ Not a committed plan — a sketch of how it would decompose:
   jar, backoff) + a parser turning SSR HTML (and/or `/api/page-preview` JSON) into
   `{outline[], section(name), citations[]}`. Unit tests with injected transport
   over saved fixtures. No agent wiring yet.
-- **W2 — The 5 `.tool` sidecars + handlers** (`grok_search/outline/section/
+- **W2 — The 5 `.tool` sidecars + handlers** (`grokipedia_search/outline/section/
   citations/related`), returning `ToolOutput` with `WebSource` citations; wired
   into `build_registry` + `main.py`; added to `JERV_TOOLS`. Sidecar-validity test.
 - **W3 — Caching + polish.** Cross-turn artifact caching for large bodies,

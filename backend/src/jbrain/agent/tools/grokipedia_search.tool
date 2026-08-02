@@ -1,5 +1,5 @@
 ---
-name: grok_search
+name: grokipedia_search
 version: 1
 permission: web
 params:
@@ -16,7 +16,7 @@ params:
 Search Grokipedia (xAI's encyclopedia) for articles matching a query, returning
 each match's title, its slug, view count, and a short snippet. Use this first to
 find the right article on a subject, news topic, or current event, then pass the
-slug to grok_outline (to see the article's sections) or grok_section (to read one).
+slug to grokipedia_outline (to see the article's sections) or grokipedia_section (to read one).
 Grokipedia is machine-written and can lag current events by weeks — treat it as a
 fast overview with citations to follow, and use web_search for breaking news. Prefer
 this over web_search when you want an encyclopedic article on a topic with sources

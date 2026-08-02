@@ -1,10 +1,11 @@
-"""jerv's Grokipedia tools (docs/plans/GROKIPEDIA_TOOL_PLAN.md).
+"""jerv's Grokipedia tools (docs/archive/GROKIPEDIA_TOOL_PLAN.md).
 
 Five tools that let jerv search Grokipedia, traverse an article by its table of
 contents, read a single section without loading the whole page, and pull the
 article's citations as followable primary-source links:
 
-    grok_search → grok_outline → grok_section → grok_citations   (+ grok_related)
+    grokipedia_search → grokipedia_outline → grokipedia_section →
+    grokipedia_citations   (+ grokipedia_related)
 
 Like `web_search`/`web_fetch` these run DIRECTLY (the `web` permission class, the
 bounded exception to invariant #9): jerv holds no knowledge-base tools and no owner
@@ -84,10 +85,10 @@ def build_grokipedia_handlers(
     web reaches). The parsed article is cached per slug in the client, so a drill-down
     (outline → section → citations → related on one slug) costs a single fetch."""
 
-    async def grok_search_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def grokipedia_search_tool(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
         if not query:
-            return "grok_search needs a non-empty query."
+            return "grokipedia_search needs a non-empty query."
         limit = _coerce_int(arguments.get("limit"), _DEFAULT_SEARCH_LIMIT)
         if emit:
             emit("web_search", query)
@@ -102,16 +103,19 @@ def build_grokipedia_handlers(
             views = f" · {h.view_count:,} views" if h.view_count else ""
             lines.append(f"- {h.title}  [slug: {h.slug}]{views}\n  {h.snippet}")
         body = (
-            "Grokipedia articles (pass a slug to grok_outline / grok_section / "
-            "grok_citations):\n" + "\n".join(lines)
+            "Grokipedia articles (pass a slug to grokipedia_outline / grokipedia_section / "
+            "grokipedia_citations):\n" + "\n".join(lines)
         )
         sources = tuple(WebSource(url=_page_url(h.slug), title=h.title) for h in hits)
         return ToolOutput(body, web_sources=sources)
 
-    async def grok_outline_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def grokipedia_outline_tool(arguments: dict, ctx: ToolContext) -> str:
         slug = str(arguments.get("slug", "")).strip()
         if not slug:
-            return "grok_outline needs the slug of a Grokipedia article (from grok_search)."
+            return (
+                "grokipedia_outline needs the slug of a Grokipedia article "
+                "(from grokipedia_search)."
+            )
         if emit:
             emit("web_fetch", _page_url(slug))
         try:
@@ -128,15 +132,18 @@ def build_grokipedia_handlers(
         lines = [f"{'  ' * (s.level - 1)}{s.number} {s.title}" for s in article.outline]
         body = (
             f"{header}Outline — {len(article.outline)} sections. Read one with "
-            "grok_section(slug, section=<number or title>):\n\n" + "\n".join(lines)
+            "grokipedia_section(slug, section=<number or title>):\n\n" + "\n".join(lines)
         )
         return ToolOutput(body, web_sources=(_page_source(article),))
 
-    async def grok_section_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def grokipedia_section_tool(arguments: dict, ctx: ToolContext) -> str:
         slug = str(arguments.get("slug", "")).strip()
         section_ref = str(arguments.get("section", "")).strip()
         if not slug or not section_ref:
-            return "grok_section needs a slug and a section (a number or title from grok_outline)."
+            return (
+                "grokipedia_section needs a slug and a section (a number or title "
+                "from grokipedia_outline)."
+            )
         detailed = str(arguments.get("response_format", "")).strip().lower() == "detailed"
         if emit:
             emit("web_fetch", _page_url(slug))
@@ -149,15 +156,15 @@ def build_grokipedia_handlers(
             available = ", ".join(f"{s.number} {s.title}" for s in article.outline[:30]) or "none"
             return (
                 f"No section {section_ref!r} in '{article.title}'. Available sections: "
-                f"{available}. Call grok_outline for the full list."
+                f"{available}. Call grokipedia_outline for the full list."
             )
         section, text = found
         suffix = ""
         if len(text) > _MAX_SECTION_CHARS:
             text = text[:_MAX_SECTION_CHARS]
             suffix = (
-                "\n\n[Section truncated — read its sub-sections (grok_outline) or its sources "
-                "(grok_citations) for the rest.]"
+                "\n\n[Section truncated — read its sub-sections (grokipedia_outline) or its "
+                "sources (grokipedia_citations) for the rest.]"
             )
         head = f"{_page_url(article.slug)} · section {section.number} {section.title}"
         body = f"{head}\n\n{text}{suffix}"
@@ -176,10 +183,10 @@ def build_grokipedia_handlers(
                 )
         return ToolOutput(body, web_sources=tuple(web_sources))
 
-    async def grok_citations_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def grokipedia_citations_tool(arguments: dict, ctx: ToolContext) -> str:
         slug = str(arguments.get("slug", "")).strip()
         if not slug:
-            return "grok_citations needs the slug of a Grokipedia article."
+            return "grokipedia_citations needs the slug of a Grokipedia article."
         section_ref = str(arguments.get("section", "")).strip()
         want = _coerce_int(arguments.get("limit"), _DEFAULT_CITATION_LIMIT)
         limit = max(1, min(want, _MAX_CITATION_LIMIT))
@@ -195,7 +202,7 @@ def build_grokipedia_handlers(
             found = article.section(section_ref)
             if found is None:
                 return (
-                    f"No section {section_ref!r} in '{article.title}'. Call grok_outline for "
+                    f"No section {section_ref!r} in '{article.title}'. Call grokipedia_outline for "
                     "the list."
                 )
             section, text = found
@@ -215,10 +222,10 @@ def build_grokipedia_handlers(
         sources = tuple(WebSource(url=c.url, title=c.title or c.publisher or c.url) for c in shown)
         return ToolOutput(body, web_sources=sources)
 
-    async def grok_related_tool(arguments: dict, ctx: ToolContext) -> str:
+    async def grokipedia_related_tool(arguments: dict, ctx: ToolContext) -> str:
         slug = str(arguments.get("slug", "")).strip()
         if not slug:
-            return "grok_related needs the slug of a Grokipedia article."
+            return "grokipedia_related needs the slug of a Grokipedia article."
         limit = max(1, _coerce_int(arguments.get("limit"), _DEFAULT_RELATED_LIMIT))
         if emit:
             emit("web_fetch", _page_url(slug))
@@ -230,17 +237,17 @@ def build_grokipedia_handlers(
             return f"No linked articles found on '{article.title}'."
         shown = article.related[:limit]
         body = (
-            f"Articles linked from '{article.title}' (pass a slug to grok_outline / "
-            "grok_section):\n" + "\n".join(f"- {r.title}  [slug: {r.slug}]" for r in shown)
+            f"Articles linked from '{article.title}' (pass a slug to grokipedia_outline / "
+            "grokipedia_section):\n" + "\n".join(f"- {r.title}  [slug: {r.slug}]" for r in shown)
         )
         return ToolOutput(
             body, web_sources=tuple(WebSource(url=_page_url(r.slug), title=r.title) for r in shown)
         )
 
     return {
-        "grok_search": grok_search_tool,
-        "grok_outline": grok_outline_tool,
-        "grok_section": grok_section_tool,
-        "grok_citations": grok_citations_tool,
-        "grok_related": grok_related_tool,
+        "grokipedia_search": grokipedia_search_tool,
+        "grokipedia_outline": grokipedia_outline_tool,
+        "grokipedia_section": grokipedia_section_tool,
+        "grokipedia_citations": grokipedia_citations_tool,
+        "grokipedia_related": grokipedia_related_tool,
     }

@@ -386,7 +386,7 @@ optional turn-binding replay) open. A separately-tracked de-dup the research sur
 near-identical research-report library and external-video corpus — is out of scope here.
 
 **Shipped:** Grokipedia tool (build record: `docs/archive/GROKIPEDIA_TOOL_PLAN.md`, PR #993) — a jerv
-tool set (`grok_search`/`outline`/`section`/`citations`/`related`) to search Grokipedia, traverse a page
+tool set (`grokipedia_search`/`outline`/`section`/`citations`/`related`) to search Grokipedia, traverse a page
 by its table of contents, drill into single sections without loading the whole article, and pull
 citations the agent can follow to primary sources. Open-internet access only (no xAI key): **API-first**
 via Grokipedia's own `/api/typeahead` + `/api/page-preview`, with the server-rendered `/page/<slug>` HTML

@@ -373,8 +373,8 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   one owner-approved exception: a `web`-gated, jerv-only on-box read of the owner's
   **coarse, coordinate-free presence** (a place name + freshness), which jerv's prompt
   forbids volunteering or sending to the web. See the sandbox bound below. The
-  **Grokipedia tools** (`grok_search` / `grok_outline` / `grok_section` /
-  `grok_citations` / `grok_related`) are `web`-gated, jerv-only reads of xAI's
+  **Grokipedia tools** (`grokipedia_search` / `grokipedia_outline` / `grokipedia_section` /
+  `grokipedia_citations` / `grokipedia_related`) are `web`-gated, jerv-only reads of xAI's
   encyclopedia over the **open internet — no xAI key** (API-first via Grokipedia's own
   `/api/typeahead` + `/api/page-preview`, server-rendered `/page/<slug>` HTML as the
   fallback; `jbrain.web.grokipedia`). They let jerv find an article, traverse it by its
