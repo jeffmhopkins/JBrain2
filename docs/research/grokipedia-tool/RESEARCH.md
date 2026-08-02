@@ -304,7 +304,7 @@ the concern `Disallow: /api/` protects against), the same posture as its existin
 direct web fetches on the owner's personal system; the `/api/` path gives real
 full-corpus search and pre-structured citations, directly serving the primary goal
 (fast citation extraction). The robots-compliant SSR path is retained as
-belt-and-suspenders, not discarded. See `../../proposed/GROKIPEDIA_TOOL_PLAN.md`.
+belt-and-suspenders, not discarded. See `../../plans/GROKIPEDIA_TOOL_PLAN.md`.
 
 ---
 

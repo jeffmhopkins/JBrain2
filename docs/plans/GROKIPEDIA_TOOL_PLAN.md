@@ -1,6 +1,6 @@
 # Grokipedia Tool — Implementation Plan
 
-> **Status:** Proposed · **Last verified:** 2026-08-02 · **Waves:** W1◻️ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-08-02 · **Waves:** W1✅ W2◻️ W3◻️
 
 Give the `jerv` persona a small set of tools to search Grokipedia, traverse an
 article by its table of contents, drill into individual sections without dumping
@@ -9,7 +9,7 @@ to primary sources**. The purpose is fast, cheap access to information on any
 subject, news, or current event — with a clear path from a Grokipedia claim to
 the source that backs it.
 
-This is a **Proposed** design (icebox). Nothing is built. It is the
+**W1 has landed** (the `jbrain.web.grokipedia` client + parser). It is the
 implementation companion to the research in `../research/grokipedia-tool/RESEARCH.md`
 (verified public surface, prior art, JBrain2 fit, tool-design rationale) — read
 that first for the evidence behind the choices here.
@@ -94,10 +94,15 @@ agent knows staleness (Grokipedia pages can be months old); actionable errors
 
 ## 4. Waves
 
-- **W1 — Client + parser.** `web/grokipedia.py` + the JSON/HTML→`{outline,
-  section, citations}` parser, API-first with SSR fallback. Unit tests with
-  injected transport over saved fixtures (a captured `/api/page-preview` JSON and
-  a `/page/<slug>` HTML sample). No agent wiring yet.
+- **W1 — Client + parser.** ✅ `backend/src/jbrain/web/grokipedia.py` — the
+  `GrokipediaClient` (API-first `/api/typeahead` + `/api/page-preview`, SSR
+  `/page/<slug>` fallback, browser UA + persistent Cloudflare cookie jar) and the
+  surface-agnostic parser producing the `GrokArticle` `{outline, section,
+  citations, related}` model (hierarchical section numbers + anchors, section
+  drill-down by number/anchor/title, citations with domain-derived publisher).
+  Unit tests (`backend/tests/unit/test_grokipedia.py`, injected transport, no
+  network) cover both surfaces, the fallback path, the 404 no-fallback rule, and
+  cookie persistence. No agent wiring yet.
 - **W2 — Tools.** The five `.tool` sidecars + handlers, `ToolOutput`/`WebSource`
   citations, registry wiring, added to `JERV_TOOLS`. Sidecar-validity test + a
   multi-turn loop test driving search→outline→section→citations with the fake

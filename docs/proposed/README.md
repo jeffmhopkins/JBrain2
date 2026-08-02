@@ -33,12 +33,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   state machine + two-sided child-safety layer + two UIs. Waves W1–W8 with a hard
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
-- `GROKIPEDIA_TOOL_PLAN.md` — a Grokipedia search/traversal tool set for the `jerv`
-  persona (`grok_search`/`outline`/`section`/`citations`/`related`): open-internet
-  access only (no xAI key), **API-first** (`/api/typeahead` + `/api/page-preview`)
-  with SSR-HTML fallback, TOC-then-section drill-down, and structured citation
-  extraction so the agent can follow sources to primary material. Waves W1–W3.
-  Backed by `../research/grokipedia-tool/RESEARCH.md`.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
@@ -46,4 +40,5 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `VIDEO_IMAGE_TOOLS_PLAN.md` were promoted to `../plans/` and are in progress.
 `ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (Scheduled).
 `DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (Scheduled).
-`CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).)_
+`CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
+`GROKIPEDIA_TOOL_PLAN.md` was promoted to `../plans/` (In progress — W1 landed).)_
