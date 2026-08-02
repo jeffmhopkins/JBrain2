@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.externaltools import build_external_handlers
+from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.readtools import (
@@ -37,6 +38,7 @@ from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo
 from jbrain.search.service import SearchResponse, SearchResult
 from jbrain.web import (
+    GrokipediaClient,
     HurricaneClient,
     NhcGisClient,
     NhcSurgeClient,
@@ -777,6 +779,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # device repo
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
+            **build_grokipedia_handlers(GrokipediaClient()),
             **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
             **build_weather_history_handlers(
                 WeatherHistoryClient(""),
@@ -811,6 +814,13 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
+        # The Grokipedia tools are `web`-classed (jerv-only): search/traverse xAI's
+        # encyclopedia and pull citations, never offered to the curator wildcard.
+        "grok_search",
+        "grok_outline",
+        "grok_section",
+        "grok_citations",
+        "grok_related",
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
@@ -930,6 +940,31 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "search",
             2,
             "b67c76b8f8bf8a7a0910fbbaed57d35332c787bec7c9408c07219b3acc982ac4",
+        ),
+        "grok_search.tool": (
+            "grok_search",
+            1,
+            "62581ea3aa33ac631bc343b0aab36eef39f9c53195eb4fa89b96e17d723c8177",
+        ),
+        "grok_outline.tool": (
+            "grok_outline",
+            1,
+            "cacf340909144f4e4429fe2c570da175f093e5a69dbff079c4cd16de1fc9ed51",
+        ),
+        "grok_section.tool": (
+            "grok_section",
+            1,
+            "dd7cd933343ccf55f7fe9a2ae5cea9b8133e836edb15b9b463af9fe23995b0cd",
+        ),
+        "grok_citations.tool": (
+            "grok_citations",
+            1,
+            "eff6a71dc44c5c26527e5c29ed9e32934b78fffe0ac51bdd1e23fd8ec8e0ffa0",
+        ),
+        "grok_related.tool": (
+            "grok_related",
+            1,
+            "e209ad48d36a2672c2e3d3bf879689c2247b815088575d2b4b24eb1b34cda759",
         ),
         "read_note.tool": (
             "read_note",
