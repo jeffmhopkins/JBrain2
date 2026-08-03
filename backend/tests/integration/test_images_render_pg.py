@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import json
 import uuid
-from collections.abc import Awaitable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Iterator
 from pathlib import Path
 from typing import TypeVar
 
@@ -58,6 +58,9 @@ class MemBlobStore:
         digest = hashlib.sha256(data).hexdigest()
         self._blobs[digest] = data
         return digest
+
+    async def put_stream(self, chunks: AsyncIterator[bytes]) -> str:
+        return await self.put(b"".join([chunk async for chunk in chunks]))
 
     async def get(self, sha256: str) -> bytes:
         try:

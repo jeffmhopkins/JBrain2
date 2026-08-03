@@ -50,6 +50,9 @@ class MemBlobStore:
         self._blobs[digest] = data
         return digest
 
+    async def put_stream(self, chunks: AsyncIterator[bytes]) -> str:
+        return await self.put(b"".join([chunk async for chunk in chunks]))
+
     async def get(self, sha256: str) -> bytes:
         try:
             return self._blobs[sha256]
