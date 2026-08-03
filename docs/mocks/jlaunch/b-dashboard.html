@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · Math launcher — B: dashboard (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14);
+    --amber-tint:rgba(201,163,106,.14); --rose-tint:rgba(207,138,143,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+    --r-card:16px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4}
+  .wrap{max-width:520px;margin:0 auto;padding:0 14px 40px}
+  .topbar{display:flex;align-items:center;gap:10px;height:56px;position:sticky;top:0;background:var(--bg);z-index:5}
+  .topbar .chev{width:24px;height:24px;color:var(--text-2)}
+  .topbar .tt{font-size:18px;font-weight:600}.topbar .tt .d{color:var(--amber)}
+  .topbar .var{margin-left:auto;font-size:11px;color:var(--text-3)}
+  p.intro{color:var(--text-2);font-size:13px;margin:2px 0 14px;line-height:1.5}p.intro b{color:var(--text)}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:16px;margin-bottom:12px}
+
+  /* hero status */
+  .hero{text-align:center;padding:22px 16px}
+  .hero .ring{width:120px;height:120px;margin:0 auto 12px;position:relative}
+  .hero .ring svg{transform:rotate(-90deg)}
+  .hero .ring .pct{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .hero .ring .pct b{font-size:26px;font-weight:700}
+  .hero .ring .pct span{font-size:10.5px;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em}
+  .hero .title{font-weight:600;font-size:15px}
+  .hero .state{font-size:12px;color:var(--amber);font-family:var(--mono);margin-top:3px}
+  .hero .state.ok{color:var(--green)}.hero .state.kill{color:var(--rose)}.hero .state.idle{color:var(--text-2)}
+  .hero .eta{font-size:11.5px;color:var(--text-3);margin-top:2px;font-family:var(--mono)}
+
+  /* phase rows */
+  .plab{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin:0 2px 9px}
+  .prow{display:flex;align-items:center;gap:11px;padding:10px 0;border-top:1px solid var(--border)}
+  .prow:first-child{border-top:0}
+  .prow .dot{width:20px;height:20px;border-radius:999px;border:2px solid var(--border);flex:none;display:flex;align-items:center;justify-content:center}
+  .prow.done .dot{border-color:var(--green);background:var(--green-tint);color:var(--green)}
+  .prow.now .dot{border-color:var(--amber);background:var(--amber-tint);color:var(--amber);animation:pulse 1.4s infinite}
+  .prow .dot svg{width:11px;height:11px}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 var(--amber-tint)}50%{box-shadow:0 0 0 5px transparent}}
+  .prow .pn{flex:1;font-size:13.5px;font-family:var(--mono)}
+  .prow.pending .pn{color:var(--text-3)}
+  .prow .pt{font-size:11.5px;color:var(--text-3);font-family:var(--mono)}
+
+  /* controls */
+  .toolbar{display:flex;gap:8px;margin-bottom:12px}
+  .btn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:12px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);font:inherit;font-weight:600;font-size:13px;cursor:pointer}
+  .btn svg{width:15px;height:15px}
+  .btn.start{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,var(--border));background:var(--green-tint)}
+  .btn.stop{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,var(--border));background:var(--amber-tint)}
+  .btn.kill{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 40%,var(--border));background:var(--rose-tint)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+
+  /* terminal drawer */
+  .drawer .dh{display:flex;align-items:center;gap:9px;width:100%;background:transparent;border:0;color:var(--text);font:inherit;padding:0;cursor:pointer}
+  .drawer .dh .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);font-weight:600}
+  .drawer .dh .live{margin-left:auto;font-size:11px;color:var(--amber);font-family:var(--mono)}
+  .drawer .dh .caret{color:var(--text-3);transition:transform .2s;width:16px;height:16px}
+  .drawer.open .dh .caret{transform:rotate(90deg)}
+  .term{display:none;margin-top:11px;background:#0B0C0E;border:1px solid var(--border);border-radius:12px;font-family:var(--mono);font-size:11px;line-height:1.55;color:#C6C8CB;padding:11px;height:190px;overflow-y:auto;white-space:pre-wrap}
+  .drawer.open .term{display:block}
+  .term .p{color:var(--amber)}.term .g{color:var(--green)}.term .d{color:var(--text-3)}
+
+  /* headline + share */
+  .result{display:none}.result.show{display:block}
+  .hl{font-family:var(--mono);font-size:12.5px;line-height:1.7}
+  .hl .k{color:var(--text-2)}.hl .v{color:var(--text)}.hl .rec{color:var(--green)}
+  .specs{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px}
+  .spec{font-size:10.5px;font-family:var(--mono);color:var(--text-2);border:1px solid var(--border);border-radius:999px;padding:3px 9px}
+  .share{width:100%;margin-top:12px;padding:12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));background:var(--steel-tint);color:var(--steel);font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+  .link{display:none;margin-top:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:10px 12px;font-family:var(--mono);font-size:11.5px;color:var(--steel);word-break:break-all}
+  .link.show{display:block}
+  h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 18l-6-6 6-6"/></svg>
+    <span class="tt">Math<span class="d">.</span></span>
+    <span class="var">Variant B · dashboard</span>
+  </div>
+  <p class="intro"><b>Dashboard / status-first.</b> A progress ring + phase checklist is the hero, so a multi-hour run reads at a glance from your phone.
+  The live terminal is one tap away in a drawer; the headline + sharelink take over the hero when it's done.</p>
+
+  <div class="card hero">
+    <div class="ring">
+      <svg width="120" height="120"><circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" stroke-width="9"/>
+        <circle id="arc" cx="60" cy="60" r="52" fill="none" stroke="var(--amber)" stroke-width="9" stroke-linecap="round" stroke-dasharray="327" stroke-dashoffset="327"/></svg>
+      <div class="pct"><b id="pct">0%</b><span id="pctlbl">idle</span></div>
+    </div>
+    <div class="title">Erdős–Straus census to 10¹²</div>
+    <div class="state idle" id="state">not started</div>
+    <div class="eta" id="eta">one-shot · ~6–10 h · all cores · 15 GB scratch</div>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn start" id="bStart" onclick="startRun()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-14 9z"/></svg>Start</button>
+    <button class="btn stop" id="bStop" disabled onclick="endRun('stop')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Stop</button>
+    <button class="btn kill" id="bKill" disabled onclick="endRun('kill')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>Kill</button>
+  </div>
+
+  <div class="card">
+    <div class="plab">Phases</div>
+    <div id="phaselist"></div>
+  </div>
+
+  <div class="card drawer" id="drawer">
+    <button class="dh" onclick="document.getElementById('drawer').classList.toggle('open')">
+      <span class="lbl">Live terminal</span><span class="live" id="livelbl">idle</span>
+      <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+    <div class="term" id="term"><span class="d">Tap Start; output streams here. Shell survives you leaving the app.</span>
+</div>
+  </div>
+
+  <div class="card result" id="result">
+    <h3>Result · verified OK</h3>
+    <div class="hl">
+      <div><span class="k">hard primes:</span> <span class="v">1,170,090,020</span></div>
+      <div><span class="k">max minimal R:</span> <span class="v">107</span> <span class="rec">(record R=107 stands)</span></div>
+      <div><span class="k">R ≥ 87 counts:</span> <span class="v">{87: 3, 91: 1, 107: 1}</span></div>
+    </div>
+    <div class="specs"><span class="spec">AMD Ryzen AI Max+ 395</span><span class="spec">32 cores</span><span class="spec">128 GB</span><span class="spec">7h 45m</span><span class="spec">412 MB tarball</span></div>
+    <button class="share" onclick="document.getElementById('link').classList.add('show')">Generate public sharelink →</button>
+    <div class="link" id="link">https://brain.example.com/results/9f2a1c7b… <br><span style="color:var(--text-3)">no login · results page + download · revoke anytime</span></div>
+  </div>
+</div>
+
+<script>
+const PHASES=[['clone','12s'],['install','2m10s'],['smoke','48s'],['run','7h32m']];
+const CIRC=327;let timer=null,i=0;
+function renderPhases(active){
+  document.getElementById('phaselist').innerHTML=PHASES.map(([n,t],j)=>{
+    const cls=j<active?'done':j===active?'now':'pending';
+    const mark=j<active?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>':j===active?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="4"/></svg>':'';
+    return `<div class="prow ${cls}"><span class="dot">${mark}</span><span class="pn">${n}</span><span class="pt">${j<=active?t:'—'}</span></div>`;
+  }).join('');
+}
+function line(html){const t=document.getElementById('term');t.insertAdjacentHTML('beforeend',html+'\n');t.scrollTop=t.scrollHeight;}
+function setPct(p,lbl){document.getElementById('pct').textContent=p+'%';document.getElementById('pctlbl').textContent=lbl;document.getElementById('arc').style.strokeDashoffset=CIRC*(1-p/100);}
+function startRun(){
+  document.getElementById('term').innerHTML='';document.getElementById('result').classList.remove('show');document.getElementById('link').classList.remove('show');
+  document.getElementById('bStart').disabled=true;document.getElementById('bStop').disabled=false;document.getElementById('bKill').disabled=false;
+  document.getElementById('livelbl').textContent='● live';
+  const st=document.getElementById('state');st.className='state';st.textContent='running…';i=0;step();
+}
+function step(){
+  if(i>=PHASES.length){finish();return;}
+  renderPhases(i);setPct(Math.round(i/PHASES.length*100),PHASES[i][0]);
+  line('<span class="p">== jlaunch phase: '+PHASES[i][0]+' ==</span>');
+  i++;timer=setTimeout(step,1100);
+}
+function finish(){
+  renderPhases(PHASES.length);setPct(100,'done');document.getElementById('arc').style.stroke='var(--green)';
+  line('<span class="g">VERIFICATION OK</span>');
+  const st=document.getElementById('state');st.className='state ok';st.textContent='succeeded';
+  document.getElementById('eta').textContent='7h 45m wall-clock · verified OK';document.getElementById('livelbl').textContent='done';
+  document.getElementById('bStop').disabled=true;document.getElementById('bKill').disabled=true;document.getElementById('bStart').disabled=false;
+  document.getElementById('result').classList.add('show');
+}
+function endRun(kind){
+  clearTimeout(timer);document.getElementById('arc').style.stroke='var(--rose)';
+  const st=document.getElementById('state');st.className='state kill';st.textContent=kind==='kill'?'killed (SIGKILL)':'stopped (SIGTERM)';
+  line('<span class="d">— '+(kind==='kill'?'SIGKILL to the process group':'SIGTERM, winding down')+' —</span>');
+  document.getElementById('livelbl').textContent='killed';
+  document.getElementById('bStop').disabled=true;document.getElementById('bKill').disabled=true;document.getElementById('bStart').disabled=false;
+}
+renderPhases(-1);
+</script>
+</body>
+</html>
