@@ -45,6 +45,13 @@ import type {
   JcodeShareToken,
   NewSessionInput,
 } from "../jcode/types";
+import type {
+  JlaunchJob,
+  JlaunchShare,
+  JlaunchShareToken,
+  JlaunchSpec,
+  PublicJlaunchRun,
+} from "../jlaunch/types";
 
 export interface Principal {
   principal_id: string;
@@ -3043,6 +3050,75 @@ export const api = {
    * already-claimed link (share links are single-use — first browser binds it). */
   async jcodeRedeemShare(token: string): Promise<{ session_id: string }> {
     return (await request("/api/jcode/share/redeem", jsonInit("POST", { token }))).json();
+  },
+
+  // --- Math launcher (jlaunch). Owner-only; routes 404 when the launcher isn't enabled. ---
+
+  /** The registered job specs (also the launcher-tile enablement probe: 404 = disabled). */
+  async jlaunchSpecs(): Promise<JlaunchSpec[]> {
+    return (await request("/api/jlaunch/specs")).json();
+  },
+
+  /** All jobs (live + finished), reconciled against the durable run mirror. */
+  async jlaunchJobs(): Promise<JlaunchJob[]> {
+    return (await request("/api/jlaunch/jobs")).json();
+  },
+
+  async jlaunchGetJob(id: string): Promise<JlaunchJob> {
+    return (await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}`)).json();
+  },
+
+  /** Start a job for a spec. 409 (ApiError) if one is already running. */
+  async jlaunchStart(spec: string): Promise<JlaunchJob> {
+    return (await request("/api/jlaunch/jobs", jsonInit("POST", { spec }))).json();
+  },
+
+  /** Graceful stop (SIGTERM) — the job finalizes as `killed`. */
+  async jlaunchStop(id: string): Promise<JlaunchJob> {
+    return (
+      await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}/stop`, { method: "POST" })
+    ).json();
+  },
+
+  /** Hard kill (SIGKILL + process sweep) — the job finalizes as `killed`. */
+  async jlaunchKill(id: string): Promise<JlaunchJob> {
+    return (
+      await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}/kill`, { method: "POST" })
+    ).json();
+  },
+
+  /** Delete a job: kills it if live, then removes the checkout, scratch, and mirror row. */
+  async jlaunchDelete(id: string): Promise<void> {
+    await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  /** Mint a public results-share link for a finished, artifact-bearing job (owner only).
+   * Streams the artifact into the blob store, then returns the bearer secret ONCE. */
+  async jlaunchMintShare(id: string, label = "shared results"): Promise<JlaunchShareToken> {
+    return (
+      await request(
+        `/api/jlaunch/jobs/${encodeURIComponent(id)}/share`,
+        jsonInit("POST", { label }),
+      )
+    ).json();
+  },
+
+  /** The live (non-revoked) share links for a job (owner only) — metadata only. */
+  async jlaunchListShares(id: string): Promise<JlaunchShare[]> {
+    return (await request(`/api/jlaunch/jobs/${encodeURIComponent(id)}/shares`)).json();
+  },
+
+  /** Revoke a results-share link (owner only). */
+  async jlaunchRevokeShare(id: string, shareId: string): Promise<void> {
+    await request(
+      `/api/jlaunch/jobs/${encodeURIComponent(id)}/shares/${encodeURIComponent(shareId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  /** PUBLIC: resolve a results-share token to its run. 404 (ApiError) when unknown/revoked. */
+  async jlaunchShareView(token: string): Promise<PublicJlaunchRun> {
+    return (await request(`/api/jlaunch-share/${encodeURIComponent(token)}`)).json();
   },
 
   /** Guided intake (recipient). Redeem a share secret for a session-scoped cookie + the

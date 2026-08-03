@@ -118,6 +118,25 @@ def test_update_keeps_jcode_turnkey_when_enabled(name: str) -> None:
     )
 
 
+# The job launcher (jlaunch) gets the same turnkey treatment as jcode: once enabled,
+# both update paths keep it built/current with no CLI.
+JLAUNCH_TURNKEY_SCRIPTS = ["update-inner.sh", "jbrain"]
+
+
+@pytest.mark.parametrize("name", JLAUNCH_TURNKEY_SCRIPTS)
+def test_update_keeps_jlaunch_turnkey_when_enabled(name: str) -> None:
+    text = (DEPLOY / name).read_text()
+    assert "JLAUNCH_ENABLED=true" in text, (
+        f"{name} must gate jlaunch on JLAUNCH_ENABLED"
+    )
+    assert "--profile jlaunch" in text, (
+        f"{name} must activate the jlaunch profile when enabled so update rebuilds it"
+    )
+    assert "JLAUNCH_TOKEN" in text, (
+        f"{name} must backfill the api<->jlaunch token so enable stays CLI-free"
+    )
+
+
 def test_update_marks_worktree_safe_before_pull() -> None:
     # The pull runs as root inside the updater container against a bind-mounted
     # worktree owned by the host operator's UID; without a safe.directory entry
@@ -145,8 +164,8 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
         return next((i for i, ln in enumerate(lines) if needle in ln), None)
 
     stop = idx("stop local-llm")
-    build = idx("compose $JCODE_PROFILE build")
-    up = idx("compose $JCODE_PROFILE up -d")
+    build = idx("compose $JCODE_PROFILE $JLAUNCH_PROFILE build")
+    up = idx("compose $JCODE_PROFILE $JLAUNCH_PROFILE up -d")
     restart = idx("up -d local-llm")
     assert "LOCAL_LLM_ENABLED=true" in text, (
         "the gateway stop/restart must be gated on LOCAL_LLM_ENABLED so a stock "

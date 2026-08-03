@@ -116,6 +116,13 @@ services:
       JBRAIN_JCODE_ENABLED: ${JCODE_ENABLED:-false}
       JBRAIN_JCODE_TOKEN: ${JCODE_TOKEN:-}
       JBRAIN_JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      # The job launcher (`jlaunch` profile, docs/plans/JLAUNCH_PLAN.md): the api proxies its
+      # control server and streams its artifact into the blob store at share time. Empty URL =
+      # feature off (fail-closed): no /jlaunch routes, no launcher tile. Shared token
+      # authenticates the api's control calls (and the terminal WS bridge).
+      JBRAIN_JLAUNCH_URL: ${JLAUNCH_URL:-}
+      JBRAIN_JLAUNCH_ENABLED: ${JLAUNCH_ENABLED:-false}
+      JBRAIN_JLAUNCH_TOKEN: ${JLAUNCH_TOKEN:-}
       # Host-mode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
       # under. The api's preview proxy enforces the request Host is <slug>-preview.<this>
       # before forwarding, so a sandbox dev app can't be served on the owner origin.
@@ -163,7 +170,7 @@ services:
     # control server (http://jcode:9100), which lives ONLY on the jcode network — so
     # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy
     # the network is empty (no jcode profile); the api's jcode client stays fail-closed.
-    networks: [edge, internal, jcode]
+    networks: [edge, internal, jcode, jlaunch]
     depends_on:
       db:
         condition: service_healthy
@@ -529,6 +536,39 @@ services:
     cpus: ${JCODE_CPUS:-2.0}
     pids_limit: ${JCODE_PIDS_LIMIT:-512}
 
+  # The job launcher (opt-in `jlaunch` profile, docs/plans/JLAUNCH_PLAN.md): runs a
+  # registered long-running one-shot computation (the Erdos-Straus census is the first
+  # spec) as a supervised job with a live terminal, start/stop/kill, and a collectable
+  # artifact the api shares publicly. On its own isolated network — only `api` joins it
+  # (Wave 2 proxies the control surface + streams the artifact), so the job's arbitrary
+  # code has no route to db/supervisor/worker/blobs.
+  jlaunch:
+    profiles: [jlaunch]
+    image: jbrain2-jlaunch:local
+    build:
+      context: ./src/jlaunch
+    restart: unless-stopped
+    environment:
+      # Bearer token the api presents on every control call (fail-closed: no token, the
+      # service refuses to start). Shared with the api via JBRAIN_JLAUNCH_TOKEN.
+      JLAUNCH_TOKEN: ${JLAUNCH_TOKEN:-}
+      JLAUNCH_WORKSPACE_ROOT: /work
+      JLAUNCH_STATE_ROOT: /work/.state
+      JLAUNCH_ARTIFACT_ROOT: /artifacts
+      JLAUNCH_LOG_LEVEL: ${JLAUNCH_LOG_LEVEL:-INFO}
+      # Verbose by association: when debug access is on, jlaunch forces DEBUG (shared flag).
+      JLAUNCH_DEBUG_ACCESS_ENABLED: ${DEBUG_ACCESS_ENABLED:-false}
+    volumes:
+      # The per-job checkouts + ~15 GB scratch, and the collected artifacts. Both are
+      # scratch/deliverables, kept OUT of backups (no owner knowledge-base data here).
+      - jlaunch_work:/work
+      - jlaunch_artifacts:/artifacts
+    networks: [jlaunch]
+    # DELIBERATELY UNCAPPED cpu/mem (unlike jcode's tight sandbox): a census run is meant
+    # to saturate the box for hours — the owner opted in and accepts it competing with
+    # chat/code-mode while it runs. pids_limit still blunts a fork bomb.
+    pids_limit: ${JLAUNCH_PIDS_LIMIT:-2048}
+
   embed:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
     restart: unless-stopped
@@ -661,6 +701,9 @@ networks:
   # only `jcode` + `local-llm` (and `api` from Wave J2) join it, so the arbitrary-code
   # sandbox has no network route to db/supervisor/worker/embed/blobs.
   jcode:
+  # Isolates the opt-in job launcher (`jlaunch` profile): only `jlaunch` + `api` join it,
+  # so a job's arbitrary code has no route to db/supervisor/worker/embed/blobs.
+  jlaunch:
 
 volumes:
   blobs:
@@ -672,3 +715,7 @@ volumes:
   # Per-session coding sandboxes (opt-in `jcode` profile) — scratch checkouts,
   # kept out of backups (no owner data lives here).
   jcode_work:
+  # The job launcher's per-job checkouts + ~15 GB scratch (opt-in `jlaunch` profile),
+  # and its collected artifacts — scratch/deliverables, kept out of backups.
+  jlaunch_work:
+  jlaunch_artifacts:

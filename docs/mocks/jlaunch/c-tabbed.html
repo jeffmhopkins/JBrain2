@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · Math launcher — C: tabbed (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14);
+    --amber-tint:rgba(201,163,106,.14); --rose-tint:rgba(207,138,143,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+    --r-card:16px; --r-seg:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4}
+  .wrap{max-width:520px;margin:0 auto;padding:0 14px 40px}
+  .topbar{display:flex;align-items:center;gap:10px;height:56px;position:sticky;top:0;background:var(--bg);z-index:5}
+  .topbar .chev{width:24px;height:24px;color:var(--text-2)}
+  .topbar .tt{font-size:16px;font-weight:600;font-family:var(--mono)}
+  .topbar .pill{margin-left:auto;font-size:10.5px;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid var(--border)}
+  .pill.run{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 34%,var(--border));background:var(--amber-tint)}
+  .pill.ok{color:var(--green);border-color:color-mix(in srgb,var(--green) 34%,var(--border));background:var(--green-tint)}
+  .pill.kill{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 34%,var(--border));background:var(--rose-tint)}
+  .pill.idle{color:var(--text-2)}
+  p.intro{color:var(--text-2);font-size:13px;margin:2px 0 12px;line-height:1.5}p.intro b{color:var(--text)}
+
+  /* tabs */
+  .tabs{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;margin-bottom:12px}
+  .tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:.7em 0;font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .tab + .tab{border-left:1px solid var(--border)}
+  .tab.on{color:var(--text);background:var(--amber-tint)}.tab.on .ic{color:var(--amber)}
+  .tab .ic{display:inline-flex}.tab .ic svg{width:15px;height:15px}
+  .tab .badge{font-size:9px;background:var(--amber);color:#0E0F11;border-radius:999px;padding:0 5px;margin-left:2px}
+
+  .pane{display:none}.pane.on{display:block}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:15px;margin-bottom:12px}
+  h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);font-weight:600}
+
+  /* overview */
+  .meta{font-family:var(--mono);font-size:12.5px;line-height:1.8;color:var(--text-2)}
+  .meta b{color:var(--text)}
+  .toolbar{display:flex;gap:8px;margin-bottom:12px}
+  .btn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:12px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);font:inherit;font-weight:600;font-size:13px;cursor:pointer}
+  .btn svg{width:15px;height:15px}
+  .btn.start{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,var(--border));background:var(--green-tint)}
+  .btn.stop{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,var(--border));background:var(--amber-tint)}
+  .btn.kill{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 40%,var(--border));background:var(--rose-tint)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .prow{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);font-family:var(--mono);font-size:13px}
+  .prow:first-child{border-top:0}
+  .prow .s{width:16px;text-align:center;flex:none}
+  .prow.done .s{color:var(--green)}.prow.now .s{color:var(--amber)}.prow.pending{color:var(--text-3)}
+  .prow .pt{margin-left:auto;font-size:11.5px;color:var(--text-3)}
+
+  /* terminal */
+  .term{background:#0B0C0E;border:1px solid var(--border);border-radius:12px;font-family:var(--mono);font-size:11.5px;line-height:1.55;color:#C6C8CB;padding:12px;height:340px;overflow-y:auto;white-space:pre-wrap}
+  .term .p{color:var(--amber)}.term .g{color:var(--green)}.term .d{color:var(--text-3)}
+
+  /* result */
+  .hl{font-family:var(--mono);font-size:12.5px;line-height:1.7}
+  .hl .k{color:var(--text-2)}.hl .v{color:var(--text)}.hl .rec{color:var(--green)}
+  .specs{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px}
+  .spec{font-size:10.5px;font-family:var(--mono);color:var(--text-2);border:1px solid var(--border);border-radius:999px;padding:3px 9px}
+  .share{width:100%;margin-top:4px;padding:12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));background:var(--steel-tint);color:var(--steel);font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+  .link{display:none;margin-top:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:10px 12px;font-family:var(--mono);font-size:11.5px;color:var(--steel);word-break:break-all}
+  .link.show{display:block}
+  .await{color:var(--text-3);font-size:13px;text-align:center;padding:26px 10px}
+  .dl{display:inline-flex;align-items:center;gap:7px;margin-top:11px;font-size:12px;color:var(--text-2);font-family:var(--mono)}
+  .dl svg{width:14px;height:14px;color:var(--teal)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 18l-6-6 6-6"/></svg>
+    <span class="tt">erdos_straus_1e12</span>
+    <span class="pill idle" id="statepill">idle</span>
+  </div>
+  <p class="intro"><b>Tabbed session.</b> Overview (status + phases + controls), Terminal (the live shell), Result (headline + sharelink) —
+  the same shape as a jcode session, so the two launchers feel like one family. Start on Overview; the Terminal badge blinks while it runs.</p>
+
+  <div class="tabs">
+    <button class="tab on" data-t="ov" onclick="tab('ov',this)"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16M4 12h16M4 19h10"/></svg></span>Overview</button>
+    <button class="tab" data-t="tm" onclick="tab('tm',this)"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v14H4z"/><path d="M8 9l3 3-3 3M13 15h3"/></svg></span>Terminal<span class="badge" id="tmbadge" style="display:none">●</span></button>
+    <button class="tab" data-t="rs" onclick="tab('rs',this)"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>Result</button>
+  </div>
+
+  <!-- OVERVIEW -->
+  <div class="pane on" id="ov">
+    <div class="toolbar">
+      <button class="btn start" id="bStart" onclick="startRun()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-14 9z"/></svg>Start</button>
+      <button class="btn stop" id="bStop" disabled onclick="endRun('stop')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Stop</button>
+      <button class="btn kill" id="bKill" disabled onclick="endRun('kill')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>Kill</button>
+    </div>
+    <div class="card">
+      <h3>Job</h3>
+      <div class="meta">
+        <div><b>Erdős–Straus census to 10¹²</b></div>
+        <div>repo · github.com/jeffmhopkins/Erd-s-Straus-attack</div>
+        <div>state · <span id="ovstate">idle</span> · one-shot, not resumable</div>
+        <div>needs · all cores · ~15 GB scratch · ~6–10 h</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Phases</h3>
+      <div id="phaselist"></div>
+    </div>
+  </div>
+
+  <!-- TERMINAL -->
+  <div class="pane" id="tm">
+    <div class="term" id="term"><span class="d">Start the job from Overview; the shell streams here and keeps running if you leave.</span>
+</div>
+  </div>
+
+  <!-- RESULT -->
+  <div class="pane" id="rs">
+    <div id="await" class="card"><div class="await">The headline + sharelink appear here once the run finishes with <span style="color:var(--green)">VERIFICATION OK</span>.</div></div>
+    <div id="resultcard" style="display:none">
+      <div class="card">
+        <h3>Headline · verified OK</h3>
+        <div class="hl">
+          <div><span class="k">hard primes:</span> <span class="v">1,170,090,020</span></div>
+          <div><span class="k">max minimal R:</span> <span class="v">107</span> at p = 8,803,369 <span class="rec">(record R=107 stands)</span></div>
+          <div><span class="k">R ≥ 87 counts:</span> <span class="v">{87: 3, 91: 1, 107: 1}</span></div>
+        </div>
+        <div class="specs"><span class="spec">AMD Ryzen AI Max+ 395</span><span class="spec">32 cores</span><span class="spec">128 GB</span><span class="spec">7h 45m</span></div>
+        <div class="dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>es_1e12_artifacts.tar.gz · 412 MB</div>
+      </div>
+      <div class="card">
+        <h3>Share</h3>
+        <button class="share" onclick="document.getElementById('link').classList.add('show')">Generate public sharelink →</button>
+        <div class="link" id="link">https://brain.example.com/results/9f2a1c7b… <br><span style="color:var(--text-3)">no login · results page + download · revoke anytime</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const PHASES=[['clone','12s'],['install','2m10s'],['smoke','48s'],['run','7h32m']];
+let timer=null,i=0;
+function tab(id,el){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));el.classList.add('on');
+  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));document.getElementById(id).classList.add('on');}
+function renderPhases(active){
+  document.getElementById('phaselist').innerHTML=PHASES.map(([n,t],j)=>{
+    const cls=j<active?'done':j===active?'now':'pending';const s=j<active?'✓':j===active?'●':'○';
+    return `<div class="prow ${cls}"><span class="s">${s}</span>${n}<span class="pt">${j<=active?t:'—'}</span></div>`;}).join('');
+}
+function line(html){const t=document.getElementById('term');t.insertAdjacentHTML('beforeend',html+'\n');t.scrollTop=t.scrollHeight;}
+function setState(s,cls){const p=document.getElementById('statepill');p.textContent=s;p.className='pill '+cls;document.getElementById('ovstate').textContent=s;}
+function startRun(){
+  document.getElementById('term').innerHTML='';document.getElementById('resultcard').style.display='none';document.getElementById('await').style.display='block';
+  document.getElementById('bStart').disabled=true;document.getElementById('bStop').disabled=false;document.getElementById('bKill').disabled=false;
+  document.getElementById('tmbadge').style.display='inline-block';setState('running','run');i=0;step();
+}
+function step(){
+  if(i>=PHASES.length){finish();return;}
+  renderPhases(i);line('<span class="p">== jlaunch phase: '+PHASES[i][0]+' ==</span>');
+  i++;timer=setTimeout(step,1100);
+}
+function finish(){
+  renderPhases(PHASES.length);line('<span class="g">VERIFICATION OK</span>');line('<span class="g">JLAUNCH_DONE ok</span>');
+  setState('succeeded','ok');document.getElementById('tmbadge').style.display='none';
+  document.getElementById('bStop').disabled=true;document.getElementById('bKill').disabled=true;document.getElementById('bStart').disabled=false;
+  document.getElementById('await').style.display='none';document.getElementById('resultcard').style.display='block';
+}
+function endRun(kind){
+  clearTimeout(timer);line('<span class="d">— '+(kind==='kill'?'SIGKILL to the process group':'SIGTERM, winding down')+' —</span>');
+  setState(kind==='kill'?'killed':'stopped','kill');document.getElementById('tmbadge').style.display='none';
+  document.getElementById('bStop').disabled=true;document.getElementById('bKill').disabled=true;document.getElementById('bStart').disabled=false;
+}
+renderPhases(-1);
+</script>
+</body>
+</html>

@@ -72,6 +72,7 @@ sync_python() { # sync_python <dir>
 sync_python backend
 sync_python supervisor
 sync_python jcode
+sync_python jlaunch
 
 # --- Frontend (React/Vite, vitest, biome) ---
 if [ -f frontend/package.json ]; then

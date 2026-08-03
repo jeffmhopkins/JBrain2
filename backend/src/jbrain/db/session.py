@@ -142,6 +142,27 @@ def research_share_context(link_id: str = "") -> SessionContext:
     )
 
 
+def jlaunch_share_context(link_id: str = "") -> SessionContext:
+    """The session a jlaunch results-share visitor (an unauthenticated stranger) runs under.
+
+    Identical shape to `research_share_context`: a NON-owner principal kind
+    (`is_owner()` is FALSE, so every `USING(app.is_owner())` table denies it) with NO
+    `subject_id`/`domain_scopes`, so it reads zero notes/chunks/locations. The ONLY grant
+    it earns is the `jlaunch_runs_share` policy (the share migration), which keys off
+    `auth_context='jlaunch_share'` (also unlocks the share-links SELECT policy) and
+    `principal_id` — the resolved share-link id the policy pins the run read to.
+
+    Called twice per view: with no `link_id` to resolve a token by hash (the empty pin
+    matches no link — the policy compares the id as text, so it fails closed), then
+    re-opened pinned to the resolved id to read exactly that link's run. Read-only.
+    """
+    return SessionContext(
+        principal_id=link_id,
+        principal_kind="jlaunch_share",
+        auth_context="jlaunch_share",
+    )
+
+
 @asynccontextmanager
 async def scoped_session(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext

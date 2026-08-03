@@ -22,6 +22,7 @@ import {
   PinIcon,
   SearchIcon,
   SettingsIcon,
+  SigmaIcon,
   UsersIcon,
   XIcon,
   ZapIcon,
@@ -46,7 +47,8 @@ export type LauncherTarget =
   | "intake"
   | "tasks"
   | "petcontrol"
-  | "jcode";
+  | "jcode"
+  | "jlaunch";
 
 interface Tile {
   title: string;
@@ -85,6 +87,7 @@ const SECTIONS: Section[] = [
       { title: "Intake", icon: <GlobeIcon size={24} />, target: "intake" },
       { title: "Image", icon: <ImageIcon size={24} />, target: "image" },
       { title: "Code", icon: <CodeIcon size={24} />, target: "jcode" },
+      { title: "Math", icon: <SigmaIcon size={24} />, target: "jlaunch" },
     ],
   },
   {
@@ -143,6 +146,38 @@ function fetchImageEnabled(): Promise<boolean> {
     .catch(() => false);
   return imageEnabledPromise;
 }
+
+// The Math (jlaunch) tile is configuration-gated exactly like Image: the /jlaunch routes
+// 404 on a box without the launcher enabled, so probe /jlaunch/specs once per session and
+// hide the tile unless it resolves. Same session-cached promise + device-local hydration so
+// reopening never refetches or flashes; a fetch failure (incl. the 404) resolves to false.
+const JLAUNCH_ENABLED_KEY = "jb.jlaunch.enabled";
+
+function loadJlaunchEnabledCached(): boolean | null {
+  try {
+    const raw = localStorage.getItem(JLAUNCH_ENABLED_KEY);
+    return raw === null ? null : raw === "true";
+  } catch {
+    return null;
+  }
+}
+
+function saveJlaunchEnabledCached(enabled: boolean): void {
+  try {
+    localStorage.setItem(JLAUNCH_ENABLED_KEY, enabled ? "true" : "false");
+  } catch {
+    // best-effort; a dropped marker just re-flashes the tile once on the next load
+  }
+}
+
+let jlaunchEnabledPromise: Promise<boolean> | null = null;
+function fetchJlaunchEnabled(): Promise<boolean> {
+  jlaunchEnabledPromise ??= api
+    .jlaunchSpecs()
+    .then(() => true)
+    .catch(() => false);
+  return jlaunchEnabledPromise;
+}
 // The Review badge polls while the launcher is open so it reads live — new
 // holds tick up, resolved ones clear — without reopening the menu. Human/
 // analysis pace, so a light interval; the launcher is only mounted while open.
@@ -176,6 +211,8 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   // count jump on open); null only on a device that has never resolved it, where
   // the tile stays hidden until the fetch below confirms enablement.
   const [imageEnabled, setImageEnabled] = useState<boolean | null>(loadImageEnabledCached);
+  // Config gate for the Math (jlaunch) tile — same pattern as Image.
+  const [jlaunchEnabled, setJlaunchEnabled] = useState<boolean | null>(loadJlaunchEnabledCached);
   // Two gates quiet the poll: a backgrounded PWA, and a launcher buried under a
   // card. Returning to either re-runs this effect — an immediate refetch, then
   // re-arm — so the badge is current the moment the menu is back on screen.
@@ -191,6 +228,10 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
     fetchImageEnabled().then((on) => {
       saveImageEnabledCached(on);
       if (!stale) setImageEnabled(on);
+    });
+    fetchJlaunchEnabled().then((on) => {
+      saveJlaunchEnabledCached(on);
+      if (!stale) setJlaunchEnabled(on);
     });
     return () => {
       stale = true;
@@ -299,8 +340,10 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
           <div className="tile-grid">
             {section.tiles
               // Omit the Image tile entirely until hosting is confirmed enabled —
-              // configuration-gated, not an unbuilt phase (so no disabled badge).
+              // configuration-gated, not an unbuilt phase (so no disabled badge). The Math
+              // (jlaunch) tile is gated the same way (hidden unless the launcher is enabled).
               .filter((tile) => tile.target !== "image" || imageEnabled === true)
+              .filter((tile) => tile.target !== "jlaunch" || jlaunchEnabled === true)
               .map((tile) => (
                 <button
                   key={tile.title}

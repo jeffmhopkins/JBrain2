@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · Math launcher — A: console-first (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14);
+    --amber-tint:rgba(201,163,106,.14); --rose-tint:rgba(207,138,143,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+    --r-card:16px; --r-seg:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:520px;margin:0 auto;padding:0 14px 40px}
+  .topbar{display:flex;align-items:center;gap:10px;height:56px;position:sticky;top:0;background:var(--bg);z-index:5}
+  .topbar .chev{width:24px;height:24px;color:var(--text-2)}
+  .topbar .tt{font-size:18px;font-weight:600}.topbar .tt .d{color:var(--amber)}
+  .topbar .var{margin-left:auto;font-size:11px;color:var(--text-3)}
+  p.intro{color:var(--text-2);font-size:13px;margin:2px 0 14px;line-height:1.5}
+  p.intro b{color:var(--text)}
+
+  /* job header */
+  .jobhead{display:flex;align-items:center;gap:11px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:13px 14px;margin-bottom:12px}
+  .jobhead .ic{width:34px;height:34px;border-radius:10px;background:var(--amber-tint);color:var(--amber);display:flex;align-items:center;justify-content:center;flex:none}
+  .jobhead .ic svg{width:18px;height:18px}
+  .jobhead .main{flex:1;min-width:0}
+  .jobhead .name{font-weight:600;font-size:14.5px}
+  .jobhead .sub{font-size:11.5px;color:var(--text-2);font-family:var(--mono);margin-top:2px}
+  .pill{font-size:10.5px;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid var(--border);white-space:nowrap}
+  .pill.run{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 34%,var(--border));background:var(--amber-tint)}
+  .pill.ok{color:var(--green);border-color:color-mix(in srgb,var(--green) 34%,var(--border));background:var(--green-tint)}
+  .pill.kill{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 34%,var(--border));background:var(--rose-tint)}
+
+  /* control toolbar */
+  .toolbar{display:flex;gap:8px;margin-bottom:10px}
+  .btn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:11px;border-radius:11px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);font:inherit;font-weight:600;font-size:13px;cursor:pointer}
+  .btn svg{width:15px;height:15px}
+  .btn.start{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,var(--border));background:var(--green-tint)}
+  .btn.stop{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,var(--border));background:var(--amber-tint)}
+  .btn.kill{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 40%,var(--border));background:var(--rose-tint)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+
+  /* phase strip */
+  .phases{display:flex;gap:6px;margin-bottom:10px}
+  .ph{flex:1;text-align:center;font-size:10.5px;color:var(--text-3);font-family:var(--mono);padding:6px 2px;border-radius:9px;border:1px solid var(--border);background:var(--surface)}
+  .ph.done{color:var(--green);border-color:color-mix(in srgb,var(--green) 30%,var(--border))}
+  .ph.now{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 34%,var(--border));background:var(--amber-tint)}
+  .ph .t{display:block;font-size:9px;color:var(--text-3);margin-top:2px}
+
+  /* terminal — the hero */
+  .term{background:#0B0C0E;border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .term-bar{display:flex;align-items:center;gap:7px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-3);font-family:var(--mono)}
+  .term-bar .dot{width:8px;height:8px;border-radius:999px;background:var(--amber);box-shadow:0 0 0 3px var(--amber-tint)}
+  .term-bar .live{margin-left:auto;color:var(--amber)}
+  .term-body{font-family:var(--mono);font-size:11.5px;line-height:1.55;color:#C6C8CB;padding:12px;height:300px;overflow-y:auto;white-space:pre-wrap}
+  .term-body .p{color:var(--amber)}.term-body .g{color:var(--green)}.term-body .d{color:var(--text-3)}
+  .cur{display:inline-block;width:7px;height:14px;background:var(--amber);vertical-align:-2px;animation:bl 1s steps(1) infinite}
+  @keyframes bl{50%{opacity:0}}
+
+  /* result / share (revealed when done) */
+  .result{display:none;margin-top:12px}
+  .result.show{display:block}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:14px;margin-bottom:12px}
+  .card h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);font-weight:600}
+  .hl{font-family:var(--mono);font-size:12.5px;line-height:1.7}
+  .hl .k{color:var(--text-2)}.hl .v{color:var(--text)}.hl .rec{color:var(--green)}
+  .share{width:100%;margin-top:4px;padding:12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));background:var(--steel-tint);color:var(--steel);font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+  .link{display:none;margin-top:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:10px 12px;font-family:var(--mono);font-size:11.5px;color:var(--steel);word-break:break-all}
+  .link.show{display:block}
+  .dl{display:inline-flex;align-items:center;gap:7px;margin-top:10px;font-size:12px;color:var(--text-2);font-family:var(--mono)}
+  .dl svg{width:14px;height:14px;color:var(--teal)}
+  .spec-note{font-size:11.5px;color:var(--text-2);line-height:1.5;margin:12px 2px 0}
+  .spec-note b{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 18l-6-6 6-6"/></svg>
+    <span class="tt">Math<span class="d">.</span></span>
+    <span class="var">Variant A · console-first</span>
+  </div>
+  <p class="intro"><b>Console-first.</b> The live terminal is the hero — you watch the run stream just like a real shell.
+  Controls sit in a compact toolbar; phase chips show progress at a glance. When it finishes, the results + sharelink slide in below.</p>
+
+  <div class="jobhead">
+    <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4h16M9 4v16M4 9h16"/></svg></span>
+    <div class="main">
+      <div class="name">Erdős–Straus census to 10¹²</div>
+      <div class="sub" id="subline">idle · one-shot · ~6–10 h · all cores · 15 GB</div>
+    </div>
+    <span class="pill run" id="statepill">idle</span>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn start" id="bStart" onclick="startRun()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-14 9z"/></svg>Start</button>
+    <button class="btn stop" id="bStop" disabled onclick="endRun('stop')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Stop</button>
+    <button class="btn kill" id="bKill" disabled onclick="endRun('kill')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>Kill</button>
+  </div>
+
+  <div class="phases" id="phases">
+    <div class="ph" data-p="clone">clone<span class="t">—</span></div>
+    <div class="ph" data-p="install">install<span class="t">—</span></div>
+    <div class="ph" data-p="smoke">smoke<span class="t">—</span></div>
+    <div class="ph" data-p="run">run<span class="t">—</span></div>
+  </div>
+
+  <div class="term">
+    <div class="term-bar"><span class="dot"></span>run console<span class="live" id="livelbl">idle</span></div>
+    <div class="term-body" id="term"><span class="d">Press Start to launch the census. The shell keeps running even if you close the app.</span>
+</div>
+  </div>
+
+  <div class="result" id="result">
+    <div class="card" style="margin-top:12px">
+      <h3>Headline</h3>
+      <div class="hl">
+        <div><span class="k">hard primes:</span> <span class="v">1,170,090,020</span></div>
+        <div><span class="k">max minimal R:</span> <span class="v">107</span> at p = 8,803,369 <span class="rec">(record R=107 stands)</span></div>
+        <div><span class="k">R ≥ 87 counts:</span> <span class="v">{87: 3, 91: 1, 107: 1}</span></div>
+      </div>
+      <div class="dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>es_1e12_artifacts.tar.gz · 412 MB · verified OK</div>
+    </div>
+    <div class="card">
+      <h3>Share the result</h3>
+      <button class="share" onclick="document.getElementById('link').classList.add('show')">Generate public sharelink →</button>
+      <div class="link" id="link">https://brain.example.com/results/9f2a1c7b… <br><span style="color:var(--text-3)">no login · headline + specs + download · revoke anytime</span></div>
+    </div>
+  </div>
+
+  <p class="spec-note">The scratch npz (~10 GB) and the checkout are <b>kept until you delete the run</b> — nothing is auto-reaped, and the runner never pushes to the repo.</p>
+</div>
+
+<script>
+const PHASES=[['clone','12s'],['install','2m10s'],['smoke','48s'],['run','7h32m']];
+let timer=null,i=0;
+function line(html){const t=document.getElementById('term');t.insertAdjacentHTML('beforeend',html+'\n');t.scrollTop=t.scrollHeight;}
+function setState(s,cls){const p=document.getElementById('statepill');p.textContent=s;p.className='pill '+cls;}
+function startRun(){
+  document.getElementById('term').innerHTML='';document.getElementById('result').classList.remove('show');
+  document.getElementById('bStart').disabled=true;document.getElementById('bStop').disabled=false;document.getElementById('bKill').disabled=false;
+  document.getElementById('livelbl').textContent='● live';document.getElementById('subline').textContent='running · started just now';
+  setState('running','run');i=0;stepPhase();
+}
+function stepPhase(){
+  if(i>=PHASES.length){finish();return;}
+  const [name,dur]=PHASES[i];
+  document.querySelectorAll('.ph').forEach((el,j)=>{el.classList.toggle('now',j===i);el.classList.toggle('done',j<i);});
+  line('<span class="p">== jlaunch phase: '+name+' ==</span>');
+  const msg={clone:'Cloning github.com/jeffmhopkins/Erd-s-Straus-attack …',
+    install:'pip install -e ".[dev]"  →  resolving sympy, numpy …',
+    smoke:'python -m pytest -q  →  <span class="g">41 passed</span>',
+    run:'bash scripts/run_1e12.sh  →  [1/3] generation (the long step) …'}[name];
+  line('<span class="d">'+msg+'</span>');
+  document.querySelectorAll('.ph .t')[i].textContent=dur;
+  i++;timer=setTimeout(stepPhase,1100);
+}
+function finish(){
+  document.querySelectorAll('.ph').forEach(el=>{el.classList.remove('now');el.classList.add('done');});
+  line('<span class="g">VERIFICATION OK</span>');line('<span class="g">JLAUNCH_DONE ok</span>');
+  document.getElementById('livelbl').textContent='done';document.getElementById('subline').textContent='succeeded · 7h 45m wall-clock';
+  setState('succeeded','ok');document.getElementById('bStop').disabled=true;document.getElementById('bKill').disabled=true;document.getElementById('bStart').disabled=false;
+  document.getElementById('result').classList.add('show');
+}
+function endRun(kind){
+  clearTimeout(timer);line('<span class="d">— '+(kind==='kill'?'SIGKILL sent to the process group':'SIGTERM sent, winding down')+' —</span>');
+  document.querySelectorAll('.ph').forEach(el=>el.classList.remove('now'));
+  document.getElementById('livelbl').textContent='killed';document.getElementById('subline').textContent='killed by you';
+  setState('killed','kill');document.getElementById('bStop').disabled=true;document.getElementById('bKill').disabled=true;document.getElementById('bStart').disabled=false;
+}
+</script>
+</body>
+</html>

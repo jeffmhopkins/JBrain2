@@ -2,6 +2,8 @@
 selection"). HTTP is faked via MockTransport — no live network, like the
 connector and LLM adapters."""
 
+from collections.abc import AsyncIterator
+
 import httpx
 import pytest
 
@@ -1085,6 +1087,9 @@ class _FakeBlobs:
         digest = hashlib.sha256(data).hexdigest()
         self.blobs[digest] = data
         return digest
+
+    async def put_stream(self, chunks: AsyncIterator[bytes]) -> str:
+        return await self.put(b"".join([chunk async for chunk in chunks]))
 
     async def get(self, sha256: str) -> bytes:
         try:
