@@ -31,6 +31,14 @@ export const PlusIcon = (p: IconProps) => (
   </Icon>
 );
 
+// A capital-sigma (Σ) glyph for the Math launcher tile — the summation symbol reads as
+// "compute / math" without leaning on a font.
+export const SigmaIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M18 5H6l6 7-6 7h12" />
+  </Icon>
+);
+
 export const MoreIcon = (p: IconProps) => (
   <Icon {...p}>
     <circle cx="5" cy="12" r="0.9" fill="currentColor" />

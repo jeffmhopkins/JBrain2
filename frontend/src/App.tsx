@@ -20,6 +20,7 @@ import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
 import { ImageScreen } from "./screens/ImageScreen";
 import { IntakeLinksScreen } from "./screens/IntakeLinksScreen";
 import { JcodeScreen } from "./screens/JcodeScreen";
+import { JlaunchScreen } from "./screens/JlaunchScreen";
 import { LLMSettingsScreen } from "./screens/LLMSettingsScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
@@ -68,13 +69,14 @@ type Card =
   | "image"
   | "intake"
   | "petcontrol"
-  | "jcode";
+  | "jcode"
+  | "jlaunch";
 
 // Automations, Tasks, Image and jcode bring their own full-screen overlay (own back
 // bar + slide-in), so they render outside the shared subscreen TopBar wrapper — hence
 // no entry here. Every Card that uses the wrapper needs a title.
 const SCREEN_TITLES: Record<
-  Exclude<Card, "automations" | "tasks" | "image" | "jcode" | "petcontrol">,
+  Exclude<Card, "automations" | "tasks" | "image" | "jcode" | "jlaunch" | "petcontrol">,
   string
 > = {
   ops: "Ops",
@@ -457,6 +459,7 @@ export function App() {
     if (card === "tasks") return setCard(null);
     if (card === "image") return setCard(null);
     if (card === "jcode") return setCard(null);
+    if (card === "jlaunch") return setCard(null);
     if (card === "petcontrol") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
@@ -519,7 +522,8 @@ export function App() {
         card !== "tasks" &&
         card !== "image" &&
         card !== "petcontrol" &&
-        card !== "jcode" && (
+        card !== "jcode" &&
+        card !== "jlaunch" && (
           <div
             className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
             ref={subRef}
@@ -613,6 +617,7 @@ export function App() {
       {/* Code mode (jcode) is a self-contained full-screen overlay (its own back
           bar + internal list↔session navigation), like Tasks/Automations. */}
       {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
+      {card === "jlaunch" && <JlaunchScreen onClose={() => setCard(null)} />}
       {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity

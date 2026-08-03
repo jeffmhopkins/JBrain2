@@ -62,9 +62,12 @@ the trust boundary and the launcher stays network-isolated (no shared blob volum
   the box), api env passthrough + network join, `scripts/jlaunch-setup.sh`,
   `jbrain enable-jlaunch`, the turnkey fold-in in `update-inner.sh`/`jbrain update`, and
   `sync_python jlaunch` in `dev-setup.sh`.
-- **Frontend** `frontend/src/` (pending): the `Math` launcher tile (config-gated like the
-  Image tile), `JlaunchScreen`, the public `JlaunchShareApp` (mounted by `main.tsx`
-  `pickRoot` at `/results/{token}`), `jlaunch/terminal.ts` + `share.ts`, and the api client.
+- **Frontend** `frontend/src/`: the `Math` launcher tile (config-gated like the Image tile,
+  probing `/jlaunch/specs`), `screens/JlaunchScreen.tsx` (the tabbed Overview·Terminal·Result
+  job screen — variant C — with start/stop/kill, a live xterm reusing jcode's `attachTerminal`,
+  and the sharelink mint), the public `screens/JlaunchShareApp.tsx` (mounted by `main.tsx`
+  `pickRoot` at `/results/{token}`), `jlaunch/{types,terminal,share}.ts`, the api client
+  methods, and the `jl-*` styles.
 
 ## Status by wave
 
@@ -74,8 +77,11 @@ the trust boundary and the launcher stays network-isolated (no shared blob volum
   migrations; 18 unit + 5 RLS-integration tests).
 - **W3 — deploy** ✅ (compose service/network/volumes, setup script + `jbrain` command,
   turnkey update fold-in, `dev-setup`).
-- **W0 — GUI gate** ◻ three interactive mocks in `docs/mocks/jlaunch/` for owner sign-off.
-- **W4 — frontend** ◻ screen + public results app + terminal glue + tile wiring.
+- **W0 — GUI gate** ✅ three interactive mocks in `docs/mocks/jlaunch/`; built against
+  **variant C** (tabbed) pending explicit owner confirmation.
+- **W4 — frontend** ✅ `Math` tile + config gate, tabbed job screen with live xterm +
+  start/stop/kill + sharelink mint, public results app, api client, `jl-*` styles; 9 vitest
+  tests (share/terminal helpers, public app render). Full suite green (1299 tests).
 
 ## Verification
 

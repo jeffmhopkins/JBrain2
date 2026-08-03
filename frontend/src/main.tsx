@@ -6,9 +6,11 @@ import { initFontScale } from "./fontScale";
 import { GuidedIntakeApp } from "./intake/GuidedIntakeApp";
 import { parseIntakePath } from "./intake/share";
 import { parseSharePath } from "./jcode/share";
+import { parseJlaunchSharePath } from "./jlaunch/share";
 import { initLocationCapture } from "./location";
 import { parseResearchSharePath } from "./research/share";
 import { JcodeShareApp } from "./screens/JcodeShareApp";
+import { JlaunchShareApp } from "./screens/JlaunchShareApp";
 import { ResearchShareApp } from "./screens/ResearchShareApp";
 import { initTheme } from "./theme";
 import { isForeground } from "./visibility";
@@ -49,6 +51,7 @@ if (!container) throw new Error("Missing #root element");
 function pickRoot(): JSX.Element {
   if (parseSharePath()) return <JcodeShareApp />;
   if (parseResearchSharePath()) return <ResearchShareApp />;
+  if (parseJlaunchSharePath()) return <JlaunchShareApp />;
   if (parseIntakePath()) return <GuidedIntakeApp />;
   // Owner app only. Warm the geolocation fix here — NOT at module load — so a public
   // share/intake recipient (a scoped surface above) is never prompted for location; only the

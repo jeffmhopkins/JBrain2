@@ -21753,3 +21753,487 @@ button.task-band:active {
   font-size: 12.5px;
   margin: 0 0 10px;
 }
+
+/* ============================================================================
+   Math launcher (jlaunch) — the "Math" tile's overlay + the public results app.
+   Variant C (tabbed) from docs/mocks/jlaunch/. Tokens only.
+   ============================================================================ */
+.jl-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 40;
+  overflow-y: auto;
+  padding: 0 14px calc(40px + env(safe-area-inset-bottom));
+  max-width: 640px;
+  margin: 0 auto;
+}
+.jl-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 5;
+}
+.jl-bar-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+.jl-bar-title.jl-mono {
+  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
+  font-size: 15px;
+}
+.jl-dot {
+  color: var(--amber);
+}
+.jl-empty {
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: center;
+  padding: 26px 12px;
+}
+.jl-body {
+  padding-bottom: 8px;
+}
+.jl-lab {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  margin: 4px 2px 9px;
+}
+.jl-lab-mt {
+  margin-top: 20px;
+}
+
+/* spec cards (start a computation) */
+.jl-spec {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+  margin-bottom: 10px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.jl-spec:hover {
+  border-color: color-mix(in srgb, var(--amber) 40%, var(--border));
+}
+.jl-spec-main {
+  flex: 1;
+  min-width: 0;
+}
+.jl-spec-title {
+  display: block;
+  font-weight: 600;
+  font-size: 14.5px;
+}
+.jl-spec-meta {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-family: var(--mono, ui-monospace, monospace);
+  margin-top: 3px;
+}
+.jl-spec-note {
+  display: block;
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 5px;
+  line-height: 1.5;
+}
+.jl-spec-start {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+/* run list */
+.jl-rows {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.jl-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 13px;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.jl-row:first-child {
+  border-top: 0;
+}
+.jl-row:hover {
+  background: var(--surface-2);
+}
+.jl-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.jl-row-title {
+  display: block;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jl-row-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono, ui-monospace, monospace);
+  margin-top: 2px;
+}
+
+/* state pill */
+.jl-pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  flex: none;
+}
+.jl-pill.run {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 34%, var(--border));
+  background: var(--amber-tint);
+}
+.jl-pill.ok {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 34%, var(--border));
+  background: var(--green-tint);
+}
+.jl-pill.fail,
+.jl-pill.kill {
+  color: var(--rose);
+  border-color: color-mix(in srgb, var(--rose) 34%, var(--border));
+  background: var(--rose-tint);
+}
+
+/* tabs */
+.jl-tabs {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 4px 0 12px;
+}
+.jl-tab {
+  flex: 1;
+  padding: 0.7em 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.jl-tab + .jl-tab {
+  border-left: 1px solid var(--border);
+}
+.jl-tab.on {
+  color: var(--text);
+  background: var(--amber-tint);
+}
+.jl-tab-live {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--amber);
+  margin-left: 6px;
+  vertical-align: 1px;
+  animation: jl-blink 1.2s infinite;
+}
+@keyframes jl-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* controls */
+.jl-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.jl-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.jl-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.jl-btn.stop {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 40%, var(--border));
+  background: var(--amber-tint);
+}
+.jl-btn.kill,
+.jl-btn.danger {
+  color: var(--rose);
+  border-color: color-mix(in srgb, var(--rose) 40%, var(--border));
+  background: var(--rose-tint);
+}
+.jl-btn.share {
+  width: 100%;
+  color: var(--steel);
+  border-color: color-mix(in srgb, var(--steel) 45%, var(--border));
+  background: var(--steel-tint);
+  font-size: 14px;
+}
+
+/* cards + meta */
+.jl-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 15px;
+  margin-bottom: 12px;
+}
+.jl-h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  font-weight: 600;
+}
+.jl-meta {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--text-2);
+  word-break: break-word;
+}
+.jl-meta-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* phases */
+.jl-phases {
+  display: flex;
+  flex-direction: column;
+}
+.jl-phase {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--text-3);
+}
+.jl-phase:first-child {
+  border-top: 0;
+}
+.jl-phase.done {
+  color: var(--green);
+}
+.jl-phase.now {
+  color: var(--amber);
+}
+.jl-phase-name {
+  flex: 1;
+}
+.jl-phase-t {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+/* terminal + console */
+.jl-term {
+  height: 340px;
+  background: #0b0c0e;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  overflow: hidden;
+}
+.jl-console {
+  background: #0b0c0e;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #c6c8cb;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 0;
+}
+
+/* result / headline / share */
+.jl-headline {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+.jl-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 11px;
+}
+.jl-chip {
+  font-size: 10.5px;
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.jl-times {
+  margin-top: 11px;
+}
+.jl-time {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.jl-link {
+  margin-top: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 10px 12px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--steel);
+  word-break: break-all;
+}
+.jl-sharelist {
+  margin-top: 10px;
+}
+.jl-shareitem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.jl-revoke {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--rose) 34%, var(--border));
+  color: var(--rose);
+  border-radius: 8px;
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.jl-sharenote {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.5;
+  margin: 10px 0 0;
+}
+.jl-download {
+  display: block;
+  text-align: center;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--border));
+  background: var(--location-tint, var(--teal-tint));
+  color: var(--teal);
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+  margin-bottom: 12px;
+}
+
+/* public results app (shell-less) */
+.jl-share-shell {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 18px 16px calc(40px + env(safe-area-inset-bottom));
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+.jl-share-msg {
+  text-align: center;
+  color: var(--text-2);
+  font-size: 14px;
+  padding-top: 64px;
+}
+.jl-share-band {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.jl-share-brand {
+  font-size: 18px;
+  font-weight: 700;
+}
+.jl-share-kicker {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+.jl-share-title {
+  font-size: 21px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  line-height: 1.25;
+}
+.jl-share-repo {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0 0 16px;
+  word-break: break-all;
+}
+.jl-share-foot {
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-align: center;
+  margin-top: 18px;
+}
