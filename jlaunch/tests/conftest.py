@@ -81,4 +81,6 @@ async def wait_terminal(manager: JobManager, jid: str, timeout: float = 15.0) ->
         if job.state in ("succeeded", "failed", "killed"):
             return job
         await asyncio.sleep(0.05)
-    raise AssertionError(f"job {jid} did not finish in {timeout}s (state={manager.get(jid).state})")  # noqa: E501
+    raise AssertionError(
+        f"job {jid} did not finish in {timeout}s (state={manager.get(jid).state})"
+    )  # noqa: E501
