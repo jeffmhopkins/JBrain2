@@ -77,8 +77,8 @@ the trust boundary and the launcher stays network-isolated (no shared blob volum
   migrations; 18 unit + 5 RLS-integration tests).
 - **W3 — deploy** ✅ (compose service/network/volumes, setup script + `jbrain` command,
   turnkey update fold-in, `dev-setup`).
-- **W0 — GUI gate** ✅ three interactive mocks in `docs/mocks/jlaunch/`; built against
-  **variant C** (tabbed) pending explicit owner confirmation.
+- **W0 — GUI gate** ✅ three interactive mocks in `docs/mocks/jlaunch/`; owner chose
+  **variant C** (tabbed), which the shipped `JlaunchScreen.tsx` implements.
 - **W4 — frontend** ✅ `Math` tile + config gate, tabbed job screen with live xterm +
   start/stop/kill + sharelink mint, public results app, api client, `jl-*` styles; 9 vitest
   tests (share/terminal helpers, public app render). Full suite green (1299 tests).
