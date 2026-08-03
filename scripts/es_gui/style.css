@@ -1,0 +1,102 @@
+:root {
+  --bg: #0b1220;
+  --panel: #131c2e;
+  --panel2: #0f1728;
+  --line: #23304a;
+  --ink: #e6edf6;
+  --muted: #93a2ba;
+  --accent: #2563eb;
+  --sky: #0ea5e9;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: max(12px, env(safe-area-inset-top)) 14px 40px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 8px 0 16px;
+}
+h1 { font-size: 1.15rem; margin: 0; font-weight: 650; }
+h1 sup { font-size: .7em; }
+.sub { color: var(--muted); font-size: .82rem; }
+.pill {
+  padding: 6px 12px; border-radius: 999px; font-size: .8rem; font-weight: 600;
+  background: var(--panel); border: 1px solid var(--line); white-space: nowrap;
+}
+.pill.run { background: rgba(37,99,235,.18); border-color: var(--accent); color: #bcd3ff; }
+.pill.ok  { background: rgba(34,197,94,.16); border-color: var(--ok); color: #b7f5cd; }
+.pill.err { background: rgba(239,68,68,.16); border-color: var(--danger); color: #ffc4c4; }
+
+.tiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px; margin-bottom: 14px;
+}
+.tile {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.tile .k { color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; }
+.tile .v { font-size: 1.25rem; font-weight: 650; margin-top: 3px; }
+.bar { height: 6px; border-radius: 4px; background: var(--panel2); margin-top: 8px; overflow: hidden; }
+.bar span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--sky)); transition: width .5s; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+.btn {
+  background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 16px; font-size: .92rem; font-weight: 600;
+  cursor: pointer; transition: filter .15s, opacity .15s;
+}
+.btn:hover:not(:disabled) { filter: brightness(1.18); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); }
+.btn.danger { background: var(--danger); border-color: var(--danger); }
+.btn.small { padding: 5px 11px; font-size: .8rem; }
+.msg { color: var(--muted); font-size: .85rem; }
+
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px;
+}
+.card-head { font-weight: 650; margin-bottom: 10px; font-size: .95rem; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+
+.kv { width: 100%; border-collapse: collapse; }
+.kv td { padding: 5px 0; border-bottom: 1px solid var(--panel2); vertical-align: top; font-size: .88rem; }
+.kv td:first-child { color: var(--muted); width: 42%; }
+.kv tr:last-child td { border-bottom: 0; }
+
+.share-row { display: flex; gap: 10px; align-items: center; }
+.share-row a { color: #8ec1ff; word-break: break-all; font-size: .9rem; }
+.share-sub { color: var(--muted); font-size: .8rem; margin-top: 6px; }
+
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+#headline { font-size: .9rem; color: #dfe8f5; }
+
+.term-head { display: flex; align-items: center; justify-content: space-between; }
+.term-actions { display: flex; gap: 12px; align-items: center; }
+.chk { color: var(--muted); font-size: .8rem; display: flex; gap: 5px; align-items: center; }
+.terminal {
+  background: #05080f; border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; height: 340px; overflow: auto; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.45; color: #c8d6ea;
+}
+.terminal.closed { display: none; }
+
+.gate {
+  position: fixed; inset: 0; background: rgba(4,8,15,.9);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.gate-box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; max-width: 360px; width: 100%; }
+.gate-box p { color: var(--muted); font-size: .88rem; }
+.gate-box input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); margin-bottom: 12px; }

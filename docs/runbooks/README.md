@@ -15,4 +15,4 @@ surface changes.
 | `DEBUG_ACCESS.md` | The owner debug console: a revocable, time-boxed `capability_token` for external assistant iteration. Off by default. |
 | `DEBUG_ACCESS_SESSION_GUIDE.md` | Assistant-facing runbook for the debug console: requesting a token and driving the box via `scripts/debug-connect.sh`. |
 | `EXTERNAL_VIDEO_WATCH.md` | Auto-ingesting a YouTube channel's new videos into the search corpus via a recurring Jerv Task (`check_channel` → `analyze_stream` → `search_external_video`). |
-| `ERDOS_STRAUS_1E12.md` | Operator runbook for `scripts/es_1e12_launcher.sh`: start/watch/kill/publish the one-shot Erdős–Straus 10¹² census (standalone compute for a math paper) and hand back one public artifact. |
+| `ERDOS_STRAUS_1E12.md` | Operator runbook for `scripts/es_1e12_launcher.sh` (+ its optional PWA dashboard `es_1e12_server.py`): start/watch/kill/publish the one-shot Erdős–Straus 10¹² census (standalone compute for a math paper) and hand back one public artifact. |

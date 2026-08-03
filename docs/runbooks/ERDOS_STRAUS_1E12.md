@@ -80,9 +80,49 @@ The ~10 GB scratch npz is deliberately **kept** after publish so the dataset
 stays verifiable; drop it with `cleanup-scratch` only once integration is
 confirmed.
 
+## PWA dashboard (optional GUI)
+
+`scripts/es_1e12_server.py` is a **standard-library-only** web backend (no pip
+deps — it reuses the `python3` + `tmux` the launcher already needs) that serves an
+installable PWA over the same lifecycle. Start it from the launcher:
+
+```bash
+scripts/es_1e12_launcher.sh gui start     # prints the URL; runs in tmux 'es1e12-gui'
+scripts/es_1e12_launcher.sh gui stop
+```
+
+Open the printed `http://<host>:8787`. Because the server runs in its own tmux
+session and the dashboard's terminal tails the on-disk `console.log`, the run and
+its feed persist independently of the browser — **close and reopen the PWA (or
+install it and swipe it away) and the live terminal re-attaches to the same
+feed.** The dashboard shows, in one view:
+
+- current phase, run/kill state, and per-phase wall clock;
+- **CPU %** and **RAM used/total** (sampled from `/proc`), plus core count;
+- an approximate generation-progress bar from the growing scratch npz;
+- **Start** / **Kill** / **Publish** buttons;
+- the headline block once complete;
+- a **live terminal** you can close and reopen at will;
+- the **public share link** for the artifact.
+
+**Share link.** After `publish`, the server exposes the public bundle at
+`<dashboard-URL>/share/` (`.../share/es_1e12_artifacts.tar.gz`). The link is built
+from the request host, so when you reach the dashboard through your Cloudflare
+tunnel (`CLOUDFLARE_TUNNEL.md`) the share URL is genuinely public — hand it to a
+collaborator or cite it from the paper. `/share/` stays reachable without a token
+so the artifact link works for anyone; the control API can be locked down.
+
+**Locking it down.** The dashboard can start and kill an all-cores compute job, so
+protect it when exposed. Set `ES_GUI_TOKEN` before `gui start`; the control API
+(`/api/*`, start/kill/publish) then requires that bearer token while `/share/`
+stays open. Open the dashboard once as `http://<host>:8787/#token=<token>` and it
+is stored locally thereafter.
+
 ## Configuration
 
-Override via environment variables (see the script header for the full list):
+Override via environment variables (see the script headers for the full list):
 `ES_WORKDIR` (working root, default `$HOME/erdos-straus-1e12`), `ES_PUBLIC_DIR`,
 `ES_MIN_DISK_GB` (default 15), `ES_SKIP_TESTS` (skip the smoke check — not
-recommended), and `WORKERS` (worker count, default all cores).
+recommended), `WORKERS` (worker count, default all cores), and — for the GUI —
+`ES_GUI_PORT` (default 8787) and `ES_GUI_TOKEN` (bearer token for the control
+API; unset means no auth).

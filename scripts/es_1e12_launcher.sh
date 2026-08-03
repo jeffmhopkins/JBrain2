@@ -22,6 +22,7 @@
 #   scripts/es_1e12_launcher.sh stop             # kill the run and its workers
 #   scripts/es_1e12_launcher.sh publish          # verify, package, expose result
 #   scripts/es_1e12_launcher.sh cleanup-scratch  # drop the ~10 GB scratch npz
+#   scripts/es_1e12_launcher.sh gui [start|stop] # PWA dashboard (see es_1e12_server.py)
 #
 # Environment overrides:
 #   ES_WORKDIR     working root (default: $HOME/erdos-straus-1e12)
@@ -30,9 +31,12 @@
 #   ES_SESSION     tmux session name (default: es1e12)
 #   ES_MIN_DISK_GB minimum free disk to start (default: 15)
 #   ES_SKIP_TESTS  set to 1 to skip the pytest smoke check (not recommended)
+#   ES_GUI_PORT    port for the GUI server (default: 8787)
+#   ES_GUI_TOKEN   if set, the GUI requires this bearer token (recommended when tunneled)
 #   WORKERS        worker processes passed to the run (default: all cores)
 set -uo pipefail
 
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 ES_WORKDIR=${ES_WORKDIR:-"$HOME/erdos-straus-1e12"}
 ES_REPO_URL=${ES_REPO_URL:-"https://github.com/jeffmhopkins/Erd-s-Straus-attack"}
 ES_REPO_DIR="$ES_WORKDIR/Erd-s-Straus-attack"
@@ -131,6 +135,10 @@ cmd_start() {
   cmd_preflight >/dev/null || die "preflight failed"
   capture_specs
   : >"$CONSOLE"
+  # Mirror everything from here into the feed the GUI/terminal tails, so clone,
+  # venv, pip, and the smoke test are visible live — not just the tmux run that
+  # follows. The tmux driver appends the run to the same file afterwards.
+  exec > >(tee -a "$CONSOLE") 2>&1
 
   step "[setup] clone (read-only compute; never pushed upstream)"
   if [ -d "$ES_REPO_DIR/.git" ]; then
@@ -374,7 +382,46 @@ cmd_cleanup_scratch() {
   info "done. Published bundle and dataset outputs are unaffected."
 }
 
-cmd_help() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; }
+# The PWA dashboard: a stdlib Python server (es_1e12_server.py) that wraps this
+# launcher, tails the console feed, and serves the published artifact. It runs in
+# its own tmux session so the terminal view reattaches after the PWA is closed.
+cmd_gui() {
+  local action=${1:-start}
+  local gsession="${ES_SESSION}-gui"
+  local port=${ES_GUI_PORT:-8787}
+  local server="$SELF_DIR/es_1e12_server.py"
+  case "$action" in
+    start)
+      command -v python3 >/dev/null 2>&1 || die "python3 required for the GUI"
+      command -v tmux >/dev/null 2>&1 || die "tmux required for the GUI"
+      [ -f "$server" ] || die "GUI server not found at $server"
+      if tmux has-session -t "$gsession" 2>/dev/null; then
+        info "GUI already running (tmux '$gsession') at http://localhost:$port"
+        return
+      fi
+      # Pass config through so the server resolves the same paths this launcher does.
+      tmux new-session -d -s "$gsession" \
+        "ES_WORKDIR='$ES_WORKDIR' ES_PUBLIC_DIR='$ES_PUBLIC_DIR' ES_SESSION='$ES_SESSION' ES_REPO_URL='$ES_REPO_URL' ES_GUI_PORT='$port' ES_LAUNCHER='$SELF_DIR/$(basename "$0")' ${ES_GUI_TOKEN:+ES_GUI_TOKEN='$ES_GUI_TOKEN' }python3 '$server'"
+      sleep 1
+      tmux has-session -t "$gsession" 2>/dev/null || die "GUI failed to start (try: python3 $server)"
+      step "GUI running"
+      info "open:  http://localhost:$port"
+      if [ -n "${ES_GUI_TOKEN:-}" ]; then
+        info "token: required — open http://localhost:$port/#token=$ES_GUI_TOKEN"
+      else
+        info "token: none (set ES_GUI_TOKEN before 'gui start' to protect controls when tunneled)"
+      fi
+      info "share: the published artifact is at <this URL>/share/ (public if reached via your tunnel)"
+      info "stop:  scripts/es_1e12_launcher.sh gui stop"
+      ;;
+    stop)
+      tmux kill-session -t "$gsession" 2>/dev/null && info "GUI stopped." || info "GUI not running."
+      ;;
+    *) die "usage: gui [start|stop]" ;;
+  esac
+}
+
+cmd_help() { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; }
 
 main() {
   local cmd=${1:-help}
@@ -388,6 +435,7 @@ main() {
     stop|kill)       cmd_stop "$@" ;;
     publish|result)  cmd_publish "$@" ;;
     cleanup-scratch) cmd_cleanup_scratch "$@" ;;
+    gui)             cmd_gui "$@" ;;
     help|-h|--help)  cmd_help ;;
     *) die "unknown command '$cmd' (try: help)" ;;
   esac

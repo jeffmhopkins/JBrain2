@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+<title>Erdős–Straus 10¹² · launcher</title>
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1>Erdős–Straus census to 10<sup>12</sup></h1>
+    <div class="sub">launcher dashboard</div>
+  </div>
+  <div class="pill" id="phasePill">connecting…</div>
+</header>
+
+<main>
+  <section class="tiles" id="tiles">
+    <div class="tile"><div class="k">Phase</div><div class="v" id="mPhase">—</div></div>
+    <div class="tile"><div class="k">Running</div><div class="v" id="mRunning">—</div></div>
+    <div class="tile"><div class="k">CPU</div><div class="v" id="mCpu">—</div><div class="bar"><span id="cpuBar"></span></div></div>
+    <div class="tile"><div class="k">RAM</div><div class="v" id="mRam">—</div><div class="bar"><span id="ramBar"></span></div></div>
+    <div class="tile"><div class="k">Elapsed</div><div class="v" id="mElapsed">—</div></div>
+    <div class="tile"><div class="k">Generation</div><div class="v" id="mScratch">—</div><div class="bar"><span id="scratchBar"></span></div></div>
+  </section>
+
+  <section class="controls">
+    <button id="btnStart" class="btn primary">▶ Start run</button>
+    <button id="btnStop" class="btn danger">■ Kill</button>
+    <button id="btnPublish" class="btn">⬆ Publish artifact</button>
+    <span id="actionMsg" class="msg"></span>
+  </section>
+
+  <section class="card" id="shareCard" hidden>
+    <div class="card-head">Public share link</div>
+    <div class="share-row">
+      <a id="shareLink" href="#" target="_blank" rel="noopener">—</a>
+      <button id="btnCopy" class="btn small">Copy</button>
+    </div>
+    <div class="share-sub" id="shareSub"></div>
+  </section>
+
+  <section class="card" id="headlineCard" hidden>
+    <div class="card-head">Headline</div>
+    <pre id="headline"></pre>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <div class="card-head">Wall-clock per phase</div>
+      <table class="kv" id="timings"><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <div class="card-head">Machine</div>
+      <table class="kv" id="specs"><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head term-head">
+      <span>Live terminal</span>
+      <span class="term-actions">
+        <label class="chk"><input type="checkbox" id="follow" checked> follow</label>
+        <button id="btnTerm" class="btn small">Close</button>
+      </span>
+    </div>
+    <pre id="terminal" class="terminal">not connected</pre>
+  </section>
+</main>
+
+<div id="tokenGate" class="gate" hidden>
+  <div class="gate-box">
+    <div class="card-head">Access token required</div>
+    <p>This dashboard is protected. Paste the <code>ES_GUI_TOKEN</code> to continue.</p>
+    <input id="tokenInput" type="password" placeholder="token" autocomplete="off">
+    <button id="tokenBtn" class="btn primary">Connect</button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
