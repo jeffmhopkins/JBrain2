@@ -33,7 +33,9 @@ def app_ctx(tmp_path, ok_spec):
 
 
 def _client(app) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://t"
+    )
 
 
 async def test_healthz_is_unauthenticated(app_ctx) -> None:

@@ -20,6 +20,7 @@ jobs:
       backend: ${{ steps.f.outputs.backend }}
       supervisor: ${{ steps.f.outputs.supervisor }}
       jcode: ${{ steps.f.outputs.jcode }}
+      jlaunch: ${{ steps.f.outputs.jlaunch }}
       frontend: ${{ steps.f.outputs.frontend }}
     steps:
       # paths-filter uses the compare API on pull_request events, but falls back to
@@ -38,6 +39,9 @@ jobs:
               - '.github/workflows/ci.yml'
             jcode:
               - 'jcode/**'
+              - '.github/workflows/ci.yml'
+            jlaunch:
+              - 'jlaunch/**'
               - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
@@ -133,6 +137,34 @@ jobs:
       - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
         run: uv run pyright
       - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+        run: uv run pytest
+
+  # The jlaunch control server (job launcher for long one-shot computations) — same
+  # shape as jcode: a Python service whose unit tests run against fakes and a trivial
+  # test spec (no real repo clone, no 10 h census, no network). The real box-only work
+  # lives in jlaunch/Dockerfile.
+  jlaunch:
+    needs: changes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jlaunch
+    steps:
+      - uses: actions/checkout@v5
+      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: jlaunch/uv.lock
+      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+        run: uv sync --all-extras
+      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff check .
+      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff format --check .
+      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
+        run: uv run pyright
+      - if: needs.changes.outputs.jlaunch == 'true' || github.event_name != 'pull_request'
         run: uv run pytest
 
   frontend:

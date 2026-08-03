@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-31
+> **Status:** Living · **Last verified:** 2026-08-03
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -19,7 +19,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | Service | Tech | Role | Net |
 |---|---|---|---|
 | `proxy` | Caddy | TLS termination (Let's Encrypt direct, or plain HTTP behind the tunnel), serves the built PWA, routes `/api`, LAN HTTPS for `jbrain.local`, jcode-preview wildcard. Ports 80/443. | edge |
-| `api` | FastAPI (async) | The REST API, auth, CRUD, search, agent chat. The internet-facing surface — never mounts the Docker socket. | edge, internal, jcode |
+| `api` | FastAPI (async) | The REST API, auth, CRUD, search, agent chat. The internet-facing surface — never mounts the Docker socket. | edge, internal, jcode, jlaunch |
 | `worker` | same image as `api` | Postgres job-queue consumer: extraction, chunking, embedding, analysis, wiki builds, the scheduled sweeps. | internal |
 | `db` | TimescaleDB-HA (Postgres 17 + Timescale + PostGIS + pgvector) | The single stateful service — relational + vector + FTS + time-series + geo + job queue + workflow state. | internal |
 | `embed` | HF text-embeddings-inference (CPU) | Local embeddings (`bge-small-en-v1.5`, 384-dim, 1 GB cap). Model = env var; swap ⇒ re-embed job. | internal |
@@ -27,6 +27,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search`/`web_fetch`. Only the KB-blind `jerv` reaches it. | internal |
 | `reader` | headless-Chromium reader (r.jina.ai-compatible) | `web_fetch` fallback renderer for bot-walled / JS-only pages. | internal |
 | `rapidocr` | RapidOCR (PP-OCR / ONNX, CPU) | Deterministic OCR: cross-validates the VLM `vision.ocr` extraction (stores a `tool="rapidocr"` row) and backs the direct `ocr` tools (jerv + the jcode sandbox, which reaches it via the api bridge). Default-on; the engine lazy-loads on first call and idle-unloads. See `../plans/RAPIDOCR_PLAN.md`. | internal |
+| `jlaunch` | `jlaunch` control server | Self-serve launcher for long one-shot scientific computations (first spec: the Erdős–Straus census to 10¹²). Clones a code-defined repo read-only, runs it as a supervised job with a live terminal + start/stop/kill, collects the artifact, and mints a public `/results/{token}` share page. Default-on; isolated `jlaunch` network, CPU/mem uncapped by design (meant to use the box for hours) — the run's worker pool is sized to RAM, not core count, so it doesn't OOM. See `../archive/JLAUNCH_PLAN.md`. | jlaunch |
 | `wall` | stdlib Python | Unauthenticated **neural-wall display** for the host's own monitor / a LAN kiosk — host vitals only (GPU %, RAM, power), no DB, its own LAN port :8800; forwards read-aloud to `tts-stt`. | internal |
 | `tts-stt` | whisper.cpp + piper + kokoro | The box's **speech I/O**: warm text-to-speech (:8801, the read-aloud renderer — piper voices plus baked-in Kokoro-82M voices) + whisper.cpp speech-to-text (:8080). Default-on; both TTS engines' voices ride the image build, so no provisioning step — the STT model is the one opt-in (`jbrain enable-whisper`). | internal |
 
@@ -51,9 +52,9 @@ runs piper only, so a stock box still serves read-aloud.
 
 **One-shot (`tools` profile):** `migrate` (`alembic upgrade head`, the only container with DDL rights) · `wipe` (destructive first-install reset, double-guarded).
 
-**Networks:** `edge` (proxy ↔ api ↔ tunnel) · `internal` (the shared backbone) · `jcode` (isolates the arbitrary-code sandbox — only `jcode`, `local-llm`, and `api` join it; no route to `db`/`worker`/`supervisor`/blobs).
+**Networks:** `edge` (proxy ↔ api ↔ tunnel) · `internal` (the shared backbone) · `jcode` (isolates the arbitrary-code sandbox — only `jcode`, `local-llm`, and `api` join it; no route to `db`/`worker`/`supervisor`/blobs) · `jlaunch` (isolates the compute job — only `jlaunch` and `api` join it; the artifact crosses into the blob store via the api, so jlaunch needs no route to `db`/blobs).
 
-**Volumes:** `blobs` (content-addressed attachments) · `db_data` · `caddy_data`/`caddy_config` · `embed_models` · `tiles` (basemap cache) · `jcode_work` (per-session scratch checkouts, never backed up). Host binds: `./backups`, `./local-models`, `./comfyui-models`, `./whisper-models`.
+**Volumes:** `blobs` (content-addressed attachments) · `db_data` · `caddy_data`/`caddy_config` · `embed_models` · `tiles` (basemap cache) · `jcode_work` (per-session scratch checkouts, never backed up) · `jlaunch_work` (job checkout + scratch, kept until the owner deletes the run) / `jlaunch_artifacts` (both never backed up). Host binds: `./backups`, `./local-models`, `./comfyui-models`, `./whisper-models`.
 
 ## The on-box GPU / local-model side
 
@@ -107,13 +108,14 @@ It is a **multi-entry build** — three separate bundles plus two guest surfaces
 | **JBrain360 dashboard** (`dash.html`) | Standalone location-only surface loaded in the Android app's WebView: live family map, person switcher, trail/heat history. |
 | **Debug console** (`debug-console.html`) | Token-authed, throwaway debugging page (no service worker). See `../runbooks/DEBUG_ACCESS.md`. |
 | `/jcode/s/{sid}` | Scoped guest view of a single shared code session. |
+| `/results/{token}` | Public results page for a finished jlaunch run — headline block + machine specs + artifact download, no login. |
 | `/intake/...` | Guest guided-intake stepper (redeems a link secret, submits a conversation). |
 
 Owner-app screens, grouped:
 
 - **Knowledge** — Home stream + omnibox, Search, Note view + Analysis tab, Entity page / Entity list / ego-Graph, Wiki landing + reader + Talk, Review inbox.
 - **Authoring / agent** — Full Brain / Research chat (the persona surfaces, with Sessions + Proposals side panels), Lists + list detail, Calendar/Appointments, Image gen/edit, Tasks (scheduled agent runs), Intake links.
-- **System** — Ops (health/metrics/restart/logs/update/export/import), Automations + Runs (the workflow surface), Data, Location (Devices/Timeline/Map, pairing, geofences, digest), Settings, LLM Settings, jcode launcher + session (xterm terminal + dev-server preview).
+- **System** — Ops (health/metrics/restart/logs/update/export/import), Automations + Runs (the workflow surface), Data, Location (Devices/Timeline/Map, pairing, geofences, digest), Settings, LLM Settings, jcode launcher + session (xterm terminal + dev-server preview), Math launcher + job (Overview/Terminal/Result tabs — live xterm, start/stop/kill, sharelink).
 
 ### JBrain360 — the Android location client (`android/`)
 
