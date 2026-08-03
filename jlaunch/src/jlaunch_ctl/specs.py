@@ -97,19 +97,37 @@ ERDOS_STRAUS_1E12 = _validate(
                 'python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"',  # noqa: E501
             ),
             Phase("smoke", ". .venv/bin/activate && python -m pytest -q"),
-            Phase("run", ". .venv/bin/activate && bash scripts/run_1e12.sh"),
+            # run_1e12.sh spins a fixed pool of WORKERS processes for the whole range
+            # (WORKERS defaults to nproc). Each worker holds ~3 GB of non-shared memory,
+            # so one-per-core exhausted this host's RAM. Size the pool to memory: budget
+            # ~1/3 of total RAM at ~3 GB/worker (mem_gb/9), capped at the core count,
+            # floored at 1. Fewer workers means a longer run, not more memory.
+            Phase(
+                "run",
+                ". .venv/bin/activate && "
+                "read -r _ mem_kb _ < /proc/meminfo && "
+                "cores=$(nproc) && "
+                "workers=$(( mem_kb / 1048576 / 9 )) && "
+                '[ "$workers" -gt "$cores" ] && workers=$cores; '
+                '[ "$workers" -lt 1 ] && workers=1; '
+                'echo "== workers: $workers of $cores cores '
+                '(mem $(( mem_kb / 1048576 ))G, ~3G each) ==" && '
+                'WORKERS="$workers" bash scripts/run_1e12.sh',
+            ),
         ),
         artifact_path="es_1e12_artifacts.tar.gz",
         artifact_media_type="application/gzip",
         verify_log="run_1e12_verify.log",
         verify_must_end_with="VERIFICATION OK",
         headline_markers=("hard primes:", "max minimal R:", "R >= 87 counts:"),
-        est_hours="6-10 h",
+        est_hours="10-20 h",
         disk_gb=15,
-        all_cores=True,
+        all_cores=False,
         notes=(
-            "One-shot scientific computation, not resumable. Uses all cores for hours. "
-            "Keeps the ~10.5 GB scratch npz until you delete the run."
+            "One-shot scientific computation, not resumable. The worker pool is sized "
+            "to ~1/3 of RAM (~3 GB each), not one-per-core, so it doesn't exhaust "
+            "memory; fewer workers means a longer run. Keeps the ~10.5 GB scratch npz "
+            "until you delete the run."
         ),
     )
 )
