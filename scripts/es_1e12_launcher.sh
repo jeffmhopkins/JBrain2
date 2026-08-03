@@ -22,7 +22,9 @@
 #   scripts/es_1e12_launcher.sh stop             # kill the run and its workers
 #   scripts/es_1e12_launcher.sh publish          # verify, package, expose result
 #   scripts/es_1e12_launcher.sh cleanup-scratch  # drop the ~10 GB scratch npz
-#   scripts/es_1e12_launcher.sh gui [start|stop] # PWA dashboard (see es_1e12_server.py)
+#   scripts/es_1e12_launcher.sh gui start        # PWA dashboard (see es_1e12_server.py)
+#   scripts/es_1e12_launcher.sh gui install       #   ... survive reboot (@reboot autostart)
+#   scripts/es_1e12_launcher.sh gui restart|stop|status
 #
 # Environment overrides:
 #   ES_WORKDIR     working root (default: $HOME/erdos-straus-1e12)
@@ -385,11 +387,16 @@ cmd_cleanup_scratch() {
 # The PWA dashboard: a stdlib Python server (es_1e12_server.py) that wraps this
 # launcher, tails the console feed, and serves the published artifact. It runs in
 # its own tmux session so the terminal view reattaches after the PWA is closed.
+GUI_ENV_FILE="$HOME/.es_1e12_gui.env"
+GUI_CRON_MARKER="# es1e12-gui-autostart"
+
 cmd_gui() {
   local action=${1:-start}
   local gsession="${ES_SESSION}-gui"
   local port=${ES_GUI_PORT:-8787}
   local server="$SELF_DIR/es_1e12_server.py"
+  local supervisor="$ES_WORKDIR/_gui_supervisor.sh"
+  local self="$SELF_DIR/$(basename "$0")"
   case "$action" in
     start)
       command -v python3 >/dev/null 2>&1 || die "python3 required for the GUI"
@@ -399,29 +406,83 @@ cmd_gui() {
         info "GUI already running (tmux '$gsession') at http://localhost:$port"
         return
       fi
-      # Pass config through so the server resolves the same paths this launcher does.
-      tmux new-session -d -s "$gsession" \
-        "ES_WORKDIR='$ES_WORKDIR' ES_PUBLIC_DIR='$ES_PUBLIC_DIR' ES_SESSION='$ES_SESSION' ES_REPO_URL='$ES_REPO_URL' ES_GUI_PORT='$port' ES_LAUNCHER='$SELF_DIR/$(basename "$0")' ${ES_GUI_TOKEN:+ES_GUI_TOKEN='$ES_GUI_TOKEN' }python3 '$server'"
+      mkdir -p "$ES_WORKDIR"
+      # Persist config so the PWA's self-update restart and a @reboot autostart
+      # ('gui install') come back with the same workdir, port, and token.
+      {
+        echo "export ES_WORKDIR='$ES_WORKDIR'"
+        echo "export ES_PUBLIC_DIR='$ES_PUBLIC_DIR'"
+        echo "export ES_SESSION='$ES_SESSION'"
+        echo "export ES_REPO_URL='$ES_REPO_URL'"
+        echo "export ES_GUI_PORT='$port'"
+        echo "export ES_LAUNCHER='$self'"
+        [ -n "${ES_GUI_TOKEN:-}" ] && echo "export ES_GUI_TOKEN='$ES_GUI_TOKEN'"
+      } >"$GUI_ENV_FILE"
+      chmod 600 "$GUI_ENV_FILE"
+      # Supervisor keeps the server up: it relaunches on crash and on the
+      # PWA-triggered self-update/restart (the server pulls new code and exits;
+      # this brings it straight back running that code).
+      cat >"$supervisor" <<SUP
+#!/usr/bin/env bash
+set -uo pipefail
+. '$GUI_ENV_FILE'
+LOG="\$ES_WORKDIR/gui_supervisor.log"
+while true; do
+  echo "[supervisor \$(date -u +%FT%TZ)] launching server" >>"\$LOG"
+  python3 '$server' > >(tee -a "\$LOG") 2>&1
+  echo "[supervisor \$(date -u +%FT%TZ)] server exited (\$?); relaunching in 2s" >>"\$LOG"
+  sleep 2
+done
+SUP
+      chmod +x "$supervisor"
+      tmux new-session -d -s "$gsession" "bash '$supervisor'"
       sleep 1
       tmux has-session -t "$gsession" 2>/dev/null || die "GUI failed to start (try: python3 $server)"
       step "GUI running"
-      info "open:  http://localhost:$port"
+      info "open:   http://localhost:$port"
       if [ -n "${ES_GUI_TOKEN:-}" ]; then
-        info "token: required — open http://localhost:$port/#token=$ES_GUI_TOKEN"
+        info "token:  required — open http://localhost:$port/#token=$ES_GUI_TOKEN"
       else
-        info "token: none (set ES_GUI_TOKEN before 'gui start' to protect controls when tunneled)"
+        info "token:  none (set ES_GUI_TOKEN before 'gui start' to protect controls when tunneled)"
       fi
-      info "share: the published artifact is at <this URL>/share/ (public if reached via your tunnel)"
-      info "stop:  scripts/es_1e12_launcher.sh gui stop"
+      info "share:  <this URL>/share/ once published (public if reached via your tunnel)"
+      info "update: use the PWA's Update button (git pull + restart) — no shell needed"
+      info "reboot: run 'gui install' once so the GUI comes back automatically"
+      info "stop:   scripts/es_1e12_launcher.sh gui stop"
       ;;
     stop)
       tmux kill-session -t "$gsession" 2>/dev/null && info "GUI stopped." || info "GUI not running."
       ;;
-    *) die "usage: gui [start|stop]" ;;
+    restart)
+      cmd_gui stop
+      sleep 1
+      cmd_gui start
+      ;;
+    status)
+      if tmux has-session -t "$gsession" 2>/dev/null; then
+        info "GUI running (tmux '$gsession') at http://localhost:$port"
+      else
+        info "GUI not running. Start it: $self gui start"
+      fi
+      ;;
+    install)
+      command -v crontab >/dev/null 2>&1 || die "crontab unavailable; cannot install autostart"
+      # Source the persisted config first so the reboot start matches this one.
+      local line="@reboot bash -lc 'sleep 15; [ -f $GUI_ENV_FILE ] && . $GUI_ENV_FILE; \"$self\" gui start >/dev/null 2>&1' $GUI_CRON_MARKER"
+      ( crontab -l 2>/dev/null | grep -vF "$GUI_CRON_MARKER"; echo "$line" ) | crontab -
+      info "autostart installed (@reboot) — the GUI returns after a reboot."
+      info "remove it with: $self gui uninstall"
+      ;;
+    uninstall)
+      command -v crontab >/dev/null 2>&1 || die "crontab unavailable"
+      crontab -l 2>/dev/null | grep -vF "$GUI_CRON_MARKER" | crontab - 2>/dev/null || true
+      info "autostart removed."
+      ;;
+    *) die "usage: gui [start|stop|restart|status|install|uninstall]" ;;
   esac
 }
 
-cmd_help() { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; }
+cmd_help() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; }
 
 main() {
   local cmd=${1:-help}

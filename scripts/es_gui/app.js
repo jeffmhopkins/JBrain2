@@ -44,10 +44,13 @@ function setPill(text, cls) {
   p.className = "pill" + (cls ? " " + cls : "");
 }
 
+let currentVersion = null;
+
 function renderStatus(s) {
   const label = PHASE_LABEL[s.phase] || s.phase;
   $("mPhase").textContent = label;
   $("mRunning").textContent = s.running ? "yes" : (s.starting ? "starting" : "no");
+  if (s.version) { currentVersion = s.version; $("version").textContent = "v" + s.version; }
 
   if (s.phase === "complete") setPill(s.verify_ok ? "✓ complete" : "complete", "ok");
   else if (s.exit_code && s.exit_code !== 0) setPill("failed (exit " + s.exit_code + ")", "err");
@@ -159,6 +162,59 @@ $("btnCopy").onclick = async () => {
   catch (_) { flash("copy failed"); }
 };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Wait for the backend to go down and come back after a restart, so a reload
+// picks up the new code rather than the still-running old process.
+async function waitForRestart() {
+  let sawDown = false;
+  for (let i = 0; i < 90; i++) {
+    await sleep(1000);
+    try {
+      const r = await fetch(withTok("/api/status"), { cache: "no-store" });
+      if (r.ok) {
+        if (sawDown || i >= 5) return true; // back up after a gap (or grace elapsed)
+      }
+    } catch (_) { sawDown = true; } // request failed → server is bouncing
+  }
+  return false;
+}
+
+async function updateAndReload(label) {
+  flash(label + "…");
+  disableControls(true);
+  if ("serviceWorker" in navigator) {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.update().catch(() => {})));
+  }
+  await waitForRestart();
+  flash("reloading");
+  await sleep(400);
+  location.reload();
+}
+
+function disableControls(v) {
+  for (const id of ["btnStart", "btnStop", "btnPublish", "btnUpdate", "btnRestart"]) $(id).disabled = v;
+}
+
+$("btnUpdate").onclick = async () => {
+  if (!confirm("Pull the latest code and restart the dashboard? A run in progress is unaffected.")) return;
+  flash("pulling latest…");
+  try {
+    const r = await api("/api/update", { method: "POST" });
+    const j = await r.json();
+    if (!j.ok) { flash("update failed: " + (j.output || "").split("\n").pop()); return; }
+    if (!j.restarting) { flash("already up to date (" + (currentVersion || "?") + ")"); return; }
+  } catch (_) { /* server may have already dropped to restart */ }
+  await updateAndReload("updating");
+};
+
+$("btnRestart").onclick = async () => {
+  if (!confirm("Restart the dashboard server?")) return;
+  try { await api("/api/restart", { method: "POST" }); } catch (_) {}
+  await updateAndReload("restarting");
+};
+
 // --- live terminal (SSE, reattaches on reopen) ------------------------------
 let es = null;
 const term = $("terminal");
@@ -204,6 +260,13 @@ document.addEventListener("visibilitychange", () => {
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
+  // A new service worker taking control means the shell changed → reload once.
+  let swReloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swReloaded) return;
+    swReloaded = true;
+    location.reload();
+  });
 }
 
 poll();

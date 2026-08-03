@@ -114,9 +114,33 @@ so the artifact link works for anyone; the control API can be locked down.
 
 **Locking it down.** The dashboard can start and kill an all-cores compute job, so
 protect it when exposed. Set `ES_GUI_TOKEN` before `gui start`; the control API
-(`/api/*`, start/kill/publish) then requires that bearer token while `/share/`
-stays open. Open the dashboard once as `http://<host>:8787/#token=<token>` and it
-is stored locally thereafter.
+(`/api/*`, start/kill/publish/update/restart) then requires that bearer token
+while `/share/` stays open. Open the dashboard once as
+`http://<host>:8787/#token=<token>` and it is stored locally thereafter.
+
+### Self-update — no shell needed after the first start
+
+`gui start` runs the server under a **supervisor** (a loop in the tmux session)
+that relaunches it on crash and on a requested restart. That makes the whole
+update loop drivable from the PWA:
+
+- **Update** button → `POST /api/update` runs `git pull --ff-only` on this
+  checkout and, if anything changed, exits so the supervisor relaunches with the
+  new code. The PWA waits for the bounce and reloads; its service worker is
+  network-first, so the new frontend assets load too. The header shows the
+  running version (short git SHA) — watch it change to confirm the update landed.
+- **Restart** button → `POST /api/restart` bounces the server without pulling.
+- Run in progress is unaffected: it lives in the separate `es1e12` tmux session,
+  not the GUI's.
+
+So after the initial `gui start`, shipping a new version is: merge it, then hit
+**Update** in the PWA. To survive a reboot too, run **`gui install`** once — it
+adds a `@reboot` autostart (config is persisted to `~/.es_1e12_gui.env`) so the
+GUI comes back on its own; `gui uninstall` removes it. (`gui restart` / `gui stop`
+/ `gui status` are also available from the shell.)
+
+The one thing that still needs a shell is the very first `gui start` — you can't
+start a server from a browser when none is running yet.
 
 ## Configuration
 

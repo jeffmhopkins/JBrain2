@@ -49,8 +49,14 @@ VERIFY_LOG = REPO_DIR / "run_1e12_verify.log"
 BUNDLE_NAME = "es_1e12_artifacts.tar.gz"
 LAUNCHER = Path(os.environ.get("ES_LAUNCHER", str(Path(__file__).with_name("es_1e12_launcher.sh"))))
 ASSETS = Path(__file__).with_name("es_gui")
+REPO_ROOT = Path(__file__).resolve().parents[1]  # the JBrain2 checkout serving this code
 TOKEN = os.environ.get("ES_GUI_TOKEN", "")
 PORT = int(os.environ.get("ES_GUI_PORT", "8787"))
+
+# The GUI runs under a supervisor (see es_1e12_launcher.sh `gui start`) that
+# relaunches the process on exit. Self-update and restart therefore just pull the
+# new code and exit; the supervisor brings the server back with it.
+RESTART_EXIT = 42
 
 # ~10.5 GB scratch npz is the generation-progress denominator (see run_1e12.sh).
 SCRATCH_TARGET_MB = 10752
@@ -267,7 +273,29 @@ def _status(scheme: str, host: str) -> dict:
         "published": published,
         "sharelink": share,
         "artifact_url": artifact,
+        "version": _version(),
     }
+
+
+def _version() -> str:
+    """Short git SHA of the checkout serving this code, so the PWA can confirm an
+    update landed after a self-update restart."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _delayed_exit(code: int, delay: float = 0.8):
+    """Exit shortly after the HTTP response is flushed; the supervisor relaunches."""
+    def worker():
+        time.sleep(delay)
+        os._exit(code)
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def _launcher(*args: str) -> subprocess.CompletedProcess:
@@ -406,6 +434,27 @@ class Handler(BaseHTTPRequestHandler):
             out = {"ok": r.returncode == 0, "output": (r.stdout + r.stderr)[-8000:]}
             out["status"] = _status(self._scheme(), self.headers.get("Host", ""))
             return self._json(out, 200 if r.returncode == 0 else 400)
+        if parsed.path == "/api/update":
+            # Pull new code into this checkout, then (if anything changed) exit so
+            # the supervisor relaunches with it — the whole update is PWA-driven.
+            before = _version()
+            r = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "pull", "--ff-only"],
+                capture_output=True, text=True, timeout=180,
+            )
+            output = (r.stdout + r.stderr).strip()
+            changed = r.returncode == 0 and "up to date" not in output.lower()
+            self._json({
+                "ok": r.returncode == 0, "output": output[-4000:],
+                "version_before": before, "restarting": changed,
+            }, 200 if r.returncode == 0 else 400)
+            if changed:
+                _delayed_exit(RESTART_EXIT)
+            return
+        if parsed.path == "/api/restart":
+            self._json({"ok": True, "restarting": True})
+            _delayed_exit(RESTART_EXIT)
+            return
         return self._json({"error": "not found"}, 404)
 
     def _api_get(self, path: str, qs: dict):
