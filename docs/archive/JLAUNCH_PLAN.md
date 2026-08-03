@@ -1,13 +1,15 @@
 # JLAUNCH — a self-serve launcher for long scientific computations
 
-> **Status:** In progress · **Last verified:** 2026-08-03
+> **Status:** Shipped 2026-08-03 · merged (PR #999) + made default-on. jlaunch subsystem — `jlaunch/`, `backend/src/jbrain/{jlaunch,api/jlaunch*,models/jlaunch,external/jlaunch_shares}.py`, `frontend/src/{jlaunch,screens/Jlaunch*}`.
 
 A **job launcher** for JBrain2: tapping a `Math` launcher tile opens a self-contained
 screen where the owner starts a long-running (~6–10 h, all-core, ~15 GB) one-shot
 computation, watches a **live terminal**, can **stop/kill** it, and when it finishes
 **generates a public results sharelink** — a no-login page (headline block + machine
 specs) with the artifact to download. No manual terminal commands, ever. Built as an
-**opt-in on-box sidecar service** in the exact spirit of jcode/ComfyUI.
+on-box sidecar service — **default-on** (single-user box): part of the base stack, its
+token auto-provisioned by install/update, so a plain PWA update brings it up with no
+enable step. (The control server is a tiny idle FastAPI process until a job runs.)
 
 The first registered job is the **Erdős–Straus census to 10¹²**
 (`github.com/jeffmhopkins/Erd-s-Straus-attack`, `scripts/RUN_1E12.md`): venv →
@@ -31,7 +33,7 @@ PWA "Math" tile → JlaunchScreen (owner)              Public results page
      └─ api/jlaunch_share.py     PUBLIC results + artifact download (no owner dep)
         │ httpx bearer / stream artifact → blob store
         ▼
- jlaunch container (profile [jlaunch], port 9101, isolated `jlaunch` network)
+ jlaunch container (default-on base stack, port 9101, isolated `jlaunch` network)
    · jlaunch_ctl.app  bearer REST + terminal WS + artifact fetch
    · jobs.py  JobManager (clone → phased pipeline → succeeded/failed/killed), reaper-EXEMPT
    · runner.py  JobSpec → one bash script fed to a PTY (live + teed to a durable log)
@@ -57,11 +59,11 @@ the trust boundary and the launcher stays network-isolated (no shared blob volum
   migrations under `backend/migrations/versions/` (`jlaunch_runs` owner RLS, then
   `jlaunch_share_links` + the `jlaunch_runs_share` keystone — a text-compared, fail-closed
   pin). Config: `jlaunch_url`/`jlaunch_enabled`/`jlaunch_token` (empty url fail-closes).
-- **Deploy** `deploy/`: the `jlaunch` compose service (profile-gated, isolated network,
-  `jlaunch_work`/`jlaunch_artifacts` volumes, **uncapped** cpu/mem — a run is meant to take
-  the box), api env passthrough + network join, `scripts/jlaunch-setup.sh`,
-  `jbrain enable-jlaunch`, the turnkey fold-in in `update-inner.sh`/`jbrain update`, and
-  `sync_python jlaunch` in `dev-setup.sh`.
+- **Deploy** `deploy/`: the `jlaunch` compose service — **default-on** (no profile gate; the
+  api default-wires `JBRAIN_JLAUNCH_URL=http://jlaunch:9101`), isolated network,
+  `jlaunch_work`/`jlaunch_artifacts` volumes, **uncapped** cpu/mem (a run is meant to take
+  the box). `JLAUNCH_TOKEN` is provisioned by `install.sh` (fresh + backfill) and both update
+  paths (`update-inner.sh` / `jbrain update`), and `dev-setup.sh` runs `sync_python jlaunch`.
 - **Frontend** `frontend/src/`: the `Math` launcher tile (config-gated like the Image tile,
   probing `/jlaunch/specs`), `screens/JlaunchScreen.tsx` (the tabbed Overview·Terminal·Result
   job screen — variant C — with start/stop/kill, a live xterm reusing jcode's `attachTerminal`,
@@ -85,10 +87,10 @@ the trust boundary and the launcher stays network-isolated (no shared blob volum
 
 ## Verification
 
-Enable with `bash scripts/jlaunch-setup.sh` (or `jbrain enable-jlaunch`); the `Math` tile
-appears. Register a fast smoke-variant spec (census bound overridden to ~1e6) to exercise
-start → live terminal → stop/kill → success → mint sharelink → open `/results/{token}` in a
-fresh browser (no cookie) → headline + specs render, download the tarball, confirm the sha
-matches; revoke → 404. Then run the real `erdos_straus_1e12` job end to end (~6–10 h),
-confirm `VERIFICATION OK`, mint the public link, and leave the checkout/scratch in place
-until integration is confirmed.
+After a PWA update (or `jbrain update`) the `jlaunch` service comes up as part of the base
+stack and the `Math` tile appears — no enable step. Register a fast smoke-variant spec
+(census bound overridden to ~1e6) to exercise start → live terminal → stop/kill → success →
+mint sharelink → open `/results/{token}` in a fresh browser (no cookie) → headline + specs
+render, download the tarball, confirm the sha matches; revoke → 404. Then run the real
+`erdos_straus_1e12` job end to end (~6–10 h), confirm `VERIFICATION OK`, mint the public
+link, and leave the checkout/scratch in place until integration is confirmed.

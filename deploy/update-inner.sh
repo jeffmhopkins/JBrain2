@@ -69,17 +69,13 @@ if grep -q '^JCODE_ENABLED=true' .env; then
   grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
 fi
 
-# Job launcher (jlaunch): same opt-in, profile-gated fold-in as jcode above — when enabled,
-# rebuild/recreate it with the stack and self-heal its .env keys (compose maps the bare keys
-# to the api as JBRAIN_JLAUNCH_*), so the PWA update keeps it current with no CLI.
-JLAUNCH_PROFILE=""
-if grep -q '^JLAUNCH_ENABLED=true' .env; then
-  JLAUNCH_PROFILE="--profile jlaunch"
-  if ! grep -q '^JLAUNCH_TOKEN=..*' .env; then
-    echo "[update] minting JLAUNCH_TOKEN (api<->jlaunch bearer)"
-    printf 'JLAUNCH_TOKEN=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
-  fi
-  grep -q '^JLAUNCH_URL=' .env || printf 'JLAUNCH_URL=%s\n' 'http://jlaunch:9101' >> .env
+# Job launcher (jlaunch): DEFAULT-ON (single-user box) — part of the base stack, not
+# profile-gated, so the plain build/recreate below already include it. Always backfill the
+# api<->jlaunch bearer for boxes that predate it (the fail-closed control server won't start
+# without it); the URL is defaulted in compose.
+if ! grep -q '^JLAUNCH_TOKEN=..*' .env; then
+  echo "[update] minting JLAUNCH_TOKEN (api<->jlaunch bearer)"
+  printf 'JLAUNCH_TOKEN=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
 fi
 
 # Read-aloud (server-side piper TTS) needs NOTHING here: piper AND the default voice
@@ -104,7 +100,7 @@ if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
 fi
 
 echo "[update] building images"
-docker compose $JCODE_PROFILE $JLAUNCH_PROFILE build
+docker compose $JCODE_PROFILE build
 
 echo "[update] running migrations"
 docker compose run --rm migrate
@@ -118,7 +114,7 @@ echo "[update] clearing renamed/removed-service orphans"
 sh src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
 
 echo "[update] restarting stack"
-docker compose $JCODE_PROFILE $JLAUNCH_PROFILE up -d
+docker compose $JCODE_PROFILE up -d
 
 # Provision any locally-hosted LLM models the operator queued from the PWA (and
 # keep the current + recommended set present). Runs AFTER the stack is up so the

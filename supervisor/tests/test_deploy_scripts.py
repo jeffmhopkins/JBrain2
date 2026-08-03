@@ -118,22 +118,41 @@ def test_update_keeps_jcode_turnkey_when_enabled(name: str) -> None:
     )
 
 
-# The job launcher (jlaunch) gets the same turnkey treatment as jcode: once enabled,
-# both update paths keep it built/current with no CLI.
-JLAUNCH_TURNKEY_SCRIPTS = ["update-inner.sh", "jbrain"]
+# The job launcher (jlaunch) is DEFAULT-ON (single-user box): a base-stack service, not
+# profile-gated. Every path that provisions the stack must backfill its api<->jlaunch
+# bearer (the fail-closed control server won't start without it), and NONE may hide it
+# behind a JLAUNCH_ENABLED gate or a `--profile jlaunch`.
+JLAUNCH_PROVISION_SCRIPTS = ["install.sh", "update-inner.sh", "jbrain"]
 
 
-@pytest.mark.parametrize("name", JLAUNCH_TURNKEY_SCRIPTS)
-def test_update_keeps_jlaunch_turnkey_when_enabled(name: str) -> None:
+@pytest.mark.parametrize("name", JLAUNCH_PROVISION_SCRIPTS)
+def test_provisions_jlaunch_token(name: str) -> None:
     text = (DEPLOY / name).read_text()
-    assert "JLAUNCH_ENABLED=true" in text, (
-        f"{name} must gate jlaunch on JLAUNCH_ENABLED"
-    )
-    assert "--profile jlaunch" in text, (
-        f"{name} must activate the jlaunch profile when enabled so update rebuilds it"
-    )
     assert "JLAUNCH_TOKEN" in text, (
-        f"{name} must backfill the api<->jlaunch token so enable stays CLI-free"
+        f"{name} must provision the api<->jlaunch bearer (jlaunch is default-on)"
+    )
+
+
+@pytest.mark.parametrize("name", JLAUNCH_PROVISION_SCRIPTS)
+def test_jlaunch_is_not_profile_gated(name: str) -> None:
+    text = (DEPLOY / name).read_text()
+    assert "--profile jlaunch" not in text, (
+        f"{name} must not profile-gate jlaunch — it's a default-on base-stack service"
+    )
+    assert "JLAUNCH_ENABLED=true" not in text, (
+        f"{name} must not gate jlaunch on JLAUNCH_ENABLED — it's default-on"
+    )
+
+
+def test_compose_runs_jlaunch_by_default() -> None:
+    # The service is in the base stack (no `profiles:` key), and the api default-wires
+    # the in-network control server so /jlaunch + the Math tile are live out of the box.
+    compose = (DEPLOY / "docker-compose.yml").read_text()
+    assert "profiles: [jlaunch]" not in compose, (
+        "the jlaunch service must not be profile-gated — it's default-on"
+    )
+    assert "JBRAIN_JLAUNCH_URL: ${JLAUNCH_URL:-http://jlaunch:9101}" in compose, (
+        "the api must default-wire the jlaunch control server URL"
     )
 
 
@@ -164,8 +183,8 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
         return next((i for i, ln in enumerate(lines) if needle in ln), None)
 
     stop = idx("stop local-llm")
-    build = idx("compose $JCODE_PROFILE $JLAUNCH_PROFILE build")
-    up = idx("compose $JCODE_PROFILE $JLAUNCH_PROFILE up -d")
+    build = idx("compose $JCODE_PROFILE build")
+    up = idx("compose $JCODE_PROFILE up -d")
     restart = idx("up -d local-llm")
     assert "LOCAL_LLM_ENABLED=true" in text, (
         "the gateway stop/restart must be gated on LOCAL_LLM_ENABLED so a stock "

@@ -116,6 +116,7 @@ POSTGRES_PASSWORD=$(openssl rand -hex 32)
 APP_DB_PASSWORD=$(openssl rand -hex 32)
 SUPERVISOR_TOKEN=$(openssl rand -hex 32)
 SEARXNG_SECRET=$(openssl rand -hex 32)
+JLAUNCH_TOKEN=$(openssl rand -hex 32)
 ANTHROPIC_API_KEY=$ANTHROPIC_KEY
 XAI_API_KEY=$XAI_KEY
 EOF
@@ -128,6 +129,12 @@ else
   if ! grep -q '^SEARXNG_SECRET=' .env; then
     say "Adding SEARXNG_SECRET for web search"
     printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+  fi
+  # The job launcher is default-on (single-user box). Backfill the api<->jlaunch bearer
+  # for installs that predate it — the fail-closed control server won't start without it.
+  if ! grep -q '^JLAUNCH_TOKEN=' .env; then
+    say "Adding JLAUNCH_TOKEN for the job launcher"
+    printf 'JLAUNCH_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
   fi
   # Turn LAN access on for installs that predate it (compose also defaults this,
   # but writing it keeps the knob discoverable + editable). Absent only.

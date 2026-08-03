@@ -28,12 +28,8 @@ fi
 if [ -f .env ] && grep -q '^JCODE_ENABLED=true' .env; then
   PROFILE+=(--profile jcode)
 fi
-# The opt-in job launcher lives behind the `jlaunch` profile. Keep it in routine commands
-# when enabled so it is built, started, restarted, and rebuilt by `update` alongside the
-# rest of the stack.
-if [ -f .env ] && grep -q '^JLAUNCH_ENABLED=true' .env; then
-  PROFILE+=(--profile jlaunch)
-fi
+# The job launcher is default-on (single-user box): part of the base stack, not
+# profile-gated, so plain `up`/`build`/`restart` already include it.
 
 usage() {
   cat <<EOF
@@ -46,7 +42,6 @@ Usage: jbrain <command>
   update           pull latest source, rebuild, migrate, restart
   enable-lan       set up LAN access (mDNS + jbrain.local alias) on this host
   enable-jcode-preview [host]   serve jcode previews at <slug>-preview.<host> (host mode)
-  enable-jlaunch                enable the job launcher (Erdos-Straus census + future jobs)
   enable-local-models [ids...]  provision + enable self-hosted local models
   enable-whisper [model]        provision + enable on-box audio transcription
   strix-halo-host-setup [args]  one-time AMD Strix Halo host prep (kernel/udev)
@@ -107,14 +102,12 @@ case "${1:-}" in
       grep -q '^JCODE_MODEL=' .env || printf 'JCODE_MODEL=%s\n' 'qwen3-coder-next' >> .env
       grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
     fi
-    # Job launcher (jlaunch): self-heal its .env keys when enabled so the host update keeps
-    # it turnkey too (compose maps these to the api as JBRAIN_JLAUNCH_*). The jlaunch
-    # profile is already active above, so build/up include it.
-    if grep -q '^JLAUNCH_ENABLED=true' .env; then
-      if ! grep -q '^JLAUNCH_TOKEN=..*' .env; then
-        printf 'JLAUNCH_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
-      fi
-      grep -q '^JLAUNCH_URL=' .env || printf 'JLAUNCH_URL=%s\n' 'http://jlaunch:9101' >> .env
+    # Job launcher (jlaunch): default-on, so always backfill the api<->jlaunch bearer for
+    # boxes that predate it (the fail-closed control server won't start without it). The
+    # URL is defaulted in compose; the service is in the base stack, so `build`/`up` below
+    # include it with no profile.
+    if ! grep -q '^JLAUNCH_TOKEN=..*' .env; then
+      printf 'JLAUNCH_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
     fi
     # Turn LAN access on for installs that predate it, then (re)provision the
     # host mDNS + alias from the freshly pulled source. Best-effort: a setup
@@ -186,12 +179,6 @@ case "${1:-}" in
     # the setup script prints; nothing is exposed until you add it.
     sh /opt/jbrain2/src/deploy/jcode-preview-setup.sh /opt/jbrain2/.env "${1:-}"
     docker compose "${PROFILE[@]}" up -d
-    ;;
-  enable-jlaunch)
-    # Opt-in job launcher: mint the api<->jlaunch bearer + fail-closed .env defaults,
-    # build the image, start the profile, and recreate the api to pick up the routes.
-    # Absolute path so it works regardless of cwd.
-    JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/scripts/jlaunch-setup.sh
     ;;
   enable-local-models)
     shift
