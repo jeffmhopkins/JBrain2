@@ -116,12 +116,14 @@ services:
       JBRAIN_JCODE_ENABLED: ${JCODE_ENABLED:-false}
       JBRAIN_JCODE_TOKEN: ${JCODE_TOKEN:-}
       JBRAIN_JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      # The job launcher (`jlaunch` profile, docs/plans/JLAUNCH_PLAN.md): the api proxies its
-      # control server and streams its artifact into the blob store at share time. Empty URL =
-      # feature off (fail-closed): no /jlaunch routes, no launcher tile. Shared token
-      # authenticates the api's control calls (and the terminal WS bridge).
-      JBRAIN_JLAUNCH_URL: ${JLAUNCH_URL:-}
-      JBRAIN_JLAUNCH_ENABLED: ${JLAUNCH_ENABLED:-false}
+      # The job launcher (docs/plans/JLAUNCH_PLAN.md): the api proxies its control server and
+      # streams its artifact into the blob store at share time. ON BY DEFAULT (single-user
+      # box) — the URL defaults to the in-network control server so the /jlaunch routes and
+      # the Math tile are live out of the box; install/update provision JLAUNCH_TOKEN. Set
+      # JLAUNCH_URL empty in .env to fail it closed. Shared token authenticates the api's
+      # control calls (and the terminal WS bridge).
+      JBRAIN_JLAUNCH_URL: ${JLAUNCH_URL:-http://jlaunch:9101}
+      JBRAIN_JLAUNCH_ENABLED: ${JLAUNCH_ENABLED:-true}
       JBRAIN_JLAUNCH_TOKEN: ${JLAUNCH_TOKEN:-}
       # Host-mode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
       # under. The api's preview proxy enforces the request Host is <slug>-preview.<this>
@@ -536,14 +538,14 @@ services:
     cpus: ${JCODE_CPUS:-2.0}
     pids_limit: ${JCODE_PIDS_LIMIT:-512}
 
-  # The job launcher (opt-in `jlaunch` profile, docs/plans/JLAUNCH_PLAN.md): runs a
-  # registered long-running one-shot computation (the Erdos-Straus census is the first
-  # spec) as a supervised job with a live terminal, start/stop/kill, and a collectable
-  # artifact the api shares publicly. On its own isolated network — only `api` joins it
-  # (Wave 2 proxies the control surface + streams the artifact), so the job's arbitrary
+  # The job launcher (docs/plans/JLAUNCH_PLAN.md): runs a registered long-running one-shot
+  # computation (the Erdos-Straus census is the first spec) as a supervised job with a live
+  # terminal, start/stop/kill, and a collectable artifact the api shares publicly. DEFAULT-ON
+  # (single-user box): part of the base stack, not profile-gated — the control server is a
+  # tiny idle FastAPI process until a job runs. On its own isolated network — only `api`
+  # joins it (proxies the control surface + streams the artifact), so the job's arbitrary
   # code has no route to db/supervisor/worker/blobs.
   jlaunch:
-    profiles: [jlaunch]
     image: jbrain2-jlaunch:local
     build:
       context: ./src/jlaunch
@@ -701,8 +703,8 @@ networks:
   # only `jcode` + `local-llm` (and `api` from Wave J2) join it, so the arbitrary-code
   # sandbox has no network route to db/supervisor/worker/embed/blobs.
   jcode:
-  # Isolates the opt-in job launcher (`jlaunch` profile): only `jlaunch` + `api` join it,
-  # so a job's arbitrary code has no route to db/supervisor/worker/embed/blobs.
+  # Isolates the job launcher: only `jlaunch` + `api` join it, so a job's arbitrary code
+  # has no route to db/supervisor/worker/embed/blobs.
   jlaunch:
 
 volumes:
@@ -715,7 +717,7 @@ volumes:
   # Per-session coding sandboxes (opt-in `jcode` profile) — scratch checkouts,
   # kept out of backups (no owner data lives here).
   jcode_work:
-  # The job launcher's per-job checkouts + ~15 GB scratch (opt-in `jlaunch` profile),
-  # and its collected artifacts — scratch/deliverables, kept out of backups.
+  # The job launcher's per-job checkouts + ~15 GB scratch, and its collected artifacts —
+  # scratch/deliverables, kept out of backups.
   jlaunch_work:
   jlaunch_artifacts:

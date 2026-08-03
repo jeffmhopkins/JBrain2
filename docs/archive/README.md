@@ -78,6 +78,11 @@ its ship evidence.
 | `JCODE_PREVIEW_HOST_PLAN.md` | Host-served per-session dev preview. |
 | `JCODE_CONTAINER_PER_SESSION_PLAN.md` | **Rejected** — per-session container (red-teamed non-viable). |
 
+## jlaunch
+| Item | What it is |
+|---|---|
+| `JLAUNCH_PLAN.md` | Default-on job launcher (Math tile): supervised long computations + public results share. |
+
 ## Research & exploration (subdirectories)
 | Item | What it is |
 |---|---|
