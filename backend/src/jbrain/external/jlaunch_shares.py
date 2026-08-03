@@ -130,9 +130,7 @@ async def revoke_share(
     return row is not None
 
 
-async def resolve_share(
-    maker: async_sessionmaker[AsyncSession], token: str
-) -> str | None:
+async def resolve_share(maker: async_sessionmaker[AsyncSession], token: str) -> str | None:
     """Resolve a bearer token to its live link id, or None (empty/unknown/revoked). Reads by
     hash under the no-pin share context, then bumps the view counter best-effort under the
     system context (the visitor has no write policy)."""

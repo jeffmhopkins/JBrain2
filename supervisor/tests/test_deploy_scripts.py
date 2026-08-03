@@ -118,15 +118,17 @@ def test_update_keeps_jcode_turnkey_when_enabled(name: str) -> None:
     )
 
 
-# The job launcher (jlaunch) gets the same turnkey treatment as jcode: once enabled, both
-# update paths keep it built/current with no CLI.
+# The job launcher (jlaunch) gets the same turnkey treatment as jcode: once enabled,
+# both update paths keep it built/current with no CLI.
 JLAUNCH_TURNKEY_SCRIPTS = ["update-inner.sh", "jbrain"]
 
 
 @pytest.mark.parametrize("name", JLAUNCH_TURNKEY_SCRIPTS)
 def test_update_keeps_jlaunch_turnkey_when_enabled(name: str) -> None:
     text = (DEPLOY / name).read_text()
-    assert "JLAUNCH_ENABLED=true" in text, f"{name} must gate jlaunch on JLAUNCH_ENABLED=true"
+    assert "JLAUNCH_ENABLED=true" in text, (
+        f"{name} must gate jlaunch on JLAUNCH_ENABLED"
+    )
     assert "--profile jlaunch" in text, (
         f"{name} must activate the jlaunch profile when enabled so update rebuilds it"
     )

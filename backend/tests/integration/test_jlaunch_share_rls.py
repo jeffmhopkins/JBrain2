@@ -95,9 +95,7 @@ async def test_share_context_leaks_nothing_else(maker: async_sessionmaker) -> No
     # Seed an owner-only jcode session and a health note — neither may be seen by a share
     # visitor. (A second jlaunch run is covered by the pin test above.)
     async with scoped_session(maker, owner) as s:
-        await s.execute(
-            text("INSERT INTO app.jcode_sessions (id, repo) VALUES ('sess9', 'r')")
-        )
+        await s.execute(text("INSERT INTO app.jcode_sessions (id, repo) VALUES ('sess9', 'r')"))
         await s.execute(
             text(
                 "INSERT INTO app.notes (id, client_id, domain_code, body)"
@@ -154,8 +152,6 @@ async def test_non_owner_cannot_read_runs_or_share_rows(maker: async_sessionmake
     token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
     async with scoped_session(maker, token) as s:
         runs = (await s.execute(text("SELECT count(*) FROM app.jlaunch_runs"))).scalar_one()
-        links = (
-            await s.execute(text("SELECT count(*) FROM app.jlaunch_share_links"))
-        ).scalar_one()
+        links = (await s.execute(text("SELECT count(*) FROM app.jlaunch_share_links"))).scalar_one()
     assert runs == 0
     assert links == 0
