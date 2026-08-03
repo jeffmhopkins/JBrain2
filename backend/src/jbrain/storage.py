@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import re
 import time
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Protocol
@@ -17,6 +18,11 @@ from typing import Protocol
 class BlobStore(Protocol):
     async def put(self, data: bytes) -> str:
         """Store bytes, return their sha256 hex digest."""
+        ...
+
+    async def put_stream(self, chunks: AsyncIterator[bytes]) -> str:
+        """Store a stream of bytes, return their sha256 hex digest — for large blobs
+        (a multi-hundred-MB artifact) that must never be buffered whole in memory."""
         ...
 
     async def get(self, sha256: str) -> bytes:
@@ -54,6 +60,28 @@ class FsBlobStore:
             tmp.write_bytes(data)
             tmp.rename(target)
         return digest
+
+    async def put_stream(self, chunks: AsyncIterator[bytes]) -> str:
+        # Hash and spool to a temp file as chunks arrive, then rename into place under the
+        # digest — so a multi-hundred-MB artifact never sits in memory and a crash never
+        # leaves a partial blob addressable. The digest isn't known until the stream ends,
+        # so spool under a unique temp name first, then rename to the content path.
+        digest = hashlib.sha256()
+        self._root.mkdir(parents=True, exist_ok=True)
+        tmp = self._root / f".incoming-{uuid.uuid4().hex}.tmp"
+        try:
+            with tmp.open("wb") as fh:
+                async for chunk in chunks:
+                    digest.update(chunk)
+                    await asyncio.to_thread(fh.write, chunk)
+            hexdigest = digest.hexdigest()
+            target = self.path_for(hexdigest)
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tmp.rename(target)
+            return hexdigest
+        finally:
+            tmp.unlink(missing_ok=True)
 
     async def get(self, sha256: str) -> bytes:
         # to_thread keeps large attachment reads off the event loop.

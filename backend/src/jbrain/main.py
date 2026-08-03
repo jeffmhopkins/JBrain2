@@ -65,6 +65,9 @@ from jbrain.api import (
     jcode_preview,
     jcode_share,
     jcode_terminal,
+    jlaunch,
+    jlaunch_share,
+    jlaunch_terminal,
     live,
     locations,
     member,
@@ -121,6 +124,7 @@ from jbrain.image_gen.render import ImageRenderService
 from jbrain.intake.repo import SqlIntakeRepo
 from jbrain.intake.sweep import intake_reaper_loop
 from jbrain.jcode import JcodeClient
+from jbrain.jlaunch import JlaunchClient
 from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
@@ -585,6 +589,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.jcode_client = (
             JcodeClient(settings.jcode_url, settings.jcode_token) if settings.jcode_url else None
         )
+        # The job launcher (docs/plans/JLAUNCH_PLAN.md): the api proxies its control surface
+        # and streams its artifact into the blob store at share time. None (empty url) =
+        # fail-closed: the /jlaunch routes 404 and the launcher tile is hidden.
+        app.state.jlaunch_client = (
+            JlaunchClient(settings.jlaunch_url, settings.jlaunch_token)
+            if settings.jlaunch_url
+            else None
+        )
         # jerv's on-box video analysis (docs/archive/VIDEO_ANALYSIS_PLAN.md): sample + caption
         # frames and transcribe the audio inline, like analyze_image/transcribe. Wired
         # only when ffmpeg can sample frames, so a box without it silently lacks the
@@ -759,6 +771,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Per-IP bound on the unauthenticated report-share reads (api/research_share.py).
         # Generous enough to browse a folder's reports back-to-back; a scanner backs off.
         app.state.research_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
+        # Per-IP bound on the unauthenticated jlaunch results-share reads (api/jlaunch_share.py).
+        app.state.jlaunch_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
         # The Automations operator surface: projects the live trigger/schedule/
         # pipeline config + the run log into the "when -> do" cards, and the action
         # registry into the Catalog. `seeded_names` is the subset mirrored into
@@ -944,6 +958,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Caddy host-routes <slug>-preview.<host> to /__jcode_preview/{slug} on the preview
     # subdomain only (the main site 404s it), and the unguessable slug is the auth.
     app.include_router(jcode_preview.router)
+    # The job launcher: owner REST proxy + run mirror + share mint, the owner terminal WS,
+    # and the public results/download surface (no owner dep). All owner-gated except the
+    # public jlaunch_share reads, which are token-in-path + rate-limited + noindex.
+    app.include_router(jlaunch.router, prefix="/api")
+    app.include_router(jlaunch_terminal.router, prefix="/api")
+    app.include_router(jlaunch_share.router, prefix="/api")
     app.include_router(external_llm.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(pet_api.router, prefix="/api")

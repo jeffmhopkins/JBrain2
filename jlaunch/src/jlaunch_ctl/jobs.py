@@ -97,6 +97,7 @@ class Job:
     state: str
     phase: str
     workspace: str
+    artifact_name: str = ""
     started_at: str | None = None
     finished_at: str | None = None
     verify_ok: bool | None = None
@@ -175,6 +176,7 @@ class JobManager:
             state="cloning",
             phase="clone" if spec.repo_url else spec.phases[0].name,
             workspace=str(workspace),
+            artifact_name=Path(spec.artifact_path).name,
             started_at=_now(),
             machine=read_machine(),
         )
