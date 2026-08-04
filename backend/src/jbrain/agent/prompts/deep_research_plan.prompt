@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.plan
-version: dr-plan-v6
+version: dr-plan-v7
 description: Plans a deep-research run — rates the question's complexity and decomposes it into self-contained web-research sub-questions (or, for a single-source extract→enrich task, an ordered pipeline of stages) plus a report outline.
 strength: high
 ---
@@ -41,6 +41,13 @@ is an object with two fields:
   bibliography", "evaluate/rank the sources", "organize the findings", "summarize the
   other sub-questions". Cross-checking sources, weighing reliability, and assembling the
   report are the tool's own later stages — never a sub-question.
+- Anchor a NAMED subject so the sub-agent doesn't research a namesake. When a brief centers
+  on a specific person, organization, or place — especially a common-word or shared name — put
+  the full disambiguating context IN the brief: the full name plus role/office, the jurisdiction
+  or location, and the year or race, and tell it to research THAT subject and disregard unrelated
+  namesakes (a dictionary word, a film, a company, a different person of the same name). A bare
+  "research Frank Collige" invites the wrong Frank; "Frank William Collige, the 2026 Republican
+  candidate for Florida Chief Financial Officer" does not.
 - Prefer FEWER, sharper angles. A focused factual question ("how many died", "when did
   X happen") is usually ONE or two sub-questions, not a decomposition — only split when
   the angles are genuinely distinct bodies of evidence. Keep the count proportional to

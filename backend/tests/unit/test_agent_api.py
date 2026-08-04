@@ -2377,3 +2377,67 @@ def test_chat_caps_total_concurrent_turns(
         client.app.state.live_turns[f"run-{i}"] = _LiveTurn(f"other-{i}")  # type: ignore[attr-defined]
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
     assert resp.status_code == 429
+
+
+# --- cross-turn reference to research reports produced this chat (fix for jerv denying a
+#     finished deep_research run happened; CROSS_TURN_TOOL_RESULTS_PLAN.md) ----------------
+
+
+class _FakeResearchLibrary:
+    """Records the session-scoped lookup and returns scripted refs — the block builder's
+    only collaborator, so its formatting is tested without a DB."""
+
+    def __init__(self, refs: list) -> None:
+        self._refs = refs
+        self.calls: list[tuple] = []
+
+    async def list_reports_for_session(self, principal_id, *, session_id, limit):  # noqa: ANN001
+        self.calls.append((principal_id, session_id, limit))
+        return self._refs
+
+
+def _request_with_library(lib: _FakeResearchLibrary):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(research_library=lib)))
+
+
+async def test_research_report_blocks_name_finished_runs() -> None:
+    """The cross-turn block names each report produced this chat (title + tool + source count
+    + id) and tells jerv the run FINISHED and to read it back — the durable half of the
+    anti-hallucination fix, so a follow-up turn can't mistake a completed run for 'just the
+    prompt'."""
+    from jbrain.api.agent import _MAX_REPORT_REFS, _research_report_blocks
+    from jbrain.external.research_corpus import SessionReportRef
+
+    lib = _FakeResearchLibrary(
+        [
+            SessionReportRef("rid-1", "CFO question", "CFO candidates", "deep_research", 129, None),
+            SessionReportRef("rid-2", "Senate candidates", None, "deep_research", 0, None),
+        ]
+    )
+    from types import SimpleNamespace
+
+    blocks = await _research_report_blocks(
+        _request_with_library(lib), "owner-1", SimpleNamespace(id="sess-1")
+    )
+    assert len(blocks) == 1
+    body = blocks[0].text
+    assert "read_research_report" in body and "FINISHED" in body
+    assert "only the JSON prompt" in body  # the exact denial it must never repeat
+    assert '"CFO candidates" — deep_research, 129 sources, id rid-1' in body
+    # A titleless report falls back to its question, and a sourceless one reads honestly.
+    assert '"Senate candidates" — deep_research, no web sources, id rid-2' in body
+    assert lib.calls == [("owner-1", "sess-1", _MAX_REPORT_REFS)]
+
+
+async def test_research_report_blocks_empty_without_reports() -> None:
+    """A chat that produced no reports injects nothing — the pointer never appears emptily."""
+    from types import SimpleNamespace
+
+    from jbrain.api.agent import _research_report_blocks
+
+    blocks = await _research_report_blocks(
+        _request_with_library(_FakeResearchLibrary([])), "o", SimpleNamespace(id="s")
+    )
+    assert blocks == []

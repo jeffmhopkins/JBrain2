@@ -1,6 +1,6 @@
 # Cross-Turn Tool Results (Fetched-Document Artifacts) — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-01 · **Waves:** W0✅ W1✅ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-08-04 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ · **Adopters:** research reports (reference-only) ✅
 
 Give jerv durable, referenceable memory of expensive tool results — starting with
 `web_fetch` (and its YouTube/transcript branch) — so a fetched page and its paging
@@ -229,6 +229,16 @@ contract, and both already work).
   reference-line injection (§4.5); `web_fetch` and the YouTube branch opt in;
   `FetchResult.full_text` exposes the whole extracted text for persistence. `jerv.prompt`
   v31 already teaches `read_artifact` / "continue where you left off".
+- **Adopter — research reports (reference-only) ✅.** Shipped alongside the deep_research
+  citation fix. The report library already persists every `deep_research`/`deep_produce` run
+  (§6), so reports take the §4.5 cross-turn REFERENCE without the artifact store:
+  `_research_report_blocks` (api/agent.py) re-injects a compact DATA-framed pointer to the
+  reports produced this session (title + id + source count, read back with
+  `read_research_report`), sourced from `research_corpus.list_reports_for_session` under the
+  corpus `external` scope, in the same volatile-suffix slot as the artifact block. This closes
+  the §1 failure for reports: jerv denied a finished run ("only the JSON prompt / not run yet")
+  because the `deep_research` return evaporated at turn's end — now the finished report stays
+  visible every turn.
 - **W2 — Generalize ◻️.** `ocr` and `gmail_read`/`gmail_search` opt in (proves the base is
   generic); archivist-persona reference injection.
 - **W3 — Polish ◻️.** Reference-line/`read_artifact` on-box tuning with the debug console

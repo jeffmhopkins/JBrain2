@@ -75,6 +75,7 @@ _PROMPTS = Path(__file__).parent / "prompts"
 _PLAN = load_prompt(_PROMPTS / "deep_research_plan.prompt")
 _REFLECT = load_prompt(_PROMPTS / "deep_research_reflect.prompt")
 _SYNTH = load_prompt(_PROMPTS / "deep_research_synthesize.prompt")
+_CURATE = load_prompt(_PROMPTS / "deep_research_curate_sources.prompt")
 
 # Deep-research runs reuse jerv's own agent route (deep_research is jerv doing agent
 # work) — one route, no separate router config or settings surface to maintain.
@@ -327,6 +328,23 @@ _PLAN_SCHEMA = {
     },
     "required": ["complexity", "sub_questions", "sections"],
 }
+
+# The source curator (deep_research_curate_sources.prompt) names the registry entries that
+# are CLEARLY unrelated noise a keyword match dragged into the gather (a namesake, a dictionary
+# page, an unrelated film/company, a bare login/home landing). It runs only once the registry is
+# large enough that noise plausibly crowds out the real sources — a small list is left untouched
+# — and it is fail-open + keep-biased + drop-capped below, so a flaky judgment can never strand
+# the run's real citations (the failure mode that turned a citation-rich request into an uncited
+# report). `drop` names entries to remove; everything else is kept.
+_CURATE_SCHEMA = {
+    "type": "object",
+    "properties": {"drop": {"type": "array", "items": {"type": "integer"}}},
+    "required": ["drop"],
+}
+_CURATE_MAX_TOKENS = 800
+# Below this many sources a run keeps the whole registry: a short list has little noise to cull
+# and is cheap for the writer to cite against, so the extra judge call isn't worth it.
+_CURATE_MIN_SOURCES = 8
 
 _REFLECT_SCHEMA = {
     "type": "object",
@@ -986,6 +1004,12 @@ class DeepResearchService:
             # (stable across the draft and the revise), so each marker maps to a tappable
             # favicon and the sources are never lost between the sub-agents and the report.
             sources = _collect_sources([*gather, *([analyst] if analyst else []), *refill])
+            # Cull the CLEARLY-unrelated noise a keyword match dragged in (namesakes, dictionary
+            # pages, unrelated films/companies) before the writer cites against the list, so a
+            # noisy registry doesn't crowd out the real sources. Fail-open + keep-biased +
+            # drop-capped (see `_curate_sources`), so it only ever removes obvious junk and can
+            # never strand the run's real citations.
+            sources = await self._curate_sources(ctx, question, sources)
 
             # --- (6) SYNTHESIZE the report ----------------------------------------
             self._phase(ctx, _WRITE_STEP, _WRITE_LABEL)
@@ -1361,6 +1385,44 @@ class DeepResearchService:
             return [], True
         gaps = [g for g in (_coerce_brief(x) for x in data.get("gaps", [])) if g]
         return gaps, bool(data.get("stable"))
+
+    async def _curate_sources(
+        self, ctx: ToolContext, question: str, sources: list[WebSource]
+    ) -> list[WebSource]:
+        """Cull CLEARLY-unrelated noise from the citation registry before the writer cites
+        against it. The gather registers every page its searches returned (webtools registers
+        a source per hit), so a common-word or shared-name subject drags in dictionary pages,
+        namesakes, and unrelated films/companies — the noise that led the CFO writer to judge
+        the whole list unmatched and drop ALL citations. This asks a keep-biased judge to name
+        only the obvious junk, and is FAIL-OPEN on every axis so it can never strand the real
+        sources: skipped under `_CURATE_MIN_SOURCES`, a degraded/empty parse keeps everything,
+        an out-of-range index is ignored, and a runaway drop (more than half the list) is
+        refused wholesale. Returns the kept sources in their original order (so the `[^n]`
+        numbering the writer cites against stays first-seen-stable)."""
+        if len(sources) < _CURATE_MIN_SOURCES:
+            return sources
+        result = await self._complete_json(
+            ctx,
+            system=_CURATE.render(),
+            user_text=f"Research question:\n{question}\n\nSources:\n{_sources_block(sources)}",
+            json_schema=_CURATE_SCHEMA,
+            max_tokens=_CURATE_MAX_TOKENS,
+        )
+        data = (result.parsed if result is not None else None) or {}
+        raw = data.get("drop")
+        if not isinstance(raw, list):
+            return sources
+        # `_sources_block` numbers 1-based; map to 0-based indices, keep only in-range.
+        drop = {n - 1 for n in raw if isinstance(n, int) and 1 <= n <= len(sources)}
+        # Keep-biased backstop: a judge that wants to drop more than half the list is almost
+        # certainly misfiring on a legitimate set — keep everything rather than gut the run.
+        if not drop or len(drop) * 2 > len(sources):
+            if drop:
+                log.info("deep_research.curate_refused", requested=len(drop), total=len(sources))
+            return sources
+        kept = [ws for i, ws in enumerate(sources) if i not in drop]
+        log.info("deep_research.curated", dropped=len(drop), kept=len(kept), total=len(sources))
+        return kept
 
     async def _synthesize(
         self,

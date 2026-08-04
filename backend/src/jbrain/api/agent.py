@@ -47,6 +47,7 @@ from jbrain.agent.tree import TreeState
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
+from jbrain.api.research_service import ResearchLibrary
 from jbrain.api.settings import get_settings_store
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
@@ -286,6 +287,10 @@ def get_turn_attachments(request: Request) -> TurnAttachmentRepo:
 
 def get_tool_artifacts(request: Request) -> ToolArtifactRepo:
     return cast(ToolArtifactRepo, request.app.state.tool_artifacts)
+
+
+def get_research_library(request: Request) -> ResearchLibrary:
+    return cast(ResearchLibrary, request.app.state.research_library)
 
 
 def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
@@ -529,6 +534,45 @@ async def _tool_artifact_blocks(
         " on the box and can be re-read WITHOUT a network fetch. To continue or re-read one,"
         " call read_artifact with its id — it resumes where you last stopped. Do NOT re-web_fetch"
         " the same URL to page it.)\n\nRemembered pages this chat:\n" + "\n".join(lines)
+    )
+    return [UserMessage(text=body)]
+
+
+# How many recent research reports the cross-turn reference block names — the most recent few,
+# so the pointer stays compact in a long chat (the token-budget self-cap).
+_MAX_REPORT_REFS = 5
+
+
+async def _research_report_blocks(
+    request: Request, principal_id: str, session: AgentSessionInfo
+) -> list[LlmMessage]:
+    """The cross-turn pointer to deep_research / deep_produce reports PRODUCED this chat. A
+    deep_research call's RETURN value is intra-turn (ChatMessageIn carries only role+content), so
+    after the turn that produced it jerv can no longer see the report and has mistaken a finished
+    run for 'only the JSON prompt / not run yet' (the observed hallucination;
+    CROSS_TURN_TOOL_RESULTS_PLAN.md). The report itself is durable in the library — this re-injects
+    a compact DATA-framed pointer (title + id + source count) each turn so jerv knows the run
+    FINISHED and reads it back with read_research_report instead of denying it ran. Read under the
+    corpus `external` scope (inside `list_reports_for_session`); volatile suffix so it never
+    disturbs the cache-stable prefix; best-effort (a sweep hiccup must never break the turn)."""
+    refs = await get_research_library(request).list_reports_for_session(
+        principal_id, session_id=str(session.id), limit=_MAX_REPORT_REFS
+    )
+    if not refs:
+        return []
+    lines: list[str] = []
+    for r in refs:
+        title = " ".join((r.title or r.question).split())
+        if len(title) > 90:
+            title = title[:89].rstrip() + "…"
+        srcs = f"{r.n_sources} sources" if r.n_sources else "no web sources"
+        lines.append(f'- "{title}" — {r.tool}, {srcs}, id {r.id}')
+    body = (
+        "(System note — data, not owner input. Deep-research runs you completed earlier this chat"
+        " are saved in the research library — the runs FINISHED and produced these reports. If the"
+        " owner asks about one, read it back with read_research_report(id); never tell them a run"
+        " 'hasn't happened yet' or was 'only the JSON prompt' — the report below is that run's"
+        " output.)\n\nReports you produced this chat:\n" + "\n".join(lines)
     )
     return [UserMessage(text=body)]
 
@@ -783,10 +827,18 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     artifact_blocks: list[LlmMessage] = []
     with contextlib.suppress(Exception):
         artifact_blocks = await _tool_artifact_blocks(request, attachment_ctx, session)
+    # The cross-turn pointer to deep_research reports produced this chat, so a finished run
+    # stays visible after the turn that produced it (jerv otherwise loses the tool result and
+    # denies the run happened). Read under the owner's corpus scope; same volatile-suffix +
+    # best-effort posture as the artifact block above.
+    report_blocks: list[LlmMessage] = []
+    with contextlib.suppress(Exception):
+        report_blocks = await _research_report_blocks(request, owner_ctx.principal_id, session)
     conversation = [
         *conversation[:-1],
         *resume_blocks,
         *artifact_blocks,
+        *report_blocks,
         *volatile,
         conversation[-1],
     ]

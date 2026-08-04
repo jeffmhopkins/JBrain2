@@ -73,6 +73,9 @@ class _FakeRouter:
         # raises it too for the named stage. deep_research must DEGRADE, not die.
         plan_bad_json: bool = False,
         reflect_bad_json: bool = False,
+        # The SOURCE CURATOR's scripted drop set (1-based source numbers). Default () = keep
+        # everything, so a run that reaches the curator is byte-unchanged unless a test opts in.
+        curate_drop: tuple[int, ...] = (),
     ) -> None:
         self.complexity = complexity
         self.sub_questions = list(sub_questions)
@@ -82,6 +85,7 @@ class _FakeRouter:
         self.reflect_script = reflect_script
         self.plan_bad_json = plan_bad_json
         self.reflect_bad_json = reflect_bad_json
+        self.curate_drop = curate_drop
         self._reflect_calls = 0
         self.calls: list[dict] = []
         self.synth_calls: list[str] = []
@@ -117,6 +121,10 @@ class _FakeRouter:
             return _Result(
                 text="", usage=usage, parsed={"covered": self.covered, "gaps": self.gaps}
             )
+        # The SOURCE CURATOR is the only other structured one-shot — matched on its schema
+        # (a `drop` list) so it never depends on the prompt's prose. Default keep-all.
+        if json_schema and "drop" in (json_schema.get("properties") or {}):
+            return _Result(text="", usage=usage, parsed={"drop": list(self.curate_drop)})
         raise AssertionError(f"unexpected complete() for system: {system[:40]!r}")
 
     async def converse_stream(self, task, *, system, messages, tools=(), **kw):  # noqa: ANN001
@@ -668,6 +676,35 @@ async def test_citations_are_tracked_from_sub_agents_to_the_report() -> None:
     assert len(urls) == len(set(urls))  # deduped
 
 
+async def test_curate_sources_culls_clearly_unrelated_noise() -> None:
+    """Once the registry is large enough to plausibly carry noise (a keyword match drags in
+    namesakes / dictionary pages), the source curator drops the entries it names as clearly
+    unrelated BEFORE the writer cites against the list — so the report cites a clean registry
+    instead of a noisy one the writer might give up on (the CFO zero-citation failure)."""
+    # 3 gather children × 3 sources = 9 collected (≥ the curate threshold); script two drops.
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
+    spawn = _FakeSpawn(sources_per_child=3)
+    out = await _svc(router, spawn).research(_ctx(), {"question": "who are the CFO candidates?"})
+    ws = out.view.data["web_sources"]  # type: ignore[attr-defined]
+    assert len(ws) == 7  # nine collected, two culled as noise
+    # The curated list is what the writer cited against, too (not just the view).
+    assert any("SOURCES — cite with these exact numbers" in uw for uw in router.synth_calls)
+
+
+async def test_curate_sources_is_keep_biased_and_fail_open() -> None:
+    """The curator can only ever remove OBVIOUS junk: a runaway drop (more than half the
+    list) is refused wholesale, and a short list is left untouched — so a flaky judgment can
+    never strand the run's real citations under the new must-cite synthesis rule."""
+    # Oversized drop (6 of 9) is refused → the whole registry survives.
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2, 3, 4, 5, 6))
+    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
+    assert len(out.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
+    # A small registry (3 sources < threshold) never even calls the curator.
+    router2 = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1,))
+    out2 = await _svc(router2, _FakeSpawn(sources_per_child=1)).research(_ctx(), {"question": "q"})
+    assert len(out2.view.data["web_sources"]) == 3  # type: ignore[attr-defined]
+
+
 # --- report depth: the synthesizer is handed a length target by complexity --
 
 
@@ -773,11 +810,12 @@ def test_plan_prompt_forbids_meta_and_cross_child_subquestions() -> None:
     from jbrain.agent.deep_research import _PLAN
 
     body = _PLAN.body.lower()
-    assert _PLAN.version == "dr-plan-v6"
+    assert _PLAN.version == "dr-plan-v7"
     assert "citation matrix" in body  # the exact meta task that leaked through v1
     assert "process or meta task" in body
     assert "in isolation" in body  # names why cross-child briefs can't work
     assert "fewer" in body  # the anti-over-decomposition steer
+    assert "namesake" in body  # v7: anchor a named subject so a sub-agent skips the wrong entity
     # v4: each sub-question is a {title, brief} object — a short row label + the full brief.
     assert "`title`" in body and "`brief`" in body
 
