@@ -759,6 +759,41 @@ async def test_curate_sources_half_drop_is_the_refusal_boundary() -> None:
     assert len(out2.view.data["web_sources"]) == 8  # type: ignore[attr-defined]
 
 
+async def test_curate_sources_min_sources_threshold_boundary() -> None:
+    """Pin the `< _CURATE_MIN_SOURCES` skip boundary (mirroring the strict `>half` pin): a
+    registry of exactly the threshold invokes the curator (a scripted drop applies), one fewer
+    skips it (the same scripted drop is ignored). A single gather angle (breadth=1) makes the
+    collected count exactly `sources_per_child`."""
+    from jbrain.agent.deep_research import _CURATE_MIN_SOURCES as MIN
+
+    # One below threshold → curator never called, drop ignored.
+    below = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
+    out = await _svc(below, _FakeSpawn(sources_per_child=MIN - 1)).research(
+        _ctx(), {"question": "q", "breadth": 1}
+    )
+    assert len(out.view.data["web_sources"]) == MIN - 1  # type: ignore[attr-defined]
+    # Exactly at threshold → curator runs, both drops apply.
+    at = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
+    out2 = await _svc(at, _FakeSpawn(sources_per_child=MIN)).research(
+        _ctx(), {"question": "q", "breadth": 1}
+    )
+    assert len(out2.view.data["web_sources"]) == MIN - 2  # type: ignore[attr-defined]
+
+
+def test_curate_and_synthesize_prompts_carry_their_behavioral_core() -> None:
+    """Guard the must-cite / all-noise-escape / keep-biased instructions against silent prose
+    drift — the behavioral core of the citation fix (the plan prompt gets the same guard via
+    its `namesake` assertion). LLM judgment itself can't be unit-tested; the prose can."""
+    from jbrain.agent.deep_research import _CURATE, _SYNTH
+
+    synth = _SYNTH.body.lower()
+    assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
+    assert "not licence to drop all citations" in synth  # the give-up path stays closed
+    assert "a fabricated citation is worse than an honest gap" in synth  # all-noise escape valve
+    curate = _CURATE.body.lower()
+    assert "keep-biased" in curate and "when you are unsure" in curate  # keep-bias survives
+
+
 # --- report depth: the synthesizer is handed a length target by complexity --
 
 

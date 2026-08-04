@@ -1887,7 +1887,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert call["system"] == AGENTS["jerv"].prompt
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # The run carries its version.
-    assert ("sess-j", "agent-jerv-v32") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v33") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
@@ -2459,3 +2459,37 @@ async def test_research_report_blocks_truncate_and_collapse_titles() -> None:
     assert len(rows) == 1  # the embedded newline was collapsed, not turned into a forged row
     assert "…" in rows[0]  # the long title was truncated
     assert "  " not in rows[0]  # runs of whitespace collapsed to single spaces
+
+
+def test_chat_wires_the_research_report_reference_block(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    """End-to-end wiring guard: a `chat()` turn actually invokes `_research_report_blocks` and
+    splices the report pointer into the conversation sent to the model. Because that call sits
+    inside a best-effort `suppress(Exception)`, a regression that always throws (missing
+    `app.state.research_library`, signature drift) would silently drop the feature with no other
+    test failing — this pins that the block is really delivered, in the volatile suffix."""
+    from jbrain.api.agent import _MAX_REPORT_REFS
+    from jbrain.external.research_corpus import SessionReportRef
+
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-rr", "", "active", ("general",), (), NOW, NOW))
+    router, fake = _capturing_router()
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    lib = _FakeResearchLibrary(
+        [SessionReportRef("rid-1", "CFO question", "CFO candidates", "deep_research", 129, None)]
+    )
+    client.app.state.research_library = lib  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-rr", "message": "why no citations?"})
+    assert resp.status_code == 200
+    msgs = fake.stream_calls[0]["messages"]
+    framed = [m for m in msgs if "Reports you produced this chat" in getattr(m, "text", "")]
+    assert len(framed) == 1  # the pointer block was actually injected, not swallowed
+    assert type(framed[0]).__name__ == "UserMessage"  # conversation channel, not a system change
+    assert "CFO candidates" in framed[0].text and "read_research_report" in framed[0].text
+    # Volatile suffix: after nothing-to-history here, but before the current user turn.
+    texts = [getattr(m, "text", "") for m in msgs]
+    assert texts.index(framed[0].text) < texts.index("why no citations?")
+    # The library was queried for THIS session, bounded by the ref cap.
+    assert lib.calls and lib.calls[0][1:] == ("sess-rr", _MAX_REPORT_REFS)

@@ -1410,16 +1410,28 @@ class DeepResearchService:
                 max_tokens=_CURATE_MAX_TOKENS,
             )
         except Exception:  # noqa: BLE001 - curation is a pure optimization; a provider error
-            # (5xx / timeout / cancellation, beyond the bad-JSON `_complete_json` already
-            # swallows) must NEVER fail a finished run's gather+refill work — keep every source.
+            # (a 5xx / timeout beyond the bad-JSON `_complete_json` already swallows) must NEVER
+            # fail a finished run's gather+refill work — keep every source. A genuine task
+            # cancellation is a BaseException, so it correctly propagates and is not swallowed.
             log.warning("deep_research.curate_failed", exc_info=True)
             return sources
-        data = (result.parsed if result is not None else None) or {}
+        # Fail-open on a non-dict parse too: this runs OUTSIDE the try above, so a truthy
+        # non-dict `parsed` (e.g. a bare JSON array) would otherwise raise on `.get` and sink the
+        # run — the one hole in the guarantee. Any shape but a dict-with-a-list-`drop` keeps all.
+        data = result.parsed if result is not None else None
+        if not isinstance(data, dict):
+            return sources
         raw = data.get("drop")
         if not isinstance(raw, list):
             return sources
-        # `_sources_block` numbers 1-based; map to 0-based indices, keep only in-range.
-        drop = {n - 1 for n in raw if isinstance(n, int) and 1 <= n <= len(sources)}
+        # `_sources_block` numbers 1-based; map to 0-based indices, keep only in-range. Exclude
+        # `bool` explicitly — `isinstance(True, int)` is True, and `True - 1 == 0` would drop the
+        # first source on a model that emitted a JSON boolean in the list.
+        drop = {
+            n - 1
+            for n in raw
+            if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(sources)
+        }
         # Keep-biased backstop: a judge that wants to drop more than half the list is almost
         # certainly misfiring on a legitimate set — keep everything rather than gut the run.
         if not drop or len(drop) * 2 > len(sources):
