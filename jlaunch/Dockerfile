@@ -4,9 +4,25 @@
 # owner's browser. `git` clones the compute repo; `python3-venv` + `build-essential` let a
 # job build numpy/sympy and compile any source deps. Unlike jcode, no coding-agent CLI is
 # installed — the "shell" here is the job script itself.
+#
+# Build context is the REPO ROOT (compose `context: ./src`) so the es-census census
+# tool (research/es-census) can be compiled and baked in for the native Erdős–Straus
+# rerun spec. A throwaway Rust stage compiles it; only the ~few-MB binary is copied into
+# the runtime image (the toolchain is discarded).
+
+# --- es-census build (native Erdős–Straus census, baked in for the launcher) ---
+FROM rust:1-slim AS escensus
+WORKDIR /build/es-census
+COPY research/es-census/Cargo.toml research/es-census/Cargo.lock ./
+COPY research/es-census/src ./src
+RUN cargo build --release --locked
+
+# --- jlaunch control server ---
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
+# The native census binary (no runtime deps; statically links its Rust crates).
+COPY --from=escensus /build/es-census/target/release/es-census /usr/local/bin/es-census
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates python3-venv build-essential \
@@ -16,11 +32,12 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
-# Layered install: deps first so source edits don't bust the dependency cache.
-COPY pyproject.toml uv.lock ./
+# Layered install: deps first so source edits don't bust the dependency cache. Paths are
+# repo-root-relative because the build context is the repo root.
+COPY jlaunch/pyproject.toml jlaunch/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY src ./src
+COPY jlaunch/src ./src
 RUN uv sync --frozen --no-dev
 
 # The per-job checkouts + ~15 GB scratch live here (the `jlaunch_work` volume mounts over

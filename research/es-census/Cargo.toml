@@ -1,0 +1,18 @@
+[package]
+name = "es-census"
+version = "0.1.0"
+edition = "2021"
+description = "Native Erdos-Straus minimal-R certificate census (windowed SPF sieve)."
+
+[dependencies]
+rayon = "1"
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
+sha2 = "0.10"
+flate2 = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
