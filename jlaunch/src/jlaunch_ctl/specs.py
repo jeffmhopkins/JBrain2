@@ -139,55 +139,68 @@ ERDOS_STRAUS_1E12 = _validate(
 )
 
 
-# Native Rust rerun of the census. The `es-census` binary (research/es-census) is
-# baked into the jlaunch image, so there is NO repo to clone. Its windowed
-# smallest-prime-factor sieve factors a=(n+R)/4 with base primes to sqrt(a), so the
-# factorization is always complete — fixing the Python path's non-minimal R above
-# ~1.3e11 (where the fixed 180000-prime table stops covering sqrt(a)) — and it is far
-# faster. It emits the same artifacts (rvals.u8.gz / meta.json / tail.json), writes the
-# verify log (every certificate is exact-checked at generation), and prints the same
-# headline block. All cores; ~10 GB held in memory for the ordered output.
-ERDOS_STRAUS_1E12_NATIVE = _validate(
-    JobSpec(
-        name="erdos_straus_1e12_native",
-        title="Erdos-Straus census to 10^12 (native Rust)",
-        repo_url="",  # baked-in tool: no clone
-        branch="",
-        phases=(
-            Phase(
-                "census",
-                "mkdir -p data && set -o pipefail && "
-                "es-census --max 1000000000000 --out data/es_1e12 "
-                "--verify-log run_1e12_verify.log 2>&1 | tee run_1e12_generate.log",
+def _native_spec(
+    label: str, exp: str, limit: str, est_hours: str, disk_gb: int
+) -> JobSpec:
+    """A native census spec to ``10^exp`` run by the baked-in ``es-census`` binary
+    (research/es-census) — so there is NO repo to clone. Its windowed
+    smallest-prime-factor sieve factors ``a=(n+R)/4`` with base primes to ``sqrt(a)``,
+    so the factorization is always complete (fixing the Python path's non-minimal R
+    above ~1.3e11), and it streams output in bounded memory so it scales past 10^12.
+    ``label`` names the artifacts (e.g. ``1e12``); ``limit`` is the exact ``--max``.
+    """
+    prefix = f"data/es_{label}"
+    verify_log = f"run_{label}_verify.log"
+    gen_log = f"run_{label}_generate.log"
+    artifact = f"es_{label}_artifacts.tar.gz"
+    return _validate(
+        JobSpec(
+            name=f"erdos_straus_{label}_native",
+            title=f"Erdos-Straus census to 10^{exp} (native Rust)",
+            repo_url="",  # baked-in tool: no clone
+            branch="",
+            phases=(
+                Phase(
+                    "census",
+                    f"mkdir -p data && set -o pipefail && "
+                    f"es-census --max {limit} --out {prefix} "
+                    f"--verify-log {verify_log} 2>&1 | tee {gen_log}",
+                ),
+                Phase(
+                    "package",
+                    f"tar czf {artifact} "
+                    f"{prefix}.rvals.u8.gz {prefix}.meta.json {prefix}.tail.json "
+                    f"{gen_log} {verify_log}",
+                ),
             ),
-            Phase(
-                "package",
-                "tar czf es_1e12_artifacts.tar.gz "
-                "data/es_1e12.rvals.u8.gz data/es_1e12.meta.json "
-                "data/es_1e12.tail.json run_1e12_generate.log run_1e12_verify.log",
+            artifact_path=artifact,
+            artifact_media_type="application/gzip",
+            verify_log=verify_log,
+            verify_must_end_with="VERIFICATION OK",
+            headline_markers=("hard primes:", "max minimal R:", "R >= 87 counts:"),
+            est_hours=est_hours,
+            disk_gb=disk_gb,
+            all_cores=True,
+            notes=(
+                "Native Rust rerun (baked-in es-census). Complete factorization to "
+                "sqrt(a) fixes the Python path's non-minimal R above ~1.3e11; every "
+                "certificate is exact-checked during generation. All cores; output is "
+                "streamed in bounded memory, so it scales past 10^12."
             ),
-        ),
-        artifact_path="es_1e12_artifacts.tar.gz",
-        artifact_media_type="application/gzip",
-        verify_log="run_1e12_verify.log",
-        verify_must_end_with="VERIFICATION OK",
-        headline_markers=("hard primes:", "max minimal R:", "R >= 87 counts:"),
-        est_hours="2-5 h",
-        disk_gb=5,
-        all_cores=True,
-        notes=(
-            "Native Rust rerun (baked-in es-census). Complete factorization to "
-            "sqrt(a) fixes the Python path's non-minimal R above ~1.3e11; every "
-            "certificate is exact-checked during generation. All cores; ~10 GB held "
-            "in memory for the ordered output. Emits rvals/meta/tail + the tarball."
-        ),
+        )
     )
-)
+
+
+ERDOS_STRAUS_1E12_NATIVE = _native_spec("1e12", "12", "1000000000000", "2-5 h", 5)
+# 10^13 is ~9.3x the work AND data of 10^12; the streamed output keeps memory bounded
+# where the Python path (and the pre-streaming binary) would need ~86 GB for primes.
+ERDOS_STRAUS_1E13_NATIVE = _native_spec("1e13", "13", "10000000000000", "1-2 days", 20)
 
 
 SPECS: dict[str, JobSpec] = {
     ERDOS_STRAUS_1E12.name: ERDOS_STRAUS_1E12,
     ERDOS_STRAUS_1E12_NATIVE.name: ERDOS_STRAUS_1E12_NATIVE,
+    ERDOS_STRAUS_1E13_NATIVE.name: ERDOS_STRAUS_1E13_NATIVE,
 }
 
 
