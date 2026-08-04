@@ -3,7 +3,10 @@
 //! Sieves the hard-residue primes in `[lo, hi]`, and for each finds the minimal
 //! residual R with an explicit certificate, factoring `a = (n+R)/4` via a
 //! windowed smallest-prime-factor sieve (see `sieve.rs`). Segments run in
-//! parallel; memory is bounded by the per-segment window.
+//! parallel; memory is bounded by the per-segment window AND by streaming the
+//! output in ascending order — primes/rvals are never accumulated whole (a 1e13
+//! run would otherwise hold ~86 GB of primes in RAM), so the census scales to
+//! arbitrarily large ranges on a fixed memory budget.
 //!
 //! With `--out PREFIX` it writes the same artifact set as the Python
 //! `bulk_generate --store rseq` path, so outputs are directly comparable and
@@ -16,14 +19,13 @@
 //!
 //! Usage:
 //!   es-census --max 100000000 [--lo L --hi H] [--seg S] [--workers W]
-//!             [--max-r R] [--tail T] [--out PREFIX]
+//!             [--max-r R] [--tail T] [--out PREFIX] [--verify-log PATH]
 
 mod sieve;
 mod solver;
 
 use std::fs::File;
 use std::io::Write;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use flate2::write::GzEncoder;
@@ -36,7 +38,6 @@ const TAIL_DEFAULT: u64 = 43; // store explicit triples for R >= this (as Python
 /// Per-segment output: the ascending primes and their minimal-R values (0 =
 /// unsolved), plus tail triples and summary counters.
 struct SegOut {
-    seg_lo: u64,
     primes: Vec<u64>,
     rvals: Vec<u8>, // clamped to 255, 0 = unsolved
     tail: Vec<(u64, u64, String, String, String)>, // n, R, a, b, c
@@ -59,7 +60,6 @@ fn process_segment(
     let wf = sieve::factor_window(a_lo, a_hi, base);
 
     let mut out = SegOut {
-        seg_lo,
         primes: Vec::with_capacity(hard.len()),
         rvals: Vec::with_capacity(hard.len()),
         tail: Vec::new(),
@@ -107,40 +107,79 @@ fn parse_u64(s: &str) -> u64 {
     }
 }
 
-fn write_artifacts(
-    prefix: &str,
-    limit: u64,
-    primes: &[u64],
-    rvals: &[u8],
-    tail: &[(u64, u64, String, String, String)],
+fn hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Running accumulators over the streamed segments — everything here is bounded
+/// (histogram, hashers, the R>=tail tail, counters), never the full prime list.
+struct Sink {
+    gz: Option<GzEncoder<File>>,
+    hr: Sha256,
+    hp: Sha256,
+    hist: Vec<u64>,
+    tail: Vec<(u64, u64, String, String, String)>,
+    unsolved: Vec<u64>,
     max_r: u64,
     max_r_prime: u64,
-    unsolved: &[u64],
+    total_hard: u64,
+    first_prime: u64,
+    last_prime: u64,
+}
+
+impl Sink {
+    fn absorb(&mut self, out: SegOut) {
+        if let Some(g) = self.gz.as_mut() {
+            g.write_all(&out.rvals).expect("write rvals");
+        }
+        self.hr.update(&out.rvals);
+        for &p in &out.primes {
+            self.hp.update((p as i64).to_le_bytes());
+        }
+        if self.first_prime == 0 {
+            if let Some(&f) = out.primes.first() {
+                self.first_prime = f;
+            }
+        }
+        if let Some(&l) = out.primes.last() {
+            self.last_prime = l;
+        }
+        self.total_hard += out.primes.len() as u64;
+        for (i, c) in out.hist.iter().enumerate() {
+            self.hist[i] += c;
+        }
+        if out.max_r > self.max_r
+            || (out.max_r == self.max_r
+                && out.max_r_prime != 0
+                && (self.max_r_prime == 0 || out.max_r_prime < self.max_r_prime))
+        {
+            self.max_r = out.max_r;
+            self.max_r_prime = out.max_r_prime;
+        }
+        self.tail.extend(out.tail);
+        self.unsolved.extend(out.unsolved);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_meta_tail(
+    prefix: &str,
+    limit: u64,
+    sink: &Sink,
     dist: &[(u64, u64)],
+    sha_rvals: &str,
+    sha_primes: &str,
     sieve_secs: f64,
     total_secs: f64,
-) -> std::io::Result<(String, String)> {
-    // sha256 of raw rvals bytes (uint8) == numpy rvals.tobytes()
-    let mut hr = Sha256::new();
-    hr.update(rvals);
-    let sha_rvals = hex(&hr.finalize());
-    // sha256 of primes as little-endian int64 == numpy int64 primes.tobytes()
-    let mut hp = Sha256::new();
-    for &p in primes {
-        hp.update((p as i64).to_le_bytes());
-    }
-    let sha_primes = hex(&hp.finalize());
-
-    // PREFIX.rvals.u8.gz
-    let f = File::create(format!("{prefix}.rvals.u8.gz"))?;
-    let mut gz = GzEncoder::new(f, Compression::new(9));
-    gz.write_all(rvals)?;
-    gz.finish()?;
-
+) -> std::io::Result<()> {
     // PREFIX.tail.json
     let mut tf = File::create(format!("{prefix}.tail.json"))?;
     write!(tf, "[")?;
-    for (i, (p, r, a, b, c)) in tail.iter().enumerate() {
+    for (i, (p, r, a, b, c)) in sink.tail.iter().enumerate() {
         if i > 0 {
             write!(tf, ",")?;
         }
@@ -155,7 +194,7 @@ fn write_artifacts(
     let dist_str: Vec<String> =
         dist.iter().map(|(r, c)| format!("\"{r}\": {c}")).collect();
     let usample: Vec<String> =
-        unsolved.iter().take(50).map(|u| u.to_string()).collect();
+        sink.unsolved.iter().take(50).map(|u| u.to_string()).collect();
     let mut mf = File::create(format!("{prefix}.meta.json"))?;
     write!(
         mf,
@@ -179,28 +218,20 @@ fn write_artifacts(
             "}}\n"
         ),
         limit = limit,
-        nhp = primes.len(),
-        nun = unsolved.len(),
+        nhp = sink.total_hard,
+        nun = sink.unsolved.len(),
         usample = usample.join(", "),
-        maxr = max_r,
-        maxrp = max_r_prime,
+        maxr = sink.max_r,
+        maxrp = sink.max_r_prime,
         dist = dist_str.join(", "),
-        first = primes.first().copied().unwrap_or(0),
-        last = primes.last().copied().unwrap_or(0),
+        first = sink.first_prime,
+        last = sink.last_prime,
         shr = sha_rvals,
         shp = sha_primes,
         ss = sieve_secs,
         es = total_secs,
     )?;
-    Ok((sha_rvals, sha_primes))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
+    Ok(())
 }
 
 fn main() {
@@ -276,70 +307,73 @@ fn main() {
         segments.push((s, e));
         s = e + 1;
     }
-
-    // Live progress for the launcher terminal: report every ~1% of segments.
     let total_segs = segments.len();
+    // Parallel batch: bounds how many segment outputs are buffered before being
+    // streamed out in order. Keeps peak memory ~O(batch) regardless of range.
+    let batch = (rayon::current_num_threads() * 4).max(4);
     let step = (total_segs / 100).max(1);
-    let done = AtomicUsize::new(0);
-    let primes_done = AtomicU64::new(0);
+
+    let mut sink = Sink {
+        gz: out.as_ref().map(|p| {
+            GzEncoder::new(
+                File::create(format!("{p}.rvals.u8.gz")).expect("create rvals.u8.gz"),
+                Compression::new(9),
+            )
+        }),
+        hr: Sha256::new(),
+        hp: Sha256::new(),
+        hist: vec![0u64; max_r as usize + 1],
+        tail: Vec::new(),
+        unsolved: Vec::new(),
+        max_r: 0,
+        max_r_prime: 0,
+        total_hard: 0,
+        first_prime: 0,
+        last_prime: 0,
+    };
+
     let t1 = Instant::now();
-    let mut parts: Vec<SegOut> = segments
-        .par_iter()
-        .map(|&(a, b)| {
-            let seg = process_segment(a, b, &base, max_r, tail_thr);
-            let np = primes_done.fetch_add(seg.primes.len() as u64, Ordering::Relaxed)
-                + seg.primes.len() as u64;
-            let d = done.fetch_add(1, Ordering::Relaxed) + 1;
-            if d % step == 0 || d == total_segs {
+    let mut done = 0usize;
+    for chunk in segments.chunks(batch) {
+        // Process a batch in parallel (order preserved by collect), then drain in
+        // ascending segment order so the streamed rvals stay in prime order.
+        let outs: Vec<SegOut> = chunk
+            .par_iter()
+            .map(|&(a, b)| process_segment(a, b, &base, max_r, tail_thr))
+            .collect();
+        for o in outs {
+            sink.absorb(o);
+            done += 1;
+            if done % step == 0 || done == total_segs {
                 eprintln!(
-                    "[census] segment {d}/{total_segs} ({}%), {np} hard primes, {:.0}s",
-                    d * 100 / total_segs,
+                    "[census] segment {done}/{total_segs} ({}%), {} hard primes, {:.0}s",
+                    done * 100 / total_segs,
+                    sink.total_hard,
                     t1.elapsed().as_secs_f64()
                 );
             }
-            seg
-        })
-        .collect();
-    let solve_secs = t1.elapsed().as_secs_f64();
-    parts.sort_by_key(|p| p.seg_lo);
-
-    // Assemble ordered arrays + merged summary.
-    let mut primes: Vec<u64> = Vec::new();
-    let mut rvals: Vec<u8> = Vec::new();
-    let mut tail: Vec<(u64, u64, String, String, String)> = Vec::new();
-    let mut unsolved: Vec<u64> = Vec::new();
-    let mut hist = vec![0u64; max_r as usize + 1];
-    let mut max_r_seen = 0u64;
-    let mut max_r_prime = 0u64;
-    for p in parts {
-        primes.extend_from_slice(&p.primes);
-        rvals.extend_from_slice(&p.rvals);
-        tail.extend(p.tail);
-        unsolved.extend(p.unsolved);
-        for (idx, c) in p.hist.iter().enumerate() {
-            hist[idx] += c;
-        }
-        if p.max_r > max_r_seen
-            || (p.max_r == max_r_seen && p.max_r_prime != 0
-                && (max_r_prime == 0 || p.max_r_prime < max_r_prime))
-        {
-            max_r_seen = p.max_r;
-            max_r_prime = p.max_r_prime;
         }
     }
+    if let Some(g) = sink.gz.take() {
+        g.finish().expect("finish gz");
+    }
+    let solve_secs = t1.elapsed().as_secs_f64();
+    let total_secs = t0.elapsed().as_secs_f64();
+    let sha_rvals = hex(&sink.hr.clone().finalize());
+    let sha_primes = hex(&sink.hp.clone().finalize());
 
-    let mut dist: Vec<(u64, u64)> = hist
+    let mut dist: Vec<(u64, u64)> = sink
+        .hist
         .iter()
         .enumerate()
         .filter(|(_, &c)| c > 0)
         .map(|(r, &c)| (r as u64, c))
         .collect();
     dist.sort_by_key(|&(r, _)| r);
-    let total_secs = t0.elapsed().as_secs_f64();
 
     // Headline block for the public results page — verbatim lines matching the
-    // Python run_1e12 output the share page renders.
-    let verdict = if max_r_seen > 107 {
+    // Python run output the share page renders.
+    let verdict = if sink.max_r > 107 {
         "(RECORD BREAKS 107!)"
     } else {
         "(record R=107 stands)"
@@ -350,41 +384,45 @@ fn main() {
         .map(|(r, c)| format!("{r}: {c}"))
         .collect();
     let headline = [
-        format!("hard primes: {}", primes.len()),
-        format!("max minimal R: {max_r_seen} at p = {max_r_prime} {verdict}"),
+        format!("hard primes: {}", sink.total_hard),
+        format!(
+            "max minimal R: {} at p = {} {verdict}",
+            sink.max_r, sink.max_r_prime
+        ),
         format!("R >= 87 counts: {{{}}}", tail87.join(", ")),
     ];
 
     if let Some(prefix) = &out {
-        match write_artifacts(
-            prefix, hi, &primes, &rvals, &tail, max_r_seen, max_r_prime,
-            &unsolved, &dist, sieve_secs, total_secs,
+        if let Err(e) = write_meta_tail(
+            prefix, hi, &sink, &dist, &sha_rvals, &sha_primes, sieve_secs, total_secs,
         ) {
-            Ok((shr, shp)) => eprintln!(
+            eprintln!("[out] failed to write meta/tail: {e}");
+        } else {
+            eprintln!(
                 "[out] wrote {prefix}.{{rvals.u8.gz,meta.json,tail.json}}  \
-                 sha256_rvals={shr}  sha256_primes={shp}"
-            ),
-            Err(e) => eprintln!("[out] failed to write artifacts: {e}"),
+                 sha256_rvals={sha_rvals}  sha256_primes={sha_primes}"
+            );
         }
     }
 
     let dist_str: Vec<String> =
         dist.iter().map(|(r, c)| format!("\"{r}\":{c}")).collect();
-    let rate = primes.len() as f64 / solve_secs.max(1e-9);
+    let rate = sink.total_hard as f64 / solve_secs.max(1e-9);
     println!("{{");
     println!("  \"lo\": {lo},");
     println!("  \"hi\": {hi},");
-    println!("  \"num_hard_primes\": {},", primes.len());
-    println!("  \"num_unsolved\": {},", unsolved.len());
-    println!("  \"max_R\": {max_r_seen},");
-    println!("  \"max_R_prime\": {max_r_prime},");
+    println!("  \"num_hard_primes\": {},", sink.total_hard);
+    println!("  \"num_unsolved\": {},", sink.unsolved.len());
+    println!("  \"max_R\": {},", sink.max_r);
+    println!("  \"max_R_prime\": {},", sink.max_r_prime);
     println!("  \"R_distribution\": {{{}}},", dist_str.join(","));
-    println!("  \"tail_count(R>={tail_thr})\": {},", tail.len());
+    println!("  \"tail_count(R>={tail_thr})\": {},", sink.tail.len());
     println!("  \"sieve_secs\": {sieve_secs:.3},");
     println!("  \"solve_secs\": {solve_secs:.3},");
     println!("  \"total_secs\": {total_secs:.3},");
     println!("  \"hard_primes_per_sec\": {rate:.0}");
     println!("}}");
+
     // Headline lines to stdout (captured into the run's console log; the launcher
     // greps these markers for the public results page).
     for line in &headline {
@@ -394,13 +432,13 @@ fn main() {
     // Optional verify log for the launcher's success gate: exact-checked at
     // generation, so a clean run (no unsolved primes) writes the sentinel.
     if let Some(vpath) = &verify_log {
-        let ok = unsolved.is_empty();
+        let ok = sink.unsolved.is_empty();
         let mut report = String::from("native es-census verification\n");
         for line in &headline {
             report.push_str(line);
             report.push('\n');
         }
-        report.push_str(&format!("unsolved: {}\n", unsolved.len()));
+        report.push_str(&format!("unsolved: {}\n", sink.unsolved.len()));
         report.push_str(
             "every certificate exact-checked (4abc = n(bc+ac+ab)) during generation\n",
         );
@@ -417,9 +455,11 @@ fn main() {
         }
     }
 
-    if !unsolved.is_empty() {
-        let sample: Vec<u64> = unsolved.iter().take(10).copied().collect();
-        eprintln!("[warn] {} unsolved (max_R={max_r} too small?): {sample:?}",
-            unsolved.len());
+    if !sink.unsolved.is_empty() {
+        let sample: Vec<u64> = sink.unsolved.iter().take(10).copied().collect();
+        eprintln!(
+            "[warn] {} unsolved (max_R={max_r} too small?): {sample:?}",
+            sink.unsolved.len()
+        );
     }
 }

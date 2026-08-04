@@ -64,6 +64,19 @@ def test_native_spec_registered_and_no_clone() -> None:
     assert "--verify-log run_1e12_verify.log" in census
 
 
+def test_native_1e13_spec_registered() -> None:
+    spec = get_spec("erdos_straus_1e13_native")
+    assert spec is not None
+    assert spec.repo_url == ""  # baked-in binary, no clone
+    assert spec.all_cores is True
+    assert [p.name for p in spec.phases] == ["census", "package"]
+    assert spec.artifact_path == "es_1e13_artifacts.tar.gz"
+    assert spec.verify_log == "run_1e13_verify.log"
+    census = spec.phases[0].run
+    assert "--max 10000000000000" in census  # exactly 10^13
+    assert "--verify-log run_1e13_verify.log" in census
+
+
 def test_validate_allows_empty_repo() -> None:
     spec = JobSpec(
         name="baked",
