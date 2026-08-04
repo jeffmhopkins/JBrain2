@@ -1401,13 +1401,19 @@ class DeepResearchService:
         numbering the writer cites against stays first-seen-stable)."""
         if len(sources) < _CURATE_MIN_SOURCES:
             return sources
-        result = await self._complete_json(
-            ctx,
-            system=_CURATE.render(),
-            user_text=f"Research question:\n{question}\n\nSources:\n{_sources_block(sources)}",
-            json_schema=_CURATE_SCHEMA,
-            max_tokens=_CURATE_MAX_TOKENS,
-        )
+        try:
+            result = await self._complete_json(
+                ctx,
+                system=_CURATE.render(),
+                user_text=f"Research question:\n{question}\n\nSources:\n{_sources_block(sources)}",
+                json_schema=_CURATE_SCHEMA,
+                max_tokens=_CURATE_MAX_TOKENS,
+            )
+        except Exception:  # noqa: BLE001 - curation is a pure optimization; a provider error
+            # (5xx / timeout / cancellation, beyond the bad-JSON `_complete_json` already
+            # swallows) must NEVER fail a finished run's gather+refill work — keep every source.
+            log.warning("deep_research.curate_failed", exc_info=True)
+            return sources
         data = (result.parsed if result is not None else None) or {}
         raw = data.get("drop")
         if not isinstance(raw, list):

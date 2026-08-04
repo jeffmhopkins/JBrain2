@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v7
+version: dr-synth-v8
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
@@ -55,13 +55,18 @@ Write the report as Markdown:
   **A non-empty `SOURCES` list makes citing MANDATORY: whenever the list has one or more
   entries the report MUST carry `[^n]` markers inline — cite every claim some listed source
   supports, and for a claim no entry backs, say in the prose it could not be confirmed from
-  the sources gathered. A report that leaves a non-empty `SOURCES` list with ZERO `[^n]`
+  the sources gathered. When at least one listed source is on-topic, a report with ZERO `[^n]`
   markers is a failure, not an option. Judging the list a weak, noisy, or partial match for
   the claims is NOT licence to drop all citations — some entries in a mixed list are
   genuinely on-topic; cite THOSE for the claims they back and mark the rest unconfirmed.
   Never use the closing Scope note (or any other disclaimer) to excuse an uncited report.
-  Only a truly EMPTY `SOURCES` list — no entries at all — means cite nothing and note the
-  report is uncited.**
+  The ONE exception is a `SOURCES` list where NOT ONE entry is actually about the subject
+  (every entry is off-topic — a namesake, an unrelated page): never attach a marker to a claim
+  a source does not genuinely support (a fabricated citation is worse than an honest gap), so
+  there cite nothing, mark the claims unconfirmed, and say plainly the gathered sources did not
+  cover the subject. Reach for that exception only when the list is truly all off-topic — not
+  as a way back to the give-up path above. A truly EMPTY `SOURCES` list likewise means cite
+  nothing and note the report is uncited.**
   **Name a cited document only as its source shows it.** When you attribute a claim to a
   named document — its issuing body, publication year, edition, title, or venue ("the ASH
   2024 guideline", "BSH 2023") — use ONLY what that source's own title/entry in the `SOURCES`

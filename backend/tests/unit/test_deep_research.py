@@ -76,6 +76,11 @@ class _FakeRouter:
         # The SOURCE CURATOR's scripted drop set (1-based source numbers). Default () = keep
         # everything, so a run that reaches the curator is byte-unchanged unless a test opts in.
         curate_drop: tuple[int, ...] = (),
+        # Make the curator call RAISE a non-BadResponse error (a provider 5xx/timeout the
+        # `_complete_json` bad-JSON catch does NOT swallow) → exercises the broad fail-open.
+        curate_raise: bool = False,
+        # Return a malformed (non-list) `drop` → exercises the keep-all-on-garbage path.
+        curate_garbage: bool = False,
     ) -> None:
         self.complexity = complexity
         self.sub_questions = list(sub_questions)
@@ -86,6 +91,8 @@ class _FakeRouter:
         self.plan_bad_json = plan_bad_json
         self.reflect_bad_json = reflect_bad_json
         self.curate_drop = curate_drop
+        self.curate_raise = curate_raise
+        self.curate_garbage = curate_garbage
         self._reflect_calls = 0
         self.calls: list[dict] = []
         self.synth_calls: list[str] = []
@@ -124,6 +131,10 @@ class _FakeRouter:
         # The SOURCE CURATOR is the only other structured one-shot — matched on its schema
         # (a `drop` list) so it never depends on the prompt's prose. Default keep-all.
         if json_schema and "drop" in (json_schema.get("properties") or {}):
+            if self.curate_raise:
+                raise RuntimeError("curator provider blew up")  # NOT LlmBadResponseError
+            if self.curate_garbage:
+                return _Result(text="", usage=usage, parsed={"drop": "not-a-list"})
             return _Result(text="", usage=usage, parsed={"drop": list(self.curate_drop)})
         raise AssertionError(f"unexpected complete() for system: {system[:40]!r}")
 
@@ -703,6 +714,49 @@ async def test_curate_sources_is_keep_biased_and_fail_open() -> None:
     router2 = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1,))
     out2 = await _svc(router2, _FakeSpawn(sources_per_child=1)).research(_ctx(), {"question": "q"})
     assert len(out2.view.data["web_sources"]) == 3  # type: ignore[attr-defined]
+
+
+async def test_curate_sources_ignores_out_of_range_and_garbage_drops() -> None:
+    """An out-of-range source number is filtered (not a crash, not a wrong cull), and a
+    malformed non-list `drop` keeps the whole registry — the curator can only remove real,
+    in-range entries a well-formed judgment names."""
+    # 9 sources; drop names source 1 (valid) and 99 (out of range) → only source 1 is culled.
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 99))
+    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
+    assert len(out.view.data["web_sources"]) == 8  # type: ignore[attr-defined]
+    # A non-list `drop` (a degraded/garbage parse) is ignored → keep-all.
+    garbage = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_garbage=True)
+    out2 = await _svc(garbage, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
+    assert len(out2.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
+
+
+async def test_curate_sources_fails_open_on_provider_error() -> None:
+    """Curation is a pure optimization — a provider error (5xx / timeout, beyond the bad-JSON
+    the shared helper already swallows) must NEVER fail a finished run's gather work. Any such
+    error keeps the whole registry rather than collapsing the run before the report is written."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_raise=True)
+    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
+    assert out.view is not None  # type: ignore[attr-defined]  # the run finished, not crashed
+    assert len(out.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
+    assert router.synth_calls  # the report was still written
+
+
+async def test_curate_sources_half_drop_is_the_refusal_boundary() -> None:
+    """The runaway-drop backstop uses a STRICT `> half`: dropping exactly half is accepted,
+    one more is refused wholesale — guarding the boundary against an off-by-one regression."""
+    subs = ("a", "b", "c", "d")  # 4 gather children × 2 sources = 8 collected
+    # Exactly half (4 of 8): accepted.
+    accept = _FakeRouter(
+        complexity="deep", covered=True, gaps=(), sub_questions=subs, curate_drop=(1, 2, 3, 4)
+    )
+    out = await _svc(accept, _FakeSpawn(sources_per_child=2)).research(_ctx(), {"question": "q"})
+    assert len(out.view.data["web_sources"]) == 4  # type: ignore[attr-defined]
+    # One past half (5 of 8): refused → the whole registry survives.
+    refuse = _FakeRouter(
+        complexity="deep", covered=True, gaps=(), sub_questions=subs, curate_drop=(1, 2, 3, 4, 5)
+    )
+    out2 = await _svc(refuse, _FakeSpawn(sources_per_child=2)).research(_ctx(), {"question": "q"})
+    assert len(out2.view.data["web_sources"]) == 8  # type: ignore[attr-defined]
 
 
 # --- report depth: the synthesizer is handed a length target by complexity --

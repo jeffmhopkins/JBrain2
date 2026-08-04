@@ -11,11 +11,14 @@ nothing" escape to a *noisy* list, atop a gather whose `web_search` registered e
 citable (a common-word name — "Frank", "Financial" — dragged in dictionary/film/bank-login
 noise). Fixed across three seams, each keeping the existing machinery:
 
-- **Synthesize prompt** (`dr-synth-v6 → v7`) — a non-empty `SOURCES` list now makes inline
+- **Synthesize prompt** (`dr-synth-v6 → v8`) — a non-empty `SOURCES` list now makes inline
   `[^n]` citation MANDATORY: cite every claim a listed source backs and mark the rest
   unconfirmed; judging the list weak/noisy is explicitly not licence to drop all citations, and
-  the Scope note may no longer excuse an uncited report. Only a truly EMPTY list means cite
-  nothing.
+  the Scope note may no longer excuse an uncited report. The v8 escape valve (from the review)
+  guards the all-noise case the keep-biased curator leaves intact: when NOT ONE listed source is
+  actually on-topic, cite nothing and mark claims unconfirmed rather than fabricate a marker — so
+  the must-cite mandate can never pressure a mis-citation. Only a truly EMPTY list means cite
+  nothing unconditionally.
 - **Source curator** (new `deep_research_curate_sources.prompt`, `dr-curate-v1`) — a keep-biased,
   fail-open, drop-capped judge culls the CLEARLY-unrelated registry entries (namesakes,
   dictionary pages, unrelated films/companies, login landings) before the writer cites, so a

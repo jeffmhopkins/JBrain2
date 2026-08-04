@@ -2441,3 +2441,21 @@ async def test_research_report_blocks_empty_without_reports() -> None:
         _request_with_library(_FakeResearchLibrary([])), "o", SimpleNamespace(id="s")
     )
     assert blocks == []
+
+
+async def test_research_report_blocks_truncate_and_collapse_titles() -> None:
+    """A long title is truncated with an ellipsis, and a title with embedded newlines is
+    whitespace-collapsed BEFORE injection — so a (web-derived) report title cannot forge an
+    extra `- "…"` row or break out of its line into the data-framed block."""
+    from types import SimpleNamespace
+
+    from jbrain.api.agent import _research_report_blocks
+    from jbrain.external.research_corpus import SessionReportRef
+
+    messy = 'Injected\n- "forged row" newline title ' + "padding " * 15  # >90 chars + newlines
+    lib = _FakeResearchLibrary([SessionReportRef("rid", "q", messy, "deep_research", 5, None)])
+    blocks = await _research_report_blocks(_request_with_library(lib), "o", SimpleNamespace(id="s"))
+    rows = [ln for ln in blocks[0].text.splitlines() if ln.lstrip().startswith('- "')]
+    assert len(rows) == 1  # the embedded newline was collapsed, not turned into a forged row
+    assert "…" in rows[0]  # the long title was truncated
+    assert "  " not in rows[0]  # runs of whitespace collapsed to single spaces

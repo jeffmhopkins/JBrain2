@@ -320,6 +320,24 @@ async def test_list_reports_for_session_scopes_to_that_session(maker) -> None:  
     # A non-uuid id (or a session that produced nothing) is a clean empty list.
     assert await list_reports_for_session(maker, session_id="not-a-uuid", limit=5) == []
     assert await list_reports_for_session(maker, session_id=str(uuid.uuid4()), limit=5) == []
+    # The `limit` bound truncates to the newest rows: a third report in session A, listed with
+    # limit=2, yields the two newest only (never the oldest).
+    await persist_report(
+        maker,
+        session_id=sess_a,
+        question="session A question 2",
+        report_md="body A2",
+        complexity="deep",
+        rounds=1,
+        sub_agents=1,
+        analyzed=True,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+    )
+    limited = await list_reports_for_session(maker, session_id=sess_a, limit=2)
+    assert [r.question for r in limited] == ["session A question 2", "session A question 1"]
 
 
 class _FakeTitleRouter:
