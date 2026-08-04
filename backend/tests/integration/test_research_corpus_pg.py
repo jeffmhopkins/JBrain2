@@ -26,6 +26,7 @@ from jbrain.external.research_corpus import (
     delete_report,
     fetch_report,
     list_reports,
+    list_reports_for_session,
     persist_report,
     search_reports,
 )
@@ -272,6 +273,71 @@ async def test_list_reports_counts_and_pages(maker) -> None:  # noqa: F811
     assert {r.question for r in page1 + page2} == {f"question number {i}" for i in range(3)}
     # The display title is None until the title_research_report job fills it.
     assert all(r.title is None for r in page1 + page2)
+
+
+async def test_list_reports_for_session_scopes_to_that_session(maker) -> None:  # noqa: F811
+    """The cross-turn reference read returns ONLY the reports produced in the given session,
+    newest first, with each report's source count — so jerv's per-turn pointer names what it
+    made in THIS chat (and a bad/non-uuid session id is a clean empty list, never an error)."""
+    await _clear_reports(maker)
+    sess_a, sess_b = str(uuid.uuid4()), str(uuid.uuid4())
+    for i in range(2):
+        await persist_report(
+            maker,
+            session_id=sess_a,
+            question=f"session A question {i}",
+            report_md=f"body A{i}",
+            complexity="deep",
+            rounds=1,
+            sub_agents=2,
+            analyzed=True,
+            revised=True,
+            coverage_limited=False,
+            truncated=False,
+            sources=[{"url": f"https://ex.com/{i}", "title": f"S{i}"}],
+        )
+    await persist_report(
+        maker,
+        session_id=sess_b,
+        question="session B question",
+        report_md="body B",
+        complexity="deep",
+        rounds=1,
+        sub_agents=1,
+        analyzed=True,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+    )
+    refs = await list_reports_for_session(maker, session_id=sess_a, limit=5)
+    # Newest first, and only this session's reports.
+    assert [r.question for r in refs] == ["session A question 1", "session A question 0"]
+    assert all(r.n_sources == 1 and r.tool == "deep_research" for r in refs)
+    # Session B's single report is not mixed in, and its source count is honest (0).
+    only_b = await list_reports_for_session(maker, session_id=sess_b, limit=5)
+    assert [r.question for r in only_b] == ["session B question"] and only_b[0].n_sources == 0
+    # A non-uuid id (or a session that produced nothing) is a clean empty list.
+    assert await list_reports_for_session(maker, session_id="not-a-uuid", limit=5) == []
+    assert await list_reports_for_session(maker, session_id=str(uuid.uuid4()), limit=5) == []
+    # The `limit` bound truncates to the newest rows: a third report in session A, listed with
+    # limit=2, yields the two newest only (never the oldest).
+    await persist_report(
+        maker,
+        session_id=sess_a,
+        question="session A question 2",
+        report_md="body A2",
+        complexity="deep",
+        rounds=1,
+        sub_agents=1,
+        analyzed=True,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+    )
+    limited = await list_reports_for_session(maker, session_id=sess_a, limit=2)
+    assert [r.question for r in limited] == ["session A question 2", "session A question 1"]
 
 
 class _FakeTitleRouter:

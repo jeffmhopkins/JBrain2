@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v6
+version: dr-synth-v8
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
@@ -52,7 +52,21 @@ Write the report as Markdown:
   `SOURCES` list instead. End the report with a `## Sources` list echoing each number you
   used with its title. Never invent a source or a number that is not in the `SOURCES`
   list; if a claim has no backing source, drop it or say plainly it could not be confirmed.
-  (If no `SOURCES` list is given, cite nothing and note the report is uncited.)
+  **A non-empty `SOURCES` list makes citing MANDATORY: whenever the list has one or more
+  entries the report MUST carry `[^n]` markers inline — cite every claim some listed source
+  supports, and for a claim no entry backs, say in the prose it could not be confirmed from
+  the sources gathered. When at least one listed source is on-topic, a report with ZERO `[^n]`
+  markers is a failure, not an option. Judging the list a weak, noisy, or partial match for
+  the claims is NOT licence to drop all citations — some entries in a mixed list are
+  genuinely on-topic; cite THOSE for the claims they back and mark the rest unconfirmed.
+  Never use the closing Scope note (or any other disclaimer) to excuse an uncited report.
+  The ONE exception is a `SOURCES` list where NOT ONE entry is actually about the subject
+  (every entry is off-topic — a namesake, an unrelated page): never attach a marker to a claim
+  a source does not genuinely support (a fabricated citation is worse than an honest gap), so
+  there cite nothing, mark the claims unconfirmed, and say plainly the gathered sources did not
+  cover the subject. Reach for that exception only when the list is truly all off-topic — not
+  as a way back to the give-up path above. A truly EMPTY `SOURCES` list likewise means cite
+  nothing and note the report is uncited.**
   **Name a cited document only as its source shows it.** When you attribute a claim to a
   named document — its issuing body, publication year, edition, title, or venue ("the ASH
   2024 guideline", "BSH 2023") — use ONLY what that source's own title/entry in the `SOURCES`
@@ -98,7 +112,9 @@ Write the report as Markdown:
 - Close with a short **Scope** note (a sentence or two): that the report is an automated
   synthesis of the web sources listed below — gathered for this run, not a systematic
   literature search — and roughly how many sources it drew on. It is provenance, not a
-  methods section; keep it brief, and don't restate the findings or the gaps.
+  methods section; keep it brief, and don't restate the findings or the gaps. The Scope
+  note is provenance ONLY — it must never claim the report could not be foot-noted, or
+  otherwise stand in for the inline `[^n]` citations the rule above requires.
 
 If the request includes a CRITIQUE of an earlier draft, you are REVISING: produce the
 improved report, folding in the critique's valid points (fix unsupported claims, add

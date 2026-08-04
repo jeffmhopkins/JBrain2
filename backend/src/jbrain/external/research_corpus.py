@@ -236,6 +236,65 @@ async def list_reports_scoped(
     return [_row_to_library_report(r) for r in rows]
 
 
+@dataclass(frozen=True)
+class SessionReportRef:
+    """A pointer to a report PRODUCED in one agent session — the material for jerv's cross-turn
+    reference line (api.agent._research_report_blocks). A deep_research call's return value is
+    intra-turn (ChatMessageIn carries only role+content), so after the turn that produced it jerv
+    can no longer see the report and has mistaken a finished run for 'only the JSON prompt / not
+    run yet' (CROSS_TURN_TOOL_RESULTS_PLAN.md). The report itself stays durable in the library;
+    this compact pointer is re-surfaced each turn so jerv reads it back instead of denying it."""
+
+    id: str
+    question: str
+    title: str | None
+    tool: str
+    n_sources: int
+    created_at: datetime | None
+
+
+async def list_reports_for_session(
+    maker: async_sessionmaker[AsyncSession],
+    *,
+    session_id: str,
+    limit: int,
+    principal_id: str = "",
+) -> list[SessionReportRef]:
+    """The reports produced in ONE agent session, newest first — the source for jerv's cross-turn
+    'reports you produced this chat' reference line. Reads under the corpus `external` scope (the
+    same context every other report read uses, so jerv reaches the library and nothing
+    owner-authored), narrowed to this `session_id`. A non-uuid id is a clean empty list."""
+    session_id = (session_id or "").strip()
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        return []
+    async with scoped_session(maker, _report_read_context(principal_id)) as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, question, title, tool,"
+                    " coalesce(jsonb_array_length(sources), 0) AS n_sources, created_at"
+                    " FROM app.research_reports"
+                    " WHERE status = 'done' AND session_id = cast(:sid AS uuid)"
+                    " ORDER BY created_at DESC, id LIMIT :limit"
+                ),
+                {"sid": session_id, "limit": limit},
+            )
+        ).all()
+    return [
+        SessionReportRef(
+            id=str(r.id),
+            question=r.question or "",
+            title=(r.title or None),
+            tool=r.tool or "deep_research",
+            n_sources=int(r.n_sources or 0),
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
 async def list_reports(
     maker: async_sessionmaker[AsyncSession],
     *,

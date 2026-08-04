@@ -39,6 +39,16 @@ class ResearchLibrary:
             self._maker, limit=limit, offset=offset, principal_id=principal_id
         )
 
+    async def list_reports_for_session(
+        self, principal_id: str, *, session_id: str, limit: int
+    ) -> list[research_corpus.SessionReportRef]:
+        """Reports PRODUCED in one agent session — the source for jerv's cross-turn reference
+        line (api.agent._research_report_blocks), so a finished deep_research run stays visible
+        after the turn that produced it (CROSS_TURN_TOOL_RESULTS_PLAN.md)."""
+        return await research_corpus.list_reports_for_session(
+            self._maker, session_id=session_id, limit=limit, principal_id=principal_id
+        )
+
     async def search_reports(
         self, principal_id: str, query: str, limit: int
     ) -> tuple[list[research_corpus.ReportHit], bool]:

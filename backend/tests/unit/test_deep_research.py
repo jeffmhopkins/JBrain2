@@ -73,6 +73,14 @@ class _FakeRouter:
         # raises it too for the named stage. deep_research must DEGRADE, not die.
         plan_bad_json: bool = False,
         reflect_bad_json: bool = False,
+        # The SOURCE CURATOR's scripted drop set (1-based source numbers). Default () = keep
+        # everything, so a run that reaches the curator is byte-unchanged unless a test opts in.
+        curate_drop: tuple[int, ...] = (),
+        # Make the curator call RAISE a non-BadResponse error (a provider 5xx/timeout the
+        # `_complete_json` bad-JSON catch does NOT swallow) → exercises the broad fail-open.
+        curate_raise: bool = False,
+        # Return a malformed (non-list) `drop` → exercises the keep-all-on-garbage path.
+        curate_garbage: bool = False,
     ) -> None:
         self.complexity = complexity
         self.sub_questions = list(sub_questions)
@@ -82,6 +90,9 @@ class _FakeRouter:
         self.reflect_script = reflect_script
         self.plan_bad_json = plan_bad_json
         self.reflect_bad_json = reflect_bad_json
+        self.curate_drop = curate_drop
+        self.curate_raise = curate_raise
+        self.curate_garbage = curate_garbage
         self._reflect_calls = 0
         self.calls: list[dict] = []
         self.synth_calls: list[str] = []
@@ -117,6 +128,14 @@ class _FakeRouter:
             return _Result(
                 text="", usage=usage, parsed={"covered": self.covered, "gaps": self.gaps}
             )
+        # The SOURCE CURATOR is the only other structured one-shot — matched on its schema
+        # (a `drop` list) so it never depends on the prompt's prose. Default keep-all.
+        if json_schema and "drop" in (json_schema.get("properties") or {}):
+            if self.curate_raise:
+                raise RuntimeError("curator provider blew up")  # NOT LlmBadResponseError
+            if self.curate_garbage:
+                return _Result(text="", usage=usage, parsed={"drop": "not-a-list"})
+            return _Result(text="", usage=usage, parsed={"drop": list(self.curate_drop)})
         raise AssertionError(f"unexpected complete() for system: {system[:40]!r}")
 
     async def converse_stream(self, task, *, system, messages, tools=(), **kw):  # noqa: ANN001
@@ -668,6 +687,113 @@ async def test_citations_are_tracked_from_sub_agents_to_the_report() -> None:
     assert len(urls) == len(set(urls))  # deduped
 
 
+async def test_curate_sources_culls_clearly_unrelated_noise() -> None:
+    """Once the registry is large enough to plausibly carry noise (a keyword match drags in
+    namesakes / dictionary pages), the source curator drops the entries it names as clearly
+    unrelated BEFORE the writer cites against the list — so the report cites a clean registry
+    instead of a noisy one the writer might give up on (the CFO zero-citation failure)."""
+    # 3 gather children × 3 sources = 9 collected (≥ the curate threshold); script two drops.
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
+    spawn = _FakeSpawn(sources_per_child=3)
+    out = await _svc(router, spawn).research(_ctx(), {"question": "who are the CFO candidates?"})
+    ws = out.view.data["web_sources"]  # type: ignore[attr-defined]
+    assert len(ws) == 7  # nine collected, two culled as noise
+    # The curated list is what the writer cited against, too (not just the view).
+    assert any("SOURCES — cite with these exact numbers" in uw for uw in router.synth_calls)
+
+
+async def test_curate_sources_is_keep_biased_and_fail_open() -> None:
+    """The curator can only ever remove OBVIOUS junk: a runaway drop (more than half the
+    list) is refused wholesale, and a short list is left untouched — so a flaky judgment can
+    never strand the run's real citations under the new must-cite synthesis rule."""
+    # Oversized drop (6 of 9) is refused → the whole registry survives.
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2, 3, 4, 5, 6))
+    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
+    assert len(out.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
+    # A small registry (3 sources < threshold) never even calls the curator.
+    router2 = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1,))
+    out2 = await _svc(router2, _FakeSpawn(sources_per_child=1)).research(_ctx(), {"question": "q"})
+    assert len(out2.view.data["web_sources"]) == 3  # type: ignore[attr-defined]
+
+
+async def test_curate_sources_ignores_out_of_range_and_garbage_drops() -> None:
+    """An out-of-range source number is filtered (not a crash, not a wrong cull), and a
+    malformed non-list `drop` keeps the whole registry — the curator can only remove real,
+    in-range entries a well-formed judgment names."""
+    # 9 sources; drop names source 1 (valid) and 99 (out of range) → only source 1 is culled.
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 99))
+    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
+    assert len(out.view.data["web_sources"]) == 8  # type: ignore[attr-defined]
+    # A non-list `drop` (a degraded/garbage parse) is ignored → keep-all.
+    garbage = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_garbage=True)
+    out2 = await _svc(garbage, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
+    assert len(out2.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
+
+
+async def test_curate_sources_fails_open_on_provider_error() -> None:
+    """Curation is a pure optimization — a provider error (5xx / timeout, beyond the bad-JSON
+    the shared helper already swallows) must NEVER fail a finished run's gather work. Any such
+    error keeps the whole registry rather than collapsing the run before the report is written."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_raise=True)
+    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
+    assert out.view is not None  # type: ignore[attr-defined]  # the run finished, not crashed
+    assert len(out.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
+    assert router.synth_calls  # the report was still written
+
+
+async def test_curate_sources_half_drop_is_the_refusal_boundary() -> None:
+    """The runaway-drop backstop uses a STRICT `> half`: dropping exactly half is accepted,
+    one more is refused wholesale — guarding the boundary against an off-by-one regression."""
+    subs = ("a", "b", "c", "d")  # 4 gather children × 2 sources = 8 collected
+    # Exactly half (4 of 8): accepted.
+    accept = _FakeRouter(
+        complexity="deep", covered=True, gaps=(), sub_questions=subs, curate_drop=(1, 2, 3, 4)
+    )
+    out = await _svc(accept, _FakeSpawn(sources_per_child=2)).research(_ctx(), {"question": "q"})
+    assert len(out.view.data["web_sources"]) == 4  # type: ignore[attr-defined]
+    # One past half (5 of 8): refused → the whole registry survives.
+    refuse = _FakeRouter(
+        complexity="deep", covered=True, gaps=(), sub_questions=subs, curate_drop=(1, 2, 3, 4, 5)
+    )
+    out2 = await _svc(refuse, _FakeSpawn(sources_per_child=2)).research(_ctx(), {"question": "q"})
+    assert len(out2.view.data["web_sources"]) == 8  # type: ignore[attr-defined]
+
+
+async def test_curate_sources_min_sources_threshold_boundary() -> None:
+    """Pin the `< _CURATE_MIN_SOURCES` skip boundary (mirroring the strict `>half` pin): a
+    registry of exactly the threshold invokes the curator (a scripted drop applies), one fewer
+    skips it (the same scripted drop is ignored). A single gather angle (breadth=1) makes the
+    collected count exactly `sources_per_child`."""
+    from jbrain.agent.deep_research import _CURATE_MIN_SOURCES as MIN
+
+    # One below threshold → curator never called, drop ignored.
+    below = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
+    out = await _svc(below, _FakeSpawn(sources_per_child=MIN - 1)).research(
+        _ctx(), {"question": "q", "breadth": 1}
+    )
+    assert len(out.view.data["web_sources"]) == MIN - 1  # type: ignore[attr-defined]
+    # Exactly at threshold → curator runs, both drops apply.
+    at = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
+    out2 = await _svc(at, _FakeSpawn(sources_per_child=MIN)).research(
+        _ctx(), {"question": "q", "breadth": 1}
+    )
+    assert len(out2.view.data["web_sources"]) == MIN - 2  # type: ignore[attr-defined]
+
+
+def test_curate_and_synthesize_prompts_carry_their_behavioral_core() -> None:
+    """Guard the must-cite / all-noise-escape / keep-biased instructions against silent prose
+    drift — the behavioral core of the citation fix (the plan prompt gets the same guard via
+    its `namesake` assertion). LLM judgment itself can't be unit-tested; the prose can."""
+    from jbrain.agent.deep_research import _CURATE, _SYNTH
+
+    synth = _SYNTH.body.lower()
+    assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
+    assert "not licence to drop all citations" in synth  # the give-up path stays closed
+    assert "a fabricated citation is worse than an honest gap" in synth  # all-noise escape valve
+    curate = _CURATE.body.lower()
+    assert "keep-biased" in curate and "when you are unsure" in curate  # keep-bias survives
+
+
 # --- report depth: the synthesizer is handed a length target by complexity --
 
 
@@ -773,11 +899,12 @@ def test_plan_prompt_forbids_meta_and_cross_child_subquestions() -> None:
     from jbrain.agent.deep_research import _PLAN
 
     body = _PLAN.body.lower()
-    assert _PLAN.version == "dr-plan-v6"
+    assert _PLAN.version == "dr-plan-v7"
     assert "citation matrix" in body  # the exact meta task that leaked through v1
     assert "process or meta task" in body
     assert "in isolation" in body  # names why cross-child briefs can't work
     assert "fewer" in body  # the anti-over-decomposition steer
+    assert "namesake" in body  # v7: anchor a named subject so a sub-agent skips the wrong entity
     # v4: each sub-question is a {title, brief} object — a short row label + the full brief.
     assert "`title`" in body and "`brief`" in body
 

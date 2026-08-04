@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-02
+> **Status:** Living · **Last verified:** 2026-08-04
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -473,6 +473,14 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   jerv continues a long transcript section-by-section (or re-reads a page) with no network
   re-fetch and no lost place. The store is a generic, opt-in base (`ToolArtifactRepo`); `ocr`
   and `gmail_read` are the next intended clients (`docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`).
+
+  **Deep-research reports stay visible across turns too.** A `deep_research`/`deep_produce`
+  return is intra-turn like any tool result, so jerv used to lose sight of a finished run and
+  deny it happened ("that was only the JSON prompt / it hasn't run yet") even though the report
+  was persisted to the library. The report library already persists every run, so it takes the
+  *reference* half of the mechanism only (no artifact store): each turn re-injects a compact
+  DATA-framed pointer to the reports produced this session (title + id + source count), read
+  back with `read_research_report` — so a finished run is never mistaken for an unrun prompt.
 
   **`analyze_image` also returns the text.** Beyond describing what an image *shows*,
   `analyze_image` now hands back the image's **verbatim text as Markdown** (headings, tables,

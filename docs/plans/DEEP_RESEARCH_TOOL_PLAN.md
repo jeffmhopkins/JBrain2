@@ -1,6 +1,33 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-29 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; v14 quantitative-provenance rule + citation-attribution fidelity + recommendation-grade signpost; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-08-04 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; v14 quantitative-provenance rule + citation-attribution fidelity + recommendation-grade signpost; v15 citation reliability — synth must-cite + question-aware source curator + entity-disambiguation queries; mock-gate sign-off pending)
+
+**v15 revision (a citation-rich request came back UNCITED — the ballot-research failure).**
+Two identically-prompted political reports diverged: the Senate run cited 162 `[^n]` markers
+against 399 gathered sources; the CFO run gathered 129 sources but emitted ZERO markers,
+closing with a Scope note that "the source list did not contain directly relevant citations …
+it cannot be fully foot-noted." Root cause was the writer over-applying the "no SOURCES ⇒ cite
+nothing" escape to a *noisy* list, atop a gather whose `web_search` registered every hit as
+citable (a common-word name — "Frank", "Financial" — dragged in dictionary/film/bank-login
+noise). Fixed across three seams, each keeping the existing machinery:
+
+- **Synthesize prompt** (`dr-synth-v6 → v8`) — a non-empty `SOURCES` list now makes inline
+  `[^n]` citation MANDATORY: cite every claim a listed source backs and mark the rest
+  unconfirmed; judging the list weak/noisy is explicitly not licence to drop all citations, and
+  the Scope note may no longer excuse an uncited report. The v8 escape valve (from the review)
+  guards the all-noise case the keep-biased curator leaves intact: when NOT ONE listed source is
+  actually on-topic, cite nothing and mark claims unconfirmed rather than fabricate a marker — so
+  the must-cite mandate can never pressure a mis-citation. Only a truly EMPTY list means cite
+  nothing unconditionally.
+- **Source curator** (new `deep_research_curate_sources.prompt`, `dr-curate-v1`) — a keep-biased,
+  fail-open, drop-capped judge culls the CLEARLY-unrelated registry entries (namesakes,
+  dictionary pages, unrelated films/companies, login landings) before the writer cites, so a
+  noisy list can't crowd out the real sources. Runs only once the registry is large enough to
+  carry noise (`_CURATE_MIN_SOURCES`); a small list or an oversized/empty drop is left untouched.
+- **Query disambiguation** (`deep_research_plan.prompt` dr-plan-v6 → v7; `research.prompt`
+  agent-research-v10 → v11) — a named subject (person/org/place, esp. a common/shared name) is
+  anchored with full name + role + jurisdiction + year, and namesake results (a dictionary word,
+  a film, an unrelated company) are discarded rather than cited — cutting the noise at its source.
 
 **v14 revision (stop invented precision and mislabelled citations — a frontier-model
 critique of the TTP-transfusion `deep` report).** An owner-supplied review of the platelet/
