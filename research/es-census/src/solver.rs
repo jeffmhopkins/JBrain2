@@ -113,3 +113,29 @@ pub fn minimal_certificate(
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sieve::{base_primes, factor_window, hard_primes_in};
+
+    #[test]
+    fn certificates_hold_over_a_small_range() {
+        let base = base_primes(2000);
+        let hard = hard_primes_in(2, 5000, &base);
+        // a = (n+R)/4 <= (5000+400)/4 = 1350
+        let wf = factor_window(2, 1400, &base);
+        assert!(!hard.is_empty());
+        for &n in &hard {
+            let cert = minimal_certificate(n, &wf, 400)
+                .unwrap_or_else(|| panic!("n={n} unsolved"));
+            assert_eq!((n + cert.r) % 4, 0);
+            // 4*a*b*c == n*(b*c + a*c + a*b), exact.
+            let four = BigUint::from(4u32);
+            let bn = BigUint::from(n);
+            let lhs = &four * &cert.a * &cert.b * &cert.c;
+            let rhs = &bn * (&cert.b * &cert.c + &cert.a * &cert.c + &cert.a * &cert.b);
+            assert_eq!(lhs, rhs, "identity for n={n}");
+        }
+    }
+}

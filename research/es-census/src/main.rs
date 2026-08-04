@@ -23,6 +23,7 @@ mod solver;
 
 use std::fs::File;
 use std::io::Write;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use flate2::write::GzEncoder;
@@ -211,6 +212,7 @@ fn main() {
     let mut max_r: u64 = 400;
     let mut tail_thr: u64 = TAIL_DEFAULT;
     let mut out: Option<String> = None;
+    let mut verify_log: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         let val = |i: usize| args.get(i + 1).expect("missing value").clone();
@@ -248,6 +250,10 @@ fn main() {
                 out = Some(val(i));
                 i += 2;
             }
+            "--verify-log" => {
+                verify_log = Some(val(i));
+                i += 2;
+            }
             other => panic!("unknown arg: {other}"),
         }
     }
@@ -271,10 +277,28 @@ fn main() {
         s = e + 1;
     }
 
+    // Live progress for the launcher terminal: report every ~1% of segments.
+    let total_segs = segments.len();
+    let step = (total_segs / 100).max(1);
+    let done = AtomicUsize::new(0);
+    let primes_done = AtomicU64::new(0);
     let t1 = Instant::now();
     let mut parts: Vec<SegOut> = segments
         .par_iter()
-        .map(|&(a, b)| process_segment(a, b, &base, max_r, tail_thr))
+        .map(|&(a, b)| {
+            let seg = process_segment(a, b, &base, max_r, tail_thr);
+            let np = primes_done.fetch_add(seg.primes.len() as u64, Ordering::Relaxed)
+                + seg.primes.len() as u64;
+            let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+            if d % step == 0 || d == total_segs {
+                eprintln!(
+                    "[census] segment {d}/{total_segs} ({}%), {np} hard primes, {:.0}s",
+                    d * 100 / total_segs,
+                    t1.elapsed().as_secs_f64()
+                );
+            }
+            seg
+        })
         .collect();
     let solve_secs = t1.elapsed().as_secs_f64();
     parts.sort_by_key(|p| p.seg_lo);
@@ -313,6 +337,24 @@ fn main() {
     dist.sort_by_key(|&(r, _)| r);
     let total_secs = t0.elapsed().as_secs_f64();
 
+    // Headline block for the public results page — verbatim lines matching the
+    // Python run_1e12 output the share page renders.
+    let verdict = if max_r_seen > 107 {
+        "(RECORD BREAKS 107!)"
+    } else {
+        "(record R=107 stands)"
+    };
+    let tail87: Vec<String> = dist
+        .iter()
+        .filter(|(r, _)| *r >= 87)
+        .map(|(r, c)| format!("{r}: {c}"))
+        .collect();
+    let headline = [
+        format!("hard primes: {}", primes.len()),
+        format!("max minimal R: {max_r_seen} at p = {max_r_prime} {verdict}"),
+        format!("R >= 87 counts: {{{}}}", tail87.join(", ")),
+    ];
+
     if let Some(prefix) = &out {
         match write_artifacts(
             prefix, hi, &primes, &rvals, &tail, max_r_seen, max_r_prime,
@@ -343,6 +385,38 @@ fn main() {
     println!("  \"total_secs\": {total_secs:.3},");
     println!("  \"hard_primes_per_sec\": {rate:.0}");
     println!("}}");
+    // Headline lines to stdout (captured into the run's console log; the launcher
+    // greps these markers for the public results page).
+    for line in &headline {
+        println!("{line}");
+    }
+
+    // Optional verify log for the launcher's success gate: exact-checked at
+    // generation, so a clean run (no unsolved primes) writes the sentinel.
+    if let Some(vpath) = &verify_log {
+        let ok = unsolved.is_empty();
+        let mut report = String::from("native es-census verification\n");
+        for line in &headline {
+            report.push_str(line);
+            report.push('\n');
+        }
+        report.push_str(&format!("unsolved: {}\n", unsolved.len()));
+        report.push_str(
+            "every certificate exact-checked (4abc = n(bc+ac+ab)) during generation\n",
+        );
+        report.push_str(if ok {
+            "VERIFICATION OK\n"
+        } else {
+            "VERIFICATION FAILED\n"
+        });
+        if let Err(e) = std::fs::write(vpath, &report) {
+            eprintln!("[verify] write failed: {e}");
+        }
+        if !ok {
+            std::process::exit(1);
+        }
+    }
+
     if !unsolved.is_empty() {
         let sample: Vec<u64> = unsolved.iter().take(10).copied().collect();
         eprintln!("[warn] {} unsolved (max_R={max_r} too small?): {sample:?}",

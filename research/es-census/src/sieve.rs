@@ -119,3 +119,33 @@ pub fn factor_window(a_lo: u64, a_hi: u64, base: &[u64]) -> WindowFactors {
     }
     WindowFactors { a_lo, small, rem }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn factor_window_reconstructs_every_value() {
+        let base = base_primes(1000);
+        let wf = factor_window(2, 4000, &base);
+        for a in 2..4000u64 {
+            let mut prod = 1u64;
+            for (p, e) in wf.factor(a) {
+                for _ in 0..e {
+                    prod *= p;
+                }
+            }
+            assert_eq!(prod, a, "reconstruction of {a}");
+        }
+    }
+
+    #[test]
+    fn hard_primes_are_prime_and_in_class() {
+        let base = base_primes(100);
+        let hp = hard_primes_in(2, 3000, &base);
+        assert!(hp.contains(&1009)); // 1009 ≡ 169 (mod 840), prime
+        assert!(hp.iter().all(|&n| is_hard(n)));
+        // ascending + no even numbers
+        assert!(hp.windows(2).all(|w| w[0] < w[1]));
+    }
+}

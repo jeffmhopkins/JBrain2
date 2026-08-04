@@ -72,10 +72,16 @@ class JobSpec:
 
 
 def _validate(spec: JobSpec) -> JobSpec:
-    if "::" in spec.repo_url or not spec.repo_url.startswith(_ALLOWED_SCHEMES):
-        raise SpecError(f"{spec.name}: repo must be an https:// or git:// URL")
-    if spec.branch.startswith("-") or not spec.phases:
-        raise SpecError(f"{spec.name}: invalid branch or empty phases")
+    # A spec may declare no repo (``repo_url=""``) when it runs a tool baked into the
+    # image rather than cloning source (the runner skips the clone phase); only a
+    # non-empty repo_url is shape-checked for the ext/file transports.
+    if spec.repo_url:
+        if "::" in spec.repo_url or not spec.repo_url.startswith(_ALLOWED_SCHEMES):
+            raise SpecError(f"{spec.name}: repo must be an https:// or git:// URL")
+        if spec.branch.startswith("-"):
+            raise SpecError(f"{spec.name}: invalid branch")
+    if not spec.phases:
+        raise SpecError(f"{spec.name}: empty phases")
     return spec
 
 
@@ -133,7 +139,56 @@ ERDOS_STRAUS_1E12 = _validate(
 )
 
 
-SPECS: dict[str, JobSpec] = {ERDOS_STRAUS_1E12.name: ERDOS_STRAUS_1E12}
+# Native Rust rerun of the census. The `es-census` binary (research/es-census) is
+# baked into the jlaunch image, so there is NO repo to clone. Its windowed
+# smallest-prime-factor sieve factors a=(n+R)/4 with base primes to sqrt(a), so the
+# factorization is always complete — fixing the Python path's non-minimal R above
+# ~1.3e11 (where the fixed 180000-prime table stops covering sqrt(a)) — and it is far
+# faster. It emits the same artifacts (rvals.u8.gz / meta.json / tail.json), writes the
+# verify log (every certificate is exact-checked at generation), and prints the same
+# headline block. All cores; ~10 GB held in memory for the ordered output.
+ERDOS_STRAUS_1E12_NATIVE = _validate(
+    JobSpec(
+        name="erdos_straus_1e12_native",
+        title="Erdos-Straus census to 10^12 (native Rust)",
+        repo_url="",  # baked-in tool: no clone
+        branch="",
+        phases=(
+            Phase(
+                "census",
+                "mkdir -p data && set -o pipefail && "
+                "es-census --max 1000000000000 --out data/es_1e12 "
+                "--verify-log run_1e12_verify.log 2>&1 | tee run_1e12_generate.log",
+            ),
+            Phase(
+                "package",
+                "tar czf es_1e12_artifacts.tar.gz "
+                "data/es_1e12.rvals.u8.gz data/es_1e12.meta.json "
+                "data/es_1e12.tail.json run_1e12_generate.log run_1e12_verify.log",
+            ),
+        ),
+        artifact_path="es_1e12_artifacts.tar.gz",
+        artifact_media_type="application/gzip",
+        verify_log="run_1e12_verify.log",
+        verify_must_end_with="VERIFICATION OK",
+        headline_markers=("hard primes:", "max minimal R:", "R >= 87 counts:"),
+        est_hours="2-5 h",
+        disk_gb=5,
+        all_cores=True,
+        notes=(
+            "Native Rust rerun (baked-in es-census). Complete factorization to "
+            "sqrt(a) fixes the Python path's non-minimal R above ~1.3e11; every "
+            "certificate is exact-checked during generation. All cores; ~10 GB held "
+            "in memory for the ordered output. Emits rvals/meta/tail + the tarball."
+        ),
+    )
+)
+
+
+SPECS: dict[str, JobSpec] = {
+    ERDOS_STRAUS_1E12.name: ERDOS_STRAUS_1E12,
+    ERDOS_STRAUS_1E12_NATIVE.name: ERDOS_STRAUS_1E12_NATIVE,
+}
 
 
 def get_spec(name: str) -> JobSpec | None:

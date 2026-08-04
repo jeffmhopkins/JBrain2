@@ -548,7 +548,10 @@ services:
   jlaunch:
     image: jbrain2-jlaunch:local
     build:
-      context: ./src/jlaunch
+      # Repo-root context so the Dockerfile can also compile research/es-census
+      # (the native census baked in for the Erdős–Straus rerun spec).
+      context: ./src
+      dockerfile: jlaunch/Dockerfile
     restart: unless-stopped
     environment:
       # Bearer token the api presents on every control call (fail-closed: no token, the
