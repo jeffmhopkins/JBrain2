@@ -607,9 +607,7 @@ def _tiered_handler(direct: httpx.Response, *, reader: bytes | None, solver_resp
             solution = {"url": str(request.url), **solver_response}
             return httpx.Response(200, json={"solution": solution})
         if request.url.host == "reader" and reader is not None:
-            return httpx.Response(
-                200, content=reader, headers={"content-type": "text/markdown"}
-            )
+            return httpx.Response(200, content=reader, headers={"content-type": "text/markdown"})
         return direct
 
     return handle
