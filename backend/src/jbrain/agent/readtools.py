@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from jbrain.citygeocode import CityGeocoder
+    from jbrain.embed import EmbedClient
     from jbrain.geocode import NominatimReverseClient
     from jbrain.llm.router import LlmRouter
     from jbrain.notify import NotifyBus
@@ -685,6 +686,7 @@ def build_registry(
     external_reverse: "NominatimReverseClient | None" = None,
     router: "LlmRouter | None" = None,
     settings: "SqlSettingsStore | None" = None,
+    embed: "EmbedClient | None" = None,
     image_handlers: dict[str, ToolHandler] | None = None,
     transcribe_handlers: dict[str, ToolHandler] | None = None,
     video_handlers: dict[str, ToolHandler] | None = None,
@@ -851,7 +853,7 @@ def build_registry(
         # so it is wired once that exists. Same guard: no router → the ref stays unbound
         # and a deep_research call refuses cleanly.
         deep_research_ref.service = DeepResearchService(
-            router=router, spawn=spawn_ref.service, maker=maker
+            router=router, spawn=spawn_ref.service, maker=maker, embed=embed
         )
         # deep_produce is the same engine, a different verb: share the one service instance.
         deep_produce_ref.service = deep_research_ref.service

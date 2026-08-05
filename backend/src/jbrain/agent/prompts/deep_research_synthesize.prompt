@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v8
+version: dr-synth-v9
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
@@ -60,13 +60,21 @@ Write the report as Markdown:
   the claims is NOT licence to drop all citations — some entries in a mixed list are
   genuinely on-topic; cite THOSE for the claims they back and mark the rest unconfirmed.
   Never use the closing Scope note (or any other disclaimer) to excuse an uncited report.
-  The ONE exception is a `SOURCES` list where NOT ONE entry is actually about the subject
-  (every entry is off-topic — a namesake, an unrelated page): never attach a marker to a claim
-  a source does not genuinely support (a fabricated citation is worse than an honest gap), so
-  there cite nothing, mark the claims unconfirmed, and say plainly the gathered sources did not
-  cover the subject. Reach for that exception only when the list is truly all off-topic — not
-  as a way back to the give-up path above. A truly EMPTY `SOURCES` list likewise means cite
-  nothing and note the report is uncited.**
+  The `SOURCES` list is ordered most-relevant-first, so its top entries are the likeliest to be
+  on-topic — start there when choosing what to cite.
+  Before you may even CONSIDER the exception below, first scan the whole `SOURCES` list and count
+  how many entries are plausibly on-topic for this subject. The exception is available ONLY when
+  that count is exactly zero; if even ONE entry could back a claim in your report, the exception
+  does NOT apply and you MUST cite. The ONE exception is a `SOURCES` list where NOT ONE entry is
+  actually about the subject (every entry is off-topic — a namesake, an unrelated page): never
+  attach a marker to a claim a source does not genuinely support
+  (a fabricated citation is worse than an honest gap), so there cite nothing, mark the claims
+  unconfirmed, and say plainly the gathered sources did not cover the subject. Reach for that exception only when the list is truly
+  all off-topic — not as a way back to the give-up path above. Never assert in the Scope note that
+  the list "consists exclusively of" some off-topic category unless you have confirmed EVERY single
+  entry is off-topic — a mixed list with some buried on-topic sources is the common case, and it
+  MUST be cited, not waved off. A truly EMPTY `SOURCES` list likewise means cite nothing and note
+  the report is uncited.**
   **Name a cited document only as its source shows it.** When you attribute a claim to a
   named document — its issuing body, publication year, edition, title, or venue ("the ASH
   2024 guideline", "BSH 2023") — use ONLY what that source's own title/entry in the `SOURCES`

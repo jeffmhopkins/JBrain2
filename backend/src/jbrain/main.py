@@ -706,6 +706,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             external_reverse,
             router=app.state.llm_router,
             settings=settings_store,
+            embed=app.state.embed_client,
             image_handlers=image_handlers,
             transcribe_handlers=transcribe_handlers,
             video_handlers=video_handlers,
