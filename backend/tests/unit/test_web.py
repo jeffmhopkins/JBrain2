@@ -586,6 +586,94 @@ def test_is_challenge_page_precision() -> None:
     assert not _is_challenge_page("Hi There", "Heading. First para. Second para.")
 
 
+# The solved page the challenge solver returns (a FlareSolverr-shape `/v1` response wraps the
+# HTML in solution.response) — real content the stealth browser recovered past the wall.
+_SOLVED_HTML = (
+    "<html><head><title>CFO Race</title></head><body>"
+    "<h1>Blaise Ingoglia</h1><p>Real article content the stealth browser recovered.</p>"
+    "</body></html>"
+)
+
+
+def _tiered_handler(direct: httpx.Response, *, reader: bytes | None, solver_response):  # type: ignore[no-untyped-def]
+    """A transport serving all three fetch legs off one MockTransport: the solver host
+    (`byparr`) with a FlareSolverr-shape JSON body (None ⇒ 500), the reader host with markdown
+    (None ⇒ not answered), and every other host with `direct`."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "byparr":
+            if solver_response is None:
+                return httpx.Response(500)
+            solution = {"url": str(request.url), **solver_response}
+            return httpx.Response(200, json={"solution": solution})
+        if request.url.host == "reader" and reader is not None:
+            return httpx.Response(
+                200, content=reader, headers={"content-type": "text/markdown"}
+            )
+        return direct
+
+    return handle
+
+
+async def test_solver_recovers_when_the_reader_returns_a_challenge() -> None:
+    # Direct 403 → reader renders the challenge interstitial (a miss) → the solver's stealth
+    # browser clears the wall and returns the real article. The escalation the whole feature is for.
+    blocked = httpx.Response(403, headers={"content-type": "text/html"})
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                blocked,
+                reader=_CHALLENGE_MD,
+                solver_response={"url": "https://x.example/walled", "response": _SOLVED_HTML},
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Real article content" in result.text
+    assert result.url == "https://x.example/walled"  # the public URL, not the solver's
+
+
+async def test_solver_that_is_still_challenged_surfaces_the_block() -> None:
+    # The solver ran but the stealth browser ALSO got a challenge (interactive Turnstile it
+    # can't clear): that is a miss too, so the original 403 surfaces — never the challenge text.
+    challenge = {"response": "<html><head><title>Just a moment...</title></head></html>"}
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(403, headers={"content-type": "text/html"}),
+                reader=_CHALLENGE_MD,
+                solver_response=challenge,
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+
+
+async def test_solver_failure_surfaces_the_block() -> None:
+    # The solver itself errors (500): it returns None like any tier miss, so the original block
+    # surfaces rather than crashing the fetch.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(403, headers={"content-type": "text/html"}),
+                reader=_CHALLENGE_MD,
+                solver_response=None,
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+
+
 # --- truncation + pagination (a long page's tail is fetchable, not just flagged) ----
 
 

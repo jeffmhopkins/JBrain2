@@ -99,6 +99,11 @@ services:
       JBRAIN_COMFYUI_URL: ${COMFYUI_URL:-}
       JBRAIN_COMFYUI_ENABLED: ${COMFYUI_ENABLED:-false}
       JBRAIN_COMFYUI_MODELS: ${COMFYUI_MODELS:-[]}
+      # Bot-challenge solver web_fetch escalates to when the reader can't clear a wall (see
+      # the `byparr` service below). OFF by default (empty ⇒ tier disabled, a challenge just
+      # surfaces as an honest block). Enable with the `solver` profile + SOLVER_URL in .env
+      # (http://byparr:8191). Worker inherits via *api_env. Heavier than the reader, so opt-in.
+      JBRAIN_SOLVER_URL: ${SOLVER_URL:-}
       # On-box speech-to-text — served by the always-on `tts-stt` service (below), but the
       # STT MODEL is a heavy opt-in download, so transcribe stays OFF (empty URL) until
       # `jbrain enable-whisper` provisions the model and sets WHISPER_URL in .env
@@ -640,6 +645,24 @@ services:
     restart: unless-stopped
     mem_limit: 1g
     shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
+    networks: [internal]
+
+  # Bot-challenge SOLVER (docs/plans/CHALLENGE_SOLVER_PLAN.md): a stealth browser behind a
+  # FlareSolverr-compatible `/v1` API (Byparr, Camoufox-backed) that clears the JS/managed
+  # Cloudflare-class challenge the plain `reader` can't — the "Update Browser Required" wall
+  # web_fetch escalates to only when the reader itself returns a challenge interstitial. It is
+  # the heaviest web sidecar (a full stealth browser per solve), so unlike searxng/reader it
+  # is OPT-IN behind the `solver` profile and OFF by default: a stock deploy never starts it,
+  # and with JBRAIN_SOLVER_URL empty the tier is simply absent (a walled page is an honest
+  # block, exactly as before). To enable: set SOLVER_URL=http://byparr:8191 in .env and run
+  # with the `solver` profile (`docker compose --profile solver up`). On `internal` — it needs
+  # egress to reach the target and holds no owner data (only jerv reaches it, like the reader).
+  byparr:
+    image: ${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr:latest}
+    profiles: [solver]
+    restart: unless-stopped
+    mem_limit: ${BYPARR_MEM_LIMIT:-2g}  # a stealth browser is heavier than the reader's Chromium
+    shm_size: 2gb  # headless browser crashes on the default 64m /dev/shm
     networks: [internal]
 
   # Deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md): a RapidOCR (PP-OCR / ONNX) sidecar,

@@ -48,6 +48,7 @@ from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, UserMessage
 from jbrain.models.notes import Attachment
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
+from jbrain.web.fetch import WebFetcher, WebFetchError
 
 log = structlog.get_logger()
 
@@ -107,6 +108,7 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             "llm.routing",
             "host.read",
             "host.metrics",
+            "web.fetch",
         ],
     )
 
@@ -553,6 +555,48 @@ async def run_sql(body: SqlRequest, request: Request, _p: DebugDep) -> SqlOut:
     rows = [[_jsonable(v) for v in row] for row in fetched[: body.max_rows]]
     log.info("debug.sql", row_count=len(rows), truncated=truncated)
     return SqlOut(columns=columns, rows=rows, row_count=len(rows), truncated=truncated)
+
+
+# --- Web fetch (exercise the live direct→reader→solver escalation) -----------
+
+
+class FetchRequest(BaseModel):
+    url: str
+    offset: int = 0
+    find: str = ""
+
+
+class FetchOut(BaseModel):
+    url: str  # the FINAL url (after redirects / the tier that served it)
+    title: str
+    text: str  # one window of the extracted text (capped like the agent sees it)
+    total_chars: int
+    links: int
+    truncated: bool
+
+
+@router.post("/fetch")
+async def fetch_url(body: FetchRequest, request: Request, _p: DebugDep) -> FetchOut:
+    """Run a URL through jerv's WebFetcher — the SAME direct→reader→solver escalation the
+    agent uses — and return the extracted page, or a 400 carrying the recoverable fetch
+    error. The one debug route that drives the live web-fetch path end to end, so the
+    bot-challenge detection and the solver fallback can be verified against a real walled URL
+    after a deploy (pair it with `logs api` to see which tier served / blocked)."""
+    request.state.debug_detail = body.url
+    fetcher = cast(WebFetcher, request.app.state.web_fetcher)
+    try:
+        result = await fetcher.fetch(body.url, offset=max(0, body.offset), find=body.find)
+    except WebFetchError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log.info("debug.fetch", url=result.url, chars=result.total_chars)
+    return FetchOut(
+        url=result.url,
+        title=result.title,
+        text=result.text,
+        total_chars=result.total_chars,
+        links=len(result.links),
+        truncated=result.truncated,
+    )
 
 
 # --- Container logs (proxied to the supervisor) -----------------------------

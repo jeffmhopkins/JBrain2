@@ -58,6 +58,11 @@ from jbrain.htmltext import extract_page
 log = structlog.get_logger()
 
 _TIMEOUT = 20.0
+# The challenge solver drives a stealth browser that WAITS OUT a JS/managed challenge, so it
+# is far slower than a plain fetch: `maxTimeout` is what the solver spends clearing the wall,
+# and the HTTP timeout sits above it so we don't abort a solve that's about to succeed.
+_SOLVER_MAX_TIMEOUT_MS = 60_000
+_SOLVER_TIMEOUT = 70.0
 # Cap the raw HTML download; a page beyond this is truncated (streamed, never buffered
 # whole). Sized so a large reference page (a ~3 MB Wikipedia list article — HTML runs
 # ~5-6 bytes per char of extracted text) downloads WHOLE, so the byte cap never starves
@@ -408,9 +413,13 @@ class WebFetcher:
         transport: httpx.AsyncBaseTransport | None = None,
         *,
         reader_url: str = "",
+        solver_url: str = "",
     ):
         self._transport = transport
         self._reader_url = reader_url.rstrip("/")
+        # A pinned bot-challenge solver (Byparr / FlareSolverr-compatible) the fetch escalates
+        # to when the reader itself returns a challenge interstitial. Empty = tier disabled.
+        self._solver_url = solver_url.rstrip("/")
 
     async def fetch(
         self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
@@ -424,32 +433,52 @@ class WebFetcher:
         try:
             result = await self._fetch_direct(url, offset=offset, find=find, find_regex=find_regex)
         except WebFetchError as exc:
-            # A bot-wall (403/429) or unreachable host: the reader, if configured,
-            # renders the page from a real browser and gets past what blocked us. But a
-            # definitive 404/410 means the page does not exist — the reader would only
-            # return the origin's soft "no such page" stub, which has enough text to read
-            # as a successful fetch and hide the miss. Re-raise so the model SEES the 404
-            # and corrects the URL instead of quietly reading an empty stub.
-            if exc.status not in _GONE_STATUSES and self._reader_url:
-                reader = await self._fetch_via_reader(
-                    url, offset=offset, find=find, find_regex=find_regex
+            # A bot-wall (403/429/challenge) or unreachable host: escalate to the recovery
+            # tiers (reader, then solver), which render the page from a real browser and get
+            # past what blocked us. But a definitive 404/410 means the page does not exist —
+            # a renderer would only return the origin's soft "no such page" stub, which has
+            # enough text to read as a successful fetch and hide the miss. Re-raise so the
+            # model SEES the 404 and corrects the URL instead of quietly reading an empty stub.
+            if exc.status not in _GONE_STATUSES:
+                recovered = await self._recover(
+                    url, offset=offset, find=find, find_regex=find_regex, require_text=False
                 )
-                if reader is not None:
-                    return reader
+                if recovered is not None:
+                    return recovered
             raise
         # Only the FIRST page's emptiness (with no keyword miss) signals a JS-rendered shell
-        # worth the reader; an empty window at offset>0, or a `find` that just didn't match,
+        # worth recovering; an empty window at offset>0, or a `find` that just didn't match,
         # is not a shell.
         empty_shell = offset == 0 and not find and not result.text.strip()
-        if empty_shell and self._reader_url:
-            # A JS-rendered shell our static extractor can't see — the reader runs the
-            # page's scripts and returns the content that wasn't in the served HTML.
-            reader = await self._fetch_via_reader(
-                url, offset=offset, find=find, find_regex=find_regex
+        if empty_shell:
+            # A JS-rendered shell our static extractor can't see — a renderer runs the page's
+            # scripts and returns the content that wasn't in the served HTML.
+            recovered = await self._recover(
+                url, offset=offset, find=find, find_regex=find_regex, require_text=True
             )
-            if reader is not None and reader.text.strip():
-                return reader
+            if recovered is not None:
+                return recovered
         return result
+
+    async def _recover(
+        self,
+        url: str,
+        *,
+        offset: int,
+        find: str,
+        find_regex: bool,
+        require_text: bool,
+    ) -> FetchResult | None:
+        """Try the recovery tiers in order — the reader, then the heavier challenge solver —
+        returning the first that yields a usable (non-challenge) page, else None. Each tier
+        returns None when it is unconfigured, fails, or hands back a challenge interstitial,
+        so escalation is simply "try the next one". `require_text` additionally rejects an
+        empty result (the JS-shell case, where a tier that renders nothing hasn't recovered)."""
+        for tier in (self._fetch_via_reader, self._fetch_via_solver):
+            recovered = await tier(url, offset=offset, find=find, find_regex=find_regex)
+            if recovered is not None and (not require_text or recovered.text.strip()):
+                return recovered
+        return None
 
     async def fetch_bytes(
         self, url: str, *, max_bytes: int = _MAX_IMAGE_BYTES
@@ -535,8 +564,10 @@ class WebFetcher:
         and returns clean markdown. The reader base URL is owner-configured and trusted
         (like SearXNG), so it is NOT run through the SSRF guard — a self-hosted reader
         legitimately lives on an internal host (`http://reader:3000`). Only the public
-        target URL travels in the path. Returns None on any reader failure, so the
-        caller falls back to its original error or empty result."""
+        target URL travels in the path. Returns None when unconfigured or on any reader
+        failure, so the caller falls back to the next tier / its original error."""
+        if not self._reader_url:
+            return None
         guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
         target = f"{self._reader_url}/{url}"
         try:
@@ -571,6 +602,54 @@ class WebFetcher:
             find=find,
             find_regex=find_regex,
             body_truncated=body_truncated,
+        )
+
+    async def _fetch_via_solver(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> FetchResult | None:
+        """Re-fetch `url` through the pinned challenge-solver sidecar — Byparr or any
+        FlareSolverr-compatible `POST /v1` API. It drives a stealth browser that clears the
+        JS / managed bot-challenge the plain reader can't, and returns the SOLVED page HTML,
+        which we extract exactly like a direct fetch (so tables, links, and pagination all
+        work). Like the reader the endpoint is owner-pinned and trusted, so it is NOT
+        SSRF-guarded — only the public TARGET url is (it must be public), and only that url
+        travels in the request body. Returns None when unconfigured, on any solver failure,
+        or when the solved page is ITSELF a challenge (an interactive Turnstile/CAPTCHA the
+        stealth browser couldn't clear) — so the caller surfaces an honest block rather than
+        laundering the challenge text into a cited source."""
+        if not self._solver_url:
+            return None
+        guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
+        payload = {"cmd": "request.get", "url": url, "maxTimeout": _SOLVER_MAX_TIMEOUT_MS}
+        try:
+            async with httpx.AsyncClient(timeout=_SOLVER_TIMEOUT, transport=self._transport) as c:
+                resp = await c.post(f"{self._solver_url}/v1", json=payload)
+                resp.raise_for_status()
+                body = resp.json()
+            solution = body.get("solution") if isinstance(body, dict) else None
+            if not isinstance(solution, dict):
+                return None
+            html = str(solution.get("response") or "")
+            final_url = str(solution.get("url") or url)
+        except (httpx.HTTPError, ValueError, WebFetchError) as exc:
+            log.warning("web.solver_failed", error=repr(exc))
+            return None
+        if not html.strip():
+            return None
+        title, text, hrefs = _extract_html(html, base=final_url)
+        if _is_challenge_page(title, text):
+            log.warning("web.challenge_blocked", url=url, via="solver", title=title[:80])
+            return None
+        log.info("web.solver_used", url=final_url)
+        return _window_and_find(
+            text,
+            url=final_url,
+            title=title,
+            links=_collect_links(hrefs, base=final_url),
+            offset=offset,
+            find=find,
+            find_regex=find_regex,
+            body_truncated=False,
         )
 
     async def _get_following_safe_redirects(

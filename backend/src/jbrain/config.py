@@ -100,6 +100,17 @@ class Settings(BaseSettings):
     # absent and falls back to this default, so it does NOT disable it. To turn the
     # fallback off, remove the reader service or point this at a non-serving endpoint.
     reader_url: str = "http://reader:3000"
+    # A pinned bot-challenge SOLVER endpoint web_fetch escalates to when the reader itself
+    # comes back with a challenge interstitial (Cloudflare "Update Browser Required" / "Just
+    # a moment…" etc. that the plain headless reader can't clear). It drives a stealth
+    # browser (Byparr / a FlareSolverr-compatible `/v1` API) that defeats the JS/managed
+    # challenge and returns the solved HTML, which extracts like a direct fetch. HEAVIER than
+    # the reader (a stealth browser per solve), so unlike the reader it is OFF by default —
+    # empty disables the tier entirely (a challenge just surfaces as an honest block, exactly
+    # as before the solver existed). Enable by running the `solver` compose profile and
+    # setting JBRAIN_SOLVER_URL (e.g. http://byparr:8191). Like the reader it is owner-pinned
+    # and never model-supplied; only the public target URL travels in the request body.
+    solver_url: str = ""
     # The on-box RapidOCR sidecar — deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md). It
     # cross-validates the VLM text extraction (both an `ocr` VLM row and a `tool="rapidocr"`
     # row are stored) and backs the direct `ocr` tools for jerv and the jcode sandbox. Part
