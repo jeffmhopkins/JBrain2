@@ -371,6 +371,28 @@ describe("ResearchScreen", () => {
     expect(await screen.findByText(/Moved to .*Medical/)).toBeInTheDocument();
   });
 
+  it("renames a report from the ⋯ menu", async () => {
+    stub();
+    const rename = vi.spyOn(api, "renameResearchReport").mockResolvedValue();
+    render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);
+    await screen.findByText("How was the 1918 flu toll estimated?");
+
+    // Open the first report's ⋯ → the action sheet → Rename.
+    fireEvent.click(screen.getAllByRole("button", { name: "Report actions" })[0] as HTMLElement);
+    fireEvent.click(within(await screen.findByRole("dialog")).getByText("Rename"));
+
+    // The rename sheet pre-fills the current display title (the question, untitled here).
+    const sheet = await screen.findByRole("dialog");
+    const input = within(sheet).getByLabelText("Report title") as HTMLInputElement;
+    expect(input.value).toBe("How was the 1918 flu toll estimated?");
+    fireEvent.change(input, { target: { value: "1918 flu death toll" } });
+    fireEvent.click(within(sheet).getByText("Save"));
+
+    await waitFor(() => expect(rename).toHaveBeenCalledWith("r1", "1918 flu death toll"));
+    // Optimistic update: the card now shows the new title.
+    expect(await screen.findByText("1918 flu death toll")).toBeInTheDocument();
+  });
+
   it("creates a folder and files the report via New folder…", async () => {
     // No folders yet → a flat list, but the ⋯ move action still creates the first folder.
     stub();

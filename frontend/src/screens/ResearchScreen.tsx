@@ -29,6 +29,7 @@ import {
   api,
 } from "../api/client";
 import { MoveReportSheet } from "../components/MoveReportSheet";
+import { RenameReportSheet } from "../components/RenameReportSheet";
 import { Sheet } from "../components/Sheet";
 import {
   ChevronRightIcon,
@@ -170,6 +171,8 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
   // editing is hidden), mirroring the Tasks "Organize" toggle.
   const [organizing, setOrganizing] = useState(false);
   const [moveFor, setMoveFor] = useState<ReportListItem | null>(null);
+  // The report whose title the RenameReportSheet is editing (null = closed).
+  const [renameFor, setRenameFor] = useState<ReportListItem | null>(null);
   // The report or folder whose public share links the ShareSheet is managing (null = closed).
   const [shareFor, setShareFor] = useState<ShareTarget | null>(null);
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
@@ -374,6 +377,21 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
       setFlash(`Moved to “${label}”.`);
     } catch (e) {
       setReports((rs) => rs?.map((r) => (r.id === report.id ? { ...r, group_id: prev } : r)) ?? rs);
+      setFlash(errMsg(e));
+    }
+  }
+
+  // Optimistically rename a report's display title; revert + surface on failure.
+  async function renameReport(report: ReportListItem, title: string) {
+    setRenameFor(null);
+    if (title === (report.title ?? "")) return;
+    const prev = report.title;
+    setReports((rs) => rs?.map((r) => (r.id === report.id ? { ...r, title } : r)) ?? rs);
+    try {
+      await api.renameResearchReport(report.id, title);
+      setFlash("Report renamed.");
+    } catch (e) {
+      setReports((rs) => rs?.map((r) => (r.id === report.id ? { ...r, title: prev } : r)) ?? rs);
       setFlash(errMsg(e));
     }
   }
@@ -702,6 +720,11 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
             onOpen(menuFor.kind, id);
           }}
           onOpenInJerv={() => openInJerv(menuFor)}
+          onRename={() => {
+            const row = menuFor.row as ReportListItem;
+            setMenuFor(null);
+            setRenameFor(row);
+          }}
           onMoveToFolder={() => {
             const row = menuFor.row as ReportListItem;
             setMenuFor(null);
@@ -718,6 +741,14 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
           onCopyTranscript={() => void copyVideoText(menuFor.row as VideoListItem, "transcript")}
           onOpenSource={() => openSource(menuFor.row as VideoListItem)}
           onDelete={() => deleteItem(menuFor)}
+        />
+      )}
+
+      {renameFor !== null && (
+        <RenameReportSheet
+          currentTitle={renameFor.title || renameFor.question}
+          onRename={(title) => void renameReport(renameFor, title)}
+          onClose={() => setRenameFor(null)}
         />
       )}
 
@@ -887,6 +918,7 @@ function ActionSheet({
   onClose,
   onView,
   onOpenInJerv,
+  onRename,
   onMoveToFolder,
   onShare,
   onCopyReport,
@@ -900,6 +932,7 @@ function ActionSheet({
   onClose: () => void;
   onView: () => void;
   onOpenInJerv: () => void;
+  onRename: () => void;
   onMoveToFolder: () => void;
   onShare: () => void;
   onCopyReport: () => void;
@@ -922,6 +955,9 @@ function ActionSheet({
         </button>
         {item.kind === "report" ? (
           <>
+            <button type="button" className="rl-action" onClick={onRename}>
+              <PencilIcon size={19} /> Rename
+            </button>
             <button type="button" className="rl-action" onClick={onMoveToFolder}>
               <ListIcon size={19} /> Move to folder
             </button>

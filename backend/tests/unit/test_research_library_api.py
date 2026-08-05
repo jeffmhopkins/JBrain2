@@ -93,6 +93,10 @@ class FakeResearchLibrary:
         self.calls["deleted_report"] = (ctx, report_id)
         return report_id == "rep-1"
 
+    async def rename_report(self, ctx: SessionContext, report_id: str, *, title: str) -> bool:
+        self.calls["renamed_report"] = (ctx, report_id, title)
+        return report_id == "rep-1"
+
     async def list_report_groups(self, ctx: SessionContext) -> list[ReportGroup]:
         self.calls["groups_ctx"] = ctx
         return list(self._groups)
@@ -204,6 +208,7 @@ def test_all_routes_require_owner(client: TestClient) -> None:
     assert client.get(f"{r}/reports/search", params={"q": "flu"}).status_code == 401
     assert client.get(f"{r}/reports/rep-1").status_code == 401
     assert client.delete(f"{r}/reports/rep-1").status_code == 401
+    assert client.patch(f"{r}/reports/rep-1", json={"title": "New"}).status_code == 401
     assert client.get(f"{r}/report-groups").status_code == 401
     assert client.post(f"{r}/report-groups", json={"name": "Medical"}).status_code == 401
     assert client.patch(f"{r}/report-groups/grp-1", json={"name": "Health"}).status_code == 401
@@ -282,6 +287,28 @@ def test_delete_report_204_under_owner_ctx(
     del library.calls["deleted_report"]
     assert client.delete("/api/research-library/reports/ghost").status_code == 204
     assert "deleted_report" not in library.calls
+
+
+def test_rename_report_204_under_owner_ctx(
+    client: TestClient, repo: FakeAuthRepo, library: FakeResearchLibrary
+) -> None:
+    login(client, repo)
+    resp = client.patch("/api/research-library/reports/rep-1", json={"title": "  Flu toll  "})
+    assert resp.status_code == 204
+    ctx, rid, title = library.calls["renamed_report"]  # type: ignore[misc]
+    assert rid == "rep-1"
+    assert title == "Flu toll"  # trimmed at the edge
+    # A full-owner context (never a jerv-style narrowed scope) is the trusted executor.
+    assert isinstance(ctx, SessionContext) and ctx.principal_kind == "owner"
+    assert ctx.owner_scoped is False
+    # A missing / non-uuid id resolves to None first → a clean 404, no write attempted.
+    del library.calls["renamed_report"]
+    r = "/api/research-library"
+    assert client.patch(f"{r}/reports/ghost", json={"title": "x"}).status_code == 404
+    assert "renamed_report" not in library.calls
+    # An empty title is rejected at the edge (min_length=1) — never reaches the library.
+    assert client.patch(f"{r}/reports/rep-1", json={"title": ""}).status_code == 422
+    assert "renamed_report" not in library.calls
 
 
 # --- report folders --------------------------------------------------------------------

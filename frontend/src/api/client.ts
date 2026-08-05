@@ -2645,6 +2645,14 @@ export const api = {
     await request(`/api/research-library/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
+  /** Set the owner-chosen display title, overriding the LLM-generated heading. */
+  async renameResearchReport(id: string, title: string): Promise<void> {
+    await request(
+      `/api/research-library/reports/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { title }),
+    );
+  },
+
   // ----- public report share links (owner mint/list/revoke; anyone reads at /share/<token>) -----
 
   /** Mint a public, revocable, no-expiry link to one report OR one folder (owner only). The

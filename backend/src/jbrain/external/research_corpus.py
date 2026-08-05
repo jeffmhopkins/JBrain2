@@ -510,3 +510,25 @@ async def delete_report(
             )
         ).first()
     return deleted is not None
+
+
+async def rename_report(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, report_id: str, title: str
+) -> bool:
+    """Set the owner-chosen display `title` for one report. Runs under the OWNER's context —
+    the trusted executor, never jerv — writing owner-only browse metadata. Unlike the titler
+    job (`title_research_report`), there is NO `title IS NULL` guard: the owner overrides the
+    LLM-generated heading, or an earlier manual one. Returns True when a row was updated
+    (idempotent: an already-gone report is a harmless no-op). The caller validates the report
+    is in the owner's scope before calling."""
+    async with scoped_session(maker, ctx) as session:
+        updated = (
+            await session.execute(
+                text(
+                    "UPDATE app.research_reports SET title = :title"
+                    " WHERE id = cast(:rid AS uuid) RETURNING id"
+                ),
+                {"title": title, "rid": report_id},
+            )
+        ).first()
+    return updated is not None
