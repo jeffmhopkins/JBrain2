@@ -96,6 +96,7 @@ fi
 HARNESS_IMAGE="timescale/timescaledb-ha:pg17"  # prod Postgres image, also used by the harness
 SEARXNG_IMAGE="${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}"  # jerv web search (stock stack service)
 MQTT_IMAGE="${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}"  # opt-in JBrain360 broker (`mqtt` profile); pin by digest for deploy
+BYPARR_IMAGE="${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr:latest}"  # bot-challenge solver (stock stack service)
 
 if ! docker info >/dev/null 2>&1; then
   if command -v dockerd >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
@@ -129,6 +130,14 @@ if docker info >/dev/null 2>&1; then
     log "pre-pulling $MQTT_IMAGE (opt-in mqtt profile)"
     for _ in 1 2 3; do docker pull "$MQTT_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
       || log "WARNING: could not pre-pull $MQTT_IMAGE — it will pull when the profile is enabled"
+  fi
+  # Pre-pull the bot-challenge solver image (Byparr, stock stack) so a `jbrain up`/update
+  # isn't a cold pull; best-effort. CI never starts the service (web fetch is faked via
+  # MockTransport), so this is local/dev only.
+  if ! docker image inspect "$BYPARR_IMAGE" >/dev/null 2>&1; then
+    log "pre-pulling $BYPARR_IMAGE (bot-challenge solver)"
+    for _ in 1 2 3; do docker pull "$BYPARR_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
+      || log "WARNING: could not pre-pull $BYPARR_IMAGE — it will pull when the stack starts"
   fi
 else
   log "WARNING: no docker daemon — testcontainers integration tests and the LLM" \

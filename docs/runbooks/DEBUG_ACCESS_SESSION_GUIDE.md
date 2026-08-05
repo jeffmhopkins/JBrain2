@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-07-18
+> **Status:** Living · **Last verified:** 2026-08-05
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -113,6 +113,13 @@ scripts/debug-connect.sh tool-probe --task agent.turn --raw-tools-file /tmp/muta
 
 # Read-only SQL (full read; runs in a READ ONLY transaction — writes are rejected).
 scripts/debug-connect.sh sql "select code, name from app.domains order by code"
+
+# Web fetch — run a URL through jerv's live direct→reader→solver path and see what comes
+# back (title + one text window + link count), or the recoverable block error. The way to
+# verify bot-challenge detection + the solver against a real walled URL after a
+# deploy; pair with `logs api` to see which tier served (web.solver_used / web.challenge_blocked).
+scripts/debug-connect.sh fetch https://example.com/walled-page
+scripts/debug-connect.sh fetch https://example.com/long-page --find "the section keyword"
 
 # Container logs (proxied to the supervisor).
 scripts/debug-connect.sh logs api --tail 200

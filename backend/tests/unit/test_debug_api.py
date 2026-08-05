@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, cast
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -20,6 +21,7 @@ from jbrain.config import Settings
 from jbrain.llm.errors import LlmError
 from jbrain.llm.types import LlmResult, LlmTurn, LlmUsage, ToolCall
 from jbrain.main import create_app
+from jbrain.web.fetch import WebFetcher
 from tests.unit.fakes import FakeAuthRepo, FakeLocalGateway, FakeSettingsStore
 
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"
@@ -232,6 +234,7 @@ def test_whoami_reports_scopes(debug_client: tuple[TestClient, str]) -> None:
     body = client.get("/api/debug/whoami", headers=_auth(key)).json()
     assert body["kind"] == "capability_token" and body["label"] == "claude"
     assert "sql.read" in body["scopes"] and "host.metrics" in body["scopes"]
+    assert "web.fetch" in body["scopes"]
 
 
 # --- self-service token lifecycle (console kill switch) ---------------------
@@ -525,6 +528,44 @@ def test_logs_proxies_to_supervisor(debug_client: tuple[TestClient, str]) -> Non
 def test_logs_unknown_service_404s(debug_client: tuple[TestClient, str]) -> None:
     client, key = debug_client
     assert client.get("/api/debug/logs/nope", headers=_auth(key)).status_code == 404
+
+
+# --- web fetch (drives the live WebFetcher end to end) ----------------------
+
+_PAGE = b"<html><head><title>Live Page</title></head><body><h1>Heading</h1></body></html>"
+
+
+def test_fetch_route_runs_the_web_fetcher(debug_client: tuple[TestClient, str]) -> None:
+    # Swap the startup WebFetcher for one on a MockTransport (no real network), then confirm
+    # the route returns the extracted page — the path used to verify the solver live.
+    client, key = debug_client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_PAGE, headers={"content-type": "text/html"})
+
+    _state(client).web_fetcher = WebFetcher(transport=httpx.MockTransport(handle))
+    resp = client.post("/api/debug/fetch", headers=_auth(key), json={"url": "https://x.example/p"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["title"] == "Live Page" and "Heading" in body["text"]
+
+
+def test_fetch_route_maps_a_block_to_400(debug_client: tuple[TestClient, str]) -> None:
+    # A blocked page (403, no reader/solver) surfaces as WebFetchError → a clean 400, not a 500.
+    client, key = debug_client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    _state(client).web_fetcher = WebFetcher(transport=httpx.MockTransport(handle))
+    resp = client.post("/api/debug/fetch", headers=_auth(key), json={"url": "https://x.example/w"})
+    assert resp.status_code == 400
+
+
+def test_fetch_route_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    resp = client.post("/api/debug/fetch", json={"url": "https://x.example/p"})
+    assert resp.status_code == 401
 
 
 def test_jcode_logs_aggregates_the_system(debug_client: tuple[TestClient, str]) -> None:

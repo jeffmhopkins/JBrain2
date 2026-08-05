@@ -516,6 +516,162 @@ async def test_a_403_still_falls_back_to_the_reader() -> None:
     assert "Rendered by the reader" in result.text
 
 
+# A bot-challenge interstitial as the reader renders it (Cloudflare "Update Browser
+# Required") — a 200 with junk text, the shape that silently became a cited source before
+# challenge detection existed.
+_CHALLENGE_MD = b"# Update Browser Required\n\nfloridapolitics.com requires a modern browser."
+# A site that serves the Cloudflare challenge directly with a 200 (title + JS/cookie wall).
+_CHALLENGE_HTML = (
+    b"<html><head><title>Just a moment...</title></head><body>"
+    b"<h1>Checking your browser before accessing the site.</h1>"
+    b"<p>Please enable JavaScript and cookies to continue.</p></body></html>"
+)
+
+
+async def test_reader_returning_a_bot_challenge_is_a_blocked_fetch() -> None:
+    # The reader "succeeds" (200) but renders the origin's bot-challenge interstitial, not the
+    # article. It must count as a reader miss so the block surfaces honestly and the junk never
+    # becomes a cited source — the "Update Browser Required" laundering bug this fix targets.
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            return httpx.Response(
+                200, content=_CHALLENGE_MD, headers={"content-type": "text/markdown"}
+            )
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle), reader_url="http://reader:3000")
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403  # the real block surfaces, not the reader's junk
+    assert "update browser" not in str(excinfo.value).lower()
+
+
+async def test_direct_200_challenge_page_is_blocked() -> None:
+    # A site that answers 200 with the Cloudflare challenge (no reader configured): the page is
+    # detected by content and raised, so the junk is never returned as real text.
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_CHALLENGE_HTML, headers={"content-type": "text/html"})
+
+    with pytest.raises(WebFetchError) as excinfo:
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/cf")
+    assert "bot-challenge" in str(excinfo.value)
+
+
+async def test_direct_200_challenge_falls_back_to_the_reader() -> None:
+    # A direct 200 challenge leaves status None when raised, so `fetch` still tries the reader —
+    # which here renders the real article past the wall (the 403 recovery path, reused).
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            return httpx.Response(
+                200, content=_READER_MD, headers={"content-type": "text/markdown"}
+            )
+        return httpx.Response(200, content=_CHALLENGE_HTML, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle), reader_url="http://reader:3000")
+    result = await fetcher.fetch("https://x.example/cf")
+    assert "Rendered by the reader" in result.text
+
+
+def test_is_challenge_page_precision() -> None:
+    from jbrain.web.fetch import _is_challenge_page
+
+    # Canonical title / body markers → blocked at any length.
+    assert _is_challenge_page("Just a moment...", "")
+    assert _is_challenge_page("", "Please enable JavaScript and cookies to continue.")
+    assert _is_challenge_page("", "# Update Browser Required\nUse a modern browser.")
+    # A real ~360-word article that merely MENTIONS Cloudflare must NOT be flagged (precision).
+    article = "Cloudflare reported a record quarter. " * 60
+    assert not _is_challenge_page("Cloudflare posts record earnings", article)
+    # An ordinary short page is not a challenge either.
+    assert not _is_challenge_page("Hi There", "Heading. First para. Second para.")
+
+
+# The solved page the challenge solver returns (a FlareSolverr-shape `/v1` response wraps the
+# HTML in solution.response) — real content the stealth browser recovered past the wall.
+_SOLVED_HTML = (
+    "<html><head><title>CFO Race</title></head><body>"
+    "<h1>Blaise Ingoglia</h1><p>Real article content the stealth browser recovered.</p>"
+    "</body></html>"
+)
+
+
+def _tiered_handler(direct: httpx.Response, *, reader: bytes | None, solver_response):  # type: ignore[no-untyped-def]
+    """A transport serving all three fetch legs off one MockTransport: the solver host
+    (`byparr`) with a FlareSolverr-shape JSON body (None ⇒ 500), the reader host with markdown
+    (None ⇒ not answered), and every other host with `direct`."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "byparr":
+            if solver_response is None:
+                return httpx.Response(500)
+            solution = {"url": str(request.url), **solver_response}
+            return httpx.Response(200, json={"solution": solution})
+        if request.url.host == "reader" and reader is not None:
+            return httpx.Response(200, content=reader, headers={"content-type": "text/markdown"})
+        return direct
+
+    return handle
+
+
+async def test_solver_recovers_when_the_reader_returns_a_challenge() -> None:
+    # Direct 403 → reader renders the challenge interstitial (a miss) → the solver's stealth
+    # browser clears the wall and returns the real article. The escalation the whole feature is for.
+    blocked = httpx.Response(403, headers={"content-type": "text/html"})
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                blocked,
+                reader=_CHALLENGE_MD,
+                solver_response={"url": "https://x.example/walled", "response": _SOLVED_HTML},
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Real article content" in result.text
+    assert result.url == "https://x.example/walled"  # the public URL, not the solver's
+
+
+async def test_solver_that_is_still_challenged_surfaces_the_block() -> None:
+    # The solver ran but the stealth browser ALSO got a challenge (interactive Turnstile it
+    # can't clear): that is a miss too, so the original 403 surfaces — never the challenge text.
+    challenge = {"response": "<html><head><title>Just a moment...</title></head></html>"}
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(403, headers={"content-type": "text/html"}),
+                reader=_CHALLENGE_MD,
+                solver_response=challenge,
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+
+
+async def test_solver_failure_surfaces_the_block() -> None:
+    # The solver itself errors (500): it returns None like any tier miss, so the original block
+    # surfaces rather than crashing the fetch.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(403, headers={"content-type": "text/html"}),
+                reader=_CHALLENGE_MD,
+                solver_response=None,
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+
+
 # --- truncation + pagination (a long page's tail is fetchable, not just flagged) ----
 
 
