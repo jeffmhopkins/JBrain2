@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-04
+> **Status:** Living · **Last verified:** 2026-08-05
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -567,7 +567,12 @@ stock deploy. Because Settings runs with `env_ignore_empty`, setting
 and falls back to the on-box `reader_url` default; to turn the fallback off, stop the
 `reader` service or point `JBRAIN_READER_URL` at a non-serving endpoint. It is the sanctioned,
 owner-controlled version of what the model was doing on its own — only the public target
-URL travels off-box, and through an endpoint the owner pins (never one the model builds). The egress-Proposal
+URL travels off-box, and through an endpoint the owner pins (never one the model builds).
+A bot-wall the reader can't defeat renders a **challenge interstitial** (Cloudflare "Just a
+moment…" / "Update Browser Required", DataDome, etc.) and returns it as a clean 200; that
+junk is detected by content (`_is_challenge_page`) and treated as a blocked fetch — a
+recoverable tool error the model sees, never ingested as page text or cited as a source —
+rather than laundered into a fake citation. The egress-Proposal
 connectors (below) remain the rule for every *other* agent and every off-box call that
 could carry owner data.
 

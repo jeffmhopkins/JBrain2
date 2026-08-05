@@ -516,6 +516,76 @@ async def test_a_403_still_falls_back_to_the_reader() -> None:
     assert "Rendered by the reader" in result.text
 
 
+# A bot-challenge interstitial as the reader renders it (Cloudflare "Update Browser
+# Required") — a 200 with junk text, the shape that silently became a cited source before
+# challenge detection existed.
+_CHALLENGE_MD = b"# Update Browser Required\n\nfloridapolitics.com requires a modern browser."
+# A site that serves the Cloudflare challenge directly with a 200 (title + JS/cookie wall).
+_CHALLENGE_HTML = (
+    b"<html><head><title>Just a moment...</title></head><body>"
+    b"<h1>Checking your browser before accessing the site.</h1>"
+    b"<p>Please enable JavaScript and cookies to continue.</p></body></html>"
+)
+
+
+async def test_reader_returning_a_bot_challenge_is_a_blocked_fetch() -> None:
+    # The reader "succeeds" (200) but renders the origin's bot-challenge interstitial, not the
+    # article. It must count as a reader miss so the block surfaces honestly and the junk never
+    # becomes a cited source — the "Update Browser Required" laundering bug this fix targets.
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            return httpx.Response(
+                200, content=_CHALLENGE_MD, headers={"content-type": "text/markdown"}
+            )
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle), reader_url="http://reader:3000")
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403  # the real block surfaces, not the reader's junk
+    assert "update browser" not in str(excinfo.value).lower()
+
+
+async def test_direct_200_challenge_page_is_blocked() -> None:
+    # A site that answers 200 with the Cloudflare challenge (no reader configured): the page is
+    # detected by content and raised, so the junk is never returned as real text.
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_CHALLENGE_HTML, headers={"content-type": "text/html"})
+
+    with pytest.raises(WebFetchError) as excinfo:
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/cf")
+    assert "bot-challenge" in str(excinfo.value)
+
+
+async def test_direct_200_challenge_falls_back_to_the_reader() -> None:
+    # A direct 200 challenge leaves status None when raised, so `fetch` still tries the reader —
+    # which here renders the real article past the wall (the 403 recovery path, reused).
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            return httpx.Response(
+                200, content=_READER_MD, headers={"content-type": "text/markdown"}
+            )
+        return httpx.Response(200, content=_CHALLENGE_HTML, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle), reader_url="http://reader:3000")
+    result = await fetcher.fetch("https://x.example/cf")
+    assert "Rendered by the reader" in result.text
+
+
+def test_is_challenge_page_precision() -> None:
+    from jbrain.web.fetch import _is_challenge_page
+
+    # Canonical title / body markers → blocked at any length.
+    assert _is_challenge_page("Just a moment...", "")
+    assert _is_challenge_page("", "Please enable JavaScript and cookies to continue.")
+    assert _is_challenge_page("", "# Update Browser Required\nUse a modern browser.")
+    # A real ~360-word article that merely MENTIONS Cloudflare must NOT be flagged (precision).
+    article = "Cloudflare reported a record quarter. " * 60
+    assert not _is_challenge_page("Cloudflare posts record earnings", article)
+    # An ordinary short page is not a challenge either.
+    assert not _is_challenge_page("Hi There", "Heading. First para. Second para.")
+
+
 # --- truncation + pagination (a long page's tail is fetchable, not just flagged) ----
 
 

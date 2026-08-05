@@ -138,6 +138,84 @@ def _fetch_error_message(status: int | None) -> str:
     return "that URL could not be fetched right now"
 
 
+# --- Bot-challenge / anti-bot interstitial detection -------------------------
+# A Cloudflare/DataDome/Imperva/etc. wall often answers 200 with a CHALLENGE page
+# ("Just a moment…", "Update Browser Required", "enable JavaScript and cookies") instead
+# of the article — served directly, or (the common case here) laundered through the
+# reader, which renders the challenge in a real browser and hands its markdown back as a
+# clean 200. Without this the pipeline ingested that junk as content and CITED it — the
+# "Update Browser Required" floridapolitics.com miss the reader turned into a fake source.
+# Detection makes a blocked page an honest failure: the direct path raises (status left
+# None, so the reader is still tried exactly as for a 403), the reader path returns None
+# (so `fetch` surfaces the original block), and neither ever becomes a WebSource.
+#
+# Precision over recall — a false positive DROPS A REAL ARTICLE, so the bar is "never flag
+# legitimate prose". Tier 1 markers (title/body strings that don't occur in real content)
+# fire at any length; every weaker marker is gated on a SHORT page (a challenge page is
+# tens of words, an article is hundreds) and/or a co-occurring combo, so an article that
+# merely mentions Cloudflare is not flagged. Signatures from FlareSolverr, microlinkhq's
+# is-antibot, and current Cloudflare/DataDome/Imperva/Akamai/PerimeterX challenge markup.
+_CHALLENGE_TITLE_MARKERS = (
+    "just a moment",
+    "attention required! | cloudflare",
+    "access to this page has been denied",
+    "update browser required",
+)
+_CHALLENGE_BODY_MARKERS = (  # canonical phrases — never in real prose, so length-independent
+    "enable javascript and cookies to continue",
+    "needs to review the security of your connection before proceeding",
+    "checking your browser before accessing",
+    "request unsuccessful. incapsula incident id",
+    "access to this page has been denied because we believe you are using automation tools",
+    "please enable js and disable any ad blocker",
+    "press & hold to confirm you are a human",
+    "verify you are human by completing the action below",
+)
+_CHALLENGE_SHORT_WORDS = 200  # a challenge page is tiny; a real article clears this easily
+_CHALLENGE_TINY_WORDS = 60
+_CHALLENGE_SHORT_MARKERS = (  # specific, but gated to a short page for false-positive safety
+    "update browser required",
+    "sorry, you have been blocked",
+    "please turn javascript on and reload the page",
+    "captcha-delivery.com",
+    "checking if the site connection is secure",
+)
+_CHALLENGE_WEAK_MARKERS = (  # risky single words — counted only on a near-empty page
+    "cloudflare",
+    "captcha",
+    "ddos-guard",
+    "incapsula",
+    "datadome",
+)
+
+
+def _is_challenge_page(title: str, text: str) -> bool:
+    """Whether (title, extracted text) is a bot-challenge interstitial rather than real
+    content — see the block comment above for the seams that act on a True verdict and why
+    this is tuned hard for precision. Tier 1 fires on canonical title/body strings at any
+    length; Tier 2 on a short page with a specific marker or a combo; Tier 3 on a near-empty
+    page dominated by a single weak marker."""
+    t = title.strip().lower()
+    b = text.lower()
+    if any(m in t for m in _CHALLENGE_TITLE_MARKERS):
+        return True
+    if any(m in b for m in _CHALLENGE_BODY_MARKERS):
+        return True
+    words = len(text.split())
+    if words < _CHALLENGE_SHORT_WORDS:
+        if any(m in b for m in _CHALLENGE_SHORT_MARKERS):
+            return True
+        if (
+            ("access denied" in b and "don't have permission to access" in b and "reference #" in b)
+            or ("cloudflare" in b and "ray id" in b and ("blocked" in b or "unable to access" in b))
+            or ("you have been blocked" in b and "why did this happen" in b)
+            or ("verifying you are human" in b and "few seconds" in b)
+            or ("verify you are a human" in b and ("perimeterx" in b or "px-captcha" in b))
+        ):
+            return True
+    return words < _CHALLENGE_TINY_WORDS and any(m in b for m in _CHALLENGE_WEAK_MARKERS)
+
+
 @dataclass(frozen=True)
 class FetchResult:
     url: str
@@ -429,6 +507,12 @@ class WebFetcher:
         else:
             text = body.decode(_charset(content_type) or "utf-8", errors="replace").strip()
             title, links = "", ()
+        # A bot-wall that answered 200 with a challenge page (not the article): raise rather
+        # than return the junk, so it never becomes a cited source. Status stays None, so
+        # `fetch` still tries the reader — the same recovery a 403 bot-wall gets.
+        if _is_challenge_page(title, text):
+            log.warning("web.challenge_blocked", url=final_url, via="direct", title=title[:80])
+            raise WebFetchError("that URL returned a bot-challenge page, not its content")
         # Window the full text at `offset` (pagination), or jump it to a `find` keyword;
         # `total_chars` lets the tool tell the model whether more remains. `truncated` means
         # the FULL text is itself short of the real page because the download hit the byte
@@ -471,6 +555,13 @@ class WebFetcher:
             log.warning("web.reader_failed", error=repr(exc))
             return None
         clean = text.strip()
+        # The reader can "succeed" (200) yet return the ORIGIN's bot-challenge interstitial
+        # (Cloudflare "Update Browser Required", "Just a moment…") rendered as markdown, not
+        # the article. Treat that as a reader miss — return None so `fetch` surfaces the
+        # original block instead of laundering the challenge text into a cited source.
+        if _is_challenge_page("", clean):
+            log.warning("web.challenge_blocked", url=url, via="reader")
+            return None
         return _window_and_find(
             clean,
             url=url,
