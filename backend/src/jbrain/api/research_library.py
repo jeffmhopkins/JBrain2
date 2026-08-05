@@ -113,6 +113,12 @@ class MoveReportBody(BaseModel):
     group_id: str | None = None
 
 
+class RenameReportBody(BaseModel):
+    """Owner-chosen display title, overriding the LLM-generated heading."""
+
+    title: str = Field(min_length=1, max_length=120)
+
+
 # --- share-link models -----------------------------------------------------------------
 # A public, revocable, no-login read grant for one report or one folder (migration 0150).
 
@@ -264,6 +270,20 @@ async def delete_report(request: Request, principal: OwnerDep, report_id: str) -
     record = await lib.fetch_report(principal.id, report_id)
     if record is not None:
         await lib.delete_report(ctx_for(principal), record.id)
+
+
+@router.patch("/reports/{report_id}", status_code=204)
+async def rename_report(
+    request: Request, principal: OwnerDep, report_id: str, body: RenameReportBody
+) -> None:
+    # Resolve within the owner's external read scope first — tolerates a non-uuid id (a clean
+    # 404 instead of a 500 from `cast(:id AS uuid)`) and confirms the row is in-scope before
+    # the full-owner title write. Owner-initiated, so it bypasses jerv's proposal path.
+    lib = get_library(request)
+    record = await lib.fetch_report(principal.id, report_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="no report with that id in scope")
+    await lib.rename_report(ctx_for(principal), record.id, title=body.title.strip())
 
 
 # --- report folders --------------------------------------------------------------------

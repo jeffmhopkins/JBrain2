@@ -104,6 +104,14 @@ async def test_research_library_api_round_trip(
         assert body["degraded"] is True  # no embed container in tests → keyword-only
         assert any(h["id"] == report_id for h in body["items"])
 
+        # --- rename: owner sets the display title (overriding the LLM heading) ---
+        renamed = client.patch(f"{base}/reports/{report_id}", json={"title": "  1918 flu toll  "})
+        assert renamed.status_code == 204
+        assert client.get(f"{base}/reports").json()["items"][0]["title"] == "1918 flu toll"
+        # A missing / non-uuid id resolves to None first → a clean 404, never a 500 from
+        # `cast(:id AS uuid)` against real Postgres (the resolve-before-write guard).
+        assert client.patch(f"{base}/reports/not-a-uuid", json={"title": "x"}).status_code == 404
+
         assert client.delete(f"{base}/reports/{report_id}").status_code == 204
         assert client.get(f"{base}/reports/{report_id}").status_code == 404
         assert client.get(f"{base}/reports").json()["total"] == 0

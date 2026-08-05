@@ -23,7 +23,7 @@ from jbrain.external.report_groups import (
     report_group_exists,
     set_report_group,
 )
-from jbrain.external.research_corpus import list_reports
+from jbrain.external.research_corpus import list_reports, rename_report
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -115,3 +115,28 @@ async def test_moving_a_report_files_it_and_delete_ungroups(maker: async_session
 
     # Moving a report that isn't there is a harmless no-op (idempotent).
     assert await set_report_group(maker, owner, str(uuid.uuid4()), None) is False
+
+
+async def test_renaming_a_report_sets_the_display_title(maker: async_sessionmaker) -> None:
+    owner = await _owner_ctx(maker)
+    rid = await _insert_report(maker, owner)
+
+    assert await rename_report(maker, owner, rid, "Rituximab mechanism") is True
+    reports, _ = await list_reports(maker, limit=50, principal_id=owner.principal_id)
+    assert {r.id: r.title for r in reports}[rid] == "Rituximab mechanism"
+
+    # No `title IS NULL` guard: a second rename overrides the first (owner has final say).
+    assert await rename_report(maker, owner, rid, "How rituximab works") is True
+    reports2, _ = await list_reports(maker, limit=50, principal_id=owner.principal_id)
+    assert {r.id: r.title for r in reports2}[rid] == "How rituximab works"
+
+    # A principal without external-domain scope can't see or touch the row — RLS drops it
+    # from its write scope, so nothing updates (the endpoint itself is owner-gated, but the
+    # corpus write must not leak across the domain firewall either).
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    assert await rename_report(maker, token, rid, "Injected title") is False
+    reports3, _ = await list_reports(maker, limit=50, principal_id=owner.principal_id)
+    assert {r.id: r.title for r in reports3}[rid] == "How rituximab works"
+
+    # Renaming a report that isn't there is a harmless no-op (idempotent).
+    assert await rename_report(maker, owner, str(uuid.uuid4()), "Ghost") is False
