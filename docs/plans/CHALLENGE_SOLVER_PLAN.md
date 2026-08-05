@@ -23,9 +23,9 @@ can't help, so escalation is just "try the next one":
 1. **direct** — a browser-headers httpx GET (unchanged).
 2. **reader** — the stock headless-Chromium renderer for a JS shell / soft bot-wall
    (unchanged), now with challenge detection on its output.
-3. **solver** — OPT-IN. A stealth browser (Byparr, Camoufox-backed) behind a
-   FlareSolverr-shape `POST /v1` API that clears the JS/managed challenge and returns
-   the solved HTML, extracted exactly like a direct fetch.
+3. **solver** — a stealth browser (Byparr, Camoufox-backed) behind a FlareSolverr-shape
+   `POST /v1` API that clears the JS/managed challenge and returns the solved HTML,
+   extracted exactly like a direct fetch.
 
 **Challenge detection (`_is_challenge_page`, `backend/src/jbrain/web/fetch.py`).** The
 load-bearing correctness fix, independent of the solver: content-based detection of a
@@ -37,13 +37,23 @@ tried), the reader/solver paths return `None`; it never becomes a `WebSource`, s
 is never cited. A distinct `web.challenge_blocked` log (with `via=direct|reader|solver`)
 makes a block diagnosable instead of hiding in a generic fetch failure.
 
-**Solver sidecar (`byparr`, `deploy/docker-compose.yml`, `solver` profile).** The
-heaviest web sidecar (a full stealth browser per solve), so unlike searxng/reader it is
-**off by default**: `JBRAIN_SOLVER_URL` empty ⇒ the tier is absent and a walled page is
-an honest block, exactly as before. Enable with `SOLVER_URL=http://byparr:8191` + the
-`solver` profile. Owner-pinned and never model-supplied, like the reader; only the public
-target URL travels in the request body. A solve that is *itself* still challenged stays a
-blocked fetch, so the solver never launders junk either.
+**Solver sidecar (`byparr`, `deploy/docker-compose.yml`).** Part of the **stock stack**
+(no profile) like searxng/reader/rapidocr, so it is **DEFAULT-ON**: a plain
+`docker compose up -d` — the command the PWA/system update runs (`deploy/update-inner.sh`)
+— creates it with no CLI or console step, and the api's `JBRAIN_SOLVER_URL` defaults to
+`http://byparr:8191` (empty env falls back to the on-box default via `env_ignore_empty`).
+It is the heaviest web sidecar (a full stealth browser per solve), but a solve only runs
+when a fetch actually hits a wall the reader couldn't clear, so an idle box pays only the
+process baseline (`mem_limit` caps a burst). To disable, point `JBRAIN_SOLVER_URL` at a
+non-serving endpoint. Owner-pinned and never model-supplied, like the reader; only the
+public target URL travels in the request body. A solve that is *itself* still challenged
+stays a blocked fetch, so the solver never launders junk either.
+
+**Rollout.** No `update-inner.sh` change is needed: the update refreshes
+`docker-compose.yml` from the tree and then runs a generic `docker compose up -d`, which
+creates any new stock (non-profiled) service — byparr comes up on the update that lands
+this change, and the api, rebuilt from the same tree, carries the new default. (A second
+back-to-back update is harmless if the box's on-disk updater lagged a version.)
 
 **Debug fetch route (`POST /api/debug/fetch`, scope `web.fetch`).** The debug console had
 no way to exercise the live fetch path — the first investigation of this bug couldn't
@@ -54,15 +64,16 @@ with `logs api` to see which tier served via `web.solver_used` / `web.challenge_
 
 ## Waves
 
-- **S1 ✅ (this PR)** — challenge detection at the direct + reader seams; the opt-in
-  solver tier (`_fetch_via_solver`, the `_recover` escalation helper, config +
-  compose + dev-setup wiring); the `POST /api/debug/fetch` route + `web.fetch` scope +
-  `debug-connect.sh fetch`. Full unit coverage (`test_web.py`, `test_debug_api.py`),
-  web fetch faked via `MockTransport` (no network in tests).
-- **S2 ◻️** — live validation on the owner's box after `SOLVER_URL` + the `solver`
-  profile are enabled: confirm a known-walled URL (`floridapolitics.com`) now returns
-  real content via `web.solver_used`, tune `maxTimeout`/`mem_limit` against real solves,
-  and decide whether to cache `cf_clearance` per host to skip repeat solves.
+- **S1 ✅ (this PR)** — challenge detection at the direct + reader seams; the default-on
+  stock solver tier (`_fetch_via_solver`, the `_recover` escalation helper, config +
+  compose + dev-setup wiring, `byparr` in the stock stack); the `POST /api/debug/fetch`
+  route + `web.fetch` scope + `debug-connect.sh fetch`. Full unit coverage (`test_web.py`,
+  `test_debug_api.py`, `test_searxng_compose.py`), web fetch faked via `MockTransport`.
+- **S2 ◻️** — live validation after the PWA update brings `byparr` up (no console step):
+  confirm a known-walled URL (`floridapolitics.com`) now returns real content via
+  `web.solver_used`, confirm the byparr port (8191 assumed) against the running image,
+  tune `maxTimeout`/`mem_limit` against real solves, and decide whether to cache
+  `cf_clearance` per host to skip repeat solves.
 
 ## Security posture and the honest ceiling
 

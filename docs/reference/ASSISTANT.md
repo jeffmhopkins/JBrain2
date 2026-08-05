@@ -572,14 +572,15 @@ A bot-wall the reader can't defeat renders a **challenge interstitial** (Cloudfl
 moment…" / "Update Browser Required", DataDome, etc.) and returns it as a clean 200; that
 junk is detected by content (`_is_challenge_page`) and treated as a blocked fetch — a
 recoverable tool error the model sees, never ingested as page text or cited as a source —
-rather than laundered into a fake citation. For the residual hard case there is an OPT-IN
-third tier, a **challenge solver** (`JBRAIN_SOLVER_URL`, the `solver` compose profile —
+rather than laundered into a fake citation. For the residual hard case there is a third tier,
+a **challenge solver** (`JBRAIN_SOLVER_URL`, the stock `byparr` service —
 docs/plans/CHALLENGE_SOLVER_PLAN.md): a stealth browser (Byparr) behind a FlareSolverr-shape
 `/v1` API that `fetch` escalates to ONLY when the reader itself returns a challenge, clearing
-the JS/managed wall and returning the solved HTML. It is off by default (heavier than the
-reader — a stealth browser per solve) and, like the reader, owner-pinned with only the public
-target URL leaving the box; a solve that is still challenged stays a blocked fetch, so it
-never launders junk either. The egress-Proposal
+the JS/managed wall and returning the solved HTML. It is part of the stock stack and
+DEFAULT-ON (like the reader) — a stealth browser is heavier, but a solve only runs when a
+fetch actually hits a wall the reader couldn't clear, so an idle box pays nothing. Like the
+reader it is owner-pinned with only the public target URL leaving the box; a solve that is
+still challenged stays a blocked fetch, so it never launders junk either. The egress-Proposal
 connectors (below) remain the rule for every *other* agent and every off-box call that
 could carry owner data.
 

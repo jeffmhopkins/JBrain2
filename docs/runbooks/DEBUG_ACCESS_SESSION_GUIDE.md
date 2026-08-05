@@ -116,7 +116,7 @@ scripts/debug-connect.sh sql "select code, name from app.domains order by code"
 
 # Web fetch — run a URL through jerv's live direct→reader→solver path and see what comes
 # back (title + one text window + link count), or the recoverable block error. The way to
-# verify bot-challenge detection + the opt-in solver against a real walled URL after a
+# verify bot-challenge detection + the solver against a real walled URL after a
 # deploy; pair with `logs api` to see which tier served (web.solver_used / web.challenge_blocked).
 scripts/debug-connect.sh fetch https://example.com/walled-page
 scripts/debug-connect.sh fetch https://example.com/long-page --find "the section keyword"

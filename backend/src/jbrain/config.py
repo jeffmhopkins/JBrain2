@@ -104,13 +104,16 @@ class Settings(BaseSettings):
     # comes back with a challenge interstitial (Cloudflare "Update Browser Required" / "Just
     # a moment…" etc. that the plain headless reader can't clear). It drives a stealth
     # browser (Byparr / a FlareSolverr-compatible `/v1` API) that defeats the JS/managed
-    # challenge and returns the solved HTML, which extracts like a direct fetch. HEAVIER than
-    # the reader (a stealth browser per solve), so unlike the reader it is OFF by default —
-    # empty disables the tier entirely (a challenge just surfaces as an honest block, exactly
-    # as before the solver existed). Enable by running the `solver` compose profile and
-    # setting JBRAIN_SOLVER_URL (e.g. http://byparr:8191). Like the reader it is owner-pinned
-    # and never model-supplied; only the public target URL travels in the request body.
-    solver_url: str = ""
+    # challenge and returns the solved HTML, which extracts like a direct fetch. The `byparr`
+    # compose service is part of the stock stack, so this default points at the on-box instance
+    # (DEFAULT-ON, like the reader): a stealth browser IS heavier, but a solve only runs when a
+    # fetch actually hits a wall the reader couldn't clear, so an idle box pays nothing. Like
+    # the reader it is owner-pinned and never model-supplied; only the public target URL travels
+    # in the request body. An empty field value disables the tier (a challenge just surfaces as
+    # an honest block) — but note env_ignore_empty above: an empty JBRAIN_SOLVER_URL is treated
+    # as absent and falls back to this default, so it does NOT disable it. To turn it off, point
+    # JBRAIN_SOLVER_URL at a non-serving endpoint or remove the byparr service.
+    solver_url: str = "http://byparr:8191"
     # The on-box RapidOCR sidecar — deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md). It
     # cross-validates the VLM text extraction (both an `ocr` VLM row and a `tool="rapidocr"`
     # row are stored) and backs the direct `ocr` tools for jerv and the jcode sandbox. Part

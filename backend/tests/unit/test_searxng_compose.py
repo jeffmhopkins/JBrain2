@@ -34,6 +34,18 @@ def test_searxng_is_in_the_stock_stack() -> None:
     )
 
 
+def test_byparr_solver_is_in_the_stock_stack() -> None:
+    # The bot-challenge solver is DEFAULT-ON (docs/plans/CHALLENGE_SOLVER_PLAN.md): no profile,
+    # so a plain `docker compose up -d` — the command a PWA update runs — brings it up with no
+    # CLI step, and the api's JBRAIN_SOLVER_URL defaults to it. A profile would strand it, since
+    # nothing in the update tooling activates a `solver` profile.
+    byparr = _spec()["services"]["byparr"]
+    assert "profiles" not in byparr, (
+        "byparr must NOT be profile-gated — the web_fetch solver tier is default-on and the "
+        "update path only starts non-profiled services"
+    )
+
+
 def test_searxng_binds_ipv4() -> None:
     env = _spec()["services"]["searxng"]["environment"]
     # Guards against the granian default :: (IPv6) bind, which crashes the
