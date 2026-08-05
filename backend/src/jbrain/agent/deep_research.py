@@ -1141,11 +1141,7 @@ class DeepResearchService:
                 # that could itself drop every citation. If it regressed a cited draft to an
                 # uncited one while sources exist, keep the cited draft rather than ship the
                 # newly-uncited revision — the same must-cite invariant, applied to the final text.
-                if (
-                    sources
-                    and _CITE_MARKER.search(pre_revise)
-                    and not _CITE_MARKER.search(report)
-                ):
+                if sources and _CITE_MARKER.search(pre_revise) and not _CITE_MARKER.search(report):
                     log.warning("deep_research.revise_dropped_citations", reached=len(sources))
                     report = pre_revise
                     revised = False
@@ -1484,9 +1480,7 @@ class DeepResearchService:
         gaps = [g for g in (_coerce_brief(x) for x in data.get("gaps", [])) if g]
         return gaps, bool(data.get("stable"))
 
-    async def _curate_sources(
-        self, question: str, sources: list[WebSource]
-    ) -> list[WebSource]:
+    async def _curate_sources(self, question: str, sources: list[WebSource]) -> list[WebSource]:
         """Rank the citation registry by embedding relevance to the question and return the
         on-topic head, reordered most-relevant first. The gather registers every page its
         searches returned (webtools registers a source per hit), so a thin-web-presence or

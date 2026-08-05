@@ -769,6 +769,7 @@ async def test_curate_reorders_survivors_most_relevant_first() -> None:
     from jbrain.agent.deep_research import _CURATE_KEEP_MIN
 
     n = _CURATE_KEEP_MIN + 2  # all survive (≤ cap, all above floor); no min-floor fallback
+
     # `rank{i}` scores rise with i (0.40 → 0.90, all ≥ the 0.30 floor); input is ascending so the
     # best (rank{n-1}) is LAST — only a real reorder surfaces it first.
     def score_by(text: str) -> float:
