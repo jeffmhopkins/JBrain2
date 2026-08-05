@@ -6,6 +6,8 @@ gap-round bound, budget charging, and the refusal paths — all proven with fake
 scripted router + a fake fan), no DB, no real model. The security-critical fan clamps
 live in test_spawn.py; here we assert the ORCHESTRATION the tool layers on the fan."""
 
+import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import pytest
@@ -73,14 +75,15 @@ class _FakeRouter:
         # raises it too for the named stage. deep_research must DEGRADE, not die.
         plan_bad_json: bool = False,
         reflect_bad_json: bool = False,
-        # The SOURCE CURATOR's scripted drop set (1-based source numbers). Default () = keep
-        # everything, so a run that reaches the curator is byte-unchanged unless a test opts in.
-        curate_drop: tuple[int, ...] = (),
-        # Make the curator call RAISE a non-BadResponse error (a provider 5xx/timeout the
-        # `_complete_json` bad-JSON catch does NOT swallow) → exercises the broad fail-open.
-        curate_raise: bool = False,
-        # Return a malformed (non-list) `drop` → exercises the keep-all-on-garbage path.
-        curate_garbage: bool = False,
+        # Whether the WRITER emits a `[^n]` citation marker in its draft. Default True (a cited
+        # draft), so the mechanical zero-citation backstop does NOT fire on an ordinary run. Set
+        # False to model the writer taking the all-off-topic escape hatch (an uncited draft) and
+        # exercise the forced re-synth.
+        cite: bool = True,
+        # Whether the writer COMPLIES on the forced re-synth (the hardened zero-citation critique):
+        # True → the retry produces a cited report; False → it stays uncited (the genuinely
+        # all-noise case that legitimately ships without markers).
+        cite_on_retry: bool = True,
     ) -> None:
         self.complexity = complexity
         self.sub_questions = list(sub_questions)
@@ -90,9 +93,11 @@ class _FakeRouter:
         self.reflect_script = reflect_script
         self.plan_bad_json = plan_bad_json
         self.reflect_bad_json = reflect_bad_json
-        self.curate_drop = curate_drop
-        self.curate_raise = curate_raise
-        self.curate_garbage = curate_garbage
+        self.cite = cite
+        self.cite_on_retry = cite_on_retry
+        # Emit the fullwidth 【1】 citation form (what a browsing model produces) instead of the
+        # ASCII [^1]; the backstop's marker regex must treat both as "cited".
+        self.fullwidth = False
         self._reflect_calls = 0
         self.calls: list[dict] = []
         self.synth_calls: list[str] = []
@@ -128,14 +133,8 @@ class _FakeRouter:
             return _Result(
                 text="", usage=usage, parsed={"covered": self.covered, "gaps": self.gaps}
             )
-        # The SOURCE CURATOR is the only other structured one-shot — matched on its schema
-        # (a `drop` list) so it never depends on the prompt's prose. Default keep-all.
-        if json_schema and "drop" in (json_schema.get("properties") or {}):
-            if self.curate_raise:
-                raise RuntimeError("curator provider blew up")  # NOT LlmBadResponseError
-            if self.curate_garbage:
-                return _Result(text="", usage=usage, parsed={"drop": "not-a-list"})
-            return _Result(text="", usage=usage, parsed={"drop": list(self.curate_drop)})
+        # Source curation is now a deterministic embedding rank (no LLM one-shot), so the
+        # planner and the coverage check are the only structured `complete` calls.
         raise AssertionError(f"unexpected complete() for system: {system[:40]!r}")
 
     async def converse_stream(self, task, *, system, messages, tools=(), **kw):  # noqa: ANN001
@@ -143,8 +142,13 @@ class _FakeRouter:
         # chunks then a closing turn carrying usage, mirroring the real adapter contract.
         user_text = messages[0].text if messages else ""
         self.synth_calls.append(user_text)
+        # The forced zero-citation re-synth carries the hardened synthetic critique (its unique
+        # "CRITICAL DEFECT" marker); a normal revise carries a real critique instead.
+        forced = "CRITICAL DEFECT" in user_text
         revising = "Critique of your earlier draft" in user_text
-        text = "REVISED REPORT" if revising else "DRAFT REPORT"
+        cited = self.cite_on_retry if forced else self.cite
+        marker = (" 【1】" if self.fullwidth else " [^1]") if cited else ""
+        text = ("REVISED REPORT" if revising else "DRAFT REPORT") + marker
         half = len(text) // 2
         yield TextChunk(text=text[:half])
         yield TextChunk(text=text[half:])
@@ -275,8 +279,10 @@ def _health_ctx(*, kind: str = "owner", scopes: tuple[str, ...] = ("health",)) -
     )
 
 
-def _svc(router: _FakeRouter, spawn: _FakeSpawn) -> DeepResearchService:
-    return DeepResearchService(router=router, spawn=spawn)  # type: ignore[arg-type]
+def _svc(
+    router: _FakeRouter, spawn: _FakeSpawn, embed: "_FakeEmbed | None" = None
+) -> DeepResearchService:
+    return DeepResearchService(router=router, spawn=spawn, embed=embed)  # type: ignore[arg-type]
 
 
 def _research_fans(spawn: _FakeSpawn) -> list[dict]:
@@ -687,111 +693,271 @@ async def test_citations_are_tracked_from_sub_agents_to_the_report() -> None:
     assert len(urls) == len(set(urls))  # deduped
 
 
-async def test_curate_sources_culls_clearly_unrelated_noise() -> None:
-    """Once the registry is large enough to plausibly carry noise (a keyword match drags in
-    namesakes / dictionary pages), the source curator drops the entries it names as clearly
-    unrelated BEFORE the writer cites against the list — so the report cites a clean registry
-    instead of a noisy one the writer might give up on (the CFO zero-citation failure)."""
-    # 3 gather children × 3 sources = 9 collected (≥ the curate threshold); script two drops.
-    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
-    spawn = _FakeSpawn(sources_per_child=3)
-    out = await _svc(router, spawn).research(_ctx(), {"question": "who are the CFO candidates?"})
+class _FakeEmbed:
+    """Deterministic stand-in for EmbedClient. texts[0] is the QUESTION (reference score 1.0);
+    each source is embedded as the 2-D unit vector `[s, sqrt(1-s²)]` for a scalar relevance `s`,
+    so `_cosine(question, source) == s` exactly — letting a test drive the rank/floor with real,
+    DISTINCT cosines rather than ties. By default `s = 1.0` when the text contains `on_topic`
+    else `0.0` (the binary noise/signal split); pass `score_by` to assign a graded score per
+    title and exercise the REORDER. `raise_on_call` models the embed container being down;
+    `short` returns a wrong-length vector list to exercise the shape guard."""
+
+    def __init__(
+        self,
+        *,
+        on_topic: str = "brevard",
+        raise_on_call: bool = False,
+        short: bool = False,
+        score_by: "Callable[[str], float] | None" = None,
+    ) -> None:
+        self.on_topic = on_topic.lower()
+        self.raise_on_call = raise_on_call
+        self.short = short
+        self.score_by = score_by
+        self.calls: list[list[str]] = []
+
+    def _score(self, i: int, text: str) -> float:
+        if i == 0:
+            return 1.0  # the question is its own reference
+        if self.score_by is not None:
+            return self.score_by(text)
+        return 1.0 if self.on_topic in text.lower() else 0.0
+
+    @staticmethod
+    def _vec(s: float) -> list[float]:
+        s = max(0.0, min(1.0, s))
+        return [s, math.sqrt(max(0.0, 1.0 - s * s))]
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(texts)
+        if self.raise_on_call:
+            raise RuntimeError("embed container down")
+        if self.short:
+            return [[1.0, 0.0]]  # one vector for many texts → shape mismatch
+        return [self._vec(self._score(i, t)) for i, t in enumerate(texts)]
+
+
+def _srcs(*specs: str) -> list[WebSource]:
+    """A citation registry from `title` specs — the host is constant, so relevance turns on
+    the title alone (which is what `_FakeEmbed` scores)."""
+    return [WebSource(url=f"https://ex.com/{i}", title=t) for i, t in enumerate(specs)]
+
+
+async def test_curate_ranks_on_topic_first_and_drops_distant_noise() -> None:
+    """The embedding rank keeps the on-topic head and drops topically-distant namesake noise
+    (the "Pam" → privileged-access-management, "District" → dictionary collisions), reordering
+    the survivors most-relevant-first so the real sources take the low `[^n]` slots — the fix
+    for "0 cited · N reached". Needs enough on-topic sources to clear `_CURATE_KEEP_MIN`, so the
+    min-floor can't drag the noise back in."""
+    from jbrain.agent.deep_research import _CURATE_KEEP_MIN
+
+    on = [f"Brevard candidate {i}" for i in range(_CURATE_KEEP_MIN + 1)]
+    noise = [f"privileged access management {i}" for i in range(10)]
+    # Interleave so on-topic entries are NOT already first — the reorder must surface them.
+    registry = _srcs(*[x for pair in zip(noise, on, strict=False) for x in pair], *on[10:])
+    svc = _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(on_topic="brevard"))
+    kept = await svc._curate_sources("Brevard County commission candidates", registry)
+    assert len(kept) == _CURATE_KEEP_MIN + 1  # every on-topic source kept, all noise dropped
+    assert all("brevard" in (ws.title or "").lower() for ws in kept)  # no namesake noise survived
+
+
+async def test_curate_reorders_survivors_most_relevant_first() -> None:
+    """The REORDER is the load-bearing half of the fix (on-topic sources take the low `[^n]`
+    slots instead of being buried at `[^487]`). With GRADED scores — the highest-relevance
+    source placed LAST in the input — the curated list must come back strictly most-relevant
+    first, which a pass-through (no sort) would fail."""
+    from jbrain.agent.deep_research import _CURATE_KEEP_MIN
+
+    n = _CURATE_KEEP_MIN + 2  # all survive (≤ cap, all above floor); no min-floor fallback
+    # `rank{i}` scores rise with i (0.40 → 0.90, all ≥ the 0.30 floor); input is ascending so the
+    # best (rank{n-1}) is LAST — only a real reorder surfaces it first.
+    def score_by(text: str) -> float:
+        idx = int(text.replace("rank", "").split()[0])
+        return 0.40 + 0.50 * (idx / (n - 1))
+
+    registry = _srcs(*[f"rank{i}" for i in range(n)])
+    kept = await _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(score_by=score_by))._curate_sources(
+        "q", registry
+    )
+    assert len(kept) == n  # all kept, only reordered
+    idxs = [int(ws.title.replace("rank", "")) for ws in kept]
+    assert idxs == sorted(idxs, reverse=True)  # strictly most-relevant-first
+    assert kept[0].title == f"rank{n - 1}" and kept[-1].title == "rank0"
+
+
+async def test_curate_min_floor_keeps_head_when_it_readmits_some_noise() -> None:
+    """Below `_CURATE_KEEP_MIN` on-topic survivors, the min-floor readmits the best-available
+    tail (some noise) rather than hand the writer a too-short list — a documented trade-off:
+    never-empty and a minimum breadth win over strict purity, and the on-topic sources still
+    rank FIRST so the writer meets them before the readmitted noise."""
+    from jbrain.agent.deep_research import _CURATE_KEEP_MIN
+
+    on = [f"brevard {i}" for i in range(5)]  # 5 < KEEP_MIN
+    noise = [f"privileged access {i}" for i in range(15)]
+    kept = await _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(on_topic="brevard"))._curate_sources(
+        "Brevard", _srcs(*on, *noise)
+    )
+    assert len(kept) == _CURATE_KEEP_MIN  # 5 on-topic + 7 readmitted noise, not just 5
+    assert all("brevard" in (ws.title or "").lower() for ws in kept[:5])  # on-topic ranked first
+
+
+async def test_curate_caps_a_huge_on_topic_registry() -> None:
+    """A registry of many on-topic sources is capped at `_CURATE_KEEP_CAP` so the writer meets
+    a bounded, signal-dense list rather than hundreds of lines that dilute the cite mandate."""
+    from jbrain.agent.deep_research import _CURATE_KEEP_CAP
+
+    registry = _srcs(*[f"Brevard source {i}" for i in range(_CURATE_KEEP_CAP + 40)])
+    svc = _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(on_topic="brevard"))
+    kept = await svc._curate_sources("Brevard County", registry)
+    assert len(kept) == _CURATE_KEEP_CAP
+
+
+async def test_curate_never_returns_empty_even_when_all_noise() -> None:
+    """The min-floor is the anti-stranding guarantee: even when NOTHING clears the relevance
+    floor (an all-noise registry, or a mis-scored run), the writer still gets the top-scored
+    head — never an empty list that would guarantee an uncited report."""
+    from jbrain.agent.deep_research import _CURATE_KEEP_MIN
+
+    registry = _srcs(*[f"unrelated topic {i}" for i in range(20)])  # nothing matches "brevard"
+    svc = _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(on_topic="brevard"))
+    kept = await svc._curate_sources("Brevard County", registry)
+    assert len(kept) == _CURATE_KEEP_MIN  # the top head, not empty
+
+
+async def test_curate_keeps_a_wholly_on_topic_list_intact() -> None:
+    """Keep-biased: a list already all on-topic and under the cap survives whole — curation only
+    ever trims the least-relevant tail, never a legitimate citation-rich set."""
+    registry = _srcs(*[f"Brevard candidate {i}" for i in range(10)])
+    svc = _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(on_topic="brevard"))
+    kept = await svc._curate_sources("Brevard County", registry)
+    assert len(kept) == 10
+
+
+async def test_curate_fails_open_on_embed_error_and_no_embedder_and_short_list() -> None:
+    """Fail-open on every axis — the run's real citations can never be stranded by curation:
+    an embed-container error keeps the whole registry, a service with NO embedder wired is a
+    no-op, and a list under `_CURATE_MIN_SOURCES` is left untouched."""
+    from jbrain.agent.deep_research import _CURATE_MIN_SOURCES
+
+    registry = _srcs(*[f"Brevard {i}" for i in range(12)])
+    # Embed raises → keep all.
+    boom = _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(raise_on_call=True))
+    assert len(await boom._curate_sources("q", registry)) == 12
+    # A wrong-length vector list (shape mismatch) → keep all.
+    short = _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(short=True))
+    assert len(await short._curate_sources("q", registry)) == 12
+    # No embedder wired → curation is a no-op.
+    none = _svc(_FakeRouter(), _FakeSpawn(), None)
+    assert len(await none._curate_sources("q", registry)) == 12
+    # Below the min-sources threshold → untouched even with an embedder.
+    tiny = _srcs(*[f"x {i}" for i in range(_CURATE_MIN_SOURCES - 1)])
+    svc = _svc(_FakeRouter(), _FakeSpawn(), _FakeEmbed(on_topic="brevard"))
+    assert len(await svc._curate_sources("Brevard", tiny)) == _CURATE_MIN_SOURCES - 1
+
+
+def test_cosine_and_host_helpers_handle_edge_cases() -> None:
+    """The ranking primitives degrade instead of crashing on degenerate input — a zero-norm or
+    length-mismatched vector scores 0.0 (never a ZeroDivisionError/ValueError that would sink a
+    finished run), and a URL that won't parse yields an empty host."""
+    from jbrain.agent.deep_research import _cosine, _host
+
+    assert _cosine([1.0, 0.0], [1.0, 0.0]) == 1.0  # parallel
+    assert _cosine([1.0, 0.0], [0.0, 1.0]) == 0.0  # orthogonal
+    assert _cosine([0.0, 0.0], [1.0, 1.0]) == 0.0  # zero-norm → 0.0, not a crash
+    assert _cosine([1.0], [1.0, 2.0]) == 0.0  # length mismatch → 0.0, not a crash
+    assert _host("https://www.ballotpedia.org/candidate") == "ballotpedia.org"  # www stripped
+    assert _host("http://[::1") == ""  # malformed URL → "", not a raise
+
+
+async def test_curated_registry_is_what_the_writer_cites_against() -> None:
+    """End-to-end: the curated (ranked + capped) registry is the SOURCES list handed to the
+    writer AND the view's favicon targets — so the report's `[^n]` numbering maps to the clean
+    registry, not the raw noisy one."""
+    # The FakeSpawn titles its sources "Src <label> <k>"; one angle carries the on-topic marker,
+    # the other is noise. Enough on-topic sources (> _CURATE_KEEP_MIN) that the min-floor can't
+    # drag the noise back in, so the drop is genuinely observable end-to-end.
+    router = _FakeRouter(
+        complexity="deep", covered=True, gaps=(), sub_questions=("brevard", "noise")
+    )
+    spawn = _FakeSpawn(sources_per_child=13)  # 13 on-topic + 13 noise = 26 collected
+    out = await _svc(router, spawn, _FakeEmbed(on_topic="brevard")).research(
+        _ctx(), {"question": "Brevard candidates", "breadth": 2}
+    )
     ws = out.view.data["web_sources"]  # type: ignore[attr-defined]
-    assert len(ws) == 7  # nine collected, two culled as noise
-    # The curated list is what the writer cited against, too (not just the view).
+    assert ws and all("brevard" in s["title"].lower() for s in ws)  # only on-topic cited
     assert any("SOURCES — cite with these exact numbers" in uw for uw in router.synth_calls)
 
 
-async def test_curate_sources_is_keep_biased_and_fail_open() -> None:
-    """The curator can only ever remove OBVIOUS junk: a runaway drop (more than half the
-    list) is refused wholesale, and a short list is left untouched — so a flaky judgment can
-    never strand the run's real citations under the new must-cite synthesis rule."""
-    # Oversized drop (6 of 9) is refused → the whole registry survives.
-    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2, 3, 4, 5, 6))
-    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
-    assert len(out.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
-    # A small registry (3 sources < threshold) never even calls the curator.
-    router2 = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1,))
-    out2 = await _svc(router2, _FakeSpawn(sources_per_child=1)).research(_ctx(), {"question": "q"})
-    assert len(out2.view.data["web_sources"]) == 3  # type: ignore[attr-defined]
+async def test_zero_citation_backstop_forces_one_hardened_resynth() -> None:
+    """The mechanical backstop: the run reached sources but the draft cites none (the writer
+    took the all-off-topic escape hatch) → ONE forced re-synth with the hardened critique, which
+    produces a cited report. Critique disabled so the only re-synth is the backstop's."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), cite=False, cite_on_retry=True)
+    spawn = _FakeSpawn(sources_per_child=2, critique_ok=False)  # no normal revise pass
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    assert len(router.synth_calls) == 2  # draft (uncited) + one forced re-synth
+    assert any("CRITICAL DEFECT" in uw for uw in router.synth_calls)  # the hardened critique
+    assert "[^1]" in out.view.data["report_md"]  # type: ignore[attr-defined]  # now cited
 
 
-async def test_curate_sources_ignores_out_of_range_and_garbage_drops() -> None:
-    """An out-of-range source number is filtered (not a crash, not a wrong cull), and a
-    malformed non-list `drop` keeps the whole registry — the curator can only remove real,
-    in-range entries a well-formed judgment names."""
-    # 9 sources; drop names source 1 (valid) and 99 (out of range) → only source 1 is culled.
-    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 99))
-    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
-    assert len(out.view.data["web_sources"]) == 8  # type: ignore[attr-defined]
-    # A non-list `drop` (a degraded/garbage parse) is ignored → keep-all.
-    garbage = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_garbage=True)
-    out2 = await _svc(garbage, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
-    assert len(out2.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
+async def test_zero_citation_backstop_is_bounded_to_one_retry() -> None:
+    """When the retry STILL emits no marker, the genuinely-all-noise case ships honestly: the
+    backstop fires exactly once (no unbounded re-synth loop) and the uncited report is returned."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), cite=False, cite_on_retry=False)
+    spawn = _FakeSpawn(sources_per_child=2, critique_ok=False)
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    assert len(router.synth_calls) == 2  # draft + one retry, then it ships — no loop
+    assert "[^1]" not in out.view.data["report_md"]  # type: ignore[attr-defined]
 
 
-async def test_curate_sources_fails_open_on_provider_error() -> None:
-    """Curation is a pure optimization — a provider error (5xx / timeout, beyond the bad-JSON
-    the shared helper already swallows) must NEVER fail a finished run's gather work. Any such
-    error keeps the whole registry rather than collapsing the run before the report is written."""
-    router = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_raise=True)
-    out = await _svc(router, _FakeSpawn(sources_per_child=3)).research(_ctx(), {"question": "q"})
-    assert out.view is not None  # type: ignore[attr-defined]  # the run finished, not crashed
-    assert len(out.view.data["web_sources"]) == 9  # type: ignore[attr-defined]
-    assert router.synth_calls  # the report was still written
+async def test_revise_pass_cannot_drop_all_citations() -> None:
+    """The backstop guards the draft; the revise pass is a second write that could itself drop
+    every citation. When it regresses a cited draft to an uncited one, the run keeps the cited
+    draft rather than shipping the newly-uncited revision — the must-cite invariant applied to
+    the FINAL text. Here: uncited draft → backstop cites it → the (uncited) revise is discarded."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=(), cite=False, cite_on_retry=True)
+    spawn = _FakeSpawn(sources_per_child=2, critique_ok=True)  # the normal revise runs (uncited)
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    assert len(router.synth_calls) == 3  # draft + backstop re-synth + revise
+    assert "[^1]" in out.view.data["report_md"]  # type: ignore[attr-defined]  # cited draft kept
 
 
-async def test_curate_sources_half_drop_is_the_refusal_boundary() -> None:
-    """The runaway-drop backstop uses a STRICT `> half`: dropping exactly half is accepted,
-    one more is refused wholesale — guarding the boundary against an off-by-one regression."""
-    subs = ("a", "b", "c", "d")  # 4 gather children × 2 sources = 8 collected
-    # Exactly half (4 of 8): accepted.
-    accept = _FakeRouter(
-        complexity="deep", covered=True, gaps=(), sub_questions=subs, curate_drop=(1, 2, 3, 4)
-    )
-    out = await _svc(accept, _FakeSpawn(sources_per_child=2)).research(_ctx(), {"question": "q"})
-    assert len(out.view.data["web_sources"]) == 4  # type: ignore[attr-defined]
-    # One past half (5 of 8): refused → the whole registry survives.
-    refuse = _FakeRouter(
-        complexity="deep", covered=True, gaps=(), sub_questions=subs, curate_drop=(1, 2, 3, 4, 5)
-    )
-    out2 = await _svc(refuse, _FakeSpawn(sources_per_child=2)).research(_ctx(), {"question": "q"})
-    assert len(out2.view.data["web_sources"]) == 8  # type: ignore[attr-defined]
+async def test_zero_citation_backstop_recognizes_fullwidth_markers() -> None:
+    """A draft cited only in the fullwidth `【n】` form a browsing model emits is already cited —
+    the backstop must NOT fire a wasted re-synth on it (the marker regex matches both forms the
+    PWA counts)."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    router.fullwidth = True  # emit 【1】 instead of [^1]
+    spawn = _FakeSpawn(sources_per_child=2, critique_ok=False)
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    assert len(router.synth_calls) == 1  # backstop did not fire
+    assert "【1】" in out.view.data["report_md"]  # type: ignore[attr-defined]
 
 
-async def test_curate_sources_min_sources_threshold_boundary() -> None:
-    """Pin the `< _CURATE_MIN_SOURCES` skip boundary (mirroring the strict `>half` pin): a
-    registry of exactly the threshold invokes the curator (a scripted drop applies), one fewer
-    skips it (the same scripted drop is ignored). A single gather angle (breadth=1) makes the
-    collected count exactly `sources_per_child`."""
-    from jbrain.agent.deep_research import _CURATE_MIN_SOURCES as MIN
-
-    # One below threshold → curator never called, drop ignored.
-    below = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
-    out = await _svc(below, _FakeSpawn(sources_per_child=MIN - 1)).research(
-        _ctx(), {"question": "q", "breadth": 1}
-    )
-    assert len(out.view.data["web_sources"]) == MIN - 1  # type: ignore[attr-defined]
-    # Exactly at threshold → curator runs, both drops apply.
-    at = _FakeRouter(complexity="deep", covered=True, gaps=(), curate_drop=(1, 2))
-    out2 = await _svc(at, _FakeSpawn(sources_per_child=MIN)).research(
-        _ctx(), {"question": "q", "breadth": 1}
-    )
-    assert len(out2.view.data["web_sources"]) == MIN - 2  # type: ignore[attr-defined]
+async def test_zero_citation_backstop_silent_when_draft_already_cited() -> None:
+    """A normal run whose draft already carries a marker never triggers the backstop — the
+    single synth (plus the ordinary critique-revise) is all that runs."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())  # cite=True by default
+    spawn = _FakeSpawn(sources_per_child=2, critique_ok=False)  # isolate: no normal revise
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    assert len(router.synth_calls) == 1  # draft only; backstop did not fire
+    assert not any("CRITICAL DEFECT" in uw for uw in router.synth_calls)
+    assert "[^1]" in out.view.data["report_md"]  # type: ignore[attr-defined]
 
 
-def test_curate_and_synthesize_prompts_carry_their_behavioral_core() -> None:
-    """Guard the must-cite / all-noise-escape / keep-biased instructions against silent prose
-    drift — the behavioral core of the citation fix (the plan prompt gets the same guard via
-    its `namesake` assertion). LLM judgment itself can't be unit-tested; the prose can."""
-    from jbrain.agent.deep_research import _CURATE, _SYNTH
+def test_synthesize_prompt_carries_its_behavioral_core() -> None:
+    """Guard the must-cite / all-noise-escape / on-topic-count-gate instructions against silent
+    prose drift — the behavioral core of the citation fix (the plan prompt gets the same guard
+    via its `namesake` assertion). LLM judgment itself can't be unit-tested; the prose can."""
+    from jbrain.agent.deep_research import _SYNTH
 
+    assert _SYNTH.version == "dr-synth-v9"  # pin the version bump (parity with the plan test)
     synth = _SYNTH.body.lower()
     assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
     assert "not licence to drop all citations" in synth  # the give-up path stays closed
     assert "a fabricated citation is worse than an honest gap" in synth  # all-noise escape valve
-    curate = _CURATE.body.lower()
-    assert "keep-biased" in curate and "when you are unsure" in curate  # keep-bias survives
+    assert "how many entries are plausibly on-topic" in synth  # v9: gate before the escape
+    assert "consists exclusively of" in synth  # v9: forbid the confabulated Scope note
 
 
 # --- report depth: the synthesizer is handed a length target by complexity --

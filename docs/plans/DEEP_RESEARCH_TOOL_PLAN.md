@@ -1,6 +1,16 @@
 # Deep Research Tool — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-04 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; v14 quantitative-provenance rule + citation-attribution fidelity + recommendation-grade signpost; v15 citation reliability — synth must-cite + question-aware source curator + entity-disambiguation queries; mock-gate sign-off pending)
+> **Status:** In progress · **Last verified:** 2026-08-05 · **Waves:** D1✅ D2✅ D3◻️ (v1 shipped; v2 orchestration merged; v3 on-box budget tuning merged; v4 report library merged; v5 budget-8M + meter fix merged (PR #902); v6 short sub-agent row titles + pinned header + fan auto-scroll merged (PR #903/#904); v7 streaming report + phase checklist; v8 checklist → vertical timeline with the fan nested in the active stage; v9 render gpt-oss harmony citations; v10 critique fed the cited SOURCES for citation-faithfulness checking; v11 report-depth upgrade (8–10 page `deep` reports); v12 evidence-grade signposting + scope note; v13 budget+wall-clock bump for saturating breadth-5 runs; v14 quantitative-provenance rule + citation-attribution fidelity + recommendation-grade signpost; v15 citation reliability — synth must-cite + question-aware source curator + entity-disambiguation queries; v16 registry culled by embedding rank + zero-citation re-synth backstop (the 501-source ballot failure); mock-gate sign-off pending)
+
+**v16 revision (0 cited · 501 reached — the LLM curator couldn't prune a large noisy registry).**
+A citation-rich District-1 candidate report gathered 501 sources but cited NONE. The v15 LLM
+source curator was structurally unable to help: its 800-token `drop` array couldn't enumerate the
+~400 namesake-noise entries ("Pam" → privileged-access-management, "District" → dictionary pages),
+and its "refuse a drop of more than half" backstop kept the whole list — so the writer again faced
+a mostly-noise registry and took the all-off-topic escape. Fixed by replacing the LLM curator with
+a deterministic embedding rank (`_curate_sources`), adding a mechanical zero-citation re-synth
+backstop, and gating the synth escape behind an explicit on-topic count (`dr-synth-v9`). See the
+v16 seams in the changelog below.
 
 **v15 revision (a citation-rich request came back UNCITED — the ballot-research failure).**
 Two identically-prompted political reports diverged: the Senate run cited 162 `[^n]` markers
@@ -11,19 +21,27 @@ nothing" escape to a *noisy* list, atop a gather whose `web_search` registered e
 citable (a common-word name — "Frank", "Financial" — dragged in dictionary/film/bank-login
 noise). Fixed across three seams, each keeping the existing machinery:
 
-- **Synthesize prompt** (`dr-synth-v6 → v8`) — a non-empty `SOURCES` list now makes inline
+- **Synthesize prompt** (`dr-synth-v6 → v9`) — a non-empty `SOURCES` list now makes inline
   `[^n]` citation MANDATORY: cite every claim a listed source backs and mark the rest
   unconfirmed; judging the list weak/noisy is explicitly not licence to drop all citations, and
-  the Scope note may no longer excuse an uncited report. The v8 escape valve (from the review)
-  guards the all-noise case the keep-biased curator leaves intact: when NOT ONE listed source is
-  actually on-topic, cite nothing and mark claims unconfirmed rather than fabricate a marker — so
-  the must-cite mandate can never pressure a mis-citation. Only a truly EMPTY list means cite
-  nothing unconditionally.
-- **Source curator** (new `deep_research_curate_sources.prompt`, `dr-curate-v1`) — a keep-biased,
-  fail-open, drop-capped judge culls the CLEARLY-unrelated registry entries (namesakes,
-  dictionary pages, unrelated films/companies, login landings) before the writer cites, so a
-  noisy list can't crowd out the real sources. Runs only once the registry is large enough to
-  carry noise (`_CURATE_MIN_SOURCES`); a small list or an oversized/empty drop is left untouched.
+  the Scope note may no longer excuse an uncited report. The escape valve guards the all-noise
+  case: when NOT ONE listed source is actually on-topic, cite nothing and mark claims unconfirmed
+  rather than fabricate a marker — so the must-cite mandate can never pressure a mis-citation.
+  Only a truly EMPTY list means cite nothing unconditionally. `v9` gates that exception behind an
+  explicit on-topic count (available only when the count is exactly zero) and forbids the
+  "consists exclusively of …" Scope-note confabulation a local model used to wave off a mixed
+  list — the "0 cited · 501 reached" failure.
+- **Source curator** (`_curate_sources`, embedding rank) — replaces the earlier LLM drop-judge,
+  whose 800-token drop array and "refuse a drop of more than half" backstop both fired backwards
+  on a large, mostly-noise registry and kept the whole thing. The registry is now ranked by
+  embedding relevance (the local `EmbedClient`, no LLM tokens) against the question and the
+  on-topic head kept, reordered most-relevant-first so the real sources take the low `[^n]` slots.
+  Deterministic and fail-open on every axis (kept whole under `_CURATE_MIN_SOURCES` or with no
+  embedder / an embed error; never fewer than `_CURATE_KEEP_MIN`, never more than `_CURATE_KEEP_CAP`).
+- **Zero-citation backstop** (`_run`) — after the first synthesis, if the run reached sources but
+  the draft carries no `[^n]` marker, one hardened re-synth is forced (the writer took the
+  all-off-topic escape hatch on a list that wasn't). A deterministic guard on the exact symptom
+  `citedSourceCount` reports, not a prose rule a local model can over-apply.
 - **Query disambiguation** (`deep_research_plan.prompt` dr-plan-v6 → v7; `research.prompt`
   agent-research-v10 → v11) — a named subject (person/org/place, esp. a common/shared name) is
   anchored with full name + role + jurisdiction + year, and namesake results (a dictionary word,

@@ -45,6 +45,8 @@ to skip a stage), and the research children corroborate proportional to source a
 from __future__ import annotations
 
 import json
+import math
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +62,7 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.spawn import SpawnService, _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.db.session import scoped_session
+from jbrain.embed import EmbedClient
 from jbrain.external.research_corpus import persist_report
 from jbrain.llm import LlmBadResponseError, LlmRouter
 from jbrain.llm.promptfile import load_prompt
@@ -75,7 +78,6 @@ _PROMPTS = Path(__file__).parent / "prompts"
 _PLAN = load_prompt(_PROMPTS / "deep_research_plan.prompt")
 _REFLECT = load_prompt(_PROMPTS / "deep_research_reflect.prompt")
 _SYNTH = load_prompt(_PROMPTS / "deep_research_synthesize.prompt")
-_CURATE = load_prompt(_PROMPTS / "deep_research_curate_sources.prompt")
 
 # Deep-research runs reuse jerv's own agent route (deep_research is jerv doing agent
 # work) — one route, no separate router config or settings surface to maintain.
@@ -329,22 +331,35 @@ _PLAN_SCHEMA = {
     "required": ["complexity", "sub_questions", "sections"],
 }
 
-# The source curator (deep_research_curate_sources.prompt) names the registry entries that
-# are CLEARLY unrelated noise a keyword match dragged into the gather (a namesake, a dictionary
-# page, an unrelated film/company, a bare login/home landing). It runs only once the registry is
-# large enough that noise plausibly crowds out the real sources — a small list is left untouched
-# — and it is fail-open + keep-biased + drop-capped below, so a flaky judgment can never strand
-# the run's real citations (the failure mode that turned a citation-rich request into an uncited
-# report). `drop` names entries to remove; everything else is kept.
-_CURATE_SCHEMA = {
-    "type": "object",
-    "properties": {"drop": {"type": "array", "items": {"type": "integer"}}},
-    "required": ["drop"],
-}
-_CURATE_MAX_TOKENS = 800
-# Below this many sources a run keeps the whole registry: a short list has little noise to cull
-# and is cheap for the writer to cite against, so the extra judge call isn't worth it.
+# Source curation ranks the citation registry by EMBEDDING relevance to the question and keeps
+# the on-topic head, so a gather over a thin-web-presence subject (an obscure candidate named
+# "Pam", a "District 1" race) doesn't hand the writer a list dominated by keyword-collision
+# noise — "PAM" = privileged access management, "district" dictionary pages, a namesake athlete
+# — which is what made the writer judge the whole list unmatched and drop ALL citations (the
+# "0 cited · 501 reached" failure). It replaces the old LLM drop-judge, whose two caps fired
+# BACKWARDS on a large, mostly-noise list: an 800-token drop array couldn't enumerate ~400
+# junk entries, and the "refuse a drop of more than half" backstop kept the whole noisy list.
+# The embedding rank has neither limit — it needs no token budget and its pruning power GROWS
+# with the noise ratio (the on-topic cluster separates ever more sharply from topically-distant
+# junk). It is deterministic, keep-biased, and fail-open on every axis (see `_curate_sources`).
+#
+# The scoring is a coarse relevance shrink, not a semantic namesake judge: a cross-encoder or an
+# LLM keep-list second stage over the shrunk head would separate subtler same-topic namesakes
+# better (docs note this as a clean follow-on), but the load-bearing fixes here are the REORDER
+# (on-topic sources take the low `[^n]` slots instead of being buried) and the CAP (the writer
+# meets signal, not 500 lines of noise), which hold even where cosine separation is only rough.
+#
+# Below this many sources a run keeps the whole registry unchanged: a short list has little noise
+# to cull and is cheap for the writer to cite against, so the rank isn't worth it.
 _CURATE_MIN_SOURCES = 8
+# The on-topic head handed to the writer: keep every source scoring at/above the relevance floor,
+# but never more than the CAP (so a huge registry can't dilute the citation instruction) and never
+# fewer than the MIN top-scored (so a harsh floor — or a mis-scored run — can never strand the
+# real sources or hand the writer an empty list). The FLOOR is a conservative lower bound tuned
+# for bge-small cosine; the CAP/MIN are the guarantees that make the fix hold regardless of it.
+_CURATE_KEEP_CAP = 60
+_CURATE_KEEP_MIN = 12
+_CURATE_KEEP_FLOOR = 0.30
 
 _REFLECT_SCHEMA = {
     "type": "object",
@@ -376,6 +391,26 @@ _SYNTH_MAX_TOKENS = 12000
 # written) instead of a static spinner. Step ordinals match the checklist (see `_phase`).
 _WRITE_STEP, _WRITE_LABEL = 6, "Writing the report"
 _REVISE_STEP, _REVISE_LABEL = 8, "Revising from the critique"
+
+# The mechanical zero-citation backstop. If the draft carries no citation marker yet the run
+# reached sources, the writer took the "all off-topic → cite nothing" escape hatch — the failure
+# this whole change targets. Rather than trust a prose rule a local model already over-applied,
+# detect the symptom deterministically and force ONE hardened re-synth (reusing the revise path)
+# with the critique below. Bounded to a single retry: if the model still emits no marker after
+# being told the list is not all off-topic, the genuinely-all-noise case is real and the honest
+# uncited report ships. The pattern matches BOTH forms the PWA's `citedSourceCount` counts — plain
+# ASCII `[^n]` and the fullwidth `【n】`/`【^n】` a browsing model (gpt-oss) emits — so a draft
+# cited only in the fullwidth form is correctly seen as cited and doesn't trigger a wasted retry.
+_CITE_MARKER = re.compile(r"\[\^\d+\]|【\^?\d+】")
+_ZERO_CITATION_CRITIQUE = (
+    "CRITICAL DEFECT: your draft carries ZERO `[^n]` citation markers, but the SOURCES list is "
+    "non-empty and its top entries are on-topic. You wrongly invoked the all-off-topic exception "
+    "— the list is NOT all off-topic. Do not repeat that. Go through the SOURCES list, identify "
+    "the entries that genuinely concern the subject, and place a `[^n]` after every claim one of "
+    "them supports; mark only the claims no listed source backs as unconfirmed. Do not fabricate "
+    "a citation for a claim its source does not support, and do not say in the Scope note that the "
+    "sources could not be cited."
+)
 # Coalesce the stream: emit a preview at most every ~N new characters so the live report
 # updates smoothly without a per-token event storm over the SSE channel.
 _SYNTH_PREVIEW_STRIDE = 240
@@ -496,6 +531,31 @@ _TRACKING_PARAMS = frozenset(
 )
 
 
+def _host(url: str) -> str:
+    """The bare hostname (no `www.`) for a source's relevance text — the host carries strong
+    on-topic signal (`ballotpedia.org`, `brevardballot.com` vs `microsoft.com`) that the title
+    alone can miss. Empty for a URL that won't parse."""
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity of two equal-length vectors, 0.0 for a degenerate (zero-norm or
+    length-mismatched) input. Pure-Python so source ranking needs no numpy — the vectors are
+    small (bge-small, 384 dims) and the registry is bounded, so the loop is trivially cheap."""
+    if len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
 def _canonical_url(url: str) -> str:
     """A dedup KEY for a URL — NOT for display (the first-seen original is kept for the
     citation). Collapses the ways one page arrives as many URLs: scheme (http vs https) and a
@@ -593,12 +653,17 @@ class DeepResearchService:
         router: LlmRouter,
         spawn: SpawnService,
         maker: async_sessionmaker[AsyncSession] | None = None,
+        embed: EmbedClient | None = None,
     ) -> None:
         self._router = router
         self._spawn = spawn
         # The report library writer's session maker. Optional: a headless/test build without a
         # DB skips persistence (the report still renders), so persist is always best-effort.
         self._maker = maker
+        # The embedding client used to rank/prune the citation registry (`_curate_sources`).
+        # Optional: with no embedder wired, curation is a no-op and the full registry passes
+        # through unchanged (fail-open), so the pipeline still runs — it just isn't pruned.
+        self._embed = embed
 
     async def research(
         self,
@@ -1004,12 +1069,13 @@ class DeepResearchService:
             # (stable across the draft and the revise), so each marker maps to a tappable
             # favicon and the sources are never lost between the sub-agents and the report.
             sources = _collect_sources([*gather, *([analyst] if analyst else []), *refill])
-            # Cull the CLEARLY-unrelated noise a keyword match dragged in (namesakes, dictionary
-            # pages, unrelated films/companies) before the writer cites against the list, so a
-            # noisy registry doesn't crowd out the real sources. Fail-open + keep-biased +
-            # drop-capped (see `_curate_sources`), so it only ever removes obvious junk and can
-            # never strand the run's real citations.
-            sources = await self._curate_sources(ctx, question, sources)
+            # Rank the registry by relevance to the question and keep the on-topic head, reordered
+            # so the real sources take the low `[^n]` slots — before the writer cites against it.
+            # A thin-web-presence subject drags in keyword-collision noise (a namesake, dictionary
+            # pages) that otherwise buries and dilutes the real sources into an uncited report;
+            # this prunes it. Fail-open + keep-biased + never-empty (see `_curate_sources`), so it
+            # only ever drops the least-relevant tail and can never strand the run's citations.
+            sources = await self._curate_sources(question, sources)
 
             # --- (6) SYNTHESIZE the report ----------------------------------------
             self._phase(ctx, _WRITE_STEP, _WRITE_LABEL)
@@ -1024,6 +1090,25 @@ class DeepResearchService:
                 critique="",
                 directive=directive,
             )
+            # Mechanical zero-citation backstop: the run reached sources but the draft cites none
+            # — the writer took the all-off-topic escape hatch. Force one hardened re-synth telling
+            # it the list is not all off-topic, rather than shipping an uncited report on a prose
+            # rule a local model already over-applied. One retry only; a still-uncited draft is the
+            # honest all-noise case. Runs before the critique slice is released so the re-synth,
+            # a jerv model call, isn't gated by it (the reserve gates child fans, not this call).
+            if sources and not _CITE_MARKER.search(report):
+                log.warning("deep_research.zero_citations_retry", reached=len(sources))
+                report = await self._synthesize(
+                    ctx,
+                    question,
+                    sections,
+                    results,
+                    analysis,
+                    sources,
+                    complexity=complexity,
+                    critique=_ZERO_CITATION_CRITIQUE,
+                    directive=directive,
+                )
 
             # The draft is written — release the critique's slice (tokens AND time) for the
             # critique child, which now runs against the full remaining pool and clock.
@@ -1039,6 +1124,7 @@ class DeepResearchService:
             revised = False
             if critique.strip():
                 self._phase(ctx, _REVISE_STEP, _REVISE_LABEL)
+                pre_revise = report
                 report = await self._synthesize(
                     ctx,
                     question,
@@ -1051,6 +1137,18 @@ class DeepResearchService:
                     directive=directive,
                 )
                 revised = True
+                # The zero-citation backstop guards the DRAFT; the revise pass is a second write
+                # that could itself drop every citation. If it regressed a cited draft to an
+                # uncited one while sources exist, keep the cited draft rather than ship the
+                # newly-uncited revision — the same must-cite invariant, applied to the final text.
+                if (
+                    sources
+                    and _CITE_MARKER.search(pre_revise)
+                    and not _CITE_MARKER.search(report)
+                ):
+                    log.warning("deep_research.revise_dropped_citations", reached=len(sources))
+                    report = pre_revise
+                    revised = False
         finally:
             ctx.tree.stage_reserve = prior_reserve
             ctx.tree.time_reserve = prior_time_reserve
@@ -1387,59 +1485,50 @@ class DeepResearchService:
         return gaps, bool(data.get("stable"))
 
     async def _curate_sources(
-        self, ctx: ToolContext, question: str, sources: list[WebSource]
+        self, question: str, sources: list[WebSource]
     ) -> list[WebSource]:
-        """Cull CLEARLY-unrelated noise from the citation registry before the writer cites
-        against it. The gather registers every page its searches returned (webtools registers
-        a source per hit), so a common-word or shared-name subject drags in dictionary pages,
-        namesakes, and unrelated films/companies — the noise that led the CFO writer to judge
-        the whole list unmatched and drop ALL citations. This asks a keep-biased judge to name
-        only the obvious junk, and is FAIL-OPEN on every axis so it can never strand the real
-        sources: skipped under `_CURATE_MIN_SOURCES`, a degraded/empty parse keeps everything,
-        an out-of-range index is ignored, and a runaway drop (more than half the list) is
-        refused wholesale. Returns the kept sources in their original order (so the `[^n]`
-        numbering the writer cites against stays first-seen-stable)."""
-        if len(sources) < _CURATE_MIN_SOURCES:
+        """Rank the citation registry by embedding relevance to the question and return the
+        on-topic head, reordered most-relevant first. The gather registers every page its
+        searches returned (webtools registers a source per hit), so a thin-web-presence or
+        shared-name subject drags in dictionary pages, namesakes, and unrelated products —
+        the noise that led the writer to judge the whole list unmatched and drop ALL citations
+        ("0 cited · 501 reached"). Scoring each source's `title — host` against the question
+        with the local embedder (no LLM tokens, deterministic) separates the on-topic cluster
+        from topically-distant junk; the on-topic head then takes the low `[^n]` slots.
+
+        FAIL-OPEN and keep-biased on every axis, so it can never strand the run's real
+        citations: skipped (kept whole) under `_CURATE_MIN_SOURCES`; kept whole if no embedder
+        is wired, the embed call raises, or it returns the wrong shape; and it NEVER returns
+        fewer than `_CURATE_KEEP_MIN` (a harsh floor or a mis-scored run still yields the best
+        head, never an empty list). The CAP bounds dilution; the FLOOR trims the least-relevant
+        tail. On a list already all on-topic (all above the floor, at/under the cap) every
+        source survives — only reordered."""
+        if len(sources) < _CURATE_MIN_SOURCES or self._embed is None:
             return sources
+        texts = [f"{ws.title or ws.url} — {_host(ws.url)}" for ws in sources]
         try:
-            result = await self._complete_json(
-                ctx,
-                system=_CURATE.render(),
-                user_text=f"Research question:\n{question}\n\nSources:\n{_sources_block(sources)}",
-                json_schema=_CURATE_SCHEMA,
-                max_tokens=_CURATE_MAX_TOKENS,
-            )
-        except Exception:  # noqa: BLE001 - curation is a pure optimization; a provider error
-            # (a 5xx / timeout beyond the bad-JSON `_complete_json` already swallows) must NEVER
-            # fail a finished run's gather+refill work — keep every source. A genuine task
-            # cancellation is a BaseException, so it correctly propagates and is not swallowed.
+            vecs = await self._embed.embed([question, *texts])
+        except Exception:  # noqa: BLE001 - curation is a pure optimization; an embed-container
+            # error (down / booting) must NEVER fail a finished run's gather+refill work — keep
+            # every source. A genuine task cancellation is a BaseException, so it propagates.
             log.warning("deep_research.curate_failed", exc_info=True)
             return sources
-        # Fail-open on a non-dict parse too: this runs OUTSIDE the try above, so a truthy
-        # non-dict `parsed` (e.g. a bare JSON array) would otherwise raise on `.get` and sink the
-        # run — the one hole in the guarantee. Any shape but a dict-with-a-list-`drop` keeps all.
-        data = result.parsed if result is not None else None
-        if not isinstance(data, dict):
+        # Fail-open on any unexpected shape (short/empty vectors) rather than mis-scoring.
+        if len(vecs) != len(sources) + 1:
+            log.warning("deep_research.curate_shape", got=len(vecs), want=len(sources) + 1)
             return sources
-        raw = data.get("drop")
-        if not isinstance(raw, list):
-            return sources
-        # `_sources_block` numbers 1-based; map to 0-based indices, keep only in-range. Exclude
-        # `bool` explicitly — `isinstance(True, int)` is True, and `True - 1 == 0` would drop the
-        # first source on a model that emitted a JSON boolean in the list.
-        drop = {
-            n - 1
-            for n in raw
-            if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(sources)
-        }
-        # Keep-biased backstop: a judge that wants to drop more than half the list is almost
-        # certainly misfiring on a legitimate set — keep everything rather than gut the run.
-        if not drop or len(drop) * 2 > len(sources):
-            if drop:
-                log.info("deep_research.curate_refused", requested=len(drop), total=len(sources))
-            return sources
-        kept = [ws for i, ws in enumerate(sources) if i not in drop]
-        log.info("deep_research.curated", dropped=len(drop), kept=len(kept), total=len(sources))
+        qvec, svecs = vecs[0], vecs[1:]
+        ranked = sorted(
+            zip(sources, (_cosine(qvec, sv) for sv in svecs), strict=True),
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        kept = [ws for ws, score in ranked if score >= _CURATE_KEEP_FLOOR][:_CURATE_KEEP_CAP]
+        if len(kept) < _CURATE_KEEP_MIN:
+            # A harsh floor (or a run whose real sources scored low) must never gut the registry:
+            # fall back to the top-scored head so the writer always has the best available list.
+            kept = [ws for ws, _ in ranked[:_CURATE_KEEP_MIN]]
+        log.info("deep_research.curated", kept=len(kept), total=len(sources))
         return kept
 
     async def _synthesize(
