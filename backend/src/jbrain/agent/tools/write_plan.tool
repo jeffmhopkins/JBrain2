@@ -1,6 +1,6 @@
 ---
 name: write_plan
-version: 1
+version: 2
 permission: web
 side_effecting: true
 params:
@@ -18,9 +18,11 @@ params:
 Create, replace, or re-status the plan for THIS conversation. Provide `body` to
 write/rewrite the plan text, `status` to change its stage, or both.
 
-How planning works: when a task is multi-step or the owner asks you to "make a
-plan", draft it with `write_plan(body=…, status="not_approved")` and ask the owner
-to review and approve it — do not start the work yet. The owner approves it (or
+Use this ONLY when the owner has explicitly asked you to make a plan ("make a plan",
+"plan this out", "outline an approach and I'll approve it"). Do NOT draft a plan on
+your own for an ordinary multi-step task — planning mode is owner-initiated, not the
+default. Once asked, draft it with `write_plan(body=…, status="not_approved")` and ask
+the owner to review and approve it — do not start the work yet. The owner approves it (or
 edits it first); only then is it `approved`. Once approved, follow it: as you begin
 executing, set `status="in_work"`, and keep the body's checklist up to date
 (`write_plan(body=…)`) as you complete steps. You may set `not_approved` or

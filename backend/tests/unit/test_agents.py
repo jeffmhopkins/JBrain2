@@ -332,8 +332,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v34",
-            "314c13ffe8a0e88b040c7dd1db4b632f0a1d6462d6a3d147b243401993213595",
+            "agent-jerv-v35",
+            "3e84d13538e0615efe4713daef815793c06db7e8c2daed428ccd6cbbe1924952",
         ),
         "archivist": (
             "agent-archivist-v6",
