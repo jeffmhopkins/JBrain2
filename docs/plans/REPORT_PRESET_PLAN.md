@@ -93,10 +93,23 @@ library** — no web, no video corpus. Design decisions (owner, 2026-08-06):
   flags any unsupported claim; and (follow-on) a deterministic tripwire that flags any number/
   name/date in the draft absent from every source profile.
 
-**Shipped so far (this branch):** `presets/compare_candidates.preset` (the outline, the
-per-dimension angles, and the grounding/attribution objective). **Still to build:** a `reports`
-source mode in `deep_research.py`; two sandboxed personas (`research_reports` gather +
-`review_reports` grounding reviewer) with digest-pinned prompts and report-library-only tool
-allowlists; the source-mode wiring (`_personas_for`, empty-gather message, etc.); the
-deterministic tripwire; and tests. Sequenced AFTER `candidate_profile` merges and is tested —
-the compare is only as good as the profiles feeding it.
+**Built (this branch):**
+- `presets/compare_candidates.preset` — the outline, the five per-dimension angles, and the
+  grounding/attribution objective.
+- The `reports` source mode in `deep_research.py` (`_SOURCE_MODES` + the six source-mode
+  helpers: `_personas_for` → the report-library personas, the "run the profiles first"
+  empty-gather message, no-web/no-`[^n]`-SOURCES flags, the supplement clause).
+- Two sandboxed personas in `agents.py` with digest-pinned prompts and report-library-only
+  tool allowlists (`search`/`read`/`list_research_report` + clock, no web): `research_reports`
+  (gather/refill) and `review_reports` (the analyst + critique grounding reviewer, whose prompt
+  makes it a faithfulness gate — flag any draft claim the reports don't support).
+- Discoverability: `deep_research.tool` (v6) now lists both presets and the compare workflow,
+  so jerv reaches for them.
+- Tests: reports-mode persona routing, the compare preset run (planner skipped, five
+  dimension angles, no web/corpus persona ever spawned), the empty-gather refusal, and all the
+  persona/sidecar pin updates.
+
+**Deferred to a follow-on:** the deterministic new-entity tripwire (a number/name in the draft
+absent from every source report) — the LLM `review_reports` grounding gate is the v1 check, and
+a string-level number check is brittle against honest reformatting ("$10.8M" vs "$10,802,229"),
+so it needs care. Also deferred: the `reports_first` web-verify variant.

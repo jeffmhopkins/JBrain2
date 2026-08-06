@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 5
+version: 6
 permission: web
 cost_class: expensive
 params:
@@ -77,3 +77,17 @@ it at the owner's analysed-video library instead: `library` for a library-only r
 timestamp), or `library_first` to research the library first and let the web fill only
 what the library is missing. Reach for these when the owner asks about their videos or
 wants a question answered against their library.
+
+Saved PRESETS give uniform, repeatable reports — pass `preset` (+ its `variables`) instead
+of composing the run yourself. Available presets:
+- `candidate_profile` — an accountability profile of ONE political candidate (their record,
+  finances, positions, and controversies, weighed against their campaign rhetoric).
+  Variables: `candidate` (full name) and `office` (the seat + race, e.g. "U.S. Senate
+  (Florida), 2026 Republican primary"). Reach for it whenever the owner wants a profile of, or
+  to research, a candidate — and run it once PER candidate to compare a field.
+- `compare_candidates` — a contrast-and-compare report across a whole field, built ONLY from
+  the candidate_profile reports already in the owner's library (no web). Variables: `office`
+  and `candidates` (a comma-separated list). Run this AFTER the per-candidate profiles exist —
+  it reads and compares them; if a profile is missing it says so.
+So to compare the candidates in a race: run `candidate_profile` for each candidate, then run
+`compare_candidates` once over the field.
