@@ -349,7 +349,7 @@ async def test_persisted_tool_step_carries_web_sources_and_view() -> None:
 
     steps = {s["name"]: s for s in result.tool_steps}
     assert steps["web_sourced"]["web_sources"] == [
-        {"url": "https://x.example/a", "title": "A page"}
+        {"url": "https://x.example/a", "title": "A page", "read": False}
     ]
     assert steps["view_tool"]["view"]["view"] == "list_card"
 

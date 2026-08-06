@@ -26,6 +26,7 @@ from jbrain.agent.deep_research import (
     _canonical_url,
     _coerce_brief,
     _collect_sources,
+    _sources_block,
 )
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.spawn import _ChildResult
@@ -952,7 +953,7 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     via its `namesake` assertion). LLM judgment itself can't be unit-tested; the prose can."""
     from jbrain.agent.deep_research import _SYNTH
 
-    assert _SYNTH.version == "dr-synth-v9"  # pin the version bump (parity with the plan test)
+    assert _SYNTH.version == "dr-synth-v10"  # pin the version bump (parity with the plan test)
     synth = _SYNTH.body.lower()
     assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
     assert "not licence to drop all citations" in synth  # the give-up path stays closed
@@ -1629,6 +1630,53 @@ def _research_child(urls: list[str]) -> _ChildResult:
         session_id="sid",
         web_sources=tuple(WebSource(url=u, title=u) for u in urls),
     )
+
+
+def _child_with(sources: list[WebSource]) -> _ChildResult:
+    return _ChildResult(
+        label="l",
+        persona="research",
+        summary="s",
+        ok=True,
+        session_id="sid",
+        web_sources=tuple(sources),
+    )
+
+
+def test_collect_sources_upgrades_read_flag_when_a_later_child_opened_the_page() -> None:
+    """A page that arrives first as a bare search hit (read=False) and later as a genuine
+    read from another child is kept once, upgraded to read=True — so the writer sees it as
+    opened, not search-listed. A URL only ever search-listed stays read=False."""
+    children = [
+        _child_with(
+            [
+                WebSource(url="https://ex.com/a", title="A"),
+                WebSource(url="https://ex.com/b", title="B"),
+            ]
+        ),
+        _child_with([WebSource(url="https://www.ex.com/a/", title="A", read=True)]),
+    ]
+    out = _collect_sources(children)
+    by_key = {_canonical_url(ws.url): ws for ws in out}
+    a = by_key[_canonical_url("https://ex.com/a")]
+    b = by_key[_canonical_url("https://ex.com/b")]
+    assert a.read is True  # upgraded by the second child's real read
+    assert b.read is False  # only ever search-listed
+    assert a.url == "https://ex.com/a"  # first-seen original url kept
+
+
+def test_sources_block_flags_search_only_entries_and_leaves_read_ones_clean() -> None:
+    """The numbered SOURCES block marks a source no agent opened so the writer won't rest a
+    contents/absence claim on a page whose text is unknown to the run; a read page is clean."""
+    block = _sources_block(
+        [
+            WebSource(url="https://ex.com/read", title="Read Page", read=True),
+            WebSource(url="https://ex.com/hit", title="Search Hit", read=False),
+        ]
+    )
+    lines = block.splitlines()
+    assert lines[0] == "[^1] Read Page — https://ex.com/read"
+    assert lines[1] == "[^2] Search Hit — https://ex.com/hit  (search result — not opened)"
 
 
 def test_canonical_url_collapses_scheme_www_tracking_fragment_slash() -> None:

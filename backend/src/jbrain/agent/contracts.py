@@ -149,6 +149,14 @@ class WebSource(BaseModel):
 
     url: str
     title: str
+    # Whether an agent actually OPENED this page and read its full content (a `web_fetch`,
+    # a read_artifact, a video/image fetch), as opposed to a source that only surfaced as a
+    # `web_search` result row and was never opened. Deep-research uses this to keep a
+    # contents claim ("page X says/omits Y") from citing a page nobody read — a search hit
+    # carries only its title+snippet, not the page's text, so it can't back such a claim.
+    # Default False so every existing construction and persisted `{url,title}` row is
+    # unchanged; only the genuine content-read tools set it True.
+    read: bool = False
 
 
 class ProposalRef(BaseModel):

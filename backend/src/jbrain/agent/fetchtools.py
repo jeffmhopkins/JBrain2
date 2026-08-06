@@ -91,7 +91,7 @@ def build_fetch_image_handlers(
         return ToolOutput(
             summary,
             view=chat_image_view(row) if show else None,
-            web_sources=(WebSource(url=url, title=url),),
+            web_sources=(WebSource(url=url, title=url, read=True),),
         )
 
     return {"fetch_image": fetch_image_tool}

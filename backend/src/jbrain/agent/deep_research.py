@@ -591,7 +591,7 @@ def _collect_sources(children: list[_ChildResult]) -> list[WebSource]:
     via a tracking link, `http` vs `https`, `www.`, or a trailing slash counts once — the raw
     count otherwise over-reports the distinct sources by a wide margin. The first-seen original
     URL is what's kept and cited."""
-    seen: set[str] = set()
+    seen: dict[str, int] = {}
     out: list[WebSource] = []
     for child in children:
         for ws in child.web_sources:
@@ -599,8 +599,13 @@ def _collect_sources(children: list[_ChildResult]) -> list[WebSource]:
                 continue
             key = _canonical_url(ws.url)
             if key not in seen:
-                seen.add(key)
+                seen[key] = len(out)
                 out.append(ws)
+            elif ws.read and not out[seen[key]].read:
+                # The same page arrived as a bare search hit AND, from another child, as a
+                # genuine read — upgrade the kept (first-seen) entry to `read` so the writer
+                # knows this URL's content was actually opened, not merely search-listed.
+                out[seen[key]] = out[seen[key]].model_copy(update={"read": True})
     return out
 
 
@@ -610,7 +615,16 @@ def _sources_block(sources: list[WebSource]) -> str:
     to favicons. Empty when the run reached no web source."""
     if not sources:
         return ""
-    return "\n".join(f"[^{i}] {ws.title or ws.url} — {ws.url}" for i, ws in enumerate(sources, 1))
+    # A source no agent opened (a bare `web_search` hit) is flagged so the writer can tell a
+    # read page from a search-listed one: a `[^n]` that attributes a page's CONTENTS ("X says
+    # / omits Y") must point at a page actually read, since a search hit carries only its
+    # title+snippet. Every entry is still numbered so `[^n]` mapping and the favicon chips are
+    # unchanged; the flag is a suffix on the line, nothing more.
+    lines = []
+    for i, ws in enumerate(sources, 1):
+        suffix = "" if ws.read else "  (search result — not opened)"
+        lines.append(f"[^{i}] {ws.title or ws.url} — {ws.url}{suffix}")
+    return "\n".join(lines)
 
 
 def _findings_block(results: list[_ChildResult]) -> str:
