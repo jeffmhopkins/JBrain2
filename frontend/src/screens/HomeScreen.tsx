@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
+import { PlanSheet } from "../agent/PlanSheet";
 import type { AppointmentRef } from "../agent/types";
 import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
 import { useReadAloud } from "../agent/useReadAloud";
+import { usePlanState } from "../agent/views/registry";
 import { AgentModelSheet } from "../components/AgentModelSheet";
 import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
@@ -82,6 +84,9 @@ export function HomeScreen({
   // The agent-model sheet (omnibox long-press on a conversation tab): pick the model
   // the open conversation runs on, for that conversation only.
   const [modelSheet, setModelSheet] = useState(false);
+  // The plan popover (omnibox plan-pill tap): the in-work plan's live status, kept out of
+  // the chat transcript so it doesn't crowd other tool views.
+  const [planSheet, setPlanSheet] = useState(false);
 
   // A compose handoff (the calendar's reschedule/cancel/ask) flips to Full Brain
   // and hands the prompt to the omnibox; the owner reviews and sends it. The
@@ -195,6 +200,27 @@ export function HomeScreen({
 
   // Research and Full Brain are conversation surfaces; everything else is capture.
   const conversational = seg.mode === "research" || seg.mode === "fullbrain";
+
+  // One live plan-state instance for the active conversation, driving BOTH the composer-foot
+  // pill and its popover. Seeds from the session-list `plan_status` (so the pill reads right
+  // at once) and reconciles the full body/countdown from GET /plans/{id}; it derives the
+  // "complete" state (all steps checked) that the stored status can't, so the pill flips to
+  // "plan complete" instead of stalling on "working to plan". `""` when there's no plan keeps
+  // the hook inert. `reloadSessions` refreshes the out-of-pill session badges after an action.
+  const planSessionId = conversational && fb.active?.plan_status ? fb.active.id : "";
+  const planSt = usePlanState(
+    planSessionId,
+    fb.active?.plan_status ? { status: fb.active.plan_status } : undefined,
+    fb.reloadSessions,
+  );
+  // The pill shows the LIVE derived state once a plan is past the draft stage — a draft
+  // (`not_approved`) shows its card inline in the chat instead, so no pill for it.
+  const pillStatus = planSessionId && planSt.state !== "not_approved" ? planSt.state : null;
+  // Close the plan popover when the conversation changes — it belongs to the session it opened on.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset only on session switch
+  useEffect(() => {
+    setPlanSheet(false);
+  }, [planSessionId]);
 
   // The Research tab reads "Teacher" while a Teacher chat is open — still the
   // research slot, just renamed; every other tab keeps the mode's own label.
@@ -323,9 +349,10 @@ export function HomeScreen({
         // foot shows the active pick.
         onLongPressTab={conversational ? () => setModelSheet(true) : undefined}
         modelLabel={conversational ? (fb.modelOverride?.label ?? null) : null}
-        // The always-visible plan pill mirrors the active session's plan_status (the
-        // out-of-card twin of the plan_card chip); null outside a conversation surface.
-        planStatus={conversational ? (fb.active?.plan_status ?? null) : null}
+        // The plan pill shows the LIVE derived plan state (incl. "complete"); tapping it
+        // opens the plan popover. A draft shows inline in the chat, so the pill is null then.
+        planStatus={pillStatus}
+        onPlanPillTap={pillStatus ? () => setPlanSheet(true) : undefined}
       />
       {modelSheet && conversational && (
         <AgentModelSheet
@@ -334,6 +361,7 @@ export function HomeScreen({
           onClose={() => setModelSheet(false)}
         />
       )}
+      {planSheet && pillStatus && <PlanSheet st={planSt} onClose={() => setPlanSheet(false)} />}
       {toast && (
         <output className="toast">
           {toast.message}

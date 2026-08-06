@@ -1330,25 +1330,35 @@ path as an assistant turn, so no model markup reaches the DOM.
 talk it into self-approving): while `not_approved` the foot shows an **Approve** button
 (`POST /api/plans/{id}/approve`) and an **Edit** affordance that opens the raw body in a
 textarea and, on save, corrects it in place (`POST /api/plans/{id}/edit`) before approving.
-Once **`in_work`**, the card polls `GET /api/plans/{id}` and, when `continuation_due_at` is
-set, shows the **auto-resume countdown** ("continuing in m:ss", a 1s ticker anchored to the
-server timestamp like `TaskStatus`) with **Continue now** (`POST …/continue`, arms it due-now)
-and **Stop** (`POST …/stop`, cancels the window). The continuation fires **server-side** (a
-background sweep); the card only **displays** the countdown and the next step's answer arrives
-by the normal chat refresh — the card never runs the turn itself. When `awaiting_owner` is
-true jerv paused for the owner's call: a distinct **violet "Waiting for you"** state with **no
-countdown**. When every step is `- [x]` the chip reads **"Plan complete"** (steel). Tokens-only
+Once **`in_work`**, the plan surface polls `GET /api/plans/{id}` and, when
+`continuation_due_at` is set, shows the **auto-resume countdown** ("continuing in m:ss", a 1s
+ticker anchored to the server timestamp like `TaskStatus`) with **Continue now**
+(`POST …/continue`, arms it due-now) and **Stop** (`POST …/stop`, cancels the window). The
+continuation fires **server-side** (a background sweep) but now **streams live** into the
+chat — the reattach broker publishes the step's thinking + tool calls token-by-token — so the
+owner watches it work, not just its settled answer. When `awaiting_owner` is true jerv paused
+for the owner's call: a distinct **violet "Waiting for you"** state with **no countdown**. When
+every step is `- [x]` the chip reads **"Plan complete"** (steel). Tokens-only
 `.plan-card`/`.plan-chip.flag-*`/`.plan-approve`/`.plan-resume`/`.plan-await` classes; the card
 brings its own frame, so the generic `.tool-view` wrapper drops its border like `tv-task`.
 
-**Out-of-card status surfaces.** The same `plan_status` (`SessionOut.plan_status ∈
-not_approved | approved | in_work | null`) drives two always-visible twins of the chip: the
-**composer-foot plan pill** (`.plan-pill.flag-*`, beside the model pill — "awaiting approval"
-/ "working to plan" / "waiting for you" / "plan complete", the in_work dot pulsing) so the
-owner sees the plan state without scrolling to the card, and the **Chats-picker plan badge**
-(`.stat.plan.flag-*`, beside the staged badge on the session row). Both are the same flag
-enum the theme colors, never a model color; the after-turn session reload keeps them fresh,
-and an in-card action optimistically refreshes them.
+**Where the plan renders — draft inline, in-work behind the pill.** To keep the plan from
+crowding the transcript (fighting deep-research and other tool views), the **inline
+`plan_card` is draft-only**: `FullBrainSurface` filters it out once the live `plan_status`
+leaves `not_approved`. The in-work plan then lives behind the composer pill: the shared plan
+state + render (`usePlanState` + `PlanBody`, `agent/views/registry.tsx`) power both the inline
+draft card and a bottom **`PlanSheet`** (the shared `Sheet`) opened by tapping the pill —
+status, checklist, countdown, Continue/Stop — dismissed like any sheet.
+
+**Out-of-card status surfaces.** `plan_status` (`SessionOut.plan_status ∈ not_approved |
+approved | in_work | null`) drives two always-visible twins of the chip: the **composer-foot
+plan pill** (`.plan-pill.flag-*`, beside the model pill — now a **button** that opens the
+`PlanSheet`, reading the **live derived state** so it flips to **"plan complete"** instead of
+stalling on "working to plan"; the in_work dot pulses) so the owner sees the plan state and can
+pop it open without scrolling, and the **Chats-picker plan badge** (`.stat.plan.flag-*`, beside
+the staged badge on the session row). Both are the same flag enum the theme colors, never a
+model color; the after-turn session reload keeps them fresh, and an in-card action
+optimistically refreshes them.
 
 ### `deep_research_report` tool-view (build plan `docs/plans/DEEP_RESEARCH_TOOL_PLAN.md`, Wave D3 — **mock-gate sign-off pending**)
 
