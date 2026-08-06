@@ -155,8 +155,6 @@ async def test_deleting_the_chat_cascades_the_plan(maker: async_sessionmaker) ->
     async with scoped_session(maker, owner) as session:
         await repo.upsert(session, sid, body="to be cascaded")
     async with scoped_session(maker, owner) as session:
-        await session.execute(
-            text("DELETE FROM app.agent_sessions WHERE id = :id"), {"id": sid}
-        )
+        await session.execute(text("DELETE FROM app.agent_sessions WHERE id = :id"), {"id": sid})
     async with scoped_session(maker, owner) as session:
         assert await repo.get(session, sid) is None  # ON DELETE CASCADE removed the plan

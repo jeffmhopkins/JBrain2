@@ -36,8 +36,8 @@ pytestmark = [
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-_OPEN = "- [ ] step one\n- [ ] step two"   # has unchecked items
-_DONE = "- [x] step one\n- [x] step two"   # all checked
+_OPEN = "- [ ] step one\n- [ ] step two"  # has unchecked items
+_DONE = "- [x] step one\n- [x] step two"  # all checked
 
 
 @pytest.fixture
@@ -189,9 +189,7 @@ class _FakeExecutor:
         # Record the session and the TYPE of the principal id — the uuid→str bug would
         # never reach here (tick would throw at set_config), so a call at all proves the fix.
         pid = kwargs["read_ctx"].principal_id  # type: ignore[attr-defined]
-        self.calls.append(
-            {"sid": kwargs["agent_session_id"], "pid_type": type(pid).__name__}
-        )
+        self.calls.append({"sid": kwargs["agent_session_id"], "pid_type": type(pid).__name__})
         return _FakeExecuted()
 
 
@@ -268,8 +266,7 @@ async def test_owner_message_reset_clears_everything(maker: async_sessionmaker) 
         await repo.set_awaiting_owner(s, sid, True)
         await s.execute(
             text(
-                "UPDATE app.agent_session_plans SET continuations_used = 5"
-                " WHERE session_id = :id"
+                "UPDATE app.agent_session_plans SET continuations_used = 5 WHERE session_id = :id"
             ),
             {"id": sid},
         )

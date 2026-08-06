@@ -61,9 +61,7 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
             plan = await repo.get(session, ctx.agent_session_id)
         if plan is None:
             return "(no plan yet — draft one with write_plan when the task needs it)"
-        view = _plan_view(
-            ctx.agent_session_id, plan.body, plan.status, plan.updated_at.isoformat()
-        )
+        view = _plan_view(ctx.agent_session_id, plan.body, plan.status, plan.updated_at.isoformat())
         return ToolOutput(
             f"Plan ({_STATUS_LABEL.get(plan.status, plan.status)}):\n\n{plan.body}",
             view=view,
