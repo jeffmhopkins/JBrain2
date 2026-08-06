@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 4
+version: 5
 permission: web
 cost_class: expensive
 params:
