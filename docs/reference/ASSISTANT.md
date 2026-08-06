@@ -372,7 +372,13 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   **current date/time** as ambient context (non-personal). `current_location` is the
   one owner-approved exception: a `web`-gated, jerv-only on-box read of the owner's
   **coarse, coordinate-free presence** (a place name + freshness), which jerv's prompt
-  forbids volunteering or sending to the web. See the sandbox bound below. The
+  forbids volunteering or sending to the web. See the sandbox bound below.
+  **Planning** (`read_plan` / `write_plan`, `web`-gated jerv-only) gives jerv an
+  owner-approved, per-conversation plan it executes across turns: it drafts a plan **only
+  when the owner asks**, the owner alone approves it (jerv can never self-approve — the
+  anti-injection guard), the approved plan is re-injected each turn so jerv follows it, and
+  a bounded, owner-interruptible auto-continuation loop runs the checklist step by step.
+  See `../plans/JERV_PLANNING_TOOL_PLAN.md`. The
   **Grokipedia tools** (`grokipedia_search` / `grokipedia_outline` / `grokipedia_section` /
   `grokipedia_citations` / `grokipedia_related`) are `web`-gated, jerv-only reads of xAI's
   encyclopedia over the **open internet — no xAI key** (API-first via Grokipedia's own

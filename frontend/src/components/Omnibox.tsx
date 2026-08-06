@@ -46,6 +46,18 @@ const PANEL_PX = 56; // horizontal travel that commits a Full Brain lateral pane
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_SLOP_PX = 10;
 
+// The composer-foot plan pill's labels, keyed by `plan_status`. The status is a flag
+// enum the theme colors (`.plan-pill.flag-*`) — never a model-sent color. The three
+// live server states plus the two derived ones jerv's plan can reach, so the pill reads
+// right whichever the session carries.
+const PLAN_PILL_LABELS: Record<string, string> = {
+  not_approved: "awaiting approval",
+  approved: "plan approved",
+  in_work: "working to plan",
+  await_owner: "waiting for you",
+  complete: "plan complete",
+};
+
 interface OmniboxProps {
   /** Mode state is lifted so the home stream can scope itself to the mode. */
   seg: SegState;
@@ -93,6 +105,10 @@ interface OmniboxProps {
   /** The active conversation's model pick, shown as a chip in the composer foot so the
    * owner sees the turn isn't on the default route. Null/absent = the default. */
   modelLabel?: string | null | undefined;
+  /** The active session's jerv plan state (`not_approved | approved | in_work`, or
+   * null when there's no plan) — an always-visible status pill in the composer foot,
+   * the out-of-card twin of the plan_card's chip. Null/absent hides it. */
+  planStatus?: string | null | undefined;
 }
 
 export function Omnibox({
@@ -113,6 +129,7 @@ export function Omnibox({
   attachEnabled = true,
   onLongPressTab,
   modelLabel,
+  planStatus,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -411,6 +428,15 @@ export function Omnibox({
               <span className="model-pill" title={`This conversation runs on ${modelLabel}`}>
                 <BotIcon size={12} />
                 {modelLabel}
+              </span>
+            )}
+            {planStatus && PLAN_PILL_LABELS[planStatus] && (
+              <span
+                className={`plan-pill flag-${planStatus}`}
+                title="jerv's plan for this conversation"
+              >
+                <span className="plan-pill-dot" aria-hidden="true" />
+                {PLAN_PILL_LABELS[planStatus]}
               </span>
             )}
             <div className="foot-icons">

@@ -169,6 +169,7 @@ export function FullBrainSurface({
                 onDeferredComplete={(msg) => {
                   void fb.send(msg, { deferredOutcome: true });
                 }}
+                onPlanChanged={fb.reloadSessions}
                 chatBusy={fb.busy}
                 onStop={fb.stop}
                 onOpenSession={fb.requestOpen}
@@ -436,6 +437,7 @@ function Bubble({
   onStop,
   onOpenSession,
   onDeferredComplete,
+  onPlanChanged,
   audio,
 }: {
   message: TranscriptMessage;
@@ -455,6 +457,9 @@ function Bubble({
   onOpenSession?: ((sessionId: string) => void) | undefined;
   /** A deferred tool call's task_status card finished — send the auto-resume turn. */
   onDeferredComplete?: ((resumeMessage: string) => void) | undefined;
+  /** An in-card plan action fired — refresh the session list so the composer plan pill
+   * and Chats badge (the out-of-card plan_status surfaces) update at once. */
+  onPlanChanged?: (() => void) | undefined;
   /** Read-aloud control for this settled answer: `playing` = it's speaking now,
    * `autoPlay` = auto-play armed (third icon state); `onToggle` plays/pauses it,
    * `onToggleAuto` (long-press) flips auto-play. Absent = read-aloud off (no control,
@@ -663,6 +668,7 @@ function Bubble({
           payload={v}
           onOpenSession={onOpenSession}
           onDeferredComplete={onDeferredComplete}
+          onPlanChanged={onPlanChanged}
         />
       ))}
       {stagedAffordance}
@@ -756,6 +762,7 @@ function Bubble({
               payload={v}
               onOpenSession={onOpenSession}
               onDeferredComplete={onDeferredComplete}
+              onPlanChanged={onPlanChanged}
             />
           </div>
         ))}
@@ -778,6 +785,7 @@ function Bubble({
                 payload={v}
                 onOpenSession={onOpenSession}
                 onDeferredComplete={onDeferredComplete}
+                onPlanChanged={onPlanChanged}
               />
             ))}
             {stagedAffordance}
@@ -827,6 +835,7 @@ function Bubble({
                 payload={v}
                 onOpenSession={onOpenSession}
                 onDeferredComplete={onDeferredComplete}
+                onPlanChanged={onPlanChanged}
               />
               {/* The "Thinking / Worked" foot lives inside the (last) card's frame — one
                   unified component instead of a separate box below it. */}
@@ -843,6 +852,7 @@ function Bubble({
                 payload={v}
                 onOpenSession={onOpenSession}
                 onDeferredComplete={onDeferredComplete}
+                onPlanChanged={onPlanChanged}
               />
             ))}
             {stagedAffordance}

@@ -323,6 +323,9 @@ export function HomeScreen({
         // foot shows the active pick.
         onLongPressTab={conversational ? () => setModelSheet(true) : undefined}
         modelLabel={conversational ? (fb.modelOverride?.label ?? null) : null}
+        // The always-visible plan pill mirrors the active session's plan_status (the
+        // out-of-card twin of the plan_card chip); null outside a conversation surface.
+        planStatus={conversational ? (fb.active?.plan_status ?? null) : null}
       />
       {modelSheet && conversational && (
         <AgentModelSheet

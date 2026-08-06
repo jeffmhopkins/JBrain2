@@ -626,6 +626,13 @@ function SessionRow({
                 </span>
               ) : (
                 <>
+                  {session.plan_status ? (
+                    // The plan badge — the same plan_status the composer pill and the
+                    // plan_card chip read; a flag enum the theme colors, never a color.
+                    <span className={`stat plan flag-${session.plan_status}`}>
+                      {session.plan_status === "not_approved" ? "plan?" : "plan"}
+                    </span>
+                  ) : null}
                   {session.staged_count ? (
                     <span className="stat staged">{session.staged_count} staged</span>
                   ) : null}

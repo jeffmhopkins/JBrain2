@@ -1,0 +1,409 @@
+<title>jerv — planning & auto-resume</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);font-family:var(--font);
+    display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 4px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:7px;background:var(--green-tint);color:var(--green);}
+
+  .controls{width:392px;max-width:94vw;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--surface-2);
+    color:var(--text-2);border-radius:10px;padding:8px 12px;font:600 12.5px var(--font);cursor:pointer;}
+  .btn:hover{color:var(--text);border-color:#33363b;}
+  .btn:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .btn.primary{background:var(--steel);color:#10141a;border-color:transparent;}
+  .btn.primary:hover{filter:brightness(1.06);color:#10141a;}
+  .btn svg{width:14px;height:14px;}
+  .seg{display:inline-flex;gap:2px;padding:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;}
+  .seg button{border:0;background:none;color:var(--text-2);font:600 11.5px var(--font);padding:6px 10px;border-radius:7px;cursor:pointer;}
+  .seg button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.3);}
+  .seg button:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+  .seg .lbl{font-size:10.5px;color:var(--text-3);align-self:center;padding:0 4px 0 6px;text-transform:uppercase;letter-spacing:.05em;}
+
+  /* ---------------- phone ---------------- */
+  .phone{width:392px;max-width:94vw;height:768px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;
+    overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:56px;display:flex;align-items:center;gap:11px;padding:0 15px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .av{width:29px;height:29px;border-radius:9px;background:var(--steel);color:#10141a;display:grid;place-items:center;font-weight:700;font-size:14px;flex:none;}
+  .bar .who{display:flex;flex-direction:column;line-height:1.2;}
+  .bar .who b{font-size:15px;font-weight:600;}
+  .bar .who span{font-size:11.5px;color:var(--text-3);}
+  .bar .sp{flex:1;}
+  .chat-badge{font:600 10px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;padding:5px 8px;border-radius:999px;white-space:nowrap;}
+  .chat-badge.hide{display:none;}
+  .chat-badge.f-await{background:var(--amber-tint);color:var(--amber);}
+  .chat-badge.f-work{background:var(--green-tint);color:var(--green);}
+  .chat-badge.f-owner{background:var(--violet-tint);color:var(--violet);}
+  .chat-badge.f-done{background:var(--steel-tint);color:var(--steel);}
+
+  .chat{flex:1;overflow-y:auto;padding:14px 15px 10px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth;}
+  @media (prefers-reduced-motion:reduce){.chat{scroll-behavior:auto;}}
+  .chat::-webkit-scrollbar{width:7px;} .chat::-webkit-scrollbar-thumb{background:var(--border);border-radius:7px;}
+
+  .row{display:flex;animation:rise .3s ease both;}
+  @keyframes rise{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+  @media (prefers-reduced-motion:reduce){.row{animation:none;}}
+  .me{align-self:flex-end;max-width:82%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);
+    border-radius:15px;border-bottom-right-radius:5px;padding:10px 13px;font-size:14px;line-height:1.45;white-space:pre-wrap;}
+  .ai{align-self:flex-start;max-width:88%;background:var(--surface);border:1px solid var(--border);
+    border-radius:15px;border-bottom-left-radius:5px;padding:10px 13px;font-size:14px;line-height:1.5;}
+  .ai b{font-weight:650;} .ai.slim{background:none;border:none;padding:4px 4px;color:var(--text-2);font-size:13px;max-width:100%;}
+  .ai .sys{display:block;font:600 9.5px/1.4 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px;}
+  .done-line{color:var(--green);display:flex;gap:7px;align-items:center;}
+  .done-line svg{width:15px;height:15px;flex:none;}
+
+  /* ---------------- plan_card ---------------- */
+  .plan{align-self:stretch;background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
+  .plan .ph{display:flex;align-items:center;gap:9px;padding:12px 13px 10px;}
+  .ph .kb{width:24px;height:24px;border-radius:7px;background:var(--steel-tint);color:var(--steel);display:grid;place-items:center;flex:none;}
+  .ph .kb svg{width:14px;height:14px;}
+  .ph .pt{flex:1;font-size:13.5px;font-weight:600;line-height:1.3;}
+  .chip{font:600 10px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;padding:5px 8px;border-radius:999px;white-space:nowrap;flex:none;}
+  .chip.f-await{background:var(--amber-tint);color:var(--amber);}
+  .chip.f-work{background:var(--green-tint);color:var(--green);}
+  .chip.f-owner{background:var(--violet-tint);color:var(--violet);}
+  .chip.f-done{background:var(--steel-tint);color:var(--steel);}
+
+  .cl{list-style:none;padding:2px 13px 4px;display:flex;flex-direction:column;gap:1px;}
+  .cl li{display:flex;gap:10px;align-items:flex-start;padding:7px 6px;border-radius:9px;font-size:13.5px;line-height:1.4;}
+  .cl li.active{background:var(--surface-2);}
+  .cl li .bx{flex:none;width:17px;height:17px;border-radius:5px;border:1.6px solid var(--text-3);display:grid;place-items:center;margin-top:1px;color:transparent;transition:.18s;}
+  .cl li .bx svg{width:11px;height:11px;}
+  .cl li.done .bx{background:var(--green);border-color:var(--green);color:#10141a;}
+  .cl li.active .bx{border-color:var(--steel);border-style:dashed;animation:sp 1.2s ease-in-out infinite;}
+  @keyframes sp{0%,100%{opacity:1;}50%{opacity:.4;}}
+  @media (prefers-reduced-motion:reduce){.cl li.active .bx{animation:none;}}
+  .cl li.done .tx{color:var(--text-3);text-decoration:line-through;text-decoration-color:var(--border);}
+
+  .pf{display:flex;align-items:center;gap:8px;padding:10px 13px 12px;border-top:1px solid var(--border);}
+  .pf .prog{flex:1;font:600 11.5px/1 var(--mono);color:var(--text-3);letter-spacing:.02em;}
+  .pf .acts{display:flex;gap:7px;align-items:center;}
+  .pf .youtag{font:600 9px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .mini{border-radius:9px;padding:8px 12px;font:600 12.5px var(--font);cursor:pointer;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);}
+  .mini:hover{color:var(--text);} .mini:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .mini.primary{background:var(--steel);color:#10141a;border-color:transparent;}
+  .mini.primary:hover{filter:brightness(1.06);}
+  .mini.tiny{padding:6px 10px;font-size:11.5px;}
+  textarea.edit{width:calc(100% - 26px);margin:0 13px 12px;resize:vertical;min-height:92px;
+    font:12.5px/1.5 var(--mono);color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px;}
+
+  /* ---------------- banners ---------------- */
+  .banner{align-self:stretch;border-radius:14px;padding:12px 13px;display:flex;gap:12px;align-items:center;
+    border:1px solid var(--border);animation:rise .3s ease both;}
+  @media (prefers-reduced-motion:reduce){.banner{animation:none;}}
+  .banner.pause{background:var(--green-tint);border-color:rgba(143,188,154,.28);}
+  .banner.await{background:var(--violet-tint);border-color:rgba(164,147,201,.3);}
+  .banner.hold{background:var(--surface-2);}
+  .ring{position:relative;width:46px;height:46px;flex:none;}
+  .ring svg{transform:rotate(-90deg);}
+  .ring .n{position:absolute;inset:0;display:grid;place-items:center;font:700 12px/1 var(--mono);color:var(--green);font-variant-numeric:tabular-nums;}
+  .banner .bb{flex:1;min-width:0;}
+  .banner .lead{font:600 10px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px;display:flex;align-items:center;gap:6px;}
+  .banner.pause .lead{color:var(--green);} .banner.await .lead{color:var(--violet);} .banner.hold .lead{color:var(--text-2);}
+  .banner .lead svg{width:13px;height:13px;}
+  .banner .main{font-size:13px;color:var(--text);} .banner .main b{font-weight:650;}
+  .banner .sub{font-size:11.5px;color:var(--text-3);margin-top:2px;}
+  .banner .ba{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;}
+
+  /* ---------------- composer ---------------- */
+  .composer{border-top:1px solid var(--border);padding:9px 13px 13px;flex:none;background:var(--bg);}
+  .foot{display:flex;align-items:center;gap:9px;margin-bottom:8px;min-height:20px;}
+  .meter{flex:none;width:74px;height:4px;background:var(--surface-2);border-radius:4px;overflow:hidden;}
+  .meter i{display:block;height:100%;width:24%;background:var(--steel);border-radius:4px;}
+  .mpill{font:600 10.5px/1 var(--mono);letter-spacing:.02em;padding:5px 9px;border-radius:999px;background:var(--surface-2);color:var(--text-3);white-space:nowrap;}
+  .sp{flex:1;}
+  .ppill{display:none;align-items:center;gap:6px;font:600 10.5px/1 var(--mono);letter-spacing:.02em;padding:5px 9px;border-radius:999px;white-space:nowrap;}
+  .ppill.show{display:inline-flex;}
+  .ppill .pd{width:6px;height:6px;border-radius:999px;flex:none;}
+  .ppill.f-await{background:var(--amber-tint);color:var(--amber);} .ppill.f-await .pd{background:var(--amber);}
+  .ppill.f-work{background:var(--green-tint);color:var(--green);} .ppill.f-work .pd{background:var(--green);animation:bl 1.4s ease-in-out infinite;}
+  .ppill.f-owner{background:var(--violet-tint);color:var(--violet);} .ppill.f-owner .pd{background:var(--violet);}
+  .ppill.f-done{background:var(--steel-tint);color:var(--steel);} .ppill.f-done .pd{background:var(--steel);}
+  @keyframes bl{0%,100%{opacity:1;}50%{opacity:.35;}}
+  @media (prefers-reduced-motion:reduce){.ppill .pd{animation:none!important;}}
+  .inrow{display:flex;align-items:flex-end;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:16px;padding:6px 6px 6px 14px;}
+  .inrow textarea{flex:1;border:0;background:none;resize:none;color:var(--text);font:14px var(--font);max-height:88px;padding:6px 0;outline:none;}
+  .inrow textarea::placeholder{color:var(--text-3);}
+  .send{width:33px;height:33px;border-radius:11px;border:0;background:var(--steel);color:#10141a;cursor:pointer;flex:none;display:grid;place-items:center;}
+  .send svg{width:16px;height:16px;stroke-width:2;} .send:hover{filter:brightness(1.07);} .send:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+
+  /* annotation markers */
+  .anno{position:absolute;z-index:9;width:19px;height:19px;border-radius:50%;background:var(--steel);color:#10141a;
+    font:700 11px/1 var(--mono);display:grid;place-items:center;box-shadow:0 2px 7px rgba(0,0,0,.5);opacity:0;transition:opacity .18s;pointer-events:none;}
+  .phone.anno-on .anno{opacity:1;}
+  .legend{width:392px;max-width:94vw;display:none;flex-direction:column;gap:9px;padding:2px;}
+  .legend.show{display:flex;}
+  .legend .li{display:flex;gap:10px;font-size:12.5px;color:var(--text-2);line-height:1.45;}
+  .legend .k{flex:none;width:20px;height:20px;border-radius:6px;background:var(--steel-tint);color:var(--steel);font:700 11px var(--mono);display:grid;place-items:center;}
+  .legend b{color:var(--text);font-weight:600;} .legend code{font:11px var(--mono);background:var(--surface-2);padding:1px 5px;border-radius:5px;color:var(--text);}
+</style>
+
+<div class="caption">
+  <span class="tag">jerv · planning &amp; auto-resume</span><br/>
+  Planning mode is <b>owner-initiated</b> — jerv only drafts a plan when you <b>ask for one</b>, never on its own.
+  You <b>approve</b> it; then it works the checklist <b>across turns</b> — pausing after each step so you can redirect,
+  and <b>auto-continuing</b> if you don't. Only you can approve. <b>Press Run, then watch (or steer) it.</b>
+</div>
+
+<div class="controls">
+  <button class="btn primary" id="playBtn"><svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z" fill="currentColor" stroke="none"/></svg>Run the demo</button>
+  <button class="btn" id="resetBtn">Reset</button>
+  <span class="seg"><span class="lbl">pause</span>
+    <button data-pace="12" aria-pressed="true">12s</button>
+    <button data-pace="60" aria-pressed="false">60s</button>
+  </span>
+  <span class="seg"><span class="lbl">labels</span>
+    <button data-anno="off" aria-pressed="true">off</button>
+    <button data-anno="on" aria-pressed="false">show</button>
+  </span>
+</div>
+
+<div class="phone" id="phone">
+  <span class="anno" style="top:16px;right:16px;">5</span>
+  <span class="anno" id="a1" style="top:150px;left:14px;display:none;">1</span>
+  <span class="anno" id="a2" style="top:150px;right:16px;display:none;">2</span>
+  <span class="anno" id="a3" style="top:250px;left:16px;display:none;">3</span>
+  <span class="anno" id="a6" style="bottom:150px;right:16px;display:none;">6</span>
+  <span class="anno" style="bottom:56px;left:150px;">4</span>
+
+  <div class="bar">
+    <span class="av">j</span>
+    <span class="who"><b>jerv</b><span>web chat · general</span></span>
+    <span class="sp"></span>
+    <span class="chat-badge hide" id="badge">plan</span>
+  </div>
+  <div class="chat" id="chat" aria-live="polite"></div>
+  <div class="composer">
+    <div class="foot">
+      <span class="meter" aria-hidden="true"><i></i></span>
+      <span class="mpill">Automatic</span>
+      <span class="sp"></span>
+      <span class="ppill" id="ppill"><span class="pd"></span><span id="ppillText"></span></span>
+    </div>
+    <div class="inrow">
+      <textarea id="input" rows="1" placeholder="Message jerv…"></textarea>
+      <button class="send" id="send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<div class="legend" id="legend">
+  <div class="li"><span class="k">1</span><div><b>plan_card view</b> — the plan body + live checklist from <code>read_plan</code>/<code>write_plan</code>; steps are <code>- [ ]</code>/<code>- [x]</code>.</div></div>
+  <div class="li"><span class="k">2</span><div><b>status chip</b> — a flag enum → theme class (<code>not_approved</code>·<code>in_work</code>·<code>await_owner</code>·<code>complete</code>); the model never sends a color.</div></div>
+  <div class="li"><span class="k">3</span><div><b>Approve — owner only</b> (<code>POST /api/plans/{id}/approve</code>). jerv sets <code>not_approved</code>/<code>in_work</code>, never <code>approved</code>.</div></div>
+  <div class="li"><span class="k">4</span><div><b>composer plan pill</b> — always-visible status from <code>SessionOut.plan_status</code>, beside the model pill.</div></div>
+  <div class="li"><span class="k">5</span><div><b>Chats badge</b> — the same <code>plan_status</code> on the session row.</div></div>
+  <div class="li"><span class="k">6</span><div><b>auto-resume window</b> — a ~60s owner-interruptible countdown; on timeout a fresh headless turn runs the next step. Bounded by the checklist, a cap, and <code>await_owner</code>.</div></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (s, r) => (r || document).querySelector(s);
+  const chat = $("#chat");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const CHECK = '<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>';
+  const CLOCK = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>';
+  const HAND  = '<svg viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8a7 7 0 0 0 7 7h1a6 6 0 0 0 6-6v-3a2 2 0 0 0-4 0"/></svg>';
+
+  const PLAN_TITLE = "Buying guide — budget mechanical keyboards under $100";
+  const STEPS = [
+    { t:"Search for current budget mechanical keyboards under $100",
+      work:"Searching the web for current sub-$100 mechanical keyboards…",
+      done:"Found 6 strong contenders under $100." },
+    { t:"Compare switches, build, and layout across the top contenders",
+      work:"Comparing switches, plate/case build, and layouts…",
+      done:"Compared switches, build, and layout across all six." },
+    { t:"Check recent reviews and reliability reports",
+      work:"Reading recent reviews and reliability threads…",
+      done:"Pulled reliability notes and reviewer consensus." },
+    { t:"Draft the buying guide with picks by use case",
+      work:"Drafting the guide with picks by use case…",
+      done:"Drafted the guide — top pick, budget pick, and quiet pick." },
+  ];
+  const AWAIT_BEFORE = 2;         // jerv pauses for input before this step
+  const MAX_CONTINUATIONS = 20;
+
+  let S;
+  const fresh = () => ({
+    status:"none", steps:STEPS.map(s=>({t:s.t,work:s.work,done:false,active:false})),
+    cur:-1, used:0, awaited:false, pace:(S?S.pace:12),
+    timer:null, node:null, banner:null,
+  });
+
+  const scroll = () => requestAnimationFrame(()=>{ chat.scrollTop = chat.scrollHeight; });
+  function esc(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+  function bubble(who, html){
+    const row=document.createElement("div"); row.className="row";
+    const b=document.createElement("div"); b.className=who; b.innerHTML=html;
+    row.appendChild(b); chat.appendChild(row); scroll(); return b;
+  }
+  const meBubble = t => bubble("me", esc(t));
+
+  // ---- plan card ----
+  const CHIP={ not_approved:["f-await","Awaiting approval"], approved:["f-work","Approved"],
+    in_work:["f-work","Working to plan"], await_owner:["f-owner","Waiting for you"], complete:["f-done","Plan complete"] };
+  function clHtml(){
+    return S.steps.map(s=>`<li class="${s.done?'done':''} ${s.active?'active':''}"><span class="bx">${CHECK}</span><span class="tx">${esc(s.t)}</span></li>`).join("");
+  }
+  function renderCard(){
+    const done=S.steps.filter(s=>s.done).length;
+    const [flag,label]=CHIP[S.status]||CHIP.not_approved;
+    const draft=S.status==="not_approved";
+    const foot = draft
+      ? `<div class="pf"><span class="prog">${done} of ${S.steps.length} steps</span><span class="acts"><span class="youtag">you</span><button class="mini tiny" id="editBtn">Edit</button><button class="mini tiny primary" id="approveBtn">Approve</button></span></div>`
+      : `<div class="pf"><span class="prog">${done} of ${S.steps.length} steps done</span></div>`;
+    S.node.innerHTML=`<div class="ph"><span class="kb"><svg viewBox="0 0 24 24"><path d="M9 4h6a1 1 0 0 1 1 1v0h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2v0a1 1 0 0 1 1-1Z"/><path d="M9 13l2 2 4-4"/></svg></span><span class="pt">${esc(PLAN_TITLE)}</span><span class="chip ${flag}">${label}</span></div><ul class="cl">${clHtml()}</ul>${foot}`;
+    if(draft){ $("#approveBtn",S.node).addEventListener("click",approve); $("#editBtn",S.node).addEventListener("click",editPlan); }
+  }
+  function card(){
+    if(!S.node){ S.node=document.createElement("div"); S.node.className="plan"; chat.appendChild(S.node); }
+    else chat.appendChild(S.node);   // move to bottom = latest write_plan
+    renderCard(); scroll();
+  }
+  function editPlan(){
+    const ta=document.createElement("textarea"); ta.className="edit";
+    ta.value=S.steps.map(s=>`- [ ] ${s.t}`).join("\n");
+    S.node.querySelector(".cl").replaceWith(ta);
+    S.node.querySelector(".pf").innerHTML=`<span class="prog">editing…</span><span class="acts"><button class="mini tiny primary" id="saveEdit">Save &amp; approve</button></span>`;
+    $("#saveEdit",S.node).addEventListener("click",approve); ta.focus();
+  }
+
+  // ---- status surfaces ----
+  const ppill=$("#ppill"), ppillText=$("#ppillText"), badge=$("#badge");
+  const PILL={ not_approved:["f-await","awaiting approval","f-await","plan?"], approved:["f-work","plan approved","f-work","plan"],
+    in_work:["f-work","working to plan","f-work","plan"], await_owner:["f-owner","waiting for you","f-owner","plan"],
+    complete:["f-done","plan complete","f-done","plan"] };
+  function paint(){
+    const m=PILL[S.status];
+    if(!m){ ppill.className="ppill"; badge.className="chat-badge hide"; return; }
+    ppill.className="ppill show "+m[0]; ppillText.textContent=m[1];
+    badge.className="chat-badge "+m[2]; badge.textContent=m[3];
+  }
+
+  // ---- flow ----
+  function draftPlan(){
+    meBubble("Make me a plan to find the best budget mechanical keyboards under $100 and write a buying guide — I'll approve it.");
+    setTimeout(()=>{
+      bubble("ai","Here's a plan for it. Take a look — <b>approve it and I'll get to work</b>. Tweak anything first if you like.");
+      S.status="not_approved"; paint(); card(); show("a1"); show("a2"); show("a3");
+    }, 480);
+  }
+  function approve(){
+    if(S.status!=="not_approved") return;
+    S.status="in_work"; renderCard(); paint();
+    bubble("ai","<span class='sys'>you approved this plan</span>Locked in — starting now.");
+    hide("a3"); show("a6");
+    setTimeout(()=>runStep(0), 620);
+  }
+  function runStep(i){
+    stopTimer(); clearBanner();
+    S.cur=i; S.steps.forEach((s,x)=>s.active=(x===i)); S.status="in_work"; paint(); card();
+    const w=bubble("ai", esc(STEPS[i].work));
+    setTimeout(()=>{
+      S.steps[i].active=false; S.steps[i].done=true;
+      w.className="ai slim"; w.innerHTML=`<span class="done-line">${CHECK}${esc(STEPS[i].done)}</span>`;
+      card(); afterStep(i);
+    }, reduce?500:1500);
+  }
+  function afterStep(i){
+    if(S.steps.every(s=>s.done)) return complete();
+    if(i+1===AWAIT_BEFORE && !S.awaited) return awaitOwner();
+    beginPause(i+1);
+  }
+  function beginPause(next){
+    clearBanner();
+    if(S.used>=MAX_CONTINUATIONS){ bubble("ai","Reached the auto-continue cap — I'll wait for you before doing more."); S.status="await_owner"; paint(); return; }
+    const b=document.createElement("div"); b.className="banner pause"; S.banner=b;
+    b.innerHTML=`<span class="ring" aria-hidden="true"><svg width="46" height="46" viewBox="0 0 46 46"><circle cx="23" cy="23" r="19" stroke="var(--border)" stroke-width="4"/><circle class="pr" cx="23" cy="23" r="19" stroke="var(--green)" stroke-width="4" stroke-dasharray="119.4" stroke-dashoffset="0"/></svg><span class="n">0:${String(S.pace).padStart(2,"0")}</span></span>
+      <div class="bb"><div class="lead">${CLOCK}Continuing automatically</div>
+      <div class="main"><b>Next:</b> ${esc(STEPS[next].t)}</div>
+      <div class="sub">Send a message to redirect — that cancels the timer. (auto-step ${S.used+1} of ${MAX_CONTINUATIONS})</div>
+      <div class="ba"><button class="mini tiny primary" id="cont">Continue now</button><button class="mini tiny" id="hold">Pause</button></div></div>`;
+    chat.appendChild(b); scroll();
+    $("#cont",b).addEventListener("click",()=>{ S.used++; runStep(next); });
+    $("#hold",b).addEventListener("click",()=>holdLoop(next));
+    const ring=b.querySelector(".pr"), num=b.querySelector(".n"), C=119.4, total=S.pace*1000, start=performance.now();
+    const tick=()=>{
+      const left=Math.max(0,total-(performance.now()-start));
+      num.textContent="0:"+String(Math.ceil(left/1000)).padStart(2,"0");
+      if(!reduce) ring.style.strokeDashoffset=String(-(C*(1-left/total)));
+      if(left<=0){ stopTimer(); S.used++; runStep(next); }
+    };
+    S.timer=setInterval(tick, reduce?250:60); tick();
+  }
+  function holdLoop(next){
+    stopTimer(); clearBanner();
+    const b=document.createElement("div"); b.className="banner hold"; S.banner=b;
+    b.innerHTML=`<div class="bb"><div class="lead">Paused by you</div><div class="main">Holding here. <b>Next:</b> ${esc(STEPS[next].t)}</div><div class="ba"><button class="mini tiny primary" id="resume">Resume</button></div></div>`;
+    chat.appendChild(b); scroll();
+    $("#resume",b).addEventListener("click",()=>{ clearBanner(); beginPause(next); });
+  }
+  function awaitOwner(){
+    stopTimer(); clearBanner(); S.awaited=true; S.status="await_owner"; paint(); card();
+    bubble("ai","Quick check before I keep going: is <b>$100 a hard ceiling</b>, or is a little over okay for a standout? And any layout preference — TKL, 60%, or full-size?");
+    const b=document.createElement("div"); b.className="banner await"; S.banner=b;
+    b.innerHTML=`<div class="bb"><div class="lead">${HAND}Waiting for you</div><div class="main">I won't auto-continue — I need your call before the next step.</div><div class="sub">jerv set <b>await_owner</b>, so the loop stays paused until you reply.</div></div>`;
+    chat.appendChild(b); scroll();
+  }
+  function complete(){
+    stopTimer(); clearBanner(); S.steps.forEach(s=>s.active=false); S.status="complete"; paint(); card();
+    bubble("ai","Done — here's your guide. <b>Top pick:</b> Keychron V-series (hot-swap, TKL). <b>Budget pick:</b> Redragon K552 to stay well under. <b>Quiet pick:</b> Royal Kludge, linear switches + foam. Want it as a shareable writeup?");
+  }
+
+  function ownerSend(text){
+    text=(text||"").trim(); if(!text) return;
+    const wasPause=S.banner&&S.banner.classList.contains("pause");
+    const wasAwait=S.status==="await_owner";
+    meBubble(text); stopTimer(); clearBanner(); S.used=0;   // owner message resets the cap
+    if(wasAwait){
+      setTimeout(()=>{ bubble("ai","<span class='sys'>you replied — resuming</span>Got it — treating $100 as firm and favoring TKL. Continuing.");
+        S.status="in_work"; paint(); setTimeout(()=>runStep(S.cur+1),520); }, 340);
+    } else if(wasPause){
+      setTimeout(()=>{ bubble("ai","<span class='sys'>you steered — timer canceled</span>Noted — I'll fold that in and keep going.");
+        setTimeout(()=>runStep(S.cur+1),520); }, 340);
+    } else if(S.status==="in_work"){
+      bubble("ai","Noted — I'll keep that in mind as I work the plan.");
+    } else if(S.status==="complete"){
+      bubble("ai","Sure — I can turn the guide into a shareable page whenever you like.");
+    } else {
+      bubble("ai","This mock is scripted — press <b>Run the demo</b> to watch the planning flow.");
+    }
+  }
+
+  // ---- utils ----
+  const stopTimer=()=>{ if(S.timer){ clearInterval(S.timer); S.timer=null; } };
+  const clearBanner=()=>{ if(S.banner){ S.banner.remove(); S.banner=null; } };
+  const show=id=>{ const e=$("#"+id); if(e) e.style.display=""; };
+  const hide=id=>{ const e=$("#"+id); if(e) e.style.display="none"; };
+  function reset(){ if(S) stopTimer(); chat.innerHTML=""; S=fresh(); paint(); hide("a1");hide("a2");hide("a3");hide("a6"); }
+
+  // ---- controls ----
+  $("#playBtn").addEventListener("click",()=>{ reset(); draftPlan(); });
+  $("#resetBtn").addEventListener("click",reset);
+  $("#send").addEventListener("click",()=>{ const t=$("#input"); ownerSend(t.value); t.value=""; });
+  $("#input").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); ownerSend(e.target.value); e.target.value=""; } });
+  document.querySelectorAll(".seg").forEach(seg=>seg.addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b) return;
+    seg.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", x===b?"true":"false"));
+    if(b.dataset.pace) S.pace=+b.dataset.pace;
+    if(b.dataset.anno){ const on=b.dataset.anno==="on"; $("#phone").classList.toggle("anno-on",on); $("#legend").classList.toggle("show",on); }
+  }));
+
+  reset();
+})();
+</script>

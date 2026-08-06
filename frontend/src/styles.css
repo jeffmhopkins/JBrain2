@@ -17242,6 +17242,369 @@ button.auto-sect[aria-expanded="true"] > svg {
     animation: none;
   }
 }
+/* --- plan_card tool-view (docs/plans/JERV_PLANNING_TOOL_PLAN.md) ---------
+   jerv's plan: body + live checklist, a flag-enum status chip, the owner-only
+   Approve/Edit foot, and the auto-resume countdown. Tokens only; the status flag is
+   an enum the theme colors (amber=awaiting, green=working, violet=waiting-for-you,
+   steel=complete) — never a model-sent color. The card brings its own frame, so the
+   generic tool-view wrapper drops its border like tv-task. */
+.fb-shell .tool-view:has(.plan-card) {
+  border: 0;
+  padding: 0;
+  background: none;
+}
+.plan-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 13px 10px;
+}
+.plan-kb {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--steel-tint);
+  color: var(--steel);
+  display: grid;
+  place-items: center;
+}
+.plan-kb svg {
+  width: 14px;
+  height: 14px;
+}
+.plan-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.plan-chip {
+  flex: none;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding: 4px 9px;
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.plan-chip.flag-not_approved {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+.plan-chip.flag-approved,
+.plan-chip.flag-in_work {
+  color: var(--green);
+  background: var(--green-tint);
+}
+.plan-chip.flag-await_owner {
+  color: var(--violet);
+  background: var(--violet-tint);
+}
+.plan-chip.flag-complete {
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+.plan-body {
+  padding: 0 13px 4px;
+  font-size: var(--fs-note);
+  color: var(--text-2);
+}
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 2px 13px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.plan-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 7px 6px;
+  border-radius: 9px;
+  font-size: var(--fs-note);
+  line-height: 1.4;
+}
+.plan-step.active {
+  background: var(--surface-2);
+}
+.plan-box {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  border: 1.6px solid var(--text-3);
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  color: transparent;
+}
+.plan-box svg {
+  width: 11px;
+  height: 11px;
+}
+.plan-step.done .plan-box {
+  background: var(--green);
+  border-color: var(--green);
+  color: var(--bg);
+}
+.plan-step.active .plan-box {
+  border-color: var(--steel);
+  border-style: dashed;
+  animation: plan-pulse 1.2s ease-in-out infinite;
+}
+@keyframes plan-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.plan-step.done .plan-tx {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--border);
+}
+.plan-edit {
+  width: calc(100% - 26px);
+  margin: 0 13px 12px;
+  resize: vertical;
+  min-height: 92px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-head);
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px;
+}
+/* The auto-resume window (green) and the waiting-for-you state (violet). */
+.plan-resume,
+.plan-await {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 13px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+.plan-resume {
+  background: var(--green-tint);
+  border: 1px solid color-mix(in srgb, var(--green) 28%, transparent);
+}
+.plan-await {
+  background: var(--violet-tint);
+  border: 1px solid color-mix(in srgb, var(--violet) 30%, transparent);
+}
+.plan-resume-lead,
+.plan-await-lead {
+  flex: none;
+  display: inline-flex;
+}
+.plan-resume-lead {
+  color: var(--green);
+}
+.plan-await-lead {
+  color: var(--violet);
+}
+.plan-resume-lead svg {
+  width: 16px;
+  height: 16px;
+}
+.plan-await-lead svg {
+  width: 15px;
+  height: 15px;
+}
+.plan-resume-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.plan-resume-txt,
+.plan-await-txt {
+  font-size: var(--fs-head);
+  color: var(--text);
+}
+.plan-await-txt {
+  flex: 1;
+  min-width: 0;
+}
+.plan-resume-sub {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.plan-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--green);
+}
+.plan-resume-acts {
+  flex: none;
+  display: flex;
+  gap: 7px;
+}
+.plan-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px 12px;
+  border-top: 1px solid var(--border);
+}
+.plan-prog {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-head);
+  color: var(--text-3);
+}
+.plan-acts {
+  flex: none;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+.plan-you {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.plan-mini,
+.plan-approve {
+  border-radius: 9px;
+  font-size: var(--fs-head);
+  font-weight: 600;
+  cursor: pointer;
+}
+.plan-mini {
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.plan-mini:hover:not(:disabled) {
+  color: var(--text);
+}
+.plan-mini.primary,
+.plan-approve {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  background: var(--steel);
+  color: var(--bg);
+}
+.plan-mini.primary {
+  padding: 6px 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-step.active .plan-box {
+    animation: none;
+  }
+}
+
+/* The composer-foot plan pill — the always-visible out-of-card twin of the plan
+   chip, beside the model pill (shares the .composer-foot with it, so unscoped like
+   .model-pill). Flag enum → theme color; the in_work dot pulses. */
+.plan-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  white-space: nowrap;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.plan-pill-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+}
+.plan-pill.flag-not_approved {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+.plan-pill.flag-approved,
+.plan-pill.flag-in_work {
+  color: var(--green);
+  background: var(--green-tint);
+}
+.plan-pill.flag-await_owner {
+  color: var(--violet);
+  background: var(--violet-tint);
+}
+.plan-pill.flag-complete {
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+.plan-pill.flag-in_work .plan-pill-dot {
+  animation: plan-pill-blink 1.4s ease-in-out infinite;
+}
+@keyframes plan-pill-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-pill.flag-in_work .plan-pill-dot {
+    animation: none;
+  }
+}
+
+/* The Chats-picker plan badge — the same plan_status on the session row, beside the
+   staged badge (scoped like .stat.staged). */
+.fb-shell .stat.plan {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.fb-shell .stat.plan.flag-not_approved {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+.fb-shell .stat.plan.flag-approved,
+.fb-shell .stat.plan.flag-in_work {
+  color: var(--green);
+  background: var(--green-tint);
+}
+.fb-shell .stat.plan.flag-await_owner {
+  color: var(--violet);
+  background: var(--violet-tint);
+}
+.fb-shell .stat.plan.flag-complete {
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+
 /* --- trail metric legend (top-left, under the names) -------------------- */
 .lm-legend {
   position: absolute;

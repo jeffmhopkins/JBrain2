@@ -50,6 +50,7 @@ from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.mergetools import build_merge_handlers
 from jbrain.agent.metricstools import build_metrics_handlers
+from jbrain.agent.plantools import build_plan_handlers
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_intake_link_handlers, build_proposal_handlers
@@ -803,6 +804,12 @@ def build_registry(
             # the owner-only `archivist_memory` table — always wired (the table always
             # exists); curator never sees it (the opt-in web class).
             **build_archivist_memory_handlers(maker),
+            # jerv's per-conversation planning tools (`web`-gated, jerv-only) over the
+            # owner-only `agent_session_plans` table — always wired (the table always
+            # exists); curator never sees them (the opt-in web class). read_plan/write_plan
+            # let jerv draft a plan the owner approves, then execute against it
+            # (docs/plans/JERV_PLANNING_TOOL_PLAN.md).
+            **build_plan_handlers(maker),
             # The sub-agent spawn primitive (docs/archive/SUBAGENT_SPAWNING_PLAN.md). A
             # late-bound handler: the service it forwards to needs the very registry
             # being built (it launches children on it), so it is wired below once the

@@ -1,6 +1,6 @@
 import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ListOut, api } from "../../api/client";
+import { type ListOut, type PlanOut, api } from "../../api/client";
 import type { ViewPayload } from "../types";
 import { resetLiveLists } from "./liveList";
 import { ToolView, isKnownView } from "./registry";
@@ -24,6 +24,27 @@ function payload(over: Partial<ViewPayload>): ViewPayload {
 function listOut(over: Partial<ListOut> = {}): ListOut {
   return { id: "L1", title: "Groceries", domain: "general", archived: false, items: [], ...over };
 }
+
+function planOut(over: Partial<PlanOut> = {}): PlanOut {
+  return {
+    session_id: "s1",
+    body: "",
+    status: "in_work",
+    updated_at: "2026-08-06T00:00:00Z",
+    continuation_due_at: null,
+    awaiting_owner: false,
+    continuations_used: 0,
+    max_continuations: 20,
+    ...over,
+  };
+}
+
+const PLAN_BODY = [
+  "# Buying guide — budget keyboards",
+  "",
+  "- [ ] Search for current budget keyboards",
+  "- [ ] Compare switches and build",
+].join("\n");
 
 // Keep the shared live-list store (and api spies) from leaking across cases.
 afterEach(() => {
@@ -848,6 +869,152 @@ describe("ToolView registry", () => {
       <ToolView payload={payload({ view: "server_metrics", data: { points: [] } })} />,
     );
     expect(getByText("No host-metrics samples recorded.")).toBeInTheDocument();
+  });
+
+  it("renders a not_approved plan_card with the title, checklist, and owner Approve", async () => {
+    expect(isKnownView("plan_card")).toBe(true);
+    // The mount reconcile pulls server truth; here it agrees with the seed (still a draft).
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "not_approved", body: PLAN_BODY }),
+    );
+    const approve = vi.spyOn(api, "approvePlan").mockResolvedValue(planOut({ status: "in_work" }));
+    const onPlanChanged = vi.fn();
+    const { getByText, getByRole } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+        })}
+        onPlanChanged={onPlanChanged}
+      />,
+    );
+    // Title from the heading, both steps, and the flag-enum chip (never a model color).
+    expect(getByText("Buying guide — budget keyboards")).toBeInTheDocument();
+    expect(getByText("Search for current budget keyboards")).toBeInTheDocument();
+    expect(getByText("Awaiting approval")).toHaveClass("flag-not_approved");
+    // The owner-only Approve gesture POSTs approve, then signals the surface to refresh.
+    fireEvent.click(getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(approve).toHaveBeenCalledWith("s1"));
+    expect(onPlanChanged).toHaveBeenCalled();
+  });
+
+  it("edits then approves a plan_card draft in place", async () => {
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "not_approved", body: PLAN_BODY }),
+    );
+    const edit = vi.spyOn(api, "editPlan").mockResolvedValue(planOut());
+    const approve = vi.spyOn(api, "approvePlan").mockResolvedValue(planOut({ status: "in_work" }));
+    const { getByRole, getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+        })}
+      />,
+    );
+    fireEvent.click(getByRole("button", { name: "Edit" }));
+    const box = getByRole("textbox", { name: "Correct the plan" }) as HTMLTextAreaElement;
+    expect(box.value).toContain("Search for current budget keyboards");
+    fireEvent.change(box, { target: { value: "# New\n- [ ] one" } });
+    fireEvent.click(getByText("Save & approve"));
+    await waitFor(() => expect(edit).toHaveBeenCalledWith("s1", "# New\n- [ ] one"));
+    expect(approve).toHaveBeenCalledWith("s1");
+  });
+
+  it("shows the auto-resume countdown + controls while in_work", async () => {
+    const due = new Date(Date.now() + 45_000).toISOString();
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "in_work", body: PLAN_BODY, continuation_due_at: due }),
+    );
+    const cont = vi.spyOn(api, "continuePlan").mockResolvedValue(planOut());
+    const { getByText, getByRole } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+        })}
+      />,
+    );
+    // The card polls GET /plans and, once continuation_due_at lands, shows the countdown.
+    await waitFor(() => expect(getByText(/continuing in/)).toBeInTheDocument());
+    expect(getByText("Working to plan")).toHaveClass("flag-in_work");
+    fireEvent.click(getByRole("button", { name: "Continue now" }));
+    await waitFor(() => expect(cont).toHaveBeenCalledWith("s1"));
+  });
+
+  it("renders the distinct await_owner state with no countdown", async () => {
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "in_work", body: PLAN_BODY, awaiting_owner: true }),
+    );
+    const { getByText, queryByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+        })}
+      />,
+    );
+    await waitFor(() => expect(getByText("Waiting for you")).toHaveClass("flag-await_owner"));
+    expect(queryByText(/continuing in/)).not.toBeInTheDocument();
+  });
+
+  it("reads Plan complete when every step is checked", async () => {
+    const done = "# Guide\n- [x] one\n- [x] two";
+    vi.spyOn(api, "getPlan").mockResolvedValue(planOut({ status: "in_work", body: done }));
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: done, status: "in_work" },
+        })}
+      />,
+    );
+    await waitFor(() =>
+      expect(getByText("Plan complete", { selector: ".plan-chip" })).toHaveClass("flag-complete"),
+    );
+  });
+
+  it("reconciles a stale historical draft card against server truth on mount", async () => {
+    // The frozen tool-view payload says not_approved, but the plan has since gone in_work
+    // and is working — the mount reconcile must supersede the stale seed (no live Approve).
+    vi.spyOn(api, "getPlan").mockResolvedValue(planOut({ status: "in_work", body: PLAN_BODY }));
+    const { getByText, queryByRole } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+        })}
+      />,
+    );
+    await waitFor(() => expect(getByText("Working to plan")).toHaveClass("flag-in_work"));
+    // The owner-only Approve is gone — the card no longer shows a stale draft affordance.
+    expect(queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
+  it("Stop cancels the window and parks the countdown", async () => {
+    const due = new Date(Date.now() + 45_000).toISOString();
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "in_work", body: PLAN_BODY, continuation_due_at: due }),
+    );
+    // Stop returns the plan still in_work but with no pending continuation.
+    const stop = vi
+      .spyOn(api, "stopPlan")
+      .mockResolvedValue(
+        planOut({ status: "in_work", body: PLAN_BODY, continuation_due_at: null }),
+      );
+    const { getByText, getByRole, queryByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+        })}
+      />,
+    );
+    await waitFor(() => expect(getByText(/continuing in/)).toBeInTheDocument());
+    fireEvent.click(getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(stop).toHaveBeenCalledWith("s1"));
+    // The countdown is gone and stays gone (the poll is parked, not re-showing next tick).
+    await waitFor(() => expect(queryByText(/continuing in/)).not.toBeInTheDocument());
   });
 
   it("tolerates missing/extra slots without crashing", () => {

@@ -242,6 +242,10 @@ export interface FullBrain {
   /** Refetch the staged-proposals list (it drops anything no longer open) — fired
    * after a proposal is enacted/minted so the panel never shows a stale row. */
   reloadProposals: () => void;
+  /** Refetch the session list + re-sync the open session by id — fired after an
+   * in-card plan action (approve/edit/stop/continue) so the out-of-card plan_status
+   * surfaces (composer pill + Chats badge) update without waiting for the next turn. */
+  reloadSessions: () => void;
   panel: Panel;
   setPanel: (p: Panel) => void;
   openProposal: string | null;
@@ -1007,6 +1011,7 @@ export function useFullBrain(
     agentOptions,
     proposals,
     reloadProposals,
+    reloadSessions,
     panel,
     setPanel,
     openProposal,

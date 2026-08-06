@@ -110,6 +110,8 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "remove_external_video",
             "check_channel",
             "query_server_metrics",
+            "read_plan",
+            "write_plan",
             "spawn_subagent",
             "deep_research",
             "deep_produce",
@@ -330,8 +332,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v33",
-            "4f1159bdcb5ed39895fe2e6035925864d379b93e1976ad68864328495e0cd803",
+            "agent-jerv-v35",
+            "3e84d13538e0615efe4713daef815793c06db7e8c2daed428ccd6cbbe1924952",
         ),
         "archivist": (
             "agent-archivist-v6",

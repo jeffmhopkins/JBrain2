@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.brainevents import build_event_emitter, build_flag_emitter
+from jbrain.agent.continuation import PlanContinuationRunner, run_plan_continuation_loop
 from jbrain.agent.deepest_tool import DeepestHandle
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.fetchtools import build_fetch_image_handlers
@@ -77,6 +78,7 @@ from jbrain.api import (
     ops,
     owntracks,
     pairing,
+    plans,
     proposals,
     research_library,
     research_share,
@@ -150,7 +152,7 @@ from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.stream import resolve_stream, ytdlp_available
 from jbrain.tasks.repo import TaskGroupRepo, TaskRepo, TaskRunRepo
 from jbrain.tasks.runner import LoopTurnExecutor, TaskRunner
-from jbrain.tasks.scheduler import run_tasks_loop
+from jbrain.tasks.scheduler import _owner_principal_id, run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
@@ -223,6 +225,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # In-flight chat turns, detached from their SSE response so a backgrounded PWA
         # can't kill them; keyed by run_id for the Stop endpoint and shutdown cleanup.
         app.state.live_turns = {}
+        # "A turn is starting for this session" markers (session_id → monotonic ts), set by
+        # /chat before it registers in live_turns, read by the plan-continuation sweep so it
+        # yields to an owner turn mid-startup (JERV_PLANNING_TOOL_PLAN.md).
+        app.state.turn_starting = {}
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.intake_repo = SqlIntakeRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
@@ -803,6 +809,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tasks_loop_task = asyncio.create_task(
             run_tasks_loop(maker, app.state.task_repo, app.state.task_runner)
         )
+        # Plan auto-continuation (JERV_PLANNING_TOOL_PLAN.md): the web-process sweep that
+        # fires due plan continuations as headless answer-only jerv turns. Reuses the same
+        # engine /chat and tasks use, and the live-turns registry (so it never stacks on a
+        # live turn). Its own LoopTurnExecutor over the shared router + agent registry.
+        app.state.plan_continuation_runner = PlanContinuationRunner(
+            maker=maker,
+            executor=LoopTurnExecutor(app.state.llm_router, app.state.agent_registry),
+            runlog=app.state.agent_runlog,
+            transcript=app.state.agent_transcript,
+            live_turns=app.state.live_turns,
+            owner_principal_id=lambda: _owner_principal_id(maker),
+            turn_starting=app.state.turn_starting,
+            max_concurrent=agent._MAX_CONCURRENT_TURNS,
+        )
+        plan_continuation_task = asyncio.create_task(
+            run_plan_continuation_loop(app.state.plan_continuation_runner)
+        )
         # The guided-intake reaper: abandons stale drafting intake sessions (§6), under the
         # full-owner system context so it can sweep every link's sessions.
         intake_reaper_task = asyncio.create_task(
@@ -841,6 +864,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if live_task is not None:
             live_task.cancel()
         tasks_loop_task.cancel()
+        plan_continuation_task.cancel()
         intake_reaper_task.cancel()
         stranded_reaper_task.cancel()
         jpet_loop_task.cancel()
@@ -983,6 +1007,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ops.router, prefix="/api")
     app.include_router(owntracks.router, prefix="/api")
     app.include_router(pairing.router, prefix="/api")
+    app.include_router(plans.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")
     app.include_router(research_library.router, prefix="/api")
     app.include_router(research_share.router, prefix="/api")

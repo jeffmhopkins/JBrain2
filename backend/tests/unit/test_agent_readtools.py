@@ -858,6 +858,10 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "read_research_report",
         "show_research_report",
         "remove_research_report",
+        # jerv's per-conversation planning tools are `web`-classed (jerv-only), over the
+        # owner-only agent_session_plans table, never offered to the curator wildcard.
+        "read_plan",
+        "write_plan",
     }
     shipped = {
         "search",
@@ -1410,6 +1414,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "remove_research_report",
             1,
             "7450bd163900253dde202db50eb7a4581e12985480b25fddb2c3f75371c0e91c",
+        ),
+        "read_plan.tool": (
+            "read_plan",
+            1,
+            "709a63ba44346dde6e78bfc03aa5ae1da11bab37d77d317a12cb7f011c7f0c1a",
+        ),
+        "write_plan.tool": (
+            "write_plan",
+            3,
+            "59a3f04336339861ff313355d11cc8a054c9bae0b53e0a445add210e8d6ddbc5",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
