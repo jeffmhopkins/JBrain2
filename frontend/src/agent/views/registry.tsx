@@ -5,7 +5,7 @@
 // selects a registered component and fills its data-only slots. Adding a
 // component is a deliberate change here, like adding a tool.
 
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type MetricPoint,
   type PlanOut,
@@ -3164,6 +3164,25 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  // An owner Stop parks an in_work plan (status stays in_work, no continuation pending):
+  // suppress the poll so it doesn't spin forever on a plan that won't advance until the
+  // owner acts again. Cleared by any non-Stop action or once the server re-arms a window.
+  const [halted, setHalted] = useState(false);
+  // Pause the poll while the tab is backgrounded; reconcile on return so a window armed
+  // while away is caught without hammering in the background.
+  const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
+
+  // Unmount guard + an action-in-flight guard/sequence, so a poll response that raced an
+  // in-card action (or landed after unmount) never clobbers newer folded truth.
+  const alive = useRef(true);
+  const busyRef = useRef(false);
+  const actionSeq = useRef(0);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const { title, steps, prose } = parsePlanBody(plan.body);
   const doneCount = steps.filter((s) => s.checked).length;
@@ -3179,36 +3198,67 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
   const live =
     (plan.status === "in_work" || plan.status === "approved") && !plan.awaiting && !allDone;
 
-  // Poll the plan while it's live so the checklist, the countdown, and awaiting_owner
-  // track the server sweep. Stops the moment it's no longer live. A blip just retries.
+  // Reconcile the local state with server truth. Guarded three ways: dropped after unmount,
+  // dropped while an in-card action is outstanding, and dropped if an action bumped the
+  // sequence since this fetch began — so a stale poll can't overwrite a just-folded PlanOut.
+  const reconcile = useCallback(async () => {
+    if (!sessionId) return;
+    const seq = actionSeq.current;
+    try {
+      const out = await api.getPlan(sessionId);
+      if (!alive.current || busyRef.current || actionSeq.current !== seq) return;
+      const next = planFromOut(out);
+      setPlan(next);
+      // A re-armed window / awaiting / a status change means the plan is advancing again —
+      // un-park the poll (a Stop that stays parked keeps dueAt null + in_work).
+      if (next.dueAt != null || next.awaiting || next.status !== "in_work") setHalted(false);
+    } catch {
+      // 404 = no plan row yet (keep the seed); any other blip retries on the next tick.
+    }
+  }, [sessionId]);
+
+  // One-shot reconcile on mount, REGARDLESS of `live`: the tool-view payload is frozen at
+  // the turn it was written, so a card re-rendered from stored history can be stale (a
+  // since-approved/-completed plan still showing "Awaiting approval" with a live Approve).
+  // Pull server truth once so the seed can never strand.
   useEffect(() => {
-    if (!sessionId || !live) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const out = await api.getPlan(sessionId);
-        if (alive) setPlan(planFromOut(out));
-      } catch {
-        // transient — the next tick retries; the work is safe server-side
-      }
+    void reconcile();
+  }, [reconcile]);
+
+  // Track tab visibility; on regaining focus, reconcile once (catches a window the server
+  // armed while the tab was hidden, including after a Stop the owner later resumed).
+  useEffect(() => {
+    const onVis = () => {
+      const v = document.visibilityState !== "hidden";
+      setVisible(v);
+      if (v) void reconcile();
     };
-    void tick();
-    const id = setInterval(tick, 5000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [sessionId, live]);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [reconcile]);
+
+  // Poll while the plan is live (and not parked by a Stop, and the tab is visible) so the
+  // checklist, the countdown, and awaiting_owner follow the server sweep. "in_work with no
+  // countdown" is a NORMAL transient (a continuation turn running, or the gap before the
+  // next window arms), so we deliberately don't cease merely on "no countdown" — only an
+  // owner Stop (`halted`) or a hidden tab pauses it.
+  useEffect(() => {
+    if (!sessionId || !live || halted || !visible) return;
+    const id = setInterval(() => void reconcile(), 5000);
+    return () => clearInterval(id);
+  }, [sessionId, live, halted, visible, reconcile]);
 
   // A 1s ticker while a countdown shows, anchored to the SERVER's due timestamp so
   // reopening mid-window shows the true remaining time (like TaskStatus's elapsed timer).
+  // Keyed off `!editing` too, so it doesn't run hidden behind the editor.
   const dueMs = plan.dueAt ? Date.parse(plan.dueAt) : Number.NaN;
   const showCountdown = live && !Number.isNaN(dueMs);
+  const countdownVisible = showCountdown && !editing;
   useEffect(() => {
-    if (!showCountdown) return;
+    if (!countdownVisible) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [showCountdown]);
+  }, [countdownVisible]);
   const remainingMs = Math.max(0, dueMs - now);
   const countdown = `${Math.floor(remainingMs / 60000)}:${String(
     Math.floor((remainingMs % 60000) / 1000),
@@ -3218,16 +3268,25 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
   // The active step: the first unchecked one while working — a dashed spinner box.
   const activeIdx = live ? steps.findIndex((s) => !s.checked) : -1;
 
-  async function run(fn: () => Promise<PlanOut>): Promise<void> {
-    if (busy) return;
+  // Run an in-card action, fold its returned PlanOut, and notify the surface. `halt` parks
+  // the poll (Stop); any other action un-parks it. The sequence bump + busy flag make an
+  // in-flight poll drop its stale result rather than clobber this fold.
+  async function run(fn: () => Promise<PlanOut>, opts?: { halt?: boolean }): Promise<void> {
+    if (busyRef.current) return;
+    actionSeq.current += 1;
+    busyRef.current = true;
     setBusy(true);
     try {
-      setPlan(planFromOut(await fn()));
+      const out = await fn();
+      if (!alive.current) return;
+      setPlan(planFromOut(out));
+      setHalted(opts?.halt === true);
       onPlanChanged?.();
     } catch {
       // leave the card as-is; the owner can retry
     } finally {
-      setBusy(false);
+      busyRef.current = false;
+      if (alive.current) setBusy(false);
     }
   }
 
@@ -3237,17 +3296,23 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
   }
   // Correct-in-place then sign off: POST edit, then the owner-only POST approve.
   async function saveApprove(): Promise<void> {
-    if (busy) return;
+    if (busyRef.current) return;
+    actionSeq.current += 1;
+    busyRef.current = true;
     setBusy(true);
     try {
       await api.editPlan(sessionId, draft);
-      setPlan(planFromOut(await api.approvePlan(sessionId)));
+      const out = await api.approvePlan(sessionId);
+      if (!alive.current) return;
+      setPlan(planFromOut(out));
+      setHalted(false);
       setEditing(false);
       onPlanChanged?.();
     } catch {
       // keep the editor open for a retry
     } finally {
-      setBusy(false);
+      busyRef.current = false;
+      if (alive.current) setBusy(false);
     }
   }
 
@@ -3258,7 +3323,9 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
           <PlanIcon />
         </span>
         <span className="plan-title">{title || "Plan"}</span>
-        <span className={`plan-chip flag-${state}`}>{PLAN_LABELS[state]}</span>
+        {/* <output> is an implicit polite live region: the state label is announced on
+            change (draft→approved→working→awaiting→complete). */}
+        <output className={`plan-chip flag-${state}`}>{PLAN_LABELS[state]}</output>
       </div>
       {prose && (
         <div className="plan-body">
@@ -3305,8 +3372,10 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
       )}
 
       {/* The auto-resume countdown: the card DISPLAYS the server's window and offers the
-          two owner overrides — Continue now (arm it due-now) and Stop (cancel it). */}
-      {showCountdown && !editing && (
+          two owner overrides — Continue now (arm it due-now) and Stop (cancel it). The
+          text body is a live region (an implicit-status <output>) so the ticking + the
+          "continuing now" flip are announced; the buttons stay outside it. */}
+      {countdownVisible && (
         <div className="plan-resume">
           <span className="plan-resume-lead" aria-hidden="true">
             <svg
@@ -3320,9 +3389,16 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
               <path d="M12 8v4l3 2" />
             </svg>
           </span>
-          <span className="plan-resume-txt">
-            continuing in <b className="plan-count">{countdown}</b>
-          </span>
+          <output className="plan-resume-body">
+            <span className="plan-resume-txt">
+              continuing in <b className="plan-count">{countdown}</b>
+            </span>
+            {plan.max > 0 && (
+              <span className="plan-resume-sub">
+                auto-step {plan.used + 1} of {plan.max}
+              </span>
+            )}
+          </output>
           <span className="plan-resume-acts">
             <button
               type="button"
@@ -3336,7 +3412,7 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
               type="button"
               className="plan-mini"
               disabled={busy}
-              onClick={() => void run(() => api.stopPlan(sessionId))}
+              onClick={() => void run(() => api.stopPlan(sessionId), { halt: true })}
             >
               Stop
             </button>

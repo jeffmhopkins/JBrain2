@@ -873,6 +873,10 @@ describe("ToolView registry", () => {
 
   it("renders a not_approved plan_card with the title, checklist, and owner Approve", async () => {
     expect(isKnownView("plan_card")).toBe(true);
+    // The mount reconcile pulls server truth; here it agrees with the seed (still a draft).
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "not_approved", body: PLAN_BODY }),
+    );
     const approve = vi.spyOn(api, "approvePlan").mockResolvedValue(planOut({ status: "in_work" }));
     const onPlanChanged = vi.fn();
     const { getByText, getByRole } = render(
@@ -895,6 +899,9 @@ describe("ToolView registry", () => {
   });
 
   it("edits then approves a plan_card draft in place", async () => {
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "not_approved", body: PLAN_BODY }),
+    );
     const edit = vi.spyOn(api, "editPlan").mockResolvedValue(planOut());
     const approve = vi.spyOn(api, "approvePlan").mockResolvedValue(planOut({ status: "in_work" }));
     const { getByRole, getByText } = render(
@@ -951,9 +958,9 @@ describe("ToolView registry", () => {
     expect(queryByText(/continuing in/)).not.toBeInTheDocument();
   });
 
-  it("reads Plan complete when every step is checked", () => {
-    vi.spyOn(api, "getPlan").mockResolvedValue(planOut());
+  it("reads Plan complete when every step is checked", async () => {
     const done = "# Guide\n- [x] one\n- [x] two";
+    vi.spyOn(api, "getPlan").mockResolvedValue(planOut({ status: "in_work", body: done }));
     const { getByText } = render(
       <ToolView
         payload={payload({
@@ -962,7 +969,52 @@ describe("ToolView registry", () => {
         })}
       />,
     );
-    expect(getByText("Plan complete", { selector: ".plan-chip" })).toHaveClass("flag-complete");
+    await waitFor(() =>
+      expect(getByText("Plan complete", { selector: ".plan-chip" })).toHaveClass("flag-complete"),
+    );
+  });
+
+  it("reconciles a stale historical draft card against server truth on mount", async () => {
+    // The frozen tool-view payload says not_approved, but the plan has since gone in_work
+    // and is working — the mount reconcile must supersede the stale seed (no live Approve).
+    vi.spyOn(api, "getPlan").mockResolvedValue(planOut({ status: "in_work", body: PLAN_BODY }));
+    const { getByText, queryByRole } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+        })}
+      />,
+    );
+    await waitFor(() => expect(getByText("Working to plan")).toHaveClass("flag-in_work"));
+    // The owner-only Approve is gone — the card no longer shows a stale draft affordance.
+    expect(queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
+  it("Stop cancels the window and parks the countdown", async () => {
+    const due = new Date(Date.now() + 45_000).toISOString();
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "in_work", body: PLAN_BODY, continuation_due_at: due }),
+    );
+    // Stop returns the plan still in_work but with no pending continuation.
+    const stop = vi
+      .spyOn(api, "stopPlan")
+      .mockResolvedValue(
+        planOut({ status: "in_work", body: PLAN_BODY, continuation_due_at: null }),
+      );
+    const { getByText, getByRole, queryByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+        })}
+      />,
+    );
+    await waitFor(() => expect(getByText(/continuing in/)).toBeInTheDocument());
+    fireEvent.click(getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(stop).toHaveBeenCalledWith("s1"));
+    // The countdown is gone and stays gone (the poll is parked, not re-showing next tick).
+    await waitFor(() => expect(queryByText(/continuing in/)).not.toBeInTheDocument());
   });
 
   it("tolerates missing/extra slots without crashing", () => {

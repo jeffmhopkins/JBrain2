@@ -17430,12 +17430,26 @@ button.auto-sect[aria-expanded="true"] > svg {
   width: 15px;
   height: 15px;
 }
+.plan-resume-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .plan-resume-txt,
+.plan-await-txt {
+  font-size: var(--fs-head);
+  color: var(--text);
+}
 .plan-await-txt {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-head);
-  color: var(--text);
+}
+.plan-resume-sub {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
 }
 .plan-count {
   font-family: var(--font-mono);
