@@ -183,8 +183,12 @@ class IngestPipeline:
         # reconciler's settle window (queue.backfill_pending_integration) bounds a
         # promised attachment that never arrives. Absent/0 hint = today's behavior.
         attachments_settled = len(attachments) >= attachments_expected
-        if attachments_settled and not outstanding and not await queue.has_active_analysis(
-            self._maker, SYSTEM_CTX, note_id, statuses=("queued",)
+        if (
+            attachments_settled
+            and not outstanding
+            and not await queue.has_active_analysis(
+                self._maker, SYSTEM_CTX, note_id, statuses=("queued",)
+            )
         ):
             # W2·C cutover: emit the note.ingested event that DRIVES integration — the
             # dispatcher resolves it to the integrate pipeline and enqueues the job

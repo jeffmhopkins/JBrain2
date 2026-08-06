@@ -24,10 +24,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "ALTER TABLE app.notes"
-        " ADD COLUMN attachments_expected integer NOT NULL DEFAULT 0"
-    )
+    op.execute("ALTER TABLE app.notes ADD COLUMN attachments_expected integer NOT NULL DEFAULT 0")
 
 
 def downgrade() -> None:

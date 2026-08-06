@@ -1475,9 +1475,7 @@ def test_group_texts_by_source_keeps_a_plain_note_as_one_group() -> None:
 def test_group_texts_by_source_splits_two_attachments_apart() -> None:
     """Distinct attachments are distinct sources: each extracts independently, so
     two receipts can't crowd each other either."""
-    groups = group_texts_by_source(
-        ["body", "r1", "r2"], ["note", "att-1", "att-2"]
-    )
+    groups = group_texts_by_source(["body", "r1", "r2"], ["note", "att-1", "att-2"])
     assert groups == [["body"], ["r1"], ["r2"]]
 
 
@@ -1504,8 +1502,10 @@ async def test_extract_note_per_source_preserves_body_facts_alongside_attachment
     carries BOTH — the body's 'car loan' edge survives even though the attachment (a
     membership card) yields its own dense facts. Empirically, a single shared call
     drops the body facts entirely once the card text is present."""
+    import json as _json
+
     from jbrain.analysis.pipeline import _extract_note
-    from jbrain.llm import LlmRouter
+    from jbrain.llm import FakeLlmClient, LlmRouter
     from jbrain.llm.types import LlmResult, LlmUsage
 
     body_extraction = {
@@ -1532,18 +1532,18 @@ async def test_extract_note_per_source_preserves_body_facts_alongside_attachment
         "temporal_tokens": [],
     }
 
-    class _ContentRoutedFake:
+    class _ContentRoutedFake(FakeLlmClient):
         """Answers by which source group's text it sees, so the two source groups get
-        their own distinct extractions (what separate calls produce in production)."""
+        their own distinct extractions (what separate calls produce in production).
+        Subclasses FakeLlmClient so it satisfies the full LlmClient protocol."""
 
         def __init__(self) -> None:
-            self.calls: list[str] = []
+            super().__init__([])
+            self.seen: list[str] = []
 
         async def complete(self, *, user_text: str, json_schema: Any = None, **_: Any) -> LlmResult:
-            self.calls.append(user_text)
+            self.seen.append(user_text)
             payload = body_extraction if "car loan" in user_text else attachment_extraction
-            import json as _json
-
             return LlmResult(text=_json.dumps(payload), parsed=payload, usage=LlmUsage(1, 1))
 
     fake = _ContentRoutedFake()
@@ -1570,7 +1570,7 @@ async def test_extract_note_per_source_preserves_body_facts_alongside_attachment
 
     # Two source groups → two note.extract calls (the body and the attachment never
     # share a budget), and the merge keeps facts from BOTH.
-    assert len(fake.calls) == 2
+    assert len(fake.seen) == 2
     statements = [f.statement for f in extraction.facts]
     assert any("car loan" in s.lower() for s in statements)  # the body fact SURVIVES
     assert any("263181384" in s for s in statements)  # the attachment fact too

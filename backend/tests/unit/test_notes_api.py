@@ -289,9 +289,12 @@ def test_create_note_forwards_attachment_intent_hint(
     c.post("/api/notes", json={"client_id": "hint2", "body": "plain"})
     assert repo.attachments_expected == [2, 0]
     # Out-of-range is rejected (the Field bounds), never silently stored.
-    assert c.post(
-        "/api/notes", json={"client_id": "hint3", "body": "x", "attachments_expected": -1}
-    ).status_code == 422
+    assert (
+        c.post(
+            "/api/notes", json={"client_id": "hint3", "body": "x", "attachments_expected": -1}
+        ).status_code
+        == 422
+    )
 
 
 def test_list_notes_pagination(client: tuple[TestClient, FakeNotesRepo, FakeJobQueue]) -> None:
