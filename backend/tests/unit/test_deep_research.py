@@ -1684,15 +1684,15 @@ async def test_preset_run_skips_the_planner_and_uses_the_presets_fixed_shape() -
     # Gather ran the preset's five fixed angles (by their titles), not model-invented ones.
     gather = _research_fans(spawn)[0]
     assert [title for title, _ in gather["briefs"]] == [
-        "Biography & record",
-        "Campaign finance (FEC)",
-        "Policy positions",
-        "Endorsements & controversies",
-        "Race context",
+        "Voting & legislative record",
+        "Career, occupations & business record",
+        "Funding, endorsements & backing",
+        "Positions over time & rhetoric",
+        "Controversies & legal record",
     ]
     # The writer got the preset's fixed outline + the variable-filled objective.
     synth = router.synth_calls[0]
-    assert "Campaign Finance" in synth and "Controversies & Record" in synth
+    assert "Voting & Legislative Record" in synth and "Record vs. Rhetoric" in synth
     assert "Jane Doe" in synth and "U.S. Senate (Florida)" in synth
 
 
@@ -1726,7 +1726,7 @@ async def test_preset_run_enforces_missing_headings_with_one_resynth() -> None:
     )
     structure_retries = [s for s in router.synth_calls if "STRUCTURE DEFECT" in s]
     assert len(structure_retries) == 1  # one hardened re-synth, not a loop
-    assert "Campaign Finance" in structure_retries[0]  # names the missing sections
+    assert "Controversies & Legal Record" in structure_retries[0]  # names the missing sections
 
 
 async def test_non_preset_run_never_enforces_headings() -> None:

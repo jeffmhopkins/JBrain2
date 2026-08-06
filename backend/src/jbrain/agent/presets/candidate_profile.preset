@@ -1,79 +1,175 @@
-# A uniform profile of ONE candidate for ONE office, so every candidate on a ballot comes
-# out in the same shape. Fill {{candidate}} and {{office}} per run. The gather angles bake
-# in the accuracy checklist (search the FEC by name; read an authoritative bio, not just the
-# campaign site; verify an absence before asserting it) so consistency and accuracy hold
-# together. See docs/plans/REPORT_PRESET_PLAN.md.
+# An evidence-first ACCOUNTABILITY PROFILE of one candidate for one office — a
+# substance-over-spin product that weights the DOCUMENTED RECORD (votes, offices and jobs
+# actually held, money raised and given, court/agency records, controversies) ABOVE the
+# campaign rhetoric, and explicitly contrasts the two. Fill {{candidate}} and {{office}}
+# per run. The five gather angles bake in the accuracy + fairness discipline the research
+# threads settled on (verify an absence before asserting it; label a legal matter by its
+# real status; date and cite every claim to a primary source). See
+# docs/plans/REPORT_PRESET_PLAN.md.
 name: candidate_profile
-description: Uniform profile of one candidate for one office — bio, experience, finance, policy, endorsements, record.
+description: Evidence-first accountability profile of one candidate — voting/legislative record, career & offices held, finances & funding, positions over time, and controversies/legal record, with campaign rhetoric checked against the record.
 output_kind: report
 sources: web
 
-question: "Candidate profile — {{candidate}} for {{office}}"
+question: "Candidate accountability profile — {{candidate}} for {{office}}"
 
 objective: |
-  Produce a uniform candidate profile of {{candidate}}, running for {{office}}.
-  Follow the section outline exactly and in order, using each heading verbatim as a Markdown
-  heading — do not add, drop, rename, merge, or reorder the sections. Fill each section from
-  the gathered findings with the facts named below:
-    - Summary: two or three sentences — who they are and their standing in this race.
-    - Background & Biography: birthplace, education (name each degree and institution),
-      career, family, and military service if any.
-    - Political Experience: offices held (with years) and prior campaigns and their results.
-    - Campaign Finance: the FEC committee name and ID, total receipts, cash on hand, and
-      notable donors or self-funding — as reported by the FEC, cited.
-    - Policy Positions: their stance on the economy, healthcare, immigration, education, and
-      energy.
-    - Endorsements & Support: notable endorsements and organized backing.
-    - Controversies & Record: any legal or regulatory history, notable controversies, or
-      record relevant to the office — reported factually and cited.
-    - Assessment: a brief, sourced read of their standing and prospects in this race.
-  When a section's fact genuinely cannot be found in the gathered sources, KEEP the heading
-  and write the single line "Not established — no supporting source found as of the run
-  date." Never drop the section, never pad it, and never assert an absence ("has no
-  committee", "no degree") the findings did not actually verify against the authoritative
-  source.
+  Produce an evidence-first ACCOUNTABILITY PROFILE of {{candidate}}, running for {{office}}:
+  a substance-over-spin comparison document that weights the candidate's DOCUMENTED RECORD —
+  votes, offices and jobs actually held, money raised and given, court and agency records —
+  ABOVE their campaign rhetoric. Treat current campaign messaging as CLAIMS to be checked
+  against that record, never as the substance itself.
+
+  Cross-cutting rules (apply to every section):
+  - Separate documented ACTION from CHARACTERIZATION. Use documenting verbs for the record
+    ("voted for", "sponsored", "filed", "founded", "received $X from", "was convicted of")
+    and attribute everything else ("the campaign says", "critics allege", "a fact-checker
+    rated"). Never let a characterization wear the voice of a fact.
+  - Date and source every claim; prefer a primary source (a roll-call vote, an FEC filing, a
+    court docket, an official bio) over an aggregator's summary of it. Label a computed score
+    (an ideology rating, a net-worth estimate) as that source's analysis, not a fact.
+  - Neutral, quantified language ("missed 34% of votes in 2025", not "frequently absent"); no
+    endorsement and no good/bad verdict — present the documented record and let the comparison
+    speak. Keep the shape identical for every candidate so profiles line up side by side.
+  - VERIFY AN ABSENCE BEFORE ASSERTING IT. Never claim "has no record / no committee / never
+    did X" unless a researcher actually checked the authoritative source and found nothing.
+    Where a section has no supporting findings, KEEP its heading and write the single line
+    "Not established — no supporting source found as of the run date."
+  - NON-INCUMBENT: a first-time candidate has no voting record — say so plainly under "Voting
+    & Legislative Record"; never fabricate or infer votes. Run the record-vs-rhetoric contrast
+    against their occupations, business conduct, donation history, and prior public statements
+    instead.
+
+  Section fill spec (use each heading verbatim, in order):
+  - Summary: name, party, office sought, incumbency, and a two-to-three-sentence sourced
+    bottom line on who they are BY RECORD.
+  - Career & Offices Held: a dated timeline of the jobs, businesses, and public offices the
+    candidate has actually held; verify résumé and business claims against records and note
+    any a public record cannot confirm.
+  - Voting & Legislative Record: key recorded votes, sponsored or co-sponsored bills, and
+    committee actions, each dated and cited (or the non-incumbent note above). Flag any vote
+    that conflicts with a position they now campaign on.
+  - Positions Over Time: the candidate's stated positions on the major issues across time,
+    each dated; name any documented SHIFT with both endpoints sourced and the candidate's own
+    explanation of the change if they gave one.
+  - Finances & Funding: money raised (committee name/ID, total receipts, cash on hand, top
+    donors and industries, PAC vs. individual vs. self-funding), money the candidate has
+    personally GIVEN (their own donation history — a revealed preference), personal financial
+    disclosure if a federal candidate — all as the FEC and the records report them.
+  - Endorsements & Backing: notable endorsements the candidate has RECEIVED — from
+    officeholders and party figures (a president, governor, senator, or party leader),
+    organizations, unions, PACs, or newspaper editorial boards — each attributed to who gave
+    it and dated, with a source; note what the endorsement signals about their standing in the
+    party/race. Say plainly if no notable endorsement is found.
+  - Controversies & Legal Record: see the fairness rules below.
+  - Record vs. Rhetoric: for each major current campaign claim or promise, set it beside the
+    documented record and give ONE dated, sourced verdict, written as one of these labels:
+    "MATCH" (the record confirms it), "CONTRADICTION" (the record shows the opposite action,
+    vote, donation, or statement), or "NO RECORD" (the record is silent as of the run date).
+    The documented side always outweighs the rhetorical one.
+  - Assessment: a brief, sourced read of the CONSISTENCY between the candidate's record and
+    their rhetoric — not their odds of winning.
+
+  Controversies & Legal Record — fairness is MANDATORY (this is an accountability record, not
+  a rumor mill). Every item MUST carry: (1) its date(s); (2) a primary-document source; (3) a
+  precise STATUS LABEL — one of allegation / lawsuit filed / charge or indictment / settlement
+  without admission / consent decree / conviction or adjudicated finding / dismissal /
+  acquittal / overturned-or-vacated; (4) how it was resolved (or "ongoing"); and (5) the
+  candidate's response, or "did not respond". An allegation or charge is NOT a finding of
+  guilt; a settlement without admission is not an admission; always report a dismissal,
+  acquittal, or reversal alongside the original matter. EXCLUDE rumor, innuendo, anonymous-only
+  claims, sealed/expunged/juvenile records, and purely private matters with no bearing on
+  public office. Where a category was checked and nothing qualifying was found, say so.
 
 sections:
   - "Summary"
-  - "Background & Biography"
-  - "Political Experience"
-  - "Campaign Finance"
-  - "Policy Positions"
-  - "Endorsements & Support"
-  - "Controversies & Record"
+  - "Career & Offices Held"
+  - "Voting & Legislative Record"
+  - "Positions Over Time"
+  - "Finances & Funding"
+  - "Endorsements & Backing"
+  - "Controversies & Legal Record"
+  - "Record vs. Rhetoric"
   - "Assessment"
 
 angles:
-  - title: "Biography & record"
+  - title: "Voting & legislative record"
     brief: >-
-      Research the full biography and record of {{candidate}}, candidate for {{office}}.
-      Read an AUTHORITATIVE profile — Ballotpedia and the official/campaign bio — not only a
-      single campaign "about" page, which is often thin. Cover birthplace, education (every
-      degree and the institution), career, family, and any military service, plus offices
-      held and prior campaigns with results. If a detail isn't on the first page you read,
-      check the reference profile before concluding it's unavailable.
-  - title: "Campaign finance (FEC)"
+      Document {{candidate}}'s VOTING and LEGISLATIVE record relevant to {{office}} from
+      NON-CAMPAIGN authorities. If they hold or have held office, pull their key recorded
+      votes, sponsored/co-sponsored bills, and committee actions WITH DATES from sources like
+      Ballotpedia's "key votes", GovTrack, Vote Smart (votesmart.org), Congress.gov, or the
+      state legislature's site (LegiScan / Open States). Cite the specific vote or bill, not
+      just the aggregator's summary. Flag any vote that conflicts with a position the
+      candidate now campaigns on. NON-INCUMBENT: if the candidate has held NO legislative
+      office, say so plainly and do NOT fabricate or infer a voting record — note the absence
+      and move on (their prior statements and offices are covered by other angles). Report only
+      documented actions, each with a source and date; label any GovTrack/Vote Smart computed
+      score as that source's analysis, not fact.
+  - title: "Career, occupations & business record"
     brief: >-
-      Find {{candidate}}'s U.S. federal campaign-finance filings for {{office}} by searching
-      the FEC website (fec.gov) for the candidate BY NAME and state. Report the principal
-      committee name and ID, total receipts, cash on hand, and notable donors or candidate
-      self-funding, as the FEC reports them. A committee is often filed under the candidate's
-      own name (e.g. a "NAME FOR SENATE" / "NAME 4 SENATE") — do not conclude there is no
-      committee until you have actually searched the FEC; if none appears, say "no FEC
-      committee found under this name as of <date>" rather than asserting none exists.
-  - title: "Policy positions"
+      Verify {{candidate}}'s stated career, occupations, and offices held for {{office}}, and
+      surface documented business conduct. Confirm claimed roles, employers, companies, and
+      dates against authoritative sources (Ballotpedia, an official bio, SEC EDGAR if they led
+      a public company, a state business registry). Where they claim a business record ("built
+      a successful company", "created jobs"), state whether public records can confirm it.
+      Surface documented business conduct through FREE court records — CourtListener / RECAP
+      (courtlistener.com) — for major litigation, bankruptcies, or liens, each labeled by its
+      outcome (settled / dismissed / judgment). Report offices held with years. Document every
+      claim with a source and date, and explicitly note any résumé claim public records cannot
+      confirm.
+  - title: "Funding, endorsements & backing"
     brief: >-
-      Research {{candidate}}'s policy positions for {{office}} across the economy, healthcare,
-      immigration, education, and energy. Draw from their campaign platform and any voter
-      guides or interviews; where a position is unstated, say so rather than inferring one.
-  - title: "Endorsements & controversies"
+      Research who BACKS {{candidate}} for {{office}} — financially and politically. (a) MONEY
+      IN: search the FEC (fec.gov) by name for their principal committee — report committee
+      name + ID, total receipts, cash on hand, individual vs. PAC vs. self-funding, and top
+      donors/industries (cross-check OpenSecrets for federal money, FollowTheMoney for state).
+      (b) MONEY GIVEN (revealed preferences): search FEC individual contributions and the
+      OpenSecrets donor lookup for donations {{candidate}} has personally MADE — who they have
+      funded is a documented signal of alignment; flag any that contradict their current
+      messaging. (c) Personal financial disclosure if a federal candidate (House Clerk / Senate
+      eFD). (d) ENDORSEMENTS RECEIVED: find notable endorsements the candidate has been given —
+      by officeholders and party figures (a president, governor, senator, party leader),
+      organizations, unions, PACs, or newspaper editorial boards — each attributed to WHO gave
+      it and dated, with a source (a campaign endorsements page, news coverage, or the
+      endorser's own statement); note what each signals about their standing in the party/race.
+      Report FEC figures as the FEC reports them, dated; a committee is often under the
+      candidate's own name (e.g. a "NAME FOR SENATE") — do not conclude none exists until you
+      have actually searched the FEC, and if none is found say "no FEC committee found under
+      this name as of <date>". If no notable endorsement is found, say so plainly.
+  - title: "Positions over time & rhetoric"
     brief: >-
-      Research endorsements and organized support for {{candidate}} ({{office}}), and
-      SEPARATELY any controversies, legal or regulatory history, or notable record. Check
-      news coverage and public records, not just the campaign's own materials; report
-      anything found factually and with sources, and note plainly if none is found.
-  - title: "Race context"
+      Build a DATED trail of {{candidate}}'s stated positions on the major issues for
+      {{office}} (economy, healthcare, immigration, education, energy, and any signature
+      issues), from the earliest available up to now, AND capture their CURRENT campaign
+      messaging. For the PAST: prior campaign sites via the Wayback Machine (web.archive.org),
+      past interviews, a Vote Smart Political Courage Test, Ballotpedia survey answers, dated
+      statements. For the PRESENT: the current campaign "issues" page, press releases, and
+      prominent social posts, each dated. Where a position appears to have CHANGED, capture
+      BOTH endpoints with dates and sources, plus the candidate's own explanation if they gave
+      one. Frame the current campaign messaging as CLAIMS to be checked against the record —
+      not as established fact. A change is only a "shift" if both endpoints are documented.
+  - title: "Controversies & legal record"
     brief: >-
-      Research the {{office}} race itself: the seat, the primary and general election dates,
-      the field of candidates, and where {{candidate}} stands relative to the others (name
-      recognition, resources, front-runner status). This frames the profile's assessment.
+      Compile a rigorously sourced, FAIRLY LABELED record of {{candidate}}'s controversies,
+      legal matters, and detrimental public record for the {{office}} race — an accountability
+      record, NOT a rumor mill. FIRST establish the candidate's full legal name and any aliases
+      to DISAMBIGUATE, and reject any record you cannot confirm belongs to this exact person
+      (common-name mix-ups are the top error). Sweep accessible PRIMARY sources: free federal
+      court records (CourtListener / RECAP, courtlistener.com), FEC enforcement (MUR case
+      files), SEC litigation and DOJ press releases, state bar / medical / professional license
+      lookups, and congressional or state ethics findings (the GovTrack misconduct database for
+      incumbents). Use investigative journalism only as a LEAD to verify against the underlying
+      record — never cite an anonymous or partisan-blog claim as fact. Run these categories:
+      criminal; civil litigation; financial (bankruptcy, tax, fraud, business failure); ethics
+      & campaign-finance; professional/regulatory discipline; labor & consumer; misuse of
+      office (for officeholders); and documented scandalous prior statements (with full context,
+      date, and original source). For EVERY item record: the date(s); a PRIMARY-DOCUMENT source;
+      a precise STATUS LABEL (allegation / lawsuit filed / charge or indictment / settlement
+      without admission / consent decree / conviction or adjudicated finding / dismissal /
+      acquittal / overturned); the DISPOSITION (how it ended, or "ongoing"); and the
+      candidate's RESPONSE or denial if any. An allegation or charge is NOT guilt; a settlement
+      without admission is not an admission; always report a dismissal, acquittal, or reversal
+      alongside the accusation. EXCLUDE rumor, innuendo, anonymous-only claims, sealed/expunged/
+      juvenile records, and purely private matters with no bearing on public office. Where a
+      category is checked and nothing qualifying is found, say "checked, nothing found".

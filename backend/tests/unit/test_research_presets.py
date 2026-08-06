@@ -21,7 +21,7 @@ def test_render_substitutes_every_slot_across_all_fields() -> None:
     r = rp.render_preset(
         "candidate_profile", {"candidate": "Jane Doe", "office": "U.S. Senate (Florida)"}
     )
-    assert r.question == "Candidate profile — Jane Doe for U.S. Senate (Florida)"
+    assert r.question == "Candidate accountability profile — Jane Doe for U.S. Senate (Florida)"
     assert "Jane Doe" in r.objective and "U.S. Senate (Florida)" in r.objective
     # No unfilled slots leak into any rendered string.
     for text in (r.question, r.objective, *r.sections, *(b for _, b in r.angles)):
