@@ -15,7 +15,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.continuation import MAX_CONTINUATIONS, maybe_schedule_continuation
+from jbrain.agent.continuation import (
+    MAX_CONTINUATIONS,
+    PlanContinuationRunner,
+    maybe_schedule_continuation,
+)
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.plantools import build_plan_handlers
 from jbrain.api.agent import _plan_blocks
@@ -23,6 +27,7 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.plan import PlanRepo
+from jbrain.tasks.scheduler import _owner_principal_id
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -161,6 +166,81 @@ async def test_settle_helper_arms_only_when_it_should(maker: async_sessionmaker)
     other = await _chat(maker, owner, body=_OPEN, status="in_work")
     await maybe_schedule_continuation(maker, owner, other, agent="curator", stop_reason="end_turn")
     assert not await _due(maker, owner, other)
+
+
+class _FakeResult:
+    text = "worked the step"
+    stop_reason = "end_turn"
+    steps = 1
+    cost_tokens = 5
+
+
+class _FakeExecuted:
+    result = _FakeResult()
+    tools: list = []
+    reasoning = ""
+
+
+class _FakeExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def run_turn(self, **kwargs: object) -> _FakeExecuted:
+        # Record the session and the TYPE of the principal id — the uuid→str bug would
+        # never reach here (tick would throw at set_config), so a call at all proves the fix.
+        pid = kwargs["read_ctx"].principal_id  # type: ignore[attr-defined]
+        self.calls.append(
+            {"sid": kwargs["agent_session_id"], "pid_type": type(pid).__name__}
+        )
+        return _FakeExecuted()
+
+
+class _FakeRunLog:
+    async def start(self, ctx: object, *, session_id: str, prompt_version: str) -> str:
+        return "run-1"
+
+    def bound(self, ctx: object, run_id: str) -> object:
+        return object()
+
+    async def finish(self, ctx: object, run_id: str, **kwargs: object) -> None:
+        return None
+
+
+class _FakeTranscript:
+    def __init__(self) -> None:
+        self.answers: list[str] = []
+
+    async def record_answer(self, ctx: object, *, session_id: str, **kwargs: object) -> None:
+        self.answers.append(session_id)
+
+
+async def test_sweep_tick_fires_a_due_continuation(maker: async_sessionmaker) -> None:
+    """End-to-end sweep: with a real owner + an armed plan, `runner.tick()` claims and runs
+    the continuation. Uses the REAL owner-pid resolver (a raw uuid) — the regression guard
+    for the bug where the sweep passed that uuid straight into the RLS ctx and silently
+    threw at set_config, so an approved plan sat at 'continuing in 0:00' forever."""
+    owner = await _owner(maker)
+    sid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, sid, delay_s=0)
+
+    executor = _FakeExecutor()
+    transcript = _FakeTranscript()
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=executor,  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=transcript,  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=lambda: _owner_principal_id(maker),  # raw uuid, like production
+    )
+    await runner.tick()
+
+    assert [c["sid"] for c in executor.calls] == [sid]  # claimed + ran (didn't throw)
+    assert executor.calls[0]["pid_type"] == "str"  # the RLS ctx got a str, not a uuid
+    assert transcript.answers == [sid]  # recorded answer-only
+    async with scoped_session(maker, owner) as s:
+        assert (await PlanRepo().get(s, sid)).continuations_used == 1  # the fire was counted
 
 
 async def test_approving_arms_and_claims_the_first_step(maker: async_sessionmaker) -> None:

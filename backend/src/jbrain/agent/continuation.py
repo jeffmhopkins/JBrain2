@@ -140,9 +140,12 @@ class PlanContinuationRunner:
 
     async def tick(self) -> None:
         """One sweep: claim every due continuation and run each."""
-        pid = await self.owner_principal_id()
-        if not pid:
+        raw = await self.owner_principal_id()
+        if not raw:
             return
+        # The resolver returns a raw uuid; the RLS GUC (set_config) binds principal_id as
+        # TEXT, so it MUST be a str — a uuid throws and the whole sweep silently no-ops.
+        pid = str(raw)
         owner_ctx = SessionContext(principal_id=pid, principal_kind="owner", owner_scoped=True)
         async with scoped_session(self.maker, owner_ctx) as session:
             due = await PlanRepo().claim_due_continuations(
