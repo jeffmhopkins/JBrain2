@@ -32,7 +32,7 @@ from jbrain.workflow import dispatcher
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.runlog import PipelineRunLog
 from jbrain.workflow.scheduler import PURGE_ACTION
-from tests.conftest import docker_available
+from tests.conftest import SchemaRoutedLlmClient, docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
@@ -86,10 +86,20 @@ async def tick(maker: async_sessionmaker[AsyncSession]) -> None:
     await dispatcher.dispatcher_tick(maker, _registry(), live=True, run_log=PipelineRunLog(maker))
 
 
-async def make_note(maker: async_sessionmaker[AsyncSession], body: str = "plain note") -> str:
+async def make_note(
+    maker: async_sessionmaker[AsyncSession],
+    body: str = "plain note",
+    *,
+    attachments_expected: int = 0,
+) -> str:
     await _seed_owner_principal(maker)
     note, _ = await SqlNotesRepo(maker).create_note(
-        OWNER, client_id=f"gate-{uuid.uuid4()}", domain="general", destination=None, body=body
+        OWNER,
+        client_id=f"gate-{uuid.uuid4()}",
+        domain="general",
+        destination=None,
+        body=body,
+        attachments_expected=attachments_expected,
     )
     return note.id
 
@@ -154,12 +164,13 @@ def handlers(
         {"xai": FakeLlmClient(ocr_responses)},
         {"vision.ocr": ("xai", "grok-4.3"), "vision.caption": ("xai", "grok-4.3")},
     )
-    # integrate_note makes two model calls (note.extract, then integrate.note);
-    # one fake serves both positionally, so each scripted extraction is followed
-    # by an empty intent. These gate tests assert sequencing, not graph content.
-    interleaved = [r for resp in extract_responses for r in (resp, EMPTY_INTENT)]
+    # A schema-routed fake so the number of note.extract calls is free to vary: an
+    # image note now extracts its body and its attachment in separate calls
+    # (per-source extraction), all answered with the scripted extraction, while
+    # integrate.note (intent schema) gets the empty intent. These gate tests assert
+    # sequencing, not graph content.
     extract = LlmRouter(
-        {"xai": FakeLlmClient(interleaved)},
+        {"xai": SchemaRoutedLlmClient(extract_responses[0], EMPTY_INTENT)},
         {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
     )
 
@@ -228,6 +239,49 @@ async def test_imageless_note_analyzes_immediately(
     await IngestPipeline(maker, blobs).ingest_note({"note_id": note_id})
     await tick(maker)
     assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+
+
+async def test_note_expecting_attachment_defers_integration_until_it_lands(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The capture race: the note is ingested BEFORE its promised image uploads.
+    Seeing zero attachments and no outstanding OCR, the old gate would emit
+    note.ingested and drive a premature body-only integration. The attachment-intent
+    hint holds it: no integrate while the promised attachment is absent, then exactly
+    one — after OCR — once it lands."""
+    await quiesce(maker)
+    note_id = await make_note(maker, "car loan photo attached", attachments_expected=1)
+    pipeline = IngestPipeline(maker, blobs)
+
+    # First ingest, before the upload: no attachment present, so despite there being
+    # no OCR work outstanding the emit is deferred — no premature body-only pass.
+    await pipeline.ingest_note({"note_id": note_id})
+    await tick(maker)
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+    # Search never waits: embedding is enqueued even while integration is deferred.
+    assert await jobs_for(maker, "embed_note", "note_id", note_id) == ["queued"]
+
+    # The image lands (a second request) and re-ingests: now OCR gates, still no
+    # body-only integrate. Then the full chain runs to exactly one extraction.
+    await add_image(maker, note_id, blobs=blobs, filename="loan.png")
+    h = handlers(
+        maker,
+        blobs,
+        ocr_responses=["APR 4.9% — 60 months", "A car-loan statement."],
+        extract_responses=[EMPTY_EXTRACTION],
+    )
+    await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": note_id})
+    await drain(maker, h)
+
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["done"]
+    async with scoped_session(maker, OWNER) as s:
+        analyzed = (
+            await s.execute(
+                text("SELECT count(*) FROM app.note_analysis WHERE note_id = :nid"),
+                {"nid": note_id},
+            )
+        ).scalar_one()
+    assert analyzed == 1
 
 
 async def test_queued_analyze_dedups_but_running_does_not(
@@ -378,6 +432,41 @@ async def test_backfill_skips_notes_with_active_ocr(
                 " AND payload->>'attachment_id' = :aid"
             ),
             {"aid": att_id},
+        )
+    await queue.backfill_pending_integration(maker, OWNER)
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]
+
+
+async def test_backfill_waits_for_promised_attachment_then_settles(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The reconciler must honor the same attachment-intent wait as the ingest gate,
+    or it would body-only integrate a note during its upload window and defeat the
+    gate. A note that still expects an unarrived attachment is skipped — until the
+    settle window lapses (a promise that never came), when it integrates on what it
+    has so a failed upload can't strand it forever."""
+    await quiesce(maker)
+    note_id = await make_note(maker, "promised an image", attachments_expected=1)
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("UPDATE app.notes SET ingest_state = 'indexed' WHERE id = :nid"),
+            {"nid": note_id},
+        )
+
+    # No attachment has landed yet and the note is fresh: within the settle window,
+    # the reconciler leaves it alone.
+    await queue.backfill_pending_integration(maker, OWNER)
+    assert await jobs_for(maker, "integrate_note", "note_id", note_id) == []
+
+    # Backdate creation past the settle window — the promise never arrived, so the
+    # note becomes eligible and integrates body-only rather than stranding.
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "UPDATE app.notes SET created_at = now() - make_interval("
+                "secs => :secs) WHERE id = :nid"
+            ),
+            {"secs": queue.INTEGRATION_ATTACHMENT_SETTLE_SECONDS + 60, "nid": note_id},
         )
     await queue.backfill_pending_integration(maker, OWNER)
     assert await jobs_for(maker, "integrate_note", "note_id", note_id) == ["queued"]

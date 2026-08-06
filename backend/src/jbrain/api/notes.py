@@ -134,6 +134,11 @@ class CreateNoteRequest(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     accuracy_m: float | None = Field(default=None, ge=0)
+    # How many attachments the client will upload for this note on subsequent
+    # requests. Ingest defers integration until they land, so a note-then-image
+    # capture is extracted once WITH its OCR text instead of a premature body-only
+    # pass (docs/reference/ANALYSIS.md "Analysis gating"). Absent/0 = integrate now.
+    attachments_expected: int = Field(default=0, ge=0, le=64)
 
 
 class UpdateNoteRequest(BaseModel):
@@ -167,6 +172,7 @@ async def create_note(
             latitude=body.latitude,
             longitude=body.longitude,
             accuracy_m=body.accuracy_m,
+            attachments_expected=body.attachments_expected,
         )
     except UnknownDomain:
         raise HTTPException(status_code=400, detail="unknown domain") from None

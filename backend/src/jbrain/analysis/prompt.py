@@ -77,6 +77,33 @@ def group_texts(texts: list[str], budget: int = GROUP_CHAR_BUDGET) -> list[list[
     return groups or [[]]
 
 
+def group_texts_by_source(
+    texts: list[str], sources: list[str], budget: int = GROUP_CHAR_BUDGET
+) -> list[list[str]]:
+    """Like `group_texts`, but a group NEVER mixes sources: the note body and each
+    attachment extract in their OWN note.extract call(s), then merge.
+
+    One shared extraction call gives every source's blocks a SINGLE fact budget, so a
+    content-rich attachment (a scanned card, a receipt) can crowd the note body's own
+    first-party facts out of that budget entirely — the sole-source-of-truth note
+    losing "car loan for the Kia" the moment a membership-card image is attached
+    (docs/reference/ANALYSIS.md "Per-source extraction"). Partitioning by source gives the
+    body its own call and its own budget, so its facts survive regardless of what the
+    attachments say; the merge (extraction.merge_extractions) re-binds objects across
+    the full mention set and dedups, so cross-source coreference and duplicates still
+    resolve. Within a source, blocks are still budget-packed by `group_texts` (a long
+    body or a multi-page PDF fans out as before). Order-preserving: the body (seq 0)
+    leads, so its title wins the reduce. A note with one source (the common plain
+    note) yields exactly the same single group as `group_texts` — one call, unchanged."""
+    buckets: dict[str, list[str]] = {}
+    for text, source in zip(texts, sources, strict=True):
+        buckets.setdefault(source, []).append(text)
+    groups: list[list[str]] = []
+    for blocks in buckets.values():
+        groups.extend(group_texts(blocks, budget))
+    return groups or [[]]
+
+
 EXTRACT_MAX_TOKENS: int = int(_PROMPT.config["max_tokens"])
 SYSTEM_PROMPT: str = _PROMPT.render(max_facts=MAX_FACTS)
 EXTRACTION_SCHEMA: dict[str, Any] = _PROMPT.output_schema or {}

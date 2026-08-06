@@ -694,6 +694,12 @@ export interface NoteCreate {
   latitude?: number;
   longitude?: number;
   accuracy_m?: number;
+  /**
+   * How many attachments this note will upload on follow-up requests. Lets the
+   * server defer integration until they land, so a note-plus-image capture is
+   * extracted once with its OCR text instead of a premature body-only pass.
+   */
+  attachments_expected?: number;
 }
 
 export interface NoteUpdate {

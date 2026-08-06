@@ -107,6 +107,7 @@ from jbrain.analysis.prompt import (
     build_user_prompt,
     fact_cap,
     group_texts,
+    group_texts_by_source,
     prompt_block,
 )
 from jbrain.analysis.supersession import (
@@ -234,16 +235,28 @@ async def _extract_note(
     prompt_anchor: datetime,
     parse_anchor: datetime | None,
     note_id: str,
+    sources: list[str] | None = None,
 ) -> Extraction:
     """Run the note.extract call(s) over a note's chunk groups and merge them into
     one Extraction, the shared front half of integrate_note so the extraction
     logic lives in one place. Raises
     PermanentJobError if the output is unusable after the adapter's one re-ask —
     retrying would just re-bill the same garbage; a SchemaError is config drift,
-    also permanent. Nothing is written here (the merge is in-memory)."""
+    also permanent. Nothing is written here (the merge is in-memory).
+
+    `sources` (parallel to `texts`, a per-block source key: the note body vs each
+    attachment) opts into per-source grouping so a content-rich attachment can't
+    crowd the note's own body facts out of a shared fact budget
+    (docs/reference/ANALYSIS.md "Per-source extraction"). Omitted (the eval/harness call
+    sites that pass flat text) keeps the plain budget-only grouping — for a note with
+    a single source the two are identical, so this only ever adds calls when a note
+    genuinely spans body + attachments."""
     try:
         parts: list[Extraction] = []
-        for group in group_texts(texts):
+        groups = (
+            group_texts_by_source(texts, sources) if sources is not None else group_texts(texts)
+        )
+        for group in groups:
             group_cap = fact_cap("\n\n".join(group))
             result = await router.complete(
                 "note.extract",
@@ -316,6 +329,7 @@ class AnalysisPipeline:
                         Chunk.id,
                         Chunk.text,
                         Chunk.source_kind,
+                        Chunk.attachment_id,
                         Attachment.filename,
                         AttachmentExtract.confidence,
                     )
@@ -339,12 +353,21 @@ class AnalysisPipeline:
             )
             for r in chunk_rows
         ] or [body]
+        # Per-block source key: the note body is one source, each attachment another,
+        # so _extract_note groups them into separate note.extract calls and one
+        # source's content can't crowd another's facts out of a shared fact budget
+        # (docs/reference/ANALYSIS.md "Per-source extraction"). Empty on the body-only
+        # fallback (no chunk_rows) — one source, so grouping is a no-op there.
+        sources = [
+            "note" if r.attachment_id is None else str(r.attachment_id) for r in chunk_rows
+        ] or ["note"]
 
         prompt_anchor = local_anchor(captured_at, tz_offset)
         parse_anchor = prompt_anchor if tz_offset is not None else None
         extraction = await _extract_note(
             self._router,
             texts,
+            sources=sources,
             domain=domain,
             prompt_anchor=prompt_anchor,
             parse_anchor=parse_anchor,

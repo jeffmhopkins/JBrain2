@@ -94,6 +94,7 @@ class NotesRepo(Protocol):
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,
+        attachments_expected: int = 0,
     ) -> tuple[NoteInfo, bool]:
         """Insert or return the existing note for client_id; bool = created."""
         ...

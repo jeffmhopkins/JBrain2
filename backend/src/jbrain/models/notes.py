@@ -44,6 +44,13 @@ class Note(Base):
     integration_state: Mapped[str] = mapped_column(
         Text, default="pending_integration", server_default="pending_integration"
     )
+    # How many attachments the client declared it will upload after creating the
+    # note (migration 0154). Capture posts the note and its attachments as separate
+    # requests, so the first ingest can race ahead of a not-yet-uploaded image and
+    # drive a blind body-only integration; ingest defers the note.ingested emit until
+    # this many attachments are present (docs/reference/ANALYSIS.md "Analysis gating").
+    # 0 = no wait (a plain note, or a client that does not send the hint).
+    attachments_expected: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Phase-6 wiki dirty bit (mark-and-sweep): false at create/edit, set true once a wiki
     # build has incorporated the note. The builder targets wiki_built = false notes.
     wiki_built: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

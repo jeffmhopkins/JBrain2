@@ -28,7 +28,7 @@ from jbrain.notes.repo import SqlNotesRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.vision import OcrResult, OcrServiceError
-from tests.conftest import docker_available
+from tests.conftest import SchemaRoutedLlmClient, docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
 pytestmark = [
@@ -283,28 +283,28 @@ async def test_analyze_prompt_marks_ocr_chunks_so_the_model_knows(
     ).ocr_attachment({"attachment_id": attachment_id})
     await pipeline.ingest_note({"note_id": note_id})
 
-    # One fake serves both calls positionally; the intent is empty (this test
-    # only asserts what reached the note.extract prompt — calls[0]).
-    extract_fake = FakeLlmClient(
-        [
-            '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
-            ' "temporal_tokens": []}',
-            '{"resolutions": [], "facts": []}',
-        ]
+    # The body and the attachment now extract in SEPARATE note.extract calls
+    # (per-source extraction), so the markers are asserted across every extract call.
+    # A schema-routed fake answers each note.extract with the extraction and the lone
+    # integrate.note with the empty intent, regardless of how many source groups run.
+    fake = SchemaRoutedLlmClient(
+        '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
+        ' "temporal_tokens": []}',
+        '{"resolutions": [], "facts": []}',
     )
     analyzer = AnalysisPipeline(
         maker,
         LlmRouter(
-            {"xai": extract_fake},
+            {"xai": fake},
             {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
         ),
     )
     await analyzer.integrate_note({"note_id": note_id})
 
-    user_text = extract_fake.calls[0]["user_text"]
-    assert "[ocr from receipt.png]\nTotal: $41.20" in user_text
-    assert "[image caption of receipt.png]\nA grocery receipt." in user_text
-    assert "filed the receipt" in user_text  # body chunk stays unmarked
+    extract_text = "\n".join(c["user_text"] for c in fake.calls)
+    assert "[ocr from receipt.png]\nTotal: $41.20" in extract_text
+    assert "[image caption of receipt.png]\nA grocery receipt." in extract_text
+    assert "filed the receipt" in extract_text  # body chunk stays unmarked
 
 
 async def test_ingest_skips_ocr_for_oversized_images(
