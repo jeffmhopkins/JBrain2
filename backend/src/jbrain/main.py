@@ -225,6 +225,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # In-flight chat turns, detached from their SSE response so a backgrounded PWA
         # can't kill them; keyed by run_id for the Stop endpoint and shutdown cleanup.
         app.state.live_turns = {}
+        # "A turn is starting for this session" markers (session_id → monotonic ts), set by
+        # /chat before it registers in live_turns, read by the plan-continuation sweep so it
+        # yields to an owner turn mid-startup (JERV_PLANNING_TOOL_PLAN.md).
+        app.state.turn_starting = {}
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.intake_repo = SqlIntakeRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
@@ -816,6 +820,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             transcript=app.state.agent_transcript,
             live_turns=app.state.live_turns,
             owner_principal_id=lambda: _owner_principal_id(maker),
+            turn_starting=app.state.turn_starting,
+            max_concurrent=agent._MAX_CONCURRENT_TURNS,
         )
         plan_continuation_task = asyncio.create_task(
             run_plan_continuation_loop(app.state.plan_continuation_runner)

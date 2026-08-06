@@ -31,11 +31,11 @@ from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_atta
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.brainevents import brain_text_enabled
 from jbrain.agent.clock import now_block
+from jbrain.agent.continuation import maybe_schedule_continuation
 from jbrain.agent.identity import me_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryService
-from jbrain.agent.continuation import maybe_schedule_continuation
 from jbrain.agent.readtools import IMAGE_TOOL_NAMES
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
@@ -734,6 +734,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         raise HTTPException(status_code=409, detail="a turn is already running for this session")
     if sum(1 for lt in live_turns.values() if not lt.done) >= _MAX_CONCURRENT_TURNS:
         raise HTTPException(status_code=429, detail="too many turns running; try again shortly")
+    # Mark that a turn is STARTING for this session — before the setup below registers it in
+    # live_turns (~drive_turn creation, far down). A plan auto-continuation reads this to
+    # yield to an owner turn still mid-startup, closing the window where both could run the
+    # same plan step. Set with NO await after the guards above, so the check-and-mark is
+    # atomic against the sweep (JERV_PLANNING_TOOL_PLAN.md). Popped once live_turns takes
+    # over (below); a marker a failed setup leaks ages out via continuation.TURN_STARTING_TTL_S.
+    request.app.state.turn_starting[str(session.id)] = time.monotonic()
 
     # An owner message supersedes any pending plan auto-continuation for this jerv chat:
     # cancel the timer, clear await-owner, and reset the continuation cap — so the owner
@@ -1194,6 +1201,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     live.task = asyncio.create_task(drive_turn(live))
     request.app.state.live_turns[run_id] = live
     live.task.add_done_callback(lambda _t: request.app.state.live_turns.pop(run_id, None))
+    # live_turns now holds this session; drop the startup marker (its job was to cover the
+    # setup window above until this registration).
+    request.app.state.turn_starting.pop(str(session.id), None)
 
     # X-Accel-Buffering off so nginx streams events instead of buffering the turn.
     return StreamingResponse(

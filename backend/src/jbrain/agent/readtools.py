@@ -27,7 +27,6 @@ from jbrain.agent.appointmenttools import (
     build_appointment_write_handlers,
 )
 from jbrain.agent.archivisttools import build_archivist_memory_handlers
-from jbrain.agent.plantools import build_plan_handlers
 from jbrain.agent.bartools import build_bar_handlers
 from jbrain.agent.charttools import build_chart_handlers
 from jbrain.agent.clock import build_clock_handlers
@@ -51,6 +50,7 @@ from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.mergetools import build_merge_handlers
 from jbrain.agent.metricstools import build_metrics_handlers
+from jbrain.agent.plantools import build_plan_handlers
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_intake_link_handlers, build_proposal_handlers

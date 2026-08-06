@@ -8,6 +8,7 @@ reset, and jerv's `await_owner` opt-out through the write_plan handler.
 
 import uuid
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -17,6 +18,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.agent.continuation import MAX_CONTINUATIONS, maybe_schedule_continuation
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.plantools import build_plan_handlers
+from jbrain.api.agent import _plan_blocks
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
@@ -79,9 +81,15 @@ async def test_schedule_then_claim_fires_once_and_counts(maker: async_sessionmak
     async with scoped_session(maker, owner) as s:
         plan = await repo.get(s, sid)
         assert plan.continuation_due_at is None  # claim cleared the due-time…
-        assert plan.continuations_used == 1  # …and counted the fire
+        assert plan.continuations_used == 0  # …but the count is bumped on a real run, not claim
         # A second sweep claims nothing (the due-time is gone).
         assert await repo.claim_due_continuations(s, max_continuations=MAX_CONTINUATIONS) == []
+
+    # bump_continuation (called when the claimed turn actually runs) counts the fire.
+    async with scoped_session(maker, owner) as s:
+        await repo.bump_continuation(s, sid)
+    async with scoped_session(maker, owner) as s:
+        assert (await repo.get(s, sid)).continuations_used == 1
 
 
 async def test_claim_skips_awaiting_owner_and_non_in_work(maker: async_sessionmaker) -> None:
@@ -152,7 +160,10 @@ async def test_owner_message_reset_clears_everything(maker: async_sessionmaker) 
         await repo.schedule_continuation(s, sid, delay_s=0)
         await repo.set_awaiting_owner(s, sid, True)
         await s.execute(
-            text("UPDATE app.agent_session_plans SET continuations_used = 5 WHERE session_id = :id"),
+            text(
+                "UPDATE app.agent_session_plans SET continuations_used = 5"
+                " WHERE session_id = :id"
+            ),
             {"id": sid},
         )
         await repo.cancel_and_reset(s, sid)
@@ -160,6 +171,29 @@ async def test_owner_message_reset_clears_everything(maker: async_sessionmaker) 
     assert plan.continuation_due_at is None
     assert plan.awaiting_owner is False
     assert plan.continuations_used == 0
+
+
+async def test_plan_blocks_only_injects_a_sanctioned_plan(maker: async_sessionmaker) -> None:
+    """The re-injection rule: a not_approved DRAFT is never fed to the turn as a sanctioned
+    operating instruction (that's what stops an injection-drafted plan being framed as
+    'follow this'); only an owner-approved / in-work plan is, and only for a jerv session."""
+    owner = await _owner(maker)
+    sid = await _chat(maker, owner, body="- [ ] do the thing", status="not_approved")
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(session_maker=maker)))
+    jerv = SimpleNamespace(agent="jerv", id=sid)
+
+    # A draft is NOT injected.
+    assert await _plan_blocks(req, owner, jerv) == []
+
+    # Once the owner approves, it IS injected — a DATA-framed operating block.
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().set_status(s, sid, "approved")
+    blocks = await _plan_blocks(req, owner, jerv)
+    assert len(blocks) == 1
+    assert "APPROVED" in blocks[0].text and "do the thing" in blocks[0].text
+
+    # A non-jerv agent never receives it.
+    assert await _plan_blocks(req, owner, SimpleNamespace(agent="curator", id=sid)) == []
 
 
 async def test_write_plan_await_owner_stops_the_loop(maker: async_sessionmaker) -> None:
@@ -179,4 +213,5 @@ async def test_write_plan_await_owner_stops_the_loop(maker: async_sessionmaker) 
         assert plan.awaiting_owner is True
         assert plan.continuation_due_at is None  # await_owner also cancels a pending fire
         # …and a due sweep now skips it.
-        assert await PlanRepo().claim_due_continuations(s, max_continuations=MAX_CONTINUATIONS) == []
+        claimed = await PlanRepo().claim_due_continuations(s, max_continuations=MAX_CONTINUATIONS)
+        assert claimed == []

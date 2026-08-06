@@ -106,6 +106,26 @@ async def test_handlers_enforce_the_state_machine(maker: async_sessionmaker) -> 
     assert "step 1" in reread
 
 
+async def test_jerv_runtime_ctx_reaches_the_owner_only_table(maker: async_sessionmaker) -> None:
+    """jerv runs owner-scoped with EMPTY domain scopes (its firewall is ownership, not a
+    domain). The plan table's policy is `app.is_owner()` only, so jerv's actual runtime ctx
+    must still read/write it — this proves the 'ownership-not-domain' reach with the real
+    ctx shape, not just a plain owner."""
+    base = await _owner(maker)
+    jerv = SessionContext(
+        principal_id=base.principal_id,
+        principal_kind="owner",
+        owner_scoped=True,
+        domain_scopes=(),
+    )
+    sid = await _new_chat(maker, jerv)
+    repo = PlanRepo()
+    async with scoped_session(maker, jerv) as session:
+        await repo.upsert(session, sid, body="jerv drafted this", status="not_approved")
+    async with scoped_session(maker, jerv) as session:
+        assert (await repo.get(session, sid)).body == "jerv drafted this"
+
+
 async def test_non_owner_sees_nothing_and_cannot_write(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     sid = await _new_chat(maker, owner)

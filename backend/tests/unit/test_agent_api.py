@@ -1516,6 +1516,7 @@ async def test_chat_turn_survives_a_client_disconnect() -> None:
     app = create_app(settings)
     # ASGITransport does NOT run lifespan, so wire the state the endpoint reads by hand.
     app.state.live_turns = {}
+    app.state.turn_starting = {}
     app.state.auth_repo = repo
     app.state.agent_sessions = sessions_store
     app.state.agent_runlog = runlog
@@ -1594,6 +1595,7 @@ async def test_chat_cancel_endpoint_persists_the_partial_and_closes_the_stream()
     )
     app = create_app(settings)
     app.state.live_turns = {}
+    app.state.turn_starting = {}
     app.state.auth_repo = repo
     app.state.agent_sessions = sessions_store
     app.state.agent_runlog = runlog
@@ -1660,6 +1662,7 @@ async def test_chat_resume_streams_the_rest_of_a_live_turn() -> None:
     )
     app = create_app(settings)
     app.state.live_turns = {}
+    app.state.turn_starting = {}
     app.state.auth_repo = repo
     app.state.agent_sessions = sessions_store
     app.state.agent_runlog = runlog

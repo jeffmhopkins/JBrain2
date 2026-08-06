@@ -112,7 +112,24 @@ the next step now.
   surfaces, driven by `SessionOut.plan_status` (the sibling of the model pill / staged
   badge), refreshed after each settled turn.
 
-## 7. Tests
+## 7. Known limitations (accepted, bounded)
+
+- **Post-approval body edits are not re-gated.** Once a plan is `approved`/`in_work`,
+  jerv may rewrite `body` (e.g. tick a step, or add a new `- [ ]`) without a fresh
+  approval — a deliberate softness, because auto-reverting on *any* body change would
+  break the legitimate check-off flow. The blast radius is bounded: jerv holds no
+  knowledge-base or owner data, its web egress is already direct, the live `plan_card` is
+  owner-visible, and any owner message resets the loop. jerv's prompt is told to set
+  `not_approved` again for changes big enough to need re-sign-off. A future hardening (a
+  body hash captured at approve time surfaced as a "changed since approval" signal on the
+  card) is noted but not built.
+- **A narrow owner-turn / continuation race is closed structurally**, not merely by
+  timing: `/chat` marks `turn_starting` the instant it passes its concurrency guard (with
+  no `await` before the mark), and the sweep's guard-and-reserve is likewise await-free, so
+  the two atomic sections can't interleave to start two turns on one session. A marker a
+  failed setup leaks ages out via `TURN_STARTING_TTL_S`.
+
+## 8. Tests
 
 Real Postgres via testcontainers; LLM faked. The mandated RLS-isolation test
 (`test_agent_session_plans_rls`: owner round-trip, non-owner sees nothing / can't write,

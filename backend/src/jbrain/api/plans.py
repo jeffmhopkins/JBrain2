@@ -112,7 +112,14 @@ async def continue_plan(request: Request, principal: OwnerDep, session_id: str) 
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
         if (plan := await _repo.get(db, session_id)) is None:
             raise HTTPException(status_code=404, detail="no plan for that conversation")
-        if plan.status == "in_work" and not plan.awaiting_owner:
+        # Only arm it if it would actually fire: in-work, not paused for the owner, and
+        # under the cap (else the sweep's own `used < max` filter would never claim it, so
+        # the card would show a countdown that silently never runs).
+        if (
+            plan.status == "in_work"
+            and not plan.awaiting_owner
+            and plan.continuations_used < MAX_CONTINUATIONS
+        ):
             await _repo.schedule_continuation(db, session_id, delay_s=0)
         plan = await _repo.get(db, session_id)
     assert plan is not None

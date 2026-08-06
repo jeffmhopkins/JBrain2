@@ -30,9 +30,9 @@ from jbrain.models.core import Base
 # default a fresh draft starts at; only the owner endpoint sets `approved`.
 PLAN_STATUSES = ("not_approved", "approved", "in_work")
 
-# An unchecked Markdown task line — `- [ ]` / `* [ ]`. Its presence means the plan has
-# work left, which is what gates a continuation (a fully `- [x]` plan is done).
-_UNCHECKED = re.compile(r"^\s*[-*]\s+\[ \]", re.MULTILINE)
+# An unchecked Markdown task line — `- [ ]` / `* [ ]` / `+ [ ]`. Its presence means the
+# plan has work left, which is what gates a continuation (a fully `- [x]` plan is done).
+_UNCHECKED = re.compile(r"^\s*[-*+]\s+\[ \]", re.MULTILINE)
 
 
 def has_open_checklist_item(body: str) -> bool:
@@ -138,10 +138,12 @@ class PlanRepo:
     async def claim_due_continuations(
         self, session: AsyncSession, *, max_continuations: int
     ) -> list[str]:
-        """Atomically claim every plan whose continuation is due — clearing the due-time
-        and bumping the used counter in one UPDATE, so a concurrent sweep can't fire the
-        same one twice. Only in-work, not-awaiting-owner, under-cap plans are claimed.
-        Returns the claimed session ids."""
+        """Atomically claim every plan whose continuation is due — clearing the due-time in
+        one UPDATE, so a concurrent sweep (or a `/continue` POST) can't fire the same one
+        twice. Only in-work, not-awaiting-owner, under-cap plans are claimed. Returns the
+        claimed session ids. The used counter is bumped by `bump_continuation` when the turn
+        actually runs, NOT here — so a claim that is then skipped (session busy, plan changed)
+        never burns a continuation against the cap."""
         stmt = (
             update(AgentSessionPlan)
             .where(
@@ -151,15 +153,23 @@ class PlanRepo:
                 AgentSessionPlan.awaiting_owner.is_(False),
                 AgentSessionPlan.continuations_used < max_continuations,
             )
-            .values(
-                continuation_due_at=None,
-                continuations_used=AgentSessionPlan.continuations_used + 1,
-                updated_at=func.now(),
-            )
+            .values(continuation_due_at=None, updated_at=func.now())
             .returning(AgentSessionPlan.session_id)
         )
         rows = (await session.execute(stmt)).all()
         return [str(r[0]) for r in rows]
+
+    async def bump_continuation(self, session: AsyncSession, session_id: str) -> None:
+        """Count one continuation fire — called when a claimed continuation actually runs a
+        turn (not at claim time), so the cap counts real runs, not skipped claims."""
+        await session.execute(
+            update(AgentSessionPlan)
+            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .values(
+                continuations_used=AgentSessionPlan.continuations_used + 1,
+                updated_at=func.now(),
+            )
+        )
 
     async def cancel_and_reset(self, session: AsyncSession, session_id: str) -> None:
         """The owner-message reset (human-anchored): drop any pending continuation, clear
