@@ -184,7 +184,10 @@ on-box heat-index compute) **/ hurricane** ·
 **media** (`transcribe`, `analyze_video`, `analyze_stream` — the last reads a video
 URL, live or on-demand, via yt-dlp + ffmpeg; a second SSRF-guarded outbound leg) ·
 **Gmail** (`gmail_*`) · **web**
-(`web_search`/`web_fetch`) · **sub-agents** (`spawn_subagent`) · **health
+(`web_search`/`web_fetch`) · **sub-agents** (`spawn_subagent`) · **planning**
+(`read_plan`/`write_plan` — an owner-approved, per-conversation plan jerv executes
+across turns; owner-initiated, owner-only approval, auto-continued between steps; see
+`../plans/JERV_PLANNING_TOOL_PLAN.md`) · **health
 lookups** · **host telemetry** (`query_server_metrics`) · `current_time`.
 
 ### Knowledge pipeline (`backend/src/jbrain/analysis/`)
