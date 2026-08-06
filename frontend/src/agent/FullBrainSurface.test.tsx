@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
-import { AgentStatusLine, FullBrainSurface } from "./FullBrainSurface";
+import { AgentStatusLine, FullBrainSurface, resolveSelectionClamp } from "./FullBrainSurface";
 import type { AgentStatus } from "./status";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
@@ -2146,5 +2146,65 @@ describe("FullBrainSurface", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("resolveSelectionClamp", () => {
+  // A minimal transcript: two conversation bubbles in the chat box, plus a side
+  // panel whose text is outside it. Detached from document — `contains`/`closest`
+  // work on a detached tree, so no cleanup is needed.
+  function fixture() {
+    const root = document.createElement("div");
+    root.innerHTML = `
+      <main class="fb-chat">
+        <div class="bubble me"><span id="u">hi there</span></div>
+        <div class="bubble ai"><span id="a">the answer</span></div>
+      </main>
+      <aside class="panel"><span id="p">panel text</span></aside>`;
+    const q = (id: string) => root.querySelector(`#${id}`) as HTMLElement;
+    return {
+      chat: root.querySelector(".fb-chat") as HTMLElement,
+      user: q("u"),
+      userBubble: root.querySelector(".bubble.me") as HTMLElement,
+      ai: q("a"),
+      aiBubble: root.querySelector(".bubble.ai") as HTMLElement,
+      panel: q("p"),
+    };
+  }
+
+  it("keeps a selection confined to one bubble, recording it as the origin", () => {
+    const f = fixture();
+    expect(resolveSelectionClamp(f.chat, f.user, f.user, false, null)).toEqual({
+      kind: "keep",
+      bubble: f.userBubble,
+    });
+  });
+
+  it("clamps a Select-all spill back to the bubble it began in", () => {
+    const f = fixture();
+    // Long-press anchored in the user bubble; "Select all" then spans into the agent turn.
+    const decision = resolveSelectionClamp(f.chat, f.user, f.ai, false, f.userBubble);
+    expect(decision).toEqual({ kind: "clamp", bubble: f.userBubble });
+  });
+
+  it("clamps to the anchor's bubble when there is no recorded origin", () => {
+    const f = fixture();
+    const decision = resolveSelectionClamp(f.chat, f.ai, f.user, false, null);
+    expect(decision).toEqual({ kind: "clamp", bubble: f.aiBubble });
+  });
+
+  it("resets on a collapsed (empty) selection", () => {
+    const f = fixture();
+    expect(resolveSelectionClamp(f.chat, f.user, f.user, true, f.userBubble)).toEqual({
+      kind: "reset",
+    });
+  });
+
+  it("leaves a selection outside the conversation alone, dropping any stale origin", () => {
+    const f = fixture();
+    // A selection wholly in the side panel must not be hijacked back into a chat bubble.
+    expect(resolveSelectionClamp(f.chat, f.panel, f.panel, false, f.userBubble)).toEqual({
+      kind: "reset",
+    });
   });
 });
