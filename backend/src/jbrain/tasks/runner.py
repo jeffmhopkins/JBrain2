@@ -10,7 +10,7 @@ raises is recorded as an `error` run, never propagated to the scheduler tick.
 """
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -19,6 +19,7 @@ import structlog
 
 from jbrain.agent.agents import AgentProfile, agent_for
 from jbrain.agent.clock import now_block
+from jbrain.agent.contracts import ChatEvent
 from jbrain.agent.loop import AgentLoop, AgentResult, guardrails_for_effort
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionRepo, read_context
@@ -62,6 +63,8 @@ class TurnExecutor(Protocol):
         timezone: str | None,
         recorder: object,
         agent_session_id: str,
+        acc: TranscriptAccumulator | None = None,
+        on_event: Callable[[ChatEvent], None] | None = None,
     ) -> ExecutedTurn: ...
 
 
@@ -90,6 +93,8 @@ class LoopTurnExecutor:
         timezone: str | None,
         recorder: object,
         agent_session_id: str,
+        acc: TranscriptAccumulator | None = None,
+        on_event: Callable[[ChatEvent], None] | None = None,
     ) -> ExecutedTurn:
         effort = await self.router.effective_reasoning_effort("agent.turn")
         # The loop yields ChatEvents, not the step/cost tallies the run summary needs,
@@ -101,7 +106,12 @@ class LoopTurnExecutor:
             recorder=tally,  # type: ignore[arg-type]
             guardrails=guardrails_for_effort(effort, scale=profile.budget_multiplier),
         )
-        acc = TranscriptAccumulator()
+        # A caller that wants to STREAM the turn (a plan continuation) passes its own
+        # accumulator — the one it exposes as the reattach snapshot — plus an `on_event`
+        # sink that emits each event onto its `_LiveTurn` broker. The default headless
+        # task path passes neither and behaves exactly as before.
+        if acc is None:
+            acc = TranscriptAccumulator()
         async for event in loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,
@@ -116,6 +126,8 @@ class LoopTurnExecutor:
             general_knowledge_label=profile.reads_knowledge_base,
         ):
             acc.feed(event)
+            if on_event is not None:
+                on_event(event)
         result = AgentResult(
             text=acc.answer_text,
             stop_reason=acc.stop_reason,
