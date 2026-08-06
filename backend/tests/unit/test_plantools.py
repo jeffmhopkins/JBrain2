@@ -13,6 +13,7 @@ from jbrain.agent.readtools import TOOLS_DIR
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.db.session import SessionContext
+from jbrain.models.plan import has_open_checklist_item
 
 # A None sessionmaker is safe for the branches that return before any DB access.
 _HANDLERS = build_plan_handlers(None)  # type: ignore[arg-type]
@@ -43,6 +44,16 @@ async def test_write_plan_needs_body_or_status() -> None:
 async def test_write_plan_rejects_oversized_body() -> None:
     out = await _HANDLERS["write_plan"]({"body": "x" * 40_001}, _ctx("sess-1"))
     assert "too long" in out
+
+
+def test_has_open_checklist_item() -> None:
+    """The continuation gate: a plan with an unchecked `- [ ]` step has work left; a
+    fully-`[x]` plan (or prose with no checklist) does not."""
+    assert has_open_checklist_item("- [ ] do this\n- [x] done")
+    assert has_open_checklist_item("* [ ] star bullet works too")
+    assert not has_open_checklist_item("- [x] all\n- [x] done")
+    assert not has_open_checklist_item("just prose, no checklist")
+    assert not has_open_checklist_item("")
 
 
 async def test_jerv_cannot_self_approve() -> None:

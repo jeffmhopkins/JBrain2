@@ -1,6 +1,6 @@
 ---
 name: write_plan
-version: 2
+version: 3
 permission: web
 side_effecting: true
 params:
@@ -13,6 +13,10 @@ params:
       type: string
       enum: [not_approved, in_work]
       description: "Set the plan's status. `not_approved`: a draft awaiting the owner's approval (use this when you first draft a plan or substantially revise one — then ask the owner to approve it). `in_work`: you've started executing an APPROVED plan (only allowed once the owner has approved). You CANNOT set `approved` — only the owner can, by tapping Approve; never claim a plan is approved yourself."
+    pause:
+      type: string
+      enum: [checkpoint, await_owner]
+      description: "How this turn should hand off. `checkpoint`: you finished a coherent step and marked it done — the system pauses briefly, then continues the next step automatically (this is the normal case; you can also just end your turn). `await_owner`: you are BLOCKED and need the owner's input before the next step — this stops the auto-continue loop until they reply. Use `await_owner` whenever you ask the owner a question mid-plan, so you don't barrel ahead over it."
   required: []
 ---
 Create, replace, or re-status the plan for THIS conversation. Provide `body` to
@@ -29,3 +33,9 @@ executing, set `status="in_work"`, and keep the body's checklist up to date
 `in_work`, but NEVER `approved` — that's the owner's call. If the owner asks for
 changes big enough to need a fresh sign-off, rewrite the body and set
 `not_approved` again.
+
+Working an approved plan runs across turns: do one coherent step, mark it `- [x]`
+with `write_plan(body=…)`, and end your turn — the system pauses for a short window
+(the owner can redirect) and then continues you into the next step automatically. If
+you need the owner's input before you can proceed, call `write_plan(pause="await_owner")`
+so the loop waits for them instead of auto-continuing over your question.

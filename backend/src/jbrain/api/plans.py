@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from jbrain.agent.continuation import MAX_CONTINUATIONS
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
@@ -30,6 +31,13 @@ class PlanOut(BaseModel):
     body: str
     status: str
     updated_at: str
+    # Auto-continuation state, for the card's countdown + controls. `continuation_due_at`
+    # is when the next step auto-fires (null = none pending); `awaiting_owner` means jerv
+    # paused for input; the counters bound the chain.
+    continuation_due_at: str | None = None
+    awaiting_owner: bool = False
+    continuations_used: int = 0
+    max_continuations: int = MAX_CONTINUATIONS
 
 
 class EditIn(BaseModel):
@@ -43,6 +51,11 @@ def _out(plan: AgentSessionPlan) -> PlanOut:
         body=plan.body,
         status=plan.status,
         updated_at=plan.updated_at.isoformat(),
+        continuation_due_at=(
+            plan.continuation_due_at.isoformat() if plan.continuation_due_at else None
+        ),
+        awaiting_owner=plan.awaiting_owner,
+        continuations_used=plan.continuations_used,
     )
 
 
@@ -76,4 +89,31 @@ async def edit_plan(
         if await _repo.get(db, session_id) is None:
             raise HTTPException(status_code=404, detail="no plan for that conversation")
         plan = await _repo.upsert(db, session_id, body=body.body)
+    return _out(plan)
+
+
+@router.post("/{session_id}/stop")
+async def stop_plan(request: Request, principal: OwnerDep, session_id: str) -> PlanOut:
+    """Cancel the pending auto-continuation and reset its budget — the owner halting the
+    loop from the card. 404 if there is no plan."""
+    async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
+        if (plan := await _repo.get(db, session_id)) is None:
+            raise HTTPException(status_code=404, detail="no plan for that conversation")
+        await _repo.cancel_and_reset(db, session_id)
+        plan = await _repo.get(db, session_id)
+    assert plan is not None
+    return _out(plan)
+
+
+@router.post("/{session_id}/continue")
+async def continue_plan(request: Request, principal: OwnerDep, session_id: str) -> PlanOut:
+    """Fire the next step now instead of waiting out the window — arms the continuation
+    due immediately (the sweep picks it up on its next pass). 404 if there is no plan."""
+    async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
+        if (plan := await _repo.get(db, session_id)) is None:
+            raise HTTPException(status_code=404, detail="no plan for that conversation")
+        if plan.status == "in_work" and not plan.awaiting_owner:
+            await _repo.schedule_continuation(db, session_id, delay_s=0)
+        plan = await _repo.get(db, session_id)
+    assert plan is not None
     return _out(plan)

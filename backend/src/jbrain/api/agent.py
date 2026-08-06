@@ -35,6 +35,7 @@ from jbrain.agent.identity import me_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryService
+from jbrain.agent.continuation import maybe_schedule_continuation
 from jbrain.agent.readtools import IMAGE_TOOL_NAMES
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
@@ -734,6 +735,15 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     if sum(1 for lt in live_turns.values() if not lt.done) >= _MAX_CONCURRENT_TURNS:
         raise HTTPException(status_code=429, detail="too many turns running; try again shortly")
 
+    # An owner message supersedes any pending plan auto-continuation for this jerv chat:
+    # cancel the timer, clear await-owner, and reset the continuation cap — so the owner
+    # both steers and refreshes the loop's budget (JERV_PLANNING_TOOL_PLAN.md). A
+    # deferred_outcome resume is a system event, not the owner steering, so it's skipped.
+    if session.agent == "jerv" and not body.deferred_outcome:
+        with contextlib.suppress(Exception):
+            async with scoped_session(request.app.state.session_maker, owner_ctx) as _db:
+                await PlanRepo().cancel_and_reset(_db, str(session.id))
+
     # The session's selected agent (docs/reference/ASSISTANT.md "Agent selection") sets the
     # persona prompt, the tool allowlist, and whether the turn reads the knowledge
     # base. A non-KB agent (teacher, jerv) runs with empty read scopes, so even a
@@ -1079,6 +1089,19 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                             owner_ctx, session.id, last_context_used, context_window
                         )
                 persisted = True
+                # Plan auto-continuation (JERV_PLANNING_TOOL_PLAN.md): if this jerv turn
+                # left an owner-approved plan in-work with unchecked steps, arm the next
+                # step ~60s out (owner-interruptible). Best-effort; the settle helper
+                # enforces all the gating (in-work, not awaiting-owner, under the cap).
+                if session.agent == "jerv":
+                    with contextlib.suppress(Exception):
+                        await maybe_schedule_continuation(
+                            request.app.state.session_maker,
+                            owner_ctx,
+                            str(session.id),
+                            agent=session.agent,
+                            stop_reason=stop_reason,
+                        )
                 # Return the box to its hot state (gpt-oss-120b + qwen3-vl). A turn that
                 # rendered an image freed every local LLM, and a turn after a code session
                 # left the coder resident — either way the gateway reloaded only the

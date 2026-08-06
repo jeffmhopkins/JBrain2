@@ -1422,8 +1422,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "write_plan.tool": (
             "write_plan",
-            2,
-            "fc834f8dd2c20c05db4cd96a4304dc76ec7c1e7091adbdc83a791eca648d5e89",
+            3,
+            "59a3f04336339861ff313355d11cc8a054c9bae0b53e0a445add210e8d6ddbc5",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

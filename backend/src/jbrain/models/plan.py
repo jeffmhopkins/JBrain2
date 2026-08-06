@@ -14,8 +14,9 @@ jerv (empty-scoped) can still reach it because the firewall is `app.is_owner()`.
 
 from __future__ import annotations
 
+import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import DateTime, ForeignKey, Text, func, update
 from sqlalchemy.dialects.postgresql import UUID
@@ -28,6 +29,16 @@ from jbrain.models.core import Base
 # The lifecycle statuses, in draft→approved→in-work order. `not_approved` is the
 # default a fresh draft starts at; only the owner endpoint sets `approved`.
 PLAN_STATUSES = ("not_approved", "approved", "in_work")
+
+# An unchecked Markdown task line — `- [ ]` / `* [ ]`. Its presence means the plan has
+# work left, which is what gates a continuation (a fully `- [x]` plan is done).
+_UNCHECKED = re.compile(r"^\s*[-*]\s+\[ \]", re.MULTILINE)
+
+
+def has_open_checklist_item(body: str) -> bool:
+    """Whether the plan body still has an unchecked `- [ ]` step — the signal that the
+    auto-continuation loop has more to do."""
+    return bool(_UNCHECKED.search(body or ""))
 
 
 class AgentSessionPlan(Base):
@@ -106,3 +117,76 @@ class PlanRepo:
             .execution_options(populate_existing=True)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    # --- auto-continuation bookkeeping -----------------------------------------
+
+    async def schedule_continuation(
+        self, session: AsyncSession, session_id: str, *, delay_s: int
+    ) -> None:
+        """Arm a continuation `delay_s` from now (the owner-interruptible window). The
+        due-time is computed against the DB clock so it survives a restart — the sweep
+        claims it whenever it next comes due."""
+        await session.execute(
+            update(AgentSessionPlan)
+            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .values(
+                continuation_due_at=func.now() + timedelta(seconds=delay_s),
+                updated_at=func.now(),
+            )
+        )
+
+    async def claim_due_continuations(
+        self, session: AsyncSession, *, max_continuations: int
+    ) -> list[str]:
+        """Atomically claim every plan whose continuation is due — clearing the due-time
+        and bumping the used counter in one UPDATE, so a concurrent sweep can't fire the
+        same one twice. Only in-work, not-awaiting-owner, under-cap plans are claimed.
+        Returns the claimed session ids."""
+        stmt = (
+            update(AgentSessionPlan)
+            .where(
+                AgentSessionPlan.continuation_due_at.isnot(None),
+                AgentSessionPlan.continuation_due_at <= func.now(),
+                AgentSessionPlan.status == "in_work",
+                AgentSessionPlan.awaiting_owner.is_(False),
+                AgentSessionPlan.continuations_used < max_continuations,
+            )
+            .values(
+                continuation_due_at=None,
+                continuations_used=AgentSessionPlan.continuations_used + 1,
+                updated_at=func.now(),
+            )
+            .returning(AgentSessionPlan.session_id)
+        )
+        rows = (await session.execute(stmt)).all()
+        return [str(r[0]) for r in rows]
+
+    async def cancel_and_reset(self, session: AsyncSession, session_id: str) -> None:
+        """The owner-message reset (human-anchored): drop any pending continuation, clear
+        the await-owner flag, and zero the cap counter — so the owner sending anything
+        both cancels the timer and gives the loop a fresh budget."""
+        await session.execute(
+            update(AgentSessionPlan)
+            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .values(
+                continuation_due_at=None,
+                awaiting_owner=False,
+                continuations_used=0,
+                updated_at=func.now(),
+            )
+        )
+
+    async def set_awaiting_owner(
+        self, session: AsyncSession, session_id: str, value: bool = True
+    ) -> None:
+        """jerv's explicit opt-out: mark the plan as awaiting the owner (suppressing the
+        auto-loop) and clear any pending continuation. Clearing it (value=False) lets the
+        loop resume without touching the due-time."""
+        values: dict[str, object] = {"awaiting_owner": value, "updated_at": func.now()}
+        if value:
+            values["continuation_due_at"] = None
+        await session.execute(
+            update(AgentSessionPlan)
+            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .values(**values)
+        )

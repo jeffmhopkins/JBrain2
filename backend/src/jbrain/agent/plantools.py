@@ -74,8 +74,9 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
             return "There's no conversation to attach a plan to here."
         body = arguments.get("body")
         status = arguments.get("status")
-        if body is None and status is None:
-            return "write_plan needs a body (the plan text) and/or a status to change."
+        pause = arguments.get("pause")
+        if body is None and status is None and pause is None:
+            return "write_plan needs a body (the plan text), a status, and/or a pause signal."
         if body is not None and len(str(body)) > _MAX_CHARS:
             return (
                 f"That plan is too long to store ({len(str(body))} chars, max {_MAX_CHARS}). "
@@ -100,17 +101,34 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
                     "Can't start work — this plan isn't approved yet. Leave it at "
                     "not_approved and ask the owner to approve it first."
                 )
+            if pause is not None and current is None and body is None:
+                return "There's no plan to pause — draft one first with write_plan(body=…)."
 
-            plan = await repo.upsert(
-                session,
-                ctx.agent_session_id,
-                body=None if body is None else str(body),
-                status=status,
-            )
+            if body is not None or status is not None:
+                plan = await repo.upsert(
+                    session,
+                    ctx.agent_session_id,
+                    body=None if body is None else str(body),
+                    status=status,
+                )
+            else:
+                plan = current  # pause-only call
+            assert plan is not None
+            # Snapshot the view fields now — a pause UPDATE below expires the ORM row, and
+            # a pause never changes body/status anyway.
             new_body, new_status, updated = plan.body, plan.status, plan.updated_at.isoformat()
 
+            # Apply the continuation opt-out/opt-in. await_owner stops the auto-loop and
+            # clears any pending continuation; checkpoint clears the flag so the loop runs.
+            if pause == "await_owner":
+                await repo.set_awaiting_owner(session, ctx.agent_session_id, True)
+            elif pause == "checkpoint":
+                await repo.set_awaiting_owner(session, ctx.agent_session_id, False)
+
         view = _plan_view(ctx.agent_session_id, new_body, new_status, updated)
-        if new_status == "not_approved":
+        if pause == "await_owner":
+            note = "Saved — paused for you. I'll wait for your reply before the next step."
+        elif new_status == "not_approved":
             note = "Saved the plan (awaiting your approval — tap Approve to sign off)."
         elif new_status == "in_work":
             note = "Plan updated — marked in work."
