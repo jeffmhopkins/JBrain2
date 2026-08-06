@@ -32,7 +32,7 @@ from jbrain.workflow import dispatcher
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.runlog import PipelineRunLog
 from jbrain.workflow.scheduler import PURGE_ACTION
-from tests.conftest import docker_available
+from tests.conftest import SchemaRoutedLlmClient, docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
@@ -164,12 +164,13 @@ def handlers(
         {"xai": FakeLlmClient(ocr_responses)},
         {"vision.ocr": ("xai", "grok-4.3"), "vision.caption": ("xai", "grok-4.3")},
     )
-    # integrate_note makes two model calls (note.extract, then integrate.note);
-    # one fake serves both positionally, so each scripted extraction is followed
-    # by an empty intent. These gate tests assert sequencing, not graph content.
-    interleaved = [r for resp in extract_responses for r in (resp, EMPTY_INTENT)]
+    # A schema-routed fake so the number of note.extract calls is free to vary: an
+    # image note now extracts its body and its attachment in separate calls
+    # (per-source extraction), all answered with the scripted extraction, while
+    # integrate.note (intent schema) gets the empty intent. These gate tests assert
+    # sequencing, not graph content.
     extract = LlmRouter(
-        {"xai": FakeLlmClient(interleaved)},
+        {"xai": SchemaRoutedLlmClient(extract_responses[0], EMPTY_INTENT)},
         {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
     )
 

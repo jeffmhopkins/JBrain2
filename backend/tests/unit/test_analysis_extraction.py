@@ -36,6 +36,8 @@ from jbrain.analysis.prompt import (
     build_user_prompt,
     fact_cap,
     group_texts,
+    group_texts_by_source,
+    prompt_block,
 )
 
 
@@ -1452,6 +1454,126 @@ def test_group_texts_fans_out_over_the_budget_without_splitting_blocks() -> None
 def test_group_texts_isolates_a_lone_oversize_block() -> None:
     big = "y" * (GROUP_CHAR_BUDGET * 2)
     assert group_texts([big, "small"]) == [[big], ["small"]]
+
+
+def test_group_texts_by_source_never_mixes_body_and_attachments() -> None:
+    """The note body and each attachment extract in separate calls, so a rich
+    attachment can't crowd the body's own facts out of a shared budget. A body plus
+    one attachment (two small blocks) yields TWO groups, body first (its title wins
+    the reduce)."""
+    body, ocr, cap = "body text", "ocr text", "caption text"
+    groups = group_texts_by_source([body, ocr, cap], ["note", "att-1", "att-1"])
+    assert groups == [["body text"], ["ocr text", "caption text"]]
+
+
+def test_group_texts_by_source_keeps_a_plain_note_as_one_group() -> None:
+    """A note with a single source is one group — identical to group_texts, so the
+    common no-attachment path stays exactly one extraction call."""
+    assert group_texts_by_source(["a", "b"], ["note", "note"]) == [["a", "b"]]
+
+
+def test_group_texts_by_source_splits_two_attachments_apart() -> None:
+    """Distinct attachments are distinct sources: each extracts independently, so
+    two receipts can't crowd each other either."""
+    groups = group_texts_by_source(
+        ["body", "r1", "r2"], ["note", "att-1", "att-2"]
+    )
+    assert groups == [["body"], ["r1"], ["r2"]]
+
+
+def _fact_json(predicate: str, statement: str, entity: str, obj: str | None) -> dict[str, Any]:
+    return {
+        "predicate": predicate,
+        "qualifier": "",
+        "kind": "relationship" if obj else "attribute",
+        "statement": statement,
+        "value_json": None if obj else {"value": statement},
+        "assertion": "asserted",
+        "entity_ref": entity,
+        "object_entity_ref": obj,
+        "temporal": None,
+        "domain": "finance",
+        "confidence": 0.9,
+    }
+
+
+async def test_extract_note_per_source_preserves_body_facts_alongside_attachment() -> None:
+    """The regression this fix targets: a content-rich attachment must not crowd the
+    note body's OWN facts out of the extraction. Per-source grouping extracts the
+    body and the attachment in separate note.extract calls, so the merged extraction
+    carries BOTH — the body's 'car loan' edge survives even though the attachment (a
+    membership card) yields its own dense facts. Empirically, a single shared call
+    drops the body facts entirely once the card text is present."""
+    from jbrain.analysis.pipeline import _extract_note
+    from jbrain.llm import LlmRouter
+    from jbrain.llm.types import LlmResult, LlmUsage
+
+    body_extraction = {
+        "title": "Car loan for the Kia",
+        "tags": ["finance", "loan", "car"],
+        "mentions": [
+            {"name": "Me", "kind": "Person", "surface_text": "Me"},
+            {"name": "car loan", "kind": "FinancialAccount", "surface_text": "car loan"},
+        ],
+        "facts": [
+            _fact_json("owns", "Me owns the Addition car loan for the Kia.", "Me", "car loan")
+        ],
+        "temporal_tokens": [],
+    }
+    attachment_extraction = {
+        "title": "Membership cards",
+        "tags": ["finance", "account", "bank"],
+        "mentions": [
+            {"name": "Checking Account", "kind": "FinancialAccount", "surface_text": "Checking"}
+        ],
+        "facts": [
+            _fact_json("identifier", "Routing/ABA number is 263181384.", "Checking Account", None)
+        ],
+        "temporal_tokens": [],
+    }
+
+    class _ContentRoutedFake:
+        """Answers by which source group's text it sees, so the two source groups get
+        their own distinct extractions (what separate calls produce in production)."""
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def complete(self, *, user_text: str, json_schema: Any = None, **_: Any) -> LlmResult:
+            self.calls.append(user_text)
+            payload = body_extraction if "car loan" in user_text else attachment_extraction
+            import json as _json
+
+            return LlmResult(text=_json.dumps(payload), parsed=payload, usage=LlmUsage(1, 1))
+
+    fake = _ContentRoutedFake()
+    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")})
+    body_block = prompt_block(
+        "Addition car loan for the kia is attached", source_kind="note", filename=None
+    )
+    ocr_block = prompt_block(
+        "Membership Card Routing/ABA #:263181384",
+        source_kind="ocr",
+        filename="c.jpg",
+        confidence=0.7,
+    )
+    anchor = datetime(2026, 8, 6, tzinfo=UTC)
+    extraction = await _extract_note(
+        router,
+        [body_block, ocr_block],
+        sources=["note", "att-1"],
+        domain="finance",
+        prompt_anchor=anchor,
+        parse_anchor=anchor,
+        note_id="n1",
+    )
+
+    # Two source groups → two note.extract calls (the body and the attachment never
+    # share a budget), and the merge keeps facts from BOTH.
+    assert len(fake.calls) == 2
+    statements = [f.statement for f in extraction.facts]
+    assert any("car loan" in s.lower() for s in statements)  # the body fact SURVIVES
+    assert any("263181384" in s for s in statements)  # the attachment fact too
 
 
 def _mr_part(

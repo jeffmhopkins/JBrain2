@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-08-06 — added the capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer a note's integration until its promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
+> **Status:** Living · **Last verified:** 2026-08-06 — two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -566,8 +566,10 @@ only, never a guessed price. Query-time pricing means a table update
 re-prices history — acceptable at personal scale, and the tokens remain
 the ground truth. ≈ **$0.01/note** at grok-4.3 rates.
 
-One guaranteed call + up to two conditional cheap calls per note; ~5–7k
-tokens ≈ $0.01/note at grok-4.3 rates. Conflict detection is bounded by candidate
+One guaranteed `note.extract` call **per source** (the note body plus one per
+attachment — per-source extraction, below) + up to two conditional cheap calls per
+note; ~5–7k tokens ≈ $0.01 for a plain note at grok-4.3 rates, roughly +$0.01 per
+attachment source. Conflict detection is bounded by candidate
 retrieval (SQL identity match, else pgvector top-k scoped to same
 entity+domain+kind) — never corpus-wide comparison. Concurrent offline-sync
 bursts serialize per (entity, predicate) to keep supersession chains
@@ -600,6 +602,29 @@ Groups run sequentially and a malformed group fails the note like any single
 extraction (the merge is in-memory; `_apply` runs once, after, in one
 transaction). Cross-group coreference is bounded by group size (several
 paragraphs); a context header for later groups is possible future work.
+
+**Per-source extraction [decided: a group never mixes the note body with an
+attachment].** One shared `note.extract` call gives every source's blocks a
+SINGLE fact budget, so a content-rich attachment (a scanned membership card, a
+receipt) can crowd the note body's own first-party facts out of that budget
+entirely — the observed failure where a note reading *"car loan for the Kia,
+attached as an image"* lost its `owns → car loan` / `owns → Kia` edges the moment
+the (unrelated) card image's OCR was present: the model, handed body + dense card
+text in one call under a "ceiling, not target" budget, emitted the card's account
+facts and dropped the body's. This is a **sole-source-of-truth** violation — the
+note's own words are the source of truth; an attachment is enrichment that must
+never delete them. So grouping partitions by source (`prompt.group_texts_by_source`,
+keyed off `Chunk.attachment_id`): the note body is one source, each attachment
+another, and each extracts in its OWN call with its own budget (body-first, so its
+title wins the reduce). The existing map-reduce reduce then re-binds objects across
+the full mention set and dedups on the structural key, so cross-source coreference
+and duplicates still resolve. A note with a single source (the common plain note)
+is exactly one group/one call — unchanged; a note with body + N attachments makes
+N+1 calls, the deliberate cost of never losing a body fact to an attachment (and of
+never letting two attachments crowd each other). This is the *extraction-input*
+guarantee behind the ingest-level capture-race gate above: the gate ensures the OCR
+text is present for the ONE extraction; per-source grouping ensures that extraction
+keeps the body's facts alongside it.
 
 **Enumerated and symmetric relationships [decided: one edge per individual,
 never a sentence-valued attribute].** "I have four daughters, A, B, C and D"

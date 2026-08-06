@@ -22,11 +22,11 @@ from sqlalchemy.pool import NullPool
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIPT_CONFIDENCE, TranscribePipeline
-from jbrain.llm import FakeLlmClient, LlmRouter
+from jbrain.llm import LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
 from jbrain.transcribe import Transcript, Word
-from tests.conftest import docker_available
+from tests.conftest import SchemaRoutedLlmClient, docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
 pytestmark = [
@@ -374,22 +374,24 @@ async def test_low_confidence_transcript_marker_reaches_extraction_prompt(
     )
     await ingest(maker, blobs).ingest_note({"note_id": note_id})
 
-    extract_fake = FakeLlmClient(
-        [
-            '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
-            ' "temporal_tokens": []}',
-            '{"resolutions": [], "facts": []}',
-        ]
+    # The body and the audio transcript now extract in SEPARATE note.extract calls
+    # (per-source extraction), so the marker is asserted across every extract call. A
+    # schema-routed fake answers each note.extract with the extraction and the lone
+    # integrate.note with the empty intent, regardless of how many source groups run.
+    fake = SchemaRoutedLlmClient(
+        '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
+        ' "temporal_tokens": []}',
+        '{"resolutions": [], "facts": []}',
     )
     analyzer = AnalysisPipeline(
         maker,
         LlmRouter(
-            {"xai": extract_fake},
+            {"xai": fake},
             {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
         ),
     )
     await analyzer.integrate_note({"note_id": note_id})
 
-    user_text = extract_fake.calls[0]["user_text"]
-    assert "[low-confidence transcript from memo.wav]\nship by August" in user_text
-    assert "left a voice memo" in user_text  # body chunk stays unmarked
+    extract_text = "\n".join(c["user_text"] for c in fake.calls)
+    assert "[low-confidence transcript from memo.wav]\nship by August" in extract_text
+    assert "left a voice memo" in extract_text  # body chunk stays unmarked
