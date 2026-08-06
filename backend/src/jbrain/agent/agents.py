@@ -234,7 +234,16 @@ ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 # KB-capable curator on an unknown name — so a malformed or injected persona is
 # refused, never resolved to a knowledge agent.
 SUBAGENT_PERSONAS = frozenset(
-    {"research", "review", "summarize", "research_library", "review_library", "research_deep"}
+    {
+        "research",
+        "review",
+        "summarize",
+        "research_library",
+        "review_library",
+        "research_reports",
+        "review_reports",
+        "research_deep",
+    }
 )
 
 # research / review children: the internet tools and the dataless clock — and NO
@@ -263,6 +272,19 @@ RESEARCH_DEEP_TOOLS = RESEARCH_TOOLS | frozenset({DECOMPOSE_TOOL})
 # tools, so the parent⊆child clamp keeps them.
 RESEARCH_LIBRARY_TOOLS = frozenset({"search_external_video", "read_external_video", "current_time"})
 REVIEW_LIBRARY_TOOLS = RESEARCH_LIBRARY_TOOLS
+# research_reports / review_reports children: the research-REPORT library read tools and the
+# dataless clock, and NO web tools — `deep_research`'s `sources=reports` (the compare-from-
+# library family) gather/refill/analyst/critique fans run these so the run reads ONLY the
+# owner's stored deep-research reports and never the open web. The read tools self-scope their
+# own `external`-domain read (the same corpus domain as the reports), so a child holding them
+# reaches the report library and nothing owner-authored. Leaves (no `spawn_subagent`), KB-less;
+# jerv holds all three read tools, so the parent⊆child clamp keeps them. `show_`/`remove_` are
+# deliberately excluded — a sub-agent needs only to find and read, never to render a card to the
+# owner or stage a deletion.
+RESEARCH_REPORTS_TOOLS = frozenset(
+    {"search_research_report", "read_research_report", "list_research_report", "current_time"}
+)
+REVIEW_REPORTS_TOOLS = RESEARCH_REPORTS_TOOLS
 # summarize: a pure transform — no tools at all, so it cannot reach the web and
 # cannot spawn.
 SUMMARIZE_TOOLS: frozenset[str] = frozenset()
@@ -419,6 +441,24 @@ AGENTS: dict[str, AgentProfile] = {
         "review_library",
         "review_library.prompt",
         tools=REVIEW_LIBRARY_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
+    # The research-report-library twins: same sandbox, but their tools are the stored
+    # research-report reads instead of the web or the video corpus. deep_research routes
+    # the gather/refill fans (research_reports) and the analyst/critique grounding fans
+    # (review_reports) here for its `sources=reports` compare-from-library mode.
+    "research_reports": _profile(
+        "research_reports",
+        "research_reports.prompt",
+        tools=RESEARCH_REPORTS_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
+    "review_reports": _profile(
+        "review_reports",
+        "review_reports.prompt",
+        tools=REVIEW_REPORTS_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=2,
     ),

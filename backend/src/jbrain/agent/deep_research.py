@@ -114,8 +114,11 @@ _DEFAULT_MODE = "standard"
 #   library       — the owner's analysed-video corpus only; NO web on any round.
 #   library_first — the library is the primary gather pass; the web fills only the
 #                   reflect→refill gap round (primary + supplement).
+#   reports       — the owner's research-report LIBRARY only (the reports deep_research
+#                   persisted); NO web. The compare-from-library family: a contrast report
+#                   is synthesized and grounded ONLY against already-cited reports.
 # The mode picks the persona each child fan runs — the pipeline is otherwise identical.
-_SOURCE_MODES = ("web", "library", "library_first")
+_SOURCE_MODES = ("web", "library", "library_first", "reports")
 _DEFAULT_SOURCE_MODE = "web"
 
 # The artifact the run produces (DEEP_PRODUCE_PLAN.md). `report` is the shipped
@@ -161,9 +164,12 @@ class SourcePlan:
 
 # The research-PRODUCER personas across every source/mode family — the gather/refill
 # children whose findings back the report, as opposed to the `review` analyst/critique.
-# `research` (web), `research_library` (corpus), `research_deep` (deepest task-agent tier).
+# `research` (web), `research_library` (video corpus), `research_reports` (research-report
+# library), `research_deep` (deepest task-agent tier).
 # Used to count findings regardless of which family a run's gather ran on.
-_RESEARCH_PERSONAS = frozenset({"research", "research_library", "research_deep"})
+_RESEARCH_PERSONAS = frozenset(
+    {"research", "research_library", "research_reports", "research_deep"}
+)
 
 
 @dataclass(frozen=True)
@@ -187,6 +193,8 @@ def _stage_persona(source_mode: str, wants_web: bool) -> str:
     split (`_personas_for`) generalized onto ordered stages."""
     if source_mode == "library":
         return "research_library"
+    if source_mode == "reports":
+        return "research_reports"
     if source_mode == "web":
         return "research"
     return "research" if wants_web else "research_library"
@@ -201,6 +209,11 @@ def _personas_for(source_mode: str) -> tuple[str, str, str]:
         return ("research_library", "research_library", "review_library")
     if source_mode == "library_first":
         return ("research_library", "research", "review")
+    if source_mode == "reports":
+        # The compare-from-library family: gather, refill, and review all read ONLY the
+        # owner's research-report library (no web egress) — the closed, already-cited source
+        # set a contrast report is synthesized and grounded against.
+        return ("research_reports", "research_reports", "review_reports")
     return ("research", "research", "review")
 
 
@@ -210,6 +223,11 @@ def _supplement_clause(source_mode: str) -> str:
     otherwise. Keeps the brief honest about the tools the child actually holds."""
     if source_mode == "library":
         return "You may search the owner's video library to resolve a specific conflict."
+    if source_mode == "reports":
+        return (
+            "You may search and read the owner's research-report library to resolve a "
+            "specific conflict — those reports are your only source."
+        )
     return "You may search the web to resolve a specific conflict."
 
 
@@ -218,8 +236,10 @@ def _can_open_sources(source_mode: str) -> bool:
     against it. Only the web review persona holds `web_fetch` (web + library_first); the
     pure-`library` reviewer (`review_library`) has `read_external_video` and no web tool,
     so a "fetch the cited URL" instruction would name a tool it doesn't hold. In that mode
-    the reviewer keeps `_supplement_clause` (search the corpus) and no SOURCES list."""
-    return source_mode != "library"
+    the reviewer keeps `_supplement_clause` (search the corpus) and no SOURCES list.
+    `reports` is likewise no-web (the reviewer reads the report library), so it too has no
+    web `[^n]` SOURCES list to open."""
+    return source_mode not in ("library", "reports")
 
 
 def _verify_sources_note(sources: list[WebSource], *, aligned: bool) -> str:
@@ -253,6 +273,12 @@ def _empty_gather_msg(source_mode: str) -> str:
             "deep research found nothing on this in your video library — no analysed "
             "video covers it. Try a broader question, analyse a relevant video first, or "
             "use sources='library_first' to let it fall back to the web."
+        )
+    if source_mode == "reports":
+        return (
+            "deep research found no matching reports in your research library to compare — "
+            "run the per-candidate profiles first (e.g. the candidate_profile preset for "
+            "each candidate), then run the comparison over them."
         )
     return (
         "deep research gathered no usable findings — the sub-agent budget for "

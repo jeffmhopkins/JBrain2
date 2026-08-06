@@ -213,10 +213,19 @@ class _FakeSpawn:
         first_label = briefs[0][0] if briefs else ""
         if first_label in self.refuse_labels:
             return []  # admission refused (tree total / budget) → the caller degrades
-        # Personas come in web/library families: research|research_library are the
-        # gather/refill producers; review|review_library are the analyst/critique.
-        is_review = persona in ("review", "review_library")
-        is_research = persona in ("research", "research_library", "research_deep")
+        # Personas come in web/library/reports families: research|research_library|
+        # research_reports are the gather/refill producers; review|review_library|
+        # review_reports are the analyst/critique.
+        is_review = persona in ("review", "review_library", "review_reports")
+        is_research = persona in (
+            "research",
+            "research_library",
+            "research_deep",
+            "research_reports",
+        )
+        # A reports-family producer reads the owner's stored reports and emits NO web citation
+        # (the compare carries no fresh citations), so it never attaches a WebSource below.
+        emits_sources = is_research and persona != "research_reports"
         if is_review:
             ok = self.analyst_ok if first_label == "cross-check" else self.critique_ok
         else:
@@ -245,7 +254,7 @@ class _FakeSpawn:
                         WebSource(url=f"https://ex.com/{label}/{k}", title=f"Src {label} {k}")
                         for k in range(self.sources_per_child)
                     )
-                    if ok and is_research
+                    if ok and emits_sources
                     else ()
                 ),
             )
@@ -1735,6 +1744,52 @@ async def test_non_preset_run_never_enforces_headings() -> None:
     router, spawn = _FakeRouter(), _FakeSpawn()
     await _svc(router, spawn).research(_ctx(), {"question": "some open question"})
     assert not any("STRUCTURE DEFECT" in s for s in router.synth_calls)
+
+
+def test_personas_for_reports_mode_are_report_library_only() -> None:
+    from jbrain.agent.deep_research import _personas_for
+
+    assert _personas_for("reports") == (
+        "research_reports",
+        "research_reports",
+        "review_reports",
+    )
+
+
+async def test_compare_preset_runs_reports_mode_never_touching_web() -> None:
+    """The compare_candidates preset routes EVERY fan to the report-library personas
+    (research_reports gather/refill + review_reports analyst/critique) and never spawns a web
+    or video-corpus persona — the closed, reports-only guarantee."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    out = await _svc(router, spawn).research(
+        _ctx(),
+        {
+            "preset": "compare_candidates",
+            "variables": {"office": "U.S. Senate (Florida)", "candidates": "Moody, Gleason, Perry"},
+        },
+    )
+    assert isinstance(out, ToolOutput)
+    assert not any("PLANNER" in c["system"] for c in router.calls)  # preset skips the planner
+    personas = {f["persona"] for f in spawn.fans}
+    assert personas <= {"research_reports", "review_reports"}
+    assert "research" not in personas and "research_library" not in personas
+    # Gather ran the five fixed dimension angles.
+    gather = next(f for f in spawn.fans if f["persona"] == "research_reports")
+    assert len(gather["briefs"]) == 5
+
+
+async def test_reports_mode_empty_gather_refuses_with_run_profiles_message() -> None:
+    """No matching reports in the library → a mode-worded refusal telling the owner to run the
+    per-candidate profiles first, not a generic empty-web message."""
+    out = await _svc(_FakeRouter(), _FakeSpawn(gather_ok=False)).research(
+        _ctx(),
+        {
+            "preset": "compare_candidates",
+            "variables": {"office": "U.S. Senate", "candidates": "A, B"},
+        },
+    )
+    assert isinstance(out, str) and out.startswith("Refused:")
+    assert "run the per-candidate profiles first" in out
 
 
 def test_missing_headings_matches_markdown_heading_lines_case_insensitively() -> None:

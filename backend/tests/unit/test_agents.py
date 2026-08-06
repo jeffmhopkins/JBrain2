@@ -30,7 +30,7 @@ from jbrain.agent.agents import (
 )
 
 
-def test_eleven_agents_are_defined() -> None:
+def test_thirteen_agents_are_defined() -> None:
     assert (
         frozenset(
             {
@@ -44,6 +44,8 @@ def test_eleven_agents_are_defined() -> None:
                 "intake",
                 "research_library",
                 "review_library",
+                "research_reports",
+                "review_reports",
                 "research_deep",
             }
         )
@@ -245,7 +247,7 @@ def test_library_subagent_personas_are_corpus_sandboxed_and_kb_less() -> None:
 
 
 def test_spawn_set_matches_the_subagent_personas() -> None:
-    """The closed spawn set is exactly the six child personas — `spawn_subagent`
+    """The closed spawn set is exactly the eight child personas — `spawn_subagent`
     validates against it BEFORE agent_for (which would otherwise resolve an unknown
     name to the KB-capable curator)."""
     assert (
@@ -256,6 +258,8 @@ def test_spawn_set_matches_the_subagent_personas() -> None:
                 "summarize",
                 "research_library",
                 "review_library",
+                "research_reports",
+                "review_reports",
                 "research_deep",
             }
         )
@@ -360,6 +364,14 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "research_deep": (
             "agent-research-deep-v2",
             "f155cd5e2a114c3403c295801e6080a7de3c632030ccff81e49ebf0bc166d643",
+        ),
+        "research_reports": (
+            "agent-research-reports-v1",
+            "2707dabb4490eb7da1b3594545efdc8672d18e1e33331c6ea6c37bf207d93f71",
+        ),
+        "review_reports": (
+            "agent-review-reports-v1",
+            "8c7e0a35abc45d9c6b2587f53a4c75b1deeb6dda6e0fa54328cc8d66b26efa56",
         ),
     }
     assert set(pins) == AGENT_NAMES

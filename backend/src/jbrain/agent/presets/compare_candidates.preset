@@ -1,0 +1,118 @@
+# A CONTRAST-AND-COMPARE report across every candidate in one race, built ONLY from the
+# per-candidate accountability profiles already in the owner's research library (source
+# mode `reports` — no web, no video corpus). It carries no fresh citations of its own: every
+# fact traces to a candidate's profile (which is itself cited), and each claim is attributed
+# "per X's profile". Fill {{office}} and {{candidates}} (a comma-separated list of the
+# candidates whose profiles to compare). The five gather angles compare ONE dimension each
+# across the whole field, so the same fixed preset handles a race of two candidates or nine.
+# Requires that candidate_profile has already been run for each candidate.
+# See docs/plans/REPORT_PRESET_PLAN.md (P3).
+name: compare_candidates
+description: Contrast-and-compare across every candidate in a race, synthesized only from their accountability profiles in the research library — record, money, positions, and controversies side by side.
+output_kind: report
+sources: reports
+
+question: "Candidate comparison — {{office}} ({{candidates}})"
+
+objective: |
+  Produce a CONTRAST-AND-COMPARE report across the candidates for {{office}}: {{candidates}}.
+  Build it ONLY from those candidates' accountability profiles already in the research
+  library — do NOT introduce any fact that is not in one of those profiles, and do not reach
+  for outside or remembered knowledge (the research agents have no web access; their findings
+  are your only source).
+
+  Grounding rules (this is the load-bearing discipline — a comparison that invents facts is
+  worse than a thin one):
+  - State ONLY what the profiles support. Attribute every comparative claim to the profile it
+    came from, in prose — "Moody raised the most (per her profile)", "Gleason self-funded (per
+    his)". A claim that cannot name a source profile does not belong in the report.
+  - Do NOT invent a number, name, date, dollar figure, vote, or event that does not appear in
+    a candidate's profile. If the profiles disagree, present both; do not resolve it yourself.
+  - Where a profile is SILENT on a dimension for a candidate, write "not covered in
+    <candidate>'s profile" rather than filling the gap. An honest gap beats a guess.
+  - No fresh footnote citations are needed (the profiles are already cited); the per-candidate
+    attribution above is what makes each claim traceable. Do not fabricate `[^n]` markers.
+  - Neutral, quantified, symmetric language — the same standard and tone for every candidate;
+    no endorsement and no "best candidate" verdict. Let the side-by-side comparison speak.
+
+  Section fill spec (use each heading verbatim, in order):
+  - The Field: one line per candidate — who they are by record — and a one-paragraph orientation
+    to the race, drawn from the profiles.
+  - Record & Experience Compared: the candidates' voting/legislative records, offices held, and
+    career/occupations side by side; note who has a governing record and who does not.
+  - Money & Backing Compared: campaign funds raised, donor/industry mix, self-funding, the
+    candidates' own donation histories, and notable endorsements received — compared across the
+    field.
+  - Positions & Consistency Compared: where the candidates stand on the major issues, and — from
+    each profile's record-vs-rhetoric findings — how consistent each one's current message is
+    with their documented record.
+  - Controversies & Legal Record Compared: each candidate's controversies and legal record as
+    their profile reports them, preserving the profile's status labels (allegation vs.
+    conviction, settled vs. dismissed); never upgrade a profile's label.
+  - Head-to-Head Contrasts: the sharpest, most decision-relevant differences between the
+    candidates — the contrasts a voter comparing them would most want, each grounded in the
+    profiles.
+  - Bottom Line: a brief, sourced summary of how the candidates differ by record — not a
+    prediction of who will win and not a recommendation.
+
+sections:
+  - "The Field"
+  - "Record & Experience Compared"
+  - "Money & Backing Compared"
+  - "Positions & Consistency Compared"
+  - "Controversies & Legal Record Compared"
+  - "Head-to-Head Contrasts"
+  - "Bottom Line"
+
+angles:
+  - title: "Record & experience across the field"
+    brief: >-
+      For the {{office}} race, compare the DOCUMENTED RECORD and EXPERIENCE of these
+      candidates: {{candidates}}. Read each candidate's accountability profile in the research
+      library (search the library by the candidate's name and the office, then read the
+      matching report) and extract, for each candidate, their voting/legislative record,
+      offices held, and career/occupations. Compare them side by side: who has a governing/
+      voting record and who does not, depth of experience, and notable actions. Report ONLY
+      what the profiles say; attribute each point to the candidate's profile; where a profile
+      does not cover something, say "not covered in <candidate>'s profile". Do not add outside
+      facts — you have no web access.
+  - title: "Money & backing across the field"
+    brief: >-
+      For the {{office}} race, compare the FINANCES and BACKING of these candidates:
+      {{candidates}}. From each candidate's accountability profile in the research library
+      (search by name + office, then read the report), extract funds raised, donor/industry
+      mix, self-funding, the candidate's own donation history, and notable endorsements
+      received. Compare across the field — who is best funded, who self-funds, who has
+      establishment/party backing. Report ONLY what the profiles say, attributed per candidate;
+      say "not covered in <candidate>'s profile" for a gap. No web access — do not add outside
+      facts.
+  - title: "Positions & consistency across the field"
+    brief: >-
+      For the {{office}} race, compare the POLICY POSITIONS and RECORD-VS-RHETORIC CONSISTENCY
+      of these candidates: {{candidates}}. From each candidate's accountability profile in the
+      research library (search by name + office, then read the report), extract where they
+      stand on the major issues and each profile's findings on how consistent the candidate's
+      current campaign message is with their documented record (matches, contradictions,
+      silences). Compare across the field — who is most/least consistent, where they diverge on
+      issues. Report ONLY what the profiles say, attributed per candidate; say "not covered in
+      <candidate>'s profile" for a gap. No web access.
+  - title: "Controversies & legal record across the field"
+    brief: >-
+      For the {{office}} race, compare the CONTROVERSIES and LEGAL RECORD of these candidates:
+      {{candidates}}. From each candidate's accountability profile in the research library
+      (search by name + office, then read the report), extract each candidate's controversies
+      and legal matters AS THE PROFILE REPORTS THEM — preserving the profile's status labels
+      (allegation / charge / settled-without-admission / conviction / dismissed / etc.). Compare
+      across the field by severity and number, but NEVER upgrade a label the profile used (an
+      allegation stays an allegation). Report ONLY what the profiles say, attributed per
+      candidate; say "checked — nothing reported in <candidate>'s profile" where a profile has
+      none. No web access — add nothing from outside the profiles.
+  - title: "Overall field & differentiators"
+    brief: >-
+      For the {{office}} race, read the accountability profiles of these candidates in the
+      research library — {{candidates}} — and identify the SHARPEST, most decision-relevant
+      DIFFERENCES between them across record, money, positions, and controversies. Summarize
+      each candidate in a sentence by their record, and name the head-to-head contrasts a voter
+      comparing them would most want to see. Ground every contrast in the profiles, attributed
+      per candidate; note where a profile is thin. No web access — synthesize only from the
+      profiles.
