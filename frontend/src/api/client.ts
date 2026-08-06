@@ -863,6 +863,23 @@ export interface ListOut {
   items: ListItemOut[];
 }
 
+/** A jerv conversation plan (docs/plans/JERV_PLANNING_TOOL_PLAN.md). `status` is the
+ * flag enum the card colors (`not_approved | approved | in_work`); `approved` is the
+ * ONE transition jerv can't make itself. The continuation fields drive the in-card
+ * auto-resume countdown: `continuation_due_at` is when the next step auto-fires (null =
+ * none pending), `awaiting_owner` means jerv paused for the owner's call, and the
+ * counters bound the chain. Every plan endpoint returns this shape. */
+export interface PlanOut {
+  session_id: string;
+  body: string;
+  status: string;
+  updated_at: string;
+  continuation_due_at: string | null;
+  awaiting_owner: boolean;
+  continuations_used: number;
+  max_continuations: number;
+}
+
 export type ReviewKind =
   | "fact_conflict"
   | "attribute_collision"
@@ -2391,6 +2408,50 @@ export const api = {
 
   async removeListItem(itemId: string): Promise<void> {
     await request(`/api/lists/items/${encodeURIComponent(itemId)}`, { method: "DELETE" });
+  },
+
+  // ----- Plans: the owner's approve/edit + auto-resume controls for a jerv plan.
+  // All owner-only; the `plan_card` tool-view and its out-of-card status surfaces
+  // (the composer plan pill + Chats badge) read this (JERV_PLANNING_TOOL_PLAN.md). -----
+  async getPlan(sessionId: string): Promise<PlanOut> {
+    const response = await request(`/api/plans/${encodeURIComponent(sessionId)}`);
+    return (await response.json()) as PlanOut;
+  },
+
+  // The owner-only sign-off — the one transition jerv cannot make itself, so web
+  // content it reads can never talk it into self-approving.
+  async approvePlan(sessionId: string): Promise<PlanOut> {
+    const response = await request(`/api/plans/${encodeURIComponent(sessionId)}/approve`, {
+      method: "POST",
+    });
+    return (await response.json()) as PlanOut;
+  },
+
+  // Correct jerv's draft text in place before approving.
+  async editPlan(sessionId: string, body: string): Promise<PlanOut> {
+    const response = await request(
+      `/api/plans/${encodeURIComponent(sessionId)}/edit`,
+      jsonInit("POST", { body }),
+    );
+    return (await response.json()) as PlanOut;
+  },
+
+  // Cancel the pending auto-continuation (and reset its budget) — the owner halting
+  // the loop from the card.
+  async stopPlan(sessionId: string): Promise<PlanOut> {
+    const response = await request(`/api/plans/${encodeURIComponent(sessionId)}/stop`, {
+      method: "POST",
+    });
+    return (await response.json()) as PlanOut;
+  },
+
+  // Fire the next step now instead of waiting out the window — arms the continuation
+  // due immediately (the server sweep picks it up within ~15s).
+  async continuePlan(sessionId: string): Promise<PlanOut> {
+    const response = await request(`/api/plans/${encodeURIComponent(sessionId)}/continue`, {
+      method: "POST",
+    });
+    return (await response.json()) as PlanOut;
   },
 
   // "resolved" is the full decision log: it folds in dismissals and

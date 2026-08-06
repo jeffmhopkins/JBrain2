@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-02
+> **Status:** Living · **Last verified:** 2026-08-06
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1310,6 +1310,45 @@ so provenance is model-retyped and the reply must say where they came from). It 
 `fact_id` refs; a cited count-by-category producer over `app.facts` is a possible follow-up.
 Tokens-only `.tv-cc-*`/`.tv-bar-*` classes; the frame matches the live `.tool-view`. Owner-
 facing chat artifact; never a note, never RAG-indexed.
+
+### `plan_card` tool-view (build plan `docs/plans/JERV_PLANNING_TOOL_PLAN.md` — binding mock: `docs/mocks/jerv-planning-mock.html`)
+
+jerv's per-conversation **plan** — the surface for owner-initiated planning-and-auto-resume.
+jerv drafts a plan only when the owner **asks for one** (its `write_plan` tool), the owner
+**approves** it, and jerv then works the checklist **across turns**, pausing after each step
+so the owner can steer and **auto-continuing** if they don't. One registered, data-only view;
+the model authors **no markup, URL, or color** (invariants #1/#9) — the tool result fills
+`{session_id, body, status, updated_at}` only, `status` a **flag enum** (`not_approved |
+approved | in_work`) the component maps to a theme class (the `flag-${status}` pattern, like
+`appointment_card`), **never** a model-sent color. The card parses `body` (plan markdown):
+the first heading is the title, the `- [ ]`/`- [x]` lines render as the **styled checklist**
+(done = filled green box + strike; the first unchecked step while working spins a dashed
+steel box), and any remaining prose renders through `<Markdown>` — the same escaped-envelope
+path as an assistant turn, so no model markup reaches the DOM.
+
+**Owner-only Approve is the one transition jerv can't make** (web content it reads can never
+talk it into self-approving): while `not_approved` the foot shows an **Approve** button
+(`POST /api/plans/{id}/approve`) and an **Edit** affordance that opens the raw body in a
+textarea and, on save, corrects it in place (`POST /api/plans/{id}/edit`) before approving.
+Once **`in_work`**, the card polls `GET /api/plans/{id}` and, when `continuation_due_at` is
+set, shows the **auto-resume countdown** ("continuing in m:ss", a 1s ticker anchored to the
+server timestamp like `TaskStatus`) with **Continue now** (`POST …/continue`, arms it due-now)
+and **Stop** (`POST …/stop`, cancels the window). The continuation fires **server-side** (a
+background sweep); the card only **displays** the countdown and the next step's answer arrives
+by the normal chat refresh — the card never runs the turn itself. When `awaiting_owner` is
+true jerv paused for the owner's call: a distinct **violet "Waiting for you"** state with **no
+countdown**. When every step is `- [x]` the chip reads **"Plan complete"** (steel). Tokens-only
+`.plan-card`/`.plan-chip.flag-*`/`.plan-approve`/`.plan-resume`/`.plan-await` classes; the card
+brings its own frame, so the generic `.tool-view` wrapper drops its border like `tv-task`.
+
+**Out-of-card status surfaces.** The same `plan_status` (`SessionOut.plan_status ∈
+not_approved | approved | in_work | null`) drives two always-visible twins of the chip: the
+**composer-foot plan pill** (`.plan-pill.flag-*`, beside the model pill — "awaiting approval"
+/ "working to plan" / "waiting for you" / "plan complete", the in_work dot pulsing) so the
+owner sees the plan state without scrolling to the card, and the **Chats-picker plan badge**
+(`.stat.plan.flag-*`, beside the staged badge on the session row). Both are the same flag
+enum the theme colors, never a model color; the after-turn session reload keeps them fresh,
+and an in-card action optimistically refreshes them.
 
 ### `deep_research_report` tool-view (build plan `docs/plans/DEEP_RESEARCH_TOOL_PLAN.md`, Wave D3 — **mock-gate sign-off pending**)
 
