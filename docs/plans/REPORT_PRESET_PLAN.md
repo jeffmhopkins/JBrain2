@@ -1,6 +1,6 @@
 # Report Presets & Batch Runs — uniform reports, run down a list
 
-> **Status:** In progress · **Last verified:** 2026-08-06 · **Waves:** P1✅ P2◻️
+> **Status:** In progress · **Last verified:** 2026-08-06 · **Waves:** P1✅ P2◻️ P3◻️
 
 The deep-research engine plans each report's shape fresh every run, so two reports on
 comparable subjects (say, two candidates on the same ballot) come out structurally
@@ -68,4 +68,35 @@ report. Not the workflow engine — the batch rides the existing **deepest-resea
 durable list-cursor, `DeepResearchService.research(preset=…, variables=item, require_persist=True)`
 per item, and the progress/notify channel per completion. Idempotency falls out of the report
 library's `(question_hash, tool)` upsert. Fire-through by default; a verify-gate is a later
-option. See the design artifact for the option analysis.
+option. See the design artifact for the option analysis. (Note: the deepest-lane framing here
+predates the owner's 2026-08-06 decision to avoid the deepest tool; the batch host is being
+re-chosen — Jerv Tasks runner is the leading candidate — before P2 is built.)
+
+## P3 — Compare-and-contrast preset (from the library) ◻️ (in progress)
+
+A follow-up preset that produces ONE contrast-and-compare report across every candidate in a
+race, synthesized **only from the per-candidate accountability profiles already in the research
+library** — no web, no video corpus. Design decisions (owner, 2026-08-06):
+
+- **Reports-only, no web (v1).** The compare draws exclusively from the owner's already-vetted,
+  already-cited profiles. This is what makes "no fresh citations needed" coherent (every fact
+  traces to a cited profile) AND makes the anti-hallucination check tractable (a closed, small
+  source set that fits in context). A `reports_first` variant (reports as substance, web only to
+  verify a specific time-sensitive fact, web-cited) is a later upgrade, not v1.
+- **Dimension-parallel angles.** The 5 gather angles each compare ONE dimension (record, career,
+  money+endorsements, positions/consistency, controversies) across the WHOLE field, with the
+  candidate list passed as a `{{candidates}}` variable — so the fixed 5-angle preset handles a
+  race of two candidates or nine, with no schema change.
+- **Grounding gate (anti-hallucination).** Three layers: the writer may only restate what the
+  profiles support and attributes every claim to a profile ("per X's profile"); the critique
+  pass is run by a reports-reading reviewer that verifies the draft against the profiles and
+  flags any unsupported claim; and (follow-on) a deterministic tripwire that flags any number/
+  name/date in the draft absent from every source profile.
+
+**Shipped so far (this branch):** `presets/compare_candidates.preset` (the outline, the
+per-dimension angles, and the grounding/attribution objective). **Still to build:** a `reports`
+source mode in `deep_research.py`; two sandboxed personas (`research_reports` gather +
+`review_reports` grounding reviewer) with digest-pinned prompts and report-library-only tool
+allowlists; the source-mode wiring (`_personas_for`, empty-gather message, etc.); the
+deterministic tripwire; and tests. Sequenced AFTER `candidate_profile` merges and is tested —
+the compare is only as good as the profiles feeding it.
