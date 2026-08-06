@@ -36,8 +36,8 @@ pytestmark = [
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-_OPEN = "- [ ] step one\n- [ ] step two"   # has unchecked items
-_DONE = "- [x] step one\n- [x] step two"   # all checked
+_OPEN = "- [ ] step one\n- [ ] step two"  # has unchecked items
+_DONE = "- [x] step one\n- [x] step two"  # all checked
 
 
 @pytest.fixture
@@ -77,7 +77,8 @@ async def test_schedule_then_claim_fires_once_and_counts(maker: async_sessionmak
 
     async with scoped_session(maker, owner) as s:
         await repo.schedule_continuation(s, sid, delay_s=0)
-        assert (await repo.get(s, sid)).continuation_due_at is not None
+        plan = await repo.get(s, sid)
+        assert plan is not None and plan.continuation_due_at is not None
 
     async with scoped_session(maker, owner) as s:
         claimed = await repo.claim_due_continuations(s, max_continuations=MAX_CONTINUATIONS)
@@ -85,6 +86,7 @@ async def test_schedule_then_claim_fires_once_and_counts(maker: async_sessionmak
 
     async with scoped_session(maker, owner) as s:
         plan = await repo.get(s, sid)
+        assert plan is not None
         assert plan.continuation_due_at is None  # claim cleared the due-time…
         assert plan.continuations_used == 0  # …but the count is bumped on a real run, not claim
         # A second sweep claims nothing (the due-time is gone).
@@ -94,7 +96,8 @@ async def test_schedule_then_claim_fires_once_and_counts(maker: async_sessionmak
     async with scoped_session(maker, owner) as s:
         await repo.bump_continuation(s, sid)
     async with scoped_session(maker, owner) as s:
-        assert (await repo.get(s, sid)).continuations_used == 1
+        plan = await repo.get(s, sid)
+        assert plan is not None and plan.continuations_used == 1
 
 
 async def test_claim_skips_awaiting_owner_and_non_in_work(maker: async_sessionmaker) -> None:
@@ -130,7 +133,9 @@ async def test_claim_respects_the_cap(maker: async_sessionmaker) -> None:
 
 async def _due(maker: async_sessionmaker, owner: SessionContext, sid: str) -> bool:
     async with scoped_session(maker, owner) as s:
-        return (await PlanRepo().get(s, sid)).continuation_due_at is not None
+        plan = await PlanRepo().get(s, sid)
+        assert plan is not None
+        return plan.continuation_due_at is not None
 
 
 async def test_settle_helper_arms_only_when_it_should(maker: async_sessionmaker) -> None:
@@ -189,9 +194,7 @@ class _FakeExecutor:
         # Record the session and the TYPE of the principal id — the uuid→str bug would
         # never reach here (tick would throw at set_config), so a call at all proves the fix.
         pid = kwargs["read_ctx"].principal_id  # type: ignore[attr-defined]
-        self.calls.append(
-            {"sid": kwargs["agent_session_id"], "pid_type": type(pid).__name__}
-        )
+        self.calls.append({"sid": kwargs["agent_session_id"], "pid_type": type(pid).__name__})
         return _FakeExecuted()
 
 
@@ -240,7 +243,8 @@ async def test_sweep_tick_fires_a_due_continuation(maker: async_sessionmaker) ->
     assert executor.calls[0]["pid_type"] == "str"  # the RLS ctx got a str, not a uuid
     assert transcript.answers == [sid]  # recorded answer-only
     async with scoped_session(maker, owner) as s:
-        assert (await PlanRepo().get(s, sid)).continuations_used == 1  # the fire was counted
+        plan = await PlanRepo().get(s, sid)
+        assert plan is not None and plan.continuations_used == 1  # the fire was counted
 
 
 async def test_approving_arms_and_claims_the_first_step(maker: async_sessionmaker) -> None:
@@ -253,7 +257,8 @@ async def test_approving_arms_and_claims_the_first_step(maker: async_sessionmake
     # Mirror the approve endpoint: arm the first continuation on the just-approved plan.
     async with scoped_session(maker, owner) as s:
         await repo.schedule_continuation(s, sid, delay_s=0)
-        assert (await repo.get(s, sid)).continuation_due_at is not None
+        plan = await repo.get(s, sid)
+        assert plan is not None and plan.continuation_due_at is not None
     # The sweep claims it even though the status is still `approved` (jerv hasn't started).
     async with scoped_session(maker, owner) as s:
         assert await repo.claim_due_continuations(s, max_continuations=MAX_CONTINUATIONS) == [sid]
@@ -268,13 +273,13 @@ async def test_owner_message_reset_clears_everything(maker: async_sessionmaker) 
         await repo.set_awaiting_owner(s, sid, True)
         await s.execute(
             text(
-                "UPDATE app.agent_session_plans SET continuations_used = 5"
-                " WHERE session_id = :id"
+                "UPDATE app.agent_session_plans SET continuations_used = 5 WHERE session_id = :id"
             ),
             {"id": sid},
         )
         await repo.cancel_and_reset(s, sid)
         plan = await repo.get(s, sid)
+        assert plan is not None
     assert plan.continuation_due_at is None
     assert plan.awaiting_owner is False
     assert plan.continuations_used == 0
@@ -290,17 +295,17 @@ async def test_plan_blocks_only_injects_a_sanctioned_plan(maker: async_sessionma
     jerv = SimpleNamespace(agent="jerv", id=sid)
 
     # A draft is NOT injected.
-    assert await _plan_blocks(req, owner, jerv) == []
+    assert await _plan_blocks(req, owner, jerv) == []  # type: ignore[arg-type]
 
     # Once the owner approves, it IS injected — a DATA-framed operating block.
     async with scoped_session(maker, owner) as s:
         await PlanRepo().set_status(s, sid, "approved")
-    blocks = await _plan_blocks(req, owner, jerv)
+    blocks = await _plan_blocks(req, owner, jerv)  # type: ignore[arg-type]
     assert len(blocks) == 1
-    assert "APPROVED" in blocks[0].text and "do the thing" in blocks[0].text
+    assert "APPROVED" in blocks[0].text and "do the thing" in blocks[0].text  # type: ignore[union-attr]
 
     # A non-jerv agent never receives it.
-    assert await _plan_blocks(req, owner, SimpleNamespace(agent="curator", id=sid)) == []
+    assert await _plan_blocks(req, owner, SimpleNamespace(agent="curator", id=sid)) == []  # type: ignore[arg-type]
 
 
 async def test_write_plan_await_owner_stops_the_loop(maker: async_sessionmaker) -> None:
@@ -317,6 +322,7 @@ async def test_write_plan_await_owner_stops_the_loop(maker: async_sessionmaker) 
 
     async with scoped_session(maker, owner) as s:
         plan = await PlanRepo().get(s, sid)
+        assert plan is not None
         assert plan.awaiting_owner is True
         assert plan.continuation_due_at is None  # await_owner also cancels a pending fire
         # …and a due sweep now skips it.

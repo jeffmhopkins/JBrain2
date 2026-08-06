@@ -132,9 +132,7 @@ async function doFlush(store: OutboxStore): Promise<FlushResult> {
         // Tell the server how many attachments follow so it defers integration
         // until they land (extract once, with OCR text) instead of a premature
         // body-only pass on the note this loop is about to upload files to.
-        ...(note.attachments.length > 0
-          ? { attachments_expected: note.attachments.length }
-          : {}),
+        ...(note.attachments.length > 0 ? { attachments_expected: note.attachments.length } : {}),
       });
       while (note.attachments.length > 0) {
         const att = note.attachments[0];

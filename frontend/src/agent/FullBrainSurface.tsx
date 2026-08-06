@@ -60,6 +60,54 @@ interface AudioControl {
 // How long a press must hold before it counts as a long-press (arm/disarm auto-play).
 const LONG_PRESS_MS = 500;
 
+// The nearest conversation bubble an owned selection endpoint sits in (`.bubble`
+// covers a `.me` user bubble and an `.ai` agent turn alike). A text node reports no
+// `closest`, so climb to its parent element first.
+function closestBubble(node: Node | null): HTMLElement | null {
+  const el = node instanceof Element ? node : (node?.parentElement ?? null);
+  return (el?.closest(".bubble") as HTMLElement | null) ?? null;
+}
+
+/** What to do with a selection change inside the conversation: forget the origin
+ * (`reset`), remember the bubble it's confined to (`keep`), or pen it back into a
+ * bubble it has escaped (`clamp`). */
+export type ClampDecision =
+  | { kind: "reset" }
+  | { kind: "keep"; bubble: HTMLElement }
+  | { kind: "clamp"; bubble: HTMLElement };
+
+// Decide how a selection change should be constrained so a selection stays penned
+// inside the single bubble it began in. Mobile Chrome's long-press "Select all"
+// expands a selection past its bubble to the whole transcript (there's no keystroke
+// to intercept — it's the text toolbar), and a drag can run past a bubble edge; both
+// land here as an escaped selection, which we snap back to the origin bubble. Pure,
+// so the decision is unit-tested without a live Selection. `startBubble` is the last
+// bubble a selection was confined to (the long-press word selection anchors there).
+export function resolveSelectionClamp(
+  chatEl: Element,
+  anchorNode: Node | null,
+  focusNode: Node | null,
+  collapsed: boolean,
+  startBubble: HTMLElement | null,
+): ClampDecision {
+  // No live selection — forget the origin so the next selection starts clean.
+  if (collapsed || !anchorNode || !focusNode) return { kind: "reset" };
+  // Neither endpoint touches the conversation (a side panel, elsewhere on the page) —
+  // leave it entirely alone, and drop any stale origin so we never steal it later.
+  if (!chatEl.contains(anchorNode) && !chatEl.contains(focusNode)) return { kind: "reset" };
+  const anchorBubble = closestBubble(anchorNode);
+  const focusBubble = closestBubble(focusNode);
+  // Already confined to one bubble: record it as the origin, nothing to correct.
+  if (anchorBubble && anchorBubble === focusBubble) return { kind: "keep", bubble: anchorBubble };
+  // Escaped its bubble. Pen it back into the bubble it began in; fall back to whichever
+  // endpoint still resolves to one (a `startBubble` that's since left the DOM is stale).
+  const target =
+    (startBubble && chatEl.contains(startBubble) ? startBubble : null) ??
+    anchorBubble ??
+    focusBubble;
+  return target ? { kind: "clamp", bubble: target } : { kind: "reset" };
+}
+
 interface Props {
   fb: FullBrain;
   /** Open a source note by id (from a Worked-block card). */
@@ -143,6 +191,51 @@ export function FullBrainSurface({
     });
     ro.observe(el);
     return () => ro.disconnect();
+  }, [fb.active?.id]);
+
+  // Keep a text selection penned inside the single bubble it started in. On mobile
+  // Chrome the long-press text toolbar's "Select all" expands the selection to the
+  // whole transcript (all bubbles share this one scroll box); we snap it back to the
+  // bubble it began in — the same for a user bubble or an agent turn. `selectionchange`
+  // fires only on `document`, so listen there but act only when the selection touches
+  // this chat. Re-armed per session: the box only exists while a chat is open, and a
+  // fresh open mounts a new element to scope against.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the id re-attaches the listener when the chat element remounts.
+  useEffect(() => {
+    const el = chatRef.current;
+    if (!el || typeof document === "undefined") return;
+    // The bubble the current selection is confined to, carried across changes so an
+    // escaping "Select all" knows where it began. A re-entrancy guard ignores the
+    // selectionchange our own clamp provokes.
+    let startBubble: HTMLElement | null = null;
+    let clamping = false;
+    function onSelectionChange(): void {
+      if (clamping) return;
+      const sel = document.getSelection();
+      if (!sel || !el) return;
+      const decision = resolveSelectionClamp(
+        el,
+        sel.anchorNode,
+        sel.focusNode,
+        sel.isCollapsed,
+        startBubble,
+      );
+      if (decision.kind === "reset") {
+        startBubble = null;
+        return;
+      }
+      startBubble = decision.bubble;
+      if (decision.kind === "clamp") {
+        clamping = true;
+        try {
+          sel.selectAllChildren(decision.bubble);
+        } finally {
+          clamping = false;
+        }
+      }
+    }
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
   }, [fb.active?.id]);
 
   // The session's name lives in the top bar (HomeScreen owns it); the panels are
