@@ -95,7 +95,8 @@ async def test_handlers_enforce_the_state_machine(maker: async_sessionmaker) -> 
     blocked = await handlers["write_plan"]({"status": "in_work"}, ctx)
     assert "isn't approved yet" in blocked
     async with scoped_session(maker, owner) as session:
-        assert (await PlanRepo().get(session, sid)).status == "not_approved"  # unchanged
+        plan = await PlanRepo().get(session, sid)
+        assert plan is not None and plan.status == "not_approved"  # unchanged
 
     # The owner approves out-of-band (the api endpoint's repo call), then jerv may work it.
     async with scoped_session(maker, owner) as session:
@@ -123,7 +124,8 @@ async def test_jerv_runtime_ctx_reaches_the_owner_only_table(maker: async_sessio
     async with scoped_session(maker, jerv) as session:
         await repo.upsert(session, sid, body="jerv drafted this", status="not_approved")
     async with scoped_session(maker, jerv) as session:
-        assert (await repo.get(session, sid)).body == "jerv drafted this"
+        plan = await repo.get(session, sid)
+        assert plan is not None and plan.body == "jerv drafted this"
 
 
 async def test_non_owner_sees_nothing_and_cannot_write(maker: async_sessionmaker) -> None:
