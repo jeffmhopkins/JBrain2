@@ -58,6 +58,9 @@ class FakeJobQueue:
 class FakeNotesRepo:
     notes: list[NoteInfo] = field(default_factory=list)
     extracts: dict[str, list[ExtractInfo]] = field(default_factory=dict)
+    # Records the attachment-intent hint each create carried, for plumbing assertions
+    # (NoteInfo is capture-input, not serialized output, so the count lives here).
+    attachments_expected: list[int] = field(default_factory=list)
 
     async def create_note(
         self,
@@ -72,12 +75,14 @@ class FakeNotesRepo:
         latitude: float | None = None,
         longitude: float | None = None,
         accuracy_m: float | None = None,
+        attachments_expected: int = 0,
     ) -> tuple[NoteInfo, bool]:
         if domain not in KNOWN_DOMAINS:
             raise UnknownDomain(domain)
         for n in self.notes:
             if n.client_id == client_id:
                 return n, False
+        self.attachments_expected.append(attachments_expected)
         note = NoteInfo(
             id=str(uuid.uuid4()),
             client_id=client_id,
@@ -268,6 +273,25 @@ def test_create_note_rejects_unknown_domain(
     c, _, _ = client
     resp = c.post("/api/notes", json={"client_id": "x", "domain": "nope", "body": "y"})
     assert resp.status_code == 400
+
+
+def test_create_note_forwards_attachment_intent_hint(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
+) -> None:
+    # The capture race fix: the client declares how many attachments follow so
+    # ingest defers integration until they land. Absent = 0 (integrate now).
+    c, repo, _ = client
+    c.post(
+        "/api/notes",
+        json={"client_id": "hint1", "body": "photo coming", "attachments_expected": 2},
+    )
+    assert repo.attachments_expected == [2]
+    c.post("/api/notes", json={"client_id": "hint2", "body": "plain"})
+    assert repo.attachments_expected == [2, 0]
+    # Out-of-range is rejected (the Field bounds), never silently stored.
+    assert c.post(
+        "/api/notes", json={"client_id": "hint3", "body": "x", "attachments_expected": -1}
+    ).status_code == 422
 
 
 def test_list_notes_pagination(client: tuple[TestClient, FakeNotesRepo, FakeJobQueue]) -> None:

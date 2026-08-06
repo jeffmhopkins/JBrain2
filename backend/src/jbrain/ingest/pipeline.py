@@ -90,6 +90,7 @@ class IngestPipeline:
             body = note.body
             domain = note.domain_code
             destination = note.destination
+            attachments_expected = note.attachments_expected
             attachments = [
                 _AttachmentRef(
                     id=a.id,
@@ -171,7 +172,18 @@ class IngestPipeline:
         # re-ingests before its own job completes, which is safe single-threaded —
         # under multi-worker the gate could see that originating job as running and
         # defer forever. TODO(queue): triggered_by_job exclusion if multi-worker lands.
-        if not outstanding and not await queue.has_active_analysis(
+        # Capture posts the note and its attachments as SEPARATE requests, so this
+        # ingest can run before a promised attachment has been uploaded — seeing zero
+        # attachments and no outstanding OCR, it would emit note.ingested and drive a
+        # blind body-only integration the OCR re-run then redoes (and briefly shows the
+        # wrong analysis). `attachments_expected` is the client's create-time hint of
+        # how many files are coming; while fewer are present the note is not settled,
+        # so defer the emit. The uploading attachment's own ingest re-drives this once
+        # it lands (and then the OCR gate above takes over), and the integration
+        # reconciler's settle window (queue.backfill_pending_integration) bounds a
+        # promised attachment that never arrives. Absent/0 hint = today's behavior.
+        attachments_settled = len(attachments) >= attachments_expected
+        if attachments_settled and not outstanding and not await queue.has_active_analysis(
             self._maker, SYSTEM_CTX, note_id, statuses=("queued",)
         ):
             # W2·C cutover: emit the note.ingested event that DRIVES integration — the

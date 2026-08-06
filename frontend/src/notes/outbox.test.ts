@@ -111,6 +111,8 @@ describe("flushOutbox", () => {
 
     const [, init] = fetchMock.mock.calls[0] ?? [];
     expect(JSON.parse(String(init?.body))).not.toHaveProperty("latitude");
+    // A note with no attachments omits the hint entirely (server treats it as 0).
+    expect(JSON.parse(String(init?.body))).not.toHaveProperty("attachments_expected");
   });
 
   it("keeps the note on network failure and retries with the same client_id", async () => {
@@ -150,6 +152,12 @@ describe("flushOutbox", () => {
     );
 
     await flushOutbox(store);
+
+    // The note POST declares how many attachments follow, so the server defers
+    // integration until they land instead of a premature body-only pass.
+    const [noteUrl, noteInit] = fetchMock.mock.calls[0] ?? [];
+    expect(String(noteUrl)).toBe("/api/notes");
+    expect(JSON.parse(String(noteInit?.body))).toMatchObject({ attachments_expected: 1 });
 
     const [url, init] = fetchMock.mock.calls[1] ?? [];
     expect(String(url)).toBe("/api/notes/srv-c-1/attachments");

@@ -513,6 +513,15 @@ async def backfill_pending_notes(
 
 INTEGRATION_BACKFILL_LIMIT = 100
 
+# How long the reconciler waits for a note's promised-but-unuploaded attachments
+# (notes.attachments_expected) before integrating it body-only anyway. The ingest
+# emit gate defers integration while fewer attachments are present than promised
+# (ingest/pipeline.py); this bounds the case where the promise never arrives — a
+# failed/abandoned upload strands the note for at most this window, then it
+# integrates on what it has. Generous enough that a slow (offline-flushed) upload
+# still lands first; short relative to how long an abandoned upload is worth waiting.
+INTEGRATION_ATTACHMENT_SETTLE_SECONDS = 300
+
 # Owner-ahead ordering hook (N14). The backfill drains oldest-first, but the leading
 # rank term keeps trusted owner notes ahead of untrusted-origin ones. Now LIVE (Phase 7,
 # guided intake): `n.provenance = 'untrusted_origin'` evaluates false (sorts first) for
@@ -565,11 +574,23 @@ async def backfill_pending_integration(
                         AND j.status IN ('queued', 'running')
                         AND att.note_id = n.id
                   )
+                  -- Honor the ingest emit gate's attachment-intent wait: a note still
+                  -- expecting more attachments than are present is not settled, so the
+                  -- reconciler must not body-only integrate it during the upload window
+                  -- (that would defeat the gate). Eligible again once the promised
+                  -- attachments land (present >= expected) OR the settle window lapses
+                  -- (a promise that never arrived — integrate on what it has).
+                  AND (
+                      n.attachments_expected <= (
+                          SELECT count(*) FROM app.attachments a WHERE a.note_id = n.id
+                      )
+                      OR n.created_at < now() - (:settle * interval '1 second')
+                  )
                 ORDER BY {INTEGRATION_BACKFILL_ORDER_BY}
                 LIMIT :lim
                 """
             ),
-            {"lim": limit},
+            {"lim": limit, "settle": INTEGRATION_ATTACHMENT_SETTLE_SECONDS},
         )
         return cast(CursorResult[Any], result).rowcount or 0
 
