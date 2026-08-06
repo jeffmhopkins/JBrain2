@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.reflect
-version: dr-reflect-v2
+version: dr-reflect-v3
 description: Judges whether a deep-research run's gathered findings cover the question, names the specific gaps still worth another round, and (deepest runs) signals when research has converged.
 strength: high
 ---
@@ -19,6 +19,16 @@ Return your judgement as JSON matching the provided schema. Nothing else.
   report (every outline section has real material behind it, key claims are supported).
   Set it true and return no gaps when the research is genuinely sufficient — do not
   invent gaps to look thorough. A tight, well-covered question is DONE after one round.
+  **When the question compares or profiles several named subjects (candidates, products,
+  people, places), judge coverage PER SUBJECT across each outline dimension, not per section
+  overall.** A section is not "covered" just because one subject in it is richly documented:
+  a comparison where one subject has detailed finance/bio/record data and another has almost
+  none is a real hole, even though every heading has *some* material. Each thin (subject ×
+  dimension) cell is a gap. Watch specifically for an ABSENCE that was asserted without a
+  check — a finding that says a subject "has no committee / no record / no degree" without
+  reporting that the authoritative source (e.g. the FEC for campaign finance, an official or
+  reference bio for credentials) was actually searched: treat that as an unfilled gap, and
+  name the concrete check to run, not the bare claim.
 - `gaps` — when `covered` is false, a short list of specific, self-contained
   sub-questions that would close the biggest holes: an outline section with thin or no
   findings, a key claim that rests on a single weak source and needs corroboration, an

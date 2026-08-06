@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 4
+version: 5
 permission: web
 cost_class: expensive
 params:
@@ -39,7 +39,24 @@ params:
         genuinely covered and the findings stop changing (or a large internal ceiling is
         hit) — materially more thorough and more expensive. Reserve `deepest` for a big,
         open question that a single gap round clearly won't cover; omit for `standard`.
-  required: [question]
+    preset:
+      type: string
+      description: >-
+        Optional. The name of a saved report PRESET (a checked-in template that pins the
+        section outline and the research angles) so the report comes out in a fixed, uniform
+        shape. When set, the tool skips its own planning and runs the preset's fixed plan,
+        filling the preset's `{{variables}}` from the `variables` object — use it to get
+        identical-structured reports across many subjects (e.g. `candidate_profile` for every
+        candidate on a ballot). Omit to let the tool plan the report itself (the default).
+    variables:
+      type: object
+      description: >-
+        Optional. The values that fill a `preset`'s `{{variables}}` for this run — e.g.
+        {"candidate": "Jane Doe", "office": "U.S. Senate (Florida)"}. Required whenever the
+        chosen preset declares variables; a missing one is refused rather than left blank.
+        Ignored when no `preset` is given. With a preset, `question` is optional (the preset
+        derives it).
+  required: []
 ---
 Research a question in depth and get back a structured, cited report. Use this for a
 genuinely open, multi-source question — one worth planning, gathering across several

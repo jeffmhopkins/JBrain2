@@ -59,6 +59,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent.briefs import compose_feed_block, prepend_feed
 from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolOutput
+from jbrain.agent.research_presets import PresetError, RenderedPreset, render_preset
 from jbrain.agent.spawn import SpawnService, _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.db.session import scoped_session
@@ -402,6 +403,34 @@ _REVISE_STEP, _REVISE_LABEL = 8, "Revising from the critique"
 # ASCII `[^n]` and the fullwidth `【n】`/`【^n】` a browsing model (gpt-oss) emits — so a draft
 # cited only in the fullwidth form is correctly seen as cited and doesn't trigger a wasted retry.
 _CITE_MARKER = re.compile(r"\[\^\d+\]|【\^?\d+】")
+
+
+# The structural backstop's twin of the zero-citation one, active only for a PRESET run (a
+# fixed outline the report must honor). If the writer dropped or renamed a required heading,
+# force ONE hardened re-synth naming the missing sections — the same one-retry, symptom-driven
+# pattern as the citation backstop, so a locked outline is enforced mechanically rather than
+# trusted to a prose rule. A section with no findings keeps its heading + the honest sentinel,
+# never a drop, so "missing" means the heading text is absent from every Markdown heading line.
+def _missing_headings(report: str, sections: list[str]) -> list[str]:
+    """Which required section headings do NOT appear on any Markdown heading line of the
+    report (case-insensitive substring match, so light rewording of the heading line around
+    the required text still counts as present). Empty when every section is represented."""
+    heads = "\n".join(ln for ln in report.splitlines() if ln.lstrip().startswith("#")).lower()
+    return [s for s in sections if s.strip() and s.strip().lower() not in heads]
+
+
+def _missing_headings_critique(missing: list[str]) -> str:
+    joined = "; ".join(missing)
+    return (
+        "STRUCTURE DEFECT: your draft is missing these REQUIRED section headings, which must "
+        f"each appear verbatim as a Markdown heading, in the given order: {joined}. Add every "
+        "missing section back. If a section has no supporting findings, KEEP its heading and "
+        "write the single line 'Not established — no supporting source found as of the run "
+        "date.' — do not drop, rename, merge, or reorder the required sections, and do not "
+        "fabricate content to fill one."
+    )
+
+
 _ZERO_CITATION_CRITIQUE = (
     "CRITICAL DEFECT: your draft carries ZERO `[^n]` citation markers, but the SOURCES list is "
     "non-empty and its top entries are on-topic. You wrongly invoked the all-off-topic exception "
@@ -411,6 +440,23 @@ _ZERO_CITATION_CRITIQUE = (
     "a citation for a claim its source does not support, and do not say in the Scope note that the "
     "sources could not be cited."
 )
+
+
+def _backstop_critique(report: str, sources: list[WebSource], enforce_sections: list[str]) -> str:
+    """The corrective critique for the ONE post-synth re-write, or "" if the draft is clean.
+    Combines the zero-citation symptom (sources reached but nothing cited) with the
+    missing-heading symptom (a preset's required section dropped), so a single re-synth fixes
+    whichever fired. `enforce_sections` is empty for a non-preset run, so its heading half is
+    inert there and the behaviour collapses to exactly the zero-citation backstop."""
+    parts: list[str] = []
+    if sources and not _CITE_MARKER.search(report):
+        parts.append(_ZERO_CITATION_CRITIQUE)
+    missing = _missing_headings(report, enforce_sections)
+    if missing:
+        parts.append(_missing_headings_critique(missing))
+    return "\n\n".join(parts)
+
+
 # Coalesce the stream: emit a preview at most every ~N new characters so the live report
 # updates smoothly without a per-token event storm over the SSE channel.
 _SYNTH_PREVIEW_STRIDE = 240
@@ -591,7 +637,7 @@ def _collect_sources(children: list[_ChildResult]) -> list[WebSource]:
     via a tracking link, `http` vs `https`, `www.`, or a trailing slash counts once — the raw
     count otherwise over-reports the distinct sources by a wide margin. The first-seen original
     URL is what's kept and cited."""
-    seen: set[str] = set()
+    seen: dict[str, int] = {}
     out: list[WebSource] = []
     for child in children:
         for ws in child.web_sources:
@@ -599,8 +645,13 @@ def _collect_sources(children: list[_ChildResult]) -> list[WebSource]:
                 continue
             key = _canonical_url(ws.url)
             if key not in seen:
-                seen.add(key)
+                seen[key] = len(out)
                 out.append(ws)
+            elif ws.read and not out[seen[key]].read:
+                # The same page arrived as a bare search hit AND, from another child, as a
+                # genuine read — upgrade the kept (first-seen) entry to `read` so the writer
+                # knows this URL's content was actually opened, not merely search-listed.
+                out[seen[key]] = out[seen[key]].model_copy(update={"read": True})
     return out
 
 
@@ -610,7 +661,16 @@ def _sources_block(sources: list[WebSource]) -> str:
     to favicons. Empty when the run reached no web source."""
     if not sources:
         return ""
-    return "\n".join(f"[^{i}] {ws.title or ws.url} — {ws.url}" for i, ws in enumerate(sources, 1))
+    # A source no agent opened (a bare `web_search` hit) is flagged so the writer can tell a
+    # read page from a search-listed one: a `[^n]` that attributes a page's CONTENTS ("X says
+    # / omits Y") must point at a page actually read, since a search hit carries only its
+    # title+snippet. Every entry is still numbered so `[^n]` mapping and the favicon chips are
+    # unchanged; the flag is a suffix on the line, nothing more.
+    lines = []
+    for i, ws in enumerate(sources, 1):
+        suffix = "" if ws.read else "  (search result — not opened)"
+        lines.append(f"[^{i}] {ws.title or ws.url} — {ws.url}{suffix}")
+    return "\n".join(lines)
 
 
 def _findings_block(results: list[_ChildResult]) -> str:
@@ -686,16 +746,6 @@ class DeepResearchService:
             return _refuse("deep research is only available in an interactive owner turn.")
         if ctx.depth >= MAX_DEPTH:
             return _refuse("a sub-agent cannot start its own deep-research run; only jerv does.")
-        question = args.get("question")
-        if not isinstance(question, str) or not question.strip():
-            return _refuse("provide a non-empty `question` to research.")
-        question = question.strip()
-        breadth = _clamp_breadth(args.get("breadth"))
-        source_mode = args.get("sources") or _DEFAULT_SOURCE_MODE
-        if source_mode not in _SOURCE_MODES:
-            return _refuse(
-                f"unknown sources mode {source_mode!r}; choose one of {list(_SOURCE_MODES)}."
-            )
         # `deepest` turns the single refill into the adaptive loop below (Wave R1); the
         # pipeline is otherwise identical, in-request and depth-1. `sources` and `mode`
         # are orthogonal — a deepest run can still be library-scoped.
@@ -703,6 +753,31 @@ class DeepResearchService:
         if mode not in _MODES:
             return _refuse(f"unknown mode {mode!r}; choose one of {list(_MODES)}.")
         deepest = mode == "deepest"
+
+        # A saved PRESET (opt-in) supplies the whole plan + report shape from a checked-in
+        # template — so many subjects come out structurally identical. Absent, the run
+        # self-orchestrates below exactly as before (the default path is byte-unchanged).
+        preset_name = args.get("preset")
+        if preset_name:
+            return await self._run_preset(
+                ctx,
+                str(preset_name),
+                args,
+                deepest=deepest,
+                on_round=on_round,
+                require_persist=require_persist,
+            )
+
+        question = args.get("question")
+        if not isinstance(question, str) or not question.strip():
+            return _refuse("provide a non-empty `question` to research (or a `preset`).")
+        question = question.strip()
+        breadth = _clamp_breadth(args.get("breadth"))
+        source_mode = args.get("sources") or _DEFAULT_SOURCE_MODE
+        if source_mode not in _SOURCE_MODES:
+            return _refuse(
+                f"unknown sources mode {source_mode!r}; choose one of {list(_SOURCE_MODES)}."
+            )
         # deep_research is the report preset of the shared engine: the objective IS the
         # question (so no OBJECTIVE block is emitted — the report path stays byte-stable),
         # and a jerv run persists to the external report corpus. `sources`/`mode` remain
@@ -717,6 +792,73 @@ class DeepResearchService:
             deepest=deepest,
             directive=directive,
             source_plan=source_plan,
+            on_round=on_round,
+            require_persist=require_persist,
+        )
+
+    async def _run_preset(
+        self,
+        ctx: ToolContext,
+        preset_name: str,
+        args: dict,
+        *,
+        deepest: bool,
+        on_round: RoundHook | None = None,
+        require_persist: bool = False,
+    ) -> str:
+        """Render a saved preset with the run's `variables` and drive `_run` from it — the
+        planner is skipped and the fixed sections + gather angles run instead, so every
+        subject the preset is pointed at comes out in the same shape. A missing variable or an
+        unknown preset is a clean refusal (the strict render), never a half-filled report."""
+        variables = args.get("variables")
+        if variables is not None and not isinstance(variables, dict):
+            return _refuse("`variables` must be an object mapping preset variable names to values.")
+        try:
+            rp: RenderedPreset = render_preset(
+                preset_name, {str(k): str(v) for k, v in (variables or {}).items()}
+            )
+        except PresetError as exc:
+            return _refuse(str(exc))
+        if rp.output_kind not in _OUTPUT_KINDS:
+            return _refuse(
+                f"preset {preset_name!r} has unknown output_kind {rp.output_kind!r}; "
+                f"choose one of {list(_OUTPUT_KINDS)}."
+            )
+        if rp.source_mode not in _SOURCE_MODES:
+            return _refuse(
+                f"preset {preset_name!r} has unknown sources {rp.source_mode!r}; "
+                f"choose one of {list(_SOURCE_MODES)}."
+            )
+        # The gather fan is capped at DR_MAX_BREADTH so the later analyst/critique fans still
+        # fit under the tree; a preset listing more angles runs the first N (its outline can
+        # still carry as many SECTIONS as it likes — those aren't fans). Log any truncation.
+        angles = list(rp.angles)[:DR_MAX_BREADTH]
+        if len(angles) < len(rp.angles):
+            log.info(
+                "deep_research.preset_angles_clamped",
+                preset=preset_name,
+                requested=len(rp.angles),
+                ran=len(angles),
+            )
+        # complexity="deep" so `_breadth_for` never shrinks the preset's chosen angle count
+        # (complexity only sizes breadth); stages stay empty (a preset is a flat gather).
+        plan_override = {
+            "complexity": "deep",
+            "sub_questions": angles,
+            "sections": list(rp.sections),
+            "stages": [],
+        }
+        directive = Directive(objective=rp.objective or rp.question, output_kind=rp.output_kind)
+        source_plan = SourcePlan(source_mode=rp.source_mode, seed=None, sink=_SINK_EXTERNAL)
+        return await self._run(
+            ctx,
+            question=rp.question,
+            breadth=len(angles),
+            deepest=deepest,
+            directive=directive,
+            source_plan=source_plan,
+            plan_override=plan_override,
+            enforce_headings=True,
             on_round=on_round,
             require_persist=require_persist,
         )
@@ -864,6 +1006,8 @@ class DeepResearchService:
         deepest: bool,
         directive: Directive,
         source_plan: SourcePlan,
+        plan_override: dict | None = None,
+        enforce_headings: bool = False,
         on_round: RoundHook | None = None,
         require_persist: bool = False,
     ) -> str:
@@ -900,8 +1044,16 @@ class DeepResearchService:
             return _refuse("a records-grounded run must stay on the local library.")
 
         # --- (1) PLAN (+ complexity) ----------------------------------------------
-        self._phase(ctx, 1, "Planning the investigation")
-        plan = await self._plan(ctx, question, breadth)
+        # A PRESET supplies the plan dict directly (fixed sections + fixed gather angles), so
+        # the planner is skipped and the run's shape is identical across subjects. Without one
+        # (the default), `_plan` invents the outline + sub-questions exactly as before — the
+        # non-preset path stays byte-for-byte unchanged.
+        if plan_override is not None:
+            self._phase(ctx, 1, "Loading the report preset")
+            plan = plan_override
+        else:
+            self._phase(ctx, 1, "Planning the investigation")
+            plan = await self._plan(ctx, question, breadth)
         complexity = plan["complexity"]
         sections = plan["sections"]
         # Each entry is a (row title, research brief) pair. A planless fallback researches
@@ -1090,14 +1242,21 @@ class DeepResearchService:
                 critique="",
                 directive=directive,
             )
-            # Mechanical zero-citation backstop: the run reached sources but the draft cites none
-            # — the writer took the all-off-topic escape hatch. Force one hardened re-synth telling
-            # it the list is not all off-topic, rather than shipping an uncited report on a prose
-            # rule a local model already over-applied. One retry only; a still-uncited draft is the
-            # honest all-noise case. Runs before the critique slice is released so the re-synth,
-            # a jerv model call, isn't gated by it (the reserve gates child fans, not this call).
-            if sources and not _CITE_MARKER.search(report):
-                log.warning("deep_research.zero_citations_retry", reached=len(sources))
+            # Mechanical backstops on the draft, folded into ONE hardened re-synth:
+            #   • zero-citation — the run reached sources but the draft cites none (the writer
+            #     took the all-off-topic escape hatch on a rule a local model over-applies);
+            #   • missing-heading (PRESET runs only) — the draft dropped/renamed a required
+            #     section of the locked outline.
+            # Detecting the symptom and forcing one corrective write beats trusting a prose rule.
+            # One retry only; a still-defective draft ships honestly. Runs before the critique
+            # slice is released so the re-synth (a jerv call) isn't gated by it.
+            backstop = _backstop_critique(report, sources, sections if enforce_headings else [])
+            if backstop:
+                log.warning(
+                    "deep_research.backstop_retry",
+                    reached=len(sources),
+                    enforce_headings=enforce_headings,
+                )
                 report = await self._synthesize(
                     ctx,
                     question,
@@ -1106,7 +1265,7 @@ class DeepResearchService:
                     analysis,
                     sources,
                     complexity=complexity,
-                    critique=_ZERO_CITATION_CRITIQUE,
+                    critique=backstop,
                     directive=directive,
                 )
 

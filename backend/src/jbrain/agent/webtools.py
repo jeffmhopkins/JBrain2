@@ -101,7 +101,8 @@ def _present_outline(result: FetchResult) -> str:
         " web_fetch the SAME url with offset=<n> to read a section:\n\n" + _outline_lines(result)
     )
     return ToolOutput(
-        body, web_sources=(WebSource(url=result.url, title=result.title or result.url),)
+        body,
+        web_sources=(WebSource(url=result.url, title=result.title or result.url, read=True),),
     )
 
 
@@ -192,7 +193,7 @@ def _present_fetch(
         )
     # The fetched page is itself a citable source — title from the page, url the FINAL url after
     # redirects (what the favicon + link should point at).
-    source = WebSource(url=result.url, title=result.title or result.url)
+    source = WebSource(url=result.url, title=result.title or result.url, read=True)
     return ToolOutput(body, web_sources=(source,))
 
 
@@ -375,7 +376,7 @@ def build_web_handlers(
                 " from here) or pass from_offset to jump. Don't re-web_fetch the URL to page.]"
             )
         await artifacts.set_offset(read_ctx, artifact_id, next_offset)
-        source = WebSource(url=art.source_url, title=art.title or art.source_url)
+        source = WebSource(url=art.source_url, title=art.title or art.source_url, read=True)
         return ToolOutput(out, web_sources=(source,))
 
     handlers: dict[str, ToolHandler] = {"web_search": web_search_tool, "web_fetch": web_fetch_tool}

@@ -477,7 +477,7 @@ def build_external_handlers(
         raw_from = arguments.get("from_ms")
         from_ms = raw_from if isinstance(raw_from, int) and not isinstance(raw_from, bool) else 0
         body = _render_transcript(transcript, max(0, from_ms))
-        source = WebSource(url=transcript.url, title=transcript.title or transcript.url)
+        source = WebSource(url=transcript.url, title=transcript.title or transcript.url, read=True)
         return ToolOutput(body, web_sources=(source,))
 
     async def show_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:

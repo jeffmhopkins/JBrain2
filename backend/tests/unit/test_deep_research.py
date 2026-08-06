@@ -23,11 +23,14 @@ from jbrain.agent.deep_research import (
     DR_REVIEW_TIME_RESERVE,
     DR_SIMPLE_BREADTH,
     DeepResearchService,
+    _backstop_critique,
     _canonical_url,
     _coerce_brief,
     _collect_sources,
+    _missing_headings,
+    _sources_block,
 )
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.spawn import _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.db.session import SessionContext
@@ -952,7 +955,7 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     via its `namesake` assertion). LLM judgment itself can't be unit-tested; the prose can."""
     from jbrain.agent.deep_research import _SYNTH
 
-    assert _SYNTH.version == "dr-synth-v9"  # pin the version bump (parity with the plan test)
+    assert _SYNTH.version == "dr-synth-v10"  # pin the version bump (parity with the plan test)
     synth = _SYNTH.body.lower()
     assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
     assert "not licence to drop all citations" in synth  # the give-up path stays closed
@@ -1629,6 +1632,141 @@ def _research_child(urls: list[str]) -> _ChildResult:
         session_id="sid",
         web_sources=tuple(WebSource(url=u, title=u) for u in urls),
     )
+
+
+def _child_with(sources: list[WebSource]) -> _ChildResult:
+    return _ChildResult(
+        label="l",
+        persona="research",
+        summary="s",
+        ok=True,
+        session_id="sid",
+        web_sources=tuple(sources),
+    )
+
+
+def test_collect_sources_upgrades_read_flag_when_a_later_child_opened_the_page() -> None:
+    """A page that arrives first as a bare search hit (read=False) and later as a genuine
+    read from another child is kept once, upgraded to read=True — so the writer sees it as
+    opened, not search-listed. A URL only ever search-listed stays read=False."""
+    children = [
+        _child_with(
+            [
+                WebSource(url="https://ex.com/a", title="A"),
+                WebSource(url="https://ex.com/b", title="B"),
+            ]
+        ),
+        _child_with([WebSource(url="https://www.ex.com/a/", title="A", read=True)]),
+    ]
+    out = _collect_sources(children)
+    by_key = {_canonical_url(ws.url): ws for ws in out}
+    a = by_key[_canonical_url("https://ex.com/a")]
+    b = by_key[_canonical_url("https://ex.com/b")]
+    assert a.read is True  # upgraded by the second child's real read
+    assert b.read is False  # only ever search-listed
+    assert a.url == "https://ex.com/a"  # first-seen original url kept
+
+
+async def test_preset_run_skips_the_planner_and_uses_the_presets_fixed_shape() -> None:
+    """A preset run never calls the PLANNER; it gathers the preset's fixed angles and hands the
+    writer the preset's fixed section outline (variable-filled)."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    out = await _svc(router, spawn).research(
+        _ctx(),
+        {
+            "preset": "candidate_profile",
+            "variables": {"candidate": "Jane Doe", "office": "U.S. Senate (Florida)"},
+        },
+    )
+    assert isinstance(out, ToolOutput)
+    # The planner one-shot never ran — the preset supplied the plan.
+    assert not any("PLANNER" in c["system"] for c in router.calls)
+    # Gather ran the preset's five fixed angles (by their titles), not model-invented ones.
+    gather = _research_fans(spawn)[0]
+    assert [title for title, _ in gather["briefs"]] == [
+        "Voting & legislative record",
+        "Career, occupations & business record",
+        "Funding, endorsements & backing",
+        "Positions over time & rhetoric",
+        "Controversies & legal record",
+    ]
+    # The writer got the preset's fixed outline + the variable-filled objective.
+    synth = router.synth_calls[0]
+    assert "Voting & Legislative Record" in synth and "Record vs. Rhetoric" in synth
+    assert "Jane Doe" in synth and "U.S. Senate (Florida)" in synth
+
+
+async def test_preset_missing_variable_refuses_before_any_research() -> None:
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    out = await _svc(router, spawn).research(
+        _ctx(), {"preset": "candidate_profile", "variables": {"candidate": "Jane Doe"}}
+    )
+    assert isinstance(out, str) and out.startswith("Refused:") and "office" in out
+    assert spawn.fans == []  # no sub-agents spawned on a refused preset render
+    assert router.synth_calls == []
+
+
+async def test_unknown_preset_refuses() -> None:
+    out = await _svc(_FakeRouter(), _FakeSpawn()).research(
+        _ctx(), {"preset": "no_such_preset", "variables": {}}
+    )
+    assert isinstance(out, str) and out.startswith("Refused:")
+
+
+async def test_preset_run_enforces_missing_headings_with_one_resynth() -> None:
+    """The fake writer emits a draft with no section headings; a preset run detects the missing
+    required sections and forces exactly one corrective re-synth carrying STRUCTURE DEFECT."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(
+        _ctx(),
+        {
+            "preset": "candidate_profile",
+            "variables": {"candidate": "Jane Doe", "office": "U.S. Senate"},
+        },
+    )
+    structure_retries = [s for s in router.synth_calls if "STRUCTURE DEFECT" in s]
+    assert len(structure_retries) == 1  # one hardened re-synth, not a loop
+    assert "Controversies & Legal Record" in structure_retries[0]  # names the missing sections
+
+
+async def test_non_preset_run_never_enforces_headings() -> None:
+    """A default (planner) run must not gain heading enforcement — the writer adapts sections
+    freely, so a draft without the planner's headings triggers no STRUCTURE re-synth."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "some open question"})
+    assert not any("STRUCTURE DEFECT" in s for s in router.synth_calls)
+
+
+def test_missing_headings_matches_markdown_heading_lines_case_insensitively() -> None:
+    report = "# Summary\nblah\n## Campaign Finance\ndetail\nprose mentioning Assessment inline"
+    # Present as headings (any case); "Assessment" only appears in prose, so it's missing.
+    missing = _missing_headings(report, ["summary", "CAMPAIGN FINANCE", "Assessment"])
+    assert missing == ["Assessment"]
+
+
+def test_backstop_critique_combines_citation_and_heading_symptoms() -> None:
+    srcs = [WebSource(url="https://ex.com/a", title="A")]
+    # Uncited draft + a missing heading → both symptoms named in one critique.
+    both = _backstop_critique("no markers here\n# Summary", srcs, ["Summary", "Finance"])
+    assert "CRITICAL DEFECT" in both and "STRUCTURE DEFECT" in both and "Finance" in both
+    # A clean, cited draft with every heading → no critique.
+    assert _backstop_critique("# Summary [^1]", srcs, ["Summary"]) == ""
+    # No sources → citation half is inert; no enforced sections → heading half inert.
+    assert _backstop_critique("uncited", [], []) == ""
+
+
+def test_sources_block_flags_search_only_entries_and_leaves_read_ones_clean() -> None:
+    """The numbered SOURCES block marks a source no agent opened so the writer won't rest a
+    contents/absence claim on a page whose text is unknown to the run; a read page is clean."""
+    block = _sources_block(
+        [
+            WebSource(url="https://ex.com/read", title="Read Page", read=True),
+            WebSource(url="https://ex.com/hit", title="Search Hit", read=False),
+        ]
+    )
+    lines = block.splitlines()
+    assert lines[0] == "[^1] Read Page — https://ex.com/read"
+    assert lines[1] == "[^2] Search Hit — https://ex.com/hit  (search result — not opened)"
 
 
 def test_canonical_url_collapses_scheme_www_tracking_fragment_slash() -> None:
