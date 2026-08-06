@@ -136,6 +136,17 @@ async def test_settle_helper_arms_only_when_it_should(maker: async_sessionmaker)
     await maybe_schedule_continuation(maker, owner, good, agent="jerv", stop_reason="end_turn")
     assert await _due(maker, owner, good)
 
+    # approved-but-not-yet-started + unchecked → armed too (the first step continues the
+    # plan without the owner having to send another message).
+    approved = await _chat(maker, owner, body=_OPEN, status="approved")
+    await maybe_schedule_continuation(maker, owner, approved, agent="jerv", stop_reason="end_turn")
+    assert await _due(maker, owner, approved)
+
+    # a still-unapproved draft is never armed.
+    draft = await _chat(maker, owner, body=_OPEN, status="not_approved")
+    await maybe_schedule_continuation(maker, owner, draft, agent="jerv", stop_reason="end_turn")
+    assert not await _due(maker, owner, draft)
+
     # all steps checked → not armed.
     done = await _chat(maker, owner, body=_DONE, status="in_work")
     await maybe_schedule_continuation(maker, owner, done, agent="jerv", stop_reason="end_turn")
@@ -150,6 +161,22 @@ async def test_settle_helper_arms_only_when_it_should(maker: async_sessionmaker)
     other = await _chat(maker, owner, body=_OPEN, status="in_work")
     await maybe_schedule_continuation(maker, owner, other, agent="curator", stop_reason="end_turn")
     assert not await _due(maker, owner, other)
+
+
+async def test_approving_arms_and_claims_the_first_step(maker: async_sessionmaker) -> None:
+    """The fix for 'approved but sitting there': the approve endpoint arms a continuation,
+    and the sweep claims an `approved` plan (not just `in_work`) — so the first step starts
+    on its own. jerv then flips the status to in_work as it executes."""
+    owner = await _owner(maker)
+    sid = await _chat(maker, owner, body=_OPEN, status="approved")
+    repo = PlanRepo()
+    # Mirror the approve endpoint: arm the first continuation on the just-approved plan.
+    async with scoped_session(maker, owner) as s:
+        await repo.schedule_continuation(s, sid, delay_s=0)
+        assert (await repo.get(s, sid)).continuation_due_at is not None
+    # The sweep claims it even though the status is still `approved` (jerv hasn't started).
+    async with scoped_session(maker, owner) as s:
+        assert await repo.claim_due_continuations(s, max_continuations=MAX_CONTINUATIONS) == [sid]
 
 
 async def test_owner_message_reset_clears_everything(maker: async_sessionmaker) -> None:

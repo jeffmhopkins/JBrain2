@@ -149,7 +149,9 @@ class PlanRepo:
             .where(
                 AgentSessionPlan.continuation_due_at.isnot(None),
                 AgentSessionPlan.continuation_due_at <= func.now(),
-                AgentSessionPlan.status == "in_work",
+                # `approved` (the first step, kicked off by the approve endpoint) or
+                # `in_work` (jerv already executing) — not a `not_approved` draft.
+                AgentSessionPlan.status.in_(("approved", "in_work")),
                 AgentSessionPlan.awaiting_owner.is_(False),
                 AgentSessionPlan.continuations_used < max_continuations,
             )

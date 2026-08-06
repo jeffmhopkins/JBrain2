@@ -67,7 +67,11 @@ model-authored markup — invariants #1/#9).
 ## 4. Approval + re-injection
 
 - **Owner approval** is a UI gesture / endpoint (`POST /api/plans/{id}/approve`), never a
-  jerv tool. The owner may edit the draft first (`/edit`).
+  jerv tool. The owner may edit the draft first (`/edit`). Approval also **arms the first
+  continuation**, so the sweep starts jerv on the plan (~15s) — approval alone otherwise
+  just sets the status and the plan sits, because nothing tells the agent it was approved.
+  The loop fires on `approved` (the first step) as well as `in_work` (jerv flips the status
+  itself as it executes).
 - **On-plan across turns:** while a plan is `approved`/`in_work`, the `/chat` route
   re-injects it each turn as a DATA-framed operating block (`_plan_blocks`), beside the
   existing `read_artifact` / `read_research_report` pointers — the single highest-leverage

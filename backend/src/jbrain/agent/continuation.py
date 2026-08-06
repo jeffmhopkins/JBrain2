@@ -53,6 +53,12 @@ CONTINUATION_DELAY_S = 60
 SWEEP_INTERVAL_S = 15
 MAX_CONTINUATIONS = 20
 
+# The statuses a continuation may fire on: `approved` (the owner just signed off — this is
+# the FIRST step, kicked off by the approve endpoint arming a continuation) and `in_work`
+# (jerv has started; it flips the status itself as it executes). Both count so approval
+# alone starts the plan without the owner having to send another message.
+_ACTIVE_STATUSES = ("approved", "in_work")
+
 # How long a session's "a turn is starting" marker (set by /chat before it registers in
 # live_turns) is trusted. Longer than any real turn setup, so a continuation yields to an
 # owner turn mid-startup; short enough that a marker leaked by a failed setup clears fast.
@@ -84,7 +90,7 @@ async def maybe_schedule_continuation(
         return
     async with scoped_session(maker, owner_ctx) as session:
         plan = await PlanRepo().get(session, session_id)
-        if plan is None or plan.status != "in_work" or plan.awaiting_owner:
+        if plan is None or plan.status not in _ACTIVE_STATUSES or plan.awaiting_owner:
             return
         if plan.continuations_used >= MAX_CONTINUATIONS or not has_open_checklist_item(plan.body):
             return
@@ -182,7 +188,7 @@ class PlanContinuationRunner:
                 plan = await PlanRepo().get(s, sid)
             if (
                 plan is None
-                or plan.status != "in_work"
+                or plan.status not in _ACTIVE_STATUSES
                 or plan.awaiting_owner
                 or not has_open_checklist_item(plan.body)
             ):

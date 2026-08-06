@@ -71,11 +71,19 @@ async def get_plan(request: Request, principal: OwnerDep, session_id: str) -> Pl
 @router.post("/{session_id}/approve")
 async def approve_plan(request: Request, principal: OwnerDep, session_id: str) -> PlanOut:
     """Sign off on the plan — the ONE transition jerv cannot make itself. 404 if there is
-    no plan to approve (the owner can't approve a plan that was never drafted)."""
+    no plan to approve (the owner can't approve a plan that was never drafted).
+
+    Approval also ARMS the first continuation: the sweep then starts jerv on the plan on
+    its next pass (~15s). Without this, approval alone just sets the status and the plan
+    sits — nothing tells the agent it was approved."""
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
-        plan = await _repo.set_status(db, session_id, "approved")
-    if plan is None:
-        raise HTTPException(status_code=404, detail="no plan for that conversation")
+        if await _repo.set_status(db, session_id, "approved") is None:
+            raise HTTPException(status_code=404, detail="no plan for that conversation")
+        await _repo.schedule_continuation(db, session_id, delay_s=0)
+    # Re-read in a fresh session so the returned state reflects the armed due-time.
+    async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
+        plan = await _repo.get(db, session_id)
+    assert plan is not None
     return _out(plan)
 
 
@@ -116,7 +124,7 @@ async def continue_plan(request: Request, principal: OwnerDep, session_id: str) 
         # under the cap (else the sweep's own `used < max` filter would never claim it, so
         # the card would show a countdown that silently never runs).
         if (
-            plan.status == "in_work"
+            plan.status in ("approved", "in_work")
             and not plan.awaiting_owner
             and plan.continuations_used < MAX_CONTINUATIONS
         ):
