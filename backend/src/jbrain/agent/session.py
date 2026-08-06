@@ -19,6 +19,7 @@ from sqlalchemy.orm import aliased
 from jbrain.agent.contracts import DEFAULT_OWNER_POLICY, PermissionClass, PolicyOutcome
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.agent import AgentSession, AgentTurn, Run
+from jbrain.models.plan import AgentSessionPlan
 from jbrain.models.proposals import Proposal
 
 _PREVIEW_LEN = 140  # the resume hint on a chat card; longer is clamped in the UI too
@@ -59,6 +60,9 @@ class AgentSessionInfo:
     # stored transcript). None until a turn reports usage, or for a pre-feature chat.
     context_tokens: int | None = None
     context_window: int | None = None
+    # This chat's plan status (not_approved | approved | in_work), for the Chats-card
+    # planning badge (JERV_PLANNING_TOOL_PLAN.md). None when the chat has no plan.
+    plan_status: str | None = None
 
 
 def _info(
@@ -69,6 +73,7 @@ def _info(
     staged_count: int = 0,
     subagent_count: int = 0,
     last_run_status: str | None = None,
+    plan_status: str | None = None,
 ) -> AgentSessionInfo:
     return AgentSessionInfo(
         id=str(row.id),
@@ -89,6 +94,7 @@ def _info(
         last_run_status=last_run_status,
         context_tokens=row.context_tokens,
         context_window=row.context_window,
+        plan_status=plan_status,
     )
 
 
@@ -191,10 +197,23 @@ class AgentSessionRepo:
             .limit(1)
             .scalar_subquery()
         )
+        # This chat's plan status, for the Chats-card planning badge — one more
+        # correlated subquery (NULL when the chat has no plan row).
+        plan_status = (
+            select(AgentSessionPlan.status)
+            .where(AgentSessionPlan.session_id == AgentSession.id)
+            .scalar_subquery()
+        )
         async with scoped_session(self._maker, ctx) as session:
             rows = await session.execute(
                 select(
-                    AgentSession, turn_count, preview, staged_count, subagent_count, last_run_status
+                    AgentSession,
+                    turn_count,
+                    preview,
+                    staged_count,
+                    subagent_count,
+                    last_run_status,
+                    plan_status,
                 ).order_by(AgentSession.last_active_at.desc())
             )
             return [
@@ -205,8 +224,9 @@ class AgentSessionRepo:
                     staged_count=sc,
                     subagent_count=kc,
                     last_run_status=rs,
+                    plan_status=ps,
                 )
-                for row, tc, pv, sc, kc, rs in rows
+                for row, tc, pv, sc, kc, rs, ps in rows
             ]
 
     async def get(self, ctx: SessionContext, session_id: str) -> AgentSessionInfo | None:

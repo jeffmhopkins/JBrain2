@@ -27,6 +27,7 @@ from jbrain.agent.appointmenttools import (
     build_appointment_write_handlers,
 )
 from jbrain.agent.archivisttools import build_archivist_memory_handlers
+from jbrain.agent.plantools import build_plan_handlers
 from jbrain.agent.bartools import build_bar_handlers
 from jbrain.agent.charttools import build_chart_handlers
 from jbrain.agent.clock import build_clock_handlers
@@ -803,6 +804,12 @@ def build_registry(
             # the owner-only `archivist_memory` table — always wired (the table always
             # exists); curator never sees it (the opt-in web class).
             **build_archivist_memory_handlers(maker),
+            # jerv's per-conversation planning tools (`web`-gated, jerv-only) over the
+            # owner-only `agent_session_plans` table — always wired (the table always
+            # exists); curator never sees them (the opt-in web class). read_plan/write_plan
+            # let jerv draft a plan the owner approves, then execute against it
+            # (docs/plans/JERV_PLANNING_TOOL_PLAN.md).
+            **build_plan_handlers(maker),
             # The sub-agent spawn primitive (docs/archive/SUBAGENT_SPAWNING_PLAN.md). A
             # late-bound handler: the service it forwards to needs the very registry
             # being built (it launches children on it), so it is wired below once the

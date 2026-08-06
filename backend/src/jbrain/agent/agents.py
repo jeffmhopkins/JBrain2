@@ -171,6 +171,13 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # this, then analyze_stream on each new match).
         "check_channel",
         "query_server_metrics",
+        # Per-conversation planning (JERV_PLANNING_TOOL_PLAN.md): draft a plan for a
+        # multi-step task, let the owner approve it, then execute against it. read_plan
+        # reads this chat's plan (body + status); write_plan drafts/rewrites it and moves
+        # its status — but jerv may only set not_approved/in_work, never `approved` (the
+        # owner's alone). The approved plan is re-injected each turn so jerv follows it.
+        "read_plan",
+        "write_plan",
         # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,
         # The two-tier decomposition primitive. jerv holds it only so the parent⊆child

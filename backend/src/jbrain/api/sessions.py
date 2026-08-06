@@ -66,6 +66,9 @@ class SessionOut(BaseModel):
     # meter restores when the owner reopens a chat (null until a turn reports usage).
     context_tokens: int | None = None
     context_window: int | None = None
+    # This chat's plan status (not_approved | approved | in_work), for the Chats-card
+    # planning badge; null when the chat has no plan (JERV_PLANNING_TOOL_PLAN.md).
+    plan_status: str | None = None
 
 
 def session_out(info: AgentSessionInfo) -> SessionOut:
@@ -86,6 +89,7 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
         last_run_status=info.last_run_status,
         context_tokens=info.context_tokens,
         context_window=info.context_window,
+        plan_status=info.plan_status,
     )
 
 

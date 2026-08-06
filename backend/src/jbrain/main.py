@@ -77,6 +77,7 @@ from jbrain.api import (
     ops,
     owntracks,
     pairing,
+    plans,
     proposals,
     research_library,
     research_share,
@@ -983,6 +984,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ops.router, prefix="/api")
     app.include_router(owntracks.router, prefix="/api")
     app.include_router(pairing.router, prefix="/api")
+    app.include_router(plans.router, prefix="/api")
     app.include_router(proposals.router, prefix="/api")
     app.include_router(research_library.router, prefix="/api")
     app.include_router(research_share.router, prefix="/api")
