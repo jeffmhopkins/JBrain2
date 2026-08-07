@@ -26,6 +26,7 @@ from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
 from jbrain.notify import Notification, NotifyBus, notify_owner
@@ -74,6 +75,7 @@ class TurnExecutor(Protocol):
         acc: TranscriptAccumulator | None = None,
         on_event: Callable[[ChatEvent], None] | None = None,
         supervised: bool = False,
+        root_tree: bool = False,
     ) -> ExecutedTurn: ...
 
 
@@ -105,6 +107,7 @@ class LoopTurnExecutor:
         acc: TranscriptAccumulator | None = None,
         on_event: Callable[[ChatEvent], None] | None = None,
         supervised: bool = False,
+        root_tree: bool = False,
     ) -> ExecutedTurn:
         effort = await self.router.effective_reasoning_effort("agent.turn")
         # The context window the turn runs against — the meter's denominator, resolved exactly
@@ -118,14 +121,22 @@ class LoopTurnExecutor:
         # `supervised` lifts the per-turn budget when a foreground PWA client is watching this
         # turn stream (a plan continuation fired while the owner is present). A background task
         # never passes it, so a headless run keeps the ordinary effort-sized budget.
+        guardrails = guardrails_for_effort(
+            effort, scale=profile.budget_multiplier, supervised=supervised
+        )
         loop = AgentLoop(
             self.router,
             self.registry,
             recorder=tally,  # type: ignore[arg-type]
-            guardrails=guardrails_for_effort(
-                effort, scale=profile.budget_multiplier, supervised=supervised
-            ),
+            guardrails=guardrails,
         )
+        # `root_tree` seeds this turn as the ROOT of a sub-agent fan (depth 0), exactly as /chat
+        # does — the budget sized off the turn's own per-turn cap. Without it `ctx.tree` is None,
+        # and the fan-out tools (deep_research/deep_produce/deepest_research/spawn_subagent) all
+        # refuse with "only available in an interactive owner turn" — which broke a plan whose
+        # steps ARE deep-research runs. A plan continuation IS an owner-approved turn, so it opts
+        # in; a headless scheduled task leaves it False and keeps the no-fan-out behaviour.
+        tree = TreeState.rooted(guardrails.max_cost_tokens) if root_tree else None
         # A caller that wants to STREAM the turn (a plan continuation) passes its own
         # accumulator — the one it exposes as the reattach snapshot — plus an `on_event`
         # sink that emits each event onto its `_LiveTurn` broker. The default headless
@@ -146,6 +157,7 @@ class LoopTurnExecutor:
             # stays unset. `context_window` IS passed so the meter tracks this turn live.
             general_knowledge_label=profile.reads_knowledge_base,
             context_window=context_window,
+            tree=tree,
         ):
             acc.feed(event)
             # Track the latest UsageEvent — the fullest the context got this turn — so the

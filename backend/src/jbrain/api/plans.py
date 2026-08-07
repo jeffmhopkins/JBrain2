@@ -39,6 +39,19 @@ def _kick_continuations(request: Request) -> None:
         runner.schedule_kick()
 
 
+def _cancel_live_turn(request: Request, session_id: str) -> None:
+    """Cancel any in-flight continuation turn for this conversation — the plan-card Stop reaching
+    the running step so it's halted now, not after it finishes. Mirrors the sweep's own
+    `session_id`/`.done` shape; a no-op if nothing is running or the registry isn't wired (some
+    test apps). The turn's CancelledError handler then marks the plan awaiting-owner too."""
+    live_turns = getattr(request.app.state, "live_turns", None)
+    if not live_turns:
+        return
+    for lt in list(live_turns.values()):
+        if getattr(lt, "session_id", None) == session_id and not getattr(lt, "done", True):
+            lt.cancel()
+
+
 class PlanOut(BaseModel):
     # `plan_id` is the plan's own identity (a card polls/mutates by it); `session_id` is the
     # conversation it belongs to (many plans may share one).
@@ -145,13 +158,23 @@ async def edit_plan(request: Request, principal: OwnerDep, plan_id: str, body: E
 
 @router.post("/{plan_id}/stop")
 async def stop_plan(request: Request, principal: OwnerDep, plan_id: str) -> PlanOut:
-    """Cancel the pending auto-continuation and reset its budget — the owner halting the
-    loop from the card. 404 if there is no such plan."""
+    """Halt the plan's auto-continuation loop — the owner hitting Stop from the card. 404 if
+    there is no such plan.
+
+    Two things, so Stop actually stops even mid-step: (1) mark the plan awaiting-owner — the
+    DURABLE halt, since it clears any pending due-time AND makes both the sweep's claim filter
+    and the settle helper skip the plan, so a settling turn can't re-arm the next step; and
+    (2) cancel any continuation turn already running for this conversation, so a step in flight
+    is stopped now rather than allowed to finish (and re-arm). The owner resumes by sending a
+    message (the owner-message reset re-opens the loop)."""
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
-        if await _repo.get_by_id(db, plan_id) is None:
-            raise HTTPException(status_code=404, detail="no such plan")
-        await _repo.cancel_and_reset(db, plan_id)
         plan = await _repo.get_by_id(db, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="no such plan")
+        session_id = str(plan.session_id)
+        await _repo.set_awaiting_owner(db, plan_id, True)
+        plan = await _repo.get_by_id(db, plan_id)
+    _cancel_live_turn(request, session_id)
     assert plan is not None
     return _out(plan)
 
