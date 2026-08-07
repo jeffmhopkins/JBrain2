@@ -118,16 +118,24 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
 
             # Apply the continuation opt-out/opt-in. await_owner stops the auto-loop and
             # clears any pending continuation; checkpoint clears the flag so the loop runs.
-            if pause == "await_owner":
+            # BUT await_owner on a `not_approved` draft is a no-op: a draft is ALREADY waiting
+            # for the owner (to approve it), so setting the flag is meaningless and actively
+            # harmful — it hides the Approve control on the card and, left set, would block the
+            # loop even after approval. The approval gate IS the pause for a draft.
+            paused_for_owner = pause == "await_owner" and new_status != "not_approved"
+            if paused_for_owner:
                 await repo.set_awaiting_owner(session, ctx.agent_session_id, True)
             elif pause == "checkpoint":
                 await repo.set_awaiting_owner(session, ctx.agent_session_id, False)
 
         view = _plan_view(ctx.agent_session_id, new_body, new_status, updated)
-        if pause == "await_owner":
+        if paused_for_owner:
             note = "Saved — paused for you. I'll wait for your reply before the next step."
         elif new_status == "not_approved":
             note = "Saved the plan (awaiting your approval — tap Approve to sign off)."
+            # Teach the model why a requested pause was ignored, so it doesn't re-issue it.
+            if pause == "await_owner":
+                note += " (A draft already waits for your approval — no need to pause it.)"
         elif new_status == "in_work":
             note = "Plan updated — marked in work."
         else:

@@ -958,6 +958,34 @@ describe("ToolView registry", () => {
     expect(queryByText(/continuing in/)).not.toBeInTheDocument();
   });
 
+  it("keeps a not_approved draft approvable even when awaiting_owner is stale", async () => {
+    // Regression: jerv can flag a not_approved DRAFT as awaiting_owner (a natural read of
+    // "don't start until I approve"). The card must stay a draft — Approve/Edit, never the
+    // "Waiting for you" state, which would strand the owner with no way to approve.
+    const reconciled = `${PLAN_BODY}\n- [ ] Reconciled extra step`;
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "not_approved", body: reconciled, awaiting_owner: true }),
+    );
+    const approve = vi.spyOn(api, "approvePlan").mockResolvedValue(planOut({ status: "in_work" }));
+    const { getByText, getByRole, queryByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+        })}
+      />,
+    );
+    // Wait until the mount reconcile has folded server truth (awaiting_owner=true + the new
+    // step) — proven by the extra step appearing.
+    await waitFor(() => expect(getByText("Reconciled extra step")).toBeInTheDocument());
+    // Even with awaiting_owner set, the draft stays approvable: the not_approved chip + Approve,
+    // never the await-owner state.
+    expect(getByText("Awaiting approval")).toHaveClass("flag-not_approved");
+    expect(queryByText("Waiting for you")).not.toBeInTheDocument();
+    fireEvent.click(getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(approve).toHaveBeenCalledWith("s1"));
+  });
+
   it("reads Plan complete when every step is checked", async () => {
     const done = "# Guide\n- [x] one\n- [x] two";
     vi.spyOn(api, "getPlan").mockResolvedValue(planOut({ status: "in_work", body: done }));

@@ -107,6 +107,48 @@ async def test_handlers_enforce_the_state_machine(maker: async_sessionmaker) -> 
     assert "step 1" in reread
 
 
+async def test_pausing_a_draft_does_not_set_awaiting_owner(maker: async_sessionmaker) -> None:
+    """Regression: jerv drafting a plan AND asking to await the owner (a natural read of
+    'don't start until I approve') must NOT set awaiting_owner on the not_approved draft — a
+    draft already waits for approval, and the flag would hide the Approve control and block the
+    loop even after approval. The pause is a no-op; the note teaches jerv why."""
+    owner = await _owner(maker)
+    sid = await _new_chat(maker, owner)
+    handlers = build_plan_handlers(maker)
+    ctx = ToolContext(session=owner, scopes=(), agent_session_id=sid)
+
+    out = await handlers["write_plan"]({"body": "- [ ] step 1", "pause": "await_owner"}, ctx)
+    assert "Approve" in out  # the awaiting-approval note, not the "paused for you" note
+    assert "no need to pause" in out  # teaches the model the pause was ignored
+    async with scoped_session(maker, owner) as session:
+        plan = await PlanRepo().get(session, sid)
+        assert plan is not None
+        assert plan.status == "not_approved"
+        assert plan.awaiting_owner is False  # the harmful flag was never set
+
+
+async def test_approve_clears_a_stale_awaiting_owner(maker: async_sessionmaker) -> None:
+    """The owner's approve transition clears any leftover awaiting_owner — otherwise the first
+    continuation the approve endpoint arms would never be claimed (the sweep skips
+    awaiting-owner plans), leaving an approved plan that never starts."""
+    owner = await _owner(maker)
+    sid = await _new_chat(maker, owner)
+    repo = PlanRepo()
+    async with scoped_session(maker, owner) as session:
+        await repo.upsert(session, sid, body="- [ ] step 1", status="not_approved")
+        await repo.set_awaiting_owner(session, sid, True)  # a stale flag on the draft
+
+    async with scoped_session(maker, owner) as session:
+        plan = await repo.approve(session, sid)
+        assert plan is not None
+        assert plan.status == "approved"
+        assert plan.awaiting_owner is False  # approving cleared it, so the loop can start
+
+    # Approving a plan that was never drafted still 404s (None), like set_status.
+    async with scoped_session(maker, owner) as session:
+        assert await repo.approve(session, str(uuid.uuid4())) is None
+
+
 async def test_jerv_runtime_ctx_reaches_the_owner_only_table(maker: async_sessionmaker) -> None:
     """jerv runs owner-scoped with EMPTY domain scopes (its firewall is ownership, not a
     domain). The plan table's policy is `app.is_owner()` only, so jerv's actual runtime ctx

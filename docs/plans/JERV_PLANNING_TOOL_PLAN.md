@@ -1,6 +1,6 @@
 # jerv Planning Tool — owner-approved plans, executed across turns
 
-> **Status:** In progress · **Last verified:** 2026-08-07 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage. **P4.1 = visibility + budget** (§5, §6, §9): the original draft card is kept on its own turn as the approved record, the between-steps wait shows an interruptible countdown on the status line, and a supervised (foreground-watched) turn earns a lifted per-turn budget.)
+> **Status:** In progress · **Last verified:** 2026-08-07 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage. **P4.1 = visibility + budget** (§5, §6, §9): the original draft card is kept on its own turn as the approved record, the between-steps wait shows an interruptible countdown on the status line, and a supervised (foreground-watched) turn earns a lifted per-turn budget. **P4.2 = draft approvability fix** (§3, §4, §6): a `not_approved` draft is always approvable — `await_owner` on a draft is a no-op, approval clears any stale flag, and the card's `not_approved` state dominates `await_owner` — so jerv pausing the draft can never strand the owner with no way to approve.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the plan is an owner-only
 > `app.agent_session_plans` row behind `app.is_owner()` RLS (FORCE), with the mandated
@@ -58,7 +58,12 @@ is Postgres', not the repo's.
   only `not_approved` / `in_work`, and `in_work` only once the owner has approved.
   **`approved` is the owner's alone** — so web content jerv reads can never talk it into
   self-approving. `pause`: `checkpoint` (finished a step, continue after the window) or
-  `await_owner` (blocked — stop the loop until the owner replies).
+  `await_owner` (blocked — stop the loop until the owner replies). **`await_owner` on a
+  `not_approved` draft is a deliberate no-op** (P4.2): a draft is already waiting for the
+  owner (to approve it), so setting the flag would be meaningless and harmful — it would hide
+  the Approve control on the card and, left set, block the loop even after approval. jerv
+  reasonably reads "don't start until I approve" as a reason to pause; the handler drops the
+  pause on a draft and returns a note teaching it that a draft already waits.
 
 Both are added to `JERV_TOOLS`; the `web` class means `curator` never sees them. A tool
 result returns a `plan_card` **view** so the card renders inline (data-only, never
@@ -67,9 +72,12 @@ model-authored markup — invariants #1/#9).
 ## 4. Approval + re-injection
 
 - **Owner approval** is a UI gesture / endpoint (`POST /api/plans/{id}/approve`), never a
-  jerv tool. The owner may edit the draft first (`/edit`). Approval also **arms the first
-  continuation**, so the sweep starts jerv on the plan (~15s) — approval alone otherwise
-  just sets the status and the plan sits, because nothing tells the agent it was approved.
+  jerv tool. The owner may edit the draft first (`/edit`). Approval (`PlanRepo.approve`) sets
+  `approved` **and clears any stale `awaiting_owner`** (jerv may have paused the draft — see
+  §3), then **arms the first continuation**, so the sweep starts jerv on the plan (~15s) —
+  approval alone otherwise just sets the status and the plan sits, because nothing tells the
+  agent it was approved. Clearing the flag is load-bearing: `claim_due_continuations` skips
+  awaiting-owner plans, so a leftover flag would leave the approved plan armed-but-never-run.
   The loop fires on `approved` (the first step) as well as `in_work` (jerv flips the status
   itself as it executes).
 - **On-plan across turns:** while a plan is `approved`/`in_work`, the `/chat` route
@@ -137,7 +145,9 @@ flag-enum status chip + the checklist; owner **Approve**/**Edit** when `not_appr
 the live **auto-resume countdown** (polling `GET /api/plans/{id}` → `continuation_due_at`)
 with **Continue now** / **Stop** when `in_work`; a distinct "Waiting for you" state when
 `awaiting_owner`; and a derived **"complete"** state (all steps `- [x]`) the stored status
-can't carry.
+can't carry. The derived state gives **`not_approved` the highest precedence** (P4.2): a
+draft always renders as a draft (Approve/Edit), even if a stray `awaiting_owner` is set on
+it — the await-owner state must never suppress the Approve control and strand the owner.
 
 **Where it renders (P4 — off the transcript):** the big card was crowding the chat and
 fighting other tool views (deep-research cards), so it no longer lives inline once approved:
@@ -189,7 +199,11 @@ fighting other tool views (deep-research cards), so it no longer lives inline on
 
 Real Postgres via testcontainers; LLM faked. The mandated RLS-isolation test
 (`test_agent_session_plans_rls`: owner round-trip, non-owner sees nothing / can't write,
-cascade delete, the approval state machine). Continuation coverage
+cascade delete, the approval state machine, and the **P4.2 draft-approvability** guards —
+pausing a draft never sets `awaiting_owner`, and `approve` clears a stale flag). The
+frontend precedence (a `not_approved` draft with a stale `awaiting_owner` still renders
+Approve, never "Waiting for you") is covered in the `registry` `plan_card` vitest suite.
+Continuation coverage
 (`test_plan_continuation`: schedule + atomic claim, the awaiting/non-in-work/cap guards,
 the settle gate, the owner reset, the `await_owner` opt-out, the **live-streaming**
 regression — a continuation registers a real `_LiveTurn` keyed by run_id, emits `data:`
