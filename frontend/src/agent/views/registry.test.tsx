@@ -987,6 +987,30 @@ describe("ToolView registry", () => {
     await waitFor(() => expect(approve).toHaveBeenCalledWith("s1"));
   });
 
+  it("suppresses the countdown when the next step starts immediately (due-now)", async () => {
+    // Approve / Continue now / a busy-retry arm the continuation due-NOW; the "continuing in
+    // 0:00" controls must never flash — the step is starting, not waiting a window.
+    const getPlan = vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({
+        status: "in_work",
+        body: PLAN_BODY,
+        continuation_due_at: new Date().toISOString(),
+      }),
+    );
+    const { queryByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+        })}
+      />,
+    );
+    await waitFor(() => expect(getPlan).toHaveBeenCalled());
+    // A due-now window never renders the countdown (a real 45s window still does — covered above).
+    expect(queryByText(/continuing in/)).not.toBeInTheDocument();
+    expect(queryByText("Continue now")).not.toBeInTheDocument();
+  });
+
   it("renders the append-only step-results scratchpad in the plan card", async () => {
     const results = [
       {
@@ -998,7 +1022,7 @@ describe("ToolView registry", () => {
     vi.spyOn(api, "getPlan").mockResolvedValue(
       planOut({ status: "in_work", body: PLAN_BODY, results }),
     );
-    const { getByText } = render(
+    const { getByText, getByRole, queryByText } = render(
       <ToolView
         payload={payload({
           view: "plan_card",
@@ -1006,8 +1030,11 @@ describe("ToolView registry", () => {
         })}
       />,
     );
-    // The Results section lists each appended entry, heading + Markdown note.
-    expect(getByText("Results")).toBeInTheDocument();
+    // The Results section defaults COLLAPSED — the header shows, the entries don't yet.
+    const toggle = getByRole("button", { name: /Results/ });
+    expect(queryByText("Step 1 — Top-rated carry-ons")).not.toBeInTheDocument();
+    // Opening it reveals each appended entry, heading + Markdown note.
+    fireEvent.click(toggle);
     expect(getByText("Step 1 — Top-rated carry-ons")).toBeInTheDocument();
     expect(getByText(/Cotopaxi Allpa/)).toBeInTheDocument();
     expect(getByText(/second entry with no heading/)).toBeInTheDocument();

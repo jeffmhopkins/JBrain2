@@ -38,7 +38,12 @@ export function Sheet({ title, onClose, children }: SheetProps) {
   }, [onClose]);
 
   function onTouchStart(event: TouchEvent) {
-    touchStartY.current = event.touches[0]?.clientY ?? null;
+    // Arm swipe-to-dismiss ONLY when the gesture starts in the sheet's top grab area (the
+    // handle + title) — never in the scrollable body. Otherwise scrolling down through long
+    // content (a plan's step reports) past the threshold would dismiss the sheet mid-read.
+    const target = event.target as Element | null;
+    const fromGrabArea = target?.closest(".sheet-grab, .sheet-title") != null;
+    touchStartY.current = fromGrabArea ? (event.touches[0]?.clientY ?? null) : null;
   }
 
   function onTouchMove(event: TouchEvent) {

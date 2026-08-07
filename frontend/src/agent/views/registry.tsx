@@ -3071,6 +3071,10 @@ const PLAN_LABELS: Record<PlanState, string> = {
   complete: "Plan complete",
 };
 const PLAN_STATUSES = new Set(["not_approved", "approved", "in_work"]);
+// The smallest remaining time that reads as a real between-steps WAIT. A continuation armed
+// due-now (approve / Continue now / a busy retry) sits below this, so its countdown/controls
+// never flash — the step is starting, not waiting. Well under the 60s owner window.
+const MIN_COUNTDOWN_MS = 3000;
 function planStatus(value: unknown): string {
   return typeof value === "string" && PLAN_STATUSES.has(value) ? value : "not_approved";
 }
@@ -3247,6 +3251,7 @@ export function usePlanState(
       if (!alive.current || busyRef.current || actionSeq.current !== seq) return;
       const next = planFromOut(out);
       setPlan(next);
+      setNow(Date.now()); // re-anchor so the countdown gate reads a fresh remaining (no flash)
       // A re-armed window / awaiting / a status change means the plan is advancing again —
       // un-park the poll (a Stop that stays parked keeps dueAt null + in_work).
       if (next.dueAt != null || next.awaiting || next.status !== "in_work") setHalted(false);
@@ -3290,14 +3295,18 @@ export function usePlanState(
   // reopening mid-window shows the true remaining time (like TaskStatus's elapsed timer).
   // Keyed off `!editing` too, so it doesn't run hidden behind the editor.
   const dueMs = plan.dueAt ? Date.parse(plan.dueAt) : Number.NaN;
-  const showCountdown = live && !Number.isNaN(dueMs);
+  const remainingMs = Number.isNaN(dueMs) ? Number.NaN : Math.max(0, dueMs - now);
+  // Only a MEANINGFUL wait shows the countdown. Approve / Continue now / a busy-retry all arm
+  // the continuation due-NOW, so their remaining is ~0 — the step is about to run, not waiting,
+  // and the "continuing in 0:00" controls must not flash. `now` is re-anchored on every plan
+  // fold (below) so this reads a fresh remaining the moment a due-time lands (no one-frame flash).
+  const showCountdown = live && !Number.isNaN(remainingMs) && remainingMs >= MIN_COUNTDOWN_MS;
   const countdownVisible = showCountdown && !editing;
   useEffect(() => {
     if (!countdownVisible) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [countdownVisible]);
-  const remainingMs = Math.max(0, dueMs - now);
   const countdown = `${Math.floor(remainingMs / 60000)}:${String(
     Math.floor((remainingMs % 60000) / 1000),
   ).padStart(2, "0")}`;
@@ -3318,6 +3327,7 @@ export function usePlanState(
       const out = await fn();
       if (!alive.current) return;
       setPlan(planFromOut(out));
+      setNow(Date.now()); // re-anchor so an approve/continue armed due-now reads ~0 (no flash)
       setHalted(opts?.halt === true);
       onPlanChanged?.();
     } catch {
@@ -3343,6 +3353,7 @@ export function usePlanState(
       const out = await api.approvePlan(sessionId);
       if (!alive.current) return;
       setPlan(planFromOut(out));
+      setNow(Date.now()); // re-anchor so the approve-armed due-now start reads ~0 (no flash)
       setHalted(false);
       setEditing(false);
       onPlanChanged?.();
@@ -3412,6 +3423,9 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
     continueNow,
     stop,
   } = st;
+  // The step-results scratchpad collapses, defaulting to CLOSED (in both the inline card and
+  // the omnibox modal), so a long run's results don't dominate the card until the owner opens it.
+  const [resultsOpen, setResultsOpen] = useState(false);
   return (
     <div className={`plan-card flag-${state}`}>
       <div className="plan-head">
@@ -3460,7 +3474,11 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
                     </svg>
                   )}
                 </span>
-                <span className="plan-tx">{s.text}</span>
+                {/* Inline Markdown so a step's `**bold**` renders instead of showing literal
+                    asterisks; the CSS collapses its block wrapper to inline. */}
+                <span className="plan-tx">
+                  <Markdown text={s.text} />
+                </span>
               </li>
             ))}
           </ul>
@@ -3469,27 +3487,50 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
 
       {/* The step-results scratchpad (append-only): each finished step's synthesis, so the
           findings live in one visible place — not buried in a turn's collapsed tool trace —
-          and the final step reads them all to write the deliverable. Hidden while editing. */}
+          and the final step reads them all to write the deliverable. Collapsible, default
+          CLOSED (card and modal alike). Hidden entirely while editing. */}
       {!editing && results.length > 0 && (
         <div className="plan-results">
-          <div className="plan-results-head">Results</div>
-          <ol className="plan-results-list">
-            {results.map((r, i) => (
-              <li
-                // Append-only, index-ordered; the position is the stable key.
-                // biome-ignore lint/suspicious/noArrayIndexKey: append-only ordered results
-                key={i}
-                className="plan-result"
-              >
-                {r.heading && <div className="plan-result-head">{r.heading}</div>}
-                {r.note && (
-                  <div className="plan-result-body">
-                    <Markdown text={r.note} />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ol>
+          <button
+            type="button"
+            className={`plan-results-head${resultsOpen ? " open" : ""}`}
+            aria-expanded={resultsOpen}
+            onClick={() => setResultsOpen((v) => !v)}
+          >
+            <svg
+              className="plan-results-chevron"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+            Results
+            <span className="plan-results-count">{results.length}</span>
+          </button>
+          {resultsOpen && (
+            <ol className="plan-results-list">
+              {results.map((r, i) => (
+                <li
+                  // Append-only, index-ordered; the position is the stable key.
+                  // biome-ignore lint/suspicious/noArrayIndexKey: append-only ordered results
+                  key={i}
+                  className="plan-result"
+                >
+                  {r.heading && <div className="plan-result-head">{r.heading}</div>}
+                  {r.note && (
+                    <div className="plan-result-body">
+                      <Markdown text={r.note} />
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
       )}
 

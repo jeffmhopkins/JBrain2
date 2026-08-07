@@ -17360,21 +17360,52 @@ button.auto-sect[aria-expanded="true"] > svg {
   color: var(--text-2);
 }
 /* The append-only step-results scratchpad (JERV_PLANNING_TOOL_PLAN.md): each finished step's
-   synthesis, one visible block per entry, so findings aren't buried in a turn's tool trace. */
+   synthesis, one block per entry, so findings aren't buried in a turn's tool trace. Collapsible,
+   default closed, in both the inline card and the omnibox modal. */
 .plan-results {
-  padding: 6px 13px 8px;
+  padding: 4px 13px 8px;
   margin-top: 4px;
   border-top: 1px solid var(--border);
 }
 .plan-results-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
   font-size: var(--fs-note);
   font-weight: 600;
   color: var(--text-2);
-  margin: 2px 0 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.plan-results-head:hover {
+  color: var(--text);
+}
+.plan-results-chevron {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  transition: transform 0.15s ease;
+}
+.plan-results-head.open .plan-results-chevron {
+  transform: rotate(90deg);
+}
+.plan-results-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--steel-tint);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
 }
 .plan-results-list {
   list-style: none;
-  margin: 0;
+  margin: 2px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -17392,8 +17423,17 @@ button.auto-sect[aria-expanded="true"] > svg {
   color: var(--text);
   margin-bottom: 3px;
 }
+/* A wide Markdown table (a step's comparison) scrolls inside the entry instead of stretching
+   the card/modal — the reported "table display issues". */
 .plan-result-body {
   color: var(--text-2);
+  overflow-x: auto;
+}
+/* Checklist step text is inline Markdown: collapse its block paragraph so `**bold**` renders
+   without forcing a line break or stray margins. */
+.plan-tx > p {
+  margin: 0;
+  display: inline;
 }
 .plan-steps {
   list-style: none;

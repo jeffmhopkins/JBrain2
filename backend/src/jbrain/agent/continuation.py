@@ -338,12 +338,12 @@ def _continuation_conversation(body: str, results: list | None = None) -> list[U
     next step, record its result, and stop. Framed as data, never owner instruction."""
     plan_block = (
         "(System note — data, not owner input. The owner ALREADY APPROVED this plan for the"
-        " conversation; it is your operating plan. Execute the NEXT unchecked step, record its"
-        " synthesized result with write_plan_result(note=…), mark the step done with"
-        " write_plan(body=…), then STOP — do not redo completed steps, and REUSE the recorded"
-        " results below instead of re-gathering what an earlier step already found. If you"
-        ' genuinely need the owner before you can proceed, call write_plan(pause="await_owner");'
-        " otherwise just do the work.)\n\nCurrent plan:\n" + body
+        " conversation; it is your operating plan. Do the ONE next unchecked step, then record"
+        " its synthesized result with write_plan_result(note=…) — that call checks the step off"
+        " and advances the plan for you, so you do NOT also rewrite the checklist. REUSE the"
+        " recorded results below instead of re-gathering what an earlier step already found. If"
+        " you genuinely need the owner before you can proceed, call"
+        ' write_plan(pause="await_owner"); otherwise just do the work.)\n\nCurrent plan:\n' + body
     )
     scratch = format_plan_results(results)
     if scratch:
@@ -352,13 +352,14 @@ def _continuation_conversation(body: str, results: list | None = None) -> list[U
         "(System event — not owner input. You are auto-continuing your approved, in-work plan."
         " The plan is ALREADY approved, so do NOT ask the owner for permission or confirmation"
         " and do NOT reply with only a status line like 'step 1 done, next up…' — actually DO"
-        " the next unchecked step now and produce its real output. Record this step's synthesis"
-        " with write_plan_result(note=…), then mark it - [x] with write_plan. When the step you"
-        " are doing is the plan's FINAL step (the last unchecked item — typically 'write the"
-        " guide/report/summary/answer'), you MUST WRITE THAT DELIVERABLE IN FULL as your visible"
-        " reply THIS TURN — the actual finished content, built from the scratchpad above — NOT a"
-        " note that it is 'ready to be written' and NOT a question asking whether to proceed."
-        " Then mark it done and end your turn.)"
+        " the ONE next unchecked step now and produce its real output. Then call"
+        " write_plan_result(note=…) with that step's synthesis (this checks the box off and"
+        " advances the plan), and END YOUR TURN — do exactly one step per turn so the owner gets"
+        " a moment between steps. When the step you are doing is the plan's FINAL step (the last"
+        " unchecked item — typically 'write the guide/report/summary/answer'), you MUST WRITE"
+        " THAT DELIVERABLE IN FULL as your visible reply THIS TURN — the actual finished content,"
+        " built from the scratchpad above — NOT a note that it is 'ready to be written' and NOT a"
+        " question asking whether to proceed, then record it and end your turn.)"
     )
     return [UserMessage(text=now_block(None)), UserMessage(text=plan_block), UserMessage(text=seed)]
 

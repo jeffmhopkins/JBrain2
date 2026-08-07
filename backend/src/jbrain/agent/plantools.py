@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
-from jbrain.models.plan import PlanRepo
+from jbrain.models.plan import PlanRepo, has_open_checklist_item, normalize_plan_body
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -131,10 +131,12 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
                 return "There's no plan to pause — draft one first with write_plan(body=…)."
 
             if body is not None or status is not None:
+                # Normalize a written body into a FLAT `- [ ]` checklist so the card renders it
+                # cleanly and the loop can tick each step (no heading-steps / nested sub-items).
                 plan = await repo.upsert(
                     session,
                     ctx.agent_session_id,
-                    body=None if body is None else str(body),
+                    body=None if body is None else normalize_plan_body(str(body)),
                     status=status,
                 )
             else:
@@ -186,7 +188,7 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
         heading_raw = arguments.get("heading")
         heading = str(heading_raw).strip() if heading_raw is not None else None
         async with scoped_session(maker, ctx.session) as session:
-            plan = await repo.append_result(
+            plan = await repo.complete_step(
                 session, ctx.agent_session_id, note=note_s, heading=heading or None
             )
         if plan is None:
@@ -200,8 +202,16 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
             plan.updated_at.isoformat(),
             results=plan.results,
         )
+        # Recording a result IS the step's completion — complete_step ticked the box and set
+        # in_work, so jerv needn't check off separately. Tell it that, and to stop this turn.
+        tail = (
+            "the plan is complete — write the finished deliverable now if you haven't"
+            if not has_open_checklist_item(plan.body)
+            else "end your turn now so the owner gets a moment before the next step"
+        )
         return ToolOutput(
-            f"Recorded result #{len(plan.results)} on the plan scratchpad.", view=view
+            f"Recorded result #{len(plan.results)} and checked off that step; {tail}.",
+            view=view,
         )
 
     return {

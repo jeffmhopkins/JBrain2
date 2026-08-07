@@ -127,10 +127,10 @@ async def test_pausing_a_draft_does_not_set_awaiting_owner(maker: async_sessionm
         assert plan.awaiting_owner is False  # the harmful flag was never set
 
 
-async def test_results_scratchpad_is_append_only(maker: async_sessionmaker) -> None:
-    """The step-results scratchpad appends in order and NEVER overwrites an earlier entry —
-    so no later step can erase a prior step's results from view. Covered through the repo and
-    the write_plan_result handler; read_plan surfaces the whole scratchpad."""
+async def test_write_plan_result_appends_ticks_and_sets_in_work(maker: async_sessionmaker) -> None:
+    """Recording a step's result is the deterministic step-completion: it appends to the
+    append-only scratchpad (never clobbering a prior entry), ticks the next unchecked box, and
+    flips approved→in_work — so progress no longer depends on jerv separately checking off."""
     owner = await _owner(maker)
     sid = await _new_chat(maker, owner)
     repo = PlanRepo()
@@ -138,20 +138,26 @@ async def test_results_scratchpad_is_append_only(maker: async_sessionmaker) -> N
     ctx = ToolContext(session=owner, scopes=(), agent_session_id=sid)
 
     async with scoped_session(maker, owner) as session:
-        assert await repo.append_result(session, sid, note="x") is None  # no plan yet
+        assert await repo.complete_step(session, sid, note="x") is None  # no plan yet
         await repo.upsert(session, sid, body="- [ ] one\n- [ ] two", status="approved")
 
-    # The handler appends; two calls yield two ordered entries (the second never clobbers).
     out1 = await handlers["write_plan_result"]({"heading": "Step 1", "note": "found A"}, ctx)
-    assert "Recorded result #1" in out1
-    out2 = await handlers["write_plan_result"]({"note": "found B"}, ctx)
-    assert "Recorded result #2" in out2
-
+    assert "Recorded result #1" in out1 and "checked off" in out1
     async with scoped_session(maker, owner) as session:
         plan = await repo.get(session, sid)
         assert plan is not None
+        assert plan.status == "in_work"  # approved → in_work on the first recorded step
+        assert plan.body == "- [x] one\n- [ ] two"  # the first box ticked, the second untouched
+        assert plan.results == [{"heading": "Step 1", "note": "found A"}]
+
+    out2 = await handlers["write_plan_result"]({"note": "found B"}, ctx)
+    assert "Recorded result #2" in out2
+    async with scoped_session(maker, owner) as session:
+        plan = await repo.get(session, sid)
+        assert plan is not None
+        assert plan.body == "- [x] one\n- [x] two"  # second box ticked; first NOT clobbered
         assert plan.results == [
-            {"heading": "Step 1", "note": "found A"},
+            {"heading": "Step 1", "note": "found A"},  # earlier entry preserved (append-only)
             {"note": "found B"},
         ]
 
@@ -161,6 +167,28 @@ async def test_results_scratchpad_is_append_only(maker: async_sessionmaker) -> N
 
     # A bare/empty note is refused; a missing plan can't take a result.
     assert "needs a `note`" in await handlers["write_plan_result"]({"note": "  "}, ctx)
+
+
+async def test_write_plan_normalizes_the_body_to_a_flat_checklist(
+    maker: async_sessionmaker,
+) -> None:
+    """A plan jerv writes with a step-as-a-heading + nested sub-items (the Step-4 render bug) is
+    normalized to a flat `- [ ]` checklist so the card renders it and every step is tickable."""
+    owner = await _owner(maker)
+    sid = await _new_chat(maker, owner)
+    handlers = build_plan_handlers(maker)
+    ctx = ToolContext(session=owner, scopes=(), agent_session_id=sid)
+
+    messy = "# Guide\n- [ ] Step 1\n- **Step 4**:\n  - [ ] top pick\n  - budget pick"
+    await handlers["write_plan"]({"body": messy}, ctx)
+    async with scoped_session(maker, owner) as session:
+        plan = await PlanRepo().get(session, sid)
+        assert plan is not None
+        # The heading and every (nested / bare) bullet became a flat top-level checkbox; the
+        # `# Guide` title is preserved as prose.
+        assert plan.body == (
+            "# Guide\n- [ ] Step 1\n- [ ] **Step 4**:\n- [ ] top pick\n- [ ] budget pick"
+        )
 
 
 async def test_approve_clears_a_stale_awaiting_owner(maker: async_sessionmaker) -> None:

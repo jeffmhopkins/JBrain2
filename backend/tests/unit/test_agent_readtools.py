@@ -1428,8 +1428,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "write_plan_result.tool": (
             "write_plan_result",
-            1,
-            "f02f5bddb5dd714c148456cfcdad218967e3ce320d116476711c0c10c0546ef1",
+            2,
+            "faacc3283d5a575dbdebc51208425ee156058715009853f09e5b8c3767c09486",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

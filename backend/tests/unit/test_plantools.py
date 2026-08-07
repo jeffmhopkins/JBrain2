@@ -13,7 +13,7 @@ from jbrain.agent.readtools import TOOLS_DIR
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.db.session import SessionContext
-from jbrain.models.plan import has_open_checklist_item
+from jbrain.models.plan import has_open_checklist_item, normalize_plan_body, tick_next_step
 
 # A None sessionmaker is safe for the branches that return before any DB access.
 _HANDLERS = build_plan_handlers(None)  # type: ignore[arg-type]
@@ -61,6 +61,27 @@ async def test_jerv_cannot_self_approve() -> None:
     alone. Refused before any DB access, so no plan is ever self-approved."""
     out = await _HANDLERS["write_plan"]({"status": "approved"}, _ctx("sess-1"))
     assert "Only the owner can approve" in out
+
+
+def test_tick_next_step() -> None:
+    """Ticks exactly the FIRST unchecked box; leaves the rest, and is a no-op when none remain."""
+    assert tick_next_step("- [ ] one\n- [ ] two") == "- [x] one\n- [ ] two"
+    assert tick_next_step("- [x] one\n- [ ] two") == "- [x] one\n- [x] two"
+    assert tick_next_step("- [x] one\n- [x] two") == "- [x] one\n- [x] two"  # none left → no-op
+    assert tick_next_step("") == ""
+
+
+def test_normalize_plan_body_flattens_to_checkboxes() -> None:
+    """Every list item — bare bullet, indented sub-item, or existing checkbox at any indent —
+    becomes a top-level `- [ ]`/`- [x]` step; headings/prose pass through; checked stays checked;
+    idempotent (the Step-4-heading-with-nested-subitems render bug)."""
+    messy = "# Guide\n- [ ] Step 1\n- **Step 4**:\n  - [x] top pick\n  - budget pick\nplain prose"
+    normalized = (
+        "# Guide\n- [ ] Step 1\n- [ ] **Step 4**:\n- [x] top pick\n- [ ] budget pick\nplain prose"
+    )
+    assert normalize_plan_body(messy) == normalized
+    assert normalize_plan_body(normalized) == normalized  # idempotent
+    assert normalize_plan_body("") == ""
 
 
 async def _noop(arguments: dict, ctx: ToolContext) -> str:
