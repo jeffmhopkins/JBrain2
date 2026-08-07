@@ -1,10 +1,13 @@
-"""jerv's per-conversation plan ORM + repo (migration 0155).
+"""jerv's per-conversation plan ORM + repo (migrations 0155, 0157, 0158).
 
-`agent_session_plans` is one owner-only row per chat: the plan `body` jerv authors
-and rewrites, plus a `status` lifecycle (`not_approved | approved | in_work`). jerv
-reads/writes the body and may set `not_approved`/`in_work`; the `approved` transition
-is the OWNER's alone (the api approve endpoint), never a jerv tool — the state-machine
-rule lives in the tool handler, this repo just persists what it's told.
+`agent_session_plans` holds MANY owner-only plans per chat, each keyed by its own
+`plan_id`: the plan `body` jerv authors and rewrites, a `status` lifecycle
+(`not_approved | approved | in_work`), and an append-only `results` scratchpad. A
+conversation can run several plans over its life; the "active" plan is the latest-created
+one, and that is what the tools, the re-injection, the continuation loop, and the omnibox
+all operate on. An older plan's row stays intact — its inline card keeps its own history —
+but only the active plan ever carries a pending continuation (creating a new plan clears
+the previous one's), so the session-scoped loop and the active plan never disagree.
 
 `PlanRepo` takes the caller's already-RLS-scoped `AsyncSession` directly (the handler
 owns the session/transaction), so the owner-only firewall is Postgres', not these
@@ -18,7 +21,7 @@ import re
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import DateTime, ForeignKey, Text, func, update
+from sqlalchemy import DateTime, ForeignKey, Text, func, select, update
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,16 +84,22 @@ def normalize_plan_body(body: str) -> str:
 
 
 class AgentSessionPlan(Base):
-    """One conversation's plan — read at every jerv turn (when approved/in-work it is
-    re-injected as the operating plan), rewritten by jerv, approved by the owner."""
+    """One plan of a conversation — the active (latest) one is re-injected each jerv turn as
+    the operating plan, rewritten by jerv, approved by the owner. Many rows may share a
+    `session_id`; `plan_id` is the per-plan identity a card binds to."""
 
     __tablename__ = "agent_session_plans"
     __table_args__ = {"schema": "app"}
 
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("app.agent_sessions.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
+        # Session-scoped lookups are served by migration 0158's composite
+        # `(session_id, created_at DESC)` index — no separate single-column index.
     )
     body: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(Text, default="not_approved")
@@ -111,67 +120,109 @@ class AgentSessionPlan(Base):
 
 
 class PlanRepo:
-    """Reads/writes the plan row for one chat on a caller-supplied RLS-scoped session."""
+    """Reads/writes plans for one chat on a caller-supplied RLS-scoped session. Mutations key
+    on a specific `plan_id`; the session-scoped paths (the tools, the loop, the re-injection)
+    resolve the ACTIVE (latest-created) plan first with `get_active`/`active_plan_id`."""
 
-    async def get(self, session: AsyncSession, session_id: str) -> AgentSessionPlan | None:
-        return await session.get(AgentSessionPlan, uuid.UUID(session_id))
+    # --- reads -----------------------------------------------------------------
 
-    async def upsert(
+    async def get_by_id(self, session: AsyncSession, plan_id: str) -> AgentSessionPlan | None:
+        """Fetch one specific plan by its `plan_id` — what an inline card polls so it keeps
+        showing ITS plan's own body/status/results, not the session's current one."""
+        return await session.get(AgentSessionPlan, uuid.UUID(plan_id))
+
+    def _active_select(self, session_id: str):
+        return (
+            select(AgentSessionPlan)
+            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            # Latest-created is active; plan_id breaks a same-instant tie deterministically.
+            .order_by(AgentSessionPlan.created_at.desc(), AgentSessionPlan.plan_id.desc())
+            .limit(1)
+        )
+
+    async def get_active(self, session: AsyncSession, session_id: str) -> AgentSessionPlan | None:
+        """The session's ACTIVE plan — the latest-created one — or None if it has no plan yet.
+        This is 'the plan' for every session-scoped path (tools, re-injection, the loop)."""
+        return (await session.execute(self._active_select(session_id))).scalars().first()
+
+    async def active_plan_id(self, session: AsyncSession, session_id: str) -> str | None:
+        """The active plan's id (or None) — for session-scoped callers that then mutate by id."""
+        stmt = self._active_select(session_id).with_only_columns(AgentSessionPlan.plan_id)
+        row = (await session.execute(stmt)).scalar_one_or_none()
+        return str(row) if row is not None else None
+
+    # --- writes ----------------------------------------------------------------
+
+    async def create(
         self,
         session: AsyncSession,
         session_id: str,
         *,
+        body: str = "",
+        status: str = "not_approved",
+    ) -> AgentSessionPlan:
+        """Start a NEW plan for the conversation (its own plan_id, empty results). Creating it
+        SUPERSEDES the prior plan: any pending continuation on the session's other plans is
+        cleared, so only this new (now active) plan can auto-continue — the session-scoped loop
+        never fires an older plan while a newer one is active."""
+        stmt = (
+            pg_insert(AgentSessionPlan)
+            .values(session_id=uuid.UUID(session_id), body=body, status=status)
+            .returning(AgentSessionPlan)
+        )
+        plan = (await session.execute(stmt)).scalar_one()
+        await session.execute(
+            update(AgentSessionPlan)
+            .where(
+                AgentSessionPlan.session_id == uuid.UUID(session_id),
+                AgentSessionPlan.plan_id != plan.plan_id,
+                AgentSessionPlan.continuation_due_at.isnot(None),
+            )
+            .values(continuation_due_at=None, updated_at=func.now())
+        )
+        return plan
+
+    async def update_plan(
+        self,
+        session: AsyncSession,
+        plan_id: str,
+        *,
         body: str | None = None,
         status: str | None = None,
-    ) -> AgentSessionPlan:
-        """Create-or-update the plan, changing only the fields provided. On insert the
-        unset field takes its column default (`body=''`, `status='not_approved'`). The
-        caller (the tool handler / the approve endpoint) is responsible for the
-        state-machine rules — this only persists."""
-        values: dict[str, object] = {"session_id": uuid.UUID(session_id), "updated_at": func.now()}
+    ) -> AgentSessionPlan | None:
+        """Update an EXISTING plan by id, changing only the fields provided (the tools editing
+        the active plan in place, and the owner's edit-before-approve). Returns None if the
+        plan is gone."""
+        values: dict[str, object] = {"updated_at": func.now()}
         if body is not None:
             values["body"] = body
         if status is not None:
             values["status"] = status
-        set_ = {k: v for k, v in values.items() if k != "session_id"}
-        stmt = (
-            pg_insert(AgentSessionPlan)
-            .values(**values)
-            .on_conflict_do_update(index_elements=[AgentSessionPlan.session_id], set_=set_)
-            .returning(AgentSessionPlan)
-            # A prior get() in this session caches the row in the identity map; without
-            # populate_existing the ORM returns that stale instance instead of the values
-            # RETURNING just produced (so an in-place status change would read stale).
-            .execution_options(populate_existing=True)
-        )
-        row = (await session.execute(stmt)).scalar_one()
-        return row
-
-    async def set_status(
-        self, session: AsyncSession, session_id: str, status: str
-    ) -> AgentSessionPlan | None:
-        """Set the status of an EXISTING plan (the owner approve path, and jerv's
-        in-work flip). Returns None if no plan exists — the owner cannot approve a plan
-        that was never drafted."""
         stmt = (
             update(AgentSessionPlan)
-            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
-            .values(status=status, updated_at=func.now())
+            .where(AgentSessionPlan.plan_id == uuid.UUID(plan_id))
+            .values(**values)
             .returning(AgentSessionPlan)
             .execution_options(populate_existing=True)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def approve(self, session: AsyncSession, session_id: str) -> AgentSessionPlan | None:
-        """The owner's approve transition: move the plan to `approved` AND clear any stale
-        `awaiting_owner`. jerv may have paused the draft (a not_approved plan is already
+    async def set_status(
+        self, session: AsyncSession, plan_id: str, status: str
+    ) -> AgentSessionPlan | None:
+        """Set a plan's status by id (jerv's in-work flip). Returns None if the plan is gone."""
+        return await self.update_plan(session, plan_id, status=status)
+
+    async def approve(self, session: AsyncSession, plan_id: str) -> AgentSessionPlan | None:
+        """The owner's approve transition on a specific plan: move it to `approved` AND clear any
+        stale `awaiting_owner`. jerv may have paused the draft (a not_approved plan is already
         waiting for approval), and a leftover await-owner flag would block the very first
         continuation the approve endpoint arms next — `claim_due_continuations` skips
-        awaiting-owner plans — leaving an approved plan that never starts. Returns None if no
-        plan exists (the owner can't approve a plan that was never drafted)."""
+        awaiting-owner plans — leaving an approved plan that never starts. Returns None if the
+        plan is gone (the owner can't approve a plan that was never drafted)."""
         stmt = (
             update(AgentSessionPlan)
-            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .where(AgentSessionPlan.plan_id == uuid.UUID(plan_id))
             .values(status="approved", awaiting_owner=False, updated_at=func.now())
             .returning(AgentSessionPlan)
             .execution_options(populate_existing=True)
@@ -179,16 +230,16 @@ class PlanRepo:
         return (await session.execute(stmt)).scalar_one_or_none()
 
     async def complete_step(
-        self, session: AsyncSession, session_id: str, *, note: str, heading: str | None = None
+        self, session: AsyncSession, plan_id: str, *, note: str, heading: str | None = None
     ) -> AgentSessionPlan | None:
-        """Record a finished step: APPEND `{heading?, note}` to the results scratchpad (never
-        rewriting an earlier entry, so nothing is erased), AND deterministically advance the
-        plan — tick the first unchecked `- [ ]` to `- [x]` and flip `approved` → `in_work`. This
-        is the "I finished a step" signal, so progress no longer depends on jerv separately
-        remembering to check the box or set the status. Read-modify-write is safe because turns
-        are serialized per plan (the single-turn guard + the sweep's atomic claim). Returns None
-        if no plan exists — results attach to a drafted plan."""
-        plan = await self.get(session, session_id)
+        """Record a finished step on a specific plan: APPEND `{heading?, note}` to the results
+        scratchpad (never rewriting an earlier entry, so nothing is erased), AND deterministically
+        advance the plan — tick the first unchecked `- [ ]` to `- [x]` and flip `approved` →
+        `in_work`. This is the "I finished a step" signal, so progress no longer depends on jerv
+        separately remembering to check the box or set the status. Read-modify-write is safe
+        because turns are serialized per plan (the single-turn guard + the sweep's atomic claim).
+        Returns None if the plan is gone."""
+        plan = await self.get_by_id(session, plan_id)
         if plan is None:
             return None
         entry: dict[str, str] = {"note": note}
@@ -197,7 +248,7 @@ class PlanRepo:
         results = [*(plan.results or []), entry]
         stmt = (
             update(AgentSessionPlan)
-            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .where(AgentSessionPlan.plan_id == uuid.UUID(plan_id))
             .values(
                 results=results,
                 body=tick_next_step(plan.body),
@@ -212,14 +263,14 @@ class PlanRepo:
     # --- auto-continuation bookkeeping -----------------------------------------
 
     async def schedule_continuation(
-        self, session: AsyncSession, session_id: str, *, delay_s: int
+        self, session: AsyncSession, plan_id: str, *, delay_s: int
     ) -> None:
-        """Arm a continuation `delay_s` from now (the owner-interruptible window). The
-        due-time is computed against the DB clock so it survives a restart — the sweep
-        claims it whenever it next comes due."""
+        """Arm a continuation on a specific plan `delay_s` from now (the owner-interruptible
+        window). The due-time is computed against the DB clock so it survives a restart — the
+        sweep claims it whenever it next comes due."""
         await session.execute(
             update(AgentSessionPlan)
-            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .where(AgentSessionPlan.plan_id == uuid.UUID(plan_id))
             .values(
                 continuation_due_at=func.now() + timedelta(seconds=delay_s),
                 updated_at=func.now(),
@@ -228,13 +279,13 @@ class PlanRepo:
 
     async def claim_due_continuations(
         self, session: AsyncSession, *, max_continuations: int
-    ) -> list[str]:
+    ) -> list[tuple[str, str]]:
         """Atomically claim every plan whose continuation is due — clearing the due-time in
         one UPDATE, so a concurrent sweep (or a `/continue` POST) can't fire the same one
-        twice. Only in-work, not-awaiting-owner, under-cap plans are claimed. Returns the
-        claimed session ids. The used counter is bumped by `bump_continuation` when the turn
-        actually runs, NOT here — so a claim that is then skipped (session busy, plan changed)
-        never burns a continuation against the cap."""
+        twice. Only in-work/approved, not-awaiting-owner, under-cap plans are claimed. Returns
+        `(plan_id, session_id)` pairs. The used counter is bumped by `bump_continuation` when the
+        turn actually runs, NOT here — so a claim that is then skipped (session busy, plan
+        changed) never burns a continuation against the cap."""
         stmt = (
             update(AgentSessionPlan)
             .where(
@@ -247,30 +298,30 @@ class PlanRepo:
                 AgentSessionPlan.continuations_used < max_continuations,
             )
             .values(continuation_due_at=None, updated_at=func.now())
-            .returning(AgentSessionPlan.session_id)
+            .returning(AgentSessionPlan.plan_id, AgentSessionPlan.session_id)
         )
         rows = (await session.execute(stmt)).all()
-        return [str(r[0]) for r in rows]
+        return [(str(r[0]), str(r[1])) for r in rows]
 
-    async def bump_continuation(self, session: AsyncSession, session_id: str) -> None:
+    async def bump_continuation(self, session: AsyncSession, plan_id: str) -> None:
         """Count one continuation fire — called when a claimed continuation actually runs a
         turn (not at claim time), so the cap counts real runs, not skipped claims."""
         await session.execute(
             update(AgentSessionPlan)
-            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .where(AgentSessionPlan.plan_id == uuid.UUID(plan_id))
             .values(
                 continuations_used=AgentSessionPlan.continuations_used + 1,
                 updated_at=func.now(),
             )
         )
 
-    async def cancel_and_reset(self, session: AsyncSession, session_id: str) -> None:
+    async def cancel_and_reset(self, session: AsyncSession, plan_id: str) -> None:
         """The owner-message reset (human-anchored): drop any pending continuation, clear
         the await-owner flag, and zero the cap counter — so the owner sending anything
         both cancels the timer and gives the loop a fresh budget."""
         await session.execute(
             update(AgentSessionPlan)
-            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .where(AgentSessionPlan.plan_id == uuid.UUID(plan_id))
             .values(
                 continuation_due_at=None,
                 awaiting_owner=False,
@@ -280,7 +331,7 @@ class PlanRepo:
         )
 
     async def set_awaiting_owner(
-        self, session: AsyncSession, session_id: str, value: bool = True
+        self, session: AsyncSession, plan_id: str, value: bool = True
     ) -> None:
         """jerv's explicit opt-out: mark the plan as awaiting the owner (suppressing the
         auto-loop) and clear any pending continuation. Clearing it (value=False) lets the
@@ -290,6 +341,6 @@ class PlanRepo:
             values["continuation_due_at"] = None
         await session.execute(
             update(AgentSessionPlan)
-            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .where(AgentSessionPlan.plan_id == uuid.UUID(plan_id))
             .values(**values)
         )

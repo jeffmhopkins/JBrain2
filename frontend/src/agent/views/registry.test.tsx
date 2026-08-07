@@ -1,9 +1,17 @@
-import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  createEvent,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ListOut, type PlanOut, api } from "../../api/client";
 import type { ViewPayload } from "../types";
 import { resetLiveLists } from "./liveList";
-import { ToolView, isKnownView } from "./registry";
+import { ToolView, isKnownView, usePlanState } from "./registry";
 
 // Leaflet needs a real layout engine; mock the hurricane_card map glue so the Track
 // tab's React behaviour (mounting, the legend, the NHC link) is what's under test, and
@@ -27,6 +35,7 @@ function listOut(over: Partial<ListOut> = {}): ListOut {
 
 function planOut(over: Partial<PlanOut> = {}): PlanOut {
   return {
+    plan_id: "p1",
     session_id: "s1",
     body: "",
     status: "in_work",
@@ -884,7 +893,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "not_approved" },
         })}
         onPlanChanged={onPlanChanged}
       />,
@@ -895,7 +904,7 @@ describe("ToolView registry", () => {
     expect(getByText("Awaiting approval")).toHaveClass("flag-not_approved");
     // The owner-only Approve gesture POSTs approve, then signals the surface to refresh.
     fireEvent.click(getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(approve).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(approve).toHaveBeenCalledWith("p1"));
     expect(onPlanChanged).toHaveBeenCalled();
   });
 
@@ -909,7 +918,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "not_approved" },
         })}
       />,
     );
@@ -918,8 +927,8 @@ describe("ToolView registry", () => {
     expect(box.value).toContain("Search for current budget keyboards");
     fireEvent.change(box, { target: { value: "# New\n- [ ] one" } });
     fireEvent.click(getByText("Save & approve"));
-    await waitFor(() => expect(edit).toHaveBeenCalledWith("s1", "# New\n- [ ] one"));
-    expect(approve).toHaveBeenCalledWith("s1");
+    await waitFor(() => expect(edit).toHaveBeenCalledWith("p1", "# New\n- [ ] one"));
+    expect(approve).toHaveBeenCalledWith("p1");
   });
 
   it("shows the auto-resume countdown + controls while in_work", async () => {
@@ -932,7 +941,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work" },
         })}
       />,
     );
@@ -940,7 +949,7 @@ describe("ToolView registry", () => {
     await waitFor(() => expect(getByText(/continuing in/)).toBeInTheDocument());
     expect(getByText("Working to plan")).toHaveClass("flag-in_work");
     fireEvent.click(getByRole("button", { name: "Continue now" }));
-    await waitFor(() => expect(cont).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(cont).toHaveBeenCalledWith("p1"));
   });
 
   it("renders the distinct await_owner state with no countdown", async () => {
@@ -951,7 +960,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work" },
         })}
       />,
     );
@@ -972,7 +981,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "not_approved" },
         })}
       />,
     );
@@ -984,7 +993,7 @@ describe("ToolView registry", () => {
     expect(getByText("Awaiting approval")).toHaveClass("flag-not_approved");
     expect(queryByText("Waiting for you")).not.toBeInTheDocument();
     fireEvent.click(getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(approve).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(approve).toHaveBeenCalledWith("p1"));
   });
 
   it("suppresses the countdown when the next step starts immediately (due-now)", async () => {
@@ -1001,7 +1010,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work" },
         })}
       />,
     );
@@ -1011,7 +1020,7 @@ describe("ToolView registry", () => {
     expect(queryByText("Continue now")).not.toBeInTheDocument();
   });
 
-  it("renders the append-only step-results scratchpad in the plan card", async () => {
+  it("renders each step-result as its own collapsible in the plan card", async () => {
     const results = [
       {
         heading: "Step 1 — Top-rated carry-ons",
@@ -1026,18 +1035,56 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work", results },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work", results },
         })}
       />,
     );
-    // The Results section defaults COLLAPSED — the header shows, the entries don't yet.
-    const toggle = getByRole("button", { name: /Results/ });
-    expect(queryByText("Step 1 — Top-rated carry-ons")).not.toBeInTheDocument();
-    // Opening it reveals each appended entry, heading + Markdown note.
-    fireEvent.click(toggle);
-    expect(getByText("Step 1 — Top-rated carry-ons")).toBeInTheDocument();
+    // Each finished step folds on its OWN — two separate toggles, both default CLOSED (the
+    // headings/notes are hidden until each is opened), a headless entry labelled "Step N".
+    const t1 = getByRole("button", { name: "Step 1 — Top-rated carry-ons" });
+    getByRole("button", { name: "Step 2" }); // the no-heading entry falls back to its index
+    expect(queryByText(/Cotopaxi Allpa/)).not.toBeInTheDocument();
+    expect(queryByText(/second entry with no heading/)).not.toBeInTheDocument();
+    // Opening ONLY the first reveals just its note — the second stays folded (independent).
+    fireEvent.click(t1);
     expect(getByText(/Cotopaxi Allpa/)).toBeInTheDocument();
+    expect(queryByText(/second entry with no heading/)).not.toBeInTheDocument();
+    // Opening the second reveals its note too.
+    fireEvent.click(getByRole("button", { name: "Step 2" }));
     expect(getByText(/second entry with no heading/)).toBeInTheDocument();
+  });
+
+  it("omnibox RESOLVE mode follows the active plan and mutates by its resolved id", async () => {
+    // The omnibox seeds usePlanState with a bare status and NO planId → RESOLVE mode: it must
+    // poll getActivePlan (not getPlan) and mutate whatever plan that resolves to, so it follows
+    // a newly-created plan instead of locking onto a stale id.
+    const due = new Date(Date.now() + 45000).toISOString();
+    const getActive = vi
+      .spyOn(api, "getActivePlan")
+      .mockResolvedValue(
+        planOut({ plan_id: "p2", status: "in_work", body: PLAN_BODY, continuation_due_at: due }),
+      );
+    const getPlan = vi.spyOn(api, "getPlan");
+    const cont = vi.spyOn(api, "continuePlan").mockResolvedValue(planOut({ plan_id: "p2" }));
+    const { result } = renderHook(() => usePlanState("s1", { status: "in_work" }));
+
+    await waitFor(() => expect(getActive).toHaveBeenCalledWith("s1"));
+    expect(getPlan).not.toHaveBeenCalled(); // RESOLVE mode never calls the by-id read
+    await waitFor(() => expect(result.current.state).toBe("in_work"));
+    // A control POSTs to the RESOLVED plan's id (p2), tracked from getActivePlan — not the seed.
+    act(() => result.current.continueNow());
+    await waitFor(() => expect(cont).toHaveBeenCalledWith("p2"));
+  });
+
+  it("omnibox RESOLVE mode keeps the seed when the conversation has no active plan", async () => {
+    // getActivePlan → null (404) must leave the hook on its seed, not crash or blank the pill.
+    vi.spyOn(api, "getActivePlan").mockResolvedValue(null);
+    const { result } = renderHook(() =>
+      usePlanState("s1", { status: "in_work", body: "# Seed\n- [ ] a" }),
+    );
+    await waitFor(() => expect(api.getActivePlan).toHaveBeenCalledWith("s1"));
+    // The seed body is retained (no active plan folded over it).
+    expect(result.current.plan.body).toBe("# Seed\n- [ ] a");
   });
 
   it("reads Plan complete when every step is checked", async () => {
@@ -1047,7 +1094,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: done, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: done, status: "in_work" },
         })}
       />,
     );
@@ -1064,13 +1111,36 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "not_approved" },
         })}
       />,
     );
     await waitFor(() => expect(getByText("Working to plan")).toHaveClass("flag-in_work"));
     // The owner-only Approve is gone — the card no longer shows a stale draft affordance.
     expect(queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
+  it("re-reconciles when the seed status changes for the same session", async () => {
+    // The composer pill / popover is seeded from the session-list status. Approving in the
+    // INLINE card refreshes that list, flipping this hook's seed not_approved→approved — the
+    // hook must pull server truth on that change so the pill reflects the approval without a
+    // conversation switch (the reported bug).
+    const getPlan = vi
+      .spyOn(api, "getPlan")
+      .mockResolvedValue(planOut({ status: "not_approved", body: PLAN_BODY }));
+    const view = (status: string) => (
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status },
+        })}
+      />
+    );
+    const { rerender } = render(view("not_approved"));
+    await waitFor(() => expect(getPlan).toHaveBeenCalledTimes(1)); // mount reconcile
+    getPlan.mockResolvedValue(planOut({ status: "in_work", body: PLAN_BODY }));
+    rerender(view("approved")); // the session list flipped the seed
+    await waitFor(() => expect(getPlan).toHaveBeenCalledTimes(2)); // pulled fresh truth
   });
 
   it("Stop cancels the window and parks the countdown", async () => {
@@ -1088,13 +1158,13 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work" },
         })}
       />,
     );
     await waitFor(() => expect(getByText(/continuing in/)).toBeInTheDocument());
     fireEvent.click(getByRole("button", { name: "Stop" }));
-    await waitFor(() => expect(stop).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(stop).toHaveBeenCalledWith("p1"));
     // The countdown is gone and stays gone (the poll is parked, not re-showing next tick).
     await waitFor(() => expect(queryByText(/continuing in/)).not.toBeInTheDocument());
   });

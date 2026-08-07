@@ -1,6 +1,8 @@
 """LoopTurnExecutor.run_turn's optional streaming sink (`acc` + `on_event`) — the seam that
 lets a plan continuation stream its events onto a `_LiveTurn` broker while still folding the
-durable transcript shape. AgentLoop is faked; no LLM, no DB."""
+durable transcript shape — and its context-usage accounting (the meter fix): it resolves the
+window and passes it into run_stream so the loop EMITS UsageEvents, then returns the fullest
+step's usage for the caller to persist. AgentLoop is faked; no LLM, no DB."""
 
 from types import SimpleNamespace
 
@@ -8,6 +10,7 @@ import pytest
 
 import jbrain.tasks.runner as runner_mod
 from jbrain.agent.agents import agent_for
+from jbrain.agent.contracts import UsageEvent
 from jbrain.db.session import SessionContext
 from jbrain.tasks.runner import LoopTurnExecutor
 
@@ -26,14 +29,20 @@ class _Ev:
 
 
 class _FakeLoop:
-    """Yields a fixed event stream in place of the real ReAct loop."""
+    """Yields a fixed event stream in place of the real ReAct loop, and records the kwargs
+    run_turn drove it with (so the test can assert the window was passed through)."""
+
+    seen_kwargs: dict = {}
 
     def __init__(self, *_a: object, **_k: object) -> None:
         pass
 
-    async def run_stream(self, **_kwargs: object):  # type: ignore[no-untyped-def]
-        for ev in (_Ev("text_delta"), _Ev("done")):
-            yield ev
+    async def run_stream(self, **kwargs: object):  # type: ignore[no-untyped-def]
+        _FakeLoop.seen_kwargs = kwargs
+        yield _Ev("text_delta")
+        # A real UsageEvent so run_turn's isinstance check captures the fill.
+        yield UsageEvent(input_tokens=1200, output_tokens=300, context_window=5000)
+        yield _Ev("done")
 
 
 class _FakeAcc:
@@ -41,9 +50,9 @@ class _FakeAcc:
     real event shapes."""
 
     def __init__(self) -> None:
-        self.fed: list[_Ev] = []
+        self.fed: list = []
 
-    def feed(self, ev: _Ev) -> None:
+    def feed(self, ev: object) -> None:
         self.fed.append(ev)
 
     answer_text = "hello"
@@ -58,6 +67,14 @@ async def _effort(_key: str) -> str:
     return "medium"
 
 
+async def _window(_key: str) -> int:
+    return 5000
+
+
+def _router() -> SimpleNamespace:
+    return SimpleNamespace(effective_reasoning_effort=_effort, context_window=_window)
+
+
 @pytest.mark.asyncio
 async def test_run_turn_streams_events_to_sink_and_uses_supplied_acc(
     monkeypatch: pytest.MonkeyPatch,
@@ -66,8 +83,7 @@ async def test_run_turn_streams_events_to_sink_and_uses_supplied_acc(
     is fed to the CALLER's accumulator (so it can serve as the reattach snapshot) AND handed
     to the sink (so it can emit an SSE frame onto the live-turn broker), in order."""
     monkeypatch.setattr(runner_mod, "AgentLoop", _FakeLoop)
-    router = SimpleNamespace(effective_reasoning_effort=_effort)
-    executor = LoopTurnExecutor(router=router, registry=object())  # type: ignore[arg-type]
+    executor = LoopTurnExecutor(router=_router(), registry=object())  # type: ignore[arg-type]
 
     acc = _FakeAcc()
     seen: list = []
@@ -83,8 +99,39 @@ async def test_run_turn_streams_events_to_sink_and_uses_supplied_acc(
         on_event=seen.append,
     )
 
-    assert [e.type for e in seen] == ["text_delta", "done"]  # the sink saw every event...
-    assert [e.type for e in acc.fed] == ["text_delta", "done"]  # ...and so did the caller's acc
+    # The sink and the caller's acc both saw every event (text_delta, usage, done), in order.
+    assert [getattr(e, "type", None) for e in seen] == ["text_delta", "usage", "done"]
+    assert [getattr(e, "type", None) for e in acc.fed] == ["text_delta", "usage", "done"]
     # The result is shaped from the SAME accumulator the caller passed.
     assert executed.result.text == "hello"
     assert executed.result.stop_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_passes_the_window_and_returns_the_context_fill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The meter fix (Gap #1/#2): run_turn resolves the context window and PASSES it into
+    run_stream — which is what makes the loop emit UsageEvents on this (continuation/task) path
+    — then returns the fullest step's fill so the caller can persist the meter seed. Without the
+    window, the loop suppresses every UsageEvent and a reattached client's meter stays frozen."""
+    monkeypatch.setattr(runner_mod, "AgentLoop", _FakeLoop)
+    executor = LoopTurnExecutor(router=_router(), registry=object())  # type: ignore[arg-type]
+
+    executed = await executor.run_turn(
+        profile=agent_for("jerv"),
+        read_ctx=OWNER,
+        read_scopes=(),
+        conversation=[],
+        timezone=None,
+        recorder=object(),
+        agent_session_id="sess-1",
+        acc=_FakeAcc(),  # type: ignore[arg-type]  # stub events don't fit the real accumulator
+    )
+
+    # The resolved window was threaded into the loop (so it emits UsageEvents at all)…
+    assert _FakeLoop.seen_kwargs.get("context_window") == 5000
+    # …and run_turn returned the fullest step's fill (input+output) + the window for the caller
+    # (the continuation) to persist via record_context.
+    assert executed.context_used == 1500
+    assert executed.context_window == 5000

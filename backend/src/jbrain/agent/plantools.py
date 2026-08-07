@@ -36,16 +36,23 @@ _STATUS_LABEL = {
 
 
 def _plan_view(
-    session_id: str, body: str, status: str, updated_at: str, results: list | None = None
+    session_id: str,
+    plan_id: str,
+    body: str,
+    status: str,
+    updated_at: str,
+    results: list | None = None,
 ) -> ViewPayload:
     """The inline `plan_card`: the plan body, its status, the step-results scratchpad, and the
     Approve control the owner taps (data-only; the PWA renders the registered component, never
-    model markup)."""
+    model markup). `plan_id` binds the card to THIS plan, so it keeps showing its own state
+    even after a later plan supersedes it in the same conversation."""
     return ViewPayload(
         view="plan_card",
         surface="inline",
         data={
             "session_id": session_id,
+            "plan_id": plan_id,
             "body": body,
             "status": status,
             "updated_at": updated_at,
@@ -79,11 +86,12 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
         if not ctx.agent_session_id:
             return "There's no conversation to attach a plan to here."
         async with scoped_session(maker, ctx.session) as session:
-            plan = await repo.get(session, ctx.agent_session_id)
+            plan = await repo.get_active(session, ctx.agent_session_id)
         if plan is None:
             return "(no plan yet — draft one with write_plan when the task needs it)"
         view = _plan_view(
             ctx.agent_session_id,
+            str(plan.plan_id),
             plan.body,
             plan.status,
             plan.updated_at.isoformat(),
@@ -118,7 +126,7 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
             )
 
         async with scoped_session(maker, ctx.session) as session:
-            current = await repo.get(session, ctx.agent_session_id)
+            current = await repo.get_active(session, ctx.agent_session_id)
             current_status = current.status if current else "not_approved"
 
             # `in_work` is only reachable once the owner has approved the plan.
@@ -130,18 +138,36 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
             if pause is not None and current is None and body is None:
                 return "There's no plan to pause — draft one first with write_plan(body=…)."
 
+            # Start a NEW plan (its own id, empty results) vs. edit the active one. A fresh
+            # `not_approved` draft written while the current plan is already approved/in_work is
+            # a NEW plan — the owner asked for something else — so it must not inherit the running
+            # plan's results or overwrite it. Refining a still-unapproved draft, or jerv rewriting
+            # the running plan's checklist, edits in place.
+            start_new = current is None or (
+                body is not None
+                and status == "not_approved"
+                and current_status in ("approved", "in_work")
+            )
             if body is not None or status is not None:
                 # Normalize a written body into a FLAT `- [ ]` checklist so the card renders it
                 # cleanly and the loop can tick each step (no heading-steps / nested sub-items).
-                plan = await repo.upsert(
-                    session,
-                    ctx.agent_session_id,
-                    body=None if body is None else normalize_plan_body(str(body)),
-                    status=status,
-                )
+                norm_body = None if body is None else normalize_plan_body(str(body))
+                if start_new:
+                    plan = await repo.create(
+                        session,
+                        ctx.agent_session_id,
+                        body=norm_body or "",
+                        status=status or "not_approved",
+                    )
+                else:
+                    assert current is not None
+                    plan = await repo.update_plan(
+                        session, str(current.plan_id), body=norm_body, status=status
+                    )
             else:
                 plan = current  # pause-only call
             assert plan is not None
+            plan_id = str(plan.plan_id)
             # Snapshot the view fields now — a pause UPDATE below expires the ORM row, and
             # a pause never changes body/status/results anyway.
             new_body, new_status, updated = plan.body, plan.status, plan.updated_at.isoformat()
@@ -155,11 +181,13 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
             # loop even after approval. The approval gate IS the pause for a draft.
             paused_for_owner = pause == "await_owner" and new_status != "not_approved"
             if paused_for_owner:
-                await repo.set_awaiting_owner(session, ctx.agent_session_id, True)
+                await repo.set_awaiting_owner(session, plan_id, True)
             elif pause == "checkpoint":
-                await repo.set_awaiting_owner(session, ctx.agent_session_id, False)
+                await repo.set_awaiting_owner(session, plan_id, False)
 
-        view = _plan_view(ctx.agent_session_id, new_body, new_status, updated, results=new_results)
+        view = _plan_view(
+            ctx.agent_session_id, plan_id, new_body, new_status, updated, results=new_results
+        )
         if paused_for_owner:
             note = "Saved — paused for you. I'll wait for your reply before the next step."
         elif new_status == "not_approved":
@@ -188,8 +216,13 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
         heading_raw = arguments.get("heading")
         heading = str(heading_raw).strip() if heading_raw is not None else None
         async with scoped_session(maker, ctx.session) as session:
-            plan = await repo.complete_step(
-                session, ctx.agent_session_id, note=note_s, heading=heading or None
+            active_id = await repo.active_plan_id(session, ctx.agent_session_id)
+            plan = (
+                None
+                if active_id is None
+                else await repo.complete_step(
+                    session, active_id, note=note_s, heading=heading or None
+                )
             )
         if plan is None:
             return (
@@ -197,6 +230,7 @@ def build_plan_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, To
             )
         view = _plan_view(
             ctx.agent_session_id,
+            str(plan.plan_id),
             plan.body,
             plan.status,
             plan.updated_at.isoformat(),

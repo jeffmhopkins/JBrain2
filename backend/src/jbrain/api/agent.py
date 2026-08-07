@@ -448,7 +448,7 @@ async def _plan_blocks(
     if session.agent != "jerv":
         return []
     async with scoped_session(request.app.state.session_maker, owner_ctx) as db:
-        plan = await PlanRepo().get(db, str(session.id))
+        plan = await PlanRepo().get_active(db, str(session.id))
     if plan is None or plan.status not in ("approved", "in_work"):
         return []
     state = "APPROVED" if plan.status == "approved" else "APPROVED, in work"
@@ -647,7 +647,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     if session.agent == "jerv" and not body.deferred_outcome:
         with contextlib.suppress(Exception):
             async with scoped_session(request.app.state.session_maker, owner_ctx) as _db:
-                await PlanRepo().cancel_and_reset(_db, str(session.id))
+                active_id = await PlanRepo().active_plan_id(_db, str(session.id))
+                if active_id is not None:
+                    await PlanRepo().cancel_and_reset(_db, active_id)
 
     # The session's selected agent (docs/reference/ASSISTANT.md "Agent selection") sets the
     # persona prompt, the tool allowlist, and whether the turn reads the knowledge

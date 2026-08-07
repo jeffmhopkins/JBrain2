@@ -882,6 +882,8 @@ export interface PlanResult {
 }
 
 export interface PlanOut {
+  /** The plan's own identity — a card polls/mutates by it; many plans may share a session. */
+  plan_id: string;
   session_id: string;
   body: string;
   status: string;
@@ -2427,24 +2429,39 @@ export const api = {
   // ----- Plans: the owner's approve/edit + auto-resume controls for a jerv plan.
   // All owner-only; the `plan_card` tool-view and its out-of-card status surfaces
   // (the composer plan pill + Chats badge) read this (JERV_PLANNING_TOOL_PLAN.md). -----
-  async getPlan(sessionId: string): Promise<PlanOut> {
-    const response = await request(`/api/plans/${encodeURIComponent(sessionId)}`);
+  // Fetch one specific plan by its id — an inline card polls this so it keeps showing ITS
+  // plan (its own body/status/results), not whatever the conversation's current plan is.
+  async getPlan(planId: string): Promise<PlanOut> {
+    const response = await request(`/api/plans/${encodeURIComponent(planId)}`);
     return (await response.json()) as PlanOut;
+  },
+
+  // The conversation's ACTIVE (latest) plan — what the omnibox pill/popover tracks, so it
+  // follows a newly-created plan instead of staying stuck on a superseded one. 404 → null.
+  async getActivePlan(sessionId: string): Promise<PlanOut | null> {
+    try {
+      const response = await request(`/api/plans/session/${encodeURIComponent(sessionId)}/active`);
+      return (await response.json()) as PlanOut;
+    } catch (e) {
+      // 404 = the conversation has no plan yet; any other error propagates.
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
   },
 
   // The owner-only sign-off — the one transition jerv cannot make itself, so web
   // content it reads can never talk it into self-approving.
-  async approvePlan(sessionId: string): Promise<PlanOut> {
-    const response = await request(`/api/plans/${encodeURIComponent(sessionId)}/approve`, {
+  async approvePlan(planId: string): Promise<PlanOut> {
+    const response = await request(`/api/plans/${encodeURIComponent(planId)}/approve`, {
       method: "POST",
     });
     return (await response.json()) as PlanOut;
   },
 
   // Correct jerv's draft text in place before approving.
-  async editPlan(sessionId: string, body: string): Promise<PlanOut> {
+  async editPlan(planId: string, body: string): Promise<PlanOut> {
     const response = await request(
-      `/api/plans/${encodeURIComponent(sessionId)}/edit`,
+      `/api/plans/${encodeURIComponent(planId)}/edit`,
       jsonInit("POST", { body }),
     );
     return (await response.json()) as PlanOut;
@@ -2452,8 +2469,8 @@ export const api = {
 
   // Cancel the pending auto-continuation (and reset its budget) — the owner halting
   // the loop from the card.
-  async stopPlan(sessionId: string): Promise<PlanOut> {
-    const response = await request(`/api/plans/${encodeURIComponent(sessionId)}/stop`, {
+  async stopPlan(planId: string): Promise<PlanOut> {
+    const response = await request(`/api/plans/${encodeURIComponent(planId)}/stop`, {
       method: "POST",
     });
     return (await response.json()) as PlanOut;
@@ -2461,8 +2478,8 @@ export const api = {
 
   // Fire the next step now instead of waiting out the window — arms the continuation
   // due immediately (the server sweep picks it up within ~15s).
-  async continuePlan(sessionId: string): Promise<PlanOut> {
-    const response = await request(`/api/plans/${encodeURIComponent(sessionId)}/continue`, {
+  async continuePlan(planId: string): Promise<PlanOut> {
+    const response = await request(`/api/plans/${encodeURIComponent(planId)}/continue`, {
       method: "POST",
     });
     return (await response.json()) as PlanOut;

@@ -827,6 +827,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             turn_starting=app.state.turn_starting,
             client_presence=app.state.plan_presence,
             max_concurrent=agent._MAX_CONCURRENT_TURNS,
+            # Persists the continuation turn's context fill so the meter restores on reopen.
+            sessions=app.state.agent_sessions,
         )
         plan_continuation_task = asyncio.create_task(
             run_plan_continuation_loop(app.state.plan_continuation_runner)

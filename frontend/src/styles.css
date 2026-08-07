@@ -9224,7 +9224,8 @@ button.small {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.fb-shell .fb-status-stop {
+.fb-shell .fb-status-stop,
+.fb-shell .fb-status-go {
   flex: none;
   margin-left: 2px;
   padding: 2px 10px;
@@ -9240,6 +9241,15 @@ button.small {
 .fb-shell .fb-status-stop:hover {
   color: var(--text);
   border-color: var(--text-3);
+}
+/* Continue now: the affirmative override (skip the wait, fire the next step) reads in the
+   accent so it's distinct from the neutral Stop. */
+.fb-shell .fb-status-go {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.fb-shell .fb-status-go:hover {
+  border-color: var(--accent);
 }
 .fb-shell .fb-status.live .fb-status-lab {
   background: linear-gradient(100deg, var(--text-3) 30%, var(--steel) 50%, var(--text-3) 70%);
@@ -17367,13 +17377,15 @@ button.auto-sect[aria-expanded="true"] > svg {
   margin-top: 4px;
   border-top: 1px solid var(--border);
 }
+/* Each step's result folds on its own: the head is the per-step toggle button. */
 .plan-results-head {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 6px 0;
+  padding: 7px 10px;
   border: 0;
+  border-radius: 9px;
   background: transparent;
   font-size: var(--fs-note);
   font-weight: 600;
@@ -17384,6 +17396,10 @@ button.auto-sect[aria-expanded="true"] > svg {
 .plan-results-head:hover {
   color: var(--text);
 }
+.plan-result-label {
+  flex: 1;
+  min-width: 0;
+}
 .plan-results-chevron {
   width: 14px;
   height: 14px;
@@ -17393,39 +17409,24 @@ button.auto-sect[aria-expanded="true"] > svg {
 .plan-results-head.open .plan-results-chevron {
   transform: rotate(90deg);
 }
-.plan-results-count {
-  min-width: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--steel-tint);
-  color: var(--text-2);
-  font-size: 11px;
-  font-weight: 600;
-  text-align: center;
-}
 .plan-results-list {
   list-style: none;
   margin: 2px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .plan-result {
-  padding: 8px 10px;
   border-radius: 9px;
   background: var(--steel-tint);
   font-size: var(--fs-note);
   color: var(--text-2);
 }
-.plan-result-head {
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 3px;
-}
 /* A wide Markdown table (a step's comparison) scrolls inside the entry instead of stretching
    the card/modal — the reported "table display issues". */
 .plan-result-body {
+  padding: 0 10px 9px 30px;
   color: var(--text-2);
   overflow-x: auto;
 }
