@@ -27,6 +27,7 @@ function listOut(over: Partial<ListOut> = {}): ListOut {
 
 function planOut(over: Partial<PlanOut> = {}): PlanOut {
   return {
+    plan_id: "p1",
     session_id: "s1",
     body: "",
     status: "in_work",
@@ -884,7 +885,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "not_approved" },
         })}
         onPlanChanged={onPlanChanged}
       />,
@@ -895,7 +896,7 @@ describe("ToolView registry", () => {
     expect(getByText("Awaiting approval")).toHaveClass("flag-not_approved");
     // The owner-only Approve gesture POSTs approve, then signals the surface to refresh.
     fireEvent.click(getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(approve).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(approve).toHaveBeenCalledWith("p1"));
     expect(onPlanChanged).toHaveBeenCalled();
   });
 
@@ -909,7 +910,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "not_approved" },
         })}
       />,
     );
@@ -918,8 +919,8 @@ describe("ToolView registry", () => {
     expect(box.value).toContain("Search for current budget keyboards");
     fireEvent.change(box, { target: { value: "# New\n- [ ] one" } });
     fireEvent.click(getByText("Save & approve"));
-    await waitFor(() => expect(edit).toHaveBeenCalledWith("s1", "# New\n- [ ] one"));
-    expect(approve).toHaveBeenCalledWith("s1");
+    await waitFor(() => expect(edit).toHaveBeenCalledWith("p1", "# New\n- [ ] one"));
+    expect(approve).toHaveBeenCalledWith("p1");
   });
 
   it("shows the auto-resume countdown + controls while in_work", async () => {
@@ -932,7 +933,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work" },
         })}
       />,
     );
@@ -940,7 +941,7 @@ describe("ToolView registry", () => {
     await waitFor(() => expect(getByText(/continuing in/)).toBeInTheDocument());
     expect(getByText("Working to plan")).toHaveClass("flag-in_work");
     fireEvent.click(getByRole("button", { name: "Continue now" }));
-    await waitFor(() => expect(cont).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(cont).toHaveBeenCalledWith("p1"));
   });
 
   it("renders the distinct await_owner state with no countdown", async () => {
@@ -951,7 +952,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work" },
         })}
       />,
     );
@@ -972,7 +973,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "not_approved" },
         })}
       />,
     );
@@ -984,7 +985,7 @@ describe("ToolView registry", () => {
     expect(getByText("Awaiting approval")).toHaveClass("flag-not_approved");
     expect(queryByText("Waiting for you")).not.toBeInTheDocument();
     fireEvent.click(getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(approve).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(approve).toHaveBeenCalledWith("p1"));
   });
 
   it("suppresses the countdown when the next step starts immediately (due-now)", async () => {
@@ -1001,7 +1002,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work" },
         })}
       />,
     );
@@ -1011,7 +1012,7 @@ describe("ToolView registry", () => {
     expect(queryByText("Continue now")).not.toBeInTheDocument();
   });
 
-  it("renders the append-only step-results scratchpad in the plan card", async () => {
+  it("renders each step-result as its own collapsible in the plan card", async () => {
     const results = [
       {
         heading: "Step 1 — Top-rated carry-ons",
@@ -1026,17 +1027,22 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work", results },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work", results },
         })}
       />,
     );
-    // The Results section defaults COLLAPSED — the header shows, the entries don't yet.
-    const toggle = getByRole("button", { name: /Results/ });
-    expect(queryByText("Step 1 — Top-rated carry-ons")).not.toBeInTheDocument();
-    // Opening it reveals each appended entry, heading + Markdown note.
-    fireEvent.click(toggle);
-    expect(getByText("Step 1 — Top-rated carry-ons")).toBeInTheDocument();
+    // Each finished step folds on its OWN — two separate toggles, both default CLOSED (the
+    // headings/notes are hidden until each is opened), a headless entry labelled "Step N".
+    const t1 = getByRole("button", { name: "Step 1 — Top-rated carry-ons" });
+    getByRole("button", { name: "Step 2" }); // the no-heading entry falls back to its index
+    expect(queryByText(/Cotopaxi Allpa/)).not.toBeInTheDocument();
+    expect(queryByText(/second entry with no heading/)).not.toBeInTheDocument();
+    // Opening ONLY the first reveals just its note — the second stays folded (independent).
+    fireEvent.click(t1);
     expect(getByText(/Cotopaxi Allpa/)).toBeInTheDocument();
+    expect(queryByText(/second entry with no heading/)).not.toBeInTheDocument();
+    // Opening the second reveals its note too.
+    fireEvent.click(getByRole("button", { name: "Step 2" }));
     expect(getByText(/second entry with no heading/)).toBeInTheDocument();
   });
 
@@ -1047,7 +1053,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: done, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: done, status: "in_work" },
         })}
       />,
     );
@@ -1064,7 +1070,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "not_approved" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "not_approved" },
         })}
       />,
     );
@@ -1085,7 +1091,7 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status },
         })}
       />
     );
@@ -1111,13 +1117,13 @@ describe("ToolView registry", () => {
       <ToolView
         payload={payload({
           view: "plan_card",
-          data: { session_id: "s1", body: PLAN_BODY, status: "in_work" },
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work" },
         })}
       />,
     );
     await waitFor(() => expect(getByText(/continuing in/)).toBeInTheDocument());
     fireEvent.click(getByRole("button", { name: "Stop" }));
-    await waitFor(() => expect(stop).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(stop).toHaveBeenCalledWith("p1"));
     // The countdown is gone and stays gone (the poll is parked, not re-showing next tick).
     await waitFor(() => expect(queryByText(/continuing in/)).not.toBeInTheDocument());
   });

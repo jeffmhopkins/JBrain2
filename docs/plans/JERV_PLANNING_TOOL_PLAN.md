@@ -1,6 +1,6 @@
 # jerv Planning Tool — owner-approved plans, executed across turns
 
-> **Status:** In progress · **Last verified:** 2026-08-07 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage. **P4.1 = visibility + budget** (§5, §6, §9): the original draft card is kept on its own turn as the approved record, the between-steps wait shows an interruptible countdown on the status line, and a supervised (foreground-watched) turn earns a lifted per-turn budget. **P4.2 = draft approvability fix** (§3, §4, §6): a `not_approved` draft is always approvable — `await_owner` on a draft is a no-op, approval clears any stale flag, and the card's `not_approved` state dominates `await_owner` — so jerv pausing the draft can never strand the owner with no way to approve. **P5 = step-results scratchpad + instant start** (§9): an append-only, index-ordered results scratchpad (`write_plan_result`) each step records its synthesis to and the final step reads to write the deliverable — visible as a per-step Results section in the card — plus approve/Continue now start the step immediately (an on-demand kick + a prompt busy-retry) instead of idling the ~60s window. **P6 = execution correctness + polish** (§10): recording a result now deterministically ticks the step's box and flips `in_work`; written plans are normalized to a flat `- [ ]` checklist (the Step-4-heading render bug); one step per turn; the card's countdown no longer flashes on an immediate start; and the Results section is collapsible + Markdown-rendered in the card and the modal.)
+> **Status:** In progress · **Last verified:** 2026-08-07 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage. **P4.1 = visibility + budget** (§5, §6, §9): the original draft card is kept on its own turn as the approved record, the between-steps wait shows an interruptible countdown on the status line, and a supervised (foreground-watched) turn earns a lifted per-turn budget. **P4.2 = draft approvability fix** (§3, §4, §6): a `not_approved` draft is always approvable — `await_owner` on a draft is a no-op, approval clears any stale flag, and the card's `not_approved` state dominates `await_owner` — so jerv pausing the draft can never strand the owner with no way to approve. **P5 = step-results scratchpad + instant start** (§9): an append-only, index-ordered results scratchpad (`write_plan_result`) each step records its synthesis to and the final step reads to write the deliverable — visible as a per-step Results section in the card — plus approve/Continue now start the step immediately (an on-demand kick + a prompt busy-retry) instead of idling the ~60s window. **P6 = execution correctness + polish** (§10): recording a result now deterministically ticks the step's box and flips `in_work`; written plans are normalized to a flat `- [ ]` checklist (the Step-4-heading render bug); one step per turn; the card's countdown no longer flashes on an immediate start; and the Results section is collapsible + Markdown-rendered in the card and the modal. **P7 = multiple independent plans per conversation** (§11): the table is re-keyed on a per-plan `plan_id` (migration 0158) so a chat holds many plans without crosstalk — an old card keeps its own results, the omnibox tracks the active (latest) plan, a fresh `not_approved` draft over a running plan starts a separate plan, and the per-step Results now fold one collapsible per step.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the plan is an owner-only
 > `app.agent_session_plans` row behind `app.is_owner()` RLS (FORCE), with the mandated
@@ -33,12 +33,15 @@ jerv is a sandboxed web chatbot with no mutating knowledge-base tools, so this i
 when the owner explicitly asks ("make a plan", "plan this out"); otherwise jerv just does
 the task. (Enforced in the jerv prompt and the `write_plan` tool description.)
 
-## 2. Data model — `app.agent_session_plans` (migration 0155)
+## 2. Data model — `app.agent_session_plans` (migrations 0155, 0157, 0158)
 
-One row per chat, keyed by `agent_sessions.id` (`ON DELETE CASCADE`), owner-only RLS
-(`app.is_owner()`, FORCE) like `archivist_memory` — a plan is conversation-local, **not**
-knowledge-base data, so it carries no domain and jerv (empty-scoped) still reaches it
-because the firewall is ownership, not a domain scope.
+MANY plans per chat (P7, migration 0158): each row is keyed by its own `plan_id uuid`, with
+`session_id` a NOT-NULL cascade FK to `agent_sessions.id` (non-unique — many plans per chat).
+Owner-only RLS (`app.is_owner()`, FORCE) like `archivist_memory` — a plan is conversation-local,
+**not** knowledge-base data, so it carries no domain and jerv (empty-scoped) still reaches it
+because the firewall is ownership, not a domain scope. The **active** plan of a session is the
+latest-created one (`ORDER BY created_at DESC`, backed by a `(session_id, created_at)` index) — the
+one the tools, the re-injection, the continuation loop, and the omnibox all operate on.
 
 - `body text` — the plan text (Markdown, a `- [ ]` / `- [x]` checklist for steps).
 - `status text` CHECK ∈ (`not_approved`, `approved`, `in_work`).
@@ -289,3 +292,42 @@ RLS integration (`write_plan_result` appends + ticks + sets in_work with no clob
 normalizes a heading/nested body to a flat checklist); vitest (`registry`: the due-now countdown
 is suppressed; the Results section defaults collapsed and opens on click). jerv prompt version +
 digest and the `write_plan_result.tool` sidecar pin bumped in the same change.
+
+## 11. Multiple independent plans per conversation (P7)
+
+Live testing surfaced crosstalk: drafting a NEW plan in a chat that already ran one showed the
+OLD plan's results and the omnibox pill didn't track the new plan — because the table was
+primary-keyed by `session_id` (one plan per chat), so a second plan overwrote the first's row and
+inherited its scratchpad. Fix: **re-key the table on a per-plan `plan_id`** (migration 0158) so a
+conversation holds MANY plans, each with its own body, status, and results.
+
+- **Data model.** `agent_session_plans.plan_id uuid` is the PK (default `gen_random_uuid()`);
+  `session_id` becomes a NOT-NULL cascade FK (now non-unique), with a `(session_id, created_at)`
+  index. The **active** plan of a session is the latest-created one. RLS/grants are unchanged (the
+  owner-only FORCE policy rides the same table).
+- **Repo.** `PlanRepo` is plan-id-native for reads/mutations (`get_by_id`, `approve`,
+  `complete_step`, `schedule_continuation`, …), with `get_active`/`active_plan_id` resolvers for
+  the session-scoped callers (the tools, the re-injection, the settle hook). `create` starts a new
+  plan AND clears the previous active plan's pending continuation — so only the active plan
+  auto-continues (the invariant that lets the session-scoped loop and "the active plan" never
+  disagree). `claim_due_continuations` returns `(plan_id, session_id)` pairs; `_run_one` re-reads
+  by `plan_id` and skips a plan that is no longer the session's active one (a newer plan was
+  drafted after the claim — its tools would otherwise do cross-plan work).
+- **write_plan create-vs-edit.** A fresh `not_approved` body written while the active plan is
+  already `approved`/`in_work` starts a SEPARATE plan (empty results); refining a still-unapproved
+  draft, or jerv rewriting the running plan's checklist, edits in place. The prompt (v37) tells
+  jerv a fresh `not_approved` draft is what begins a new plan.
+- **API.** Reads/mutations key on `plan_id` (`GET/POST /plans/{plan_id}…`), plus
+  `GET /plans/session/{session_id}/active` for the omnibox to resolve the current plan. `PlanOut`
+  and the `plan_card` view payload carry `plan_id`.
+- **PWA.** `usePlanState` runs in two modes: an inline card is BOUND to its own `plan_id` (polls
+  `getPlan(planId)`, so an old card keeps its own history after a newer plan supersedes it); the
+  omnibox pill/popover RESOLVES the active plan each poll (`getActivePlan(sessionId)`), so it
+  follows a newly-created plan. Also: the per-step Results scratchpad now folds **per step** —
+  each finished step is its own collapsible (default closed), rather than one combined section.
+
+Tests: RLS integration (a new draft over a running plan starts a fresh plan with empty results and
+clears the old plan's continuation; refining an unapproved draft stays one plan; cascade deletes
+all a chat's plans); continuation integration (claim returns `(plan_id, session_id)`; a superseded
+plan is not run); vitest (`registry`: each step-result is its own collapsible, opening one leaves
+the others folded). Migration 0158 + jerv prompt v37 digest bumped in the same change.

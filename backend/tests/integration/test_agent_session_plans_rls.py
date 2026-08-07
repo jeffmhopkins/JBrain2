@@ -1,11 +1,13 @@
-"""Migration 0155 against real Postgres: `agent_session_plans` is owner-only (CLAUDE.md
-rule 3), and jerv's plan state machine holds.
+"""Migrations 0155/0157/0158 against real Postgres: `agent_session_plans` is owner-only
+(CLAUDE.md rule 3), the plan state machine holds, and a chat can hold multiple independent
+plans.
 
 The mandatory per-new-table RLS isolation test. The owner round-trips a draft →
 approve → in-work plan via `PlanRepo` and the tool handlers; a non-owner
 (capability-token) principal sees ZERO rows and cannot write. The state machine is
 exercised through the handlers: jerv can never set `approved`, and `in_work` is refused
-until the owner has approved. Finally, deleting the chat cascades the plan away.
+until the owner has approved. A second plan drafted over a running one supersedes it
+without inheriting its results. Finally, deleting the chat cascades the plans away.
 """
 
 import uuid
@@ -71,12 +73,13 @@ async def test_owner_roundtrips_a_plan(maker: async_sessionmaker) -> None:
     repo = PlanRepo()
 
     async with scoped_session(maker, owner) as session:
-        assert await repo.get(session, sid) is None  # no plan before any write
-        plan = await repo.upsert(session, sid, body="1. do X\n2. do Y")
+        assert await repo.get_active(session, sid) is None  # no plan before any write
+        plan = await repo.create(session, sid, body="1. do X\n2. do Y")
+        pid = str(plan.plan_id)
         assert plan.status == "not_approved"  # a fresh draft defaults to awaiting approval
 
     async with scoped_session(maker, owner) as session:
-        plan = await repo.set_status(session, sid, "approved")  # the owner approve path
+        plan = await repo.set_status(session, pid, "approved")  # the owner approve path
         assert plan is not None and plan.status == "approved"
         assert plan.body == "1. do X\n2. do Y"  # approving does not disturb the body
 
@@ -95,16 +98,81 @@ async def test_handlers_enforce_the_state_machine(maker: async_sessionmaker) -> 
     blocked = await handlers["write_plan"]({"status": "in_work"}, ctx)
     assert "isn't approved yet" in blocked
     async with scoped_session(maker, owner) as session:
-        plan = await PlanRepo().get(session, sid)
+        plan = await PlanRepo().get_active(session, sid)
         assert plan is not None and plan.status == "not_approved"  # unchanged
 
     # The owner approves out-of-band (the api endpoint's repo call), then jerv may work it.
     async with scoped_session(maker, owner) as session:
-        await PlanRepo().set_status(session, sid, "approved")
+        pid = await PlanRepo().active_plan_id(session, sid)
+        assert pid is not None
+        await PlanRepo().set_status(session, pid, "approved")
     worked = await handlers["write_plan"]({"status": "in_work"}, ctx)
     assert "in work" in worked
     reread = await handlers["read_plan"]({}, ctx)
     assert "step 1" in reread
+
+
+async def test_a_new_draft_over_a_running_plan_starts_a_fresh_plan(
+    maker: async_sessionmaker,
+) -> None:
+    """The reported crosstalk: drafting a NEW plan in a chat that already has a running one must
+    create a SEPARATE plan (its own id, EMPTY results), not overwrite the first and inherit its
+    scratchpad. The old plan's row stays intact; `get_active` now returns the new one, and the
+    old plan's pending continuation is cleared (only the active plan auto-continues)."""
+    owner = await _owner(maker)
+    sid = await _new_chat(maker, owner)
+    repo = PlanRepo()
+    handlers = build_plan_handlers(maker)
+    ctx = ToolContext(session=owner, scopes=(), agent_session_id=sid)
+
+    # Plan A: approved, in-work, with a recorded result and an armed continuation.
+    async with scoped_session(maker, owner) as session:
+        a = await repo.create(session, sid, body="- [ ] a1\n- [ ] a2", status="approved")
+        a_id = str(a.plan_id)
+    await handlers["write_plan_result"]({"heading": "A-step", "note": "found A"}, ctx)
+    async with scoped_session(maker, owner) as session:
+        await repo.schedule_continuation(session, a_id, delay_s=60)
+
+    # jerv drafts a brand-new plan (a fresh not_approved draft) — a different objective.
+    out = await handlers["write_plan"]({"body": "- [ ] b1", "status": "not_approved"}, ctx)
+    assert "Approve" in out
+
+    async with scoped_session(maker, owner) as session:
+        active = await repo.get_active(session, sid)
+        assert active is not None
+        b_id = str(active.plan_id)
+        assert b_id != a_id  # a genuinely separate plan
+        assert active.status == "not_approved"
+        assert active.body == "- [ ] b1"
+        assert active.results == []  # did NOT inherit A's scratchpad — no crosstalk
+        # Plan A survives untouched, keeping its own results, and its continuation was cleared.
+        a_row = await repo.get_by_id(session, a_id)
+        assert a_row is not None
+        assert a_row.results == [{"heading": "A-step", "note": "found A"}]
+        assert a_row.continuation_due_at is None  # superseded — only the active plan continues
+
+
+async def test_editing_an_unapproved_draft_stays_one_plan(maker: async_sessionmaker) -> None:
+    """Refining a still-unapproved draft (write_plan again while not_approved) EDITS it in
+    place — it must not spawn a second draft."""
+    owner = await _owner(maker)
+    sid = await _new_chat(maker, owner)
+    repo = PlanRepo()
+    handlers = build_plan_handlers(maker)
+    ctx = ToolContext(session=owner, scopes=(), agent_session_id=sid)
+
+    await handlers["write_plan"]({"body": "- [ ] first take", "status": "not_approved"}, ctx)
+    await handlers["write_plan"]({"body": "- [ ] revised take", "status": "not_approved"}, ctx)
+    async with scoped_session(maker, owner) as session:
+        count = (
+            await session.execute(
+                text("SELECT count(*) FROM app.agent_session_plans WHERE session_id = :s"),
+                {"s": sid},
+            )
+        ).scalar()
+        assert count == 1  # one draft, refined in place
+        active = await repo.get_active(session, sid)
+        assert active is not None and active.body == "- [ ] revised take"
 
 
 async def test_pausing_a_draft_does_not_set_awaiting_owner(maker: async_sessionmaker) -> None:
@@ -121,7 +189,7 @@ async def test_pausing_a_draft_does_not_set_awaiting_owner(maker: async_sessionm
     assert "Approve" in out  # the awaiting-approval note, not the "paused for you" note
     assert "no need to pause" in out  # teaches the model the pause was ignored
     async with scoped_session(maker, owner) as session:
-        plan = await PlanRepo().get(session, sid)
+        plan = await PlanRepo().get_active(session, sid)
         assert plan is not None
         assert plan.status == "not_approved"
         assert plan.awaiting_owner is False  # the harmful flag was never set
@@ -138,13 +206,14 @@ async def test_write_plan_result_appends_ticks_and_sets_in_work(maker: async_ses
     ctx = ToolContext(session=owner, scopes=(), agent_session_id=sid)
 
     async with scoped_session(maker, owner) as session:
-        assert await repo.complete_step(session, sid, note="x") is None  # no plan yet
-        await repo.upsert(session, sid, body="- [ ] one\n- [ ] two", status="approved")
+        # No plan yet: complete_step against a bogus id is a no-op returning None.
+        assert await repo.complete_step(session, str(uuid.uuid4()), note="x") is None
+        await repo.create(session, sid, body="- [ ] one\n- [ ] two", status="approved")
 
     out1 = await handlers["write_plan_result"]({"heading": "Step 1", "note": "found A"}, ctx)
     assert "Recorded result #1" in out1 and "checked off" in out1
     async with scoped_session(maker, owner) as session:
-        plan = await repo.get(session, sid)
+        plan = await repo.get_active(session, sid)
         assert plan is not None
         assert plan.status == "in_work"  # approved → in_work on the first recorded step
         assert plan.body == "- [x] one\n- [ ] two"  # the first box ticked, the second untouched
@@ -153,7 +222,7 @@ async def test_write_plan_result_appends_ticks_and_sets_in_work(maker: async_ses
     out2 = await handlers["write_plan_result"]({"note": "found B"}, ctx)
     assert "Recorded result #2" in out2
     async with scoped_session(maker, owner) as session:
-        plan = await repo.get(session, sid)
+        plan = await repo.get_active(session, sid)
         assert plan is not None
         assert plan.body == "- [x] one\n- [x] two"  # second box ticked; first NOT clobbered
         assert plan.results == [
@@ -182,7 +251,7 @@ async def test_write_plan_normalizes_the_body_to_a_flat_checklist(
     messy = "# Guide\n- [ ] Step 1\n- **Step 4**:\n  - [ ] top pick\n  - budget pick"
     await handlers["write_plan"]({"body": messy}, ctx)
     async with scoped_session(maker, owner) as session:
-        plan = await PlanRepo().get(session, sid)
+        plan = await PlanRepo().get_active(session, sid)
         assert plan is not None
         # The heading and every (nested / bare) bullet became a flat top-level checkbox; the
         # `# Guide` title is preserved as prose.
@@ -199,16 +268,17 @@ async def test_approve_clears_a_stale_awaiting_owner(maker: async_sessionmaker) 
     sid = await _new_chat(maker, owner)
     repo = PlanRepo()
     async with scoped_session(maker, owner) as session:
-        await repo.upsert(session, sid, body="- [ ] step 1", status="not_approved")
-        await repo.set_awaiting_owner(session, sid, True)  # a stale flag on the draft
+        plan = await repo.create(session, sid, body="- [ ] step 1", status="not_approved")
+        pid = str(plan.plan_id)
+        await repo.set_awaiting_owner(session, pid, True)  # a stale flag on the draft
 
     async with scoped_session(maker, owner) as session:
-        plan = await repo.approve(session, sid)
+        plan = await repo.approve(session, pid)
         assert plan is not None
         assert plan.status == "approved"
         assert plan.awaiting_owner is False  # approving cleared it, so the loop can start
 
-    # Approving a plan that was never drafted still 404s (None), like set_status.
+    # Approving a plan that never existed still 404s (None), like set_status.
     async with scoped_session(maker, owner) as session:
         assert await repo.approve(session, str(uuid.uuid4())) is None
 
@@ -228,9 +298,9 @@ async def test_jerv_runtime_ctx_reaches_the_owner_only_table(maker: async_sessio
     sid = await _new_chat(maker, jerv)
     repo = PlanRepo()
     async with scoped_session(maker, jerv) as session:
-        await repo.upsert(session, sid, body="jerv drafted this", status="not_approved")
+        await repo.create(session, sid, body="jerv drafted this", status="not_approved")
     async with scoped_session(maker, jerv) as session:
-        plan = await repo.get(session, sid)
+        plan = await repo.get_active(session, sid)
         assert plan is not None and plan.body == "jerv drafted this"
 
 
@@ -240,7 +310,7 @@ async def test_non_owner_sees_nothing_and_cannot_write(maker: async_sessionmaker
     repo = PlanRepo()
 
     async with scoped_session(maker, owner) as session:
-        await repo.upsert(session, sid, body="owner-only plan", status="approved")
+        await repo.create(session, sid, body="owner-only plan", status="approved")
 
     # A non-owner principal sees zero rows — RLS hides every chat's plan.
     async with scoped_session(maker, NON_OWNER) as session:
@@ -252,17 +322,24 @@ async def test_non_owner_sees_nothing_and_cannot_write(maker: async_sessionmaker
     # …and cannot write: the owner WITH CHECK rejects a non-owner insert.
     with pytest.raises(ProgrammingError):
         async with scoped_session(maker, NON_OWNER) as session:
-            await repo.upsert(session, sid, body="sneaky", status="approved")
+            await repo.create(session, sid, body="sneaky", status="approved")
 
 
-async def test_deleting_the_chat_cascades_the_plan(maker: async_sessionmaker) -> None:
+async def test_deleting_the_chat_cascades_the_plans(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     sid = await _new_chat(maker, owner)
     repo = PlanRepo()
 
     async with scoped_session(maker, owner) as session:
-        await repo.upsert(session, sid, body="to be cascaded")
+        await repo.create(session, sid, body="plan one")
+        await repo.create(session, sid, body="plan two")  # two plans on the one chat
     async with scoped_session(maker, owner) as session:
         await session.execute(text("DELETE FROM app.agent_sessions WHERE id = :id"), {"id": sid})
     async with scoped_session(maker, owner) as session:
-        assert await repo.get(session, sid) is None  # ON DELETE CASCADE removed the plan
+        count = (
+            await session.execute(
+                text("SELECT count(*) FROM app.agent_session_plans WHERE session_id = :s"),
+                {"s": sid},
+            )
+        ).scalar()
+        assert count == 0  # ON DELETE CASCADE removed every plan of the chat

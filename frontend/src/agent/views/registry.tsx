@@ -3162,7 +3162,12 @@ function planFromOut(out: PlanOut): PlanLocal {
  * the owner alone makes. */
 export function usePlanState(
   sessionId: string,
-  seed?: { body?: string; status?: string; results?: PlanResult[] },
+  seed?: {
+    planId?: string | undefined;
+    body?: string;
+    status?: string;
+    results?: PlanResult[];
+  },
   onPlanChanged?: () => void,
 ) {
   const [plan, setPlan] = useState<PlanLocal>(() => ({
@@ -3174,6 +3179,16 @@ export function usePlanState(
     used: 0,
     max: 0,
   }));
+  // Which plan this hook drives. Two modes, fixed by whether the seed carried a plan id:
+  //   • BOUND (inline card): a fixed `seed.planId` — always poll/mutate THAT plan, so an old
+  //     card keeps its own state after a newer plan supersedes it.
+  //   • RESOLVE (omnibox pill/popover): no seed id — poll GET .../active each time so it FOLLOWS
+  //     the conversation's latest plan, tracking that plan's id for the controls.
+  // A ref (not state) so a fold and a mutation read the current id synchronously without a
+  // re-render race. `seedRef` exposes the latest seed to the [sessionId]-stable reconcile.
+  const seedRef = useRef(seed);
+  seedRef.current = seed;
+  const planIdRef = useRef<string | null>(seed?.planId ?? null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -3206,6 +3221,9 @@ export function usePlanState(
   useEffect(() => {
     if (seededSid.current === sessionId) return;
     seededSid.current = sessionId;
+    // Re-point at the new chat's plan: a bound card carries its own id; the omnibox drops back
+    // to RESOLVE mode (null) so its next poll re-discovers the new conversation's active plan.
+    planIdRef.current = seed?.planId ?? null;
     setPlan({
       body: seed?.body ?? "",
       status: planStatus(seed?.status),
@@ -3218,7 +3236,7 @@ export function usePlanState(
     // seed is read fresh on a session switch, not tracked as a dep (it changes identity
     // every render); the switch is keyed off sessionId alone (the guard above early-returns
     // unless it changed, so the seed deps only pacify the linter — they never re-fire it).
-  }, [sessionId, seed?.body, seed?.status, seed?.results]);
+  }, [sessionId, seed?.planId, seed?.body, seed?.status, seed?.results]);
 
   const { title, steps, prose } = parsePlanBody(plan.body);
   const doneCount = steps.filter((s) => s.checked).length;
@@ -3246,9 +3264,13 @@ export function usePlanState(
   const reconcile = useCallback(async () => {
     if (!sessionId) return;
     const seq = actionSeq.current;
+    const bound = seedRef.current?.planId ?? null;
     try {
-      const out = await api.getPlan(sessionId);
+      // BOUND: this card's own plan. RESOLVE: the session's active plan (may be a newer one).
+      const out = bound ? await api.getPlan(bound) : await api.getActivePlan(sessionId);
       if (!alive.current || busyRef.current || actionSeq.current !== seq) return;
+      if (out == null) return; // omnibox, no plan for this chat yet — keep the seed
+      planIdRef.current = out.plan_id;
       const next = planFromOut(out);
       setPlan(next);
       setNow(Date.now()); // re-anchor so the countdown gate reads a fresh remaining (no flash)
@@ -3256,7 +3278,7 @@ export function usePlanState(
       // un-park the poll (a Stop that stays parked keeps dueAt null + in_work).
       if (next.dueAt != null || next.awaiting || next.status !== "in_work") setHalted(false);
     } catch {
-      // 404 = no plan row yet (keep the seed); any other blip retries on the next tick.
+      // 404 = no such plan / no plan row yet (keep the seed); other blips retry next tick.
     }
   }, [sessionId]);
 
@@ -3266,10 +3288,10 @@ export function usePlanState(
   // session list, which flips this hook's seed `not_approved`→`approved` — without this pull
   // the composer pill wouldn't reflect the approval until the owner switched conversations
   // (the reported bug). A since-approved/-completed seed likewise can't strand an "Awaiting
-  // approval" card.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: seed?.status is a deliberate
-  // trigger — re-reconcile when the session-list status flips (e.g. an inline-card approve),
-  // not just on mount; the effect body reads server truth, not the seed value itself.
+  // approval" card. seed?.status is a deliberate trigger — re-reconcile when the session-list
+  // status flips (e.g. an inline-card approve), not just on mount; the effect body reads server
+  // truth (getPlan / getActivePlan), not the seed value itself.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional seed?.status trigger
   useEffect(() => {
     void reconcile();
   }, [reconcile, seed?.status]);
@@ -3351,12 +3373,14 @@ export function usePlanState(
   // Correct-in-place then sign off: POST edit, then the owner-only POST approve.
   async function saveApprove(): Promise<void> {
     if (busyRef.current) return;
+    const id = planIdRef.current;
+    if (!id) return;
     actionSeq.current += 1;
     busyRef.current = true;
     setBusy(true);
     try {
-      await api.editPlan(sessionId, draft);
-      const out = await api.approvePlan(sessionId);
+      await api.editPlan(id, draft);
+      const out = await api.approvePlan(id);
       if (!alive.current) return;
       setPlan(planFromOut(out));
       setNow(Date.now()); // re-anchor so the approve-armed due-now start reads ~0 (no flash)
@@ -3389,12 +3413,21 @@ export function usePlanState(
     busy,
     countdownVisible,
     countdown,
-    approve: () => void run(() => api.approvePlan(sessionId)),
+    approve: () => {
+      const id = planIdRef.current;
+      if (id) void run(() => api.approvePlan(id));
+    },
     startEdit,
     cancelEdit: () => setEditing(false),
     saveApprove: () => void saveApprove(),
-    continueNow: () => void run(() => api.continuePlan(sessionId)),
-    stop: () => void run(() => api.stopPlan(sessionId), { halt: true }),
+    continueNow: () => {
+      const id = planIdRef.current;
+      if (id) void run(() => api.continuePlan(id));
+    },
+    stop: () => {
+      const id = planIdRef.current;
+      if (id) void run(() => api.stopPlan(id), { halt: true });
+    },
   };
 }
 
@@ -3429,9 +3462,18 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
     continueNow,
     stop,
   } = st;
-  // The step-results scratchpad collapses, defaulting to CLOSED (in both the inline card and
-  // the omnibox modal), so a long run's results don't dominate the card until the owner opens it.
-  const [resultsOpen, setResultsOpen] = useState(false);
+  // The step-results scratchpad: one collapsible per finished step (each entry folds on its
+  // own), defaulting to CLOSED (inline card and omnibox modal alike), so a long run's results
+  // don't dominate the card until the owner opens the step they care about.
+  const [openResults, setOpenResults] = useState<ReadonlySet<number>>(() => new Set<number>());
+  const toggleResult = useCallback((i: number) => {
+    setOpenResults((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }, []);
   return (
     <div className={`plan-card flag-${state}`}>
       <div className="plan-head">
@@ -3493,50 +3535,50 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
 
       {/* The step-results scratchpad (append-only): each finished step's synthesis, so the
           findings live in one visible place — not buried in a turn's collapsed tool trace —
-          and the final step reads them all to write the deliverable. Collapsible, default
-          CLOSED (card and modal alike). Hidden entirely while editing. */}
+          and the final step reads them all to write the deliverable. One collapsible per
+          step (each folds independently), default CLOSED (card and modal alike). Hidden
+          entirely while editing. */}
       {!editing && results.length > 0 && (
         <div className="plan-results">
-          <button
-            type="button"
-            className={`plan-results-head${resultsOpen ? " open" : ""}`}
-            aria-expanded={resultsOpen}
-            onClick={() => setResultsOpen((v) => !v)}
-          >
-            <svg
-              className="plan-results-chevron"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M9 6l6 6-6 6" />
-            </svg>
-            Results
-            <span className="plan-results-count">{results.length}</span>
-          </button>
-          {resultsOpen && (
-            <ol className="plan-results-list">
-              {results.map((r, i) => (
+          <ol className="plan-results-list">
+            {results.map((r, i) => {
+              const open = openResults.has(i);
+              return (
                 <li
                   // Append-only, index-ordered; the position is the stable key.
                   // biome-ignore lint/suspicious/noArrayIndexKey: append-only ordered results
                   key={i}
                   className="plan-result"
                 >
-                  {r.heading && <div className="plan-result-head">{r.heading}</div>}
-                  {r.note && (
+                  <button
+                    type="button"
+                    className={`plan-results-head${open ? " open" : ""}`}
+                    aria-expanded={open}
+                    onClick={() => toggleResult(i)}
+                  >
+                    <svg
+                      className="plan-results-chevron"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
+                    <span className="plan-result-label">{r.heading || `Step ${i + 1}`}</span>
+                  </button>
+                  {open && r.note && (
                     <div className="plan-result-body">
                       <Markdown text={r.note} />
                     </div>
                   )}
                 </li>
-              ))}
-            </ol>
-          )}
+              );
+            })}
+          </ol>
         </div>
       )}
 
@@ -3657,6 +3699,9 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
   const st = usePlanState(
     String(data.session_id ?? ""),
     {
+      // The card binds to THIS plan's id, so it keeps polling/mutating its own plan even after
+      // a later plan supersedes it in the conversation (no crosstalk with the newer plan).
+      planId: data.plan_id ? String(data.plan_id) : undefined,
       body: String(data.body ?? ""),
       status: planStatus(data.status),
       results: Array.isArray(data.results) ? (data.results as PlanResult[]) : [],

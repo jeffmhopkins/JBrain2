@@ -112,12 +112,14 @@ async def maybe_schedule_continuation(
     if agent != "jerv" or stop_reason in _NO_CONTINUE_STOPS:
         return
     async with scoped_session(maker, owner_ctx) as session:
-        plan = await PlanRepo().get(session, session_id)
+        plan = await PlanRepo().get_active(session, session_id)
         if plan is None or plan.status not in _ACTIVE_STATUSES or plan.awaiting_owner:
             return
         if plan.continuations_used >= MAX_CONTINUATIONS or not has_open_checklist_item(plan.body):
             return
-        await PlanRepo().schedule_continuation(session, session_id, delay_s=CONTINUATION_DELAY_S)
+        await PlanRepo().schedule_continuation(
+            session, str(plan.plan_id), delay_s=CONTINUATION_DELAY_S
+        )
 
 
 @dataclass
@@ -168,8 +170,8 @@ class PlanContinuationRunner:
             due = await PlanRepo().claim_due_continuations(
                 session, max_continuations=MAX_CONTINUATIONS
             )
-        for sid in due:
-            await self._run_one(sid, pid, owner_ctx)
+        for plan_id, sid in due:
+            await self._run_one(plan_id, sid, pid, owner_ctx)
 
     def _session_busy(self, session_id: str) -> bool:
         """Whether an owner turn (live, or mid-startup within the TTL) holds this session.
@@ -191,12 +193,12 @@ class PlanContinuationRunner:
         seen = self.client_presence.get(session_id)
         return seen is not None and (time.monotonic() - seen) < PRESENCE_TTL_S
 
-    async def _rearm(self, sid: str, owner_ctx: SessionContext) -> None:
+    async def _rearm(self, plan_id: str, owner_ctx: SessionContext) -> None:
         # A busy/cap retry, NOT the owner window — re-arm due-now so the next sweep retries the
         # instant the session frees, rather than idling the full CONTINUATION_DELAY_S.
         with contextlib.suppress(Exception):
             async with scoped_session(self.maker, owner_ctx) as s:
-                await PlanRepo().schedule_continuation(s, sid, delay_s=BUSY_RETRY_DELAY_S)
+                await PlanRepo().schedule_continuation(s, plan_id, delay_s=BUSY_RETRY_DELAY_S)
 
     def schedule_kick(self) -> None:
         """Fire an on-demand sweep NOW (the owner just approved / hit Continue) so the due step
@@ -214,13 +216,13 @@ class PlanContinuationRunner:
         except Exception as exc:  # noqa: BLE001 — one bad kick must not crash the caller's task
             log.warning("plan.continuation_kick_failed", error=repr(exc))
 
-    async def _run_one(self, sid: str, pid: str, owner_ctx: SessionContext) -> None:
+    async def _run_one(self, plan_id: str, sid: str, pid: str, owner_ctx: SessionContext) -> None:
         # Atomic guard-and-reserve: the busy/cap checks and the live-turns registration run
         # with NO await between them, so no owner /chat turn or sibling sweep can slip in and
         # start a second turn for this session. A busy session (or a full box) re-arms and
         # retries next sweep.
         if self._session_busy(sid) or self._at_global_cap():
-            await self._rearm(sid, owner_ctx)
+            await self._rearm(plan_id, owner_ctx)
             return
         # Reserve the single-turn slot with a REAL `_LiveTurn` (the same frame-buffer +
         # fan-out broker /chat uses), so a reattaching client can stream this turn live —
@@ -234,11 +236,16 @@ class PlanContinuationRunner:
         self.live_turns[active_key] = live
         try:
             # Re-read under the reservation — the plan may have changed between claim and now
-            # (owner approved-away, finished the checklist, or set await_owner).
+            # (owner approved-away, finished the checklist, or set await_owner). Also confirm
+            # this plan is STILL the session's ACTIVE plan: if a newer plan was created since the
+            # claim, this one was superseded and must NOT run (its tools would resolve to the
+            # newer active plan — cross-plan work).
             async with scoped_session(self.maker, owner_ctx) as s:
-                plan = await PlanRepo().get(s, sid)
+                plan = await PlanRepo().get_by_id(s, plan_id)
+                active_id = await PlanRepo().active_plan_id(s, sid)
             if (
                 plan is None
+                or active_id != plan_id
                 or plan.status not in _ACTIVE_STATUSES
                 or plan.awaiting_owner
                 or not has_open_checklist_item(plan.body)
@@ -247,7 +254,7 @@ class PlanContinuationRunner:
             # Count the fire now — a real turn is about to run. A claim that was skipped/
             # aborted above never reaches here, so a collision never burns a continuation.
             async with scoped_session(self.maker, owner_ctx) as s:
-                await PlanRepo().bump_continuation(s, sid)
+                await PlanRepo().bump_continuation(s, plan_id)
 
             profile = agent_for("jerv")
             read_ctx = read_context(pid, ())

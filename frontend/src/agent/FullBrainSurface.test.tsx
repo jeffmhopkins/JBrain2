@@ -227,7 +227,7 @@ describe("FullBrainSurface", () => {
           view: {
             view: "plan_card",
             surface: "inline",
-            data: { session_id: "s1", body: "# Trip\n- [ ] book", status },
+            data: { plan_id: "p1", session_id: "s1", body: "# Trip\n- [ ] book", status },
             refs: [],
           },
         },
@@ -237,6 +237,7 @@ describe("FullBrainSurface", () => {
 
   it("shows the inline plan_card while the plan is a draft", async () => {
     vi.spyOn(api, "getPlan").mockResolvedValue({
+      plan_id: "p1",
       session_id: "s1",
       body: "# Trip\n- [ ] book",
       status: "not_approved",
@@ -263,6 +264,7 @@ describe("FullBrainSurface", () => {
 
   it("keeps the original draft-emitted plan_card after approval, reconciled to the live status", async () => {
     const getPlan = vi.spyOn(api, "getPlan").mockResolvedValue({
+      plan_id: "p1",
       session_id: "s1",
       body: "# Trip\n- [x] book",
       status: "in_work",

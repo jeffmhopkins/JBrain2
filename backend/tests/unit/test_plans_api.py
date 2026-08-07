@@ -29,6 +29,7 @@ def test_plan_endpoints_require_an_authenticated_owner(client: TestClient) -> No
     # caller at the router dependency, before the handler runs. The `approve` gate (the
     # one transition jerv can't make itself) is the security-critical one.
     assert client.get("/api/plans/s-1").status_code == 401
+    assert client.get("/api/plans/session/s-1/active").status_code == 401
     assert client.post("/api/plans/s-1/approve").status_code == 401
     assert client.post("/api/plans/s-1/edit", json={"body": "x"}).status_code == 401
     assert client.post("/api/plans/s-1/stop").status_code == 401
