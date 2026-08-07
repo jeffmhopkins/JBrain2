@@ -3213,12 +3213,18 @@ export function usePlanState(
   const { title, steps, prose } = parsePlanBody(plan.body);
   const doneCount = steps.filter((s) => s.checked).length;
   const allDone = steps.length > 0 && doneCount === steps.length;
-  // The display state folds the two derived states over the server status.
-  const state: PlanState = allDone
-    ? "complete"
-    : plan.awaiting
-      ? "await_owner"
-      : (plan.status as PlanState);
+  // The display state folds the two derived states over the server status. `not_approved`
+  // DOMINATES: a draft is always a draft (its foot is Approve/Edit), even if a stray
+  // `awaiting_owner` is set on it — a draft is already waiting for the owner to approve, so
+  // the await-owner state must never suppress the Approve control and strand the owner.
+  const state: PlanState =
+    plan.status === "not_approved"
+      ? "not_approved"
+      : allDone
+        ? "complete"
+        : plan.awaiting
+          ? "await_owner"
+          : (plan.status as PlanState);
   // The plan is "live" (working the checklist) while in_work/approved and neither paused
   // for the owner nor finished — that's when the card polls and can show a countdown.
   const live =

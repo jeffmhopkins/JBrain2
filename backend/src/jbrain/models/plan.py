@@ -118,6 +118,22 @@ class PlanRepo:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def approve(self, session: AsyncSession, session_id: str) -> AgentSessionPlan | None:
+        """The owner's approve transition: move the plan to `approved` AND clear any stale
+        `awaiting_owner`. jerv may have paused the draft (a not_approved plan is already
+        waiting for approval), and a leftover await-owner flag would block the very first
+        continuation the approve endpoint arms next — `claim_due_continuations` skips
+        awaiting-owner plans — leaving an approved plan that never starts. Returns None if no
+        plan exists (the owner can't approve a plan that was never drafted)."""
+        stmt = (
+            update(AgentSessionPlan)
+            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .values(status="approved", awaiting_owner=False, updated_at=func.now())
+            .returning(AgentSessionPlan)
+            .execution_options(populate_existing=True)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     # --- auto-continuation bookkeeping -----------------------------------------
 
     async def schedule_continuation(
