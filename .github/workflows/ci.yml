@@ -61,18 +61,29 @@ jobs:
       # Ryuk reaps leaked containers; the runner is ephemeral, so it is dead
       # weight here and its Docker Hub image pull is a recurring flake. Skip it.
       TESTCONTAINERS_RYUK_DISABLED: "true"
+      # coverage.py's default C tracer roughly doubles the pytest wall-clock on this
+      # suite (measured: +84%). PEP 669 sys.monitoring cuts that to ~+15% while
+      # keeping the same line coverage, so the 80% gate still runs on every PR — it
+      # just costs ~a minute less. Requires the 3.13 pinned below (sysmon is 3.12+);
+      # on an older interpreter coverage silently falls back to the C tracer.
+      COVERAGE_CORE: sysmon
     steps:
       - uses: actions/checkout@v5
-      # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media);
-      # ubuntu-latest ships them, but install explicitly so the suite never silently
-      # skips and drops coverage.
+      # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media).
+      # Skip the ~1-minute `apt-get update` when the runner image already ships
+      # ffmpeg (it does today); only pay for a real install if a future image drops
+      # it. Mirrors the guard in scripts/dev-setup.sh so the suite never silently
+      # skips media tests and drops coverage.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: command -v ffmpeg >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y ffmpeg; }
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
+          # Pin 3.13 so coverage's sys.monitoring core (COVERAGE_CORE above) is
+          # available; backend/.python-version keeps local dev on the same runtime.
+          python-version: "3.13"
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         run: uv sync --all-extras
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
@@ -81,10 +92,11 @@ jobs:
         run: uv run ruff format --check .
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         run: uv run pyright
-      # Runners have Docker, so the testcontainers RLS suite runs here. Each
-      # test module spins its own Postgres container, so spread modules across
-      # cores with xdist; loadscope keeps a module (and its container) on one
-      # worker so the module-scoped fixtures stay valid.
+      # Runners have Docker, so the testcontainers RLS suite runs here. One
+      # Postgres container is provisioned per xdist worker (session-scoped, shared
+      # via a filelock) and each test module clones a fresh DB from the migrated
+      # template — so spread modules across cores with xdist; loadscope keeps a
+      # module (and its DB) on one worker so the module-scoped fixtures stay valid.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         run: uv run pytest -n auto --dist loadscope --cov --cov-fail-under=80
 

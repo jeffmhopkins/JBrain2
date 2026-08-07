@@ -38,6 +38,10 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
 fi
 
 # --- Python (backend + supervisor: FastAPI, pytest, ruff, pyright) ---
+# backend/.python-version pins 3.13 so coverage's sys.monitoring core
+# (COVERAGE_CORE=sysmon) is available — it cuts the pytest coverage overhead from
+# ~+84% to ~+15%. `uv sync` below auto-fetches that interpreter; nothing to install
+# by hand. CI (.github/workflows/ci.yml) pins the same runtime and sets the env var.
 ensure_uv() {
   if ! command -v uv >/dev/null 2>&1; then
     log "installing uv"
