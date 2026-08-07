@@ -105,10 +105,15 @@ interface OmniboxProps {
   /** The active conversation's model pick, shown as a chip in the composer foot so the
    * owner sees the turn isn't on the default route. Null/absent = the default. */
   modelLabel?: string | null | undefined;
-  /** The active session's jerv plan state (`not_approved | approved | in_work`, or
-   * null when there's no plan) — an always-visible status pill in the composer foot,
-   * the out-of-card twin of the plan_card's chip. Null/absent hides it. */
+  /** The active session's jerv plan state — the LIVE derived state
+   * (`approved | in_work | await_owner | complete`, or null when there's no plan / it's
+   * still a draft) shown as a status pill in the composer foot. Tapping it opens the plan
+   * popover (see `onPlanPillTap`); a draft shows inline in the chat instead, so it's null
+   * here. */
   planStatus?: string | null | undefined;
+  /** Tap the plan pill → open the plan popover (status + Continue now / Stop). Absent =
+   * the pill is a non-interactive status chip. */
+  onPlanPillTap?: (() => void) | undefined;
 }
 
 export function Omnibox({
@@ -130,6 +135,7 @@ export function Omnibox({
   onLongPressTab,
   modelLabel,
   planStatus,
+  onPlanPillTap,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -430,15 +436,27 @@ export function Omnibox({
                 {modelLabel}
               </span>
             )}
-            {planStatus && PLAN_PILL_LABELS[planStatus] && (
-              <span
-                className={`plan-pill flag-${planStatus}`}
-                title="jerv's plan for this conversation"
-              >
-                <span className="plan-pill-dot" aria-hidden="true" />
-                {PLAN_PILL_LABELS[planStatus]}
-              </span>
-            )}
+            {planStatus &&
+              PLAN_PILL_LABELS[planStatus] &&
+              (onPlanPillTap ? (
+                <button
+                  type="button"
+                  className={`plan-pill flag-${planStatus}`}
+                  title="jerv's plan for this conversation — tap for status"
+                  onClick={onPlanPillTap}
+                >
+                  <span className="plan-pill-dot" aria-hidden="true" />
+                  {PLAN_PILL_LABELS[planStatus]}
+                </button>
+              ) : (
+                <span
+                  className={`plan-pill flag-${planStatus}`}
+                  title="jerv's plan for this conversation"
+                >
+                  <span className="plan-pill-dot" aria-hidden="true" />
+                  {PLAN_PILL_LABELS[planStatus]}
+                </span>
+              ))}
             <div className="foot-icons">
               {attachEnabled && (
                 <button

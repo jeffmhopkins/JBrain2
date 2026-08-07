@@ -17259,6 +17259,13 @@ button.auto-sect[aria-expanded="true"] > svg {
   border-radius: var(--r-card);
   overflow: hidden;
 }
+/* Inside the omnibox popover the sheet already frames the content, so flatten the card —
+   no card-in-a-card double border. */
+.plan-sheet .plan-card {
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
 .plan-head {
   display: flex;
   align-items: center;
@@ -17535,6 +17542,12 @@ button.auto-sect[aria-expanded="true"] > svg {
   font-weight: 600;
   color: var(--text-3);
   background: var(--surface-2);
+  /* Rendered as a <button> when it opens the plan popover — neutralize the UA chrome so it
+     reads as the same pill whether interactive or a plain status chip. */
+  appearance: none;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
 }
 .plan-pill-dot {
   flex: none;

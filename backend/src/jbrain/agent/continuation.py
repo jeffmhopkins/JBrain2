@@ -5,14 +5,17 @@ guardrails). So execution is chunked across turns: when a jerv turn ends while i
 is `in_work` with unchecked `- [ ]` steps left, a continuation is scheduled ~60s out —
 an owner-interruptible window. If the owner sends anything in that window the timer is
 cancelled (their message supersedes and resets the cap); otherwise the sweep fires one
-FRESH headless turn — a fresh guardrail budget — that runs the next step and re-arms.
+FRESH turn — a fresh guardrail budget — that runs the next step and re-arms.
 
 This composes existing machinery rather than adding a loop: the delay is a due-time on
 the plan row + a periodic sweep (restart-safe, like the tasks scheduler); the turn runs
 through `LoopTurnExecutor` (the same engine /chat and tasks use) and is recorded
 answer-only (`record_answer`, no fake owner bubble), the same shape as the deferred-tool
-auto-resume. It stays inside the "no unbounded autonomous loop" invariant: each hop is a
-discrete, separately-recorded, step-capped turn, and the chain terminates when the
+auto-resume. It also STREAMS: the turn registers a real `_LiveTurn` broker (§Feature-1),
+so a foreground/reloaded client reattaches and watches it token-by-token — the sweep turn
+is server-driven, not invisible. It stays inside the "no unbounded autonomous loop"
+invariant: each hop is a discrete, separately-recorded, step-capped turn, and the chain
+terminates when the
 checklist is done, the status leaves `in_work`, jerv signals `await_owner`, the owner
 sends anything, or a max-continuations cap is hit.
 """
@@ -31,7 +34,9 @@ import structlog
 
 from jbrain.agent.agents import agent_for
 from jbrain.agent.clock import now_block
+from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.session import read_context
+from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import UserMessage
 from jbrain.models.plan import PlanRepo, has_open_checklist_item
@@ -97,28 +102,14 @@ async def maybe_schedule_continuation(
         await PlanRepo().schedule_continuation(session, session_id, delay_s=CONTINUATION_DELAY_S)
 
 
-class _ContinuationTurn:
-    """A live-turn marker the /chat concurrency guard reads (it checks `session_id` +
-    `done`), so a continuation turn occupies the same single-turn-per-session slot and an
-    owner turn can't stack on top of it. `task`/`cancel()` mirror `_LiveTurn`'s shape so
-    the lifespan shutdown drain — which calls `.cancel()` on every live-turns value — treats
-    a continuation marker harmlessly (a continuation turn is awaited by the sweep, not the
-    shutdown; there is no task to cancel)."""
-
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        self.done = False
-        self.task = None
-
-    def cancel(self) -> None:
-        return None
-
-
 @dataclass
 class PlanContinuationRunner:
-    """Fires due plan continuations as headless, answer-only jerv turns. Reuses the
-    /chat process's engine (`executor`), run-log, transcript, and the live-turns registry
-    (so it never stacks on a live turn)."""
+    """Fires due plan continuations as jerv turns that STREAM live: each registers a real
+    `_LiveTurn` in the shared registry, so a foreground/reloaded client reattaches and
+    watches the step's thinking + tool calls token-by-token (like an owner turn), while the
+    turn is still persisted answer-only via `record_answer`. Reuses the /chat process's
+    engine (`executor`), run-log, transcript, and the live-turns registry (so it never
+    stacks on a live turn)."""
 
     maker: async_sessionmaker[AsyncSession]
     executor: LoopTurnExecutor
@@ -181,9 +172,16 @@ class PlanContinuationRunner:
         if self._session_busy(sid) or self._at_global_cap():
             await self._rearm(sid, owner_ctx)
             return
-        key = uuid.uuid4().hex
-        marker = _ContinuationTurn(sid)
-        self.live_turns[key] = marker
+        # Reserve the single-turn slot with a REAL `_LiveTurn` (the same frame-buffer +
+        # fan-out broker /chat uses), so a reattaching client can stream this turn live —
+        # its thinking and tool calls token-by-token, exactly like an owner turn. It also
+        # satisfies the concurrency guard's `.session_id`/`.done` shape and the shutdown
+        # drain's `.cancel()` (task is None → a harmless no-op). Keyed by a temp id until
+        # `runlog.start` yields the run_id, then re-keyed to run_id so the reattach endpoints
+        # (session_live_run / resume_chat_run, keyed by run_id) discover and follow it.
+        live = _LiveTurn(session_id=sid)
+        active_key = uuid.uuid4().hex
+        self.live_turns[active_key] = live
         try:
             # Re-read under the reservation — the plan may have changed between claim and now
             # (owner approved-away, finished the checklist, or set await_owner).
@@ -206,6 +204,16 @@ class PlanContinuationRunner:
             run_id = await self.runlog.start(
                 owner_ctx, session_id=sid, prompt_version=profile.version
             )
+            # Re-key the reservation to the run_id so a reattaching client that discovers this
+            # session's live run (GET /chat/sessions/{id}/live-run) can then stream it
+            # (GET /chat/runs/{run_id}/stream) — both look the turn up by run_id.
+            self.live_turns[run_id] = self.live_turns.pop(active_key)
+            active_key = run_id
+            # The turn's render accumulator, exposed on the broker so the reattach snapshot
+            # can seed a reloaded client from the render-so-far; the sink emits each event as
+            # a `data:` SSE frame — byte-identical to the /chat drive loop — onto the broker.
+            acc = TranscriptAccumulator()
+            live.acc = acc
             status, stop_reason, steps, cost = "error", "error", 0, 0
             try:
                 executed = await self.executor.run_turn(
@@ -216,6 +224,8 @@ class PlanContinuationRunner:
                     timezone=None,
                     recorder=self.runlog.bound(owner_ctx, run_id),
                     agent_session_id=sid,
+                    acc=acc,
+                    on_event=lambda ev: live.emit(f"data: {ev.model_dump_json()}\n\n".encode()),
                 )
                 status, stop_reason = "done", executed.result.stop_reason
                 steps, cost = executed.result.steps, executed.result.cost_tokens
@@ -230,6 +240,10 @@ class PlanContinuationRunner:
                     )
             except Exception as exc:  # noqa: BLE001 — a continuation failure is a recorded run
                 log.warning("plan.continuation_failed", session_id=sid, error=repr(exc))
+            finally:
+                # End every live subscriber (done or error) so a reattached client's stream
+                # closes cleanly instead of hanging on the heartbeat until the row is popped.
+                live.finish()
             with contextlib.suppress(Exception):
                 await self.runlog.finish(
                     owner_ctx,
@@ -248,8 +262,8 @@ class PlanContinuationRunner:
                     )
                 await self._nudge()
         finally:
-            marker.done = True
-            self.live_turns.pop(key, None)
+            live.done = True
+            self.live_turns.pop(active_key, None)
 
     async def _nudge(self) -> None:
         """Best-effort, content-free wake so a backgrounded PWA fetches the new turn."""

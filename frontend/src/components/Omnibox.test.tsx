@@ -455,4 +455,39 @@ describe("Omnibox", () => {
     );
     expect(screen.getByText("GPT-OSS 120B")).toBeInTheDocument();
   });
+
+  it("shows the plan pill with the derived state, and taps open the plan popover", () => {
+    const onPlanPillTap = vi.fn();
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "research" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        planStatus="complete"
+        onPlanPillTap={onPlanPillTap}
+      />,
+    );
+    // The pill reads the LIVE derived state ("complete") — not stuck on "working to plan" —
+    // and is a button that opens the popover.
+    const pill = screen.getByRole("button", { name: /plan complete/i });
+    fireEvent.click(pill);
+    expect(onPlanPillTap).toHaveBeenCalled();
+  });
+
+  it("renders the plan pill as a plain chip (no button) when it isn't tappable", () => {
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "research" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        planStatus="in_work"
+      />,
+    );
+    expect(screen.getByText("working to plan")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /working to plan/i })).not.toBeInTheDocument();
+  });
 });

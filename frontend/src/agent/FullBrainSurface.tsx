@@ -263,6 +263,7 @@ export function FullBrainSurface({
                   void fb.send(msg, { deferredOutcome: true });
                 }}
                 onPlanChanged={fb.reloadSessions}
+                planStatus={fb.active?.plan_status ?? null}
                 chatBusy={fb.busy}
                 onStop={fb.stop}
                 onOpenSession={fb.requestOpen}
@@ -531,6 +532,7 @@ function Bubble({
   onOpenSession,
   onDeferredComplete,
   onPlanChanged,
+  planStatus,
   audio,
 }: {
   message: TranscriptMessage;
@@ -553,6 +555,10 @@ function Bubble({
   /** An in-card plan action fired — refresh the session list so the composer plan pill
    * and Chats badge (the out-of-card plan_status surfaces) update at once. */
   onPlanChanged?: (() => void) | undefined;
+  /** The active session's stored plan_status. The inline plan_card shows ONLY while the
+   * plan is a draft (`not_approved`); once approved it lives behind the composer pill's
+   * popover, so it's filtered out of the transcript here. */
+  planStatus?: string | null | undefined;
   /** Read-aloud control for this settled answer: `playing` = it's speaking now,
    * `autoPlay` = auto-play armed (third icon state); `onToggle` plays/pauses it,
    * `onToggleAuto` (long-press) flips auto-play. Absent = read-aloud off (no control,
@@ -695,6 +701,12 @@ function Bubble({
   // view through once the fan stands down.
   const viewsToRender = message.views
     .filter((v) => !(liveFanActive && v.view === "subagent_synthesis"))
+    // The plan_card is inline ONLY while the plan is a draft awaiting approval; once the
+    // owner approves, the in-work plan lives behind the composer pill's popover, so drop the
+    // (now redundant) inline card instead of letting it stack down the chat and crowd other
+    // tool views. Keyed off the live session status, so an already-approved plan whose card
+    // was emitted while still a draft is filtered too.
+    .filter((v) => v.view !== "plan_card" || planStatus === "not_approved")
     .map((v) => {
       if (v.view !== "generated_image") return v;
       const preview = imagePreviews[nextImagePreview++];

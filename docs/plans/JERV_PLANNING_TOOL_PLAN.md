@@ -1,6 +1,6 @@
 # jerv Planning Tool — owner-approved plans, executed across turns
 
-> **Status:** In progress · **Last verified:** 2026-08-06 · **Waves:** P1✅ P2✅ P3◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt — shipped on-branch with unit + RLS-isolation tests. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks — shipped on-branch with integration tests. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown — in progress.)
+> **Status:** In progress · **Last verified:** 2026-08-06 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the plan is an owner-only
 > `app.agent_session_plans` row behind `app.is_owner()` RLS (FORCE), with the mandated
@@ -91,12 +91,21 @@ Composition of existing machinery, not a new loop (`agent/continuation.py`):
   (drops the due-time, clears await-owner, zeroes the cap counter), so the owner both
   steers and refreshes the budget (a `deferred_outcome` resume is a system event, skipped).
 - **Fire:** an in-process sweep (`run_plan_continuation_loop`, ~15s cadence, restart-safe
-  because the due-time lives in the DB) atomically claims due plans and runs one **fresh,
-  headless, answer-only** jerv turn per plan via `LoopTurnExecutor` — the same engine
-  `/chat` and tasks use — recorded with `record_answer` (no fake owner bubble), exactly
-  like the deferred-tool auto-resume. The runner registers in the shared `live_turns`
-  registry, so an owner turn can't stack on a continuation (the `/chat` 409 guard) and vice
-  versa; a busy session re-arms and retries next sweep.
+  because the due-time lives in the DB) atomically claims due plans and runs one **fresh**
+  jerv turn per plan via `LoopTurnExecutor` — the same engine `/chat` and tasks use —
+  recorded with `record_answer` (no fake owner bubble), exactly like the deferred-tool
+  auto-resume. **It STREAMS live (P4):** rather than register the old inert marker, the
+  runner registers a real `_LiveTurn` (the shared frame-buffer + fan-out broker, extracted
+  to `agent/live_turn.py`) keyed by the continuation's run_id, and passes an `on_event` sink
+  into `run_turn` (`tasks/runner.py`) that emits each event as a `data:` SSE frame. Because
+  the continuation flips the session's `last_run_status` to `running`, a foreground/reloaded
+  client discovers the run (`GET /chat/sessions/{id}/live-run`) and follows it
+  (`GET /chat/runs/{run_id}/stream`) — the very same reattach path an owner's detached turn
+  uses — so the owner watches the step's thinking + tool calls token-by-token instead of it
+  running invisibly. The frontend arms this via a poll on `useFullBrain` while the active
+  plan is working. The runner registers in the shared `live_turns` registry, so an owner
+  turn can't stack on a continuation (the `/chat` 409 guard) and vice versa; a busy session
+  re-arms and retries next sweep.
 - **Terminate:** the chain stops when the checklist is fully `- [x]`, the status leaves
   `in_work`, jerv sets `await_owner`, the owner sends anything, or `MAX_CONTINUATIONS` (20)
   is hit. Each hop is a discrete, separately-recorded, guardrailed turn — bounded per the
@@ -105,16 +114,29 @@ Composition of existing machinery, not a new loop (`agent/continuation.py`):
 Owner controls (`/api/plans/{id}/stop|continue`) cancel the pending continuation or fire
 the next step now.
 
-## 6. PWA surfaces (P3)
+## 6. PWA surfaces (P3, retargeted in P4)
 
-- **`plan_card` tool-view** (DESIGN.md "Agent tool views"): the body (Markdown) + a
-  flag-enum status chip + the checklist; owner **Approve**/**Edit** when `not_approved`;
-  the live **auto-resume countdown** (polling `GET /api/plans/{id}` → `continuation_due_at`)
-  with **Continue now** / **Stop** when `in_work`; a distinct "Waiting for you" state when
-  `awaiting_owner`.
-- **Composer-foot plan pill** and **Chats-picker badge** — the out-of-card status
-  surfaces, driven by `SessionOut.plan_status` (the sibling of the model pill / staged
-  badge), refreshed after each settled turn.
+The plan's live state + controls live in one shared hook/component pair
+(`usePlanState` + `PlanBody`, `agent/views/registry.tsx`): the body (Markdown) + a
+flag-enum status chip + the checklist; owner **Approve**/**Edit** when `not_approved`;
+the live **auto-resume countdown** (polling `GET /api/plans/{id}` → `continuation_due_at`)
+with **Continue now** / **Stop** when `in_work`; a distinct "Waiting for you" state when
+`awaiting_owner`; and a derived **"complete"** state (all steps `- [x]`) the stored status
+can't carry.
+
+**Where it renders (P4 — off the transcript):** the big card was crowding the chat and
+fighting other tool views (deep-research cards), so it no longer lives inline once approved:
+
+- **`plan_card` tool-view — draft only.** `FullBrainSurface`'s `viewsToRender` drops the
+  inline `plan_card` unless the live `plan_status === "not_approved"`, so the card shows only
+  while the owner still needs to **Approve/Edit** the draft, then disappears.
+- **Composer-foot plan pill → popover.** The always-visible pill now reads the LIVE derived
+  state (so it flips to **"plan complete"** instead of stalling on "working to plan"), and is
+  a **button**: tapping it opens the plan in a bottom **`PlanSheet`** (the shared `Sheet`) —
+  the in-work status, checklist, countdown, and Continue/Stop — which the owner dismisses.
+  One `usePlanState` instance (in `HomeScreen`) drives both the pill and the popover.
+- **Chats-picker badge** — the other out-of-card status surface, driven by
+  `SessionOut.plan_status`, refreshed after each settled turn.
 
 ## 7. Known limitations (accepted, bounded)
 
@@ -139,6 +161,12 @@ Real Postgres via testcontainers; LLM faked. The mandated RLS-isolation test
 (`test_agent_session_plans_rls`: owner round-trip, non-owner sees nothing / can't write,
 cascade delete, the approval state machine). Continuation coverage
 (`test_plan_continuation`: schedule + atomic claim, the awaiting/non-in-work/cap guards,
-the settle gate, the owner reset, the `await_owner` opt-out). Unit coverage
-(`test_plantools`: the tool guards, web-gating/jerv-only, the checklist helper); the
-sidecar + prompt version pins are updated in the same change.
+the settle gate, the owner reset, the `await_owner` opt-out, and the **live-streaming**
+regression — a continuation registers a real `_LiveTurn` keyed by run_id, emits `data:`
+frames, and is discoverable via the registry, then drained). Unit coverage
+(`test_plantools`: the tool guards, web-gating/jerv-only, the checklist helper;
+`test_loop_turn_executor`: the `acc`/`on_event` streaming sink on `run_turn`); the
+sidecar + prompt version pins are updated in the same change. Frontend (vitest):
+`useFullBrain` (the live-continuation discovery poll), `FullBrainSurface` (the inline
+`plan_card` is draft-only), `Omnibox` (the plan pill is a tappable popover trigger),
+and the existing `registry` `plan_card` suite.

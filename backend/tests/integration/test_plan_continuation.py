@@ -6,6 +6,7 @@ cap), the shared settle decision (`maybe_schedule_continuation`), the owner-mess
 reset, and jerv's `await_owner` opt-out through the write_plan handler.
 """
 
+import json
 import uuid
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
@@ -245,6 +246,80 @@ async def test_sweep_tick_fires_a_due_continuation(maker: async_sessionmaker) ->
     async with scoped_session(maker, owner) as s:
         plan = await PlanRepo().get(s, sid)
         assert plan is not None and plan.continuations_used == 1  # the fire was counted
+
+
+class _StreamEvent:
+    """A minimal ChatEvent stand-in for the continuation's SSE sink — only model_dump_json
+    is used (to build the `data:` frame)."""
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def model_dump_json(self) -> str:
+        return json.dumps(self._payload)
+
+
+class _StreamingFakeExecutor:
+    """A fake that STREAMS: it drives the `on_event` sink the continuation passes, so the
+    turn's `_LiveTurn` broker fills with `data:` frames — the reattach path a foreground
+    client rides. Snapshots the shared live-turns registry mid-run (before `_run_one` pops
+    it in its finally), which is exactly what `session_live_run` reads to discover the run."""
+
+    def __init__(self, live_turns: dict) -> None:
+        self._live_turns = live_turns
+        self.during: dict = {}
+
+    async def run_turn(self, **kwargs: object) -> _FakeExecuted:
+        on_event = kwargs.get("on_event")
+        if on_event is not None:
+            on_event(_StreamEvent({"type": "text_delta", "text": "on it"}))  # type: ignore[operator]
+            on_event(_StreamEvent({"type": "done", "stop_reason": "stop"}))  # type: ignore[operator]
+        turns = list(self._live_turns.items())
+        self.during = {
+            "keys": [k for k, _ in turns],
+            "sessions": [getattr(v, "session_id", None) for _, v in turns],
+            "frames": [list(getattr(v, "frames", [])) for _, v in turns],
+            "has_acc": [getattr(v, "acc", None) is not None for _, v in turns],
+        }
+        return _FakeExecuted()
+
+
+async def test_continuation_streams_via_a_live_turn(maker: async_sessionmaker) -> None:
+    """A continuation registers a REAL `_LiveTurn` keyed by its run_id and emits each event as
+    a `data:` SSE frame — so a foreground/reloaded client discovers it (`session_live_run`
+    reads `live_turns` by session_id) and streams the step live, then the registry is drained
+    when the turn ends. The regression guard for 'plan steps run invisibly'."""
+    owner = await _owner(maker)
+    sid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, sid, delay_s=0)
+
+    live_turns: dict = {}
+    executor = _StreamingFakeExecutor(live_turns)
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=executor,  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns=live_turns,
+        owner_principal_id=lambda: _owner_principal_id(maker),
+    )
+    await runner.tick()
+
+    # DURING the run: exactly one live turn, keyed by the run_id ("run-1" from _FakeRunLog) so
+    # session_live_run / resume_chat_run find it, tagged with the chat session, holding an acc
+    # snapshot and the two emitted SSE frames.
+    d = executor.during
+    assert d["keys"] == ["run-1"]
+    assert d["sessions"] == [sid]
+    assert d["has_acc"] == [True]
+    frames = d["frames"][0]
+    assert len(frames) == 2
+    assert frames[0].startswith(b"data: ") and frames[0].endswith(b"\n\n")
+    assert b'"text": "on it"' in frames[0]
+
+    # AFTER the run: the registry is drained (turn finished, buffer freed) — no leak.
+    assert live_turns == {}
 
 
 async def test_approving_arms_and_claims_the_first_step(maker: async_sessionmaker) -> None:

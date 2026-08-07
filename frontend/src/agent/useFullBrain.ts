@@ -119,6 +119,12 @@ function latestForMode(sessions: AgentSession[], mode: ConvMode): AgentSession |
 const RECONCILE_INTERVAL_MS = 3000;
 const RECONCILE_TIMEOUT_MS = 3_720_000;
 
+// How often a foregrounded chat whose plan is actively working polls for a plan-continuation
+// turn that started server-side, so it can reattach and stream the step live. A continuation
+// begins ~60s after the owner's turn settled, and a foreground client never re-observes the
+// session's `last_run_status`, so the once-per-mount reload reattach can't catch it.
+const PLAN_LIVE_POLL_MS = 4000;
+
 export interface FullBrainDeps {
   listSessions: () => Promise<AgentSession[]>;
   createSession: (body: SessionCreate) => Promise<AgentSession>;
@@ -574,6 +580,31 @@ export function useFullBrain(
     reattachedRef.current.add(activeId);
     void reattach(activeId);
   }, [enabled, activeId, active?.last_run_status, busy]);
+
+  // Discover and stream a plan CONTINUATION turn that fires server-side while this chat is
+  // open. The reload reattach above catches an already-running turn once per mount; a
+  // continuation instead starts ~60s AFTER the owner's turn settled, and a foreground client
+  // never re-observes `last_run_status`, so it would otherwise run invisibly (only appearing
+  // on the next reload). While the active plan is working, poll its live-run and reattach on
+  // a hit — `reattach` self-guards on `turnSessionRef`, so it never stacks on an in-flight
+  // turn, and each step is a fresh run_id the next poll picks up. Paused while the tab is
+  // hidden; stops once the plan leaves the working states.
+  useEffect(() => {
+    if (!enabled || activeId === null) return;
+    const status = active?.plan_status;
+    if (status !== "approved" && status !== "in_work") return;
+    let stopped = false;
+    const tick = (): void => {
+      if (stopped || document.visibilityState === "hidden") return;
+      if (busy || turnSessionRef.current !== null) return;
+      void reattach(activeId);
+    };
+    const id = window.setInterval(tick, PLAN_LIVE_POLL_MS);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+  }, [enabled, activeId, active?.plan_status, busy]);
 
   async function send(
     textRaw: string,

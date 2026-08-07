@@ -500,3 +500,47 @@ describe("useFullBrain — sub-agent children survive the mode filter", () => {
     expect(result.current.sessions.map((s) => s.id)).toEqual(["cur1"]);
   });
 });
+
+describe("useFullBrain — live plan-continuation discovery", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("polls the active session's live-run while its plan is working", async () => {
+    vi.useFakeTimers();
+    const sessionLiveRun = vi.fn(async () => null);
+    const d = deps({
+      listSessions: vi.fn(async () => [session({ id: "A", plan_status: "in_work" })]),
+      sessionLiveRun,
+    });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.active?.id).toBe("A");
+    // No running turn to reattach and no poll has elapsed yet.
+    expect(sessionLiveRun).not.toHaveBeenCalled();
+
+    // One poll interval later, it looks for a continuation turn started server-side.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    expect(sessionLiveRun).toHaveBeenCalledWith("A");
+  });
+
+  it("does not poll when the active session has no plan", async () => {
+    vi.useFakeTimers();
+    const sessionLiveRun = vi.fn(async () => null);
+    const d = deps({
+      listSessions: vi.fn(async () => [session({ id: "A" })]),
+      sessionLiveRun,
+    });
+    renderHook(() => useFullBrain("fullbrain", d));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(8000);
+    });
+    expect(sessionLiveRun).not.toHaveBeenCalled();
+  });
+});

@@ -207,6 +207,75 @@ describe("FullBrainSurface", () => {
     expect(screen.getByText("eggs")).toBeInTheDocument();
   });
 
+  // The inline plan_card is a draft-only affordance: it shows while the owner still needs to
+  // approve, then the in-work plan moves to the composer pill's popover so it doesn't crowd
+  // the chat. The surface keys the gate off the LIVE session plan_status, not the (frozen)
+  // view payload — so a since-approved card is dropped even though its payload says draft.
+  const planTurn = (): TranscriptTurn[] => [
+    { role: "user", content: "make a plan", tools: [] },
+    {
+      role: "assistant",
+      content: "Here's the plan.",
+      tools: [
+        {
+          id: "c1",
+          name: "write_plan",
+          ok: true,
+          sources: [],
+          view: {
+            view: "plan_card",
+            surface: "inline",
+            data: { session_id: "s1", body: "# Trip\n- [ ] book", status: "not_approved" },
+            refs: [],
+          },
+        },
+      ],
+    },
+  ];
+
+  it("shows the inline plan_card while the plan is a draft", async () => {
+    vi.spyOn(api, "getPlan").mockResolvedValue({
+      session_id: "s1",
+      body: "# Trip\n- [ ] book",
+      status: "not_approved",
+      updated_at: "2026-06-12T00:00:00Z",
+      continuation_due_at: null,
+      awaiting_owner: false,
+      continuations_used: 0,
+      max_continuations: 20,
+    });
+    render(
+      <Harness
+        d={deps({
+          listSessions: vi.fn(async () => [session({ plan_status: "not_approved" })]),
+          getTranscript: vi.fn(async () => planTurn()),
+        })}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The draft renders inline with its owner Approve affordance.
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(document.querySelector(".plan-card")).toBeInTheDocument();
+  });
+
+  it("hides the inline plan_card once the plan is approved (it lives behind the pill)", async () => {
+    const getPlan = vi.spyOn(api, "getPlan");
+    render(
+      <Harness
+        d={deps({
+          listSessions: vi.fn(async () => [session({ plan_status: "in_work" })]),
+          getTranscript: vi.fn(async () => planTurn()),
+        })}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The assistant answer replays, but the plan_card is filtered out of the transcript —
+    // and, being unmounted, it never even polls the plan.
+    expect(await screen.findByText("Here's the plan.")).toBeInTheDocument();
+    expect(document.querySelector(".plan-card")).not.toBeInTheDocument();
+    expect(getPlan).not.toHaveBeenCalled();
+  });
+
   it("keeps the active session's history when it is re-opened from the list", async () => {
     const getTranscript = vi.fn(
       async (): Promise<TranscriptTurn[]> => [{ role: "user", content: "kept", tools: [] }],

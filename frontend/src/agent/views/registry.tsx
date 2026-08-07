@@ -3146,15 +3146,21 @@ function planFromOut(out: PlanOut): PlanLocal {
   };
 }
 
-/** The `plan_card` tool-view: jerv's plan body + live checklist, a flag-enum status
- * chip, the owner-only Approve/Edit foot while it's a draft, and the auto-resume
- * countdown (Continue now / Stop) while it's in work. Polls GET /plans/{id} so the
- * checklist and countdown follow the server-side continuation sweep. */
-function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
-  const sessionId = String(data.session_id ?? "");
+/** Live state for one conversation's plan (docs/plans/JERV_PLANNING_TOOL_PLAN.md): seeds
+ * from the tool-view payload (or a bare status for the omnibox surfaces), then polls
+ * GET /plans/{id} while the plan is in work so the checklist, the flag-enum status chip,
+ * and the auto-resume countdown track the server-side continuation sweep. Shared by the
+ * inline draft card (PlanCard) and the omnibox popover (PlanSheet). Every control POSTs a
+ * plan endpoint and folds the returned PlanOut back in; `approved` is the ONE transition
+ * the owner alone makes. */
+export function usePlanState(
+  sessionId: string,
+  seed?: { body?: string; status?: string },
+  onPlanChanged?: () => void,
+) {
   const [plan, setPlan] = useState<PlanLocal>(() => ({
-    body: String(data.body ?? ""),
-    status: planStatus(data.status),
+    body: seed?.body ?? "",
+    status: planStatus(seed?.status),
     dueAt: null,
     awaiting: false,
     used: 0,
@@ -3183,6 +3189,26 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
       alive.current = false;
     };
   }, []);
+
+  // The omnibox keeps ONE instance across conversation switches; when the session changes,
+  // re-seed from the new chat's status so the pill/popover never shows the previous chat's
+  // plan until reconcile lands. Skips the initial mount (useState already seeded) so the
+  // inline card — which mounts per view with its full body payload — never flashes empty.
+  const seededSid = useRef(sessionId);
+  useEffect(() => {
+    if (seededSid.current === sessionId) return;
+    seededSid.current = sessionId;
+    setPlan({
+      body: seed?.body ?? "",
+      status: planStatus(seed?.status),
+      dueAt: null,
+      awaiting: false,
+      used: 0,
+      max: 0,
+    });
+    // seed is read fresh on a session switch, not tracked as a dep (it changes identity
+    // every render); the switch is keyed off sessionId alone.
+  }, [sessionId, seed?.body, seed?.status]);
 
   const { title, steps, prose } = parsePlanBody(plan.body);
   const doneCount = steps.filter((s) => s.checked).length;
@@ -3217,10 +3243,10 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
     }
   }, [sessionId]);
 
-  // One-shot reconcile on mount, REGARDLESS of `live`: the tool-view payload is frozen at
-  // the turn it was written, so a card re-rendered from stored history can be stale (a
-  // since-approved/-completed plan still showing "Awaiting approval" with a live Approve).
-  // Pull server truth once so the seed can never strand.
+  // One-shot reconcile on mount, REGARDLESS of `live`: the seed (a frozen tool-view payload,
+  // or a bare session status for the omnibox surfaces) can be stale — a since-approved or
+  // -completed plan still showing "Awaiting approval" with a live Approve. Pull server truth
+  // once so the seed can never strand.
   useEffect(() => {
     void reconcile();
   }, [reconcile]);
@@ -3316,6 +3342,62 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
     }
   }
 
+  return {
+    sessionId,
+    plan,
+    state,
+    title,
+    prose,
+    steps,
+    doneCount,
+    allDone,
+    draftState,
+    activeIdx,
+    editing,
+    draft,
+    setDraft,
+    busy,
+    countdownVisible,
+    countdown,
+    approve: () => void run(() => api.approvePlan(sessionId)),
+    startEdit,
+    cancelEdit: () => setEditing(false),
+    saveApprove: () => void saveApprove(),
+    continueNow: () => void run(() => api.continuePlan(sessionId)),
+    stop: () => void run(() => api.stopPlan(sessionId), { halt: true }),
+  };
+}
+
+export type PlanStateHook = ReturnType<typeof usePlanState>;
+
+/** The plan body — head + flag-enum status chip, prose, the live checklist (or the
+ * editor), the auto-resume countdown, the await-owner notice, and the owner foot.
+ * Rendered inline while the plan is a draft (PlanCard) and inside the omnibox popover once
+ * it's working (PlanSheet). */
+export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
+  const {
+    state,
+    title,
+    prose,
+    steps,
+    doneCount,
+    allDone,
+    draftState,
+    activeIdx,
+    editing,
+    draft,
+    setDraft,
+    busy,
+    countdownVisible,
+    countdown,
+    plan,
+    approve,
+    startEdit,
+    cancelEdit,
+    saveApprove,
+    continueNow,
+    stop,
+  } = st;
   return (
     <div className={`plan-card flag-${state}`}>
       <div className="plan-head">
@@ -3404,16 +3486,11 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
               type="button"
               className="plan-mini primary"
               disabled={busy}
-              onClick={() => void run(() => api.continuePlan(sessionId))}
+              onClick={continueNow}
             >
               Continue now
             </button>
-            <button
-              type="button"
-              className="plan-mini"
-              disabled={busy}
-              onClick={() => void run(() => api.stopPlan(sessionId), { halt: true })}
-            >
+            <button type="button" className="plan-mini" disabled={busy} onClick={stop}>
               Stop
             </button>
           </span>
@@ -3447,19 +3524,14 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
         <div className="plan-foot">
           <span className="plan-prog">editing…</span>
           <span className="plan-acts">
-            <button
-              type="button"
-              className="plan-mini"
-              disabled={busy}
-              onClick={() => setEditing(false)}
-            >
+            <button type="button" className="plan-mini" disabled={busy} onClick={cancelEdit}>
               Cancel
             </button>
             <button
               type="button"
               className="plan-mini primary"
               disabled={busy}
-              onClick={() => void saveApprove()}
+              onClick={saveApprove}
             >
               Save &amp; approve
             </button>
@@ -3475,12 +3547,7 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
             <button type="button" className="plan-mini" disabled={busy} onClick={startEdit}>
               Edit
             </button>
-            <button
-              type="button"
-              className="plan-approve"
-              disabled={busy}
-              onClick={() => void run(() => api.approvePlan(sessionId))}
-            >
+            <button type="button" className="plan-approve" disabled={busy} onClick={approve}>
               Approve
             </button>
           </span>
@@ -3494,6 +3561,18 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
       )}
     </div>
   );
+}
+
+/** The `plan_card` tool-view: shown inline only while the plan is a draft (the surface
+ * filters it out once approved — the in-work plan then lives behind the omnibox pill's
+ * popover). A thin wrapper over the shared plan state + body. */
+function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
+  const st = usePlanState(
+    String(data.session_id ?? ""),
+    { body: String(data.body ?? ""), status: planStatus(data.status) },
+    onPlanChanged,
+  );
+  return <PlanBody st={st} />;
 }
 
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {

@@ -1340,10 +1340,9 @@ def test_live_turn_evicts_oldest_frames_past_the_cap() -> None:
     # The memory backstop (fix #4): a runaway turn that streams past _MAX_BUFFERED_FRAMES
     # evicts the OLDEST frames off the front rather than growing unbounded, and advances
     # `_base` (the absolute index of frames[0]) by the count evicted.
-    import jbrain.api.agent as agent_mod
-    from jbrain.api.agent import _LiveTurn
+    from jbrain.agent.live_turn import _MAX_BUFFERED_FRAMES, _LiveTurn
 
-    cap = agent_mod._MAX_BUFFERED_FRAMES
+    cap = _MAX_BUFFERED_FRAMES
     live = _LiveTurn()
     for i in range(cap + 5):
         live.emit(f"data: {i}\n\n".encode())
@@ -1360,10 +1359,9 @@ async def test_live_turn_replay_after_offset_translates_across_eviction() -> Non
     # that lands inside the surviving window replays from exactly that frame (translated
     # past `_base`), and a reconnect before the evicted point clamps to the oldest survivor
     # (degrades, never breaks — fix #3 re-creates a child whose spawn frame is gone).
-    import jbrain.api.agent as agent_mod
-    from jbrain.api.agent import _LiveTurn
+    from jbrain.agent.live_turn import _MAX_BUFFERED_FRAMES, _LiveTurn
 
-    cap = agent_mod._MAX_BUFFERED_FRAMES
+    cap = _MAX_BUFFERED_FRAMES
     live = _LiveTurn()
     for i in range(cap + 5):  # evicts frames 0..4; survivors are 5..cap+4
         live.emit(f"data: {i}\n\n".encode())
@@ -1388,10 +1386,9 @@ async def test_live_turn_evicted_reconnect_follows_live_across_the_boundary() ->
     # caught up to yet are still coming) backfills the surviving window and then follows the
     # live frames in order — the eviction/`_base` accounting holds across the snapshot→live
     # seam, and the keepalive offset bookkeeping (data frames only) is unchanged.
-    import jbrain.api.agent as agent_mod
-    from jbrain.api.agent import _LiveTurn
+    from jbrain.agent.live_turn import _MAX_BUFFERED_FRAMES, _LiveTurn
 
-    cap = agent_mod._MAX_BUFFERED_FRAMES
+    cap = _MAX_BUFFERED_FRAMES
     live = _LiveTurn()
     for i in range(cap + 3):  # evicts 0..2; survivors 3..cap+2, `_base` == 3
         live.emit(f"data: {i}\n\n".encode())
