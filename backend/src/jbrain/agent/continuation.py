@@ -231,10 +231,11 @@ class PlanContinuationRunner:
         # Reserve the single-turn slot with a REAL `_LiveTurn` (the same frame-buffer +
         # fan-out broker /chat uses), so a reattaching client can stream this turn live —
         # its thinking and tool calls token-by-token, exactly like an owner turn. It also
-        # satisfies the concurrency guard's `.session_id`/`.done` shape and the shutdown
-        # drain's `.cancel()` (task is None → a harmless no-op). Keyed by a temp id until
-        # `runlog.start` yields the run_id, then re-keyed to run_id so the reattach endpoints
-        # (session_live_run / resume_chat_run, keyed by run_id) discover and follow it.
+        # satisfies the concurrency guard's `.session_id`/`.done` shape and carries the turn's
+        # task once it starts (set below), so the Stop endpoint and the shutdown drain can
+        # `.cancel()` it. Keyed by a temp id until `runlog.start` yields the run_id, then re-keyed
+        # to run_id so the reattach endpoints (session_live_run / resume_chat_run, keyed by
+        # run_id) discover and follow it.
         live = _LiveTurn(session_id=sid)
         active_key = uuid.uuid4().hex
         self.live_turns[active_key] = live
@@ -281,8 +282,14 @@ class PlanContinuationRunner:
             # ordinary bounded budget (JERV_PLANNING_TOOL_PLAN.md).
             supervised = self._client_present(sid)
             status, stop_reason, steps, cost = "error", "error", 0, 0
-            try:
-                executed = await self.executor.run_turn(
+            # Run the turn as its OWN task and publish it on the broker (`live.task`), so the
+            # owner's Stop (POST /chat/runs/{run_id}/cancel → live.cancel()) can actually cancel
+            # it. Without this `live.task` stayed None, so Stop was a silent no-op for a
+            # continuation — the step ran to completion and the loop re-armed, and Stop appeared
+            # to "do nothing". `root_tree=True` seeds the turn as a fan root so its steps may call
+            # deep_research/spawn (else those refuse "only available in an interactive owner turn").
+            turn_task = asyncio.ensure_future(
+                self.executor.run_turn(
                     profile=profile,
                     read_ctx=read_ctx,
                     read_scopes=(),
@@ -293,7 +300,12 @@ class PlanContinuationRunner:
                     acc=acc,
                     on_event=lambda ev: live.emit(f"data: {ev.model_dump_json()}\n\n".encode()),
                     supervised=supervised,
+                    root_tree=True,
                 )
+            )
+            live.task = turn_task
+            try:
+                executed = await turn_task
                 status, stop_reason = "done", executed.result.stop_reason
                 steps, cost = executed.result.steps, executed.result.cost_tokens
                 with contextlib.suppress(Exception):
@@ -313,6 +325,22 @@ class PlanContinuationRunner:
                 if self.sessions is not None and used and window:
                     with contextlib.suppress(Exception):
                         await self.sessions.record_context(owner_ctx, sid, used, window)
+            except asyncio.CancelledError:
+                # The owner hit Stop: the cancel endpoint cancelled THIS turn's task (a different
+                # task from the sweep). HALT the plan — mark it awaiting-owner, which clears any
+                # pending due-time and makes both the sweep's claim filter and the settle helper
+                # below skip it — so Stop actually stops the loop instead of it re-arming the next
+                # step. The owner resumes by sending a message (the owner-message reset re-opens
+                # the loop). If our OWN task is being cancelled (a shutdown drain), re-raise so the
+                # sweep loop unwinds cleanly rather than swallowing its cancellation.
+                current = asyncio.current_task()
+                if current is not None and current.cancelling() > 0:
+                    raise
+                stop_reason = "stopped"
+                with contextlib.suppress(Exception):
+                    async with scoped_session(self.maker, owner_ctx) as s:
+                        await PlanRepo().set_awaiting_owner(s, plan_id, True)
+                log.info("plan.continuation_stopped", session_id=sid)
             except Exception as exc:  # noqa: BLE001 — a continuation failure is a recorded run
                 log.warning("plan.continuation_failed", session_id=sid, error=repr(exc))
             finally:

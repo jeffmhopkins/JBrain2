@@ -589,6 +589,98 @@ async def test_plan_blocks_only_injects_a_sanctioned_plan(maker: async_sessionma
     assert await _plan_blocks(req, owner, SimpleNamespace(agent="curator", id=sid)) == []  # type: ignore[arg-type]
 
 
+class _RootTreeExecutor:
+    """Records the `root_tree` flag the continuation drove run_turn with — the wire-up that
+    seeds the turn as a fan root so its steps may call deep_research (the executor-level test
+    proves the flag actually mints a TreeState)."""
+
+    def __init__(self) -> None:
+        self.root_tree: object = None
+
+    async def run_turn(self, **kwargs: object) -> _FakeExecuted:
+        self.root_tree = kwargs.get("root_tree")
+        return _FakeExecuted()
+
+
+async def test_continuation_opts_into_a_root_tree(maker: async_sessionmaker) -> None:
+    """A continuation is an owner-approved turn, so it runs as a fan ROOT (`root_tree=True`) —
+    otherwise `ctx.tree` is None and every deep_research/spawn step in the plan refuses with
+    'only available in an interactive owner turn'. The regression guard for candidate-report
+    plans (run candidate_profile per candidate, then compare_candidates) never getting off step
+    one."""
+    owner = await _owner(maker)
+    sid, pid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, pid, delay_s=0)
+
+    executor = _RootTreeExecutor()
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=executor,  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=lambda: _owner_principal_id(maker),
+    )
+    await runner.tick()
+
+    assert executor.root_tree is True
+
+
+class _BlockingExecutor:
+    """A turn that blocks until its task is cancelled — so a test can hit Stop mid-step and
+    assert the loop halts instead of running the step to completion and re-arming."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def run_turn(self, **_kwargs: object) -> _FakeExecuted:
+        self.started.set()
+        await asyncio.sleep(3600)  # until cancelled by the Stop
+        return _FakeExecuted()  # never reached
+
+
+async def test_stop_cancels_the_running_step_and_halts_the_loop(maker: async_sessionmaker) -> None:
+    """The owner's Stop (POST /chat/runs/{run_id}/cancel → live.cancel()) must actually stop a
+    plan: the continuation now runs its turn as a cancellable task published on `live.task`, and
+    a cancelled turn marks the plan awaiting-owner so the sweep can't re-claim it and the settle
+    helper can't re-arm. The regression guard for 'I hit Stop and it just keeps firing steps'."""
+    owner = await _owner(maker)
+    sid, pid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, pid, delay_s=0)
+
+    executor = _BlockingExecutor()
+    live_turns: dict = {}
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=executor,  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns=live_turns,
+        owner_principal_id=lambda: _owner_principal_id(maker),
+    )
+    run = asyncio.ensure_future(runner._run_one(pid, sid, owner.principal_id, owner))
+    await asyncio.wait_for(executor.started.wait(), timeout=5)
+
+    # The live turn is registered and carries the turn task, so the Stop endpoint can cancel it —
+    # the bug was `live.task` staying None, which made live.cancel() a no-op for a continuation.
+    live = next(lt for lt in live_turns.values() if not lt.done)
+    assert live.task is not None
+    live.cancel()  # the owner hits Stop
+    await asyncio.wait_for(run, timeout=5)
+
+    async with scoped_session(maker, owner) as s:
+        plan = await PlanRepo().get_by_id(s, pid)
+        assert plan is not None
+        assert plan.awaiting_owner is True  # halted
+        assert plan.continuation_due_at is None  # no next step armed
+        # A sweep now skips it (the awaiting-owner claim filter), so the loop stays stopped.
+        claimed = await PlanRepo().claim_due_continuations(s, max_continuations=MAX_CONTINUATIONS)
+        assert claimed == []
+    assert live_turns == {}  # the registry drained — no leak
+
+
 async def test_write_plan_await_owner_stops_the_loop(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     sid, pid = await _chat(maker, owner, body=_OPEN, status="in_work")

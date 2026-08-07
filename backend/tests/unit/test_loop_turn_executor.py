@@ -11,6 +11,7 @@ import pytest
 import jbrain.tasks.runner as runner_mod
 from jbrain.agent.agents import agent_for
 from jbrain.agent.contracts import UsageEvent
+from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
 from jbrain.tasks.runner import LoopTurnExecutor
 
@@ -135,3 +136,51 @@ async def test_run_turn_passes_the_window_and_returns_the_context_fill(
     # (the continuation) to persist via record_context.
     assert executed.context_used == 1500
     assert executed.context_window == 5000
+
+
+@pytest.mark.asyncio
+async def test_root_tree_seeds_a_rooted_fan_so_deep_research_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`root_tree=True` (the plan-continuation path) seeds this turn as the ROOT of a sub-agent
+    fan — a `TreeState` with a real budget — exactly as /chat does. That non-None `ctx.tree` is
+    what lets a plan step call deep_research/deep_produce/spawn (all of which refuse when
+    `ctx.tree is None`). Without it a plan whose steps ARE deep-research runs got 'only available
+    in an interactive owner turn' on every step."""
+    monkeypatch.setattr(runner_mod, "AgentLoop", _FakeLoop)
+    executor = LoopTurnExecutor(router=_router(), registry=object())  # type: ignore[arg-type]
+
+    await executor.run_turn(
+        profile=agent_for("jerv"),
+        read_ctx=OWNER,
+        read_scopes=(),
+        conversation=[],
+        timezone=None,
+        recorder=object(),
+        agent_session_id="sess-1",
+        acc=_FakeAcc(),  # type: ignore[arg-type]
+        root_tree=True,
+    )
+    tree = _FakeLoop.seen_kwargs.get("tree")
+    assert isinstance(tree, TreeState)
+    assert tree.tree_budget > 0  # a real fan budget, sized off the turn's own per-turn cap
+
+
+@pytest.mark.asyncio
+async def test_no_root_tree_leaves_the_turn_treeless(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default (a headless scheduled task) passes NO tree, so `ctx.tree` stays None and the
+    fan-out tools keep refusing — an autonomous cron turn does not silently gain deep research."""
+    monkeypatch.setattr(runner_mod, "AgentLoop", _FakeLoop)
+    executor = LoopTurnExecutor(router=_router(), registry=object())  # type: ignore[arg-type]
+
+    await executor.run_turn(
+        profile=agent_for("jerv"),
+        read_ctx=OWNER,
+        read_scopes=(),
+        conversation=[],
+        timezone=None,
+        recorder=object(),
+        agent_session_id="sess-1",
+        acc=_FakeAcc(),  # type: ignore[arg-type]
+    )
+    assert _FakeLoop.seen_kwargs.get("tree") is None

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import cast
+from typing import Any, cast
 
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 
@@ -55,8 +55,10 @@ class _LiveTurn:
         self._base = 0
         self.done = False
         self._subs: set[asyncio.Queue[bytes | object]] = set()
-        # The driving task — held so the cancel endpoint and shutdown can stop it.
-        self.task: asyncio.Task[None] | None = None
+        # The driving task — held so the cancel endpoint and shutdown can stop it. Typed
+        # `Any` result: /chat's drive_turn returns None, a plan continuation's turn task returns
+        # an ExecutedTurn; only `.cancel()` is ever called on it, so the result type is moot.
+        self.task: asyncio.Task[Any] | None = None
         # The turn's live render accumulator, set by `drive_turn` once it exists. The
         # reattach snapshot reads it so a reloaded PWA seeds its bubble from the turn's
         # render SO FAR — no dependence on the frame buffer still holding the (possibly
