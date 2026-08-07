@@ -6,10 +6,12 @@ cap), the shared settle decision (`maybe_schedule_continuation`), the owner-mess
 reset, and jerv's `await_owner` opt-out through the write_plan handler.
 """
 
+import asyncio
 import json
 import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -18,11 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.agent.continuation import (
+    CONTINUATION_DELAY_S,
     MAX_CONTINUATIONS,
     PRESENCE_TTL_S,
     PlanContinuationRunner,
     maybe_schedule_continuation,
 )
+from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.plantools import build_plan_handlers
 from jbrain.api.agent import _plan_blocks
@@ -257,6 +261,68 @@ async def test_sweep_tick_fires_a_due_continuation(maker: async_sessionmaker) ->
     async with scoped_session(maker, owner) as s:
         plan = await PlanRepo().get(s, sid)
         assert plan is not None and plan.continuations_used == 1  # the fire was counted
+
+
+async def test_schedule_kick_runs_a_due_step_immediately(maker: async_sessionmaker) -> None:
+    """The owner approving (or hitting Continue) fires an on-demand kick so the due step runs
+    NOW — not on the next periodic sweep. schedule_kick spawns a tracked task that runs one
+    tick; draining it runs the claimed step."""
+    owner = await _owner(maker)
+    sid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, sid, delay_s=0)
+
+    executor = _FakeExecutor()
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=executor,  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=lambda: _owner_principal_id(maker),
+    )
+    runner.schedule_kick()
+    tasks = list(runner._kick_tasks)
+    assert tasks  # a kick task was scheduled and tracked (so it isn't GC'd)
+    await asyncio.gather(*tasks)
+
+    assert [c["sid"] for c in executor.calls] == [sid]  # ran now, no sweep tick needed
+
+
+async def test_busy_session_rearms_promptly_not_the_owner_window(
+    maker: async_sessionmaker,
+) -> None:
+    """A due step whose session is busy (an owner turn holds it — e.g. the owner approved while
+    the draft turn was still finishing) does NOT idle the full 60s owner window: it re-arms
+    due-now so the next sweep retries the instant the session frees. The 60s countdown bug."""
+    owner = await _owner(maker)
+    sid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, sid, delay_s=0)
+
+    executor = _FakeExecutor()
+    live_turns: dict = {"owner-run": _LiveTurn(session_id=sid)}  # a live owner turn holds it
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=executor,  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns=live_turns,
+        owner_principal_id=lambda: _owner_principal_id(maker),
+    )
+    await runner.tick()
+
+    assert executor.calls == []  # busy → the step did not run
+    async with scoped_session(maker, owner) as s:
+        plan = await PlanRepo().get(s, sid)
+        assert plan is not None and plan.continuation_due_at is not None  # re-armed
+        # Re-armed to retry promptly (due ~now), NOT the 60s owner window.
+        ahead = (plan.continuation_due_at - datetime.now(UTC)).total_seconds()
+        assert ahead < CONTINUATION_DELAY_S / 2
+    # Clear the due-now re-arm so it can't be claimed by a later test's sweep (these tests
+    # share one owner, and claim_due_continuations claims every due plan for that owner).
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().cancel_and_reset(s, sid)
 
 
 async def test_continuation_runs_supervised_when_a_client_is_present(

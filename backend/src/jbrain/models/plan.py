@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from sqlalchemy import DateTime, ForeignKey, Text, func, update
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -55,6 +55,11 @@ class AgentSessionPlan(Base):
     )
     body: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(Text, default="not_approved")
+    # The append-only step-results scratchpad (migration 0157): a JSONB array of
+    # `{heading?, note}` entries, one per `write_plan_result` call, in append order. A later
+    # step can add an entry but never overwrite an earlier one, so no turn erases prior
+    # results; `read_plan` and the per-turn re-injection return the whole array.
+    results: Mapped[list] = mapped_column(JSONB, default=list)
     # Auto-continuation bookkeeping (see the migration). due_at NULL = no continuation
     # pending; awaiting_owner suppresses it; continuations_used caps the chain.
     continuation_due_at: Mapped[datetime | None] = mapped_column(
@@ -129,6 +134,30 @@ class PlanRepo:
             update(AgentSessionPlan)
             .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
             .values(status="approved", awaiting_owner=False, updated_at=func.now())
+            .returning(AgentSessionPlan)
+            .execution_options(populate_existing=True)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def append_result(
+        self, session: AsyncSession, session_id: str, *, note: str, heading: str | None = None
+    ) -> AgentSessionPlan | None:
+        """Append one entry to the step-results scratchpad (APPEND-ONLY): a `{heading?, note}`
+        object added at the next index. Never rewrites an existing entry, so a later step can
+        add results but can never erase an earlier step's from view. Read-modify-write is safe
+        because turns are serialized per plan (the single-turn guard + the sweep's atomic
+        claim). Returns None if no plan exists — results attach to a drafted plan."""
+        plan = await self.get(session, session_id)
+        if plan is None:
+            return None
+        entry: dict[str, str] = {"note": note}
+        if heading:
+            entry["heading"] = heading
+        results = [*(plan.results or []), entry]
+        stmt = (
+            update(AgentSessionPlan)
+            .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
+            .values(results=results, updated_at=func.now())
             .returning(AgentSessionPlan)
             .execution_options(populate_existing=True)
         )

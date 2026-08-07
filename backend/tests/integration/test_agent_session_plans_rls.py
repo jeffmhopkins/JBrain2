@@ -127,6 +127,42 @@ async def test_pausing_a_draft_does_not_set_awaiting_owner(maker: async_sessionm
         assert plan.awaiting_owner is False  # the harmful flag was never set
 
 
+async def test_results_scratchpad_is_append_only(maker: async_sessionmaker) -> None:
+    """The step-results scratchpad appends in order and NEVER overwrites an earlier entry —
+    so no later step can erase a prior step's results from view. Covered through the repo and
+    the write_plan_result handler; read_plan surfaces the whole scratchpad."""
+    owner = await _owner(maker)
+    sid = await _new_chat(maker, owner)
+    repo = PlanRepo()
+    handlers = build_plan_handlers(maker)
+    ctx = ToolContext(session=owner, scopes=(), agent_session_id=sid)
+
+    async with scoped_session(maker, owner) as session:
+        assert await repo.append_result(session, sid, note="x") is None  # no plan yet
+        await repo.upsert(session, sid, body="- [ ] one\n- [ ] two", status="approved")
+
+    # The handler appends; two calls yield two ordered entries (the second never clobbers).
+    out1 = await handlers["write_plan_result"]({"heading": "Step 1", "note": "found A"}, ctx)
+    assert "Recorded result #1" in out1
+    out2 = await handlers["write_plan_result"]({"note": "found B"}, ctx)
+    assert "Recorded result #2" in out2
+
+    async with scoped_session(maker, owner) as session:
+        plan = await repo.get(session, sid)
+        assert plan is not None
+        assert plan.results == [
+            {"heading": "Step 1", "note": "found A"},
+            {"note": "found B"},
+        ]
+
+    # read_plan surfaces the whole scratchpad to the model.
+    read = await handlers["read_plan"]({}, ctx)
+    assert "Step results recorded so far" in read and "found A" in read and "found B" in read
+
+    # A bare/empty note is refused; a missing plan can't take a result.
+    assert "needs a `note`" in await handlers["write_plan_result"]({"note": "  "}, ctx)
+
+
 async def test_approve_clears_a_stale_awaiting_owner(maker: async_sessionmaker) -> None:
     """The owner's approve transition clears any leftover awaiting_owner — otherwise the first
     continuation the approve endpoint arms would never be claimed (the sweep skips

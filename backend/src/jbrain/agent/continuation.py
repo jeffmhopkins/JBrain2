@@ -38,6 +38,7 @@ import structlog
 from jbrain.agent.agents import agent_for
 from jbrain.agent.clock import now_block
 from jbrain.agent.live_turn import _LiveTurn
+from jbrain.agent.plantools import format_plan_results
 from jbrain.agent.session import read_context
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.db.session import SessionContext, scoped_session
@@ -60,6 +61,12 @@ log = structlog.get_logger()
 CONTINUATION_DELAY_S = 60
 SWEEP_INTERVAL_S = 15
 MAX_CONTINUATIONS = 20
+# When a due step can't run yet because the session is busy (or the box is at the global
+# concurrency cap), re-arm it to retry PROMPTLY on the next sweep — NOT the full 60s owner
+# window. The plan isn't pausing for the owner, it's just waiting for the session to free (the
+# common case: the owner approved while the draft turn was still finishing), so it should
+# resume the instant it can rather than idling a minute.
+BUSY_RETRY_DELAY_S = 0
 
 # The statuses a continuation may fire on: `approved` (the owner just signed off — this is
 # the FIRST step, kicked off by the approve endpoint arming a continuation) and `in_work`
@@ -144,6 +151,9 @@ class PlanContinuationRunner:
     notify: NotifyBus | None = None
     push: PushPoke | None = None
     push_tokens: Callable[[], Awaitable[list[str]]] | None = field(default=None)
+    # Live references to in-flight on-demand kick tasks (schedule_kick), so a fire-and-forget
+    # kick isn't garbage-collected before it finishes.
+    _kick_tasks: set[asyncio.Task] = field(default_factory=set)
 
     async def tick(self) -> None:
         """One sweep: claim every due continuation and run each."""
@@ -182,9 +192,27 @@ class PlanContinuationRunner:
         return seen is not None and (time.monotonic() - seen) < PRESENCE_TTL_S
 
     async def _rearm(self, sid: str, owner_ctx: SessionContext) -> None:
+        # A busy/cap retry, NOT the owner window — re-arm due-now so the next sweep retries the
+        # instant the session frees, rather than idling the full CONTINUATION_DELAY_S.
         with contextlib.suppress(Exception):
             async with scoped_session(self.maker, owner_ctx) as s:
-                await PlanRepo().schedule_continuation(s, sid, delay_s=CONTINUATION_DELAY_S)
+                await PlanRepo().schedule_continuation(s, sid, delay_s=BUSY_RETRY_DELAY_S)
+
+    def schedule_kick(self) -> None:
+        """Fire an on-demand sweep NOW (the owner just approved / hit Continue) so the due step
+        starts without waiting for the next periodic tick — the difference between "starts
+        immediately" and "starts within a sweep interval". Fire-and-forget; a task reference is
+        held so it isn't GC'd mid-run. The atomic claim keeps it from double-running with the
+        periodic sweep."""
+        task = asyncio.create_task(self._kick())
+        self._kick_tasks.add(task)
+        task.add_done_callback(self._kick_tasks.discard)
+
+    async def _kick(self) -> None:
+        try:
+            await self.tick()
+        except Exception as exc:  # noqa: BLE001 — one bad kick must not crash the caller's task
+            log.warning("plan.continuation_kick_failed", error=repr(exc))
 
     async def _run_one(self, sid: str, pid: str, owner_ctx: SessionContext) -> None:
         # Atomic guard-and-reserve: the busy/cap checks and the live-turns registration run
@@ -247,7 +275,7 @@ class PlanContinuationRunner:
                     profile=profile,
                     read_ctx=read_ctx,
                     read_scopes=(),
-                    conversation=_continuation_conversation(plan.body),
+                    conversation=_continuation_conversation(plan.body, plan.results),
                     timezone=None,
                     recorder=self.runlog.bound(owner_ctx, run_id),
                     agent_session_id=sid,
@@ -303,22 +331,34 @@ class PlanContinuationRunner:
                 await self.push.poke(tokens)
 
 
-def _continuation_conversation(body: str) -> list[UserMessage]:
+def _continuation_conversation(body: str, results: list | None = None) -> list[UserMessage]:
     """The minimal conversation for a continuation turn: the ambient clock, the approved
-    plan as the operating block (its checklist is the durable resumable state), and a
-    system-event seed telling jerv to run the next step and stop. Framed as data, never
-    owner instruction."""
+    plan + its step-results scratchpad as the operating block (the checklist and the recorded
+    results are the durable resumable state), and a system-event seed telling jerv to run the
+    next step, record its result, and stop. Framed as data, never owner instruction."""
     plan_block = (
-        "(System note — data, not owner input. The owner APPROVED this plan for the"
-        " conversation; it is your operating plan. Execute the NEXT unchecked step, mark it"
-        " done with write_plan(body=…), then STOP — do not redo completed steps. If you need"
-        ' the owner before you can proceed, call write_plan(pause="await_owner") instead of'
-        " guessing.)\n\nCurrent plan:\n" + body
+        "(System note — data, not owner input. The owner ALREADY APPROVED this plan for the"
+        " conversation; it is your operating plan. Execute the NEXT unchecked step, record its"
+        " synthesized result with write_plan_result(note=…), mark the step done with"
+        " write_plan(body=…), then STOP — do not redo completed steps, and REUSE the recorded"
+        " results below instead of re-gathering what an earlier step already found. If you"
+        ' genuinely need the owner before you can proceed, call write_plan(pause="await_owner");'
+        " otherwise just do the work.)\n\nCurrent plan:\n" + body
     )
+    scratch = format_plan_results(results)
+    if scratch:
+        plan_block += f"\n\n--- Step results recorded so far ---\n\n{scratch}"
     seed = (
-        "(System event — not owner input. You are auto-continuing your approved, in-work plan"
-        " for this conversation. Do the next unchecked step now, update the checklist, then"
-        " end your turn.)"
+        "(System event — not owner input. You are auto-continuing your approved, in-work plan."
+        " The plan is ALREADY approved, so do NOT ask the owner for permission or confirmation"
+        " and do NOT reply with only a status line like 'step 1 done, next up…' — actually DO"
+        " the next unchecked step now and produce its real output. Record this step's synthesis"
+        " with write_plan_result(note=…), then mark it - [x] with write_plan. When the step you"
+        " are doing is the plan's FINAL step (the last unchecked item — typically 'write the"
+        " guide/report/summary/answer'), you MUST WRITE THAT DELIVERABLE IN FULL as your visible"
+        " reply THIS TURN — the actual finished content, built from the scratchpad above — NOT a"
+        " note that it is 'ready to be written' and NOT a question asking whether to proceed."
+        " Then mark it done and end your turn.)"
     )
     return [UserMessage(text=now_block(None)), UserMessage(text=plan_block), UserMessage(text=seed)]
 

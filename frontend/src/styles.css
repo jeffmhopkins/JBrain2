@@ -17359,6 +17359,42 @@ button.auto-sect[aria-expanded="true"] > svg {
   font-size: var(--fs-note);
   color: var(--text-2);
 }
+/* The append-only step-results scratchpad (JERV_PLANNING_TOOL_PLAN.md): each finished step's
+   synthesis, one visible block per entry, so findings aren't buried in a turn's tool trace. */
+.plan-results {
+  padding: 6px 13px 8px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.plan-results-head {
+  font-size: var(--fs-note);
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 2px 0 6px;
+}
+.plan-results-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plan-result {
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--steel-tint);
+  font-size: var(--fs-note);
+  color: var(--text-2);
+}
+.plan-result-head {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+.plan-result-body {
+  color: var(--text-2);
+}
 .plan-steps {
   list-style: none;
   margin: 0;

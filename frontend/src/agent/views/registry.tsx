@@ -9,6 +9,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   type MetricPoint,
   type PlanOut,
+  type PlanResult,
   api,
   attachmentUrl,
   chatAttachmentThumbUrl,
@@ -3129,6 +3130,7 @@ function PlanIcon(): ReactNode {
 interface PlanLocal {
   body: string;
   status: string;
+  results: PlanResult[];
   dueAt: string | null;
   awaiting: boolean;
   used: number;
@@ -3139,6 +3141,7 @@ function planFromOut(out: PlanOut): PlanLocal {
   return {
     body: out.body,
     status: planStatus(out.status),
+    results: out.results ?? [],
     dueAt: out.continuation_due_at,
     awaiting: out.awaiting_owner,
     used: out.continuations_used,
@@ -3155,12 +3158,13 @@ function planFromOut(out: PlanOut): PlanLocal {
  * the owner alone makes. */
 export function usePlanState(
   sessionId: string,
-  seed?: { body?: string; status?: string },
+  seed?: { body?: string; status?: string; results?: PlanResult[] },
   onPlanChanged?: () => void,
 ) {
   const [plan, setPlan] = useState<PlanLocal>(() => ({
     body: seed?.body ?? "",
     status: planStatus(seed?.status),
+    results: seed?.results ?? [],
     dueAt: null,
     awaiting: false,
     used: 0,
@@ -3201,14 +3205,16 @@ export function usePlanState(
     setPlan({
       body: seed?.body ?? "",
       status: planStatus(seed?.status),
+      results: seed?.results ?? [],
       dueAt: null,
       awaiting: false,
       used: 0,
       max: 0,
     });
     // seed is read fresh on a session switch, not tracked as a dep (it changes identity
-    // every render); the switch is keyed off sessionId alone.
-  }, [sessionId, seed?.body, seed?.status]);
+    // every render); the switch is keyed off sessionId alone (the guard above early-returns
+    // unless it changed, so the seed deps only pacify the linter — they never re-fire it).
+  }, [sessionId, seed?.body, seed?.status, seed?.results]);
 
   const { title, steps, prose } = parsePlanBody(plan.body);
   const doneCount = steps.filter((s) => s.checked).length;
@@ -3355,6 +3361,7 @@ export function usePlanState(
     title,
     prose,
     steps,
+    results: plan.results,
     doneCount,
     allDone,
     draftState,
@@ -3386,6 +3393,7 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
     title,
     prose,
     steps,
+    results,
     doneCount,
     allDone,
     draftState,
@@ -3457,6 +3465,32 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
             ))}
           </ul>
         )
+      )}
+
+      {/* The step-results scratchpad (append-only): each finished step's synthesis, so the
+          findings live in one visible place — not buried in a turn's collapsed tool trace —
+          and the final step reads them all to write the deliverable. Hidden while editing. */}
+      {!editing && results.length > 0 && (
+        <div className="plan-results">
+          <div className="plan-results-head">Results</div>
+          <ol className="plan-results-list">
+            {results.map((r, i) => (
+              <li
+                // Append-only, index-ordered; the position is the stable key.
+                // biome-ignore lint/suspicious/noArrayIndexKey: append-only ordered results
+                key={i}
+                className="plan-result"
+              >
+                {r.heading && <div className="plan-result-head">{r.heading}</div>}
+                {r.note && (
+                  <div className="plan-result-body">
+                    <Markdown text={r.note} />
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
       )}
 
       {/* The auto-resume countdown: the card DISPLAYS the server's window and offers the
@@ -3575,7 +3609,11 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
 function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
   const st = usePlanState(
     String(data.session_id ?? ""),
-    { body: String(data.body ?? ""), status: planStatus(data.status) },
+    {
+      body: String(data.body ?? ""),
+      status: planStatus(data.status),
+      results: Array.isArray(data.results) ? (data.results as PlanResult[]) : [],
+    },
     onPlanChanged,
   );
   return <PlanBody st={st} />;

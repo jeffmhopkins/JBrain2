@@ -875,11 +875,19 @@ export interface ListOut {
  * auto-resume countdown: `continuation_due_at` is when the next step auto-fires (null =
  * none pending), `awaiting_owner` means jerv paused for the owner's call, and the
  * counters bound the chain. Every plan endpoint returns this shape. */
+/** One appended entry in a plan's step-results scratchpad (append-only, index-ordered). */
+export interface PlanResult {
+  heading?: string;
+  note: string;
+}
+
 export interface PlanOut {
   session_id: string;
   body: string;
   status: string;
   updated_at: string;
+  /** The append-only step-results scratchpad, in append order — the card's Results section. */
+  results: PlanResult[];
   continuation_due_at: string | null;
   awaiting_owner: boolean;
   continuations_used: number;

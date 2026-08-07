@@ -26,11 +26,24 @@ OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 _repo = PlanRepo()
 
 
+def _kick_continuations(request: Request) -> None:
+    """Nudge the plan-continuation runner to run any now-due step immediately, so Approve /
+    Continue starts the step without waiting for the next periodic sweep. Best-effort: the
+    runner isn't present in some test apps, and the atomic claim keeps this from double-running
+    with the periodic sweep."""
+    runner = getattr(request.app.state, "plan_continuation_runner", None)
+    if runner is not None:
+        runner.schedule_kick()
+
+
 class PlanOut(BaseModel):
     session_id: str
     body: str
     status: str
     updated_at: str
+    # The append-only step-results scratchpad: `{heading?, note}` entries in append order,
+    # rendered as the card's per-step Results section.
+    results: list[dict] = []
     # Auto-continuation state, for the card's countdown + controls. `continuation_due_at`
     # is when the next step auto-fires (null = none pending); `awaiting_owner` means jerv
     # paused for input; the counters bound the chain.
@@ -51,6 +64,7 @@ def _out(plan: AgentSessionPlan) -> PlanOut:
         body=plan.body,
         status=plan.status,
         updated_at=plan.updated_at.isoformat(),
+        results=list(plan.results or []),
         continuation_due_at=(
             plan.continuation_due_at.isoformat() if plan.continuation_due_at else None
         ),
@@ -82,6 +96,9 @@ async def approve_plan(request: Request, principal: OwnerDep, session_id: str) -
         if await _repo.approve(db, session_id) is None:
             raise HTTPException(status_code=404, detail="no plan for that conversation")
         await _repo.schedule_continuation(db, session_id, delay_s=0)
+    # Start the first step NOW instead of waiting for the next periodic sweep — the owner
+    # expects Approve to kick off step one immediately, not after a window.
+    _kick_continuations(request)
     # Re-read in a fresh session so the returned state reflects the armed due-time.
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
         plan = await _repo.get(db, session_id)
@@ -125,12 +142,16 @@ async def continue_plan(request: Request, principal: OwnerDep, session_id: str) 
         # Only arm it if it would actually fire: in-work, not paused for the owner, and
         # under the cap (else the sweep's own `used < max` filter would never claim it, so
         # the card would show a countdown that silently never runs).
-        if (
+        armed = (
             plan.status in ("approved", "in_work")
             and not plan.awaiting_owner
             and plan.continuations_used < MAX_CONTINUATIONS
-        ):
+        )
+        if armed:
             await _repo.schedule_continuation(db, session_id, delay_s=0)
         plan = await _repo.get(db, session_id)
+    # Fire it off now (not on the next sweep) so "Continue now" is actually now.
+    if armed:
+        _kick_continuations(request)
     assert plan is not None
     return _out(plan)

@@ -862,6 +862,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # owner-only agent_session_plans table, never offered to the curator wildcard.
         "read_plan",
         "write_plan",
+        "write_plan_result",
     }
     shipped = {
         "search",
@@ -1424,6 +1425,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "write_plan",
             3,
             "59a3f04336339861ff313355d11cc8a054c9bae0b53e0a445add210e8d6ddbc5",
+        ),
+        "write_plan_result.tool": (
+            "write_plan_result",
+            1,
+            "f02f5bddb5dd714c148456cfcdad218967e3ce320d116476711c0c10c0546ef1",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
