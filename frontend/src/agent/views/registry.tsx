@@ -3260,13 +3260,19 @@ export function usePlanState(
     }
   }, [sessionId]);
 
-  // One-shot reconcile on mount, REGARDLESS of `live`: the seed (a frozen tool-view payload,
-  // or a bare session status for the omnibox surfaces) can be stale — a since-approved or
-  // -completed plan still showing "Awaiting approval" with a live Approve. Pull server truth
-  // once so the seed can never strand.
+  // Reconcile on mount AND whenever the seed status changes for the SAME session, REGARDLESS
+  // of `live`: the seed (a frozen tool-view payload, or the session-list status for the omnibox
+  // pill/popover) can be stale. In particular, approving in the INLINE card refreshes the
+  // session list, which flips this hook's seed `not_approved`→`approved` — without this pull
+  // the composer pill wouldn't reflect the approval until the owner switched conversations
+  // (the reported bug). A since-approved/-completed seed likewise can't strand an "Awaiting
+  // approval" card.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: seed?.status is a deliberate
+  // trigger — re-reconcile when the session-list status flips (e.g. an inline-card approve),
+  // not just on mount; the effect body reads server truth, not the seed value itself.
   useEffect(() => {
     void reconcile();
-  }, [reconcile]);
+  }, [reconcile, seed?.status]);
 
   // Track tab visibility; on regaining focus, reconcile once (catches a window the server
   // armed while the tab was hidden, including after a Stop the owner later resumed).

@@ -138,7 +138,13 @@ interface Props {
    * the composer shows this instead of the settled "Answered" — an interruptible countdown to
    * the next step (JERV_PLANNING_TOOL_PLAN.md). `countdown` is the live "m:ss" remaining;
    * `onStop` holds the continuation. Absent when no continuation is armed. */
-  planWaiting?: { countdown: string; onStop?: (() => void) | undefined } | undefined;
+  planWaiting?:
+    | {
+        countdown: string;
+        onStop?: (() => void) | undefined;
+        onContinue?: (() => void) | undefined;
+      }
+    | undefined;
 }
 
 export function FullBrainSurface({
@@ -316,6 +322,7 @@ export function FullBrainSurface({
         <AgentStatusLine
           status={liveStatus ?? idleStatus}
           onInterrupt={liveStatus ? undefined : planWaiting?.onStop}
+          onContinueNow={liveStatus ? undefined : planWaiting?.onContinue}
         />
       </div>
 
@@ -403,12 +410,16 @@ function prettySize(bytes: number): string {
 export function AgentStatusLine({
   status,
   onInterrupt,
+  onContinueNow,
 }: {
   status: AgentStatus | null;
   /** Present only on the between-steps `waiting` status: the owner's override that stops the
    * armed plan continuation, surfaced as a Stop button right on the status line so the wait is
    * interruptible where it's shown (JERV_PLANNING_TOOL_PLAN.md). */
   onInterrupt?: (() => void) | undefined;
+  /** Also on the `waiting` status: skip the rest of the window and fire the next step NOW, for
+   * an owner actively watching who doesn't want to wait it out. */
+  onContinueNow?: (() => void) | undefined;
 }): ReactNode {
   // What's actually on screen. It tracks `status` except that a "tool" label is
   // pinned: when the tool finishes inside the window we keep showing it, falling
@@ -486,6 +497,11 @@ export function AgentStatusLine({
           {shown.label}
           {shown.emphasis ? <span className="tool"> {shown.emphasis}</span> : null}
         </span>
+        {onContinueNow ? (
+          <button type="button" className="fb-status-go" onClick={onContinueNow}>
+            Continue now
+          </button>
+        ) : null}
         {onInterrupt ? (
           <button type="button" className="fb-status-stop" onClick={onInterrupt}>
             Stop

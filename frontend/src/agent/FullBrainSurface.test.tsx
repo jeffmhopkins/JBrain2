@@ -1378,18 +1378,24 @@ describe("FullBrainSurface", () => {
     }
   });
 
-  it("shows the between-steps plan countdown with an inline Stop that holds the continuation", () => {
+  it("shows the between-steps plan countdown with inline Stop + Continue now overrides", () => {
     const onInterrupt = vi.fn();
+    const onContinueNow = vi.fn();
     const waiting: AgentStatus = {
       kind: "waiting",
       label: "Starting next step in",
       emphasis: "0:54",
     };
-    render(<AgentStatusLine status={waiting} onInterrupt={onInterrupt} />);
+    render(
+      <AgentStatusLine status={waiting} onInterrupt={onInterrupt} onContinueNow={onContinueNow} />,
+    );
     const line = screen.getByRole("status");
     expect(line.textContent).toContain("Starting next step in");
     expect(line.textContent).toContain("0:54");
     expect(document.querySelector(".fb-status.waiting")).toBeInTheDocument();
+    // Stop holds the continuation; Continue now fires the next step immediately.
+    fireEvent.click(screen.getByRole("button", { name: "Continue now" }));
+    expect(onContinueNow).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(onInterrupt).toHaveBeenCalledTimes(1);
   });

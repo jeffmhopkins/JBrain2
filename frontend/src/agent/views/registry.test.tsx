@@ -1073,6 +1073,29 @@ describe("ToolView registry", () => {
     expect(queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
   });
 
+  it("re-reconciles when the seed status changes for the same session", async () => {
+    // The composer pill / popover is seeded from the session-list status. Approving in the
+    // INLINE card refreshes that list, flipping this hook's seed not_approved→approved — the
+    // hook must pull server truth on that change so the pill reflects the approval without a
+    // conversation switch (the reported bug).
+    const getPlan = vi
+      .spyOn(api, "getPlan")
+      .mockResolvedValue(planOut({ status: "not_approved", body: PLAN_BODY }));
+    const view = (status: string) => (
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status },
+        })}
+      />
+    );
+    const { rerender } = render(view("not_approved"));
+    await waitFor(() => expect(getPlan).toHaveBeenCalledTimes(1)); // mount reconcile
+    getPlan.mockResolvedValue(planOut({ status: "in_work", body: PLAN_BODY }));
+    rerender(view("approved")); // the session list flipped the seed
+    await waitFor(() => expect(getPlan).toHaveBeenCalledTimes(2)); // pulled fresh truth
+  });
+
   it("Stop cancels the window and parks the countdown", async () => {
     const due = new Date(Date.now() + 45_000).toISOString();
     vi.spyOn(api, "getPlan").mockResolvedValue(

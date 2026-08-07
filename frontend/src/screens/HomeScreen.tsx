@@ -267,7 +267,11 @@ export function HomeScreen({
           // while a continuation is actually armed (in_work + a due window), and Stop holds it.
           planWaiting={
             planSt.countdownVisible
-              ? { countdown: planSt.countdown, onStop: planSt.stop }
+              ? {
+                  countdown: planSt.countdown,
+                  onStop: planSt.stop,
+                  onContinue: planSt.continueNow,
+                }
               : undefined
           }
         />

@@ -9224,7 +9224,8 @@ button.small {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.fb-shell .fb-status-stop {
+.fb-shell .fb-status-stop,
+.fb-shell .fb-status-go {
   flex: none;
   margin-left: 2px;
   padding: 2px 10px;
@@ -9240,6 +9241,15 @@ button.small {
 .fb-shell .fb-status-stop:hover {
   color: var(--text);
   border-color: var(--text-3);
+}
+/* Continue now: the affirmative override (skip the wait, fire the next step) reads in the
+   accent so it's distinct from the neutral Stop. */
+.fb-shell .fb-status-go {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.fb-shell .fb-status-go:hover {
+  border-color: var(--accent);
 }
 .fb-shell .fb-status.live .fb-status-lab {
   background: linear-gradient(100deg, var(--text-3) 30%, var(--steel) 50%, var(--text-3) 70%);
