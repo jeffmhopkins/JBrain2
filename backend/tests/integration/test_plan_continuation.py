@@ -30,6 +30,7 @@ from jbrain.agent.continuation import (
 from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.plantools import build_plan_handlers
+from jbrain.agent.session import AgentSessionRepo
 from jbrain.api.agent import _plan_blocks
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
@@ -263,6 +264,53 @@ async def test_sweep_tick_fires_a_due_continuation(maker: async_sessionmaker) ->
     async with scoped_session(maker, owner) as s:
         plan = await PlanRepo().get_by_id(s, pid)
         assert plan is not None and plan.continuations_used == 1  # the fire was counted
+
+
+class _ContextExecuted:
+    result = _FakeResult()
+    tools: list = []
+    reasoning = ""
+    context_used = 1500  # the fullest step's prompt+output
+    context_window = 5000  # the model's window it ran against
+
+
+class _ContextFakeExecutor:
+    async def run_turn(self, **_kwargs: object) -> _ContextExecuted:
+        return _ContextExecuted()
+
+
+async def test_continuation_persists_the_context_meter_seed(maker: async_sessionmaker) -> None:
+    """The meter fix (Gap #2): after a continuation turn settles, the runner persists the turn's
+    context fill onto the AgentSession row via `record_context`, so a client that reopens the
+    chat AFTER the live stream is gone still sees the true context usage instead of a stale
+    foreground value. Gated on `sessions` being wired (production wires it in main.py)."""
+    owner = await _owner(maker)
+    sid, pid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, pid, delay_s=0)
+
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=_ContextFakeExecutor(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=lambda: _owner_principal_id(maker),
+        sessions=AgentSessionRepo(maker),
+    )
+    await runner.tick()
+
+    async with scoped_session(maker, owner) as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT context_tokens, context_window FROM app.agent_sessions WHERE id = :id"
+                ),
+                {"id": sid},
+            )
+        ).one()
+    assert row.context_tokens == 1500  # the meter seed the continuation persisted
+    assert row.context_window == 5000
 
 
 async def test_superseded_plan_is_not_run(maker: async_sessionmaker) -> None:

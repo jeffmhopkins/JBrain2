@@ -39,7 +39,7 @@ from jbrain.agent.agents import agent_for
 from jbrain.agent.clock import now_block
 from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.plantools import format_plan_results
-from jbrain.agent.session import read_context
+from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm import UserMessage
@@ -153,6 +153,10 @@ class PlanContinuationRunner:
     notify: NotifyBus | None = None
     push: PushPoke | None = None
     push_tokens: Callable[[], Awaitable[list[str]]] | None = field(default=None)
+    # Persists the continuation turn's context fill onto the AgentSession row, so the PWA's
+    # context meter restores to the true value when the chat is reopened after plan work (the
+    # live stream already carries the UsageEvents; this is the reopen seed). None → skip.
+    sessions: AgentSessionRepo | None = None
     # Live references to in-flight on-demand kick tasks (schedule_kick), so a fire-and-forget
     # kick isn't garbage-collected before it finishes.
     _kick_tasks: set[asyncio.Task] = field(default_factory=set)
@@ -301,6 +305,14 @@ class PlanContinuationRunner:
                         tools=executed.tools,
                         reasoning=executed.reasoning,
                     )
+                # Persist the meter seed so a client that reopens the chat AFTER the continuation
+                # (its live stream gone) still sees the true context fill, not a stale foreground
+                # value. Best-effort — the transcript is the source of truth, not this.
+                used = getattr(executed, "context_used", 0)
+                window = getattr(executed, "context_window", 0)
+                if self.sessions is not None and used and window:
+                    with contextlib.suppress(Exception):
+                        await self.sessions.record_context(owner_ctx, sid, used, window)
             except Exception as exc:  # noqa: BLE001 — a continuation failure is a recorded run
                 log.warning("plan.continuation_failed", session_id=sid, error=repr(exc))
             finally:

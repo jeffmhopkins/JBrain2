@@ -19,7 +19,7 @@ import structlog
 
 from jbrain.agent.agents import AgentProfile, agent_for
 from jbrain.agent.clock import now_block
-from jbrain.agent.contracts import ChatEvent
+from jbrain.agent.contracts import ChatEvent, UsageEvent
 from jbrain.agent.loop import AgentLoop, AgentResult, guardrails_for_effort
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionRepo, read_context
@@ -46,6 +46,13 @@ class ExecutedTurn:
     result: AgentResult
     tools: list[dict[str, Any]] = field(default_factory=list)
     reasoning: str = ""
+    # The turn's context-usage for the PWA meter: `context_used` is the fullest step's
+    # prompt+output (the last UsageEvent), `context_window` the model's window it ran against.
+    # Both 0 when the turn emitted no usage (no window resolved). A continuation persists these
+    # via `record_context` so the meter restores on reopen — the live path already streams the
+    # UsageEvents to a reattached client.
+    context_used: int = 0
+    context_window: int = 0
 
 
 class TurnExecutor(Protocol):
@@ -99,6 +106,11 @@ class LoopTurnExecutor:
         supervised: bool = False,
     ) -> ExecutedTurn:
         effort = await self.router.effective_reasoning_effort("agent.turn")
+        # The context window the turn runs against — the meter's denominator, resolved exactly
+        # as /chat does. Passing it into run_stream is what makes the loop EMIT UsageEvents on
+        # this path (the loop suppresses them when the window is None); without it a continuation
+        # streamed to a reattached client left the context meter frozen at the last /chat value.
+        context_window = await self.router.context_window("agent.turn")
         # The loop yields ChatEvents, not the step/cost tallies the run summary needs,
         # so count them as the loop records each step (as /chat does).
         tally = StepTally(recorder)
@@ -119,6 +131,7 @@ class LoopTurnExecutor:
         # task path passes neither and behaves exactly as before.
         if acc is None:
             acc = TranscriptAccumulator()
+        context_used = 0
         async for event in loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,
@@ -128,11 +141,16 @@ class LoopTurnExecutor:
             agent_session_id=agent_session_id,
             tools_allow=profile.tools,
             # The "from general knowledge — not your notes" label only makes sense for an
-            # agent that reads notes (mirrors /chat); a task has no live location, so
-            # `here`/`context_window` stay unset.
+            # agent that reads notes (mirrors /chat); a task has no live location, so `here`
+            # stays unset. `context_window` IS passed so the meter tracks this turn live.
             general_knowledge_label=profile.reads_knowledge_base,
+            context_window=context_window,
         ):
             acc.feed(event)
+            # Track the latest UsageEvent — the fullest the context got this turn — so the
+            # caller can persist the meter seed (the live client already sees the stream).
+            if isinstance(event, UsageEvent):
+                context_used = event.input_tokens + event.output_tokens
             if on_event is not None:
                 on_event(event)
         result = AgentResult(
@@ -141,7 +159,13 @@ class LoopTurnExecutor:
             steps=tally.steps,
             cost_tokens=tally.cost,
         )
-        return ExecutedTurn(result=result, tools=acc.tool_steps(), reasoning=acc.reasoning_text)
+        return ExecutedTurn(
+            result=result,
+            tools=acc.tool_steps(),
+            reasoning=acc.reasoning_text,
+            context_used=context_used,
+            context_window=context_window,
+        )
 
 
 class TaskRunner:
@@ -217,6 +241,13 @@ class TaskRunner:
             result = executed.result
             status, summary, steps, cost = "done", result.text, result.steps, result.cost_tokens
             stop_reason = result.stop_reason
+            if executed.context_window and executed.context_used:
+                with contextlib.suppress(Exception):
+                    # Seed the meter for the session this task created, so reopening it shows the
+                    # turn's real context fill instead of an empty meter (best-effort).
+                    await self._sessions.record_context(
+                        owner_ctx, session.id, executed.context_used, executed.context_window
+                    )
             with contextlib.suppress(Exception):
                 # Record the tool steps and reasoning trace the turn produced, so the
                 # session this task created replays its "Worked" / "Thought for Ns"
