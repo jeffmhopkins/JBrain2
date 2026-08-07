@@ -1,6 +1,6 @@
 # jerv Planning Tool — owner-approved plans, executed across turns
 
-> **Status:** In progress · **Last verified:** 2026-08-07 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage. **P4.1 = visibility + budget** (§5, §6, §9): the original draft card is kept on its own turn as the approved record, the between-steps wait shows an interruptible countdown on the status line, and a supervised (foreground-watched) turn earns a lifted per-turn budget. **P4.2 = draft approvability fix** (§3, §4, §6): a `not_approved` draft is always approvable — `await_owner` on a draft is a no-op, approval clears any stale flag, and the card's `not_approved` state dominates `await_owner` — so jerv pausing the draft can never strand the owner with no way to approve.)
+> **Status:** In progress · **Last verified:** 2026-08-07 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage. **P4.1 = visibility + budget** (§5, §6, §9): the original draft card is kept on its own turn as the approved record, the between-steps wait shows an interruptible countdown on the status line, and a supervised (foreground-watched) turn earns a lifted per-turn budget. **P4.2 = draft approvability fix** (§3, §4, §6): a `not_approved` draft is always approvable — `await_owner` on a draft is a no-op, approval clears any stale flag, and the card's `not_approved` state dominates `await_owner` — so jerv pausing the draft can never strand the owner with no way to approve. **P5 = step-results scratchpad + instant start** (§9): an append-only, index-ordered results scratchpad (`write_plan_result`) each step records its synthesis to and the final step reads to write the deliverable — visible as a per-step Results section in the card — plus approve/Continue now start the step immediately (an on-demand kick + a prompt busy-retry) instead of idling the ~60s window.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the plan is an owner-only
 > `app.agent_session_plans` row behind `app.is_owner()` RLS (FORCE), with the mandated
@@ -221,3 +221,40 @@ draft-emitted `plan_card` is kept and reconciles after approval while a step-tur
 dropped; and `AgentStatusLine` renders the between-steps countdown with an interruptible Stop),
 `status` (`planWaitingStatus`), `Omnibox` (the plan pill is a tappable popover trigger), and the
 existing `registry` `plan_card` suite.
+
+## 9. Step-results scratchpad + instant start (P5)
+
+Two gaps surfaced once plans ran end to end: a completed step's findings lived only in that
+turn's collapsed tool trace (invisible in the chat, unavailable to later steps as a clean
+synthesis), and approve/Continue idled the ~60s window before the first step actually started.
+
+**Results scratchpad (append-only, index-ordered).** A `results jsonb` column on
+`agent_session_plans` (migration 0157) holds an array of `{heading?, note}` entries.
+`write_plan_result(note, heading?)` (jerv-only, `web` class) APPENDS one entry per call and
+never rewrites an earlier index — so no later step can erase a prior step's results from view
+(the owner's explicit requirement; simpler than a diff/version store, and each entry is its own
+per-step attribution). `read_plan` returns the whole scratchpad, and it is re-injected each
+turn (`_plan_blocks` for owner turns, `_continuation_conversation` for continuation steps), so
+every step reads all prior results and the FINAL step reads the whole thing to write the
+deliverable. The jerv prompt + the continuation seed tell jerv to record each finished step's
+synthesis before ticking it `- [x]`. It renders as a per-step **Results** section in the plan
+card (`PlanBody`), so a research step's findings are visible in one place instead of buried in
+its tool trace. `PlanRepo.append_result` is read-modify-write (safe — turns are serialized per
+plan by the single-turn guard + the sweep's atomic claim); an entry is capped at
+`_MAX_RESULT_CHARS`.
+
+**Instant start.** Approve arms the first continuation due-now, but the periodic sweep
+(`SWEEP_INTERVAL_S`) meant up to a sweep's delay before it ran — and, worse, if the owner
+approved while the draft turn was still finishing, `_run_one` found the session busy and
+re-armed the FULL `CONTINUATION_DELAY_S` (the observed ~60s wait). Two fixes: the busy/cap
+re-arm now uses `BUSY_RETRY_DELAY_S` (due-now, retry next sweep — it isn't pausing for the
+owner, just waiting for the session to free), and the approve/Continue endpoints call
+`PlanContinuationRunner.schedule_kick()` — an on-demand, fire-and-forget sweep tick (task
+reference held so it isn't GC'd; the atomic claim keeps it from double-running with the
+periodic sweep) — so the step starts immediately when the session is free.
+
+Tests: RLS integration (`test_results_scratchpad_is_append_only`: append order + no-clobber via
+the repo and the `write_plan_result` handler, `read_plan` surfaces it, empty-note refused);
+continuation integration (`test_schedule_kick_runs_a_due_step_immediately`,
+`test_busy_session_rearms_promptly_not_the_owner_window`); vitest (the card renders the
+append-only Results section). The jerv prompt version pin is bumped in the same change.

@@ -31,6 +31,7 @@ function planOut(over: Partial<PlanOut> = {}): PlanOut {
     body: "",
     status: "in_work",
     updated_at: "2026-08-06T00:00:00Z",
+    results: [],
     continuation_due_at: null,
     awaiting_owner: false,
     continuations_used: 0,
@@ -984,6 +985,32 @@ describe("ToolView registry", () => {
     expect(queryByText("Waiting for you")).not.toBeInTheDocument();
     fireEvent.click(getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(approve).toHaveBeenCalledWith("s1"));
+  });
+
+  it("renders the append-only step-results scratchpad in the plan card", async () => {
+    const results = [
+      {
+        heading: "Step 1 — Top-rated carry-ons",
+        note: "Found **Cotopaxi Allpa** and Peak Design 45L.",
+      },
+      { note: "A second entry with no heading." },
+    ];
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "in_work", body: PLAN_BODY, results }),
+    );
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { session_id: "s1", body: PLAN_BODY, status: "in_work", results },
+        })}
+      />,
+    );
+    // The Results section lists each appended entry, heading + Markdown note.
+    expect(getByText("Results")).toBeInTheDocument();
+    expect(getByText("Step 1 — Top-rated carry-ons")).toBeInTheDocument();
+    expect(getByText(/Cotopaxi Allpa/)).toBeInTheDocument();
+    expect(getByText(/second entry with no heading/)).toBeInTheDocument();
   });
 
   it("reads Plan complete when every step is checked", async () => {
