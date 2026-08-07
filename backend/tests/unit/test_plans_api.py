@@ -5,6 +5,7 @@ real approve/edit round-trip) is covered by the RLS integration test."""
 
 from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,7 +49,9 @@ class _FakeLive:
         self.cancelled = True
 
 
-def _req(live_turns: object) -> SimpleNamespace:
+def _req(live_turns: object) -> Any:
+    # A stand-in for the FastAPI Request `_cancel_live_turn` reads `.app.state.live_turns` off;
+    # typed Any so it satisfies the `Request` parameter without a real app.
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(live_turns=live_turns)))
 
 
@@ -57,7 +60,7 @@ def test_cancel_live_turn_cancels_only_the_running_turn_for_this_session() -> No
     mine = _FakeLive("sess-1")
     other = _FakeLive("sess-2")  # a different chat's turn is untouched
     done = _FakeLive("sess-1", done=True)  # an already-finished turn isn't re-cancelled
-    _cancel_live_turn(_req({"a": mine, "b": other, "c": done}), "sess-1")  # type: ignore[arg-type]
+    _cancel_live_turn(_req({"a": mine, "b": other, "c": done}), "sess-1")
     assert mine.cancelled is True
     assert other.cancelled is False
     assert done.cancelled is False
