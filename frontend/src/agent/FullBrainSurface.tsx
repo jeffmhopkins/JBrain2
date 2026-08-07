@@ -22,7 +22,7 @@ import { SubagentFan } from "./SubagentFan";
 import { attachmentKind } from "./attachmentKind";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
-import { type AgentStatus, agentStatus } from "./status";
+import { type AgentStatus, agentStatus, planWaitingStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
@@ -133,6 +133,12 @@ interface Props {
         onToggleAuto: () => void;
       }
     | undefined;
+  /** The active plan's between-steps countdown, when one is armed: while jerv's approved
+   * plan is working and the next auto-step is pending (not mid-turn), the status line above
+   * the composer shows this instead of the settled "Answered" — an interruptible countdown to
+   * the next step (JERV_PLANNING_TOOL_PLAN.md). `countdown` is the live "m:ss" remaining;
+   * `onStop` holds the continuation. Absent when no continuation is armed. */
+  planWaiting?: { countdown: string; onStop?: (() => void) | undefined } | undefined;
 }
 
 export function FullBrainSurface({
@@ -141,6 +147,7 @@ export function FullBrainSurface({
   onOpenEntity,
   onProposalEnacted,
   readAloud,
+  planWaiting,
 }: Props): ReactNode {
   const chatRef = useRef<HTMLElement>(null);
   const { panel, setPanel } = fb;
@@ -238,6 +245,20 @@ export function FullBrainSurface({
     return () => document.removeEventListener("selectionchange", onSelectionChange);
   }, [fb.active?.id]);
 
+  // The status line's content: a live turn phase (thinking / a tool / answering) always
+  // wins, so a streaming continuation step reads normally. Only once the turn has settled does
+  // an armed plan continuation take the line over with its interruptible countdown; absent
+  // that, the settled turn's own "Answered/Stopped" status shows as before.
+  const turnStatus = agentStatus(fb.messages, fb.active?.id);
+  const liveStatus =
+    turnStatus &&
+    (turnStatus.kind === "thinking" ||
+      turnStatus.kind === "tool" ||
+      turnStatus.kind === "answering")
+      ? turnStatus
+      : null;
+  const idleStatus = planWaiting ? planWaitingStatus(planWaiting.countdown) : turnStatus;
+
   // The session's name lives in the top bar (HomeScreen owns it); the panels are
   // a swipe away on the omnibox — right for Sessions, left for Proposals.
   return (
@@ -263,7 +284,6 @@ export function FullBrainSurface({
                   void fb.send(msg, { deferredOutcome: true });
                 }}
                 onPlanChanged={fb.reloadSessions}
-                planStatus={fb.active?.plan_status ?? null}
                 chatBusy={fb.busy}
                 onStop={fb.stop}
                 onOpenSession={fb.requestOpen}
@@ -290,8 +310,13 @@ export function FullBrainSurface({
         )}
 
         {/* The live status sits at the surface's bottom edge, just above the
-            omnibox composer — replacing the old in-bubble "…". */}
-        <AgentStatusLine status={agentStatus(fb.messages, fb.active?.id)} />
+            omnibox composer — replacing the old in-bubble "…". A live turn (thinking / a
+            tool / answering) always wins; only when the turn has settled does an armed plan
+            continuation take the line over as the interruptible next-step countdown. */}
+        <AgentStatusLine
+          status={liveStatus ?? idleStatus}
+          onInterrupt={liveStatus ? undefined : planWaiting?.onStop}
+        />
       </div>
 
       <aside
@@ -375,7 +400,16 @@ function prettySize(bytes: number): string {
 // pulsing dot and a label that shimmers steel while the agent is live, then
 // settles; a clean finish auto-hides after a beat, errors stay put. A tool's
 // label is held for TOOL_HOLD_MS so a fast call doesn't flash past unread.
-export function AgentStatusLine({ status }: { status: AgentStatus | null }): ReactNode {
+export function AgentStatusLine({
+  status,
+  onInterrupt,
+}: {
+  status: AgentStatus | null;
+  /** Present only on the between-steps `waiting` status: the owner's override that stops the
+   * armed plan continuation, surfaced as a Stop button right on the status line so the wait is
+   * interruptible where it's shown (JERV_PLANNING_TOOL_PLAN.md). */
+  onInterrupt?: (() => void) | undefined;
+}): ReactNode {
   // What's actually on screen. It tracks `status` except that a "tool" label is
   // pinned: when the tool finishes inside the window we keep showing it, falling
   // through to the live status only once the hold elapses. A new tool inside the
@@ -441,6 +475,25 @@ export function AgentStatusLine({ status }: { status: AgentStatus | null }): Rea
   }, [ticking]);
 
   if (!shown || (shown.kind === "done" && doneHidden)) return null;
+  // The between-steps plan countdown: a distinct, non-timed line (the countdown text is fed
+  // in fresh each second by the surface's live plan state) with an inline Stop so the owner
+  // can hold the auto-continuation from where it's announced.
+  if (shown.kind === "waiting") {
+    return (
+      <output className="fb-status waiting">
+        <span className="fb-status-mark" aria-hidden="true" />
+        <span className="fb-status-lab">
+          {shown.label}
+          {shown.emphasis ? <span className="tool"> {shown.emphasis}</span> : null}
+        </span>
+        {onInterrupt ? (
+          <button type="button" className="fb-status-stop" onClick={onInterrupt}>
+            Stop
+          </button>
+        ) : null}
+      </output>
+    );
+  }
   const live = shown.kind === "thinking" || shown.kind === "tool" || shown.kind === "answering";
   const cls = live ? "live" : shown.kind === "error" ? "err" : "done";
   // Anchor (or re-anchor) the turn timer whenever the turn changes — the moment a new
@@ -532,7 +585,6 @@ function Bubble({
   onOpenSession,
   onDeferredComplete,
   onPlanChanged,
-  planStatus,
   audio,
 }: {
   message: TranscriptMessage;
@@ -555,10 +607,6 @@ function Bubble({
   /** An in-card plan action fired — refresh the session list so the composer plan pill
    * and Chats badge (the out-of-card plan_status surfaces) update at once. */
   onPlanChanged?: (() => void) | undefined;
-  /** The active session's stored plan_status. The inline plan_card shows ONLY while the
-   * plan is a draft (`not_approved`); once approved it lives behind the composer pill's
-   * popover, so it's filtered out of the transcript here. */
-  planStatus?: string | null | undefined;
   /** Read-aloud control for this settled answer: `playing` = it's speaking now,
    * `autoPlay` = auto-play armed (third icon state); `onToggle` plays/pauses it,
    * `onToggleAuto` (long-press) flips auto-play. Absent = read-aloud off (no control,
@@ -701,12 +749,16 @@ function Bubble({
   // view through once the fan stands down.
   const viewsToRender = message.views
     .filter((v) => !(liveFanActive && v.view === "subagent_synthesis"))
-    // The plan_card is inline ONLY while the plan is a draft awaiting approval; once the
-    // owner approves, the in-work plan lives behind the composer pill's popover, so drop the
-    // (now redundant) inline card instead of letting it stack down the chat and crowd other
-    // tool views. Keyed off the live session status, so an already-approved plan whose card
-    // was emitted while still a draft is filtered too.
-    .filter((v) => v.view !== "plan_card" || planStatus === "not_approved")
+    // The plan_card is kept inline ONLY on the ORIGINAL turn that drafted the plan — the
+    // one where the owner reads it and approves. That card (emitted while the plan was a
+    // `not_approved` draft) stays put and, being live, reconciles to show the plan's current
+    // state (Approved → Working → Complete) as its anchored record in the transcript. The
+    // plan_cards jerv emits on later CONTINUATION step turns (each `write_plan` tick, emitted
+    // while `in_work`) are dropped — the working plan lives behind the composer pill's popover
+    // and the status-line countdown, so those would only stack down the chat and crowd other
+    // tool views. Keyed off the VIEW's own frozen payload status, so the decision is per-card
+    // (which turn emitted it) rather than the single live session status.
+    .filter((v) => v.view !== "plan_card" || v.data.status === "not_approved")
     .map((v) => {
       if (v.view !== "generated_image") return v;
       const preview = imagePreviews[nextImagePreview++];

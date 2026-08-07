@@ -5,7 +5,10 @@ guardrails). So execution is chunked across turns: when a jerv turn ends while i
 is `in_work` with unchecked `- [ ]` steps left, a continuation is scheduled ~60s out —
 an owner-interruptible window. If the owner sends anything in that window the timer is
 cancelled (their message supersedes and resets the cap); otherwise the sweep fires one
-FRESH turn — a fresh guardrail budget — that runs the next step and re-arms.
+FRESH turn — a fresh guardrail budget — that runs the next step and re-arms. A step fired
+while the owner is watching it stream (a recent foreground live-run poll) runs SUPERVISED —
+the lifted per-turn budget — so a long step isn't cut off mid-work while they monitor and
+can Stop; a step that fires with no client present keeps the ordinary bounded budget.
 
 This composes existing machinery rather than adding a loop: the delay is a due-time on
 the plan row + a periodic sweep (restart-safe, like the tasks scheduler); the turn runs
@@ -69,6 +72,14 @@ _ACTIVE_STATUSES = ("approved", "in_work")
 # owner turn mid-startup; short enough that a marker leaked by a failed setup clears fast.
 TURN_STARTING_TTL_S = 30.0
 
+# How recently a foreground PWA client must have polled this session's live-run for the
+# continuation to count as SUPERVISED (→ the lifted per-turn budget, loop.guardrails_for_effort).
+# The client polls live-run every ~4s while a plan works and the tab is visible; if the app is
+# backgrounded or closed the poll stops and presence ages out within this window, so the next
+# step falls back to the ordinary bounded budget. A generous multiple of the ~4s poll absorbs a
+# couple of missed ticks while staying well under the 60s continuation window.
+PRESENCE_TTL_S = 15.0
+
 # Turn outcomes that must NOT schedule a continuation: a deferred turn already handed off
 # to a background job (its own resume continues the chat); an errored/cancelled/stranded
 # turn should not spin the loop; and `too_many_errors` is a persistent-failure stop —
@@ -122,6 +133,11 @@ class PlanContinuationRunner:
     # Reading it lets a continuation yield to an owner turn still mid-startup, closing the
     # window where both could run the same step (JERV_PLANNING_TOOL_PLAN.md).
     turn_starting: dict[str, float] = field(default_factory=dict)
+    # session_id → monotonic ts of the last foreground live-run poll (recorded by /chat's
+    # `session_live_run` endpoint). A step fired while a client is present (within
+    # PRESENCE_TTL_S) runs SUPERVISED — the lifted per-turn budget — because the owner is
+    # watching it stream and can Stop it; otherwise it keeps the ordinary bounded budget.
+    client_presence: dict[str, float] = field(default_factory=dict)
     # The global in-flight-turn cap (/chat's _MAX_CONCURRENT_TURNS), so a continuation never
     # pushes the box past it.
     max_concurrent: int = 4
@@ -158,6 +174,12 @@ class PlanContinuationRunner:
     def _at_global_cap(self) -> bool:
         live = sum(1 for lt in self.live_turns.values() if not getattr(lt, "done", True))
         return live >= self.max_concurrent
+
+    def _client_present(self, session_id: str) -> bool:
+        """Whether a foreground PWA client is watching this session's plan — a live-run poll
+        within PRESENCE_TTL_S. Gates the SUPERVISED (lifted-budget) path for the step turn."""
+        seen = self.client_presence.get(session_id)
+        return seen is not None and (time.monotonic() - seen) < PRESENCE_TTL_S
 
     async def _rearm(self, sid: str, owner_ctx: SessionContext) -> None:
         with contextlib.suppress(Exception):
@@ -214,6 +236,11 @@ class PlanContinuationRunner:
             # a `data:` SSE frame — byte-identical to the /chat drive loop — onto the broker.
             acc = TranscriptAccumulator()
             live.acc = acc
+            # A step the owner is actively watching (a recent live-run poll) runs SUPERVISED —
+            # the lifted per-turn budget — so a long step isn't cut off with "hit the budget"
+            # while they monitor it and can Stop. Fired with no client present, it keeps the
+            # ordinary bounded budget (JERV_PLANNING_TOOL_PLAN.md).
+            supervised = self._client_present(sid)
             status, stop_reason, steps, cost = "error", "error", 0, 0
             try:
                 executed = await self.executor.run_turn(
@@ -226,6 +253,7 @@ class PlanContinuationRunner:
                     agent_session_id=sid,
                     acc=acc,
                     on_event=lambda ev: live.emit(f"data: {ev.model_dump_json()}\n\n".encode()),
+                    supervised=supervised,
                 )
                 status, stop_reason = "done", executed.result.stop_reason
                 steps, cost = executed.result.steps, executed.result.cost_tokens

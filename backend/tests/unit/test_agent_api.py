@@ -1102,14 +1102,18 @@ def test_chat_ignores_a_non_uuid_appointment_id(
     assert fake.stream_calls[0]["messages"][-1].text == "hi"
 
 
-def test_chat_high_reasoning_effort_widens_the_tool_step_cap(
+def test_chat_runs_supervised_lifting_the_tool_step_cap(
     client: TestClient,
     repo: FakeAuthRepo,
     sessions_store: FakeAgentSessions,
     runlog: FakeRunLog,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # agent.turn stored at high effort on a reasoning-capable model → the loop's step
-    # cap widens to 60. A model that always asks for a tool runs the full 60 steps.
+    # A /chat turn is SUPERVISED by definition (the owner sent it from an open PWA that streams
+    # it live and can Stop it), so its step cap is the lifted supervised ceiling — NOT the
+    # effort tier (60 at high) and NOT the default 20. A small monkeypatched ceiling keeps the
+    # loop fast while proving the supervised cap, not the effort tier, is what stops it.
+    monkeypatch.setattr("jbrain.agent.loop.SUPERVISED_MAX_STEPS", 7)
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
 
@@ -1129,8 +1133,9 @@ def test_chat_high_reasoning_effort_widens_the_tool_step_cap(
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "dig deep"})
     assert resp.status_code == 200
     assert runlog.finished[-1]["stop_reason"] == "max_steps"
-    # The model was asked 60 times before the widened cap stopped it (20 by default).
-    assert len(fake.stream_calls) == 60
+    # Stopped at the supervised ceiling (7), not the high-effort tier (60) — proof /chat runs
+    # supervised regardless of the stored effort.
+    assert len(fake.stream_calls) == 7
 
 
 def test_chat_model_failure_emits_error_done_and_marks_run_failed(
@@ -2308,6 +2313,9 @@ def test_session_live_run_returns_the_run_id(client: TestClient, repo: FakeAuthR
     resp = client.get("/api/chat/sessions/sess-1/live-run")
     assert resp.status_code == 200
     assert resp.json() == {"run_id": "run-xyz", "snapshot": None, "frame_index": 0}
+    # The poll doubles as the plan-continuation SUPERVISED signal: it stamps the session's
+    # foreground presence, so a step firing next runs on the lifted per-turn budget.
+    assert "sess-1" in client.app.state.plan_presence  # type: ignore[attr-defined]
 
 
 def test_session_live_run_returns_render_snapshot_and_frame_offset(

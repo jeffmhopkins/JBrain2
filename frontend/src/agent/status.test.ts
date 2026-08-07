@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentStatus } from "./status";
+import { agentStatus, planWaitingStatus } from "./status";
 import type { TranscriptMessage } from "./transcript";
 
 function asst(over: Partial<TranscriptMessage> = {}): TranscriptMessage {
@@ -23,6 +23,16 @@ const USER: TranscriptMessage = {
   reasoning: "",
   thinking: false,
 };
+
+describe("planWaitingStatus", () => {
+  it("carries the countdown on emphasis as a between-steps waiting status", () => {
+    expect(planWaitingStatus("0:54")).toEqual({
+      kind: "waiting",
+      label: "Starting next step in",
+      emphasis: "0:54",
+    });
+  });
+});
 
 describe("agentStatus", () => {
   it("is null when idle (no turn, or the last message is the user's)", () => {

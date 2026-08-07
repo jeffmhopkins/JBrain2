@@ -674,7 +674,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # serves). Resolved once here and passed to the loop, which stamps it on each
     # UsageEvent so the meter never has to know the route.
     context_window = await router.context_window("agent.turn", spec_override=model_override)
-    guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier)
+    # A /chat turn is SUPERVISED by definition: the owner just sent it from an open PWA that
+    # streams it live and can Stop it any moment. So it earns the lifted per-turn budget — the
+    # human is the loop's anchor, and a long web thread shouldn't be cut off with "hit the
+    # budget" while they watch (JERV_PLANNING_TOOL_PLAN.md). This also sizes the spawn-tree
+    # budget below (seeded from `max_cost_tokens`), so a supervised fan gets matching headroom.
+    guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier, supervised=True)
     # Hide the image-GEN tools when ComfyUI is down — but only for a persona that
     # actually holds them (jerv), so a curator turn never probes a backend it can't use.
     liveness = getattr(request.app.state, "image_liveness", None)
@@ -1218,7 +1223,13 @@ async def session_live_run(request: Request, session_id: str) -> LiveRunOut:
     The snapshot and `frame_index` are read with no `await` between them, so they are a
     consistent pair: the driving task feeds the accumulator and emits a frame within one
     synchronous step, so at every await point the accumulator reflects exactly the frames
-    counted by `frame_index`."""
+    counted by `frame_index`.
+
+    This is also the plan-continuation SUPERVISED signal: the foreground client polls this
+    every ~4s while a plan works and the tab is visible (even a 404 poll hits here), so
+    stamping presence at the top marks the owner as watching. A step that fires while presence
+    is fresh runs on the lifted per-turn budget (JERV_PLANNING_TOOL_PLAN.md)."""
+    request.app.state.plan_presence[session_id] = time.monotonic()
     for run_id, live in request.app.state.live_turns.items():
         if getattr(live, "session_id", None) == session_id and not live.done:
             acc = getattr(live, "acc", None)

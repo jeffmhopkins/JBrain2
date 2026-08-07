@@ -263,6 +263,13 @@ export function HomeScreen({
                 }
               : undefined
           }
+          // The between-steps countdown for the status line above the composer: shown only
+          // while a continuation is actually armed (in_work + a due window), and Stop holds it.
+          planWaiting={
+            planSt.countdownVisible
+              ? { countdown: planSt.countdown, onStop: planSt.stop }
+              : undefined
+          }
         />
       ) : (
         <Stream

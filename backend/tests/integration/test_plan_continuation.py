@@ -7,6 +7,7 @@ reset, and jerv's `await_owner` opt-out through the write_plan handler.
 """
 
 import json
+import time
 import uuid
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.agent.continuation import (
     MAX_CONTINUATIONS,
+    PRESENCE_TTL_S,
     PlanContinuationRunner,
     maybe_schedule_continuation,
 )
@@ -194,8 +196,15 @@ class _FakeExecutor:
     async def run_turn(self, **kwargs: object) -> _FakeExecuted:
         # Record the session and the TYPE of the principal id — the uuid→str bug would
         # never reach here (tick would throw at set_config), so a call at all proves the fix.
+        # `supervised` proves the presence-gated budget path (a watched step runs unbounded).
         pid = kwargs["read_ctx"].principal_id  # type: ignore[attr-defined]
-        self.calls.append({"sid": kwargs["agent_session_id"], "pid_type": type(pid).__name__})
+        self.calls.append(
+            {
+                "sid": kwargs["agent_session_id"],
+                "pid_type": type(pid).__name__,
+                "supervised": kwargs.get("supervised"),
+            }
+        )
         return _FakeExecuted()
 
 
@@ -242,10 +251,62 @@ async def test_sweep_tick_fires_a_due_continuation(maker: async_sessionmaker) ->
 
     assert [c["sid"] for c in executor.calls] == [sid]  # claimed + ran (didn't throw)
     assert executor.calls[0]["pid_type"] == "str"  # the RLS ctx got a str, not a uuid
+    # No client presence registered → the step runs on the ordinary bounded budget.
+    assert executor.calls[0]["supervised"] is False
     assert transcript.answers == [sid]  # recorded answer-only
     async with scoped_session(maker, owner) as s:
         plan = await PlanRepo().get(s, sid)
         assert plan is not None and plan.continuations_used == 1  # the fire was counted
+
+
+async def test_continuation_runs_supervised_when_a_client_is_present(
+    maker: async_sessionmaker,
+) -> None:
+    """A step fired while a foreground client is watching (a recent live-run poll) runs
+    SUPERVISED — the lifted per-turn budget — so a long step isn't cut off mid-work."""
+    owner = await _owner(maker)
+    sid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, sid, delay_s=0)
+
+    executor = _FakeExecutor()
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=executor,  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=lambda: _owner_principal_id(maker),
+        client_presence={sid: time.monotonic()},  # a fresh foreground live-run poll
+    )
+    await runner.tick()
+
+    assert executor.calls[0]["supervised"] is True
+
+
+async def test_continuation_unsupervised_when_presence_is_stale(
+    maker: async_sessionmaker,
+) -> None:
+    """A step fired after the app was backgrounded/closed (its live-run poll stopped, so
+    presence aged past the TTL) falls back to the ordinary bounded budget."""
+    owner = await _owner(maker)
+    sid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, sid, delay_s=0)
+
+    executor = _FakeExecutor()
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=executor,  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=lambda: _owner_principal_id(maker),
+        client_presence={sid: time.monotonic() - (PRESENCE_TTL_S + 5)},  # last seen too long ago
+    )
+    await runner.tick()
+
+    assert executor.calls[0]["supervised"] is False
 
 
 class _StreamEvent:

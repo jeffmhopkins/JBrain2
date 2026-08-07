@@ -207,11 +207,13 @@ describe("FullBrainSurface", () => {
     expect(screen.getByText("eggs")).toBeInTheDocument();
   });
 
-  // The inline plan_card is a draft-only affordance: it shows while the owner still needs to
-  // approve, then the in-work plan moves to the composer pill's popover so it doesn't crowd
-  // the chat. The surface keys the gate off the LIVE session plan_status, not the (frozen)
-  // view payload — so a since-approved card is dropped even though its payload says draft.
-  const planTurn = (): TranscriptTurn[] => [
+  // The inline plan_card is kept only on the ORIGINAL turn that drafted the plan (the card
+  // emitted while the plan was a `not_approved` draft). That card stays put and, being live,
+  // reconciles to show the plan's current state as its anchored transcript record. The
+  // plan_cards jerv re-emits on later continuation step turns (emitted while `in_work`) are
+  // dropped — the working plan lives behind the composer pill and the status-line countdown.
+  // The gate keys off the VIEW's own frozen payload status, so it is a per-card decision.
+  const planTurn = (status = "not_approved"): TranscriptTurn[] => [
     { role: "user", content: "make a plan", tools: [] },
     {
       role: "assistant",
@@ -225,7 +227,7 @@ describe("FullBrainSurface", () => {
           view: {
             view: "plan_card",
             surface: "inline",
-            data: { session_id: "s1", body: "# Trip\n- [ ] book", status: "not_approved" },
+            data: { session_id: "s1", body: "# Trip\n- [ ] book", status },
             refs: [],
           },
         },
@@ -258,19 +260,50 @@ describe("FullBrainSurface", () => {
     expect(document.querySelector(".plan-card")).toBeInTheDocument();
   });
 
-  it("hides the inline plan_card once the plan is approved (it lives behind the pill)", async () => {
+  it("keeps the original draft-emitted plan_card after approval, reconciled to the live status", async () => {
+    const getPlan = vi.spyOn(api, "getPlan").mockResolvedValue({
+      session_id: "s1",
+      body: "# Trip\n- [x] book",
+      status: "in_work",
+      updated_at: "2026-06-12T00:00:00Z",
+      continuation_due_at: null,
+      awaiting_owner: false,
+      continuations_used: 0,
+      max_continuations: 20,
+    });
+    render(
+      <Harness
+        d={deps({
+          listSessions: vi.fn(async () => [session({ plan_status: "in_work" })]),
+          // The original turn's card was emitted while the plan was still a draft.
+          getTranscript: vi.fn(async () => planTurn("not_approved")),
+        })}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The original card stays put and reconciles to the live in-work state (no more Approve).
+    expect(await screen.findByText("Here's the plan.")).toBeInTheDocument();
+    expect(document.querySelector(".plan-card")).toBeInTheDocument();
+    await waitFor(() => expect(getPlan).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("drops a plan_card re-emitted on a continuation step turn", async () => {
     const getPlan = vi.spyOn(api, "getPlan");
     render(
       <Harness
         d={deps({
           listSessions: vi.fn(async () => [session({ plan_status: "in_work" })]),
-          getTranscript: vi.fn(async () => planTurn()),
+          // A step turn's tick emits its plan_card while the plan is already `in_work`.
+          getTranscript: vi.fn(async () => planTurn("in_work")),
         })}
       />,
     );
     await waitFor(() => screen.getByLabelText("Conversation"));
-    // The assistant answer replays, but the plan_card is filtered out of the transcript —
-    // and, being unmounted, it never even polls the plan.
+    // The step answer replays, but its plan_card is filtered out — and, being unmounted, it
+    // never even polls the plan.
     expect(await screen.findByText("Here's the plan.")).toBeInTheDocument();
     expect(document.querySelector(".plan-card")).not.toBeInTheDocument();
     expect(getPlan).not.toHaveBeenCalled();
@@ -1341,6 +1374,32 @@ describe("FullBrainSurface", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("shows the between-steps plan countdown with an inline Stop that holds the continuation", () => {
+    const onInterrupt = vi.fn();
+    const waiting: AgentStatus = {
+      kind: "waiting",
+      label: "Starting next step in",
+      emphasis: "0:54",
+    };
+    render(<AgentStatusLine status={waiting} onInterrupt={onInterrupt} />);
+    const line = screen.getByRole("status");
+    expect(line.textContent).toContain("Starting next step in");
+    expect(line.textContent).toContain("0:54");
+    expect(document.querySelector(".fb-status.waiting")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits the Stop when the waiting status carries no interrupt handler", () => {
+    render(
+      <AgentStatusLine
+        status={{ kind: "waiting", label: "Starting next step in", emphasis: "0:12" }}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toContain("0:12");
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   });
 
   it("shows a live elapsed timer through each phase, re-anchoring on a phase change", () => {
