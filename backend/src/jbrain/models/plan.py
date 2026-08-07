@@ -33,12 +33,51 @@ PLAN_STATUSES = ("not_approved", "approved", "in_work")
 # An unchecked Markdown task line — `- [ ]` / `* [ ]` / `+ [ ]`. Its presence means the
 # plan has work left, which is what gates a continuation (a fully `- [x]` plan is done).
 _UNCHECKED = re.compile(r"^\s*[-*+]\s+\[ \]", re.MULTILINE)
+# The first UNchecked checkbox, captured so `tick_next_step` can flip exactly it to `[x]`.
+_FIRST_UNCHECKED = re.compile(r"^(\s*[-*+]\s+\[)( )(\])", re.MULTILINE)
+# A list item that is NOT already a checkbox: a bullet with content but no `[ ]`/`[x]`.
+# `normalize_plan_body` turns each of these into a top-level `- [ ]` step, so a plan is
+# always a flat checklist the card can render and the loop can tick.
+_BULLET = re.compile(r"^(\s*)[-*+]\s+(?!\[[ xX]\])(.+?)\s*$")
+# An already-checkbox line (any indent / bullet char) → re-emit at top level, `[ ]`/`[x]`.
+_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s+(.*?)\s*$")
 
 
 def has_open_checklist_item(body: str) -> bool:
     """Whether the plan body still has an unchecked `- [ ]` step — the signal that the
     auto-continuation loop has more to do."""
     return bool(_UNCHECKED.search(body or ""))
+
+
+def tick_next_step(body: str) -> str:
+    """Flip the FIRST unchecked `- [ ]` to `- [x]` — the deterministic step check-off that
+    `write_plan_result` does when jerv records a step's result, so progress no longer depends
+    on jerv remembering to rewrite the body. No-op if nothing is unchecked."""
+    return _FIRST_UNCHECKED.sub(r"\1x\3", body or "", count=1)
+
+
+def normalize_plan_body(body: str) -> str:
+    """Normalize a plan into a FLAT `- [ ]` checklist so the card renders it cleanly and the
+    loop can tick each step (the Step-4-as-a-heading-with-nested-subitems render bug). Every
+    list item — a bare bullet, an indented sub-bullet, or an existing checkbox at any indent —
+    becomes a top-level `- [ ]` / `- [x]` step; a bullet that was already a checkbox keeps its
+    checked state. Headings (`#…`), blank lines, and non-bullet prose pass through untouched,
+    so the title and any framing survive. Idempotent."""
+    if not body:
+        return body
+    out: list[str] = []
+    for line in body.split("\n"):
+        cb = _CHECKBOX.match(line)
+        if cb:
+            mark = "x" if cb.group(1).lower() == "x" else " "
+            out.append(f"- [{mark}] {cb.group(2)}")
+            continue
+        bullet = _BULLET.match(line)
+        if bullet:
+            out.append(f"- [ ] {bullet.group(2)}")
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 class AgentSessionPlan(Base):
@@ -139,14 +178,16 @@ class PlanRepo:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def append_result(
+    async def complete_step(
         self, session: AsyncSession, session_id: str, *, note: str, heading: str | None = None
     ) -> AgentSessionPlan | None:
-        """Append one entry to the step-results scratchpad (APPEND-ONLY): a `{heading?, note}`
-        object added at the next index. Never rewrites an existing entry, so a later step can
-        add results but can never erase an earlier step's from view. Read-modify-write is safe
-        because turns are serialized per plan (the single-turn guard + the sweep's atomic
-        claim). Returns None if no plan exists — results attach to a drafted plan."""
+        """Record a finished step: APPEND `{heading?, note}` to the results scratchpad (never
+        rewriting an earlier entry, so nothing is erased), AND deterministically advance the
+        plan — tick the first unchecked `- [ ]` to `- [x]` and flip `approved` → `in_work`. This
+        is the "I finished a step" signal, so progress no longer depends on jerv separately
+        remembering to check the box or set the status. Read-modify-write is safe because turns
+        are serialized per plan (the single-turn guard + the sweep's atomic claim). Returns None
+        if no plan exists — results attach to a drafted plan."""
         plan = await self.get(session, session_id)
         if plan is None:
             return None
@@ -157,7 +198,12 @@ class PlanRepo:
         stmt = (
             update(AgentSessionPlan)
             .where(AgentSessionPlan.session_id == uuid.UUID(session_id))
-            .values(results=results, updated_at=func.now())
+            .values(
+                results=results,
+                body=tick_next_step(plan.body),
+                status="in_work" if plan.status == "approved" else plan.status,
+                updated_at=func.now(),
+            )
             .returning(AgentSessionPlan)
             .execution_options(populate_existing=True)
         )

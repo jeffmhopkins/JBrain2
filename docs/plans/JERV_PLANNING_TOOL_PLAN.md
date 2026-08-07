@@ -1,6 +1,6 @@
 # jerv Planning Tool — owner-approved plans, executed across turns
 
-> **Status:** In progress · **Last verified:** 2026-08-07 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage. **P4.1 = visibility + budget** (§5, §6, §9): the original draft card is kept on its own turn as the approved record, the between-steps wait shows an interruptible countdown on the status line, and a supervised (foreground-watched) turn earns a lifted per-turn budget. **P4.2 = draft approvability fix** (§3, §4, §6): a `not_approved` draft is always approvable — `await_owner` on a draft is a no-op, approval clears any stale flag, and the card's `not_approved` state dominates `await_owner` — so jerv pausing the draft can never strand the owner with no way to approve. **P5 = step-results scratchpad + instant start** (§9): an append-only, index-ordered results scratchpad (`write_plan_result`) each step records its synthesis to and the final step reads to write the deliverable — visible as a per-step Results section in the card — plus approve/Continue now start the step immediately (an on-demand kick + a prompt busy-retry) instead of idling the ~60s window.)
+> **Status:** In progress · **Last verified:** 2026-08-07 · **Waves:** P1✅ P2✅ P3✅ P4◻️ (P1 = the planning tool: table + RLS, read_plan/write_plan, owner-only approval, per-turn re-injection, prompt. P2 = the auto-continuation runtime: the settle hook, the in-process sweep, the `pause` control, the /chat hooks. P3 = the PWA surfaces: the `plan_card` view, the composer-foot plan pill, the Chats badge, the auto-resume countdown. P4 = **live + tidy** (on-branch, pre-merge): continuation turns now STREAM live into the chat via the reattach broker (§5), and the plan surface moved off the transcript — the inline card is draft-only, the in-work plan lives behind the composer pill's popover (§6). Shipped with unit + RLS-isolation + integration + vitest coverage. **P4.1 = visibility + budget** (§5, §6, §9): the original draft card is kept on its own turn as the approved record, the between-steps wait shows an interruptible countdown on the status line, and a supervised (foreground-watched) turn earns a lifted per-turn budget. **P4.2 = draft approvability fix** (§3, §4, §6): a `not_approved` draft is always approvable — `await_owner` on a draft is a no-op, approval clears any stale flag, and the card's `not_approved` state dominates `await_owner` — so jerv pausing the draft can never strand the owner with no way to approve. **P5 = step-results scratchpad + instant start** (§9): an append-only, index-ordered results scratchpad (`write_plan_result`) each step records its synthesis to and the final step reads to write the deliverable — visible as a per-step Results section in the card — plus approve/Continue now start the step immediately (an on-demand kick + a prompt busy-retry) instead of idling the ~60s window. **P6 = execution correctness + polish** (§10): recording a result now deterministically ticks the step's box and flips `in_work`; written plans are normalized to a flat `- [ ]` checklist (the Step-4-heading render bug); one step per turn; the card's countdown no longer flashes on an immediate start; and the Results section is collapsible + Markdown-rendered in the card and the modal.)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the plan is an owner-only
 > `app.agent_session_plans` row behind `app.is_owner()` RLS (FORCE), with the mandated
@@ -258,3 +258,34 @@ the repo and the `write_plan_result` handler, `read_plan` surfaces it, empty-not
 continuation integration (`test_schedule_kick_runs_a_due_step_immediately`,
 `test_busy_session_rearms_promptly_not_the_owner_window`); vitest (the card renders the
 append-only Results section). The jerv prompt version pin is bumped in the same change.
+
+## 10. Execution correctness + polish (P6)
+
+Live testing surfaced that a plan could tick nothing and produce nothing: jerv recorded a
+result but never checked the box off, never flipped `in_work`, ran multiple steps in one turn,
+and wrote a `- **Step 4 – Write Guide**:` heading with nested sub-checkboxes that the card
+couldn't render. Fixes:
+
+- **Recording a result IS the step completion.** `write_plan_result` → `PlanRepo.complete_step`
+  appends the entry AND deterministically advances the plan: `tick_next_step` flips the first
+  unchecked `- [ ]` to `- [x]`, and `approved` flips to `in_work` on the first recorded step. So
+  progress no longer depends on jerv remembering a separate `write_plan` check-off (the observed
+  failure: body stayed all `- [ ]`, status stuck at `approved`). The tool description + prompt
+  say so, and tell jerv to do exactly one step per turn then end it.
+- **Plan-body normalization.** `normalize_plan_body` (applied when jerv writes the body) turns
+  a plan into a FLAT `- [ ]` checklist — every list item (a bare bullet, an indented sub-item,
+  or an existing checkbox at any depth) becomes a top-level step; headings/prose pass through;
+  checked state is preserved; idempotent. This fixes the step-as-a-heading render bug and makes
+  every step tickable.
+- **PWA polish.** The card's between-steps countdown/controls no longer flash on an immediate
+  start: the countdown shows only for a real wait (`remainingMs >= MIN_COUNTDOWN_MS`), and `now`
+  is re-anchored on every plan fold so an approve/Continue armed due-now reads ~0. The step-text
+  is inline Markdown (so a step's `**bold**` renders, not literal asterisks). The Results section
+  is collapsible, **default closed**, and Markdown-rendered (wide tables scroll) in both the
+  inline card and the omnibox modal (they share `PlanBody`).
+
+Tests: unit (`test_plantools`: `tick_next_step`, `normalize_plan_body` flatten + idempotent);
+RLS integration (`write_plan_result` appends + ticks + sets in_work with no clobber; `write_plan`
+normalizes a heading/nested body to a flat checklist); vitest (`registry`: the due-now countdown
+is suppressed; the Results section defaults collapsed and opens on click). jerv prompt version +
+digest and the `write_plan_result.tool` sidecar pin bumped in the same change.

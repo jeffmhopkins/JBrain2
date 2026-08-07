@@ -1,6 +1,6 @@
 ---
 name: write_plan_result
-version: 1
+version: 2
 permission: web
 side_effecting: true
 params:
@@ -14,12 +14,13 @@ params:
       description: A short label for this entry, e.g. "Step 1 — Top-rated carry-ons". Optional but recommended so the scratchpad reads as an ordered log.
   required: [note]
 ---
-Append your finished step's SYNTHESIS to this plan's shared results scratchpad. The
-scratchpad is APPEND-ONLY and index-ordered: each call adds a new entry at the next index
-and NEVER overwrites an earlier one, so nothing you or a later step records is ever erased.
+Record a finished step. This APPENDS your step's synthesis to the plan's shared results
+scratchpad AND completes the step for you: it ticks the next unchecked box (`- [x]`) and, the
+first time, flips the plan to `in_work`. The scratchpad is append-only and index-ordered, so
+nothing you or a later step records is ever erased.
 
-Use it while executing an approved plan: after you complete a step (before you mark it
-`- [x]` with write_plan), record the step's actual findings here with `note` (and a short
-`heading`). Later steps read the whole scratchpad back via `read_plan`, and the final step
-reads all of it to write the deliverable — so put the real substance here, not just "done".
-Read the plan first if you want to see what earlier steps already recorded.
+Call it ONCE per step, right after you finish that step's work — you do NOT need a separate
+write_plan call to check the box off. Put the real substance in `note` (findings, a
+comparison, a draft), not "done". Later steps read the whole scratchpad back via `read_plan`,
+and the final step reads all of it to write the deliverable. After you call this, END YOUR
+TURN so the owner gets a moment before the next step auto-continues.
