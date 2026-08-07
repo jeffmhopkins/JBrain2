@@ -46,11 +46,12 @@ class ExecutedTurn:
     result: AgentResult
     tools: list[dict[str, Any]] = field(default_factory=list)
     reasoning: str = ""
-    # The turn's context-usage for the PWA meter: `context_used` is the fullest step's
-    # prompt+output (the last UsageEvent), `context_window` the model's window it ran against.
-    # Both 0 when the turn emitted no usage (no window resolved). A continuation persists these
-    # via `record_context` so the meter restores on reopen — the live path already streams the
-    # UsageEvents to a reattached client.
+    # The turn's context-usage for the PWA meter: `context_used` is the latest UsageEvent's
+    # prompt+output (what the live meter shows — the same value /chat persists as
+    # `last_context_used`; a ReAct context grows monotonically, so the last step is the fullest),
+    # `context_window` the model's window it ran against. Both 0 when the turn emitted no usage.
+    # A continuation persists these via `record_context` so the meter restores on reopen — the
+    # live path already streams the UsageEvents to a reattached client.
     context_used: int = 0
     context_window: int = 0
 

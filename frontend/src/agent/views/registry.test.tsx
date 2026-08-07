@@ -1,9 +1,17 @@
-import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  createEvent,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ListOut, type PlanOut, api } from "../../api/client";
 import type { ViewPayload } from "../types";
 import { resetLiveLists } from "./liveList";
-import { ToolView, isKnownView } from "./registry";
+import { ToolView, isKnownView, usePlanState } from "./registry";
 
 // Leaflet needs a real layout engine; mock the hurricane_card map glue so the Track
 // tab's React behaviour (mounting, the legend, the NHC link) is what's under test, and
@@ -1044,6 +1052,39 @@ describe("ToolView registry", () => {
     // Opening the second reveals its note too.
     fireEvent.click(getByRole("button", { name: "Step 2" }));
     expect(getByText(/second entry with no heading/)).toBeInTheDocument();
+  });
+
+  it("omnibox RESOLVE mode follows the active plan and mutates by its resolved id", async () => {
+    // The omnibox seeds usePlanState with a bare status and NO planId → RESOLVE mode: it must
+    // poll getActivePlan (not getPlan) and mutate whatever plan that resolves to, so it follows
+    // a newly-created plan instead of locking onto a stale id.
+    const due = new Date(Date.now() + 45000).toISOString();
+    const getActive = vi
+      .spyOn(api, "getActivePlan")
+      .mockResolvedValue(
+        planOut({ plan_id: "p2", status: "in_work", body: PLAN_BODY, continuation_due_at: due }),
+      );
+    const getPlan = vi.spyOn(api, "getPlan");
+    const cont = vi.spyOn(api, "continuePlan").mockResolvedValue(planOut({ plan_id: "p2" }));
+    const { result } = renderHook(() => usePlanState("s1", { status: "in_work" }));
+
+    await waitFor(() => expect(getActive).toHaveBeenCalledWith("s1"));
+    expect(getPlan).not.toHaveBeenCalled(); // RESOLVE mode never calls the by-id read
+    await waitFor(() => expect(result.current.state).toBe("in_work"));
+    // A control POSTs to the RESOLVED plan's id (p2), tracked from getActivePlan — not the seed.
+    act(() => result.current.continueNow());
+    await waitFor(() => expect(cont).toHaveBeenCalledWith("p2"));
+  });
+
+  it("omnibox RESOLVE mode keeps the seed when the conversation has no active plan", async () => {
+    // getActivePlan → null (404) must leave the hook on its seed, not crash or blank the pill.
+    vi.spyOn(api, "getActivePlan").mockResolvedValue(null);
+    const { result } = renderHook(() =>
+      usePlanState("s1", { status: "in_work", body: "# Seed\n- [ ] a" }),
+    );
+    await waitFor(() => expect(api.getActivePlan).toHaveBeenCalledWith("s1"));
+    // The seed body is retained (no active plan folded over it).
+    expect(result.current.plan.body).toBe("# Seed\n- [ ] a");
   });
 
   it("reads Plan complete when every step is checked", async () => {

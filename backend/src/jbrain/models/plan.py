@@ -98,7 +98,8 @@ class AgentSessionPlan(Base):
         UUID(as_uuid=True),
         ForeignKey("app.agent_sessions.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
+        # Session-scoped lookups are served by migration 0158's composite
+        # `(session_id, created_at DESC)` index — no separate single-column index.
     )
     body: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(Text, default="not_approved")

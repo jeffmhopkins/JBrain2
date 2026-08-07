@@ -111,12 +111,20 @@ async def approve_plan(request: Request, principal: OwnerDep, plan_id: str) -> P
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
         # `approve` also clears any stale await-owner (jerv may have paused the draft), so the
         # continuation armed below can actually be claimed — otherwise the approved plan sits.
-        if await _repo.approve(db, plan_id) is None:
+        approved = await _repo.approve(db, plan_id)
+        if approved is None:
             raise HTTPException(status_code=404, detail="no such plan")
-        await _repo.schedule_continuation(db, plan_id, delay_s=0)
+        # Only ARM the loop if this is the conversation's ACTIVE plan. Approving a superseded
+        # plan (a newer plan was drafted after this card) would arm a continuation the sweep's
+        # active-plan guard then drops — a countdown that silently never runs. The plan still
+        # becomes `approved`; it just won't auto-run while a newer plan owns the conversation.
+        is_active = await _repo.active_plan_id(db, str(approved.session_id)) == plan_id
+        if is_active:
+            await _repo.schedule_continuation(db, plan_id, delay_s=0)
     # Start the first step NOW instead of waiting for the next periodic sweep — the owner
     # expects Approve to kick off step one immediately, not after a window.
-    _kick_continuations(request)
+    if is_active:
+        _kick_continuations(request)
     # Re-read in a fresh session so the returned state reflects the armed due-time.
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
         plan = await _repo.get_by_id(db, plan_id)
@@ -155,13 +163,15 @@ async def continue_plan(request: Request, principal: OwnerDep, plan_id: str) -> 
     async with scoped_session(request.app.state.session_maker, ctx_for(principal)) as db:
         if (plan := await _repo.get_by_id(db, plan_id)) is None:
             raise HTTPException(status_code=404, detail="no such plan")
-        # Only arm it if it would actually fire: in-work, not paused for the owner, and
-        # under the cap (else the sweep's own `used < max` filter would never claim it, so
-        # the card would show a countdown that silently never runs).
+        # Only arm it if it would actually fire: in-work, not paused for the owner, under the
+        # cap, AND the session's ACTIVE plan (else the sweep's own `used < max` / active-plan
+        # filters would never run it, so the card would show a countdown that silently never
+        # runs).
         armed = (
             plan.status in ("approved", "in_work")
             and not plan.awaiting_owner
             and plan.continuations_used < MAX_CONTINUATIONS
+            and await _repo.active_plan_id(db, str(plan.session_id)) == plan_id
         )
         if armed:
             await _repo.schedule_continuation(db, plan_id, delay_s=0)

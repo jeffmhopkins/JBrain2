@@ -314,14 +314,17 @@ async def test_continuation_persists_the_context_meter_seed(maker: async_session
 
 
 async def test_superseded_plan_is_not_run(maker: async_sessionmaker) -> None:
-    """A continuation claimed for a plan that is no longer the session's ACTIVE plan (a newer
-    plan was drafted after the claim) must NOT run — its tools would resolve to the newer plan,
-    doing cross-plan work. The active-plan guard in `_run_one` drops it."""
+    """The claim→supersede race: a continuation already claimed for a plan that is no longer the
+    session's ACTIVE plan (a newer plan was drafted after the claim) must NOT run — its tools
+    would resolve to the newer active plan, doing cross-plan work. `_run_one` re-reads the active
+    plan under its reservation and drops the stale one. Driven through `_run_one` directly because
+    `create`'s supersede clears the old plan's due-time, so a `tick()` claim would never reach the
+    guard — this exercises the guard itself, not the supersede."""
     owner = await _owner(maker)
     sid, old_pid = await _chat(maker, owner, body=_OPEN, status="in_work")
-    # Force the old plan due AND still in_work, then draft a newer plan so the old one is stale.
+    # The old plan is still in_work with open items (so only the active-guard can stop it), but a
+    # newer plan now exists — so old_pid is no longer active.
     async with scoped_session(maker, owner) as s:
-        await PlanRepo().schedule_continuation(s, old_pid, delay_s=0)
         await PlanRepo().create(s, sid, body="- [ ] newer", status="not_approved")
 
     executor = _FakeExecutor()
@@ -333,9 +336,10 @@ async def test_superseded_plan_is_not_run(maker: async_sessionmaker) -> None:
         live_turns={},
         owner_principal_id=lambda: _owner_principal_id(maker),
     )
-    await runner.tick()
+    # Simulate a claim that already happened, then run the claimed (now-superseded) plan.
+    await runner._run_one(old_pid, sid, owner.principal_id, owner)
 
-    # The claim cleared old_pid's due-time; the guard then saw it wasn't active and skipped it.
+    # The active-plan guard (active_id != old_pid) dropped it before the executor ran.
     assert executor.calls == []
 
 

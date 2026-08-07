@@ -17423,11 +17423,6 @@ button.auto-sect[aria-expanded="true"] > svg {
   font-size: var(--fs-note);
   color: var(--text-2);
 }
-.plan-result-head {
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 3px;
-}
 /* A wide Markdown table (a step's comparison) scrolls inside the entry instead of stretching
    the card/modal — the reported "table display issues". */
 .plan-result-body {

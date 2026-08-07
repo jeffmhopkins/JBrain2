@@ -319,7 +319,10 @@ conversation holds MANY plans, each with its own body, status, and results.
   jerv a fresh `not_approved` draft is what begins a new plan.
 - **API.** Reads/mutations key on `plan_id` (`GET/POST /plans/{plan_id}…`), plus
   `GET /plans/session/{session_id}/active` for the omnibox to resolve the current plan. `PlanOut`
-  and the `plan_card` view payload carry `plan_id`.
+  and the `plan_card` view payload carry `plan_id`. approve/continue arm the loop only when the
+  plan is the session's ACTIVE one (approving a superseded plan would arm a countdown the sweep's
+  active-guard then drops). The Chats-list `plan_status` badge subquery resolves the ACTIVE plan
+  (`ORDER BY created_at DESC LIMIT 1`) — a bare scalar over many plan rows would 500 the list.
 - **PWA.** `usePlanState` runs in two modes: an inline card is BOUND to its own `plan_id` (polls
   `getPlan(planId)`, so an old card keeps its own history after a newer plan supersedes it); the
   omnibox pill/popover RESOLVES the active plan each poll (`getActivePlan(sessionId)`), so it

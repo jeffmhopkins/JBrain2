@@ -257,6 +257,30 @@ async def test_list_aggregates_turns_preview_and_staged(maker: async_sessionmake
     assert card.staged_count == 1
 
 
+async def test_list_reports_the_active_plan_status_with_many_plans(
+    maker: async_sessionmaker,
+) -> None:
+    """Regression: the Chats-list `plan_status` badge is a correlated scalar subquery. With
+    MANY plans per conversation (migration 0158) it MUST resolve the ACTIVE (latest-created)
+    plan — a bare scalar over multiple rows raises 'more than one row returned by a subquery'
+    and 500s the whole list. So the card shows the newest plan's status, and list() succeeds."""
+    from jbrain.models.plan import PlanRepo
+
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    plans = PlanRepo()
+    info = await repo.create(owner, domain_scopes=[], title="ask jerv", agent="jerv")
+
+    async with scoped_session(maker, owner) as s:
+        await plans.create(s, info.id, body="- [ ] one", status="in_work")  # older plan
+    async with scoped_session(maker, owner) as s:
+        await plans.create(s, info.id, body="- [ ] two", status="not_approved")  # newer = active
+
+    # list() does not raise (the subquery resolves one row) and reports the ACTIVE plan's status.
+    card = next(c for c in await repo.list(owner) if c.id == info.id)
+    assert card.plan_status == "not_approved"
+
+
 async def test_set_status_archives_and_is_owner_only(maker: async_sessionmaker) -> None:
     owner = await _owner_ctx(maker)
     repo = AgentSessionRepo(maker)

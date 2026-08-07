@@ -198,10 +198,15 @@ class AgentSessionRepo:
             .scalar_subquery()
         )
         # This chat's plan status, for the Chats-card planning badge — one more
-        # correlated subquery (NULL when the chat has no plan row).
+        # correlated subquery (NULL when the chat has no plan row). A conversation may hold
+        # MANY plans (migration 0158), so this MUST resolve the ACTIVE (latest-created) one —
+        # a bare scalar subquery over multiple rows would raise "more than one row returned by
+        # a subquery" and 500 the whole Chats list. Ordering mirrors PlanRepo._active_select.
         plan_status = (
             select(AgentSessionPlan.status)
             .where(AgentSessionPlan.session_id == AgentSession.id)
+            .order_by(AgentSessionPlan.created_at.desc(), AgentSessionPlan.plan_id.desc())
+            .limit(1)
             .scalar_subquery()
         )
         async with scoped_session(self._maker, ctx) as session:
