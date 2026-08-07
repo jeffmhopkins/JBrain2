@@ -4,13 +4,14 @@
 
 import type { TranscriptMessage } from "./transcript";
 
-export type AgentStatusKind = "thinking" | "tool" | "answering" | "done" | "error";
+export type AgentStatusKind = "thinking" | "tool" | "answering" | "done" | "error" | "waiting";
 
 export interface AgentStatus {
   kind: AgentStatusKind;
   /** Plain leading text. */
   label: string;
-  /** Emphasised tail — the tool's object ("your notes"), rendered stronger. */
+  /** Emphasised tail — the tool's object ("your notes"), rendered stronger. On a
+   * `waiting` status this carries the live countdown (e.g. "0:54"). */
   emphasis?: string;
   /** Identity of the live turn, so the status line can reset its per-turn timer at a
    * turn boundary. Steady across a turn's phases (thinking → tool → answering) and
@@ -83,6 +84,16 @@ function phaseStatus(last: TranscriptMessage): AgentStatus {
     kind: "done",
     label: used ? `Answered · ${used} tool${used > 1 ? "s" : ""} used` : "Answered",
   };
+}
+
+/** The between-steps status for a working plan: while a continuation is armed but not yet
+ * firing, the status line shows this instead of the settled "Answered" — an owner-visible,
+ * interruptible countdown to the next auto-step (JERV_PLANNING_TOOL_PLAN.md §2 issue). The
+ * countdown ("m:ss") rides `emphasis` so the view renders it emphasised, like a tool object.
+ * Built here (not by `agentStatus`, which reads only the transcript) and passed in by the
+ * surface, which owns the live plan state. */
+export function planWaitingStatus(countdown: string): AgentStatus {
+  return { kind: "waiting", label: "Starting next step in", emphasis: countdown };
 }
 
 /** The current agent status, or null when idle (nothing to show). Reads only the

@@ -65,6 +65,7 @@ class TurnExecutor(Protocol):
         agent_session_id: str,
         acc: TranscriptAccumulator | None = None,
         on_event: Callable[[ChatEvent], None] | None = None,
+        supervised: bool = False,
     ) -> ExecutedTurn: ...
 
 
@@ -95,16 +96,22 @@ class LoopTurnExecutor:
         agent_session_id: str,
         acc: TranscriptAccumulator | None = None,
         on_event: Callable[[ChatEvent], None] | None = None,
+        supervised: bool = False,
     ) -> ExecutedTurn:
         effort = await self.router.effective_reasoning_effort("agent.turn")
         # The loop yields ChatEvents, not the step/cost tallies the run summary needs,
         # so count them as the loop records each step (as /chat does).
         tally = StepTally(recorder)
+        # `supervised` lifts the per-turn budget when a foreground PWA client is watching this
+        # turn stream (a plan continuation fired while the owner is present). A background task
+        # never passes it, so a headless run keeps the ordinary effort-sized budget.
         loop = AgentLoop(
             self.router,
             self.registry,
             recorder=tally,  # type: ignore[arg-type]
-            guardrails=guardrails_for_effort(effort, scale=profile.budget_multiplier),
+            guardrails=guardrails_for_effort(
+                effort, scale=profile.budget_multiplier, supervised=supervised
+            ),
         )
         # A caller that wants to STREAM the turn (a plan continuation) passes its own
         # accumulator — the one it exposes as the reattach snapshot — plus an `on_event`

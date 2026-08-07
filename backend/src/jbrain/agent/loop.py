@@ -127,6 +127,17 @@ class Guardrails:
 # runaway.)
 STEPS_BY_EFFORT: dict[str, int] = {"high": 60, "medium": 50}
 
+# A SUPERVISED turn — one a foreground PWA client is up watching stream, able to Stop it at
+# any moment — earns a much larger per-turn budget: the human is the loop's anchor, so a long
+# multi-source web thread or a plan step that legitimately needs many tool calls isn't cut off
+# mid-work with "hit the budget" / "too many steps". These are a large FINITE backstop, not a
+# truly unbounded loop (the ASSISTANT.md "no unbounded autonomous loop" invariant): the
+# consecutive-error cap is untouched and these ceilings still stop a genuinely wedged run. An
+# UNsupervised turn — a scheduled background task, or a plan continuation that fired while no
+# client was watching — keeps the ordinary effort-sized budget below.
+SUPERVISED_MAX_STEPS = 500
+SUPERVISED_MAX_COST_TOKENS = 2_000_000
+
 # The forced-final synthesis (force_final_answer, on step/budget/tree exhaustion) writes an
 # answer from already-gathered material — a mechanical step that needs no thinking. Run it at
 # NONE effort regardless of the run's effort: even "low" still let gpt-oss generate a
@@ -158,13 +169,26 @@ BUDGET_WARNING_DIRECTIVE = (
 )
 
 
-def guardrails_for_effort(effort: str | None, *, scale: int = 1) -> Guardrails:
+def guardrails_for_effort(
+    effort: str | None, *, scale: int = 1, supervised: bool = False
+) -> Guardrails:
     """The loop's budget sized to the task's effective reasoning effort, then scaled
     by a per-agent factor. `scale` (an agent's `budget_multiplier`, default 1) widens
     BOTH the step cap and the cost-token budget together: the archivist's long, many-
     tool mailbox cleanups run at 4, so a single sweep isn't cut off mid-chain
     (docs/archive/EMAIL_ARCHIVIST_PLAN.md). The consecutive-error cap is unscaled — a wedged
-    chain should still bail fast regardless of persona."""
+    chain should still bail fast regardless of persona.
+
+    `supervised` lifts the per-turn ceilings to a large finite backstop
+    (`SUPERVISED_MAX_*`): a foreground PWA client is up watching this turn stream and can Stop
+    it, so the human anchors the loop and a legitimately long turn isn't cut off. The
+    supervised ceilings already dominate every persona's scaled default, so `scale` is not
+    applied on top of them (JERV_PLANNING_TOOL_PLAN.md)."""
+    if supervised:
+        return Guardrails(
+            max_steps=SUPERVISED_MAX_STEPS,
+            max_cost_tokens=SUPERVISED_MAX_COST_TOKENS,
+        )
     base = STEPS_BY_EFFORT.get(effort or "", Guardrails.max_steps)
     return Guardrails(
         max_steps=base * scale,

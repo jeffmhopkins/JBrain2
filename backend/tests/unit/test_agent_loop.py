@@ -29,6 +29,8 @@ from jbrain.agent.contracts import (
     WebSource,
 )
 from jbrain.agent.loop import (
+    SUPERVISED_MAX_COST_TOKENS,
+    SUPERVISED_MAX_STEPS,
     SYSTEM_PROMPT,
     SYSTEM_VERSION,
     AgentLoop,
@@ -266,6 +268,22 @@ def test_guardrails_for_effort_scales_both_caps_per_agent() -> None:
     # The scale applies to the default step cap too, not only the effort tiers.
     assert guardrails_for_effort(None, scale=4).max_steps == 80
     assert guardrails_for_effort("medium", scale=4).max_steps == 200
+
+
+def test_guardrails_for_effort_supervised_lifts_the_ceilings() -> None:
+    # A supervised turn (a foreground client is watching it stream and can Stop it) earns the
+    # large finite backstop, independent of effort — so a long step isn't cut off mid-work.
+    g = guardrails_for_effort("none", supervised=True)
+    assert g.max_steps == SUPERVISED_MAX_STEPS
+    assert g.max_cost_tokens == SUPERVISED_MAX_COST_TOKENS
+    # The supervised ceilings dominate every persona's scaled default, so `scale` is NOT
+    # applied on top of them — high effort + a 4× persona still lands on the flat ceilings.
+    scaled = guardrails_for_effort("high", scale=4, supervised=True)
+    assert scaled.max_steps == SUPERVISED_MAX_STEPS
+    assert scaled.max_cost_tokens == SUPERVISED_MAX_COST_TOKENS
+    # Still FINITE, and the consecutive-error cap is untouched — a wedged run still bails.
+    assert g.max_consecutive_tool_errors == 3
+    assert g.max_steps > guardrails_for_effort("high", scale=4).max_steps
 
 
 async def test_max_steps_guardrail_stops_a_tool_loop() -> None:

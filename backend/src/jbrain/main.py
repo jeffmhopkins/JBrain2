@@ -229,6 +229,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # /chat before it registers in live_turns, read by the plan-continuation sweep so it
         # yields to an owner turn mid-startup (JERV_PLANNING_TOOL_PLAN.md).
         app.state.turn_starting = {}
+        # "A foreground client is watching this session's plan" markers (session_id → monotonic
+        # ts), set by the live-run poll endpoint, read by the plan-continuation sweep so a step
+        # fired while the owner is present runs SUPERVISED — the lifted per-turn budget.
+        app.state.plan_presence = {}
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.intake_repo = SqlIntakeRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
@@ -821,6 +825,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             live_turns=app.state.live_turns,
             owner_principal_id=lambda: _owner_principal_id(maker),
             turn_starting=app.state.turn_starting,
+            client_presence=app.state.plan_presence,
             max_concurrent=agent._MAX_CONCURRENT_TURNS,
         )
         plan_continuation_task = asyncio.create_task(
