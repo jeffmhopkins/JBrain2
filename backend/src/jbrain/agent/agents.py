@@ -159,6 +159,14 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # Collapsed from four flat tools after a tool-selection probe (gpt-oss-120b fills
         # name/sources reliably, incl. single-source narrowing).
         "public_records",
+        # portal_search (DYNAMIC_PORTAL_FETCH_PLAN.md): actually QUERY a dynamic STATE government
+        # search portal by name (FL Sunbiz corp registry, FL DFS licensee lookup) — the ones a
+        # plain web_fetch can only see the empty search FORM of — and return each hit's STATIC
+        # detail URL as a citable WebSource. Complements public_records (national keyless
+        # registries) with state-portal search. `web`-gated, always wired (an unconfigured
+        # resolver reports "not configured"). Granted to RESEARCH_TOOLS too so a research child
+        # holds it under the parent⊆child clamp.
+        "portal_search",
         # The external-source video library read umbrella (TOOL_CATALOG_PLAN.md):
         # `external_video(action=search|list|read)` — search the analysed-YouTube corpus,
         # browse/count the whole library, or read one video's FULL transcript. Sandboxed
@@ -267,7 +275,7 @@ SUBAGENT_PERSONAS = frozenset(
 # NO `current_location` (M2) either: the location read is never in a child persona.
 # This allowlist is a ceiling — a child's effective tools are still clamped to the
 # parent's at dispatch.
-RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time"})
+RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time", "portal_search"})
 REVIEW_TOOLS = RESEARCH_TOOLS
 # research_deep: the TASK-AGENT tier of a deepest-research run (max_depth=2). Identical to
 # `research` — same web sandbox, no KB, no location — PLUS the one-shot `decompose_research`

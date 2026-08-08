@@ -25,6 +25,7 @@ from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.ocrtools import build_ocr_handlers
+from jbrain.agent.portaltools import build_portal_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import build_registry
@@ -174,6 +175,7 @@ from jbrain.web import (
     WebFetcher,
     WikidataClient,
 )
+from jbrain.web.portals import FlSunbizResolver
 from jbrain.web.youtube import youtube_page
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.lint import WIKI_LINT_SPEC
@@ -513,6 +515,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 app.state.federal_register,
                 emit=brain_emit,
             )
+        )
+        # Portal-search resolvers (DYNAMIC_PORTAL_FETCH_PLAN.md): each pinned state portal is
+        # constructed here (like the public-records clients) and passed to the one `portal_search`
+        # tool, which reaches it through the shared SSRF-guarded web_fetcher. Adding a portal is a
+        # new adapter + one construction line here. Always registered so the sidecar has its
+        # handler; an unconfigured resolver reports "not configured".
+        app.state.portal_resolvers = (FlSunbizResolver(settings.sunbiz_url),)
+        web_handlers.update(
+            build_portal_handlers(web_fetcher, app.state.portal_resolvers, emit=brain_emit)
         )
         web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
         web_handlers.update(

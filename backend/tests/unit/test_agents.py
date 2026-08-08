@@ -100,6 +100,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "read_artifact",
             "grokipedia",
             "public_records",
+            "portal_search",
             "external_video",
             "show_external_video",
             "remove_external_video",
@@ -208,7 +209,7 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
     child-initiated nesting was removed — NONE holds `spawn_subagent`: children are
     always leaves."""
     research, review, summarize = (AGENTS["research"], AGENTS["review"], AGENTS["summarize"])
-    assert research.tools == RESEARCH_TOOLS == WEB_TOOLS | {"current_time"}
+    assert research.tools == RESEARCH_TOOLS == WEB_TOOLS | {"current_time", "portal_search"}
     assert review.tools == REVIEW_TOOLS == RESEARCH_TOOLS
     assert summarize.tools == SUMMARIZE_TOOLS == frozenset()
     for p in (research, review, summarize):
@@ -334,8 +335,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
         ),
         "research": (
-            "agent-research-v14",
-            "13ed87835334cac7367fbd4cf7172dcedb7d38e215102147b73cb2878c96447b",
+            "agent-research-v15",
+            "2583f0a5be2b2dcc791749e87c472e8a8d6e23e690f9bab6f2d5c618fbd3a0fa",
         ),
         "review": (
             "agent-review-v7",

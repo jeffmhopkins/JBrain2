@@ -762,6 +762,52 @@ class WebFetcher:
             body_truncated=body_truncated,
         )
 
+    async def fetch_html(
+        self,
+        url: str,
+        *,
+        method: str = "GET",
+        body: str = "",
+        content_type: str = "application/x-www-form-urlencoded",
+    ) -> tuple[str, str]:
+        """Fetch a portal result page and return `(final_url, raw decoded HTML/text)` through the
+        SAME per-hop SSRF guard (`_send_following_safe_redirects`: httpx auto-redirect off, every
+        hop's host re-validated), byte cap (`_read_capped`), and browser headers as `fetch()` —
+        but with NO trafilatura extraction (a portal resolver parses the result rows itself) and
+        NO reader/solver escalation. `method="POST"` sends `body` with `content_type` for a portal
+        whose search answers a POST. Raises `WebFetchError` on a bad scheme/host/hop, a non-2xx,
+        or a non-text body, exactly as `fetch()` does — so a resolver rides one guarded egress
+        leg, never a bare `httpx` client. This is the single primitive the `portals/` adapters
+        use to reach a pinned government portal (DYNAMIC_PORTAL_FETCH_PLAN.md)."""
+        method = method.upper()
+        headers: dict[str, str] = dict(BROWSER_HEADERS)
+        content: bytes | None = None
+        if method == "POST":
+            payload = body.encode("utf-8")
+            if len(payload) > _MAX_POST_BODY:
+                raise WebFetchError("that POST body is too large to send")
+            headers["Content-Type"] = content_type
+            content = payload
+        try:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+            ) as client:
+                resp = await self._send_following_safe_redirects(
+                    client, method, url, headers=headers, content=content
+                )
+                resp_content_type = resp.headers.get("content-type", "")
+                final_url = str(resp.url)
+                if not _is_textual(resp_content_type):
+                    await resp.aclose()
+                    kind = resp_content_type or "unknown"
+                    raise WebFetchError(f"that portal did not return a text response ({kind})")
+                raw, _ = await _read_capped(resp)
+        except httpx.HTTPError as exc:
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            log.warning("web.fetch_html_failed", error=repr(exc), status=status)
+            raise WebFetchError(_fetch_error_message(status), status=status) from exc
+        return final_url, raw.decode(_charset(resp_content_type) or "utf-8", errors="replace")
+
     async def _fetch_via_reader(
         self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
     ) -> FetchResult | None:

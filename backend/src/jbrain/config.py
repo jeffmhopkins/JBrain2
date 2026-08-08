@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     # model-supplied; only a public query goes out (with the descriptive User-Agent the API
     # requests). Empty disables the tool (it reports "not configured") while the sidecar loads.
     federal_register_url: str = "https://www.federalregister.gov"
+    # FL Sunbiz corporation registry backing jerv's `portal_search(kind="business")` resolver —
+    # a dynamic state portal a plain web_fetch can only see the search FORM of. The resolver
+    # issues the portal's real SearchResults request through the shared SSRF-guarded WebFetcher
+    # and returns each entity's STATIC detail URL (DYNAMIC_PORTAL_FETCH_PLAN.md). Pinned here,
+    # never model-supplied; only a public entity name goes out. Empty disables the resolver (the
+    # tool reports it "not configured") while the sidecar still loads.
+    sunbiz_url: str = "https://search.sunbiz.org"
     # A pinned reader endpoint web_fetch falls back to when a direct fetch is blocked
     # (bot-walled 403/429) or comes back empty (a JS-rendered shell our static extractor
     # can't see). A reader renders the page with a real browser and returns clean

@@ -388,6 +388,68 @@ async def test_get_still_works_unchanged_alongside_post_support() -> None:
     assert result.title == "Hi There" and "First para." in result.text
 
 
+# --- fetch_html (the portal-resolver raw-HTML/POST primitive) ---------------
+
+
+async def test_fetch_html_returns_raw_html_not_extracted() -> None:
+    # A resolver parses result rows itself, so fetch_html returns the RAW HTML (table markup
+    # intact), not trafilatura-extracted prose.
+    raw = "<html><body><table><tr><td>PROPERTY PRO SERVICES</td></tr></table></body></html>"
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=raw, headers={"content-type": "text/html"})
+
+    final_url, body = await WebFetcher(transport=httpx.MockTransport(handle)).fetch_html(
+        "https://p.example/results?q=x"
+    )
+    assert "<table>" in body and "<td>PROPERTY PRO SERVICES</td>" in body
+    assert final_url == "https://p.example/results?q=x"
+
+
+async def test_fetch_html_post_sends_the_body_and_method() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="<html>ok</html>", headers={"content-type": "text/html"})
+
+    await WebFetcher(transport=httpx.MockTransport(handle)).fetch_html(
+        "https://p.example/search",
+        method="POST",
+        body="name=smith",
+        content_type="application/x-www-form-urlencoded",
+    )
+    assert seen[0].method == "POST"
+    assert seen[0].headers["content-type"] == "application/x-www-form-urlencoded"
+
+
+async def test_fetch_html_refuses_a_private_host() -> None:
+    # Real DNS resolve (no injected transport): a link-local/metadata host is refused before any
+    # request leaves the box — the same SSRF guard as fetch().
+    with pytest.raises(WebFetchError):
+        await WebFetcher().fetch_html("http://169.254.169.254/latest/meta-data")
+
+
+async def test_fetch_html_refuses_a_redirect_hop_to_a_non_public_target() -> None:
+    # A 30x whose Location is a non-public target is refused by the PER-HOP guard on the
+    # fetch_html path too — a resolver can't be redirected into the box's own services (R4).
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "file:///etc/passwd"})
+
+    with pytest.raises(WebFetchError):
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch_html(
+            "https://p.example/redir"
+        )
+
+
+async def test_fetch_html_http_error_raises() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, headers={"content-type": "text/html"})
+
+    with pytest.raises(WebFetchError):
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch_html("https://p.example/x")
+
+
 async def test_web_fetch_tool_post_returns_the_json() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

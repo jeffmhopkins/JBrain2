@@ -8,6 +8,7 @@ from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
+from jbrain.agent.portaltools import build_portal_handlers
 from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import (
     TOOLS_DIR,
@@ -53,6 +54,7 @@ from jbrain.web import (
     WebFetcher,
     WikidataClient,
 )
+from jbrain.web.portals import FlSunbizResolver
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
 
@@ -791,6 +793,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
                 NppesClient(""),
                 FederalRegisterClient(""),
             ),
+            **build_portal_handlers(WebFetcher(), (FlSunbizResolver(""),)),
             **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
             **build_weather_history_handlers(
                 WeatherHistoryClient(""),
@@ -832,6 +835,10 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # lookups by name across court/identity/license/federal_register via
         # public_records(sources=…), never offered to the curator wildcard.
         "public_records",
+        # portal_search is `web`-classed (jerv + research children): queries a dynamic STATE
+        # government portal by name via portal_search(jurisdiction, kind), never the curator
+        # wildcard.
+        "portal_search",
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
@@ -1190,6 +1197,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "web_fetch",
             11,
             "041ab6230280ae67c0008fbcfcf3021823c9c6bab240d34a1c45e3cd38dc171b",
+        ),
+        "portal_search.tool": (
+            "portal_search",
+            1,
+            "390085c96b13eb36f0667772a159e276e0004fd6c26b30647a58acf18f91167b",
         ),
         "public_records.tool": (
             "public_records",
