@@ -415,6 +415,20 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   including **FDA/agency debarments** and enforcement, by name or term. Collapsed from four
   flat tools after a tool-selection probe confirmed gpt-oss-120b fills `name`/`sources`
   reliably (incl. single-source narrowing). The
+  **`portal_search`** tool (`portal_search(name, jurisdiction, kind)`, one `web`-gated tool
+  granted to jerv AND the web research personas — DYNAMIC_PORTAL_FETCH_PLAN.md) actually
+  QUERIES a dynamic STATE government search portal — the ones a plain `web_fetch` can only
+  see the empty search FORM of — by issuing the portal's real result request through the
+  shared SSRF-guarded `WebFetcher` and returning each hit with a STATIC, citable detail URL
+  (a `WebSource` that folds into deep-research's `[^n]` registry). It dispatches to a pinned
+  per-portal resolver under `jbrain.web.portals` by `(jurisdiction, kind)` (or an explicit
+  `key`); v1 ships **`fl_business`** (FL Sunbiz corporation search, `JBRAIN_SUNBIZ_URL`).
+  It **complements** `public_records`: that fans the NATIONAL keyless registries, while
+  `portal_search` reaches a specific STATE portal's own search — so use `portal_search` for a
+  state business registry or state license lookup, `public_records` for the national ones.
+  Every hit is a **lead to verify** against its detail page, never a verdict; an empty result
+  is "not found here", not proof no record exists (it pairs with `web_fetch`'s "search form,
+  not results" honesty backstop for portals without an adapter). The
   **`weather`** tool is a `web`-gated, jerv-only forecast lookup over a pinned
   Open-Meteo upstream (free, no key, run directly like search): it replaces the
   multi-step search-and-scrape weather flow with one call returning a summary plus a

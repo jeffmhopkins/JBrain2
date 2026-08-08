@@ -1,7 +1,7 @@
 # Dynamic Portal Fetch — resolvers for JS/POST government search portals ("dinosaurs")
 
 > **Status:** In progress (adversarial review incorporated — see "Review outcomes" below) ·
-> **Last verified:** 2026-08-08 · **Wave order (revised):** P3✅ → P1◻️ → P2◻️
+> **Last verified:** 2026-08-08 · **Wave order (revised):** P3✅ → P1✅ → P2◻️
 > (the dependency-free honesty backstop shipped FIRST; see Review outcomes R-Q1)
 
 Give the research fan a way to actually *query* dynamic government search portals — the
@@ -209,7 +209,7 @@ Each wave is independently shippable and CI-green on its own. Portal HTTP is **f
 every test** (injected `httpx` transport with captured fixture HTML) — tests never hit a
 live government site.
 
-### Wave P1 — Resolver framework + FL Sunbiz adapter ◻️
+### Wave P1 — Resolver framework + FL Sunbiz adapter ✅ (shipped)
 
 **Scope.** The `jbrain/web/portals/` package (`base.py` contract + registry + dataclasses),
 the `fl_sunbiz` adapter, `WebFetcher.fetch_html` (the guarded raw-HTML/POST primitive), the
