@@ -17404,6 +17404,15 @@ button.auto-sect[aria-expanded="true"] > svg {
   flex: 1;
   min-width: 0;
 }
+/* Time spent on the step — muted, right-aligned (the label's flex:1 pushes it over), tabular
+   so digits don't jitter as steps finish. */
+.plan-result-time {
+  flex: none;
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
 .plan-results-chevron {
   width: 14px;
   height: 14px;

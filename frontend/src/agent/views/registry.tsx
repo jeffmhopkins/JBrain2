@@ -3112,6 +3112,21 @@ function parsePlanBody(body: string): { title: string; steps: PlanStep[]; prose:
   return { title, steps, prose: proseLines.join("\n").trim() };
 }
 
+// A step's elapsed time for the plan card — compact "2m 14s" / "45s" / "1h 3m". The server
+// rounds and clamps `secs` to a non-negative int; guard defensively all the same.
+function formatDuration(secs: number): string {
+  const s = Math.max(0, Math.round(secs));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) {
+    const rem = s % 60;
+    return rem ? `${m}m ${rem}s` : `${m}m`;
+  }
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return remM ? `${h}h ${remM}m` : `${h}h`;
+}
+
 // The clipboard-with-check plan glyph (the mock's header icon). Neutral stroke; the
 // theme owns the color.
 function PlanIcon(): ReactNode {
@@ -3569,6 +3584,9 @@ export function PlanBody({ st }: { st: PlanStateHook }): ReactNode {
                       <path d="M9 6l6 6-6 6" />
                     </svg>
                     <span className="plan-result-label">{r.heading || `Step ${i + 1}`}</span>
+                    {typeof r.secs === "number" && (
+                      <span className="plan-result-time">{formatDuration(r.secs)}</span>
+                    )}
                   </button>
                   {open && r.note && (
                     <div className="plan-result-body">

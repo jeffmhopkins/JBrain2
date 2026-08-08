@@ -258,8 +258,11 @@ class PlanContinuationRunner:
                 return
             # Count the fire now — a real turn is about to run. A claim that was skipped/
             # aborted above never reaches here, so a collision never burns a continuation.
+            # Stamp the step's start in the same breath so `complete_step` can record how long
+            # this step took (the card's per-step time).
             async with scoped_session(self.maker, owner_ctx) as s:
                 await PlanRepo().bump_continuation(s, plan_id)
+                await PlanRepo().mark_step_started(s, plan_id)
 
             profile = agent_for("jerv")
             read_ctx = read_context(pid, ())

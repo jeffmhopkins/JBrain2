@@ -879,6 +879,8 @@ export interface ListOut {
 export interface PlanResult {
   heading?: string;
   note: string;
+  /** Wall-clock seconds the step took (start of its turn → result recorded), when timed. */
+  secs?: number;
 }
 
 export interface PlanOut {
