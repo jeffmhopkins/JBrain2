@@ -429,8 +429,14 @@ def build_external_handlers(
 
         # Enrich ONLY the new uploads (cheapest place to resolve): a per-video metadata pull
         # gives duration / publish-time / description so the model can judge which are worth
-        # analysing — not just match a title. Resolves run concurrently, each best-effort.
-        metas = await asyncio.gather(*(asyncio.to_thread(meta_resolver, u.video_id) for u in fresh))
+        # analysing — not just match a title. Resolves run concurrently, each best-effort:
+        # `return_exceptions` so one resolver raising doesn't fail the whole channel check (the
+        # downstream code already treats a `None` meta as "unresolved").
+        resolved = await asyncio.gather(
+            *(asyncio.to_thread(meta_resolver, u.video_id) for u in fresh),
+            return_exceptions=True,
+        )
+        metas = [None if isinstance(m, BaseException) else m for m in resolved]
         pairs = list(zip(fresh, metas, strict=True))
 
         if within_days is not None:

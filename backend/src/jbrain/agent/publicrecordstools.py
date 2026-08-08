@@ -170,8 +170,18 @@ def build_public_records_handlers(
         raw = arguments.get("sources")
         if isinstance(raw, str):
             raw = [raw]
-        chosen = {str(s).strip().lower() for s in raw} if raw else set(_SOURCE_ORDER)
-        wanted = [s for s in _SOURCE_ORDER if s in chosen] or list(_SOURCE_ORDER)
+        if raw:
+            chosen = {str(s).strip().lower() for s in raw}
+            wanted = [s for s in _SOURCE_ORDER if s in chosen]
+            # A non-empty but unrecognized `sources` is steered, not silently widened to all four
+            # (the umbrella dispatchers steer a bad `action` the same way).
+            if not wanted:
+                return (
+                    "public_records `sources` must be any of identity, court, license,"
+                    f" federal_register (got {sorted(chosen)}). Omit sources to query all four."
+                )
+        else:
+            wanted = list(_SOURCE_ORDER)
         parts: list[str] = []
         web: list[WebSource] = []
         for s in wanted:
@@ -181,7 +191,14 @@ def build_public_records_handlers(
                 sub["state"] = arguments["state"]
             if arguments.get("limit"):
                 sub["limit"] = arguments["limit"]
-            res = await fn(sub, ctx)
+            # One source raising an UNEXPECTED error must degrade that section, never fail the
+            # whole sweep (designed outages already come back as an "unavailable" string via the
+            # client `ok` flag; this catches the schema-change / timeout surprises).
+            try:
+                res: str | ToolOutput = await fn(sub, ctx)
+            except Exception as exc:  # noqa: BLE001 - degrade-per-source, don't fail the sweep
+                log.warning("public_records.source_error", source=s, error=str(exc))
+                res = "(this source errored — try again shortly, or web_search for it)"
             parts.append(f"══ {_SOURCE_LABEL[s]} ══\n{res}")
             if isinstance(res, ToolOutput):
                 web.extend(res.web_sources)

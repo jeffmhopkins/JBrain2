@@ -75,6 +75,24 @@ async def test_current_location_address_without_external_falls_back_to_city() ->
     assert "in London, United Kingdom" in out
 
 
+class _BoomExt(_Ext):
+    """An external reverse-geocoder that is DOWN — its reverse() raises."""
+
+    def __init__(self) -> None:
+        super().__init__(None)
+
+    async def reverse(self, latitude: float, longitude: float) -> str | None:
+        raise RuntimeError("nominatim 503")
+
+
+@pytest.mark.asyncio
+async def test_current_location_address_outage_falls_back_to_city_not_raise() -> None:
+    # A reverse-geocoder outage must degrade to the offline city, never raise into the loop.
+    city = _City(CityHit(name="London", region="", country="United Kingdom", distance_m=300.0))
+    out = await _tool(city, _BoomExt())({"detail": "address"}, _here_ctx(51.52, -0.16))
+    assert "in London, United Kingdom" in out
+
+
 @pytest.mark.asyncio
 async def test_current_location_coordinates_returns_raw_lat_lon_without_geocoding() -> None:
     # detail="coordinates" reports the raw fix and never touches either geocoder.

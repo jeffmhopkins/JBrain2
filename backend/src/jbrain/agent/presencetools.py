@@ -99,9 +99,15 @@ def build_presence_handlers(
         # Raw coordinates when explicitly asked — no geocoding, the fix is the answer.
         if detail == "coordinates":
             return _coords_phrase(lat, lon, ago)
-        # A specific street address only when asked AND an external geocoder is set.
+        # A specific street address only when asked AND an external geocoder is set. An outage
+        # of the external reverse-geocoder must fall through to the offline city path below, not
+        # raise into the loop — the coarse city is the graceful answer to "where am I".
         if detail == "address" and external_reverse is not None:
-            addr = await external_reverse.reverse(lat, lon)
+            try:
+                addr = await external_reverse.reverse(lat, lon)
+            except Exception as exc:  # noqa: BLE001 - reverse-geocode outage → offline fallback
+                log.warning("agent.current_location_reverse_failed", error=repr(exc))
+                addr = None
             if addr:
                 return _address_phrase(addr, ago)
         # Default: name the nearest city offline — no service, no egress.

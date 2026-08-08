@@ -143,3 +143,20 @@ async def test_reads_a_pdf_page_by_page() -> None:
     assert "[page 1]" in out and "page one text" in out
     assert "[page 2]" in out and "page two text" in out
     assert rapid.calls == 2
+
+
+async def test_a_decode_failure_degrades_to_an_actionable_message() -> None:
+    # An unexpected (non-OcrServiceError) failure in the OCR/decode path — e.g. rapidocr raising
+    # on malformed image bytes, or a corrupt PDF that gets past rasterization — must return a
+    # specific actionable message, not escape to the loop's generic wrapper. (A corrupt PDF that
+    # can't even be opened is handled upstream: pdf_page_images returns no pages → "no text".)
+    blobs, atts = FakeBlobs(), FakeAttachments()
+    sha = await blobs.put(b"\x89PNG-broken")
+    atts.add(ATT, media_type="image/png", sha=sha, filename="broken.png")
+
+    class _Boom:
+        async def ocr(self, data: bytes, media_type: str = "application/octet-stream") -> object:
+            raise RuntimeError("cannot decode image")
+
+    out = await _tool(_Boom(), blobs, atts)({"source_attachment_id": ATT}, CTX)
+    assert "couldn't read that file" in out and ("corrupt" in out or "password" in out)

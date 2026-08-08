@@ -72,6 +72,16 @@ def build_ocr_handlers(
         except OcrServiceError as exc:
             log.warning("ocr_tool_unavailable", error=str(exc))
             return _UNAVAILABLE
+        except Exception as exc:  # noqa: BLE001 - an unexpected decode failure → specific, actionable
+            # A non-OcrServiceError from the OCR/decode path (e.g. rapidocr raising on malformed
+            # bytes). A corrupt PDF that can't even be opened is handled upstream (pdf_page_images
+            # returns no pages → _NO_TEXT); this catches the surprises with a clearer message than
+            # the loop's generic wrapper.
+            log.warning("ocr_tool_decode_failed", media_type=info.media_type, error=repr(exc))
+            return (
+                "I couldn't read that file — it may be corrupt, encrypted, or password-protected."
+                " Try re-exporting or re-attaching it."
+            )
         text = text.strip()
         if not text:
             return _NO_TEXT

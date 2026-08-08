@@ -976,7 +976,11 @@ async def test_run_stream_tool_error_surfaces_in_result_event() -> None:
     router, _ = stream_router_with(turns)
     events = await collect(AgentLoop(router, registry_with(make_tool("boom", boom))))
     result = next(e for e in events if isinstance(e, ToolResultEvent))
-    assert result.ok is False and "nope" in result.summary
+    # A raised exception becomes a recoverable, ACTIONABLE observation — it names the tool and
+    # says what to do next, and does NOT leak the raw exception string ("nope") to the model.
+    assert result.ok is False
+    assert "boom" in result.summary and "did not run" in result.summary
+    assert "nope" not in result.summary
     # The stream still settles cleanly after a recovered tool error. (The
     # substantive "recovered" answer retrieved nothing, so a neutral
     # general-knowledge label tails after the terminal done.)
