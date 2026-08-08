@@ -1,6 +1,6 @@
 ---
 name: grokipedia
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -37,6 +37,10 @@ params:
         For action=section — concise (default) returns just the section text; detailed also
         appends the section's cited sources and any linked Grokipedia articles.
   required: [action]
+examples:
+  - {action: search, query: "Chagos Archipelago sovereignty dispute"}
+  - {action: section, slug: "Elon_Musk", section: "Early life"}
+  - {action: citations, slug: "Ashley_Moody"}
 ---
 Query Grokipedia (xAI's encyclopedia). ONE tool, five actions — set `action`:
 

@@ -1,6 +1,6 @@
 ---
 name: render_bars
-version: 3
+version: 4
 permission: read
 params:
   type: object
@@ -35,6 +35,8 @@ params:
               type: number
         required: [name, values]
   required: [title, categories, series]
+examples:
+  - {title: "Notes by tag", unit: "notes", categories: ["work", "home", "health"], series: [{name: "count", values: [12, 7, 3]}]}
 ---
 Render a categorical breakdown or ranking you have already gathered as an interactive bar graph
 (the `bar_chart` view): one bar per category, with a Chart / Table / Stats card. Give the category

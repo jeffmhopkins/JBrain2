@@ -1,6 +1,6 @@
 ---
 name: research_report
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -28,6 +28,10 @@ params:
       type: integer
       description: For action=list — 1-based page to step through a library larger than one page.
   required: [action]
+examples:
+  - {action: search, query: "Florida Senate primary"}
+  - {action: list}
+  - {action: read, id: "rr_9f2c"}
 ---
 Read the owner's library of saved deep-research reports — the cited reports the `deep_research`
 tool persisted on earlier questions. ONE tool, three read actions — set `action`:

@@ -1,6 +1,6 @@
 ---
 name: public_records
-version: 3
+version: 4
 permission: web
 params:
   type: object
@@ -28,6 +28,10 @@ params:
       type: integer
       description: Maximum results per source (default 10, max 25; identity caps lower).
   required: [name]
+examples:
+  - {name: "Neelam Perry", sources: ["identity"]}
+  - {name: "Neelam Perry", sources: ["identity", "court", "license", "federal_register"]}
+  - {name: "John A. Smith", sources: ["court"]}
 ---
 FREE, keyless public-records lookups about a PERSON by name. ONE tool, four sources — set
 `sources` (omit for all four):

@@ -988,6 +988,25 @@ async def test_run_stream_tool_error_surfaces_in_result_event() -> None:
     assert isinstance(events[-1], GeneralKnowledgeEvent)
 
 
+async def test_run_stream_tool_error_echoes_a_call_example_when_the_tool_has_one() -> None:
+    # A raised error on a tool that authored call examples echoes the first one — self-teaching
+    # the exact argument shape (a raised error is often a malformed-args call).
+    spec = ToolSpec(name="boomex", version=1, params={"type": "object"}, permission="read")
+    tool = RegisteredTool(
+        toolfile=ToolFile(spec=spec, description="the boomex tool", examples=({"q": "hi"},)),
+        handler=boom,
+    )
+    turns = [
+        LlmTurn("", (ToolCall("c1", "boomex", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("ok", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(tool)))
+    result = next(e for e in events if isinstance(e, ToolResultEvent))
+    assert result.ok is False
+    assert "Example call:" in result.summary and '{"q": "hi"}' in result.summary
+
+
 async def test_run_stream_max_steps_guardrail_emits_done() -> None:
     forever = [LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(1, 1))]
     router, _ = stream_router_with(forever)

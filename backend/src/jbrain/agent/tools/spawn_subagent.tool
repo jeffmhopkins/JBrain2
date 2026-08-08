@@ -1,6 +1,6 @@
 ---
 name: spawn_subagent
-version: 5
+version: 6
 permission: web
 cost_class: expensive
 params:
@@ -68,6 +68,12 @@ params:
     max_parallel:
       type: integer
       description: How many children may run at once within a wave (default 4, capped at 4).
+examples:
+  - tasks:
+      - {persona: "research", brief: "Find the current men's marathon world record and when it was set, with a source.", label: "marathon WR"}
+  - tasks:
+      - {persona: "research", brief: "Summarize recent reporting on company X's Q2 earnings.", label: "earnings"}
+      - {persona: "research", brief: "Find analyst reactions to company X's Q2 guidance.", label: "guidance"}
 ---
 Launch web-sandboxed sub-agents to work parts of a task, then read their summaries
 and compose the answer yourself. Each child runs on its own fresh context with the

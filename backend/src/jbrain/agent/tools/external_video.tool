@@ -1,6 +1,6 @@
 ---
 name: external_video
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -30,6 +30,10 @@ params:
       type: integer
       description: For action=list — 1-based page to step through a library larger than one page.
   required: [action]
+examples:
+  - {action: search, query: "interest rate cuts"}
+  - {action: list}
+  - {action: read, url: "https://www.youtube.com/watch?v=abc123"}
 ---
 Read the owner's library of analysed YouTube videos — the transcripts, spoken content, and
 on-screen descriptions of videos that have been ingested. ONE tool, three read actions — set

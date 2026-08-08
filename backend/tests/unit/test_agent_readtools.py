@@ -953,8 +953,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "grokipedia.tool": (
             "grokipedia",
-            1,
-            "7475a67b414381014de6a2f77b68568e709c97cd12db5db0a8663bc07d85a7c4",
+            2,
+            "463d51aca67f498367696d05d51d26ebbde78d314e746ed80ff2650fbb9728aa",
         ),
         "read_note.tool": (
             "read_note",
@@ -1078,8 +1078,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "render_bars.tool": (
             "render_bars",
-            3,
-            "a78812e8d946438328c5c649248e2da3b5f3c5996e69bdd1212124a37df48ad6",
+            4,
+            "8994d2f5504ff3dfef5b3027aaa39b313d3bbbddfa7cef71f765007b606faef1",
         ),
         "read_encounters.tool": (
             "read_encounters",
@@ -1193,8 +1193,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "public_records.tool": (
             "public_records",
-            3,
-            "ead166e6bfbbfa2fe0fbd142205e2b135602ccccb15d41d7df010253eb32a5f6",
+            4,
+            "aa506e5826104d10d056bc22af4094565dfa998f380bf14fc3adbe452445db76",
         ),
         "read_artifact.tool": (
             "read_artifact",
@@ -1328,13 +1328,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "spawn_subagent.tool": (
             "spawn_subagent",
-            5,
-            "0951333387033c01df060fe90a71058d3414ec6edd22e1c44ef8bb01f417a744",
+            6,
+            "5ff0dd2c682b2ddc1f65fae2c582d87000c2d5b5124a032874de1bd4676e750f",
         ),
         "external_video.tool": (
             "external_video",
-            1,
-            "165762263ead61ac986195cf769f6cd26e1247e9e50c0e58b838599648cb00e1",
+            2,
+            "a85989b8bf4c9989f403db521428162812123fd7356a1dab7c0e5851d36fd0c0",
         ),
         "show_external_video.tool": (
             "show_external_video",
@@ -1353,13 +1353,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "deep_research.tool": (
             "deep_research",
-            7,
-            "51da21a43b7f6cf96143872e75ecbdf996155c5f89814ccc221335d1ac081bdc",
+            8,
+            "e4664655195e3cd5ca942eccbd71a1ee1ba0dea30fbe4528621129495f9f6a8a",
         ),
         "deep_produce.tool": (
             "deep_produce",
-            4,
-            "2d31f1ec1fd016c9f8ec845892ae51ecf52d55ab26739acfb24b7993be6dbe86",
+            5,
+            "3a5975756c10ed6ab5704bfd3f2d926b3261f990b204ba6f47f0c5137400ec2d",
         ),
         "decompose_research.tool": (
             "decompose_research",
@@ -1373,8 +1373,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "research_report.tool": (
             "research_report",
-            1,
-            "7b4f1e2ef52b2ce5d24573003351a63f22850df57cffab40ea1f8bc917d9776b",
+            2,
+            "720c5da64ac3999d0f3b83c45c58408d1f67191e3115133859b393afed375533",
         ),
         "show_research_report.tool": (
             "show_research_report",

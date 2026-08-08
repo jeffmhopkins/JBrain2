@@ -11,6 +11,7 @@ actual firewall; visibility is convenience.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,10 +64,17 @@ class RegisteredTool:
 
     def as_llm_tool(self) -> LlmTool:
         """The adapter-facing definition: the model reads the description and the
-        arguments schema."""
+        arguments schema. Any authored call examples are appended to the description so the
+        model can copy the exact argument shape — the near-term `tool_guide` (TOOL_CATALOG_PLAN)."""
+        description = self.toolfile.description
+        if self.toolfile.examples:
+            shown = "\n".join(
+                f"- {json.dumps(ex, ensure_ascii=False)}" for ex in self.toolfile.examples
+            )
+            description += f"\n\nExample call(s) — copy this argument shape:\n{shown}"
         return LlmTool(
             name=self.spec.name,
-            description=self.toolfile.description,
+            description=description,
             input_schema=self.spec.params,
         )
 
