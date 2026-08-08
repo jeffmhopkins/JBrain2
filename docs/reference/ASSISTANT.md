@@ -394,7 +394,20 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   court/disciplinary records filed under a **prior/maiden name** that web-only research
   misses; the tool prose tells jerv to run it once per name variant and to treat every
   hit as a **lead to verify** against the primary document (common-name collisions), not
-  a verdict. Same sandboxed-web posture as `web_search` — only a public name goes out. The
+  a verdict. It also queries CourtListener's **judges/officials `people` DB**, surfacing
+  any `is_alias_of` link (a person filed under a prior name → their canonical record) and
+  positions held. Same sandboxed-web posture as `web_search` — only a public name goes out.
+  Three sibling keyless tools complete the "find the alias, then re-run everything under
+  it" loop for a person profile (`jbrain.web.wikidata` / `nppes` / `federal_register`, all
+  `web`-gated, jerv-only, pinned base URLs from config, **no API key**, descriptive
+  User-Agent where required): **`resolve_identity`** (Wikidata) resolves a name to its
+  canonical entity(ies) and harvests every alias/aka/maiden/former name plus occupation and
+  a few external IDs (an NPI feeds `provider_license`) — the tool to run **first**;
+  **`provider_license`** (NPPES NPI registry) returns a clinician's license
+  number/state/specialty and any `other_names` (a prior/maiden name — the pivot to the right
+  state board), framed plainly as a registry that carries **no disciplinary actions**; and
+  **`federal_register`** searches federal rules/notices, including **FDA/agency debarments**
+  and enforcement, by name or term — each a lead to verify against the notice. The
   **`weather`** tool is a `web`-gated, jerv-only forecast lookup over a pinned
   Open-Meteo upstream (free, no key, run directly like search): it replaces the
   multi-step search-and-scrape weather flow with one call returning a summary plus a

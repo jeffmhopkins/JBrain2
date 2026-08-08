@@ -5,9 +5,12 @@ from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.externaltools import build_external_handlers
+from jbrain.agent.federalregistertools import build_federal_register_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
+from jbrain.agent.identitytools import build_resolve_identity_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
+from jbrain.agent.providerlicensetools import build_provider_license_handlers
 from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import (
     TOOLS_DIR,
@@ -40,15 +43,18 @@ from jbrain.notes.service import NoteInfo
 from jbrain.search.service import SearchResponse, SearchResult
 from jbrain.web import (
     CourtListenerClient,
+    FederalRegisterClient,
     GrokipediaClient,
     HurricaneClient,
     NhcGisClient,
     NhcSurgeClient,
+    NppesClient,
     NwsClient,
     SearxngClient,
     WeatherClient,
     WeatherHistoryClient,
     WebFetcher,
+    WikidataClient,
 )
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
@@ -783,6 +789,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_grokipedia_handlers(GrokipediaClient()),
             **build_public_records_handlers(CourtListenerClient("")),
+            **build_resolve_identity_handlers(WikidataClient("")),
+            **build_provider_license_handlers(NppesClient("")),
+            **build_federal_register_handlers(FederalRegisterClient("")),
             **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
             **build_weather_history_handlers(
                 WeatherHistoryClient(""),
@@ -827,6 +836,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # public_records is `web`-classed (jerv-only): free court-records search by name,
         # never offered to the curator wildcard.
         "public_records",
+        # The keyless identity/license/enforcement lookups (jerv-only), `web`-classed like
+        # public_records — never offered to the curator wildcard.
+        "resolve_identity",
+        "provider_license",
+        "federal_register",
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
@@ -1214,8 +1228,23 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "public_records.tool": (
             "public_records",
+            2,
+            "a66fe8112bc2d7cbaa3c4f1722e63e501700bc484adf21ed0083a5a4e8f2e6f0",
+        ),
+        "resolve_identity.tool": (
+            "resolve_identity",
             1,
-            "12a2260a588d27bb222abcd83933edd6df2bdc6b038689bb85b91cae68e899c4",
+            "a91ab924fd314701c6a96ecd28aac0c2f88f8d3b71ab16ffaa0fcaf984bade1c",
+        ),
+        "provider_license.tool": (
+            "provider_license",
+            1,
+            "52ce0f3cb773ed07f0c0274b866ab41f466b91b5ee6586116c87c56c4410cc5d",
+        ),
+        "federal_register.tool": (
+            "federal_register",
+            1,
+            "06782218dfde12cb981f882166373ffbc35fa95f83adf17d098242e86f3866b9",
         ),
         "read_artifact.tool": (
             "read_artifact",

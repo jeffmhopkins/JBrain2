@@ -95,6 +95,27 @@ class Settings(BaseSettings):
     # lifts the anonymous rate limit — leave it blank to run keyless (the default posture).
     courtlistener_url: str = "https://www.courtlistener.com"
     courtlistener_token: str = ""
+    # Wikidata backing jerv's `resolve_identity` tool — a FREE, no-key API (search +
+    # per-entity data) used to harvest a person's canonical name, ALL aliases (aka /
+    # maiden / former names), occupation, and a few external IDs, so the records/license
+    # searches can be re-run under every name variant (docs/reference/ASSISTANT.md "Agent
+    # selection"). Like CourtListener the base URL is pinned here and never model-supplied;
+    # only a public name goes out (with a descriptive User-Agent Wikidata requires). Empty
+    # disables the tool (it reports "not configured") while the sidecar still loads.
+    wikidata_url: str = "https://www.wikidata.org"
+    # The NPPES NPI registry backing jerv's `provider_license` tool — the FREE, no-key
+    # national provider registry (CMS) that returns a clinician's license number/state/
+    # specialty and any `other_names` (a prior/maiden name), the pivot to the right state
+    # board (docs/reference/ASSISTANT.md "Agent selection"). Pinned base URL, never
+    # model-supplied; only a public name (and optional state) goes out. Empty disables the
+    # tool (it reports "not configured") while the sidecar still loads.
+    nppes_url: str = "https://npiregistry.cms.hhs.gov"
+    # The Federal Register backing jerv's `federal_register` tool — the FREE, no-key API for
+    # federal rules/notices, incl. FDA/agency debarments and enforcement actions, searched by
+    # term (docs/reference/ASSISTANT.md "Agent selection"). Pinned base URL, never
+    # model-supplied; only a public query goes out (with the descriptive User-Agent the API
+    # requests). Empty disables the tool (it reports "not configured") while the sidecar loads.
+    federal_register_url: str = "https://www.federalregister.gov"
     # A pinned reader endpoint web_fetch falls back to when a direct fetch is blocked
     # (bot-walled 403/429) or comes back empty (a JS-rendered shell our static extractor
     # can't see). A reader renders the page with a real browser and returns clean

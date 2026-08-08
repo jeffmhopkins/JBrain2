@@ -9,6 +9,10 @@ SearXNG client the base URL is pinned from config and never model-supplied; only
 name text is, and an optional token merely lifts the anonymous rate limit. This client
 speaks CourtListener's `/api/rest/v4/search/` JSON API and returns a small merged row
 list; it never executes a tool policy itself — the handler does.
+
+It also speaks the `/api/rest/v4/people/` endpoint (`search_people`) — the small judges/
+officials DB — surfacing alias links (`is_alias_of`) and positions, so a person filed under a
+prior name is tied to their canonical record. Still keyless; a supplement to the case search.
 """
 
 from __future__ import annotations
@@ -38,6 +42,8 @@ _CACHE_MAX_ENTRIES = 256  # LRU bound so the cache can't grow without limit.
 # cases), `r` = RECAP dockets (filings). We query both and merge so a name that only appears
 # on a docket (a case with no published opinion) is still found.
 _SEARCH_TYPES = (("o", "opinion"), ("r", "docket"))
+_MAX_PEOPLE = 5  # judges/officials surfaced per name — the people DB is small, alias links matter
+_MAX_POSITION_TITLES = 4  # position titles listed per person before collapsing to a count
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,19 @@ class Record:
     docket_number: str
     url: str
     kind: str  # "opinion" (a decided case) or "docket" (a filing)
+
+
+@dataclass(frozen=True)
+class Person:
+    """One CourtListener judge/official record. The point here is the ALIAS edge: a person
+    filed under a prior name links (`is_alias_of`) to their canonical record, and `positions`
+    names the offices held — the pivot the opinion/docket search alone can't surface."""
+
+    name: str
+    url: str
+    is_alias_of: str  # a URL to the canonical record when this row is an alias, else ""
+    positions: tuple[str, ...]  # position titles held (courts/offices), capped
+    position_count: int
 
 
 class CourtListenerClient:
@@ -75,6 +94,13 @@ class CourtListenerClient:
         # injectable clock for deterministic expiry tests. None when disabled (`cache_ttl_s
         # <= 0`). Only a successful, non-empty result is stored (see `search`).
         self._cache: TTLCache[tuple[str, int], list[Record]] | None = (
+            TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
+            if cache_ttl_s > 0
+            else None
+        )
+        # A sibling cache for the people/alias lookup — keyed on the name alone (the people DB
+        # is small and unpaged here), same TTL + LRU bound as the case-search cache.
+        self._people_cache: TTLCache[str, list[Person]] | None = (
             TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
             if cache_ttl_s > 0
             else None
@@ -140,6 +166,45 @@ class CourtListenerClient:
         rows = body.get("results") if isinstance(body, dict) else None
         return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
+    async def search_people(self, name: str) -> tuple[list[Person], bool]:
+        """Look up judges/officials by name in CourtListener's `people` DB and surface their
+        alias links (`is_alias_of`) and positions. This is a SUPPLEMENT to `search`: a person
+        filed under a prior name is linked here to their canonical record. Returns (people, ok);
+        `ok` is False only on an outage (never raises). Keyless, like `search`."""
+        query = name.strip()
+        if not self._base_url or not query:
+            return [], bool(self._base_url)
+        if self._people_cache is not None and (cached := self._people_cache.get(query)) is not None:
+            return cached, True
+        first, last = _split_name(query)
+        headers = {"Accept": "application/json"}
+        if self._token:
+            headers["Authorization"] = f"Token {self._token}"
+        params: dict[str, str] = {}
+        if first:
+            params["name_first"] = first
+        if last:
+            params["name_last"] = last
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
+                resp = await client.get(
+                    f"{self._base_url}/api/rest/v4/people/", params=params, headers=headers
+                )
+                resp.raise_for_status()
+                body = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("web.public_records_people_failed", error=repr(exc))
+            return [], False
+        rows = body.get("results") if isinstance(body, dict) else None
+        people = [
+            p
+            for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, dict) and (p := _parse_person(row, base_url=self._base_url))
+        ][:_MAX_PEOPLE]
+        if self._people_cache is not None and people:
+            self._people_cache[query] = people
+        return people, True
+
 
 def _parse_row(row: dict, *, kind: str, base_url: str) -> Record | None:
     """Map one CourtListener result row to a `Record`, or None when it carries no case name.
@@ -166,4 +231,49 @@ def _dedup_key(record: Record) -> tuple[str, str, str]:
         record.case_name.lower(),
         record.docket_number.lower(),
         record.court.lower(),
+    )
+
+
+def _split_name(name: str) -> tuple[str, str]:
+    """Split a full name into (first, last) for the people endpoint's separate fields. The last
+    token is the surname; everything before it is the first/given part. A single token is a
+    surname (the more selective field)."""
+    parts = name.split()
+    if len(parts) == 1:
+        return "", parts[0]
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def _position_title(row: object) -> str:
+    """A short title for one `positions` entry. The people endpoint returns positions as nested
+    objects (a `position_type` / `job_title` plus a court/organization) or as bare resource URLs
+    when unexpanded; only the object form yields a title."""
+    if not isinstance(row, dict):
+        return ""
+    kind = str(row.get("position_type") or row.get("job_title") or "").strip()
+    where = str(row.get("organization_name") or row.get("court") or "").strip()
+    return f"{kind} — {where}" if kind and where else kind or where
+
+
+def _parse_person(row: dict, *, base_url: str) -> Person | None:
+    """Map one CourtListener `people` row to a `Person`, or None when it carries no name."""
+    name = " ".join(
+        str(row.get(k) or "").strip()
+        for k in ("name_first", "name_middle", "name_last", "name_suffix")
+        if row.get(k)
+    ).strip()
+    if not name:
+        return None
+    person_id = str(row.get("id") or "").strip()
+    slug = str(row.get("slug") or "").strip()
+    url = f"{base_url}/person/{person_id}/{slug}/" if person_id else ""
+    positions_raw = row.get("positions")
+    positions: list = positions_raw if isinstance(positions_raw, list) else []
+    titles = tuple(t for p in positions if (t := _position_title(p)))
+    return Person(
+        name=name,
+        url=url,
+        is_alias_of=str(row.get("is_alias_of") or "").strip(),
+        positions=titles[:_MAX_POSITION_TITLES],
+        position_count=len(positions),
     )

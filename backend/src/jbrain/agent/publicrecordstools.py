@@ -17,7 +17,7 @@ import structlog
 from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
-from jbrain.web.public_records import CourtListenerClient, Record
+from jbrain.web.public_records import CourtListenerClient, Person, Record
 
 log = structlog.get_logger()
 
@@ -48,6 +48,26 @@ def _format_record(record: Record) -> str:
     return f"- {line}\n  {record.url}" if record.url else f"- {line}"
 
 
+def _format_person(person: Person) -> str:
+    """One judge/official line, surfacing the alias link and positions."""
+    lines = [f"- {person.name}"]
+    if person.is_alias_of:
+        lines[0] += "  (ALIAS record — links to a canonical record)"
+        lines.append(f"  canonical: {person.is_alias_of}")
+    if person.positions:
+        suffix = (
+            f" (+{person.position_count - len(person.positions)} more)"
+            if (person.position_count > len(person.positions))
+            else ""
+        )
+        lines.append("  positions: " + "; ".join(person.positions) + suffix)
+    elif person.position_count:
+        lines.append(f"  {person.position_count} position(s) on record")
+    if person.url:
+        lines.append(f"  {person.url}")
+    return "\n".join(lines)
+
+
 def build_public_records_handlers(
     client: CourtListenerClient, emit: BrainEmit | None = None
 ) -> dict[str, ToolHandler]:
@@ -69,22 +89,37 @@ def build_public_records_handlers(
                 f"The public-records source ({_SOURCE_HEADER}) is unavailable right now — try"
                 f' again shortly, or web_search for court records under "{name}".'
             )
-        if not records:
+        # A supplement to the case search: the judges/officials DB, which links a person filed
+        # under a prior name to their canonical record (best-effort — an outage here just omits
+        # the section rather than failing the whole tool).
+        people, _people_ok = await client.search_people(name)
+        if not records and not people:
             return (
                 f'Source: {_SOURCE_HEADER}.\nNo public court records for "{name}". Try a name'
                 " VARIANT (a prior/maiden name, initials, or alternate spelling) — many records"
                 " are filed under a former name."
             )
-        lines = "\n".join(_format_record(r) for r in records)
-        body = (
-            f"Source: {_SOURCE_HEADER}.\n"
-            f'{len(records)} record(s) for "{name}":\n{lines}\n\n'
+        sections = [f"Source: {_SOURCE_HEADER}."]
+        if records:
+            lines = "\n".join(_format_record(r) for r in records)
+            sections.append(f'{len(records)} record(s) for "{name}":\n{lines}')
+        if people:
+            plines = "\n".join(_format_person(p) for p in people)
+            sections.append(
+                f'{len(people)} judge/official record(s) for "{name}" (alias links + positions'
+                f"):\n{plines}"
+            )
+        sections.append(
             "These are LEADS, not confirmed facts: a common name can collide with a different"
             " person, so VERIFY each hit belongs to this individual against the primary"
-            " document (open the URL with web_fetch) before relying on it. Run this once per"
-            " name variant (including any prior/maiden name)."
+            " document (open the URL with web_fetch) before relying on it. An ALIAS record links"
+            " a prior name to a canonical one — follow it and re-run under that name. Run this"
+            " once per name variant (including any prior/maiden name)."
         )
-        sources = tuple(WebSource(url=r.url, title=r.case_name) for r in records if r.url)
+        body = "\n".join(sections)
+        sources = tuple(WebSource(url=r.url, title=r.case_name) for r in records if r.url) + tuple(
+            WebSource(url=p.url, title=p.name) for p in people if p.url
+        )
         return ToolOutput(body, web_sources=sources)
 
     return {"public_records": public_records_tool}

@@ -1,6 +1,6 @@
 ---
 name: public_records
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -20,7 +20,10 @@ OPINIONS (decided cases) and RECAP DOCKETS (filings) from the Free Law Project, 
 rate-limited source. Use this to find court or disciplinary matters filed under a name
 that a plain web_search misses — for a person profile, run it once per name VARIANT you
 have, especially any PRIOR or MAIDEN name, since records are often filed under a former
-name. Each result is "CaseName — Court (dateFiled) [docket] URL".
+name. Each case result is "CaseName — Court (dateFiled) [docket] URL". It also searches
+CourtListener's judges/officials database and returns any matching people with their POSITIONS
+and, when present, an ALIAS link — a person filed under a prior name is tied there to their
+canonical record, which you can follow and re-search under that name.
 
 Every hit is a LEAD, not a verdict. A common name can belong to a different person, so
 you MUST verify each match is really THIS individual before relying on it: open the

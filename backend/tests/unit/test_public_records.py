@@ -47,14 +47,38 @@ _UPPAL_DOCKET = {
 }
 _EMPTY = {"count": 0, "results": []}
 
+# A people/alias hit: a judge filed under a prior name, linking to the canonical record.
+_PEOPLE = {
+    "count": 1,
+    "results": [
+        {
+            "id": 42,
+            "slug": "jane-roe",
+            "name_first": "Jane",
+            "name_last": "Roe",
+            "is_alias_of": "https://www.courtlistener.com/api/rest/v4/people/7/",
+            "positions": [
+                {"position_type": "Judge", "court": "Fla. Dist. Ct. App."},
+                {"position_type": "Attorney"},
+            ],
+        }
+    ],
+}
+_PEOPLE_EMPTY = {"count": 0, "results": []}
 
-def _client(o_body: dict, r_body: dict, *, token: str = "") -> CourtListenerClient:
-    """A CourtListener client whose transport answers type=o and type=r distinctly, and
-    records the requests it saw (on the returned client's `.seen`)."""
+
+def _client(
+    o_body: dict, r_body: dict, *, token: str = "", people_body: dict | None = None
+) -> CourtListenerClient:
+    """A CourtListener client whose transport answers type=o, type=r, and the /people/ endpoint
+    distinctly, and records the requests it saw (on the returned client's `.seen`)."""
     seen: list[httpx.Request] = []
+    people = people_body if people_body is not None else _PEOPLE_EMPTY
 
     def handle(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if request.url.path.endswith("/people/"):
+            return httpx.Response(200, json=people)
         body = o_body if request.url.params.get("type") == "o" else r_body
         return httpx.Response(200, json=body)
 
@@ -130,6 +154,42 @@ async def test_repeat_search_is_served_from_cache() -> None:
     assert len(client.seen) == 2  # type: ignore[attr-defined]
 
 
+# --- people / alias lookup --------------------------------------------------
+
+
+async def test_search_people_parses_the_alias_and_positions() -> None:
+    client = _client(_EMPTY, _EMPTY, people_body=_PEOPLE)
+    people, ok = await client.search_people("Jane Roe")
+    assert ok
+    assert len(people) == 1
+    p = people[0]
+    assert p.name == "Jane Roe"
+    assert p.is_alias_of == "https://www.courtlistener.com/api/rest/v4/people/7/"  # the alias edge
+    assert p.positions == ("Judge — Fla. Dist. Ct. App.", "Attorney")
+    assert p.position_count == 2
+    assert p.url == "https://www.courtlistener.com/person/42/jane-roe/"
+    # The name split into first/last for the people endpoint's separate fields.
+    people_req = [r for r in client.seen if r.url.path.endswith("/people/")][0]  # type: ignore[attr-defined]
+    assert people_req.url.params.get("name_first") == "Jane"
+    assert people_req.url.params.get("name_last") == "Roe"
+
+
+async def test_search_people_errors_return_empty_not_raise() -> None:
+    def boom(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    client = CourtListenerClient(
+        "https://www.courtlistener.com", transport=httpx.MockTransport(boom)
+    )
+    people, ok = await client.search_people("anyone")
+    assert people == [] and ok is False
+
+
+async def test_search_people_unconfigured_returns_empty_ok_false() -> None:
+    people, ok = await CourtListenerClient("").search_people("anyone")
+    assert people == [] and ok is False
+
+
 # --- public_records tool ----------------------------------------------------
 
 
@@ -147,6 +207,20 @@ async def test_tool_surfaces_the_uppal_opinion_with_court_date_and_url() -> None
     assert "verify" in text.lower()
     # The record rides as a citable web source.
     assert out.web_sources and out.web_sources[0].url.startswith("https://www.courtlistener.com")
+
+
+async def test_tool_surfaces_the_people_alias_section() -> None:
+    handlers = build_public_records_handlers(_client(_EMPTY, _EMPTY, people_body=_PEOPLE))
+    out = await handlers["public_records"]({"name": "Jane Roe"}, CTX)
+    assert isinstance(out, ToolOutput)
+    text = str(out)
+    assert "judge/official record(s)" in text
+    assert "Jane Roe" in text
+    assert "ALIAS record" in text  # the is_alias_of link is surfaced
+    assert "Judge — Fla. Dist. Ct. App." in text
+    assert "person/42/jane-roe" in text
+    # The person rides as a citable web source.
+    assert any(s.url.endswith("/person/42/jane-roe/") for s in out.web_sources)
 
 
 async def test_tool_dedups_and_reports_one_row_for_the_overlap() -> None:
