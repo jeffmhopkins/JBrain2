@@ -1188,8 +1188,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_fetch.tool": (
             "web_fetch",
-            10,
-            "3f6c4afaa4fe76a171165bcd9ff43e6df9afb6c31f1a556fa9dd1ca561949894",
+            11,
+            "041ab6230280ae67c0008fbcfcf3021823c9c6bab240d34a1c45e3cd38dc171b",
         ),
         "public_records.tool": (
             "public_records",

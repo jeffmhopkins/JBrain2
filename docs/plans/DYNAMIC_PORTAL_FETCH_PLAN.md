@@ -1,8 +1,8 @@
 # Dynamic Portal Fetch — resolvers for JS/POST government search portals ("dinosaurs")
 
-> **Status:** Proposed (adversarial review incorporated — see "Review outcomes" below) ·
-> **Last verified:** 2026-08-08 · **Wave order (revised):** P3◻️ → P1◻️ → P2◻️
-> (the dependency-free honesty backstop ships FIRST; see Review outcomes R-Q1)
+> **Status:** In progress (adversarial review incorporated — see "Review outcomes" below) ·
+> **Last verified:** 2026-08-08 · **Wave order (revised):** P3✅ → P1◻️ → P2◻️
+> (the dependency-free honesty backstop shipped FIRST; see Review outcomes R-Q1)
 
 Give the research fan a way to actually *query* dynamic government search portals — the
 ones `web_fetch` can only see the empty search FORM of — and make an un-queryable portal
@@ -280,7 +280,7 @@ state business registry and state license lookups the prose already gestures at,
 - `test_research_presets.py` — `candidate_profile` renders with the `portal_search`
   instruction present in the relevant angles.
 
-### Wave P3 — "Search form, not results" detection backstop ◻️
+### Wave P3 — "Search form, not results" detection backstop ✅ (shipped)
 
 **Scope.** `_is_search_form_page` in `fetch.py` + the distinct model-visible observation,
 wired into `_fetch_direct` (raise-and-surface) and the reader/solver paths (return None on
