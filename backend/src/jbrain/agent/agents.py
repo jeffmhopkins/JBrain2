@@ -204,13 +204,13 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # The deepest-research primitive — jerv kicks off a no-holds background run and
         # returns immediately (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
         DEEPEST_RESEARCH_TOOL,
-        # The deep-research report library — browse / search / read / show / remove the
-        # reports deep_research persisted, the same corpus pattern as the video tools. read_
-        # returns a report's FULL text, so a follow-up turn can reference an earlier run
-        # (the chat history keeps only jerv's summary of it).
-        "list_research_report",
-        "search_research_report",
-        "read_research_report",
+        # The deep-research report library (TOOL_CATALOG_PLAN.md): the read umbrella
+        # `research_report(action=search|list|read)` — action=read returns a report's FULL text,
+        # so a follow-up turn can reference an earlier run (chat history keeps only jerv's
+        # summary). show/remove stay SEPARATE tools (distinct output types, and keeping the
+        # destructive/owner-facing ones out of the umbrella lets the report sub-agents hold only
+        # the read umbrella — see RESEARCH_REPORTS_TOOLS).
+        "research_report",
         "show_research_report",
         "remove_research_report",
     }
@@ -293,15 +293,13 @@ REVIEW_LIBRARY_TOOLS = RESEARCH_LIBRARY_TOOLS
 # research_reports / review_reports children: the research-REPORT library read tools and the
 # dataless clock, and NO web tools — `deep_research`'s `sources=reports` (the compare-from-
 # library family) gather/refill/analyst/critique fans run these so the run reads ONLY the
-# owner's stored deep-research reports and never the open web. The read tools self-scope their
-# own `external`-domain read (the same corpus domain as the reports), so a child holding them
+# owner's stored deep-research reports and never the open web. The read umbrella self-scopes its
+# own `external`-domain read (the same corpus domain as the reports), so a child holding it
 # reaches the report library and nothing owner-authored. Leaves (no `spawn_subagent`), KB-less;
-# jerv holds all three read tools, so the parent⊆child clamp keeps them. `show_`/`remove_` are
-# deliberately excluded — a sub-agent needs only to find and read, never to render a card to the
-# owner or stage a deletion.
-RESEARCH_REPORTS_TOOLS = frozenset(
-    {"search_research_report", "read_research_report", "list_research_report", "current_time"}
-)
+# jerv holds `research_report`, so the parent⊆child clamp keeps it. show_/remove_ are separate
+# tools, never granted here — a sub-agent needs only to find and read, never to render a card to
+# the owner or stage a deletion (the read-only umbrella is exactly that boundary).
+RESEARCH_REPORTS_TOOLS = frozenset({"research_report", "current_time"})
 REVIEW_REPORTS_TOOLS = RESEARCH_REPORTS_TOOLS
 # summarize: a pure transform — no tools at all, so it cannot reach the web and
 # cannot spawn.

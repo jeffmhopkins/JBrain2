@@ -1,12 +1,20 @@
-"""jerv's deep-research report library tools: browse, search, read, show, and remove the reports
-the `deep_research` tool persisted (external.research_corpus).
+"""jerv's deep-research report library tools: the read umbrella `research_report(action=…)`
+(search / list / read) plus the separate `show_research_report` and `remove_research_report`
+(the reports the `deep_research` tool persisted in external.research_corpus).
+
+The three READ operations collapse into one action-dispatched `research_report` tool
+(TOOL_CATALOG_PLAN); show (renders a card) and remove (stages a deletion proposal) stay separate
+tools — distinct output types, and keeping the destructive/owner-facing ones out of the umbrella
+lets a sub-agent hold only the read umbrella (the parent⊆child clamp), never show/remove. A
+tool-selection probe confirmed gpt-oss-120b fills the read action reliably and still routes a
+"show"/"delete" request to the dedicated tool.
 
 Sandboxed jerv-only surfaces (`web` permission), reading a LOCAL table in the corpus's own
 `external` domain — the sibling of the external-video tools (external + agent/externaltools). jerv's
 own tool session is empty-scoped, so each handler opens a purpose-built owner+external read used
 ONLY for the report query; `remove_research_report` goes further and only STAGES a removal proposal
-the owner approves inline. `read_research_report` returns a report's FULL Markdown — the path a
-follow-up turn takes to reference an earlier run (chat history keeps only jerv's summary of it).
+the owner approves inline. `research_report(action=read)` returns a report's FULL Markdown — the
+path a follow-up turn takes to reference an earlier run (chat history keeps only jerv's summary).
 """
 
 import uuid
@@ -78,8 +86,8 @@ def build_research_report_handlers(
         query = str(arguments.get("query", "")).strip()
         if not query:
             return (
-                "search_research_report needs a non-empty query. To browse or count every"
-                " stored report instead, use list_research_report."
+                "research_report(action=search) needs a non-empty query. To browse or count"
+                " every stored report instead, use action=list."
             )
         limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
         hits, degraded = await search_reports(
@@ -94,7 +102,7 @@ def build_research_report_handlers(
         return (
             f"{prefix}\n\nResearch reports matching '{query}':\n"
             + "\n".join(lines)
-            + "\n\nUse read_research_report(id=…) for a report's full text, or"
+            + "\n\nUse research_report(action=read, id=…) for a report's full text, or"
             " show_research_report(id=…) to re-open its card."
         )
 
@@ -137,12 +145,12 @@ def build_research_report_handlers(
     async def read_research_report_tool(arguments: dict, ctx: ToolContext) -> str:
         ref = _ref(arguments)
         if not ref:
-            return "read_research_report needs the id (or question) of a stored report."
+            return "research_report(action=read) needs the id (or question) of a stored report."
         rec = await fetch_report(maker, ref, principal_id=ctx.session.principal_id)
         if rec is None:
             return (
                 f"No stored research report matches '{ref}'."
-                " Use search_research_report or list_research_report to find one."
+                " Use research_report(action=search) or action=list to find one."
             )
         body = rec.report_md
         truncated = len(body) > _REPORT_MAX_CHARS
@@ -161,7 +169,7 @@ def build_research_report_handlers(
         if rec is None:
             return (
                 f"No stored research report matches '{ref}'."
-                " Use search_research_report or list_research_report to find one."
+                " Use research_report(action=search) or action=list to find one."
             )
         view = ViewPayload(
             view="deep_research_report", surface="inline", data=_report_view_data(rec)
@@ -181,7 +189,7 @@ def build_research_report_handlers(
         if rec is None:
             return (
                 f"No stored research report matches '{ref}'."
-                " Use search_research_report or list_research_report to find one."
+                " Use research_report(action=search) or action=list to find one."
             )
         # jerv only PROPOSES: it stages a one-leaf removal the owner approves inline; the trusted
         # executor does the delete. Staged under the corpus's external scope (jerv's own session is
@@ -208,10 +216,26 @@ def build_research_report_handlers(
             proposal=ProposalRef(proposal_id=prop_id, kind="remove-research-report"),
         )
 
+    _reads: dict[str, ToolHandler] = {
+        "search": search_research_report_tool,
+        "list": list_research_report_tool,
+        "read": read_research_report_tool,
+    }
+
+    async def research_report_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        action = str(arguments.get("action", "")).strip().lower()
+        fn = _reads.get(action)
+        if fn is None:
+            return (
+                "research_report needs action= one of search, list, read (got"
+                f" {action or 'nothing'!r}). To show a report's card use show_research_report;"
+                " to remove one use remove_research_report."
+            )
+        return await fn(arguments, ctx)
+
     return {
-        "search_research_report": search_research_report_tool,
-        "list_research_report": list_research_report_tool,
-        "read_research_report": read_research_report_tool,
+        # The read umbrella (search / list / read).
+        "research_report": research_report_tool,
         "show_research_report": show_research_report_tool,
         # Always registered so its sidecar always pairs; returns "not available" without a
         # ProposalRepo (a read-only test build). In the app it's always present.

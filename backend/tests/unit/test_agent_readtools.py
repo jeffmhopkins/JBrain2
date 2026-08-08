@@ -864,9 +864,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # The deep-research report library (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md) —
         # `web`-classed (jerv-only), reading/managing the research-report corpus via a
         # purpose-built scope, never the curator wildcard.
-        "search_research_report",
-        "list_research_report",
-        "read_research_report",
+        "research_report",
         "show_research_report",
         "remove_research_report",
         # jerv's per-conversation planning tools are `web`-classed (jerv-only), over the
@@ -1387,30 +1385,20 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "2ce3fab6919ea95b910dcfee09a0862707fb7f6745d81661a45e6f9ed64e62e4",
         ),
-        "list_research_report.tool": (
-            "list_research_report",
+        "research_report.tool": (
+            "research_report",
             1,
-            "bfa298bd6a8dea64295f7fbaf36a3fad1d9b782bd49057764f688e5c4ef459c8",
-        ),
-        "search_research_report.tool": (
-            "search_research_report",
-            1,
-            "abf2b04a88333f8dc6bfe135b8d38cbdfc6c18c7af4d9477fe01c7387eeb53e3",
-        ),
-        "read_research_report.tool": (
-            "read_research_report",
-            1,
-            "19522ba829bba3570b0f5f46127d88892f160d273d5b6eb947bd7ae38ad7722d",
+            "7b4f1e2ef52b2ce5d24573003351a63f22850df57cffab40ea1f8bc917d9776b",
         ),
         "show_research_report.tool": (
             "show_research_report",
             1,
-            "20ed01ffe32a026231c7c1e36e8160f85ac986b029a3bfe77de86788393aa0a6",
+            "02b1f6917c2974c4be7b6ccb864feb847d10f64c7ef7e63f8c5fd3ee9151b660",
         ),
         "remove_research_report.tool": (
             "remove_research_report",
             1,
-            "7450bd163900253dde202db50eb7a4581e12985480b25fddb2c3f75371c0e91c",
+            "929e5c7f2db8bd613c4a96825eaa3d7e23098c1f6d561f01195b0b39f0939543",
         ),
         "read_plan.tool": (
             "read_plan",

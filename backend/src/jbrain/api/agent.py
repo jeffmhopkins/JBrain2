@@ -481,7 +481,8 @@ async def _research_report_blocks(
     run for 'only the JSON prompt / not run yet' (the observed hallucination;
     CROSS_TURN_TOOL_RESULTS_PLAN.md). The report itself is durable in the library — this re-injects
     a compact DATA-framed pointer (title + id + source count) each turn so jerv knows the run
-    FINISHED and reads it back with read_research_report instead of denying it ran. Read under the
+    FINISHED and reads it back with research_report(action=read) instead of denying it ran. Read
+    under the
     corpus `external` scope (inside `list_reports_for_session`); volatile suffix so it never
     disturbs the cache-stable prefix; best-effort (a sweep hiccup must never break the turn)."""
     refs = await get_research_library(request).list_reports_for_session(
@@ -499,7 +500,8 @@ async def _research_report_blocks(
     body = (
         "(System note — data, not owner input. Deep-research runs you completed earlier this chat"
         " are saved in the research library — the runs FINISHED and produced these reports. If the"
-        " owner asks about one, read it back with read_research_report(id); never tell them a run"
+        " owner asks about one, read it back with research_report(action=read, id=…); never tell"
+        " them a run"
         " 'hasn't happened yet' or was 'only the JSON prompt' — the report below is that run's"
         " output.)\n\nReports you produced this chat:\n" + "\n".join(lines)
     )

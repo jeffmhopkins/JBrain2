@@ -115,9 +115,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "deep_produce",
             "decompose_research",
             "deepest_research",
-            "list_research_report",
-            "search_research_report",
-            "read_research_report",
+            "research_report",
             "show_research_report",
             "remove_research_report",
         }
@@ -330,8 +328,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v39",
-            "3bb8e5475810efa4b4892932889b8bd6cfd2ebf0fe10664273d1a7283d2c4ccf",
+            "agent-jerv-v40",
+            "3064eb8a77a79c38b9a0660505cd9f80d6bdc3c19f8a19b6c0e96b222d095fcd",
         ),
         "archivist": (
             "agent-archivist-v6",
@@ -366,12 +364,12 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "f155cd5e2a114c3403c295801e6080a7de3c632030ccff81e49ebf0bc166d643",
         ),
         "research_reports": (
-            "agent-research-reports-v1",
-            "2707dabb4490eb7da1b3594545efdc8672d18e1e33331c6ea6c37bf207d93f71",
+            "agent-research-reports-v2",
+            "ac162af1e86c43e73b8285ed9cb6ea3e8d3cff7ed498d413dc392ecd93e98baf",
         ),
         "review_reports": (
-            "agent-review-reports-v1",
-            "8c7e0a35abc45d9c6b2587f53a4c75b1deeb6dda6e0fa54328cc8d66b26efa56",
+            "agent-review-reports-v2",
+            "487ddb5461ab4b7040bcc894ca13d6d0819632c624ee8c1a0518ce90fbad24df",
         ),
     }
     assert set(pins) == AGENT_NAMES
