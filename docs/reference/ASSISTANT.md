@@ -379,35 +379,35 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   anti-injection guard), the approved plan is re-injected each turn so jerv follows it, and
   a bounded, owner-interruptible auto-continuation loop runs the checklist step by step.
   See `../plans/JERV_PLANNING_TOOL_PLAN.md`. The
-  **Grokipedia tools** (`grokipedia_search` / `grokipedia_outline` / `grokipedia_section` /
-  `grokipedia_citations` / `grokipedia_related`) are `web`-gated, jerv-only reads of xAI's
+  **Grokipedia umbrella** (`grokipedia(action=search|outline|section|citations|related)`, one
+  action-dispatched tool — TOOL_CATALOG_PLAN.md) is a `web`-gated, jerv-only read of xAI's
   encyclopedia over the **open internet — no xAI key** (API-first via Grokipedia's own
   `/api/typeahead` + `/api/page-preview`, server-rendered `/page/<slug>` HTML as the
   fallback; `jbrain.web.grokipedia`). They let jerv find an article, traverse it by its
   table of contents, read a single section without loading the whole page, and pull the
   article's citations as followable primary-source URLs — same sandboxed-web posture as
   `web_search` (a pinned public site, no owner data). The
-  **`public_records`** tool is a `web`-gated, jerv-only free public-records search by
-  name (v1: **CourtListener** — U.S. court opinions + RECAP dockets, a free no-key
-  rate-limited API; `jbrain.web.public_records`, pinned base URL from
-  `JBRAIN_COURTLISTENER_URL`, optional `JBRAIN_COURTLISTENER_TOKEN`). It exists to catch
-  court/disciplinary records filed under a **prior/maiden name** that web-only research
-  misses; the tool prose tells jerv to run it once per name variant and to treat every
-  hit as a **lead to verify** against the primary document (common-name collisions), not
-  a verdict. It also queries CourtListener's **judges/officials `people` DB**, surfacing
-  any `is_alias_of` link (a person filed under a prior name → their canonical record) and
-  positions held. Same sandboxed-web posture as `web_search` — only a public name goes out.
-  Three sibling keyless tools complete the "find the alias, then re-run everything under
-  it" loop for a person profile (`jbrain.web.wikidata` / `nppes` / `federal_register`, all
-  `web`-gated, jerv-only, pinned base URLs from config, **no API key**, descriptive
-  User-Agent where required): **`resolve_identity`** (Wikidata) resolves a name to its
-  canonical entity(ies) and harvests every alias/aka/maiden/former name plus occupation and
-  a few external IDs (an NPI feeds `provider_license`) — the tool to run **first**;
-  **`provider_license`** (NPPES NPI registry) returns a clinician's license
-  number/state/specialty and any `other_names` (a prior/maiden name — the pivot to the right
-  state board), framed plainly as a registry that carries **no disciplinary actions**; and
-  **`federal_register`** searches federal rules/notices, including **FDA/agency debarments**
-  and enforcement, by name or term — each a lead to verify against the notice. The
+  **`public_records`** umbrella (`public_records(name, sources=[…])`, one `web`-gated,
+  jerv-only tool — TOOL_CATALOG_PLAN.md) fans a name across four FREE, keyless sources
+  (omit `sources` for all four; base URLs pinned from config, only a public name goes out,
+  descriptive User-Agent where required). It exists to catch records filed under a
+  **prior/maiden name** that web-only research misses; the prose tells jerv to run
+  `sources=[identity]` **first** to harvest aliases, then re-run under each variant, and to
+  treat every hit as a **lead to verify** against the primary document (common-name
+  collisions), not a verdict. The sources: **`identity`** (Wikidata; `jbrain.web.wikidata`)
+  resolves a name to its canonical entity(ies) and every alias/aka/maiden/former name plus
+  occupation and a few external IDs (an NPI feeds the `license` source) — run first;
+  **`court`** (**CourtListener** — U.S. court opinions + RECAP dockets, a free no-key
+  rate-limited API; `jbrain.web.public_records`, `JBRAIN_COURTLISTENER_URL`, optional
+  `JBRAIN_COURTLISTENER_TOKEN`), plus CourtListener's **judges/officials `people` DB**
+  surfacing any `is_alias_of` link (a prior name → canonical record) and positions held;
+  **`license`** (NPPES NPI registry; `jbrain.web.nppes`) returns a clinician's license
+  number/state/specialty and any `other_names`, framed plainly as a registry that carries
+  **no disciplinary actions** (the pivot to the right state board); and
+  **`federal_register`** (`jbrain.web.federal_register`) searches federal rules/notices,
+  including **FDA/agency debarments** and enforcement, by name or term. Collapsed from four
+  flat tools after a tool-selection probe confirmed gpt-oss-120b fills `name`/`sources`
+  reliably (incl. single-source narrowing). The
   **`weather`** tool is a `web`-gated, jerv-only forecast lookup over a pinned
   Open-Meteo upstream (free, no key, run directly like search): it replaces the
   multi-step search-and-scrape weather flow with one call returning a summary plus a
@@ -451,7 +451,7 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   docs/archive/DEFERRED_TOOL_CALLS_PLAN.md). The resume is a short **system notice** — "the
   analysis you started is ready, in your library at <url>; carry on with the owner's
   request" — **not** the transcript: jerv reads the summary/transcript on demand with
-  `read_external_video`, so the resume never pastes a wall of text into the chat. That turn
+  `external_video(action=read)`, so the resume never pastes a wall of text into the chat. That turn
   is driven by a server notice, not owner input, so it's recorded and rendered **answer-only**
   (no user turn) — the answer stands on its own after the analysis card, never a pseudo-owner
   "guest blurb". The resume fires whenever the card next sees the job `done` — including a
@@ -507,7 +507,7 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   was persisted to the library. The report library already persists every run, so it takes the
   *reference* half of the mechanism only (no artifact store): each turn re-injects a compact
   DATA-framed pointer to the reports produced this session (title + id + source count), read
-  back with `read_research_report` — so a finished run is never mistaken for an unrun prompt.
+  back with `research_report(action=read)` — so a finished run is never mistaken for an unrun prompt.
 
   **`analyze_image` also returns the text.** Beyond describing what an image *shows*,
   `analyze_image` now hands back the image's **verbatim text as Markdown** (headings, tables,

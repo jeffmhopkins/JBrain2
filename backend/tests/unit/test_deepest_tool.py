@@ -94,7 +94,7 @@ async def test_kickoff_attaches_a_running_card_and_tells_the_model_to_stop() -> 
     low = out.lower()
     assert "end your turn" in low  # the model is told to stop, not wait
     # …and told by name not to poll the report library or re-run the research inline.
-    assert "read_research_report" in low and "list_research_report" in low
+    assert "research_report(action=read)" in low and "action=list" in low
     assert "do not start a deep_research" in low
 
 

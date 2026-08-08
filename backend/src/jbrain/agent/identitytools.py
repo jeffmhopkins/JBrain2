@@ -86,10 +86,10 @@ def build_resolve_identity_handlers(
             f"Source: {_SOURCE_HEADER}.\n"
             f'{len(entities)} entity match(es) for "{name}":\n{blocks}\n\n'
             "Pick the entity that matches this person (the description/occupation disambiguates),"
-            " then RE-RUN the records/license searches under EACH alternate name above:"
-            " provider_license (for a clinician), public_records, and federal_register — many"
-            " records are filed under a prior or maiden name. An external NPI feeds"
-            " provider_license directly."
+            " then RE-RUN public_records under EACH alternate name above — its license source (for"
+            " a clinician), court source, and federal_register source — because many records are"
+            " filed under a prior or maiden name. An external NPI feeds the license source"
+            " directly."
         )
         sources = tuple(WebSource(url=e.url, title=e.label or e.qid) for e in entities if e.url)
         return ToolOutput(body, web_sources=sources)

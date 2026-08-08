@@ -1,5 +1,9 @@
-"""jerv's external-source video tools: `search_external_video` (hybrid search over the ingested
-video corpus) and `check_channel` (list a channel's new uploads worth analysing).
+"""jerv's external-source video tools: the read umbrella `external_video(action=search|list|read)`
+(hybrid search / browse / full transcript over the ingested video corpus), plus the separate
+`check_channel` (list a channel's new uploads worth analysing), `show_external_video` (the
+analysis card), and `remove_external_video` (stage a removal). The three reads collapse into one
+action-dispatched tool (TOOL_CATALOG_PLAN); show/remove stay separate so the library sub-agents
+can hold only the read umbrella (the parent⊆child clamp).
 
 Like the web tools, these are sandboxed jerv-only surfaces (`web` permission), but they read a
 LOCAL table in the corpus's own `external` domain (and, for check_channel, list public channel
@@ -238,9 +242,9 @@ def _render_transcript(t: ExternalTranscript, from_ms: int = 0) -> str:
     body = f"{header}{description}{summary}{transcript}"
     if next_from_ms is not None:
         body += (
-            "\n\n[transcript continues — call read_external_video again with "
+            "\n\n[transcript continues — call external_video(action=read) again with "
             f"from_ms={next_from_ms} to read the next part (to enumerate the WHOLE video you "
-            "must continue to the end), or use search_external_video to jump to a moment]"
+            "must continue to the end), or use action=search to jump to a moment]"
         )
     return body
 
@@ -295,8 +299,8 @@ def build_external_handlers(
         query = str(arguments.get("query", "")).strip()
         if not query:
             return (
-                "search_external_video needs a non-empty query. To browse or count the"
-                " whole library instead, use list_external_video."
+                "external_video(action=search) needs a non-empty query. To browse or count the"
+                " whole library instead, use action=list."
             )
         limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
         hits, degraded = await search_corpus(
@@ -461,14 +465,14 @@ def build_external_handlers(
     async def read_external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         ref = str(arguments.get("url") or arguments.get("video_id") or "").strip()
         if not ref:
-            return "read_external_video needs the url (or id) of a video in the library."
+            return "external_video(action=read) needs the url (or id) of a video in the library."
         transcript = await fetch_transcript(
             maker, _parse_video_id(ref), principal_id=ctx.session.principal_id
         )
         if transcript is None:
             return (
                 f"No analysed video in the library matches '{ref}'."
-                " Use search_external_video to find one first."
+                " Use external_video(action=search) to find one first."
             )
         if not transcript.windows and not transcript.summary:
             return f"'{transcript.title}' is in the library but has no stored transcript."
@@ -490,7 +494,7 @@ def build_external_handlers(
         if t is None:
             return (
                 f"No analysed video in the library matches '{ref}'."
-                " Use search_external_video to find one first."
+                " Use external_video(action=search) to find one first."
             )
         frames = await _frame_views(t.frames, blobs)
         view = ViewPayload(view="video_analysis", surface="inline", data=_card_data(t, frames))
@@ -510,7 +514,7 @@ def build_external_handlers(
         if t is None:
             return (
                 f"No analysed video in the library matches '{ref}'."
-                " Use search_external_video to find one first."
+                " Use external_video(action=search) to find one first."
             )
         # jerv only PROPOSES: it stages a one-leaf removal the owner approves inline; the trusted
         # executor does the delete. Staged under the corpus's external scope (jerv's own session is
@@ -536,11 +540,30 @@ def build_external_handlers(
             proposal=ProposalRef(proposal_id=prop_id, kind="remove-library-video"),
         )
 
+    _reads: dict[str, ToolHandler] = {
+        "search": search_external_video_tool,
+        "list": list_external_video_tool,
+        "read": read_external_video_tool,
+    }
+
+    async def external_video_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        action = str(arguments.get("action", "")).strip().lower()
+        fn = _reads.get(action)
+        if fn is None:
+            return (
+                "external_video needs action= one of search, list, read (got"
+                f" {action or 'nothing'!r}). To show a video's card use show_external_video;"
+                " to remove one use remove_external_video."
+            )
+        return await fn(arguments, ctx)
+
     return {
-        "search_external_video": search_external_video_tool,
-        "list_external_video": list_external_video_tool,
+        # The read umbrella (search / list / read).
+        "external_video": external_video_tool,
+        # check_channel (discovery) + show/remove (a card / a staged deletion) stay separate:
+        # distinct shapes, and keeping show/remove out of the umbrella lets the library
+        # sub-agents hold only the read umbrella (never show/remove).
         "check_channel": check_channel_tool,
-        "read_external_video": read_external_video_tool,
         "show_external_video": show_external_video_tool,
         # Always registered so its sidecar always pairs; the handler returns "not available" when
         # no ProposalRepo is wired (a read-only test build). In the app it's always present.

@@ -140,42 +140,32 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # sidecar — the hallucination-free counterpart to analyze_image, preferred for
         # literal text (error screenshots, receipts, scanned docs) (RAPIDOCR_PLAN.md).
         "ocr",
-        # Grokipedia tools (GROKIPEDIA_TOOL_PLAN.md): search xAI's encyclopedia, traverse
-        # an article by its table of contents, read a single section without loading the
-        # whole page, pull citations to follow to primary sources, and traverse to linked
+        # Grokipedia umbrella (GROKIPEDIA_TOOL_PLAN.md, TOOL_CATALOG_PLAN.md): ONE
+        # `grokipedia(action=…)` tool over the five operations — search xAI's encyclopedia,
+        # traverse an article by its table of contents, read a single section without loading
+        # the whole page, pull citations to follow to primary sources, and traverse to linked
         # articles. `web`-gated like web_search/web_fetch — a pinned public site, no owner
-        # data — and always wired (no config gate).
-        "grokipedia_search",
-        "grokipedia_outline",
-        "grokipedia_section",
-        "grokipedia_citations",
-        "grokipedia_related",
-        # Free public-records search by name (PUBLIC_RECORDS_TOOL): CourtListener opinions +
-        # RECAP dockets + a judges/officials alias lookup, so a person profile finds
-        # court/disciplinary matters filed under a prior/maiden name that web-only research
-        # misses. `web`-gated like web_search — a pinned public source, no owner data — and
-        # always wired (no config gate).
+        # data — and always wired (no config gate). Collapsed from five flat tools after a
+        # tool-selection probe confirmed gpt-oss-120b fills the action reliably.
+        "grokipedia",
+        # The public_records umbrella (PUBLIC_RECORDS_TOOL, TOOL_CATALOG_PLAN.md): ONE
+        # `public_records(name, sources=[…])` tool fanning a name across four FREE, keyless
+        # sources — identity (Wikidata aliases/maiden/former names + occupation), court
+        # (CourtListener opinions + RECAP dockets + a judges/officials alias lookup), license
+        # (NPPES NPI registry: license number/state/specialty + other_names), and
+        # federal_register (agency debarments/enforcement) — so a person profile finds matters
+        # filed under a prior/maiden name that web-only research misses. `web`-gated like
+        # web_search (pinned public sources, no owner data, no API key) and always wired.
+        # Collapsed from four flat tools after a tool-selection probe (gpt-oss-120b fills
+        # name/sources reliably, incl. single-source narrowing).
         "public_records",
-        # The keyless identity/license/enforcement lookups that pair with public_records for a
-        # person profile — all `web`-gated (pinned public source, no owner data, no API key) and
-        # always wired (no config gate). resolve_identity (Wikidata) harvests a person's aliases
-        # (aka/maiden/former names) so the records searches re-run under each; provider_license
-        # (NPPES NPI registry) returns a clinician's license number/state/specialty + other_names;
-        # federal_register catches agency debarments/enforcement notices by name/term.
-        "resolve_identity",
-        "provider_license",
-        "federal_register",
-        # Search the external-source video corpus (analysed YouTube videos). Sandboxed
-        # jerv-only alongside web_search; reads the general-domain corpus via a
-        # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
-        "search_external_video",
-        # Enumerate / count the whole library (title, channel, date, length per video) with an
-        # exact total — the browse/count companion to the content search, so "what's in my
-        # library?" answers from a real listing, not a fuzzy query.
-        "list_external_video",
-        # Read one library video's FULL transcript (search_external_video → read_external_video,
-        # the web_search → web_fetch pattern) when a single excerpt isn't enough.
-        "read_external_video",
+        # The external-source video library read umbrella (TOOL_CATALOG_PLAN.md):
+        # `external_video(action=search|list|read)` — search the analysed-YouTube corpus,
+        # browse/count the whole library, or read one video's FULL transcript. Sandboxed
+        # jerv-only alongside web_search; reads the general-domain corpus via a purpose-built
+        # scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md). show/remove stay
+        # SEPARATE (distinct shapes; keeps them out of the library sub-agents' read grant).
+        "external_video",
         # SHOW one library video as the video-analysis card (embed + frame timeline + tabs),
         # rebuilt from stored corpus data — when the owner wants to see/watch it, not read it.
         "show_external_video",
@@ -210,13 +200,13 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # The deepest-research primitive — jerv kicks off a no-holds background run and
         # returns immediately (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7).
         DEEPEST_RESEARCH_TOOL,
-        # The deep-research report library — browse / search / read / show / remove the
-        # reports deep_research persisted, the same corpus pattern as the video tools. read_
-        # returns a report's FULL text, so a follow-up turn can reference an earlier run
-        # (the chat history keeps only jerv's summary of it).
-        "list_research_report",
-        "search_research_report",
-        "read_research_report",
+        # The deep-research report library (TOOL_CATALOG_PLAN.md): the read umbrella
+        # `research_report(action=search|list|read)` — action=read returns a report's FULL text,
+        # so a follow-up turn can reference an earlier run (chat history keeps only jerv's
+        # summary). show/remove stay SEPARATE tools (distinct output types, and keeping the
+        # destructive/owner-facing ones out of the umbrella lets the report sub-agents hold only
+        # the read umbrella — see RESEARCH_REPORTS_TOOLS).
+        "research_report",
         "show_research_report",
         "remove_research_report",
     }
@@ -290,24 +280,22 @@ RESEARCH_DEEP_TOOLS = RESEARCH_TOOLS | frozenset({DECOMPOSE_TOOL})
 # dataless clock, and NO web tools — `deep_research`'s `sources=library` /
 # `library_first` gather/refill/analyst fans run these so a corpus-scoped run touches
 # the open web only where the mode explicitly allows it (DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md).
-# `search_external_video`/`read_external_video` self-scope their own `external`-domain
-# read, so a child holding them reaches the corpus and nothing owner-authored. Like the
-# web children they are leaves (no `spawn_subagent`) and KB-less. jerv holds both corpus
-# tools, so the parent⊆child clamp keeps them.
-RESEARCH_LIBRARY_TOOLS = frozenset({"search_external_video", "read_external_video", "current_time"})
+# the `external_video` read umbrella self-scopes its own `external`-domain read, so a child
+# holding it reaches the corpus and nothing owner-authored. Like the web children they are
+# leaves (no `spawn_subagent`) and KB-less. jerv holds `external_video`, so the parent⊆child
+# clamp keeps it; show/remove are separate tools, never granted here.
+RESEARCH_LIBRARY_TOOLS = frozenset({"external_video", "current_time"})
 REVIEW_LIBRARY_TOOLS = RESEARCH_LIBRARY_TOOLS
 # research_reports / review_reports children: the research-REPORT library read tools and the
 # dataless clock, and NO web tools — `deep_research`'s `sources=reports` (the compare-from-
 # library family) gather/refill/analyst/critique fans run these so the run reads ONLY the
-# owner's stored deep-research reports and never the open web. The read tools self-scope their
-# own `external`-domain read (the same corpus domain as the reports), so a child holding them
+# owner's stored deep-research reports and never the open web. The read umbrella self-scopes its
+# own `external`-domain read (the same corpus domain as the reports), so a child holding it
 # reaches the report library and nothing owner-authored. Leaves (no `spawn_subagent`), KB-less;
-# jerv holds all three read tools, so the parent⊆child clamp keeps them. `show_`/`remove_` are
-# deliberately excluded — a sub-agent needs only to find and read, never to render a card to the
-# owner or stage a deletion.
-RESEARCH_REPORTS_TOOLS = frozenset(
-    {"search_research_report", "read_research_report", "list_research_report", "current_time"}
-)
+# jerv holds `research_report`, so the parent⊆child clamp keeps it. show_/remove_ are separate
+# tools, never granted here — a sub-agent needs only to find and read, never to render a card to
+# the owner or stage a deletion (the read-only umbrella is exactly that boundary).
+RESEARCH_REPORTS_TOOLS = frozenset({"research_report", "current_time"})
 REVIEW_REPORTS_TOOLS = RESEARCH_REPORTS_TOOLS
 # summarize: a pure transform — no tools at all, so it cannot reach the web and
 # cannot spawn.

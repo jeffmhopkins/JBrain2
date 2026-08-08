@@ -5,11 +5,8 @@ run_editor_turn orchestration (prose -> reply, empty -> None) with an empty regi
 from typing import Any
 
 from jbrain.agent.externaltools import build_external_handlers
-from jbrain.agent.federalregistertools import build_federal_register_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
-from jbrain.agent.identitytools import build_resolve_identity_handlers
-from jbrain.agent.providerlicensetools import build_provider_license_handlers
 from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
@@ -159,13 +156,13 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
         stub,  # device repo
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
-            **build_grokipedia_handlers(GrokipediaClient()),  # grokipedia_* sidecars
-            **build_public_records_handlers(CourtListenerClient("")),  # public_records sidecar
-            **build_resolve_identity_handlers(WikidataClient("")),  # resolve_identity sidecar
-            **build_provider_license_handlers(NppesClient("")),  # provider_license sidecar
-            **build_federal_register_handlers(
-                FederalRegisterClient("")
-            ),  # federal_register sidecar
+            **build_grokipedia_handlers(GrokipediaClient()),  # grokipedia umbrella sidecar
+            **build_public_records_handlers(  # public_records umbrella sidecar
+                CourtListenerClient(""),
+                WikidataClient(""),
+                NppesClient(""),
+                FederalRegisterClient(""),
+            ),
             **build_weather_handlers(WeatherClient("", ""), stub),
             **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(
@@ -176,7 +173,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
                 NwsClient(""),
                 NhcSurgeClient(""),
             ),
-            **build_external_handlers(stub, stub),  # search_external_video + check_channel sidecars
+            **build_external_handlers(stub, stub),  # external_video + check_channel sidecars
             **build_research_report_handlers(stub, stub),  # *_research_report sidecars
         },
         stub,  # city geocoder

@@ -98,18 +98,9 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "compare_images",
             "ocr",
             "read_artifact",
-            "grokipedia_search",
-            "grokipedia_outline",
-            "grokipedia_section",
-            "grokipedia_citations",
-            "grokipedia_related",
+            "grokipedia",
             "public_records",
-            "resolve_identity",
-            "provider_license",
-            "federal_register",
-            "search_external_video",
-            "list_external_video",
-            "read_external_video",
+            "external_video",
             "show_external_video",
             "remove_external_video",
             "check_channel",
@@ -122,9 +113,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "deep_produce",
             "decompose_research",
             "deepest_research",
-            "list_research_report",
-            "search_research_report",
-            "read_research_report",
+            "research_report",
             "show_research_report",
             "remove_research_report",
         }
@@ -239,7 +228,7 @@ def test_library_subagent_personas_are_corpus_sandboxed_and_kb_less() -> None:
     assert (
         research_lib.tools
         == RESEARCH_LIBRARY_TOOLS
-        == frozenset({"search_external_video", "read_external_video", "current_time"})
+        == frozenset({"external_video", "current_time"})
     )
     assert review_lib.tools == REVIEW_LIBRARY_TOOLS == RESEARCH_LIBRARY_TOOLS
     for p in (research_lib, review_lib):
@@ -337,8 +326,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v39",
-            "3bb8e5475810efa4b4892932889b8bd6cfd2ebf0fe10664273d1a7283d2c4ccf",
+            "agent-jerv-v41",
+            "fbc9e3b100ae2eeb9abf09c1b29b0c1383d8bac225fe23fce4ec0064c5ee1916",
         ),
         "archivist": (
             "agent-archivist-v6",
@@ -361,24 +350,24 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "fb03cdd6ff8198855e006cf0ee22de93d2384457cd23fe4f25607ef207f31c38",
         ),
         "research_library": (
-            "agent-research-library-v2",
-            "d6420ca2f0af7979204d6cc92f3528bd55818e63290cb3eae60c0d885705e0c3",
+            "agent-research-library-v3",
+            "06c905079178e08f85625be14236d71737a9513f4b3d6f87d8492b4742c47e24",
         ),
         "review_library": (
-            "agent-review-library-v1",
-            "dfe6a297ac32de73ffafbb2f3910e47698698268d64787b8d744cb44c56a010c",
+            "agent-review-library-v2",
+            "f3123fdde9bfbe360e67d5c56812f7a72d55cf25a744d1788f4f7380f0a29564",
         ),
         "research_deep": (
             "agent-research-deep-v2",
             "f155cd5e2a114c3403c295801e6080a7de3c632030ccff81e49ebf0bc166d643",
         ),
         "research_reports": (
-            "agent-research-reports-v1",
-            "2707dabb4490eb7da1b3594545efdc8672d18e1e33331c6ea6c37bf207d93f71",
+            "agent-research-reports-v2",
+            "ac162af1e86c43e73b8285ed9cb6ea3e8d3cff7ed498d413dc392ecd93e98baf",
         ),
         "review_reports": (
-            "agent-review-reports-v1",
-            "8c7e0a35abc45d9c6b2587f53a4c75b1deeb6dda6e0fa54328cc8d66b26efa56",
+            "agent-review-reports-v2",
+            "487ddb5461ab4b7040bcc894ca13d6d0819632c624ee8c1a0518ce90fbad24df",
         ),
     }
     assert set(pins) == AGENT_NAMES

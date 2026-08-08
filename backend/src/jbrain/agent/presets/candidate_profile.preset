@@ -36,13 +36,14 @@ objective: |
     Where a section has no supporting findings, KEEP its heading and write the single line
     "Not established — no supporting source found as of the run date."
   - USE EVERY NAME THE RECORD REVEALS. Establish the candidate's full legal name AND any prior,
-    maiden, married, or alternate names EARLY. Run `resolve_identity` (Wikidata) FIRST to harvest
-    the canonical name and every alias/aka/maiden/former name it records; also mine the FEC
-    committee's treasurer/candidate field, an official bio, news, and court records, which
-    frequently expose one. Treat EACH name as a REQUIRED search key: re-run `provider_license`
-    (for a physician or clinician — it returns license number/state/specialty and any
-    other_names), `public_records` (CourtListener), and `federal_register` (agency
-    debarments/enforcement) under EVERY variant before any "no record" statement. A profile that
+    maiden, married, or alternate names EARLY. Run `public_records(name, sources=["identity"])`
+    (Wikidata) FIRST to harvest the canonical name and every alias/aka/maiden/former name it
+    records; also mine the FEC committee's treasurer/candidate field, an official bio, news, and
+    court records, which frequently expose one. Treat EACH name as a REQUIRED search key: re-run
+    `public_records` under EVERY variant — its `license` source (for a physician/clinician:
+    license number/state/specialty + other_names), `court` source (CourtListener), and
+    `federal_register` source (agency debarments/enforcement) — before any "no record" statement.
+    A profile that
     surfaces an alias in one section (e.g. a committee treasurer named differently from the ballot
     name) but asserts "no license / no record" in another section WITHOUT having searched that
     alias is DEFECTIVE — reconcile the two and search the alias before writing. A professional
@@ -178,14 +179,15 @@ angles:
       Compile a rigorously sourced, FAIRLY LABELED record of {{candidate}}'s controversies,
       legal matters, and detrimental public record for the {{office}} race — an accountability
       record, NOT a rumor mill. FIRST establish the candidate's full legal name and EVERY prior,
-      maiden, married, or alternate name — run `resolve_identity` (Wikidata) to harvest the aliases,
-      and also mine the FEC committee's treasurer/candidate field, the candidate's own bio,
-      "formerly known as" mentions, and any court or license record — because a professional license,
-      disciplinary action, or criminal case is frequently filed under a PRIOR or MAIDEN name rather
-      than the ballot name. Then run EVERY category search below under EACH name variant, not just the
-      ballot name, using `provider_license` (NPPES — a clinician's license number/state/specialty and
-      any other_names; NOTE it carries no discipline, so take the license + state to the state board),
-      `public_records` (CourtListener), and `federal_register` (agency debarments/enforcement).
+      maiden, married, or alternate name — run `public_records(name, sources=["identity"])` (Wikidata)
+      to harvest the aliases, and also mine the FEC committee's treasurer/candidate field, the
+      candidate's own bio, "formerly known as" mentions, and any court or license record — because a
+      professional license, disciplinary action, or criminal case is frequently filed under a PRIOR or
+      MAIDEN name rather than the ballot name. Then run EVERY category search below under EACH name
+      variant, not just the ballot name, using `public_records` — its `license` source (NPPES — a
+      clinician's license number/state/specialty and any other_names; NOTE it carries no discipline, so
+      take the license + state to the state board), `court` source (CourtListener), and
+      `federal_register` source (agency debarments/enforcement).
       Reject any record you cannot confirm belongs to this exact person (common-name mix-ups are the
       top error), but do NOT assert "no license / no record" for a name you never actually searched. If a state license or court portal returns
       nothing readable, treat it as "not verifiable via that source", try the portal's result/detail

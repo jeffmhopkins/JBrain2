@@ -337,8 +337,8 @@ def _resume_message(title: str, url: str) -> str:
         f"owner's video library ({url}), and the owner already sees its frames and "
         "transcript on the analysis card above. That finished analysis IS what the owner "
         "asked for (the frame sampling and transcription) — do NOT analyze this video "
-        "again. If answering needs its content, call read_external_video with that url to "
-        "read the summary and transcript, then reply."
+        "again. If answering needs its content, call external_video(action=read) with that "
+        "url to read the summary and transcript, then reply."
     )
 
 

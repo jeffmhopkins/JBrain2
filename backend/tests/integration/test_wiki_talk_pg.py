@@ -13,11 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain.agent.externaltools import build_external_handlers
-from jbrain.agent.federalregistertools import build_federal_register_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
-from jbrain.agent.identitytools import build_resolve_identity_handlers
-from jbrain.agent.providerlicensetools import build_provider_license_handlers
 from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
@@ -394,13 +391,13 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         stub,  # device repo
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
-            **build_grokipedia_handlers(GrokipediaClient()),  # the grokipedia_* sidecars' handlers
-            **build_public_records_handlers(CourtListenerClient("")),  # the public_records sidecar
-            **build_resolve_identity_handlers(WikidataClient("")),  # the resolve_identity sidecar
-            **build_provider_license_handlers(NppesClient("")),  # the provider_license sidecar
-            **build_federal_register_handlers(
-                FederalRegisterClient("")
-            ),  # federal_register sidecar
+            **build_grokipedia_handlers(GrokipediaClient()),  # the grokipedia umbrella handler
+            **build_public_records_handlers(  # the public_records umbrella handler
+                CourtListenerClient(""),
+                WikidataClient(""),
+                NppesClient(""),
+                FederalRegisterClient(""),
+            ),
             **build_weather_handlers(WeatherClient("", ""), stub),
             **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(

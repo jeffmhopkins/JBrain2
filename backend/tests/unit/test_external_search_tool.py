@@ -14,7 +14,14 @@ _CTX = ToolContext(session=SessionContext(principal_id="owner", principal_kind="
 
 
 def _handler():
-    return build_external_handlers(object(), object())["search_external_video"]  # type: ignore[arg-type]
+    # search is now action=search on the external_video umbrella; inject it so the call sites
+    # below stay per-arg.
+    umb = build_external_handlers(object(), object())["external_video"]  # type: ignore[arg-type]
+
+    async def search(args: dict, ctx):  # type: ignore[no-untyped-def]
+        return await umb({**args, "action": "search"}, ctx)
+
+    return search
 
 
 async def _run(monkeypatch, hits, degraded, args):
@@ -77,14 +84,19 @@ async def test_degraded_note_when_embed_down(monkeypatch) -> None:
 async def test_empty_and_blank_query(monkeypatch) -> None:
     # A blank query no longer dead-ends — it points at the browse/count tool.
     blank = await _run(monkeypatch, [], False, {"query": "   "})
-    assert "non-empty query" in blank and "list_external_video" in blank
+    assert "non-empty query" in blank and "action=list" in blank
     assert await _run(monkeypatch, [], False, {"query": "nothing"}) == (
         "No videos in the library matched 'nothing'."
     )
 
 
 def _list_handler():
-    return build_external_handlers(object(), object())["list_external_video"]  # type: ignore[arg-type]
+    umb = build_external_handlers(object(), object())["external_video"]  # type: ignore[arg-type]
+
+    async def list_(args: dict, ctx):  # type: ignore[no-untyped-def]
+        return await umb({**args, "action": "list"}, ctx)
+
+    return list_
 
 
 async def _run_list(monkeypatch, videos, total, args, *, expect_offset=None):

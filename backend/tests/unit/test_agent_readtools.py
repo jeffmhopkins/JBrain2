@@ -5,12 +5,9 @@ from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.externaltools import build_external_handlers
-from jbrain.agent.federalregistertools import build_federal_register_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
-from jbrain.agent.identitytools import build_resolve_identity_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
-from jbrain.agent.providerlicensetools import build_provider_license_handlers
 from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import (
     TOOLS_DIR,
@@ -788,10 +785,12 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_grokipedia_handlers(GrokipediaClient()),
-            **build_public_records_handlers(CourtListenerClient("")),
-            **build_resolve_identity_handlers(WikidataClient("")),
-            **build_provider_license_handlers(NppesClient("")),
-            **build_federal_register_handlers(FederalRegisterClient("")),
+            **build_public_records_handlers(
+                CourtListenerClient(""),
+                WikidataClient(""),
+                NppesClient(""),
+                FederalRegisterClient(""),
+            ),
             **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
             **build_weather_history_handlers(
                 WeatherHistoryClient(""),
@@ -826,31 +825,19 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
-        # The Grokipedia tools are `web`-classed (jerv-only): search/traverse xAI's
-        # encyclopedia and pull citations, never offered to the curator wildcard.
-        "grokipedia_search",
-        "grokipedia_outline",
-        "grokipedia_section",
-        "grokipedia_citations",
-        "grokipedia_related",
-        # public_records is `web`-classed (jerv-only): free court-records search by name,
-        # never offered to the curator wildcard.
+        # The Grokipedia umbrella is `web`-classed (jerv-only): search/traverse xAI's
+        # encyclopedia and pull citations via grokipedia(action=…), never the curator wildcard.
+        "grokipedia",
+        # The public_records umbrella is `web`-classed (jerv-only): free keyless records
+        # lookups by name across court/identity/license/federal_register via
+        # public_records(sources=…), never offered to the curator wildcard.
         "public_records",
-        # The keyless identity/license/enforcement lookups (jerv-only), `web`-classed like
-        # public_records — never offered to the curator wildcard.
-        "resolve_identity",
-        "provider_license",
-        "federal_register",
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
-        # search_external_video is `web`-classed (jerv-only), reading the external-source
-        # video corpus via a purpose-built scope, never the curator wildcard.
-        "search_external_video",
-        # list_external_video is `web`-classed (jerv-only): enumerate/count the whole library.
-        "list_external_video",
-        # read_external_video is `web`-classed (jerv-only): one library video's full transcript.
-        "read_external_video",
+        # external_video is the `web`-classed (jerv-only) read umbrella (search/list/read) over
+        # the external-source video corpus, via a purpose-built scope, never the curator wildcard.
+        "external_video",
         # show_external_video is `web`-classed (jerv-only): the video-analysis card from corpus.
         "show_external_video",
         # remove_external_video is `web`-classed (jerv-only): stages an owner-approved removal.
@@ -873,9 +860,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # The deep-research report library (docs/plans/DEEP_RESEARCH_TOOL_PLAN.md) —
         # `web`-classed (jerv-only), reading/managing the research-report corpus via a
         # purpose-built scope, never the curator wildcard.
-        "search_research_report",
-        "list_research_report",
-        "read_research_report",
+        "research_report",
         "show_research_report",
         "remove_research_report",
         # jerv's per-conversation planning tools are `web`-classed (jerv-only), over the
@@ -966,30 +951,10 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "b67c76b8f8bf8a7a0910fbbaed57d35332c787bec7c9408c07219b3acc982ac4",
         ),
-        "grokipedia_search.tool": (
-            "grokipedia_search",
+        "grokipedia.tool": (
+            "grokipedia",
             1,
-            "c5d376f1f08c5097273db93e53f84ab5e0a968217191cbf70438dc18a1e55de6",
-        ),
-        "grokipedia_outline.tool": (
-            "grokipedia_outline",
-            1,
-            "f364b023c27a6ea8e348d3b0401214e932c046004aeddfb699b54dc4cd6cc4cf",
-        ),
-        "grokipedia_section.tool": (
-            "grokipedia_section",
-            1,
-            "fcdf6485b1de9156c8e80f3658b01bb729f850f3437ca55da41bda28d2dc4cb5",
-        ),
-        "grokipedia_citations.tool": (
-            "grokipedia_citations",
-            1,
-            "144cb472fd75fe3a0318efa07b957f3b7d10a517062e45f9ea79187e3a557624",
-        ),
-        "grokipedia_related.tool": (
-            "grokipedia_related",
-            1,
-            "e20ede495b4a2a5f2aa5c66a3e083402ebd853b4a8f89c5296936e3e50c4764d",
+            "7475a67b414381014de6a2f77b68568e709c97cd12db5db0a8663bc07d85a7c4",
         ),
         "read_note.tool": (
             "read_note",
@@ -1223,28 +1188,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_fetch.tool": (
             "web_fetch",
-            9,
-            "d3cadfcb9b085f52e48f15747078df317e3dc3859f8c690e6d08b3704d87b1fb",
+            10,
+            "3f6c4afaa4fe76a171165bcd9ff43e6df9afb6c31f1a556fa9dd1ca561949894",
         ),
         "public_records.tool": (
             "public_records",
-            2,
-            "a66fe8112bc2d7cbaa3c4f1722e63e501700bc484adf21ed0083a5a4e8f2e6f0",
-        ),
-        "resolve_identity.tool": (
-            "resolve_identity",
-            1,
-            "a91ab924fd314701c6a96ecd28aac0c2f88f8d3b71ab16ffaa0fcaf984bade1c",
-        ),
-        "provider_license.tool": (
-            "provider_license",
-            1,
-            "52ce0f3cb773ed07f0c0274b866ab41f466b91b5ee6586116c87c56c4410cc5d",
-        ),
-        "federal_register.tool": (
-            "federal_register",
-            1,
-            "06782218dfde12cb981f882166373ffbc35fa95f83adf17d098242e86f3866b9",
+            3,
+            "ead166e6bfbbfa2fe0fbd142205e2b135602ccccb15d41d7df010253eb32a5f6",
         ),
         "read_artifact.tool": (
             "read_artifact",
@@ -1381,30 +1331,20 @@ def test_sidecars_pinned_to_their_versions() -> None:
             5,
             "0951333387033c01df060fe90a71058d3414ec6edd22e1c44ef8bb01f417a744",
         ),
-        "search_external_video.tool": (
-            "search_external_video",
-            2,
-            "35980730d691617a57fde6bc07a112ccb8db0ba49b071e4c274f1fb0aeb0251c",
-        ),
-        "list_external_video.tool": (
-            "list_external_video",
+        "external_video.tool": (
+            "external_video",
             1,
-            "21e6ff676f81063cb5022512377db4c7dff31a6595e2253fcbc787bc3f29cb3a",
-        ),
-        "read_external_video.tool": (
-            "read_external_video",
-            3,
-            "b5318150729b5e701ab90a1887c84b66c5c973bab78816df7c554d2735b2b23d",
+            "165762263ead61ac986195cf769f6cd26e1247e9e50c0e58b838599648cb00e1",
         ),
         "show_external_video.tool": (
             "show_external_video",
             1,
-            "5c5cc42b9573683f5fad58fb0ecf10d91a4778ca46d184d7c0060a4cfaa28571",
+            "71d6c7ae15fa33195fdccd85ed80d2bb93146a6bd16009354e626cb20bf24602",
         ),
         "remove_external_video.tool": (
             "remove_external_video",
             1,
-            "05c37cc6bec361537c5699ff07e276e399b72103c7514a8392863b3dda0fdbbf",
+            "1cc3d5e411aa14afeffdb6521611f9ff1d7e42286f7c69690456202a672d2797",
         ),
         "check_channel.tool": (
             "check_channel",
@@ -1431,30 +1371,20 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "2ce3fab6919ea95b910dcfee09a0862707fb7f6745d81661a45e6f9ed64e62e4",
         ),
-        "list_research_report.tool": (
-            "list_research_report",
+        "research_report.tool": (
+            "research_report",
             1,
-            "bfa298bd6a8dea64295f7fbaf36a3fad1d9b782bd49057764f688e5c4ef459c8",
-        ),
-        "search_research_report.tool": (
-            "search_research_report",
-            1,
-            "abf2b04a88333f8dc6bfe135b8d38cbdfc6c18c7af4d9477fe01c7387eeb53e3",
-        ),
-        "read_research_report.tool": (
-            "read_research_report",
-            1,
-            "19522ba829bba3570b0f5f46127d88892f160d273d5b6eb947bd7ae38ad7722d",
+            "7b4f1e2ef52b2ce5d24573003351a63f22850df57cffab40ea1f8bc917d9776b",
         ),
         "show_research_report.tool": (
             "show_research_report",
             1,
-            "20ed01ffe32a026231c7c1e36e8160f85ac986b029a3bfe77de86788393aa0a6",
+            "02b1f6917c2974c4be7b6ccb864feb847d10f64c7ef7e63f8c5fd3ee9151b660",
         ),
         "remove_research_report.tool": (
             "remove_research_report",
             1,
-            "7450bd163900253dde202db50eb7a4581e12985480b25fddb2c3f75371c0e91c",
+            "929e5c7f2db8bd613c4a96825eaa3d7e23098c1f6d561f01195b0b39f0939543",
         ),
         "read_plan.tool": (
             "read_plan",

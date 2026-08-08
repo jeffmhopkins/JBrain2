@@ -1,6 +1,6 @@
 ---
 name: web_fetch
-version: 9
+version: 10
 permission: web
 params:
   type: object
@@ -83,7 +83,7 @@ transcript when it has captions. That transcript IS the complete spoken content:
 whole thing, page through every window with offset (the reply names the exact next offset and
 how much remains) until the end, and quote only what the windows actually contain — never
 summarize or invent transcript you did not read. Do NOT reach for analyze_video, analyze_stream,
-search_external_video, or read_external_video to get a transcript captions already provide here:
+or external_video (action=search/read) to get a transcript captions already provide here:
 those read a video's frames, or a video ALREADY analysed into the owner's library, not an
 arbitrary URL. Reach for analyze_video/analyze_stream only when a video has NO captions or its
 visuals (not just the words) matter. A page you fetch is remembered for the rest of this chat —

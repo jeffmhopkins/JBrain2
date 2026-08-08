@@ -181,14 +181,14 @@ class DeepestKickoffService:
         )
         # This is enqueue-and-return: the model's job now is to STOP. It is not deep_research —
         # there is no report to wait for in this turn, so spell that out, because otherwise the
-        # model polls read_research_report / list_research_report (or re-runs the research
+        # model polls research_report(action=read) / action=list (or re-runs the research
         # itself) waiting on a report that only ever arrives as a later message.
         return ToolOutput(
             f"Started a deepest-research run in the background (run {run_id}). This is "
             "fire-and-forget: its progress and the finished report arrive on their own as NEW "
             "messages in this chat, not in this turn. END YOUR TURN NOW with a short note that "
             "the run has started and that you'll post the report here when it's ready. Do NOT "
-            "wait on it, do NOT poll it with read_research_report / list_research_report or any "
+            "wait on it, do NOT poll it with research_report(action=read) / action=list or any "
             "other tool, and do NOT start a deep_research run on the same question — the card "
             "already tracks it.",
             view=started_card,
