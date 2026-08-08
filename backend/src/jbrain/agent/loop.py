@@ -478,6 +478,23 @@ class AgentLoop:
             log.warning("agent.hidden_tools_probe_failed", exc_info=True)
             return ()
 
+    async def _hide_tool_round_text(self) -> bool:
+        """Whether a tool-call round's `content` on THIS route is leaked thinking to hide, not
+        the answer. The local gpt-oss harmony route (served via llama.cpp) sometimes emits a
+        tool-call round's ANALYSIS on the `content` channel instead of `reasoning_content` — seen
+        after a tool result in a multi-tool turn — so that round's "content" is the model's
+        reasoning, which then got glued in front of the real reply. Harmony has no Claude-style
+        interleaved final text: a tool-call message carries analysis + the call, never a
+        user-facing preamble. So for the local route a tool-round's content is ALWAYS reasoning
+        and is routed to the thinking trace, never the answer; a hosted model (Claude, Grok) that
+        legitimately narrates before a tool call is left untouched. Never raises — a routing
+        hiccup degrades to keeping the text (the prior behaviour)."""
+        try:
+            provider, _model = await self._router.effective_spec(self._task, SYSTEM_STRENGTH)
+        except Exception:  # noqa: BLE001 - a routing hiccup must never break a turn
+            return False
+        return provider == "local"
+
     @staticmethod
     def _tree_exhausted(tree: TreeState | None, depth: int) -> bool:
         """Whether this loop must stop on the shared tree budget (Wave S2). The root
@@ -842,9 +859,17 @@ class AgentLoop:
         surfaced_sources: list[NoteSource] = []
         surfaced_entities: list[EntityRef] = []
         mutated = False
+        # The local gpt-oss route leaks a tool-round's analysis onto the content channel; buffer
+        # that round's text and route it to the thinking trace instead of the answer (see
+        # `_hide_tool_round_text`). A hosted model keeps its live per-chunk stream byte-for-byte.
+        hide_tool_round_text = await self._hide_tool_round_text()
 
         for _step in range(self._g.max_steps):
             turn: LlmTurn | None = None
+            # On the local route we can't classify this round's content until its stop_reason
+            # arrives (a tool call is signalled only at the end), so buffer the round's text and
+            # commit it once we know whether the round is a tool call (hide) or the answer (show).
+            round_text: list[str] = []
             async for part in self._router.converse_stream(
                 self._task,
                 system=system_prompt,
@@ -856,8 +881,11 @@ class AgentLoop:
             ):
                 if isinstance(part, TextChunk):
                     if part.text:
-                        answer_parts.append(part.text)
-                        yield TextDelta(text=part.text)
+                        if hide_tool_round_text:
+                            round_text.append(part.text)
+                        else:
+                            answer_parts.append(part.text)
+                            yield TextDelta(text=part.text)
                 elif isinstance(part, ReasoningChunk):
                     # The model's thinking trace — streamed to the PWA's "thinking"
                     # disclosure, never added to the answer or the grounding corpus.
@@ -865,6 +893,16 @@ class AgentLoop:
                         yield ReasoningDelta(text=part.text)
                 else:
                     turn = part
+            if turn is not None and hide_tool_round_text and round_text:
+                # Commit the buffered round now that its stop_reason is known: a tool-call round's
+                # content is leaked harmony analysis → show it as thinking, never the answer; the
+                # final (non-tool) round's content IS the answer.
+                round_content = "".join(round_text)
+                if turn.stop_reason == "tool_use" and turn.tool_calls:
+                    yield ReasoningDelta(text=round_content)
+                else:
+                    answer_parts.append(round_content)
+                    yield TextDelta(text=round_content)
             if turn is None:
                 # The adapter always closes a stream with an LlmTurn; guard the
                 # contract anyway rather than dereference None.
@@ -1205,6 +1243,9 @@ class AgentLoop:
         mutated = False
         idx = 0
         spent = 0
+        # Local gpt-oss route: a tool-call round's content is leaked harmony analysis, not the
+        # answer — route it to the thinking trace (see `_hide_tool_round_text`).
+        hide_tool_round_text = await self._hide_tool_round_text()
 
         for _step in range(self._g.max_steps):
             turn = await self._router.converse(
@@ -1235,8 +1276,13 @@ class AgentLoop:
                 # whole thinking trace before the answer. Never enters answer_parts.
                 events.append(ReasoningDelta(text=turn.reasoning))
             if turn.text:
-                answer_parts.append(turn.text)
-                events.append(TextDelta(text=turn.text))
+                if hide_tool_round_text and turn.stop_reason == "tool_use" and turn.tool_calls:
+                    # A tool-call round's content on the local route is leaked analysis — replay
+                    # it as thinking, never glue it in front of the real answer.
+                    events.append(ReasoningDelta(text=turn.text))
+                else:
+                    answer_parts.append(turn.text)
+                    events.append(TextDelta(text=turn.text))
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 return _BufferedTurn(
