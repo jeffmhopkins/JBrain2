@@ -1,6 +1,6 @@
 ---
 name: render_bars
-version: 2
+version: 3
 permission: read
 params:
   type: object
@@ -50,7 +50,9 @@ or several lines) use `render_chart`.
 
 It renders exactly the numbers you pass, so this is a **general** artifact for figures you
 assembled yourself — a tally you counted, a public breakdown you looked up. Those numbers must come
-from something you actually read this turn; say where in your reply. Do NOT use it to re-plot the
-owner's recorded measurements or lab results — those have grounded, cited tools (`chart_measurements`,
+from something you actually read this turn; say where in your reply. The bar card the owner sees
+shows every category and value, so do NOT list the bars back in prose — give the takeaway (the
+ranking, the standout) and say where the numbers came from. Do NOT use it to re-plot the owner's
+recorded measurements or lab results — those have grounded, cited tools (`chart_measurements`,
 `read_labs`) that trace each value to a note. If there aren't at least two categories (or two series),
 no graph is drawn and the tool says so rather than inventing one.
