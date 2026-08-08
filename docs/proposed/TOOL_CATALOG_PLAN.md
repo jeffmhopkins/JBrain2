@@ -1,10 +1,17 @@
 # Tool Catalog — a scalable tool surface for a growing tool count
 
-> **Status:** Proposed (revised after independent review) · **Last verified:** 2026-08-08 ·
-> **Waves:** W0◻️ W1◻️ W2◻️ W3◻️
-> Recommended sequencing after review: **ship W0 + W1 as their own deliverable now**; **gate
-> W2/W3** (the catalog machinery) behind a pre-built selection-accuracy eval and resolving the
-> mode-(a) / native-tool-calling contradiction in §7. See §10.
+> **Status:** In progress (W1 shipped) · **Last verified:** 2026-08-08 ·
+> **Waves:** W0◻️ W1✅ W2◻️ W3◻️
+> **W1 (umbrellas) is shipped** — the four action/source families collapsed with no capability
+> change and no measurable tool-selection regression on the live gpt-oss-120b (validated first via
+> the `/api/debug/tool-probe` harness, then per-family): `grokipedia` (5→1),
+> `public_records` (4→1 fan-out over identity/court/license/federal_register), `research_report`
+> reads (3→1, show/remove kept separate), `external_video` reads (3→1, show/remove/check_channel
+> kept separate). jerv's tool surface: **48 → 37**. The read-umbrella + separate-destructive split
+> preserves the sub-agent parent⊆child clamp (a library/report child holds only the read umbrella).
+> Remaining: **W0** (trim the fattest descriptions; the family/summary metadata decision in §5) and
+> the **gated W2/W3** (the catalog machinery) — behind a pre-built selection-accuracy eval and
+> resolving the mode-(a) / native-tool-calling contradiction in §7. See §10.
 > (W0 = metadata + trim; W1 = umbrella-consolidate source/action families; W2 = the catalog:
 > always-on menu + hot core + `tool_guide`-before-call + auto-load-on-miss; W3 = tune the hot
 > core, migrate remaining families, measure.)
