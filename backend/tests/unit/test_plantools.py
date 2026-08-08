@@ -84,6 +84,44 @@ def test_normalize_plan_body_flattens_to_checkboxes() -> None:
     assert normalize_plan_body("") == ""
 
 
+def test_normalize_plan_body_keeps_a_notes_section_as_prose() -> None:
+    """A trailing notes section (`**Notes**:`, `## Caveats`, …) is jerv's explanatory prose, NOT
+    steps — its bullets must stay bullets so they render as notes, not as extra checkboxes that
+    inflate the step count and feed non-actions ('Await your approval before starting') into the
+    loop. The checklist above it still flattens to `- [ ]` steps. Regression guard for the
+    candidate-report plan whose 3 notes became 3 phantom steps (0 of 8 instead of 0 of 5)."""
+    body = (
+        "- [ ] Run deep_research for Chris Gleason\n"
+        "- [ ] Run deep_research for Ashley Moody\n"
+        "\n"
+        "**Notes**:\n"
+        "- Each deep_research call produces a cited report saved to the library.\n"
+        "- The compare step will pull those reports.\n"
+        "- Await your approval before starting."
+    )
+    out = normalize_plan_body(body)
+    # Only the two real steps are checklist items…
+    assert out.count("- [ ]") == 2
+    # …the notes stayed prose bullets (never turned into `- [ ]` steps).
+    assert "- Each deep_research call produces" in out
+    assert "- Await your approval before starting" in out
+    assert "- [ ] Await your approval" not in out
+    assert has_open_checklist_item(out)  # still has real work
+    # The loop's step scan sees exactly the two steps, not the notes.
+    assert normalize_plan_body(out) == out  # idempotent
+
+
+def test_normalize_plan_body_recognizes_notes_headings_but_not_step_text() -> None:
+    """The prose-section trigger is a bare label (`**Notes**`, `## Caveats`, `Notes:`), so it
+    stops flattening — but a real step that merely starts with 'Note' is untouched."""
+    for heading in ("**Notes**", "**Notes:**", "## Notes", "Notes:", "### Caveats", "**Tips**"):
+        out = normalize_plan_body(f"- [ ] do it\n{heading}\n- a caveat")
+        assert "- [ ] a caveat" not in out, heading  # the bullet under the heading stays prose
+        assert "- a caveat" in out, heading
+    # A step whose text starts with 'Note' is NOT a prose heading — it stays a real step.
+    assert normalize_plan_body("- Note the FEC deadline") == "- [ ] Note the FEC deadline"
+
+
 async def _noop(arguments: dict, ctx: ToolContext) -> str:
     return ""
 
