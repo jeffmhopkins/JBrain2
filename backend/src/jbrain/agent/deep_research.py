@@ -1438,7 +1438,10 @@ class DeepResearchService:
                 revised=revised,
                 coverage_limited=coverage_limited,
                 truncated=any(r.truncated for r in roster),
-                sources=[{"url": ws.url, "title": ws.title} for ws in sources],
+                # Carry the `read` flag so the stored report distinguishes a page an agent
+                # actually opened from a bare search-listed hit, instead of collapsing every
+                # source to "not opened" in the library card.
+                sources=[{"url": ws.url, "title": ws.title, "read": ws.read} for ws in sources],
                 source_mode=source_mode,
                 tool=tool,
             )

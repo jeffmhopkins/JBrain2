@@ -2063,6 +2063,42 @@ async def test_plain_produce_still_persists_external_no_seed() -> None:
     assert persisted[0]["tool"] == "deep_produce"
 
 
+async def test_persist_carries_the_read_flag_into_the_source_registry(monkeypatch) -> None:  # noqa: ANN001
+    """The persisted source list keeps each source's `read` flag (opened vs. search-listed), so
+    the stored report can tell a page an agent actually read from a bare search hit — rather than
+    collapsing every source to 'not opened' in the library card."""
+    import jbrain.agent.deep_research as dr
+
+    captured: dict = {}
+
+    async def _spy(maker, **kw):  # noqa: ANN001
+        captured.update(kw)
+        return "rid"
+
+    monkeypatch.setattr(dr, "persist_report", _spy)
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    svc._maker = object()  # type: ignore[assignment]  # non-None so _persist runs; _spy is the writer
+    await svc._persist(
+        _ctx(),
+        question="q",
+        report="body",
+        complexity="deep",
+        rounds=1,
+        roster=[],
+        sources=[
+            WebSource(url="https://ex.com/read", title="Read", read=True),
+            WebSource(url="https://ex.com/hit", title="Hit", read=False),
+        ],
+        analyzed=True,
+        revised=True,
+        coverage_limited=False,
+    )
+    assert captured["sources"] == [
+        {"url": "https://ex.com/read", "title": "Read", "read": True},
+        {"url": "https://ex.com/hit", "title": "Hit", "read": False},
+    ]
+
+
 def _critique_brief(spawn: _FakeSpawn) -> str:
     fan = next(
         f
