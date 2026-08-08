@@ -1412,7 +1412,7 @@ class AgentLoop:
                 tool_call_id=call.id,
                 content=(
                     f"{call.name} hit an internal error and did not run. Try a different approach"
-                    " or another tool; if it keeps failing, tell the owner what you were attempting."
+                    " or another tool; if it keeps failing, tell the owner what you attempted."
                 ),
                 is_error=True,
             )
