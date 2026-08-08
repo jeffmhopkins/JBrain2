@@ -566,6 +566,27 @@ export function useFullBrain(
     };
   }, [enabled, activeId, getTranscript, setSessionMessages]);
 
+  // Reconcile the active chat on RESUME from the background. A PWA that was backgrounded
+  // mid-plan doesn't remount and its `activeId` doesn't change, so the id-keyed reload above
+  // never re-fires — plan-continuation turns that landed while hidden stay missing and a stale
+  // "still researching…" streaming bubble lingers (with a runaway elapsed timer), until the
+  // owner switches chats and back. That was the observed "reopen shows an old turn; re-nav
+  // fixes it" bug. On becoming visible again, reload the active chat's settled transcript —
+  // unless a turn is streaming live into it (turnSessionRef), whose in-flight render the stored
+  // transcript doesn't hold yet. A genuinely-live continuation is re-found by the plan poll.
+  useEffect(() => {
+    if (!enabled || activeId === null) return;
+    const onVisible = (): void => {
+      if (document.visibilityState !== "visible") return;
+      if (activeId === turnSessionRef.current) return;
+      getTranscript(activeId)
+        .then((turns) => setSessionMessages(activeId, () => turns.map(fromTurn)))
+        .catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [enabled, activeId, getTranscript, setSessionMessages]);
+
   // Reattach to the active chat's still-running detached turn after a full reload. The
   // session reports `last_run_status === "running"` but this hook lost the in-memory run
   // handle, so without this the live deep-research/fan component never shows and the rail
