@@ -132,7 +132,15 @@ angles:
       Verify {{candidate}}'s stated career, occupations, and offices held for {{office}}, and
       surface documented business conduct. Confirm claimed roles, employers, companies, and
       dates against authoritative sources (Ballotpedia, an official bio, SEC EDGAR if they led
-      a public company, a state business registry). Where they claim a business record ("built
+      a public company, a state business registry). When the candidate RUNS A BUSINESS, open that
+      business's OWN website — its About / Team / leadership / staff-bio page for the principal —
+      as a primary bio source; it frequently carries the individual's own professional license
+      number, prior public-sector jobs, and credentials the campaign "about" page omits. A firm's
+      licensee record documents the ENTITY (the LLC / DBA), not the person — find and report the
+      individual's OWN license, filed under their name, instead of attributing the company's
+      license to them, and report only the degree fields, license numbers, and dates a source
+      actually states (do not infer a "business" major, or a degree type — a Ph.D. is not a DBA —
+      from the office they seek). Where they claim a business record ("built
       a successful company", "created jobs"), state whether public records can confirm it.
       Surface documented business conduct through FREE court records — CourtListener / RECAP
       (courtlistener.com) — for major litigation, bankruptcies, or liens, each labeled by its
@@ -158,6 +166,11 @@ angles:
       organizations, unions, PACs, or newspaper editorial boards — each attributed to WHO gave
       it and dated, with a source (a campaign endorsements page, news coverage, or the
       endorser's own statement); note what each signals about their standing in the party/race.
+      Run a FRESH, DATED endorsement search close to the run date ("{{candidate}} endorsement"
+      plus the current year, and the editorial-board pages of the major papers in the state)
+      rather than trusting a race-analysis aggregator's endorsement field, which lags — a
+      newspaper or officeholder endorsement can land days before the run and be absent from an
+      older summary.
       Report FEC figures as the FEC reports them, dated; a committee is often under the
       candidate's own name (e.g. a "NAME FOR SENATE") — do not conclude none exists until you
       have actually searched the FEC, and if none is found say "no FEC committee found under
@@ -191,7 +204,12 @@ angles:
       Reject any record you cannot confirm belongs to this exact person (common-name mix-ups are the
       top error), but do NOT assert "no license / no record" for a name you never actually searched. If a state license or court portal returns
       nothing readable, treat it as "not verifiable via that source", try the portal's result/detail
-      endpoint or news coverage of the action, and do not conclude the record is absent. Sweep
+      endpoint or news coverage of the action, and do not conclude the record is absent. Also read
+      the candidate's OWN social media (their campaign Facebook / X) for SELF-DISCLOSED financial or
+      legal history — a bankruptcy, lien, or past charge the candidate addresses directly (often
+      rebutting a "hit piece"). A dated self-disclosure is a citable primary statement: record it
+      with its disposition and the candidate's framing, even when no court portal surfaces the
+      underlying matter — omitting a matter the candidate has publicly discussed is itself a gap. Sweep
       accessible PRIMARY sources: free federal
       court records (CourtListener / RECAP, courtlistener.com), FEC enforcement (MUR case
       files), SEC litigation and DOJ press releases, state bar / medical / professional license
