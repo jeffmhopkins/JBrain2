@@ -257,6 +257,32 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     expect(result.current.activeTurn).toBeNull();
   });
 
+  it("reloads the active chat's transcript when the PWA resumes from the background", async () => {
+    // The reopen-staleness bug: a plan continuation lands while the PWA is hidden, but the
+    // id-keyed transcript reload doesn't re-fire (activeId unchanged, no remount), so the new
+    // turn is missing and a stale streaming bubble lingers until the owner switches chats. A
+    // visibilitychange handler reconciles the active chat's transcript on resume.
+    let turns: TranscriptTurn[] = [
+      { role: "user", content: "make a plan", tools: [] },
+      { role: "assistant", content: "plan ready", tools: [] },
+    ];
+    const getTranscript = vi.fn(async (): Promise<TranscriptTurn[]> => turns);
+    const listSessions = vi.fn(async () => [session({ id: "A" })]);
+    const d = deps({ getTranscript, listSessions });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.messages.length).toBe(2));
+
+    // A continuation step lands while hidden — the settled transcript now has a third turn.
+    turns = [...turns, { role: "assistant", content: "Step 1 done", tools: [] }];
+    act(() => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    // On resume the handler refetches, so the missing turn appears without a chat switch.
+    await waitFor(() => expect(result.current.messages.at(-1)?.text).toBe("Step 1 done"));
+    expect(result.current.messages.length).toBe(3);
+  });
+
   it("refreshes the sessions list when a sub-agent spawns (live rail)", async () => {
     async function* chat(): AsyncGenerator<ChatEvent> {
       yield { type: "run", run_id: "r1" };

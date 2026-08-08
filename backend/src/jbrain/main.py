@@ -15,17 +15,21 @@ from jbrain.agent.brainevents import build_event_emitter, build_flag_emitter
 from jbrain.agent.continuation import PlanContinuationRunner, run_plan_continuation_loop
 from jbrain.agent.deepest_tool import DeepestHandle
 from jbrain.agent.externaltools import build_external_handlers
+from jbrain.agent.federalregistertools import build_federal_register_handlers
 from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.grabtools import build_grab_frame_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
+from jbrain.agent.identitytools import build_resolve_identity_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.ocrtools import build_ocr_handlers
 from jbrain.agent.proposals import ProposalRepo
+from jbrain.agent.providerlicensetools import build_provider_license_handlers
+from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.runlog import AgentRunLog, RunLogReader, reap_stranded_loop
@@ -158,16 +162,20 @@ from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
 from jbrain.vision import RapidOcrClient
 from jbrain.web import (
+    CourtListenerClient,
     FaviconFetcher,
+    FederalRegisterClient,
     GrokipediaClient,
     HurricaneClient,
     NhcGisClient,
     NhcSurgeClient,
+    NppesClient,
     NwsClient,
     SearxngClient,
     WeatherClient,
     WeatherHistoryClient,
     WebFetcher,
+    WikidataClient,
 )
 from jbrain.web.youtube import youtube_page
 from jbrain.wiki.actions import WIKI_SPECS
@@ -485,6 +493,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # posture as web_search; a browser UA + cookie jar handle Cloudflare, per-slug cache
         # collapses a drill-down to one fetch.
         web_handlers.update(build_grokipedia_handlers(GrokipediaClient(), emit=brain_emit))
+        # jerv's free public-records lookup (docs/reference/ASSISTANT.md "Agent selection") —
+        # CourtListener opinions + RECAP dockets, searched by name. Merged into the web handlers
+        # so it rides the existing `web` gate, the same sandboxed-web posture as web_search; the
+        # base URL is pinned from config and only a public name goes out. Shared on app.state so
+        # the jcode bridge (like searxng/web_fetcher) can reach the one cached instance.
+        app.state.courtlistener = CourtListenerClient(
+            settings.courtlistener_url, settings.courtlistener_token
+        )
+        web_handlers.update(build_public_records_handlers(app.state.courtlistener, emit=brain_emit))
+        # jerv's keyless identity/alias + license/enforcement lookups (docs/reference/
+        # ASSISTANT.md "Agent selection"): resolve_identity (Wikidata) harvests a person's
+        # aliases so the records/license searches re-run under every name variant;
+        # provider_license (NPPES NPI registry) gives a clinician's license + other_names;
+        # federal_register catches agency debarments/enforcement. All FREE, no key — base URLs
+        # pinned from config, only a public name/term goes out — merged into the web handlers so
+        # they ride the same `web` gate as web_search.
+        app.state.wikidata = WikidataClient(settings.wikidata_url)
+        app.state.nppes = NppesClient(settings.nppes_url)
+        app.state.federal_register = FederalRegisterClient(settings.federal_register_url)
+        web_handlers.update(build_resolve_identity_handlers(app.state.wikidata, emit=brain_emit))
+        web_handlers.update(build_provider_license_handlers(app.state.nppes, emit=brain_emit))
+        web_handlers.update(
+            build_federal_register_handlers(app.state.federal_register, emit=brain_emit)
+        )
         web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
         web_handlers.update(
             build_weather_history_handlers(

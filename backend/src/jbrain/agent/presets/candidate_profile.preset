@@ -35,6 +35,26 @@ objective: |
     did X" unless a researcher actually checked the authoritative source and found nothing.
     Where a section has no supporting findings, KEEP its heading and write the single line
     "Not established — no supporting source found as of the run date."
+  - USE EVERY NAME THE RECORD REVEALS. Establish the candidate's full legal name AND any prior,
+    maiden, married, or alternate names EARLY. Run `resolve_identity` (Wikidata) FIRST to harvest
+    the canonical name and every alias/aka/maiden/former name it records; also mine the FEC
+    committee's treasurer/candidate field, an official bio, news, and court records, which
+    frequently expose one. Treat EACH name as a REQUIRED search key: re-run `provider_license`
+    (for a physician or clinician — it returns license number/state/specialty and any
+    other_names), `public_records` (CourtListener), and `federal_register` (agency
+    debarments/enforcement) under EVERY variant before any "no record" statement. A profile that
+    surfaces an alias in one section (e.g. a committee treasurer named differently from the ballot
+    name) but asserts "no license / no record" in another section WITHOUT having searched that
+    alias is DEFECTIVE — reconcile the two and search the alias before writing. A professional
+    license, disciplinary action, or criminal case is very often filed under a prior/maiden name,
+    not the ballot name.
+  - AN EMPTY PORTAL IS NOT PROOF OF ABSENCE. A government search app (a state license lookup, a
+    court-docket search) that returns nothing readable to the fetch is NOT evidence the record
+    does not exist — a dynamic portal often cannot be read directly. Record such a result as
+    "not verifiable via <source> as of the run date", try an alternate path (the portal's
+    result/detail URL or search endpoint, a cached copy, an official disciplinary-action index,
+    or news coverage of the record) before concluding anything, and NEVER upgrade "the search
+    returned nothing" into "no record exists".
   - NON-INCUMBENT: a first-time candidate has no voting record — say so plainly under "Voting
     & Legislative Record"; never fabricate or infer votes. Run the record-vs-rhetoric contrast
     against their occupations, business conduct, donation history, and prior public statements
@@ -124,6 +144,10 @@ angles:
       IN: search the FEC (fec.gov) by name for their principal committee — report committee
       name + ID, total receipts, cash on hand, individual vs. PAC vs. self-funding, and top
       donors/industries (cross-check OpenSecrets for federal money, FollowTheMoney for state).
+      The committee's treasurer/candidate name field often reveals the candidate's full LEGAL or
+      PRIOR name (e.g. a maiden name that differs from the ballot name) — capture it verbatim and
+      flag it explicitly as a disambiguation key the licensing/court/disciplinary checks must also
+      search under, since a license or case is often filed under that name.
       (b) MONEY GIVEN (revealed preferences): search FEC individual contributions and the
       OpenSecrets donor lookup for donations {{candidate}} has personally MADE — who they have
       funded is a documented signal of alignment; flag any that contradict their current
@@ -153,9 +177,20 @@ angles:
     brief: >-
       Compile a rigorously sourced, FAIRLY LABELED record of {{candidate}}'s controversies,
       legal matters, and detrimental public record for the {{office}} race — an accountability
-      record, NOT a rumor mill. FIRST establish the candidate's full legal name and any aliases
-      to DISAMBIGUATE, and reject any record you cannot confirm belongs to this exact person
-      (common-name mix-ups are the top error). Sweep accessible PRIMARY sources: free federal
+      record, NOT a rumor mill. FIRST establish the candidate's full legal name and EVERY prior,
+      maiden, married, or alternate name — run `resolve_identity` (Wikidata) to harvest the aliases,
+      and also mine the FEC committee's treasurer/candidate field, the candidate's own bio,
+      "formerly known as" mentions, and any court or license record — because a professional license,
+      disciplinary action, or criminal case is frequently filed under a PRIOR or MAIDEN name rather
+      than the ballot name. Then run EVERY category search below under EACH name variant, not just the
+      ballot name, using `provider_license` (NPPES — a clinician's license number/state/specialty and
+      any other_names; NOTE it carries no discipline, so take the license + state to the state board),
+      `public_records` (CourtListener), and `federal_register` (agency debarments/enforcement).
+      Reject any record you cannot confirm belongs to this exact person (common-name mix-ups are the
+      top error), but do NOT assert "no license / no record" for a name you never actually searched. If a state license or court portal returns
+      nothing readable, treat it as "not verifiable via that source", try the portal's result/detail
+      endpoint or news coverage of the action, and do not conclude the record is absent. Sweep
+      accessible PRIMARY sources: free federal
       court records (CourtListener / RECAP, courtlistener.com), FEC enforcement (MUR case
       files), SEC litigation and DOJ press releases, state bar / medical / professional license
       lookups, and congressional or state ethics findings (the GovTrack misconduct database for

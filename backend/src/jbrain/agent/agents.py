@@ -150,6 +150,21 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "grokipedia_section",
         "grokipedia_citations",
         "grokipedia_related",
+        # Free public-records search by name (PUBLIC_RECORDS_TOOL): CourtListener opinions +
+        # RECAP dockets + a judges/officials alias lookup, so a person profile finds
+        # court/disciplinary matters filed under a prior/maiden name that web-only research
+        # misses. `web`-gated like web_search — a pinned public source, no owner data — and
+        # always wired (no config gate).
+        "public_records",
+        # The keyless identity/license/enforcement lookups that pair with public_records for a
+        # person profile — all `web`-gated (pinned public source, no owner data, no API key) and
+        # always wired (no config gate). resolve_identity (Wikidata) harvests a person's aliases
+        # (aka/maiden/former names) so the records searches re-run under each; provider_license
+        # (NPPES NPI registry) returns a clinician's license number/state/specialty + other_names;
+        # federal_register catches agency debarments/enforcement notices by name/term.
+        "resolve_identity",
+        "provider_license",
+        "federal_register",
         # Search the external-source video corpus (analysed YouTube videos). Sandboxed
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).

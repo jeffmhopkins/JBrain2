@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-05
+> **Status:** Living · **Last verified:** 2026-08-08
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -387,6 +387,27 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   table of contents, read a single section without loading the whole page, and pull the
   article's citations as followable primary-source URLs — same sandboxed-web posture as
   `web_search` (a pinned public site, no owner data). The
+  **`public_records`** tool is a `web`-gated, jerv-only free public-records search by
+  name (v1: **CourtListener** — U.S. court opinions + RECAP dockets, a free no-key
+  rate-limited API; `jbrain.web.public_records`, pinned base URL from
+  `JBRAIN_COURTLISTENER_URL`, optional `JBRAIN_COURTLISTENER_TOKEN`). It exists to catch
+  court/disciplinary records filed under a **prior/maiden name** that web-only research
+  misses; the tool prose tells jerv to run it once per name variant and to treat every
+  hit as a **lead to verify** against the primary document (common-name collisions), not
+  a verdict. It also queries CourtListener's **judges/officials `people` DB**, surfacing
+  any `is_alias_of` link (a person filed under a prior name → their canonical record) and
+  positions held. Same sandboxed-web posture as `web_search` — only a public name goes out.
+  Three sibling keyless tools complete the "find the alias, then re-run everything under
+  it" loop for a person profile (`jbrain.web.wikidata` / `nppes` / `federal_register`, all
+  `web`-gated, jerv-only, pinned base URLs from config, **no API key**, descriptive
+  User-Agent where required): **`resolve_identity`** (Wikidata) resolves a name to its
+  canonical entity(ies) and harvests every alias/aka/maiden/former name plus occupation and
+  a few external IDs (an NPI feeds `provider_license`) — the tool to run **first**;
+  **`provider_license`** (NPPES NPI registry) returns a clinician's license
+  number/state/specialty and any `other_names` (a prior/maiden name — the pivot to the right
+  state board), framed plainly as a registry that carries **no disciplinary actions**; and
+  **`federal_register`** searches federal rules/notices, including **FDA/agency debarments**
+  and enforcement, by name or term — each a lead to verify against the notice. The
   **`weather`** tool is a `web`-gated, jerv-only forecast lookup over a pinned
   Open-Meteo upstream (free, no key, run directly like search): it replaces the
   multi-step search-and-scrape weather flow with one call returning a summary plus a
@@ -557,7 +578,11 @@ way it does library videos, since chat history otherwise keeps only jerv's summa
 `web_fetch` is the one genuinely outbound leg, size-capped, with an **SSRF guard** —
 it resolves the host and refuses any private/loopback/link-local target (and re-checks
 every redirect hop), so a model-supplied URL can't read the box's own internal services
-or the cloud metadata endpoint. Extraction is **on-box**: it presents as an ordinary
+or the cloud metadata endpoint. It defaults to a GET but also takes **`method="POST"`**
+(with `body` + `content_type`, JSON or form-encoded) to call a JSON/search API endpoint
+the GET path can't reach — the same SSRF host/redirect guard, a capped request body, no
+reader/solver escalation and no YouTube path (a bare API call); a JSON reply comes back
+pretty-printed and windows like a page. Extraction is **on-box**: it presents as an ordinary
 browser (so a bot-wall is far less likely to 403 it), runs the page through
 **trafilatura** for clean main-content markdown (the dependency-free `htmltext` pass is
 the fallback, and supplies the title + navigation links), and reads a linked **PDF**'s

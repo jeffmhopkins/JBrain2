@@ -44,6 +44,7 @@ bounded stream, so an oversized response cannot be buffered whole into memory.
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 import socket
 from dataclasses import dataclass
@@ -82,6 +83,14 @@ _MAX_IMAGE_BYTES = 10_000_000
 _MAX_CHARS = 30_000
 _MAX_LINKS = 40  # cap the links surfaced for navigation; a link-heavy page is trimmed
 _MAX_REDIRECTS = 4
+# Cap the POST request body (a search/JSON API query). A model-built body is small; this
+# bounds it so an accidental huge payload can't be shipped off-box in one call. The
+# response is bounded by `_read_capped` (`_MAX_BYTES`) like the GET path.
+_MAX_POST_BODY = 64 * 1024
+# The content types a POST body may declare — a JSON payload or an HTML form encoding, the
+# two shapes a search/JSON API endpoint expects. Nothing else (no multipart, no arbitrary
+# type) so the POST path stays a narrow API-call primitive, not a general uploader.
+POST_CONTENT_TYPES = frozenset({"application/json", "application/x-www-form-urlencoded"})
 # When `find` lands the window on a keyword, start a little before the match so the model
 # sees the lead-in (a table header, the sentence introducing the row), not a mid-line cut.
 _FIND_LEAD = 200
@@ -422,14 +431,36 @@ class WebFetcher:
         self._solver_url = solver_url.rstrip("/")
 
     async def fetch(
-        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+        self,
+        url: str,
+        *,
+        offset: int = 0,
+        find: str = "",
+        find_regex: bool = False,
+        method: str = "GET",
+        body: str = "",
+        content_type: str = "application/json",
     ) -> FetchResult:
         """Fetch `url` and return one window of its extracted text. `offset` pages through a
         long page (window = `full_text[offset : offset+_MAX_CHARS]`). `find`, if given, jumps
         the window to the first occurrence of that keyword at/after `offset` and attaches the
         match map — so the model targets the right SECTION of a big page instead of reading
-        (or blindly guessing an offset into) the whole thing."""
+        (or blindly guessing an offset into) the whole thing.
+
+        `method="POST"` sends `body` (with `content_type`) to a JSON/search API endpoint
+        instead of a plain GET — the same SSRF host/redirect guard, no reader/solver
+        escalation (those render a GET URL), no youtube path. A JSON response comes back
+        pretty-printed; anything else is extracted like a text page."""
         offset = max(0, offset)
+        if method.upper() == "POST":
+            return await self._fetch_post(
+                url,
+                body=body,
+                content_type=content_type,
+                offset=offset,
+                find=find,
+                find_regex=find_regex,
+            )
         try:
             result = await self._fetch_direct(url, offset=offset, find=find, find_regex=find_regex)
         except WebFetchError as exc:
@@ -557,6 +588,69 @@ class WebFetcher:
             body_truncated=body_truncated,
         )
 
+    async def _fetch_post(
+        self,
+        url: str,
+        *,
+        body: str,
+        content_type: str,
+        offset: int = 0,
+        find: str = "",
+        find_regex: bool = False,
+    ) -> FetchResult:
+        """POST `body` to `url` and window the response — for hitting a JSON/search API
+        endpoint the GET-only path can't reach. Shares the GET path's SSRF discipline
+        EXACTLY (`_send_following_safe_redirects`: httpx auto-redirect off, every hop's host
+        re-checked), so a POST can't be pointed at the box's own services or 30x its way
+        there. The request body is capped (`_MAX_POST_BODY`) and the response bounded
+        (`_read_capped`) like a GET. No reader/solver escalation (those render a GET URL) and
+        no youtube path — this is a bare API call. A JSON response is returned pretty-printed;
+        any other text body is extracted like an HTML/text page."""
+        payload = body.encode("utf-8")
+        if len(payload) > _MAX_POST_BODY:
+            raise WebFetchError("that POST body is too large to send")
+        headers = {
+            **BROWSER_HEADERS,
+            "Content-Type": content_type,
+            # Ask for JSON first — these endpoints are APIs — but accept a text/HTML body too.
+            "Accept": "application/json, text/html;q=0.9, */*;q=0.8",
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+            ) as client:
+                resp = await self._send_following_safe_redirects(
+                    client, "POST", url, headers=headers, content=payload
+                )
+                resp_content_type = resp.headers.get("content-type", "")
+                final_url = str(resp.url)
+                if not _is_textual(resp_content_type) and "pdf" not in resp_content_type.lower():
+                    await resp.aclose()
+                    kind = resp_content_type or "unknown"
+                    raise WebFetchError(f"that endpoint did not return a text response ({kind})")
+                raw, body_truncated = await _read_capped(resp)
+        except httpx.HTTPError as exc:
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            log.warning("web.fetch_post_failed", error=repr(exc), status=status)
+            raise WebFetchError(_fetch_error_message(status), status=status) from exc
+        decoded = raw.decode(_charset(resp_content_type) or "utf-8", errors="replace")
+        if "json" in resp_content_type.lower():
+            title, text = "", _pretty_json(decoded)
+        elif "html" in resp_content_type.lower():
+            title, text, _ = _extract_html(decoded, base=final_url)
+        else:
+            title, text = "", decoded.strip()
+        return _window_and_find(
+            text,
+            url=final_url,
+            title=title,
+            links=(),
+            offset=offset,
+            find=find,
+            find_regex=find_regex,
+            body_truncated=body_truncated,
+        )
+
     async def _fetch_via_reader(
         self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
     ) -> FetchResult | None:
@@ -655,13 +749,29 @@ class WebFetcher:
     async def _get_following_safe_redirects(
         self, client: httpx.AsyncClient, url: str
     ) -> httpx.Response:
-        """GET `url`, validating the host of every hop against the SSRF blocklist
-        and following up to `_MAX_REDIRECTS` redirects by hand (httpx auto-redirect
-        is off, so a 30x to a private address can't slip past the per-hop check)."""
+        """GET `url` through the per-hop SSRF guard — the plain-fetch and image-byte path."""
+        return await self._send_following_safe_redirects(
+            client, "GET", url, headers=BROWSER_HEADERS
+        )
+
+    async def _send_following_safe_redirects(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        content: bytes | None = None,
+    ) -> httpx.Response:
+        """Send `method` to `url`, validating the host of every hop against the SSRF blocklist
+        and following up to `_MAX_REDIRECTS` redirects by hand (httpx auto-redirect is off, so
+        a 30x to a private address can't slip past the per-hop check). Shared by the GET path
+        and the POST path so both guard identically; a redirected POST re-sends its body to
+        the re-validated host (a search API rarely redirects, but the guard holds if it does)."""
         for _hop in range(_MAX_REDIRECTS + 1):
             self._guard_host(url)
             resp = await client.send(
-                client.build_request("GET", url, headers=BROWSER_HEADERS),
+                client.build_request(method, url, headers=headers, content=content),
                 stream=True,
             )
             if resp.is_redirect and resp.headers.get("location"):
@@ -740,6 +850,16 @@ async def _read_capped(resp: httpx.Response, *, max_bytes: int = _MAX_BYTES) -> 
 def _is_textual(content_type: str) -> bool:
     ct = content_type.lower()
     return not ct or ct.startswith("text/") or "html" in ct or "json" in ct or "xml" in ct
+
+
+def _pretty_json(raw: str) -> str:
+    """A JSON API body re-serialized indented so the model reads it as structured text
+    (windowed by the same offset/find machinery as a page). A body that doesn't parse as
+    JSON — despite the content-type — degrades to the raw text rather than erroring."""
+    try:
+        return json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
+    except (ValueError, TypeError):
+        return raw.strip()
 
 
 def _charset(content_type: str) -> str | None:

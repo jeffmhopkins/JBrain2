@@ -287,6 +287,160 @@ async def test_fetch_bytes_caps_the_download_size() -> None:
     assert len(body) == 1000  # truncated to the cap, never buffered whole
 
 
+# --- POST (a JSON/search API endpoint the GET path can't reach) ---------------
+
+_SEARCH_API_JSON = {"count": 1, "results": [{"caseName": "SMITH v. STATE", "court": "Fla."}]}
+
+
+async def test_fetch_post_sends_body_and_returns_pretty_json() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json=_SEARCH_API_JSON, headers={"content-type": "application/json"}
+        )
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch(
+        "https://api.example/search",
+        method="POST",
+        body='{"q":"smith"}',
+        content_type="application/json",
+    )
+    assert seen[0].method == "POST"
+    assert seen[0].content == b'{"q":"smith"}'
+    assert seen[0].headers["content-type"] == "application/json"
+    # A JSON reply comes back pretty-printed (indented), so the model reads it as structure.
+    assert '"caseName": "SMITH v. STATE"' in result.text
+    assert result.url == "https://api.example/search"
+
+
+async def test_fetch_post_form_encoded_content_type_rides() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    await WebFetcher(transport=httpx.MockTransport(handle)).fetch(
+        "https://api.example/search",
+        method="POST",
+        body="q=smith",
+        content_type="application/x-www-form-urlencoded",
+    )
+    assert seen[0].headers["content-type"] == "application/x-www-form-urlencoded"
+
+
+async def test_fetch_post_caps_an_oversized_body() -> None:
+    from jbrain.web.fetch import _MAX_POST_BODY
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={}, headers={"content-type": "application/json"})
+
+    with pytest.raises(WebFetchError):
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch(
+            "https://api.example/search", method="POST", body="x" * (_MAX_POST_BODY + 1)
+        )
+
+
+async def test_fetch_post_windows_a_non_json_text_body() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"plain result rows", headers={"content-type": "text/plain"}
+        )
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch(
+        "https://api.example/q", method="POST", body="q=1"
+    )
+    assert "plain result rows" in result.text
+
+
+async def test_post_blocks_a_non_public_address() -> None:
+    # The POST path shares the GET path's SSRF guard: a model-supplied private/loopback/
+    # link-local host is refused before any request leaves the box (invariant #9), with a
+    # real DNS resolve (no injected transport).
+    with pytest.raises(WebFetchError):
+        await WebFetcher().fetch("http://169.254.169.254/latest/api", method="POST", body="{}")
+
+
+async def test_post_refuses_a_redirect_to_a_non_public_scheme() -> None:
+    # A 30x whose Location is a file:/ target is refused by the per-hop guard on the POST
+    # path too — a crafted redirect can't turn a POST into a local read.
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "file:///etc/passwd"})
+
+    with pytest.raises(WebFetchError):
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch(
+            "https://api.example/redir", method="POST", body="{}"
+        )
+
+
+async def test_get_still_works_unchanged_alongside_post_support() -> None:
+    # The default (no method) path is a plain GET, unaffected by the POST addition.
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/p")
+    assert seen[0].method == "GET"
+    assert result.title == "Hi There" and "First para." in result.text
+
+
+async def test_web_fetch_tool_post_returns_the_json() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=_SEARCH_API_JSON, headers={"content-type": "application/json"}
+        )
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://api.example/search", "method": "POST", "body": '{"q":"smith"}'},
+            _fresh_ctx(),
+        )
+    )
+    assert "SMITH v. STATE" in out
+
+
+async def test_web_fetch_tool_post_rejects_an_unsupported_content_type() -> None:
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, json={}, headers={"content-type": "application/json"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {
+                "url": "https://api.example/s",
+                "method": "POST",
+                "body": "{}",
+                "content_type": "multipart/form-data",
+            },
+            _fresh_ctx(),
+        )
+    )
+    assert "content_type" in out
+    assert calls["n"] == 0  # rejected before any request left the box
+
+
+async def test_web_fetch_tool_rejects_an_unknown_method() -> None:
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher())
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/p", "method": "DELETE"}, _fresh_ctx()
+        )
+    )
+    assert "GET or POST" in out
+
+
 # --- web sources (favicon citation chips) ----------------------------------
 
 
