@@ -256,6 +256,10 @@ class PlanContinuationRunner:
                 or not has_open_checklist_item(plan.body)
             ):
                 return
+            # How many results existed BEFORE this turn — so the settle below can tell whether
+            # this turn actually recorded a step (ticking its box) or finished the work but
+            # skipped write_plan_result (which would otherwise re-run the same step forever).
+            results_before = len(plan.results or [])
             # Count the fire now — a real turn is about to run. A claim that was skipped/
             # aborted above never reaches here, so a collision never burns a continuation.
             # Stamp the step's start in the same breath so `complete_step` can record how long
@@ -285,6 +289,7 @@ class PlanContinuationRunner:
             # ordinary bounded budget (JERV_PLANNING_TOOL_PLAN.md).
             supervised = self._client_present(sid)
             status, stop_reason, steps, cost = "error", "error", 0, 0
+            answer_text = ""  # the turn's visible reply, captured for the settle safety net
             # Run the turn as its OWN task and publish it on the broker (`live.task`), so the
             # owner's Stop (POST /chat/runs/{run_id}/cancel → live.cancel()) can actually cancel
             # it. Without this `live.task` stayed None, so Stop was a silent no-op for a
@@ -311,6 +316,7 @@ class PlanContinuationRunner:
                 executed = await turn_task
                 status, stop_reason = "done", executed.result.stop_reason
                 steps, cost = executed.result.steps, executed.result.cost_tokens
+                answer_text = (executed.result.text or "").strip()
                 with contextlib.suppress(Exception):
                     await self.transcript.record_answer(
                         owner_ctx,
@@ -360,6 +366,31 @@ class PlanContinuationRunner:
                     cost_tokens=cost,
                 )
             if status == "done":
+                # Safety net for the "step never checked off" loop: if the turn finished with a
+                # visible answer but recorded NO result (jerv skipped write_plan_result — common
+                # when the step's action was a single deep_research call that already produced and
+                # persisted a report, so jerv just recapped), the box never ticked and the loop
+                # would re-run the SAME step. Record the turn's answer deterministically so the box
+                # ticks and the plan advances (the rich report, if any, is in the library anyway).
+                # It also keeps `results` index-aligned to the steps — a tick with no appended
+                # result would misalign every later step's Results block. Skipped when jerv DID
+                # record (results grew), paused for the owner, or produced nothing.
+                if answer_text:
+                    with contextlib.suppress(Exception):
+                        async with scoped_session(self.maker, owner_ctx) as s:
+                            after = await PlanRepo().get_by_id(s, plan_id)
+                            if (
+                                after is not None
+                                # `approved` too, not just `in_work`: on the FIRST step jerv may
+                                # skip write_plan_result AND the in_work flip, leaving it approved —
+                                # complete_step below both records and flips it.
+                                and after.status in _ACTIVE_STATUSES
+                                and not after.awaiting_owner
+                                and has_open_checklist_item(after.body)
+                                and len(after.results or []) == results_before
+                            ):
+                                await PlanRepo().complete_step(s, plan_id, note=answer_text)
+                                log.info("plan.continuation_autorecorded_step", session_id=sid)
                 # Re-run the settle decision so the loop advances to the next step (this turn
                 # never went through /chat's settle hook), and nudge the owner it moved.
                 with contextlib.suppress(Exception):
@@ -404,6 +435,10 @@ def _continuation_conversation(body: str, results: list | None = None) -> list[U
         " Actually DO the ONE next unchecked step now and produce its real output, then call"
         " write_plan_result(note=…) with that step's full synthesis (this checks the box off and"
         " advances the plan; the detailed findings live in that recorded result, not the chat)."
+        " ALWAYS end the step with write_plan_result — even when the step's action was a single"
+        " deep_research / report call that already produced a report. Running the tool does NOT"
+        " check the box; ONLY write_plan_result does, so skipping it makes the loop re-run this"
+        " same step. Do not end the turn until you have called it."
         " For a NON-final step, your VISIBLE reply this turn must be ONE short sentence confirming"
         " what you just finished — a specific recap of THIS step's result, e.g. 'Step 1 done —"
         " compared 5 carry-ons on capacity and warranty; front-runners are the Cotopaxi Allpa 35L,"

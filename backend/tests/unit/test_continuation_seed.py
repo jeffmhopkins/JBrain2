@@ -21,6 +21,9 @@ def test_seed_reinjects_the_scratchpad_and_directs_the_deliverable() -> None:
     assert "REUSE the recorded results" in text
     # Record each step's synthesis to the scratchpad.
     assert "write_plan_result" in text
+    # A deep_research/report step must STILL call write_plan_result — running the tool doesn't tick
+    # the box (the "step never checked off, loop re-ran it" bug).
+    assert "Running the tool does NOT" in text
     # A NON-final step still gives the owner a visible one-line recap of what it just did (so the
     # turn isn't empty), while the full findings stay in the recorded result.
     assert "ONE short sentence confirming" in text
