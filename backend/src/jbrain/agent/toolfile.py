@@ -42,12 +42,22 @@ class ToolFile:
     # can change without forcing a version bump. The SELF_EDIT_LOCKED deny-set still
     # wins over it (non-neg #12).
     self_editable: bool = False
+    # Concrete call examples (a list of arguments objects) the model can copy — surfaced into the
+    # tool's model-facing description (toolregistry.as_llm_tool) and echoed on a failed call. Model
+    # -facing, so it IS folded into the digest (below) — but ONLY when present, so the many tools
+    # without examples keep their existing digest and need no version bump. Popped in the parser
+    # like `self_editable` (it is not a ToolSpec/params field), not part of the arguments schema.
+    examples: tuple[dict[str, object], ...] = ()
 
     @property
     def digest(self) -> str:
         """A content hash over the description and the spec, pinned per version by
         the CI guard so prose/param edits force a deliberate `version` bump."""
         blob = self.description + "\x00" + json.dumps(self.spec.model_dump(), sort_keys=True)
+        # Fold examples in only when present, so a tool that has none hashes exactly as before
+        # (no mass version bump); adding/changing an example is then a deliberate bump.
+        if self.examples:
+            blob += "\x00examples:" + json.dumps(list(self.examples), sort_keys=True)
         return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -67,11 +77,16 @@ def load_tool(path: Path) -> ToolFile:
         body = body[:-1]
     if not body.strip():
         raise ToolFileError(f"{path}: empty description body — the model needs one")
-    # Pop the governance flag before ToolSpec (which forbids extras) so it never
-    # touches the spec or the digest — it is sidecar metadata, not a tool contract.
+    # Pop the governance flag and the examples before ToolSpec (which forbids extras) so neither
+    # touches the spec — examples are model-facing help, not part of the arguments contract.
     self_editable = bool(meta.pop("self_editable", False))
+    examples_raw = meta.pop("examples", None) or []
+    if not isinstance(examples_raw, list) or not all(isinstance(e, dict) for e in examples_raw):
+        raise ToolFileError(f"{path}: `examples` must be a list of argument objects")
     try:
         spec = ToolSpec.model_validate(meta)
     except ValidationError as exc:
         raise ToolFileError(f"{path}: invalid tool frontmatter: {exc}") from exc
-    return ToolFile(spec=spec, description=body, self_editable=self_editable)
+    return ToolFile(
+        spec=spec, description=body, self_editable=self_editable, examples=tuple(examples_raw)
+    )

@@ -39,6 +39,23 @@ params: {type: object}
 Read a lab result by id.
 """
 
+SEARCH_TOOL_WITH_EXAMPLES = """\
+---
+name: search
+version: 1
+permission: read
+params:
+  type: object
+  properties:
+    query: {type: string}
+  required: [query]
+examples:
+  - {query: "quarterly revenue"}
+  - {query: "who is Celine"}
+---
+Search the knowledge base for notes, facts, and entities.
+"""
+
 
 def write_tool(directory: Path, filename: str, content: str) -> Path:
     path = directory / filename
@@ -86,6 +103,43 @@ def test_load_tool_rejects_empty_description(tmp_path: Path) -> None:
     empty = "---\nname: x\nversion: 1\npermission: read\nparams: {}\n---\n\n"
     with pytest.raises(ToolFileError, match="empty description"):
         load_tool(write_tool(tmp_path, "x.tool", empty))
+
+
+# --- examples (the near-term tool_guide: call examples, TOOL_CATALOG_PLAN) -------
+
+
+def test_load_tool_parses_examples_and_keeps_them_off_the_spec(tmp_path: Path) -> None:
+    tf = load_tool(write_tool(tmp_path, "s.tool", SEARCH_TOOL_WITH_EXAMPLES))
+    assert tf.examples == ({"query": "quarterly revenue"}, {"query": "who is Celine"})
+    assert "examples" not in tf.spec.model_dump()  # examples are not a ToolSpec/params field
+
+
+def test_examples_change_the_digest_but_their_absence_does_not(tmp_path: Path) -> None:
+    plain = load_tool(write_tool(tmp_path, "a.tool", SEARCH_TOOL))
+    with_ex = load_tool(write_tool(tmp_path, "b.tool", SEARCH_TOOL_WITH_EXAMPLES))
+    # Adding examples changes the digest (a deliberate version bump); an example-less tool keeps
+    # exactly the pre-examples digest (so the fleet of tools without examples never mass-bumps).
+    assert with_ex.digest != plain.digest
+    assert plain.digest == load_tool(write_tool(tmp_path, "a2.tool", SEARCH_TOOL)).digest
+
+
+def test_load_tool_rejects_malformed_examples(tmp_path: Path) -> None:
+    bad = SEARCH_TOOL.replace("---\nSearch", "examples:\n  - not-an-object\n---\nSearch")
+    with pytest.raises(ToolFileError, match="examples"):
+        load_tool(write_tool(tmp_path, "x.tool", bad))
+
+
+def test_as_llm_tool_appends_examples_to_the_description(tmp_path: Path) -> None:
+    rt = registered(SEARCH_TOOL_WITH_EXAMPLES, tmp_path, "s.tool")
+    desc = rt.as_llm_tool().description
+    assert "Example call" in desc
+    assert '{"query": "quarterly revenue"}' in desc  # the exact shape to copy
+
+
+def test_as_llm_tool_without_examples_is_just_the_description(tmp_path: Path) -> None:
+    rt = registered(SEARCH_TOOL, tmp_path, "s.tool")
+    desc = rt.as_llm_tool().description
+    assert desc == "Search the knowledge base for notes, facts, and entities."
 
 
 # --- registry -------------------------------------------------------------

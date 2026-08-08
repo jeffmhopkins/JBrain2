@@ -1,6 +1,6 @@
 ---
 name: deep_produce
-version: 4
+version: 5
 permission: read
 cost_class: expensive
 params:
@@ -72,6 +72,9 @@ params:
         Optional (owner only). An ISO date — end of the medical-records window (see
         `emr_since`). Either bound alone is allowed (open-ended on the other side).
   required: [question]
+examples:
+  - {question: "Compare Postgres, MySQL, and SQLite for a small self-hosted app", output_kind: "table"}
+  - {question: "A step-by-step plan to migrate a REST API to gRPC", output_kind: "plan"}
 ---
 Research a topic in depth and get back a structured, cited artifact of the kind you ask for —
 a report, a plan, a comparison table, a brief, a differential, or a timeline. Use this when the

@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 7
+version: 8
 permission: web
 cost_class: expensive
 params:
@@ -57,6 +57,9 @@ params:
         Ignored when no `preset` is given. With a preset, `question` is optional (the preset
         derives it).
   required: []
+examples:
+  - {question: "How do stablecoins hold their peg, and what are the main failure modes?"}
+  - {question: "What did my analysed videos say about the 2026 launch schedule?", sources: "library"}
 ---
 Research a question in depth and get back a structured, cited report. Use this for a
 genuinely open, multi-source question — one worth planning, gathering across several

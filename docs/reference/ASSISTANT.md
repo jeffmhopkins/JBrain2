@@ -225,9 +225,16 @@ prose or params without a bump → build fails) and stamped on every run the too
 participates in, so a behavior change is a deliberate migration. Frontmatter also
 declares `domains` (which scopes may see it), `mutating`, `side_effecting`,
 `cost_class`, and `response_format` — `concise`/`detailed` text and/or a **view**
-(see below). A `ToolRegistry` discovers and validates sidecars at startup (invalid
-sidecar or missing handler → startup failure), and `schemas_for(scopes)` returns
-only the tools in scope.
+(see below). A sidecar may also carry an optional **`examples`** list — concrete
+argument objects the model can copy; they are appended to the model-facing
+description (`as_llm_tool`) and echoed on a bad-arg failure, the near-term
+`tool_guide` for the polymorphic tools (umbrellas, `deep_research`, `spawn_subagent`,
+`render_bars`). Like `self_editable`, `examples` is parsed out of the frontmatter
+(not a `ToolSpec`/params field) but IS model-facing, so it is folded into the
+version digest **only when present** — a tool with no examples keeps its digest and
+needs no bump, while adding/changing one is a deliberate bump. A `ToolRegistry`
+discovers and validates sidecars at startup (invalid sidecar or missing handler →
+startup failure), and `schemas_for(scopes)` returns only the tools in scope.
 
 **Tool result views.** A tool may render rich UI — lab plots, tables, timelines,
 appointment cards, confirm sheets — by returning a **`view`**: a schema-validated,

@@ -9,6 +9,7 @@ the loop's concern; what a tool *does* is the handler's.
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1408,14 +1409,16 @@ class AgentLoop:
             # message — not the raw exception string (a dead-end that can leak internals); the
             # detail stays in the log.
             log.warning("agent.tool_error", tool=call.name, error=repr(exc))
-            err = ToolResult(
-                tool_call_id=call.id,
-                content=(
-                    f"{call.name} hit an internal error and did not run. Try a different approach"
-                    " or another tool; if it keeps failing, tell the owner what you attempted."
-                ),
-                is_error=True,
+            # If the tool authored call examples, echo the first one — a raised exception is
+            # often a malformed-args call, so showing the exact shape is self-teaching.
+            hint = ""
+            if tool.toolfile.examples:
+                hint = f" Example call: {json.dumps(tool.toolfile.examples[0], ensure_ascii=False)}"
+            base = (
+                f"{call.name} hit an internal error and did not run. Try a different approach or"
+                " another tool; if it keeps failing, tell the owner what you attempted."
             )
+            err = ToolResult(tool_call_id=call.id, content=base + hint, is_error=True)
             return _Dispatched(err, (), None, (), None, None)
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
