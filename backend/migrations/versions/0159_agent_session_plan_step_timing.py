@@ -25,9 +25,7 @@ depends_on = None
 def upgrade() -> None:
     # Nullable: a plan not mid-step has no start stamp, and the column is only ever set while a
     # step's turn is in flight (cleared when the step's result is recorded).
-    op.execute(
-        "ALTER TABLE app.agent_session_plans ADD COLUMN step_started_at timestamptz"
-    )
+    op.execute("ALTER TABLE app.agent_session_plans ADD COLUMN step_started_at timestamptz")
 
 
 def downgrade() -> None:

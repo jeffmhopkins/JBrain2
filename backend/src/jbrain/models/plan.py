@@ -149,9 +149,7 @@ class AgentSessionPlan(Base):
     # When the current step's turn began (migration 0159). Set by `mark_step_started` as a
     # continuation starts a step, read by `complete_step` to record that step's elapsed `secs`
     # onto its results entry, then cleared. NULL when no step is in flight.
-    step_started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    step_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
