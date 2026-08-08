@@ -566,6 +566,53 @@ async def test_owner_message_reset_clears_everything(maker: async_sessionmaker) 
     assert plan.continuations_used == 0
 
 
+async def test_mark_step_started_stamps_the_row(maker: async_sessionmaker) -> None:
+    """The continuation stamps the step's start as its turn begins, so complete_step can time it."""
+    owner = await _owner(maker)
+    _, pid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().mark_step_started(s, pid)
+        plan = await PlanRepo().get_by_id(s, pid)
+    assert plan is not None and plan.step_started_at is not None
+
+
+async def test_complete_step_records_elapsed_and_clears_start(maker: async_sessionmaker) -> None:
+    """complete_step records the step's elapsed `secs` onto its results entry (from the stamped
+    start) and clears the start — so the card shows the time spent on each step, and the next step
+    times itself fresh. Backdate the start 5s so the elapsed is deterministic without a sleep."""
+    owner = await _owner(maker)
+    _, pid = await _chat(maker, owner, body=_OPEN, status="approved")
+    repo = PlanRepo()
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "UPDATE app.agent_session_plans"
+                " SET step_started_at = now() - interval '5 seconds' WHERE plan_id = :id"
+            ),
+            {"id": pid},
+        )
+    async with scoped_session(maker, owner) as s:
+        await repo.complete_step(s, pid, note="did it", heading="Step 1")
+        plan = await repo.get_by_id(s, pid)
+    assert plan is not None
+    assert plan.step_started_at is None  # consumed
+    entry = plan.results[-1]
+    assert entry["note"] == "did it" and entry["heading"] == "Step 1"
+    assert isinstance(entry["secs"], int) and entry["secs"] >= 4  # ~5s, allow slack
+
+
+async def test_complete_step_without_a_start_records_no_time(maker: async_sessionmaker) -> None:
+    """A step finished with no start stamped (e.g. a foreground turn) carries no `secs` — the card
+    simply shows no time for it rather than a bogus one."""
+    owner = await _owner(maker)
+    _, pid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().complete_step(s, pid, note="untimed")
+        plan = await PlanRepo().get_by_id(s, pid)
+    assert plan is not None
+    assert "secs" not in plan.results[-1]
+
+
 async def test_plan_blocks_only_injects_a_sanctioned_plan(maker: async_sessionmaker) -> None:
     """The re-injection rule: a not_approved DRAFT is never fed to the turn as a sanctioned
     operating instruction (that's what stops an injection-drafted plan being framed as

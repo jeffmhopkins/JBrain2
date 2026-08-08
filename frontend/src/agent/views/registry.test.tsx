@@ -1054,6 +1054,30 @@ describe("ToolView registry", () => {
     expect(getByText(/second entry with no heading/)).toBeInTheDocument();
   });
 
+  it("shows the time spent on each step when the result carries it", async () => {
+    const results = [
+      { heading: "Chris Gleason", note: "profile", secs: 134 }, // 2m 14s
+      { note: "quick one", secs: 45 }, // 45s
+      { heading: "Compare", note: "done", secs: 3780 }, // 1h 3m
+    ];
+    vi.spyOn(api, "getPlan").mockResolvedValue(
+      planOut({ status: "in_work", body: PLAN_BODY, results }),
+    );
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "plan_card",
+          data: { plan_id: "p1", session_id: "s1", body: PLAN_BODY, status: "in_work", results },
+        })}
+      />,
+    );
+    await waitFor(() => expect(api.getPlan).toHaveBeenCalled());
+    // The duration shows on each step's (collapsed) header, formatted compactly.
+    getByText("2m 14s");
+    getByText("45s");
+    getByText("1h 3m");
+  });
+
   it("omnibox RESOLVE mode follows the active plan and mutates by its resolved id", async () => {
     // The omnibox seeds usePlanState with a bare status and NO planId → RESOLVE mode: it must
     // poll getActivePlan (not getPlan) and mutate whatever plan that resolves to, so it follows

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import DateTime, ForeignKey, Text, func, select, update
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -146,6 +146,10 @@ class AgentSessionPlan(Base):
     )
     awaiting_owner: Mapped[bool] = mapped_column(default=False)
     continuations_used: Mapped[int] = mapped_column(default=0)
+    # When the current step's turn began (migration 0159). Set by `mark_step_started` as a
+    # continuation starts a step, read by `complete_step` to record that step's elapsed `secs`
+    # onto its results entry, then cleared. NULL when no step is in flight.
+    step_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -269,13 +273,22 @@ class PlanRepo:
         `in_work`. This is the "I finished a step" signal, so progress no longer depends on jerv
         separately remembering to check the box or set the status. Read-modify-write is safe
         because turns are serialized per plan (the single-turn guard + the sweep's atomic claim).
-        Returns None if the plan is gone."""
+        Records the step's elapsed `secs` on the entry when `step_started_at` was stamped (the
+        continuation marks it as the step's turn began), then clears it — so the card can show the
+        time spent on each step. Returns None if the plan is gone."""
         plan = await self.get_by_id(session, plan_id)
         if plan is None:
             return None
-        entry: dict[str, str] = {"note": note}
+        entry: dict[str, str | int] = {"note": note}
         if heading:
             entry["heading"] = heading
+        # The step's elapsed wall-clock: from when its turn began (`step_started_at`, stamped by
+        # `mark_step_started`) to now. Absent when no start was stamped (e.g. a step finished in a
+        # foreground turn that didn't go through the continuation) — then the entry carries no time.
+        if plan.step_started_at is not None:
+            secs = round((datetime.now(UTC) - plan.step_started_at).total_seconds())
+            if secs >= 0:
+                entry["secs"] = secs
         results = [*(plan.results or []), entry]
         stmt = (
             update(AgentSessionPlan)
@@ -284,12 +297,25 @@ class PlanRepo:
                 results=results,
                 body=tick_next_step(plan.body),
                 status="in_work" if plan.status == "approved" else plan.status,
+                # Consume the start stamp — the next step stamps its own, so a step that records
+                # no result (or a foreground turn) never inherits a stale start.
+                step_started_at=None,
                 updated_at=func.now(),
             )
             .returning(AgentSessionPlan)
             .execution_options(populate_existing=True)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def mark_step_started(self, session: AsyncSession, plan_id: str) -> None:
+        """Stamp the current step's start (DB clock) as its turn begins — the continuation calls
+        this right after counting the fire, so `complete_step` can record the step's elapsed time.
+        A plain overwrite: each step re-stamps, so the value always reflects the step in flight."""
+        await session.execute(
+            update(AgentSessionPlan)
+            .where(AgentSessionPlan.plan_id == uuid.UUID(plan_id))
+            .values(step_started_at=func.now(), updated_at=func.now())
+        )
 
     # --- auto-continuation bookkeeping -----------------------------------------
 
