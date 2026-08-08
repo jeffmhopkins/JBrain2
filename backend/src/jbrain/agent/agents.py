@@ -140,16 +140,14 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # sidecar — the hallucination-free counterpart to analyze_image, preferred for
         # literal text (error screenshots, receipts, scanned docs) (RAPIDOCR_PLAN.md).
         "ocr",
-        # Grokipedia tools (GROKIPEDIA_TOOL_PLAN.md): search xAI's encyclopedia, traverse
-        # an article by its table of contents, read a single section without loading the
-        # whole page, pull citations to follow to primary sources, and traverse to linked
+        # Grokipedia umbrella (GROKIPEDIA_TOOL_PLAN.md, TOOL_CATALOG_PLAN.md): ONE
+        # `grokipedia(action=…)` tool over the five operations — search xAI's encyclopedia,
+        # traverse an article by its table of contents, read a single section without loading
+        # the whole page, pull citations to follow to primary sources, and traverse to linked
         # articles. `web`-gated like web_search/web_fetch — a pinned public site, no owner
-        # data — and always wired (no config gate).
-        "grokipedia_search",
-        "grokipedia_outline",
-        "grokipedia_section",
-        "grokipedia_citations",
-        "grokipedia_related",
+        # data — and always wired (no config gate). Collapsed from five flat tools after a
+        # tool-selection probe confirmed gpt-oss-120b fills the action reliably.
+        "grokipedia",
         # Free public-records search by name (PUBLIC_RECORDS_TOOL): CourtListener opinions +
         # RECAP dockets + a judges/officials alias lookup, so a person profile finds
         # court/disciplinary matters filed under a prior/maiden name that web-only research
