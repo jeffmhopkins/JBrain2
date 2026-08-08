@@ -75,8 +75,11 @@ async def test_current_location_address_without_external_falls_back_to_city() ->
     assert "in London, United Kingdom" in out
 
 
-class _BoomExt:
+class _BoomExt(_Ext):
     """An external reverse-geocoder that is DOWN — its reverse() raises."""
+
+    def __init__(self) -> None:
+        super().__init__(None)
 
     async def reverse(self, latitude: float, longitude: float) -> str | None:
         raise RuntimeError("nominatim 503")
