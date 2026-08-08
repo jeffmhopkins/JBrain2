@@ -7,6 +7,7 @@ from typing import Any
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
+from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.toolregistry import ToolRegistry
@@ -21,6 +22,7 @@ from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import AssistantMessage, LlmTurn, LlmUsage, ToolCall, UserMessage
 from jbrain.web import (
+    CourtListenerClient,
     GrokipediaClient,
     HurricaneClient,
     NhcGisClient,
@@ -152,6 +154,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_grokipedia_handlers(GrokipediaClient()),  # grokipedia_* sidecars
+            **build_public_records_handlers(CourtListenerClient("")),  # public_records sidecar
             **build_weather_handlers(WeatherClient("", ""), stub),
             **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(

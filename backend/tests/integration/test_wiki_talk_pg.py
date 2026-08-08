@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
+from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.session import read_context
@@ -33,6 +34,7 @@ from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import LlmTurn, LlmUsage, ToolCall
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.web import (
+    CourtListenerClient,
     GrokipediaClient,
     HurricaneClient,
     NhcGisClient,
@@ -387,6 +389,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_grokipedia_handlers(GrokipediaClient()),  # the grokipedia_* sidecars' handlers
+            **build_public_records_handlers(CourtListenerClient("")),  # the public_records sidecar
             **build_weather_handlers(WeatherClient("", ""), stub),
             **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(
