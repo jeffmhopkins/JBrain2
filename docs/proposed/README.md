@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-08-02
+> **Status:** Living · **Last verified:** 2026-08-08
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -33,6 +33,14 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   state machine + two-sided child-safety layer + two UIs. Waves W1–W8 with a hard
   safety gate before child exposure. Backed by the approved component work in
   `../research/teacher-mode/` (`COMPONENT_CATALOG.md` + four mocks).
+- `TOOL_CATALOG_PLAN.md` — a scalable tool surface for jerv's growing tool count:
+  separate DISCOVERY (an always-on compact menu — name + ≤12-word summary + family)
+  from INVOCATION-SCHEMA (a verbose use-guide loaded on demand via `tool_guide(name)`,
+  which also arms the tool's schema), plus a full-schema hot core for the common path
+  and umbrella dispatch tools for the source/action families. Revised after two
+  independent reviews: ship the cheap waves now (W0 trim + metadata, W1 umbrellas
+  19→4), and **gate** the catalog machinery (W2/W3) behind resolving the
+  mode-(a)/native-tool-calling contradiction and a pre-built selection-accuracy eval.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
