@@ -249,3 +249,24 @@ async def test_lister_error_is_surfaced(monkeypatch) -> None:
         {"channel_id": "UCabc"}, _CTX
     )
     assert out == "that channel couldn't be listed"
+
+
+async def test_a_meta_resolver_that_raises_does_not_fail_the_check(monkeypatch) -> None:
+    # return_exceptions on the metadata fan: one resolver raising must degrade to no-metadata for
+    # that video, never abort the whole channel check.
+    await _fresh(monkeypatch, {"a", "b"})
+    _prior(monkeypatch)
+
+    def resolver(video_id, *, skip_guard=False):
+        if video_id == "a":
+            raise RuntimeError("resolver boom")
+        return VideoMeta(duration_s=600, aspect_ratio=1.78)
+
+    handler = build_external_handlers(
+        object(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        lambda cid, *, limit=10: _uploads(("a", "Alpha News"), ("b", "Beta News"))[:limit],
+        meta_resolver=resolver,
+    )["check_channel"]
+    out = await handler({"channel_id": "UCabc"}, _CTX)
+    assert "Alpha News" in out and "Beta News" in out  # both listed; the raise didn't abort

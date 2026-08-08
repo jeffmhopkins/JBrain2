@@ -295,6 +295,34 @@ async def test_umbrella_narrows_to_a_single_source() -> None:
     assert "Identity & aliases" not in out and "Federal Register" not in out
 
 
+async def test_umbrella_steers_on_an_unknown_source() -> None:
+    # A non-empty but unrecognized `sources` is steered, not silently widened to all four.
+    out = str(await _umbrella(_client(_EMPTY, _EMPTY))({"name": "Jane", "sources": ["cout"]}, CTX))
+    assert "must be any of identity, court, license, federal_register" in out
+    assert "Court records" not in out  # it did NOT run a sweep
+
+
+async def test_umbrella_degrades_one_source_that_errors(monkeypatch) -> None:
+    # An UNEXPECTED exception in one source degrades that section, never fails the whole sweep.
+    import jbrain.agent.publicrecordstools as prt
+
+    async def boom(_args: dict, _ctx: Any) -> str:
+        raise RuntimeError("schema changed")
+
+    monkeypatch.setattr(
+        prt, "build_provider_license_handlers", lambda *a, **k: {"provider_license": boom}
+    )
+    umbrella = prt.build_public_records_handlers(
+        _client(_UPPAL_OPINION, _EMPTY),
+        WikidataClient(""),
+        NppesClient(""),
+        FederalRegisterClient(""),
+    )["public_records"]
+    out = str(await umbrella({"name": "Neelam Uppal", "sources": ["license", "court"]}, CTX))
+    assert "this source errored" in out  # the license section degraded
+    assert "NEELAM UPPAL v. DEPT. OF HEALTH" in out  # the court section still ran
+
+
 async def test_tool_emits_a_tendril_event_per_source() -> None:
     fired: list[tuple[str, str | None]] = []
     umbrella = _umbrella(

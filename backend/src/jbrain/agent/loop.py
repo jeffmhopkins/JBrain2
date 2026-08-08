@@ -1402,9 +1402,20 @@ class AgentLoop:
         tool = self._registry.get(call.name)
         try:
             observation = await tool.handler(call.arguments, tool_ctx)
-        except Exception as exc:  # noqa: BLE001 — a tool error is an observation
+        except Exception as exc:  # noqa: BLE001 — a tool error is an observation, not a crash
+            # A raised exception becomes a recoverable observation (CancelledError is a
+            # BaseException, so a Stop still propagates). The model gets a generic, ACTIONABLE
+            # message — not the raw exception string (a dead-end that can leak internals); the
+            # detail stays in the log.
             log.warning("agent.tool_error", tool=call.name, error=repr(exc))
-            err = ToolResult(tool_call_id=call.id, content=f"error: {exc}", is_error=True)
+            err = ToolResult(
+                tool_call_id=call.id,
+                content=(
+                    f"{call.name} hit an internal error and did not run. Try a different approach"
+                    " or another tool; if it keeps failing, tell the owner what you were attempting."
+                ),
+                is_error=True,
+            )
             return _Dispatched(err, (), None, (), None, None)
         out = observation if isinstance(observation, ToolOutput) else None
         result = ToolResult(tool_call_id=call.id, content=str(observation), is_error=False)
