@@ -44,6 +44,21 @@ _FIRST_UNCHECKED = re.compile(r"^(\s*[-*+]\s+\[)( )(\])", re.MULTILINE)
 _BULLET = re.compile(r"^(\s*)[-*+]\s+(?!\[[ xX]\])(.+?)\s*$")
 # An already-checkbox line (any indent / bullet char) → re-emit at top level, `[ ]`/`[x]`.
 _CHECKBOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s+(.*?)\s*$")
+# A heading/label line that introduces explanatory PROSE, not steps — "Notes", "Caveats",
+# etc., as a markdown heading (`## Notes`), a bold label (`**Notes:**`), or a bare `Notes:`.
+# Once a plan body hits one, the bullets under it are notes jerv added (caveats, reminders),
+# NOT checklist steps — so `normalize_plan_body` leaves them as prose instead of flattening
+# them into `- [ ]` steps, which had inflated the step count and fed non-actions ("Await your
+# approval before starting") into the continuation loop. Matches a line that is ESSENTIALLY
+# just the label (only `#`/`*`/`_`/`:` decoration around one notes-word), so a real step
+# ("- [ ] Note the deadline") never trips it.
+_PROSE_HEADING = re.compile(
+    r"^\s*[#*_\s]*"
+    r"(?:notes?|caveats?|context|background|assumptions?|references?|tips?|reminders?|fyi"
+    r"|disclaimers?)"
+    r"[\s:*_]*$",
+    re.IGNORECASE,
+)
 
 
 def has_open_checklist_item(body: str) -> bool:
@@ -65,11 +80,27 @@ def normalize_plan_body(body: str) -> str:
     list item — a bare bullet, an indented sub-bullet, or an existing checkbox at any indent —
     becomes a top-level `- [ ]` / `- [x]` step; a bullet that was already a checkbox keeps its
     checked state. Headings (`#…`), blank lines, and non-bullet prose pass through untouched,
-    so the title and any framing survive. Idempotent."""
+    so the title and any framing survive. Idempotent.
+
+    EXCEPTION — a trailing notes section (`**Notes**`, `## Caveats`, …): once a `_PROSE_HEADING`
+    line is seen, the rest of the body is jerv's explanatory prose (caveats, reminders), NOT
+    steps, so its bullets pass through UNCONVERTED. Otherwise those note bullets became checklist
+    steps — inflating the count and feeding non-actions like "Await your approval before starting"
+    into the continuation loop. The frontend's `parsePlanBody` already renders non-checkbox lines
+    as prose, so this makes the notes show as notes, not steps."""
     if not body:
         return body
     out: list[str] = []
+    in_prose = False
     for line in body.split("\n"):
+        if _PROSE_HEADING.match(line):
+            in_prose = True
+            out.append(line)
+            continue
+        # In a notes section, leave every line verbatim — a bullet there is a note, not a step.
+        if in_prose:
+            out.append(line)
+            continue
         cb = _CHECKBOX.match(line)
         if cb:
             mark = "x" if cb.group(1).lower() == "x" else " "
