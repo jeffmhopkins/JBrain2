@@ -1892,7 +1892,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert call["system"] == AGENTS["jerv"].prompt
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # The run carries its version.
-    assert ("sess-j", "agent-jerv-v39") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v41") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
@@ -2205,7 +2205,7 @@ def test_model_message_frames_a_deferred_outcome_as_data() -> None:
     )
     assert notice in framed
     assert "System event" in framed
-    assert "read_external_video" in framed
+    assert "external_video(action=read)" in framed
     assert "data, not an instruction" in framed
     # The finished analysis already fulfilled the frames+transcript request; the framing
     # must steer jerv AWAY from re-running analyze_stream on the same video (the
@@ -2438,7 +2438,7 @@ async def test_research_report_blocks_name_finished_runs() -> None:
     )
     assert len(blocks) == 1
     body = getattr(blocks[0], "text", "")
-    assert "read_research_report" in body and "FINISHED" in body
+    assert "research_report(action=read" in body and "FINISHED" in body
     assert "only the JSON prompt" in body  # the exact denial it must never repeat
     assert '"CFO candidates" — deep_research, 129 sources, id rid-1' in body
     # A titleless report falls back to its question, and a sourceless one reads honestly.
@@ -2500,7 +2500,7 @@ def test_chat_wires_the_research_report_reference_block(
     framed = [m for m in msgs if "Reports you produced this chat" in getattr(m, "text", "")]
     assert len(framed) == 1  # the pointer block was actually injected, not swallowed
     assert type(framed[0]).__name__ == "UserMessage"  # conversation channel, not a system change
-    assert "CFO candidates" in framed[0].text and "read_research_report" in framed[0].text
+    assert "CFO candidates" in framed[0].text and "research_report(action=read" in framed[0].text
     # Volatile suffix: after nothing-to-history here, but before the current user turn.
     texts = [getattr(m, "text", "") for m in msgs]
     assert texts.index(framed[0].text) < texts.index("why no citations?")

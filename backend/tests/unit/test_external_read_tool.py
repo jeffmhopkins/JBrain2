@@ -15,7 +15,14 @@ _CTX = ToolContext(session=SessionContext(principal_id="owner", principal_kind="
 
 
 def _handler():
-    return build_external_handlers(object(), object())["read_external_video"]  # type: ignore[arg-type]
+    # The read op is now action=read on the external_video umbrella; inject it so the
+    # per-arg call sites below are unchanged.
+    umb = build_external_handlers(object(), object())["external_video"]  # type: ignore[arg-type]
+
+    async def read(args: dict, ctx: ToolContext):  # type: ignore[no-untyped-def]
+        return await umb({**args, "action": "read"}, ctx)
+
+    return read
 
 
 async def _run(monkeypatch, transcript, args):

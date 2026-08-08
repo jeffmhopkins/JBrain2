@@ -90,7 +90,7 @@ async def test_deferred_job_writes_the_finished_card_to_the_result_row(
     resume = str(row.result["resume_message"])
     assert "Launch Stream" in resume
     assert "https://youtube.com/watch?v=abc" in resume
-    assert "read_external_video" in resume
+    assert "external_video(action=read)" in resume
     assert "A launch stream showing the rocket." not in resume  # no summary/transcript dump
 
 

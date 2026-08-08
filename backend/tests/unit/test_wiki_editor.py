@@ -173,7 +173,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
                 NwsClient(""),
                 NhcSurgeClient(""),
             ),
-            **build_external_handlers(stub, stub),  # search_external_video + check_channel sidecars
+            **build_external_handlers(stub, stub),  # external_video umbrella + check_channel sidecars
             **build_research_report_handlers(stub, stub),  # *_research_report sidecars
         },
         stub,  # city geocoder

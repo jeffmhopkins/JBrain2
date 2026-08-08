@@ -159,17 +159,13 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # Collapsed from four flat tools after a tool-selection probe (gpt-oss-120b fills
         # name/sources reliably, incl. single-source narrowing).
         "public_records",
-        # Search the external-source video corpus (analysed YouTube videos). Sandboxed
-        # jerv-only alongside web_search; reads the general-domain corpus via a
-        # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
-        "search_external_video",
-        # Enumerate / count the whole library (title, channel, date, length per video) with an
-        # exact total — the browse/count companion to the content search, so "what's in my
-        # library?" answers from a real listing, not a fuzzy query.
-        "list_external_video",
-        # Read one library video's FULL transcript (search_external_video → read_external_video,
-        # the web_search → web_fetch pattern) when a single excerpt isn't enough.
-        "read_external_video",
+        # The external-source video library read umbrella (TOOL_CATALOG_PLAN.md):
+        # `external_video(action=search|list|read)` — search the analysed-YouTube corpus,
+        # browse/count the whole library, or read one video's FULL transcript. Sandboxed
+        # jerv-only alongside web_search; reads the general-domain corpus via a purpose-built
+        # scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md). show/remove stay
+        # SEPARATE (distinct shapes; keeps them out of the library sub-agents' read grant).
+        "external_video",
         # SHOW one library video as the video-analysis card (embed + frame timeline + tabs),
         # rebuilt from stored corpus data — when the owner wants to see/watch it, not read it.
         "show_external_video",
@@ -284,11 +280,11 @@ RESEARCH_DEEP_TOOLS = RESEARCH_TOOLS | frozenset({DECOMPOSE_TOOL})
 # dataless clock, and NO web tools — `deep_research`'s `sources=library` /
 # `library_first` gather/refill/analyst fans run these so a corpus-scoped run touches
 # the open web only where the mode explicitly allows it (DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md).
-# `search_external_video`/`read_external_video` self-scope their own `external`-domain
-# read, so a child holding them reaches the corpus and nothing owner-authored. Like the
-# web children they are leaves (no `spawn_subagent`) and KB-less. jerv holds both corpus
-# tools, so the parent⊆child clamp keeps them.
-RESEARCH_LIBRARY_TOOLS = frozenset({"search_external_video", "read_external_video", "current_time"})
+# the `external_video` read umbrella self-scopes its own `external`-domain read, so a child
+# holding it reaches the corpus and nothing owner-authored. Like the web children they are
+# leaves (no `spawn_subagent`) and KB-less. jerv holds `external_video`, so the parent⊆child
+# clamp keeps it; show/remove are separate tools, never granted here.
+RESEARCH_LIBRARY_TOOLS = frozenset({"external_video", "current_time"})
 REVIEW_LIBRARY_TOOLS = RESEARCH_LIBRARY_TOOLS
 # research_reports / review_reports children: the research-REPORT library read tools and the
 # dataless clock, and NO web tools — `deep_research`'s `sources=reports` (the compare-from-

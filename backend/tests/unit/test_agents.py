@@ -100,9 +100,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "read_artifact",
             "grokipedia",
             "public_records",
-            "search_external_video",
-            "list_external_video",
-            "read_external_video",
+            "external_video",
             "show_external_video",
             "remove_external_video",
             "check_channel",
@@ -230,7 +228,7 @@ def test_library_subagent_personas_are_corpus_sandboxed_and_kb_less() -> None:
     assert (
         research_lib.tools
         == RESEARCH_LIBRARY_TOOLS
-        == frozenset({"search_external_video", "read_external_video", "current_time"})
+        == frozenset({"external_video", "current_time"})
     )
     assert review_lib.tools == REVIEW_LIBRARY_TOOLS == RESEARCH_LIBRARY_TOOLS
     for p in (research_lib, review_lib):
@@ -328,8 +326,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v40",
-            "3064eb8a77a79c38b9a0660505cd9f80d6bdc3c19f8a19b6c0e96b222d095fcd",
+            "agent-jerv-v41",
+            "fbc9e3b100ae2eeb9abf09c1b29b0c1383d8bac225fe23fce4ec0064c5ee1916",
         ),
         "archivist": (
             "agent-archivist-v6",
@@ -352,12 +350,12 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "fb03cdd6ff8198855e006cf0ee22de93d2384457cd23fe4f25607ef207f31c38",
         ),
         "research_library": (
-            "agent-research-library-v2",
-            "d6420ca2f0af7979204d6cc92f3528bd55818e63290cb3eae60c0d885705e0c3",
+            "agent-research-library-v3",
+            "06c905079178e08f85625be14236d71737a9513f4b3d6f87d8492b4742c47e24",
         ),
         "review_library": (
-            "agent-review-library-v1",
-            "dfe6a297ac32de73ffafbb2f3910e47698698268d64787b8d744cb44c56a010c",
+            "agent-review-library-v2",
+            "f3123fdde9bfbe360e67d5c56812f7a72d55cf25a744d1788f4f7380f0a29564",
         ),
         "research_deep": (
             "agent-research-deep-v2",

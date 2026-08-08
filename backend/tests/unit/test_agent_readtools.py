@@ -835,13 +835,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
-        # search_external_video is `web`-classed (jerv-only), reading the external-source
-        # video corpus via a purpose-built scope, never the curator wildcard.
-        "search_external_video",
-        # list_external_video is `web`-classed (jerv-only): enumerate/count the whole library.
-        "list_external_video",
-        # read_external_video is `web`-classed (jerv-only): one library video's full transcript.
-        "read_external_video",
+        # external_video is the `web`-classed (jerv-only) read umbrella (search/list/read) over
+        # the external-source video corpus, via a purpose-built scope, never the curator wildcard.
+        "external_video",
         # show_external_video is `web`-classed (jerv-only): the video-analysis card from corpus.
         "show_external_video",
         # remove_external_video is `web`-classed (jerv-only): stages an owner-approved removal.
@@ -1192,8 +1188,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_fetch.tool": (
             "web_fetch",
-            9,
-            "d3cadfcb9b085f52e48f15747078df317e3dc3859f8c690e6d08b3704d87b1fb",
+            10,
+            "3f6c4afaa4fe76a171165bcd9ff43e6df9afb6c31f1a556fa9dd1ca561949894",
         ),
         "public_records.tool": (
             "public_records",
@@ -1335,30 +1331,20 @@ def test_sidecars_pinned_to_their_versions() -> None:
             5,
             "0951333387033c01df060fe90a71058d3414ec6edd22e1c44ef8bb01f417a744",
         ),
-        "search_external_video.tool": (
-            "search_external_video",
-            2,
-            "35980730d691617a57fde6bc07a112ccb8db0ba49b071e4c274f1fb0aeb0251c",
-        ),
-        "list_external_video.tool": (
-            "list_external_video",
+        "external_video.tool": (
+            "external_video",
             1,
-            "21e6ff676f81063cb5022512377db4c7dff31a6595e2253fcbc787bc3f29cb3a",
-        ),
-        "read_external_video.tool": (
-            "read_external_video",
-            3,
-            "b5318150729b5e701ab90a1887c84b66c5c973bab78816df7c554d2735b2b23d",
+            "165762263ead61ac986195cf769f6cd26e1247e9e50c0e58b838599648cb00e1",
         ),
         "show_external_video.tool": (
             "show_external_video",
             1,
-            "5c5cc42b9573683f5fad58fb0ecf10d91a4778ca46d184d7c0060a4cfaa28571",
+            "71d6c7ae15fa33195fdccd85ed80d2bb93146a6bd16009354e626cb20bf24602",
         ),
         "remove_external_video.tool": (
             "remove_external_video",
             1,
-            "05c37cc6bec361537c5699ff07e276e399b72103c7514a8392863b3dda0fdbbf",
+            "1cc3d5e411aa14afeffdb6521611f9ff1d7e42286f7c69690456202a672d2797",
         ),
         "check_channel.tool": (
             "check_channel",

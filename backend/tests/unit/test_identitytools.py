@@ -134,8 +134,8 @@ async def test_tool_surfaces_the_alias_and_reframes_the_reruns() -> None:
     assert "physician" in text
     assert "National Provider Identifier 1234567890" in text
     assert "Wikidata" in text
-    # It reframes toward re-running the records/license searches under each variant.
-    assert "provider_license" in text and "public_records" in text
+    # It reframes toward re-running public_records (its sources) under each variant.
+    assert "public_records" in text and "license source" in text
     assert out.web_sources and out.web_sources[0].url == "https://www.wikidata.org/wiki/Q1"
 
 
