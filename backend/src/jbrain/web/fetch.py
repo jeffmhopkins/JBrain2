@@ -132,6 +132,13 @@ class WebFetchError(RuntimeError):
         self.status = status
 
 
+class SearchFormError(WebFetchError):
+    """The fetched page is an interactive SEARCH FORM, not results — the query was never
+    executed, so it is NOT evidence the record is absent. A distinct subclass so `fetch()`
+    surfaces it WITHOUT the reader/solver recovery a bot-wall gets: a renderer cannot submit the
+    form either, so escalation would be pure latency waste (`_is_search_form_page`)."""
+
+
 # A definitive "this resource does not exist" — no reader fallback (the reader would
 # only render the origin's soft "no such page" stub, which has enough text to read as
 # a successful fetch and hide the miss). A bot-wall (403/429) or transient error still
@@ -228,6 +235,99 @@ def _is_challenge_page(title: str, text: str) -> bool:
         ):
             return True
     return words < _CHALLENGE_TINY_WORDS and any(m in b for m in _CHALLENGE_WEAK_MARKERS)
+
+
+# --- "Search form, not results" detection (honest degradation for un-queryable portals) ------
+# A dynamic government portal (FL Sunbiz `CorporationSearch/ByName`, FL DFS DICE `pb_*.asp`)
+# answers a bare GET with its empty SEARCH FORM, not results — `web_fetch` can't run the form's
+# client-side / POST query. Ingested as content, that empty form read as "no record found" — the
+# exact laundering that let a candidate profile assert "no entity" when the search never ran.
+# On a True verdict `_fetch_direct` raises `SearchFormError`, which `fetch()` surfaces WITHOUT
+# the reader/solver recovery a bot-wall gets: a renderer cannot submit the form either, so
+# escalation would be pure latency waste (a search form IS the served content, not a wall to
+# render past).
+#
+# Precision over recall — a false positive DROPS A REAL PAGE — so this fires ONLY when the main
+# content genuinely IS a search form: a SHORT extracted body (the form labels + boilerplate, not
+# an article) that carries a query input + a submit control in the raw HTML, AND shows no sign
+# the query actually ran (no result-bearing table in the raw HTML, no "results"/"no results"
+# text). A nav search box on a real article, or a genuine (even empty) results page, is not
+# flagged. The detector needs the RAW HTML; on the reader path (markdown only) it is a no-op, so
+# form detection relies on the direct path (where the un-queried portal form is served).
+_FORM_SHORT_WORDS = 200  # a bare form is form labels + boilerplate; a real article clears this
+_RESULTS_PRESENT_MARKERS = (  # the query DID run (even to empty) — a real results page, not a form
+    "no results",
+    "no records found",
+    "no record found",
+    "no matching records",
+    "0 results",
+    "did not match",
+    "your search returned",
+    "results found",
+    "showing results",
+    "search results for",
+)
+_TR_RE = re.compile(r"<tr\b.*?</tr>", re.IGNORECASE | re.DOTALL)
+
+
+def _has_search_form(h: str) -> bool:
+    """Whether the raw HTML's main interactive element is a search form — a `<form>` carrying a
+    free-text query field (or a select/textarea) AND a submit control. Deliberately structural
+    (not phrase-based) so it generalizes across portals."""
+    if "<form" not in h:
+        return False
+    has_query_field = (
+        'type="text"' in h
+        or "type='text'" in h
+        or 'type="search"' in h
+        or "type='search'" in h
+        or "<select" in h
+        or "<textarea" in h
+    )
+    has_submit = (
+        'type="submit"' in h
+        or "type='submit'" in h
+        or "<button" in h
+        or 'value="search"' in h
+        or "value='search'" in h
+    )
+    return has_query_field and has_submit
+
+
+def _has_result_rows(h: str) -> bool:
+    """A result-bearing table in the RAW HTML — ≥2 rows each carrying a data cell with a link (a
+    results list linking to detail pages, the shape a portal's SearchResults page has). A bare
+    form, or a layout table with no linked data rows, does not trip it — so a real (even empty)
+    results page whose rows the extractor dropped is never mistaken for an unexecuted form."""
+    linked = sum(1 for r in _TR_RE.findall(h) if "<td" in r.lower() and "<a " in r.lower())
+    return linked >= 2
+
+
+def _is_search_form_page(title: str, text: str, html: str) -> bool:
+    """Whether (title, extracted text, raw HTML) is an un-queried search FORM rather than
+    content or results — see the block comment above for the seams and the precision bar. False
+    whenever the raw HTML is unavailable (the reader's markdown path), so detection rides the
+    direct path where the portal serves the form."""
+    if not html:
+        return False
+    b = text.lower()
+    if any(m in b for m in _RESULTS_PRESENT_MARKERS):
+        return False  # the query ran (even to empty) — a real results page, not a bare form
+    if len(text.split()) >= _FORM_SHORT_WORDS:
+        return False  # a content-rich page with an incidental search box — never flag prose
+    if _has_result_rows(html):
+        return False  # results present in the raw HTML even if the extractor dropped them
+    return _has_search_form(html)
+
+
+# The distinct, model-visible observation for a True verdict — NOT the form text and NOT a bare
+# "no readable text": the query was never executed, so this is not evidence of absence.
+_SEARCH_FORM_MESSAGE = (
+    "that URL is an interactive search FORM, not results — the query was not executed, so this "
+    "is NOT evidence the record does not exist. Find the portal's result/detail URL (the page "
+    "its search leads to), a cached copy, or an official index/record page, or web_search for "
+    "the specific record; do not read this as 'no record found'."
+)
 
 
 @dataclass(frozen=True)
@@ -463,6 +563,10 @@ class WebFetcher:
             )
         try:
             result = await self._fetch_direct(url, offset=offset, find=find, find_regex=find_regex)
+        except SearchFormError:
+            # An un-queried search form: the reader/solver can't submit it either, so recovery
+            # would only burn latency. Surface the "query not executed" observation directly.
+            raise
         except WebFetchError as exc:
             # A bot-wall (403/429/challenge) or unreachable host: escalate to the recovery
             # tiers (reader, then solver), which render the page from a real browser and get
@@ -556,13 +660,14 @@ class WebFetcher:
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
             log.warning("web.fetch_failed", error=repr(exc), status=status)
             raise WebFetchError(_fetch_error_message(status), status=status) from exc
+        raw_html = ""
         if "pdf" in content_type.lower():
             # A linked PDF (common in research) is real text, not a dead end: pull its
             # text layer with PyMuPDF rather than refusing the way a binary body is.
             title, text, links = "", _extract_pdf_text(body), ()
         elif "html" in content_type.lower():
-            html = body.decode(_charset(content_type) or "utf-8", errors="replace")
-            title, text, hrefs = _extract_html(html, base=final_url)
+            raw_html = body.decode(_charset(content_type) or "utf-8", errors="replace")
+            title, text, hrefs = _extract_html(raw_html, base=final_url)
             links = _collect_links(hrefs, base=final_url)
         else:
             text = body.decode(_charset(content_type) or "utf-8", errors="replace").strip()
@@ -573,6 +678,12 @@ class WebFetcher:
         if _is_challenge_page(title, text):
             log.warning("web.challenge_blocked", url=final_url, via="direct", title=title[:80])
             raise WebFetchError("that URL returned a bot-challenge page, not its content")
+        # An un-queried search form (a dynamic gov portal served as its empty form): raise a
+        # DISTINCT error so `fetch()` surfaces "the query was not executed" WITHOUT trying the
+        # reader/solver — a renderer can't submit the form, so that recovery is pure waste.
+        if _is_search_form_page(title, text, raw_html):
+            log.info("web.search_form_detected", url=final_url, via="direct", title=title[:80])
+            raise SearchFormError(_SEARCH_FORM_MESSAGE)
         # Window the full text at `offset` (pagination), or jump it to a `find` keyword;
         # `total_chars` lets the tool tell the model whether more remains. `truncated` means
         # the FULL text is itself short of the real page because the download hit the byte
@@ -733,6 +844,11 @@ class WebFetcher:
         title, text, hrefs = _extract_html(html, base=final_url)
         if _is_challenge_page(title, text):
             log.warning("web.challenge_blocked", url=url, via="solver", title=title[:80])
+            return None
+        # A solved page that is itself just a search form is not recovered content — return None
+        # so a form never becomes a cited source (mirrors the challenge seam).
+        if _is_search_form_page(title, text, html):
+            log.info("web.search_form_detected", url=final_url, via="solver")
             return None
         log.info("web.solver_used", url=final_url)
         return _window_and_find(

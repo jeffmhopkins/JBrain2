@@ -41,14 +41,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   independent reviews: ship the cheap waves now (W0 trim + metadata, W1 umbrellas
   19→4), and **gate** the catalog machinery (W2/W3) behind resolving the
   mode-(a)/native-tool-calling contradiction and a pre-built selection-accuracy eval.
-- `DYNAMIC_PORTAL_FETCH_PLAN.md` — give the research fan a way to actually *query* dynamic
-  government search portals (codename "dinosaurs"): per-portal resolver adapters (FL Sunbiz
-  corp search, FL DFS licensee search) that turn a name into real, citable result/detail
-  rows via each portal's actual endpoint through the existing SSRF-guarded fetcher, plus a
-  "this is a search form, not results" detector so an un-queryable portal degrades honestly
-  instead of laundering "the search returned nothing" into "no record exists". Waves P3
-  (honesty backstop, ships first) → P1 (resolver framework + Sunbiz) → P2 (DFS). Adversarial
-  review incorporated. Motivated by the `candidate_profile` failure diagnosed in this repo.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
@@ -57,4 +49,5 @@ shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,
 `ENTITY_GRAPH_INGEST_V2_PLAN.md` was ratified and promoted to `../plans/` (Scheduled).
 `DEEP_PRODUCE_PLAN.md` was reviewed, hardened, and promoted to `../plans/` (Scheduled).
 `CROSS_TURN_TOOL_RESULTS_PLAN.md` was promoted to `../plans/` (In progress — W0+W1 landed).
+`DYNAMIC_PORTAL_FETCH_PLAN.md` was scheduled and promoted to `../plans/` (In progress — P3 landed).
 `GROKIPEDIA_TOOL_PLAN.md` was promoted, shipped (W1–W3, PR #993), and now lives in `../archive/`.)_

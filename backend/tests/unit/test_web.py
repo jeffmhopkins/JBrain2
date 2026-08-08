@@ -10,7 +10,7 @@ import pytest
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.db.session import SessionContext
-from jbrain.web.fetch import WebFetcher, WebFetchError
+from jbrain.web.fetch import SearchFormError, WebFetcher, WebFetchError
 from jbrain.web.search import SearxngClient, WebSearchError
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
@@ -738,6 +738,62 @@ def test_is_challenge_page_precision() -> None:
     assert not _is_challenge_page("Cloudflare posts record earnings", article)
     # An ordinary short page is not a challenge either.
     assert not _is_challenge_page("Hi There", "Heading. First para. Second para.")
+
+
+# A dynamic gov portal served as its empty search form (the Sunbiz ByName / DFS pb_*.asp shape):
+# a short page whose main content is a query field + submit, with no results.
+_SEARCH_FORM_HTML = (
+    b"<html><head><title>Search for Corporations by Name</title></head><body>"
+    b"<h1>Search the Corporation Records</h1>"
+    b"<form action='/Inquiry/CorporationSearch/SearchResults' method='get'>"
+    b"<label>Entity Name:</label><input type='text' name='SearchTerm'/>"
+    b"<input type='submit' value='Search Now'/></form>"
+    b"<p>Other search options: by officer, by registered agent.</p></body></html>"
+)
+
+
+def test_is_search_form_page_precision() -> None:
+    from jbrain.web.fetch import _is_search_form_page
+
+    form_html = "<form><input type='text' name='q'/><input type='submit' value='Search'/></form>"
+    # A bare search form on a short page → flagged (the query was never run).
+    assert _is_search_form_page(
+        "Search for Corporations by Name", "Entity Name: search by name.", form_html
+    )  # noqa: E501
+    # No raw HTML (the reader's markdown path) → never flagged; detection rides the direct path.
+    assert not _is_search_form_page("Search", "Entity Name:", "")
+    # A real results page — even an EMPTY one — says so: the query ran, it is not a bare form.
+    empty = "No records found for your search."
+    assert not _is_search_form_page("Search Results", empty, form_html)
+    # A result-bearing table in the raw HTML → results present even if the extractor dropped them.
+    results_html = form_html + (
+        "<table><tr><td><a href='/d/1'>ACME LLC</a></td></tr>"
+        "<tr><td><a href='/d/2'>ACME INC</a></td></tr></table>"
+    )
+    assert not _is_search_form_page("Search Results", "", results_html)
+    # A content-rich article that merely has a nav search box → never flagged (precision).
+    article = "The county commission met to discuss the annual budget in detail. " * 30
+    assert not _is_search_form_page("County budget talks", article, form_html)
+    # A page with no form at all → not flagged.
+    assert not _is_search_form_page("About us", "We are a company.", "<div>hello</div>")
+
+
+async def test_direct_search_form_is_surfaced_not_recovered() -> None:
+    # A dynamic portal served as its empty search form. Even with a reader configured that WOULD
+    # return content, the form error surfaces DIRECTLY — no reader/solver recovery (a renderer
+    # can't submit the form either), and the message says the query was not executed.
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            md = {"content-type": "text/markdown"}
+            return httpx.Response(200, content=_READER_MD, headers=md)
+        return httpx.Response(200, content=_SEARCH_FORM_HTML, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle), reader_url="http://reader:3000")
+    with pytest.raises(SearchFormError) as excinfo:
+        await fetcher.fetch("https://search.example/Inquiry/CorporationSearch/ByName")
+    msg = str(excinfo.value).lower()
+    assert "search form" in msg and "not evidence" in msg
+    assert "rendered by the reader" not in msg  # the reader was never used — no recovery
 
 
 # The solved page the challenge solver returns (a FlareSolverr-shape `/v1` response wraps the
