@@ -8,6 +8,7 @@ from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.grokipediatools import build_grokipedia_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
+from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import (
     TOOLS_DIR,
     build_entity_handlers,
@@ -38,6 +39,7 @@ from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo
 from jbrain.search.service import SearchResponse, SearchResult
 from jbrain.web import (
+    CourtListenerClient,
     GrokipediaClient,
     HurricaneClient,
     NhcGisClient,
@@ -780,6 +782,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_grokipedia_handlers(GrokipediaClient()),
+            **build_public_records_handlers(CourtListenerClient("")),
             **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
             **build_weather_history_handlers(
                 WeatherHistoryClient(""),
@@ -821,6 +824,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "grokipedia_section",
         "grokipedia_citations",
         "grokipedia_related",
+        # public_records is `web`-classed (jerv-only): free court-records search by name,
+        # never offered to the curator wildcard.
+        "public_records",
         # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
         # research/review children) by allowlist, never to the curator wildcard.
         "spawn_subagent",
@@ -1203,8 +1209,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "web_fetch.tool": (
             "web_fetch",
-            8,
-            "518fd9e634add430ae8a6d4a4257ba7c7d56815c132b7041c3cab7f212035da4",
+            9,
+            "d3cadfcb9b085f52e48f15747078df317e3dc3859f8c690e6d08b3704d87b1fb",
+        ),
+        "public_records.tool": (
+            "public_records",
+            1,
+            "12a2260a588d27bb222abcd83933edd6df2bdc6b038689bb85b91cae68e899c4",
         ),
         "read_artifact.tool": (
             "read_artifact",

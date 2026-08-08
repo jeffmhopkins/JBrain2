@@ -26,6 +26,7 @@ from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.ocrtools import build_ocr_handlers
 from jbrain.agent.proposals import ProposalRepo
+from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
 from jbrain.agent.runlog import AgentRunLog, RunLogReader, reap_stranded_loop
@@ -158,6 +159,7 @@ from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
 from jbrain.vision import RapidOcrClient
 from jbrain.web import (
+    CourtListenerClient,
     FaviconFetcher,
     GrokipediaClient,
     HurricaneClient,
@@ -485,6 +487,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # posture as web_search; a browser UA + cookie jar handle Cloudflare, per-slug cache
         # collapses a drill-down to one fetch.
         web_handlers.update(build_grokipedia_handlers(GrokipediaClient(), emit=brain_emit))
+        # jerv's free public-records lookup (docs/reference/ASSISTANT.md "Agent selection") —
+        # CourtListener opinions + RECAP dockets, searched by name. Merged into the web handlers
+        # so it rides the existing `web` gate, the same sandboxed-web posture as web_search; the
+        # base URL is pinned from config and only a public name goes out. Shared on app.state so
+        # the jcode bridge (like searxng/web_fetcher) can reach the one cached instance.
+        app.state.courtlistener = CourtListenerClient(
+            settings.courtlistener_url, settings.courtlistener_token
+        )
+        web_handlers.update(build_public_records_handlers(app.state.courtlistener, emit=brain_emit))
         web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
         web_handlers.update(
             build_weather_history_handlers(

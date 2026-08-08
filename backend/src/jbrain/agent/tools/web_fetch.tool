@@ -1,6 +1,6 @@
 ---
 name: web_fetch
-version: 8
+version: 9
 permission: web
 params:
   type: object
@@ -8,6 +8,24 @@ params:
     url:
       type: string
       description: The http(s) URL of the page to read.
+    method:
+      type: string
+      enum: [GET, POST]
+      description: >-
+        HTTP method (default GET = read a page). Use POST only to call a JSON/search API
+        endpoint that requires it (e.g. a portal's search service) — pass the request in body.
+    body:
+      type: string
+      description: >-
+        The request body for a POST — the JSON (or form-encoded) payload the API expects.
+        Ignored for a GET. Example: method="POST", content_type="application/json",
+        body='{"query":"smith","state":"FL"}' to call a search API. Kept small (capped).
+    content_type:
+      type: string
+      enum: [application/json, application/x-www-form-urlencoded]
+      description: >-
+        The Content-Type of a POST body (default application/json; also
+        application/x-www-form-urlencoded for a form-style API). Ignored for a GET.
     outline:
       type: boolean
       description: >-
@@ -48,7 +66,11 @@ link, open the next page, drill into a file in a repository) rather than stoppin
 the first page. Only fetch a URL you actually obtained from a web_search result, a
 link on a page you fetched, or the owner directly — never build, guess, or extrapolate
 a URL yourself (e.g. appending a year suffix to an article title); if you don't have
-the URL you want, web_search for it. Only http and https URLs work; scripts, styles,
+the URL you want, web_search for it. To call a JSON or search API endpoint that requires
+it, set method="POST" and pass the request in body (with content_type) — e.g.
+method="POST", body='{"query":"acme corp"}' against a portal's search service; a JSON
+reply comes back formatted. The same rule applies: only POST to a URL you legitimately
+obtained, never one you guessed. Only http and https URLs work; scripts, styles,
 and page boilerplate (menus, headers, footers) are stripped. A long page is returned in
 windows: to reach the part you need, pass find="<keyword>" to jump straight to that
 section (best for a big page — e.g. a specific year or name in a long table), pass

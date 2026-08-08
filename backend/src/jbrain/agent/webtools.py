@@ -21,7 +21,14 @@ from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.tool_artifacts import ToolArtifactRepo
 from jbrain.storage import BlobStore
-from jbrain.web.fetch import FetchResult, WebFetcher, WebFetchError, is_youtube_url, window_text
+from jbrain.web.fetch import (
+    POST_CONTENT_TYPES,
+    FetchResult,
+    WebFetcher,
+    WebFetchError,
+    is_youtube_url,
+    window_text,
+)
 from jbrain.web.search import SearxngClient, WebSearchError
 
 log = structlog.get_logger()
@@ -273,6 +280,7 @@ def build_web_handlers(
         find = str(arguments.get("find", "")).strip()
         outline_only = _coerce_bool(arguments.get("outline"))
         find_regex = _coerce_bool(arguments.get("regex"))
+        method = (str(arguments.get("method", "GET")).strip() or "GET").upper()
         # Validate a regex `find` up front — before any fetch or the failed-fetch memo — so a bad
         # pattern gives a clean, correctable error rather than a dead-URL mark or an empty result.
         if find and find_regex:
@@ -283,6 +291,40 @@ def build_web_handlers(
                     f"Invalid regex for find: {exc}. Fix the pattern, or drop regex=true to search"
                     " for the text literally."
                 )
+        if method not in ("GET", "POST"):
+            return "web_fetch method must be GET or POST."
+        # A POST hits a JSON/search API endpoint the GET-only path can't. It does NOT take the
+        # youtube path (a bare API call, not a video page) nor the failed-fetch backstop (that
+        # keys a dead GET URL; the same endpoint is legitimately POSTed with different bodies) —
+        # so it's handled here, ahead of both. The SSRF guard is identical (WebFetcher._fetch_post).
+        if method == "POST":
+            content_type = (
+                str(arguments.get("content_type", "application/json")).strip() or "application/json"
+            )
+            if content_type not in POST_CONTENT_TYPES:
+                return (
+                    f"web_fetch content_type must be one of {sorted(POST_CONTENT_TYPES)} for a"
+                    " POST."
+                )
+            body = str(arguments.get("body", ""))
+            if emit:
+                emit("web_fetch", url)
+            try:
+                result = await fetcher.fetch(
+                    url,
+                    offset=offset,
+                    find=find,
+                    find_regex=find_regex,
+                    method="POST",
+                    body=body,
+                    content_type=content_type,
+                )
+            except WebFetchError as exc:
+                return str(exc)
+            await _remember(ctx, result, url, "web_fetch")
+            if outline_only:
+                return _present_outline(result)
+            return _present_fetch(result, url, offset, find, find_regex)
         # A YouTube URL reads as a lightweight title+channel+description+captions view (no media
         # download, no GPU) that pages/keyword-jumps like any page. A None result (unresolvable —
         # private, geo-blocked, not really a video) falls through to a normal HTML fetch.

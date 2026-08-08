@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     # (the tool returns "not configured") but the sidecars still load so jerv always
     # has its handlers.
     searxng_url: str = "http://searxng:8080"
+    # The CourtListener public-records source backing jerv's `public_records` tool — a
+    # FREE, no-key REST API (Free Law Project) for court opinions + RECAP dockets, searched
+    # by name (docs/reference/ASSISTANT.md "Agent selection"). Like SearXNG the base URL is
+    # pinned here and never model-supplied; only a public name goes out. Empty disables the
+    # tool (it reports "not configured") while the sidecar still loads. An optional API token
+    # lifts the anonymous rate limit — leave it blank to run keyless (the default posture).
+    courtlistener_url: str = "https://www.courtlistener.com"
+    courtlistener_token: str = ""
     # A pinned reader endpoint web_fetch falls back to when a direct fetch is blocked
     # (bot-walled 403/429) or comes back empty (a JS-rendered shell our static extractor
     # can't see). A reader renders the page with a real browser and returns clean

@@ -103,6 +103,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "grokipedia_section",
             "grokipedia_citations",
             "grokipedia_related",
+            "public_records",
             "search_external_video",
             "list_external_video",
             "read_external_video",

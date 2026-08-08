@@ -150,6 +150,11 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "grokipedia_section",
         "grokipedia_citations",
         "grokipedia_related",
+        # Free public-records search by name (PUBLIC_RECORDS_TOOL): CourtListener opinions +
+        # RECAP dockets, so a person profile finds court/disciplinary matters filed under a
+        # prior/maiden name that web-only research misses. `web`-gated like web_search — a
+        # pinned public source, no owner data — and always wired (no config gate).
+        "public_records",
         # Search the external-source video corpus (analysed YouTube videos). Sandboxed
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
