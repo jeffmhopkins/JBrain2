@@ -2,7 +2,6 @@
 "Agent selection"). HTTP is faked via MockTransport — no live network. The canned data
 includes the <span class="match"> highlight HTML the API returns, so the strip is exercised."""
 
-
 import httpx
 
 from jbrain.agent.federalregistertools import build_federal_register_handlers

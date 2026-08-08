@@ -2,7 +2,6 @@
 "Agent selection"). HTTP is faked via MockTransport — no live network, like the other web
 clients. The canned data includes an ALIAS case (aliases.en) — the whole point of the tool."""
 
-
 import httpx
 
 from jbrain.agent.identitytools import build_resolve_identity_handlers

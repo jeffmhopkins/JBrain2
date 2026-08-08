@@ -2,7 +2,6 @@
 "Agent selection"). HTTP is faked via MockTransport — no live network. The canned data
 includes an `other_names` ALIAS row and per-state license numbers — the tool's whole point."""
 
-
 import httpx
 
 from jbrain.agent.loop import ToolContext, ToolOutput
