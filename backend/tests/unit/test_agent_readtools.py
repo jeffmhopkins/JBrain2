@@ -1078,8 +1078,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "render_bars.tool": (
             "render_bars",
-            2,
-            "42ce8bbd8ea4f1272d039ef368e3547c03a45cf4c6d483efdbc246a05323fbf4",
+            3,
+            "a78812e8d946438328c5c649248e2da3b5f3c5996e69bdd1212124a37df48ad6",
         ),
         "read_encounters.tool": (
             "read_encounters",
@@ -1218,18 +1218,18 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "transcribe.tool": (
             "transcribe",
-            2,
-            "f7d5a16c2e858d890595e9fd452c3f3d25154679574e4d45181678866c288017",
+            3,
+            "ab0a7b6e72ca9b9315e28c154a17eaae0d5ee3ac8a53d4175f590e69d665469e",
         ),
         "analyze_video.tool": (
             "analyze_video",
-            2,
-            "e4765dd86c2e0731b25bbf79931400ae544775f96074c115e2e7044bc8f78ebc",
+            3,
+            "a7859e3c7d28153f14fa10dd22fc0f4b53006aad4af7f69efc7b671916279953",
         ),
         "analyze_stream.tool": (
             "analyze_stream",
-            7,
-            "b9a11c70df80caa62bc587424d6b606bae9047fad54136a39b893050003a23c5",
+            8,
+            "db5f6a0550222dd5ed212398ccf0d6b34a50dadb9a7432e072e28f551b596650",
         ),
         "grab_frame.tool": (
             "grab_frame",
@@ -1253,8 +1253,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "query_server_metrics.tool": (
             "query_server_metrics",
-            1,
-            "c913e40d4769f173fe57a03f30f1a9ef5380970fb423729001f4e3dffa353647",
+            2,
+            "11edd0bdd760adca0afff188586a09df9d519f4886ad16eeea1588aae3c02cf6",
         ),
         "weather.tool": (
             "weather",
@@ -1353,13 +1353,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "deep_research.tool": (
             "deep_research",
-            6,
-            "14f8effbb62996b95dbb885079ed436ea967805cd8fa75a2df6f7c989ad65b52",
+            7,
+            "51da21a43b7f6cf96143872e75ecbdf996155c5f89814ccc221335d1ac081bdc",
         ),
         "deep_produce.tool": (
             "deep_produce",
-            3,
-            "4689d1cb78c2631e1678c983f58cb44749e62accef85ec897cbb869079bafd8f",
+            4,
+            "2d31f1ec1fd016c9f8ec845892ae51ecf52d55ab26739acfb24b7993be6dbe86",
         ),
         "decompose_research.tool": (
             "decompose_research",

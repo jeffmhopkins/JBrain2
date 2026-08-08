@@ -1,6 +1,6 @@
 ---
 name: analyze_video
-version: 2
+version: 3
 permission: web
 cost_class: expensive
 params:
@@ -20,5 +20,6 @@ using the owner's local models. Pass source_attachment_id (the id from the
 need to know its content, since you cannot watch it yourself. The first time you ask
 about a clip it starts the analysis (sampling frames, captioning them, and
 transcribing the audio) and tells you to check back; ask again in a moment to read
-the result. Returns a summary of the video; it inserts nothing and shows the owner
-nothing beyond a player card, so report what you learned in your own words.
+the result. It renders an analysis card the owner sees (summary + a frame timeline +
+transcript tabs), so answer what was asked in a line or two — do NOT re-narrate the
+summary or paste the transcript back; the card already shows them.

@@ -1,6 +1,6 @@
 ---
 name: deep_produce
-version: 3
+version: 4
 permission: read
 cost_class: expensive
 params:
@@ -86,7 +86,9 @@ The tool does the rest on its own — plans the sub-questions, dispatches sandbo
 sub-agents to gather and cite sources, judges coverage and fills the biggest gaps, writes the
 artifact, has a reviewer critique it, and revises once. Every kind is a cited Markdown document
 held to the same sourcing discipline as a report. It is a single bounded run: you call it once
-and wait for the finished artifact rather than steering it mid-run.
+and wait for the finished artifact rather than steering it mid-run. The finished artifact renders
+as a card the owner already sees — lead with a one-line takeaway; do NOT re-paste or re-narrate
+it (read it back later with `research_report(action=read)` if you need to build on it).
 
 By default it researches the open web. Set `sources` to draw on the owner's analysed-video
 library instead (`library` for library-only, `library_first` to prefer the library and let the

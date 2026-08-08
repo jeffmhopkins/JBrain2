@@ -1,6 +1,6 @@
 ---
 name: analyze_stream
-version: 7
+version: 8
 permission: web
 cost_class: expensive
 # NOTE: `mode` and `captions` intentionally carry NO JSON-Schema `enum`. gpt-oss's
@@ -77,7 +77,7 @@ or auto-generated), re-run the same URL with `captions: off` to force whisper; `
 uses captions or nothing. For a full transcript of a very long, captionless video, have
 the owner attach it and use the video tool instead.
 
-Returns a summary of what was seen and heard; it inserts nothing and shows the owner
-nothing beyond an analysis card, so report what you learned in your own words. It
-reads a live stream or a large video over the network and runs the local models, so
-it can take a little while.
+It renders an analysis card the owner sees (summary + frames, and in window/full mode a
+transcript), so answer what was asked in a line or two — do NOT re-narrate the summary
+or paste the transcript back; the card already shows them. It reads a live stream or a
+large video over the network and runs the local models, so it can take a little while.

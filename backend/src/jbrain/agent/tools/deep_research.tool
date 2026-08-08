@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 6
+version: 7
 permission: web
 cost_class: expensive
 params:
@@ -67,9 +67,10 @@ Give it one self-contained `question`. The tool does the rest on its own: it pla
 sub-questions, dispatches sandboxed research sub-agents to gather and cite sources,
 judges whether coverage is enough and fills the biggest gaps with one more round if
 not, writes an outlined report, and (for a deep question) has a reviewer critique the
-draft and revises it once. It returns the finished report — read it, then present or
-build on it. It is a single bounded run: it plans and paces itself, so you call it once
-and wait for the report rather than steering it mid-run.
+draft and revises it once. It returns the finished report, which ALSO renders as a card
+the owner already sees — read it and give a one-line lead-in or build on it, but do NOT
+re-paste or re-narrate the report itself. It is a single bounded run: it plans and paces
+itself, so you call it once and wait for the report rather than steering it mid-run.
 
 By default it researches the open web (no owner knowledge base). Set `sources` to point
 it at the owner's analysed-video library instead: `library` for a library-only run

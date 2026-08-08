@@ -1,6 +1,6 @@
 ---
 name: query_server_metrics
-version: 1
+version: 2
 permission: read
 params:
   type: object
@@ -18,3 +18,7 @@ behaving (e.g. "has it been running hot, throttling, or low on memory lately?").
 This is host hardware telemetry sampled every ~30 seconds, NOT the owner's notes —
 do not use it to answer questions about the owner's knowledge base. Longer ranges
 are summarized from an hourly rollup, so peaks within an hour are still reflected.
+
+The reply renders a sparkline metrics card the owner sees, with each metric's current,
+peak, and average — do NOT read the numbers back line by line; give a one-line takeaway
+(is it healthy, running hot, throttling, low on memory?).
