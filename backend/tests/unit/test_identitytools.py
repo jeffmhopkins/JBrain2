@@ -2,16 +2,11 @@
 "Agent selection"). HTTP is faked via MockTransport — no live network, like the other web
 clients. The canned data includes an ALIAS case (aliases.en) — the whole point of the tool."""
 
-from typing import Any
 
 import httpx
 
-from jbrain.agent.agents import JERV_TOOLS
 from jbrain.agent.identitytools import build_resolve_identity_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
-from jbrain.agent.readtools import TOOLS_DIR
-from jbrain.agent.toolfile import load_tool
-from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.db.session import SessionContext
 from jbrain.web.wikidata import WikidataClient
 
@@ -181,25 +176,6 @@ async def test_tool_emits_a_tendril_event() -> None:
     assert fired == [("web_search", "Jane Roe")]
 
 
-# --- registration / permission (web-class, jerv-only) -----------------------
-
-
-async def _noop(_arguments: dict, _ctx: Any) -> str:
-    return ""
-
-
-def test_resolve_identity_sidecar_is_a_web_tool_requiring_a_name() -> None:
-    tf = load_tool(TOOLS_DIR / "resolve_identity.tool")
-    assert tf.spec.permission == "web"
-    assert tf.spec.side_effecting is False
-    assert tf.spec.params["required"] == ["name"]
-    assert "resolve_identity" in JERV_TOOLS
-
-
-def test_resolve_identity_is_jerv_only_not_curator() -> None:
-    registry = ToolRegistry(
-        [RegisteredTool(toolfile=load_tool(TOOLS_DIR / "resolve_identity.tool"), handler=_noop)]
-    )
-    curator = registry.allowed_names(scopes=("general", "health", "finance", "location"))
-    assert "resolve_identity" not in curator  # the web class is never in the curator wildcard
-    assert "resolve_identity" in registry.allowed_names(scopes=(), allow=JERV_TOOLS)
+# resolve_identity is no longer a top-level tool — it is a `source` of the public_records
+# umbrella (docs/plans/TOOL_CATALOG_PLAN.md); its sidecar + jerv-only/web-class registration are
+# covered by test_public_records.py. This file keeps the Wikidata source's own behaviour.

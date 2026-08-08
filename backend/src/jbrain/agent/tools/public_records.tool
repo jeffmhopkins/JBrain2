@@ -1,6 +1,6 @@
 ---
 name: public_records
-version: 2
+version: 3
 permission: web
 params:
   type: object
@@ -8,28 +8,44 @@ params:
     name:
       type: string
       description: >-
-        The exact name (or alias) to search — a person's full name, or an organization.
-        Run this once per name VARIANT you know, including any prior or maiden name.
+        The person's name (or organization) to look up. Run once per name VARIANT you know,
+        including any prior or maiden name — records are often filed under a former name.
+    sources:
+      type: array
+      items:
+        type: string
+        enum: [identity, court, license, federal_register]
+      description: >-
+        Which keyless sources to query (omit for ALL four). identity = Wikidata (canonical name +
+        aliases/maiden/former names + occupation; query this FIRST to harvest aliases). court =
+        CourtListener (opinions + RECAP dockets + a judges/officials alias lookup). license =
+        NPPES/NPI registry (a clinician's license number/state/specialty + other_names).
+        federal_register = agency debarments + enforcement notices.
+    state:
+      type: string
+      description: For sources including license — a 2-letter US state to narrow the NPI provider search.
     limit:
       type: integer
-      description: Maximum number of records to return (default 10, max 25).
+      description: Maximum results per source (default 10, max 25; identity caps lower).
   required: [name]
 ---
-Search FREE public court records by name. v1 covers CourtListener — U.S. court
-OPINIONS (decided cases) and RECAP DOCKETS (filings) from the Free Law Project, a free,
-rate-limited source. Use this to find court or disciplinary matters filed under a name
-that a plain web_search misses — for a person profile, run it once per name VARIANT you
-have, especially any PRIOR or MAIDEN name, since records are often filed under a former
-name. Each case result is "CaseName — Court (dateFiled) [docket] URL". It also searches
-CourtListener's judges/officials database and returns any matching people with their POSITIONS
-and, when present, an ALIAS link — a person filed under a prior name is tied there to their
-canonical record, which you can follow and re-search under that name.
+FREE, keyless public-records lookups about a PERSON by name. ONE tool, four sources — set
+`sources` (omit for all four):
 
-Every hit is a LEAD, not a verdict. A common name can belong to a different person, so
-you MUST verify each match is really THIS individual before relying on it: open the
-record's URL with web_fetch and confirm it against the primary document (the parties,
-dates, and identifying detail). Do not report a record as this person's until you have
-confirmed it. This tool only surfaces candidates; web_fetch and your judgment confirm
-them. It searches by name only — it sends no other owner data — and it does not cover
-every jurisdiction, so a clean result is not proof of no records; fall back to web_search
-for sources it doesn't index.
+- identity — Wikidata: the canonical name + ALL alternate names (aka/maiden/former) + occupation
+  + a few pivot IDs (an NPI feeds `license`). Query this FIRST: an alias it finds is a required
+  re-search key for the other sources.
+- court — CourtListener: U.S. court OPINIONS + RECAP DOCKETS, plus the judges/officials database
+  (which links a person filed under a prior name to their canonical record). Free, rate-limited.
+- license — NPPES NPI registry: a clinician's NPI, credential, per-state license number +
+  specialty, and any other_names (a prior/maiden name). A REGISTRY, not a discipline database —
+  a hit is the identifier + alias to take to the right state board, never a clean/dirty verdict.
+- federal_register — U.S. federal rules & notices, incl. FDA/agency DEBARMENTS and enforcement
+  actions naming a person or company.
+
+Every hit is a LEAD, not a verdict: a common name collides with other people, so verify each
+match against its primary document (open the URL with web_fetch — the parties, dates, identifying
+detail) before relying on it. For a person profile, run identity first to harvest aliases, then
+re-run the other sources under EACH name. Searches by name only (no other owner data leaves the
+box) and does not cover every jurisdiction, so an empty result is "not found here", not proof of
+no records — fall back to web_search for sources it doesn't index.

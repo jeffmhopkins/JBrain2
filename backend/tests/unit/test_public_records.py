@@ -14,7 +14,10 @@ from jbrain.agent.readtools import TOOLS_DIR
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.db.session import SessionContext
+from jbrain.web.federal_register import FederalRegisterClient
+from jbrain.web.nppes import NppesClient
 from jbrain.web.public_records import CourtListenerClient
+from jbrain.web.wikidata import WikidataClient
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
 
@@ -190,19 +193,29 @@ async def test_search_people_unconfigured_returns_empty_ok_false() -> None:
     assert people == [] and ok is False
 
 
-# --- public_records tool ----------------------------------------------------
+# --- public_records umbrella tool ------------------------------------------
+# The umbrella fans a name across four sources. Binding a real CourtListener client and
+# UNCONFIGURED identity/license/federal_register clients lets a sources=["court"] call exercise
+# exactly the court section, while a default (all-four) call proves the fan.
+
+
+def _umbrella(court: CourtListenerClient, *, emit: Any = None):  # type: ignore[no-untyped-def]
+    return build_public_records_handlers(
+        court, WikidataClient(""), NppesClient(""), FederalRegisterClient(""), emit=emit
+    )["public_records"]
 
 
 async def test_tool_surfaces_the_uppal_opinion_with_court_date_and_url() -> None:
-    handlers = build_public_records_handlers(_client(_UPPAL_OPINION, _EMPTY))
-    out = await handlers["public_records"]({"name": "Neelam Uppal"}, CTX)
+    out = await _umbrella(_client(_UPPAL_OPINION, _EMPTY))(
+        {"name": "Neelam Uppal", "sources": ["court"]}, CTX
+    )
     assert isinstance(out, ToolOutput)
     text = str(out)
     assert "NEELAM UPPAL v. DEPT. OF HEALTH" in text
     assert "Fla. Dist. Ct. App." in text
     assert "2018-05-16" in text
     assert "courtlistener.com/opinion/4444" in text
-    # The header names the source and its limits, and a LEAD/verify caution is present.
+    # The umbrella header carries a LEAD/verify caution; the section names the source.
     assert "CourtListener" in text
     assert "verify" in text.lower()
     # The record rides as a citable web source.
@@ -210,8 +223,9 @@ async def test_tool_surfaces_the_uppal_opinion_with_court_date_and_url() -> None
 
 
 async def test_tool_surfaces_the_people_alias_section() -> None:
-    handlers = build_public_records_handlers(_client(_EMPTY, _EMPTY, people_body=_PEOPLE))
-    out = await handlers["public_records"]({"name": "Jane Roe"}, CTX)
+    out = await _umbrella(_client(_EMPTY, _EMPTY, people_body=_PEOPLE))(
+        {"name": "Jane Roe", "sources": ["court"]}, CTX
+    )
     assert isinstance(out, ToolOutput)
     text = str(out)
     assert "judge/official record(s)" in text
@@ -224,15 +238,21 @@ async def test_tool_surfaces_the_people_alias_section() -> None:
 
 
 async def test_tool_dedups_and_reports_one_row_for_the_overlap() -> None:
-    handlers = build_public_records_handlers(_client(_UPPAL_OPINION, _UPPAL_DOCKET))
-    out = str(await handlers["public_records"]({"name": "Neelam Uppal"}, CTX))
+    out = str(
+        await _umbrella(_client(_UPPAL_OPINION, _UPPAL_DOCKET))(
+            {"name": "Neelam Uppal", "sources": ["court"]}, CTX
+        )
+    )
     assert out.count("NEELAM UPPAL v. DEPT. OF HEALTH") == 1
     assert "1 record(s)" in out
 
 
 async def test_tool_no_results_is_a_clean_line() -> None:
-    handlers = build_public_records_handlers(_client(_EMPTY, _EMPTY))
-    out = str(await handlers["public_records"]({"name": "Nobody McNobody"}, CTX))
+    out = str(
+        await _umbrella(_client(_EMPTY, _EMPTY))(
+            {"name": "Nobody McNobody", "sources": ["court"]}, CTX
+        )
+    )
     assert "No public court records" in out
     assert "Nobody McNobody" in out
     # It nudges toward a name variant, since records often sit under a prior name.
@@ -240,8 +260,7 @@ async def test_tool_no_results_is_a_clean_line() -> None:
 
 
 async def test_tool_needs_a_name() -> None:
-    handlers = build_public_records_handlers(_client(_EMPTY, _EMPTY))
-    assert "needs a name" in await handlers["public_records"]({"name": "  "}, CTX)
+    assert "needs a name" in await _umbrella(_client(_EMPTY, _EMPTY))({"name": "  "}, CTX)
 
 
 async def test_tool_reports_an_outage_distinctly_from_empty() -> None:
@@ -251,23 +270,38 @@ async def test_tool_reports_an_outage_distinctly_from_empty() -> None:
     client = CourtListenerClient(
         "https://www.courtlistener.com", transport=httpx.MockTransport(boom)
     )
-    out = str(await build_public_records_handlers(client)["public_records"]({"name": "x"}, CTX))
+    out = str(await _umbrella(client)({"name": "x", "sources": ["court"]}, CTX))
     assert "unavailable" in out.lower()
 
 
 async def test_tool_unconfigured_reports_not_configured() -> None:
-    handlers = build_public_records_handlers(CourtListenerClient(""))
-    out = str(await handlers["public_records"]({"name": "x"}, CTX))
+    out = str(await _umbrella(CourtListenerClient(""))({"name": "x", "sources": ["court"]}, CTX))
     assert "not configured" in out.lower()
 
 
-async def test_tool_emits_a_tendril_event() -> None:
+async def test_umbrella_fans_all_four_sources_by_default() -> None:
+    out = str(await _umbrella(_client(_EMPTY, _EMPTY))({"name": "Someone"}, CTX))
+    for label in ("Identity & aliases", "Court records", "Provider license", "Federal Register"):
+        assert label in out  # every section header appears when sources is omitted
+
+
+async def test_umbrella_narrows_to_a_single_source() -> None:
+    out = str(
+        await _umbrella(_client(_UPPAL_OPINION, _EMPTY))(
+            {"name": "Neelam Uppal", "sources": ["court"]}, CTX
+        )
+    )
+    assert "Court records" in out
+    assert "Identity & aliases" not in out and "Federal Register" not in out
+
+
+async def test_tool_emits_a_tendril_event_per_source() -> None:
     fired: list[tuple[str, str | None]] = []
-    handlers = build_public_records_handlers(
+    umbrella = _umbrella(
         _client(_EMPTY, _EMPTY), emit=lambda kind, text=None: fired.append((kind, text))
     )
-    await handlers["public_records"]({"name": "Neelam Uppal"}, CTX)
-    assert fired == [("web_search", "Neelam Uppal")]
+    await umbrella({"name": "Neelam Uppal", "sources": ["court"]}, CTX)
+    assert fired == [("web_search", "Neelam Uppal")]  # one reach for the one source queried
 
 
 # --- registration / permission (web-class, jerv-only) -----------------------

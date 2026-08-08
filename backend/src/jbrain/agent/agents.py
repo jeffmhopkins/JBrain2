@@ -148,21 +148,17 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # data — and always wired (no config gate). Collapsed from five flat tools after a
         # tool-selection probe confirmed gpt-oss-120b fills the action reliably.
         "grokipedia",
-        # Free public-records search by name (PUBLIC_RECORDS_TOOL): CourtListener opinions +
-        # RECAP dockets + a judges/officials alias lookup, so a person profile finds
-        # court/disciplinary matters filed under a prior/maiden name that web-only research
-        # misses. `web`-gated like web_search — a pinned public source, no owner data — and
-        # always wired (no config gate).
+        # The public_records umbrella (PUBLIC_RECORDS_TOOL, TOOL_CATALOG_PLAN.md): ONE
+        # `public_records(name, sources=[…])` tool fanning a name across four FREE, keyless
+        # sources — identity (Wikidata aliases/maiden/former names + occupation), court
+        # (CourtListener opinions + RECAP dockets + a judges/officials alias lookup), license
+        # (NPPES NPI registry: license number/state/specialty + other_names), and
+        # federal_register (agency debarments/enforcement) — so a person profile finds matters
+        # filed under a prior/maiden name that web-only research misses. `web`-gated like
+        # web_search (pinned public sources, no owner data, no API key) and always wired.
+        # Collapsed from four flat tools after a tool-selection probe (gpt-oss-120b fills
+        # name/sources reliably, incl. single-source narrowing).
         "public_records",
-        # The keyless identity/license/enforcement lookups that pair with public_records for a
-        # person profile — all `web`-gated (pinned public source, no owner data, no API key) and
-        # always wired (no config gate). resolve_identity (Wikidata) harvests a person's aliases
-        # (aka/maiden/former names) so the records searches re-run under each; provider_license
-        # (NPPES NPI registry) returns a clinician's license number/state/specialty + other_names;
-        # federal_register catches agency debarments/enforcement notices by name/term.
-        "resolve_identity",
-        "provider_license",
-        "federal_register",
         # Search the external-source video corpus (analysed YouTube videos). Sandboxed
         # jerv-only alongside web_search; reads the general-domain corpus via a
         # purpose-built scope, never the owner's notes (EXTERNAL_VIDEO_INGESTION_PLAN.md).
