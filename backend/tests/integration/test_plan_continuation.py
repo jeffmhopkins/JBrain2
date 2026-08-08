@@ -613,6 +613,76 @@ async def test_complete_step_without_a_start_records_no_time(maker: async_sessio
     assert "secs" not in plan.results[-1]
 
 
+async def test_autorecords_a_step_when_jerv_skips_write_plan_result(
+    maker: async_sessionmaker,
+) -> None:
+    """The 'step never checked off' loop: jerv finished the step's work (a visible answer) but did
+    NOT call write_plan_result — so the box never ticked and the loop re-ran the SAME step. The
+    continuation's safety net records the turn's answer and ticks the box, so the plan advances.
+    `_FakeExecutor` returns an answer and never touches the plan, exactly that failure."""
+    owner = await _owner(maker)
+    sid, pid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, pid, delay_s=0)
+
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=_FakeExecutor(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=lambda: _owner_principal_id(maker),
+    )
+    await runner.tick()
+
+    async with scoped_session(maker, owner) as s:
+        plan = await PlanRepo().get_by_id(s, pid)
+    assert plan is not None
+    assert len(plan.results) == 1  # the safety net recorded the turn's answer…
+    assert plan.results[0]["note"] == _FakeResult.text
+    assert plan.body.startswith("- [x] step one")  # …and ticked the first box, so it advances
+
+
+class _RecordingExecutor:
+    """Simulates jerv correctly calling write_plan_result during the turn (records + ticks), so
+    the safety net must NOT add a second, duplicate result."""
+
+    def __init__(self, maker: async_sessionmaker, owner: SessionContext, pid: str) -> None:
+        self._maker, self._owner, self._pid = maker, owner, pid
+
+    async def run_turn(self, **_kwargs: object) -> _FakeExecuted:
+        async with scoped_session(self._maker, self._owner) as s:
+            await PlanRepo().complete_step(s, self._pid, note="jerv-recorded", heading="Step 1")
+        return _FakeExecuted()
+
+
+async def test_does_not_double_record_when_jerv_recorded_the_step(
+    maker: async_sessionmaker,
+) -> None:
+    """When jerv DID call write_plan_result (results grew), the safety net stays out of the way —
+    no duplicate entry, no misaligned scratchpad."""
+    owner = await _owner(maker)
+    sid, pid = await _chat(maker, owner, body=_OPEN, status="approved")
+    async with scoped_session(maker, owner) as s:
+        await PlanRepo().schedule_continuation(s, pid, delay_s=0)
+
+    runner = PlanContinuationRunner(
+        maker=maker,
+        executor=_RecordingExecutor(maker, owner, pid),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+        live_turns={},
+        owner_principal_id=lambda: _owner_principal_id(maker),
+    )
+    await runner.tick()
+
+    async with scoped_session(maker, owner) as s:
+        plan = await PlanRepo().get_by_id(s, pid)
+    assert plan is not None
+    assert len(plan.results) == 1  # only jerv's record — the safety net added nothing
+    assert plan.results[0]["note"] == "jerv-recorded"
+
+
 async def test_plan_blocks_only_injects_a_sanctioned_plan(maker: async_sessionmaker) -> None:
     """The re-injection rule: a not_approved DRAFT is never fed to the turn as a sanctioned
     operating instruction (that's what stops an injection-drafted plan being framed as
