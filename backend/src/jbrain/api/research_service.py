@@ -67,6 +67,10 @@ class ResearchLibrary:
     async def rename_report(self, ctx: SessionContext, report_id: str, *, title: str) -> bool:
         return await research_corpus.rename_report(self._maker, ctx, report_id, title)
 
+    async def keep_report(self, ctx: SessionContext, report_id: str) -> bool:
+        """Clear a report's expiry so it is kept forever (REPORT_EXPIRY_PLAN.md, W4)."""
+        return await research_corpus.keep_report(self._maker, ctx, report_id)
+
     # --- report folders (owner-only browse metadata; every call under an owner ctx) ---
     async def list_report_groups(self, ctx: SessionContext) -> list[report_groups.ReportGroup]:
         return await report_groups.list_report_groups(self._maker, ctx)

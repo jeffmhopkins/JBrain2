@@ -1,6 +1,6 @@
 # Report Expiry (TTL) & Per-Run Dedup Keys
 
-> **Status:** In progress · **Last verified:** 2026-08-09 · **Waves:** W1✅ W2✅ W3✅ W4◻️(deferred, GUI-gated)
+> **Status:** Shipped · **Last verified:** 2026-08-09 · **Waves:** W1✅ W2✅ W3✅ W4✅
 
 The research library (`app.research_reports`, migration 0140) keeps every persisted
 report forever. That is right for a candidate profile you'll revisit, but wrong for a
@@ -111,13 +111,19 @@ the last. Both are needed to "keep the last 7 days of briefings, then auto-clean
 - **Tests:** render injects `today`; two runs on different dates produce different
   `question_hash` (distinct rows), so 7 days coexist; same date de-dups in place.
 
-### W4 — Surface expiry + "keep this" (DEFERRED — GUI gate) ◻️
-Owner-facing polish, held because it changes a **GUI surface** (PROCESS.md GUI gate:
-three interactive mock artifacts chosen before build):
-- `LibraryReport` gains `expires_at`; the library listing shows "expires in N days".
-- A **keep** action (clear `expires_at` → keep forever), as an owner-context function
-  (like `rename_report`) + a jerv tool + a library button.
-Scoped separately after W1–W3 land; the data plumbing (W1's column) already supports it.
+### W4 — Surface expiry + "keep this" ✅
+GUI gate satisfied with three interactive mocks in `docs/mocks/research-expiry/`
+(`a-quiet-footer`, `b-pill-and-pin`, `c-urgency-strip`); **A — quiet footer** chosen (owner
+authorized proceeding without a blocking review — see that folder's README).
+- **Backend:** `LibraryReport` + `ReportListOut` gain `expires_at`; `keep_report`
+  (`external/research_corpus.py`, owner-ctx, nulls `expires_at`, idempotent) via the
+  `ResearchLibrary` seam and `POST /research-library/reports/{id}/keep` (owner-gated,
+  resolve-in-scope-first like rename).
+- **Frontend:** the report row shows a muted-amber "expires in N days" clause (rose in the
+  final day) in its subline; the ⋯ action sheet offers **Keep this report** (green,
+  optimistic clear) only when the report has an expiry. `api.keepResearchReport`.
+- **Tests:** API-layer keep 204/404 + owner-ctx + list carries `expires_at`; integration
+  keep clears the TTL and survives the sweep; frontend renders the clause and Keep clears it.
 
 ## Non-negotiables checklist (CLAUDE.md)
 - **#3 RLS:** the sweep runs on an RLS-scoped session; W2 carries an RLS test for the

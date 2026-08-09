@@ -21667,6 +21667,14 @@ button.task-band:active {
 .rl-cxword-simple {
   color: var(--green);
 }
+/* An opt-in expiry (TTL) clause in the report subline: muted amber, escalating to rose in
+   the report's final day (REPORT_EXPIRY_PLAN.md). */
+.rl-exp {
+  color: var(--amber);
+}
+.rl-exp-soon {
+  color: var(--rose);
+}
 /* Videos grouped into collapsible per-channel sections. */
 .rl-group {
   display: flex;
@@ -21878,6 +21886,13 @@ button.task-band:active {
 }
 .rl-action-del > svg {
   color: var(--rose);
+}
+/* Keep — a positive (green) action to stop a report expiring. */
+.rl-action-keep {
+  color: var(--green);
+}
+.rl-action-keep > svg {
+  color: var(--green);
 }
 .rl-action-armed {
   background: var(--rose-tint);

@@ -27,6 +27,7 @@ from jbrain.external.research_corpus import (
     delete_report,
     expire_reports,
     fetch_report,
+    keep_report,
     list_reports,
     list_reports_for_session,
     persist_report,
@@ -373,6 +374,40 @@ async def test_expire_reports_reaps_only_past_ttl(maker) -> None:  # noqa: F811
 
     # Idempotent: a second sweep at the same instant deletes nothing more.
     assert await expire_reports(maker, now=datetime.now(UTC) + timedelta(days=8)) == 0
+
+
+async def test_keep_report_clears_expiry_and_survives_the_sweep(maker) -> None:  # noqa: F811
+    """keep_report nulls a report's TTL so the sweep no longer reaps it, and the cleared
+    expiry surfaces in the listing (REPORT_EXPIRY_PLAN.md, W4)."""
+    await _clear_reports(maker)
+    rid = await persist_report(
+        maker,
+        session_id=None,
+        question="a briefing the owner wants to keep",
+        report_md="## Body\n\ntext",
+        complexity="brief",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+        retention_days=7,
+    )
+    assert await _expires_at(maker, rid) is not None
+    # The listing carries the expiry so the UI can show "expires in N days".
+    reports, _ = await list_reports(maker, limit=10)
+    assert reports[0].expires_at is not None
+
+    # Keep it (owner ctx) → expiry cleared; idempotent; and now the far-future sweep spares it.
+    assert await keep_report(maker, OWNER, rid) is True
+    assert await _expires_at(maker, rid) is None
+    assert await keep_report(maker, OWNER, rid) is True  # idempotent (already kept)
+    reports2, _ = await list_reports(maker, limit=10)
+    assert reports2[0].expires_at is None
+    assert await expire_reports(maker, now=datetime.now(UTC) + timedelta(days=999)) == 0
+    assert await fetch_report(maker, rid) is not None
 
 
 async def test_list_reports_counts_and_pages(maker) -> None:  # noqa: F811

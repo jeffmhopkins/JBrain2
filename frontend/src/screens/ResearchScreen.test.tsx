@@ -22,6 +22,7 @@ const REPORTS: ReportListResponse = {
       rounds: 2,
       group_id: null,
       source_mode: "web",
+      expires_at: null,
     },
     {
       id: "r2",
@@ -33,6 +34,7 @@ const REPORTS: ReportListResponse = {
       rounds: 1,
       group_id: null,
       source_mode: "web",
+      expires_at: null,
     },
   ],
   total: 2,
@@ -108,6 +110,7 @@ describe("ResearchScreen", () => {
           rounds: 2,
           group_id: null,
           source_mode: "web",
+          expires_at: null,
         },
       ],
       total: 1,
@@ -214,6 +217,39 @@ describe("ResearchScreen", () => {
     );
   });
 
+  it("shows a report's expiry and keeps it from the ⋯ menu", async () => {
+    const keep = vi.spyOn(api, "keepResearchReport").mockResolvedValue();
+    vi.spyOn(api, "researchReports").mockResolvedValue({
+      items: [
+        {
+          id: "rex",
+          question: "Daily news briefing for Friday",
+          title: null,
+          complexity: "brief",
+          created_at: "2026-08-09T00:00:00Z",
+          sub_agents: 5,
+          rounds: 1,
+          group_id: null,
+          source_mode: "web",
+          // ~3 days out → the subline reads "expires in 3 days".
+          expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+        },
+      ],
+      total: 1,
+    });
+    vi.spyOn(api, "researchVideos").mockResolvedValue({ items: [], total: 0 });
+    render(<ResearchScreen onOpen={noop} onOpenInJerv={noop} />);
+    await screen.findByText("Daily news briefing for Friday");
+    expect(screen.getByText("expires in 3 days")).toBeInTheDocument();
+
+    // Keep it → the API fires and the countdown clause disappears (optimistic clear).
+    fireEvent.click(screen.getAllByRole("button", { name: "Report actions" })[0] as HTMLElement);
+    const sheet = await screen.findByRole("dialog");
+    fireEvent.click(within(sheet).getByText(/Keep this report/));
+    await waitFor(() => expect(keep).toHaveBeenCalledWith("rex"));
+    await waitFor(() => expect(screen.queryByText("expires in 3 days")).not.toBeInTheDocument());
+  });
+
   it("copies a video summary from the ⋯ menu, fetching the full item on demand", async () => {
     stub();
     vi.spyOn(api, "researchVideo").mockResolvedValue({
@@ -318,6 +354,7 @@ describe("ResearchScreen", () => {
           rounds: 2,
           group_id: "grp-med",
           source_mode: "web",
+          expires_at: null,
         },
         {
           id: "loose",
@@ -329,6 +366,7 @@ describe("ResearchScreen", () => {
           rounds: 1,
           group_id: null,
           source_mode: "web",
+          expires_at: null,
         },
       ],
       total: 2,

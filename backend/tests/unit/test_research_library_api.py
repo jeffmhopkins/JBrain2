@@ -77,6 +77,7 @@ class FakeResearchLibrary:
                 sub_agents=6,
                 rounds=2,
                 group_id="grp-1",
+                expires_at=WHEN,
             )
         ], 3
 
@@ -95,6 +96,10 @@ class FakeResearchLibrary:
 
     async def rename_report(self, ctx: SessionContext, report_id: str, *, title: str) -> bool:
         self.calls["renamed_report"] = (ctx, report_id, title)
+        return report_id == "rep-1"
+
+    async def keep_report(self, ctx: SessionContext, report_id: str) -> bool:
+        self.calls["kept_report"] = (ctx, report_id)
         return report_id == "rep-1"
 
     async def list_report_groups(self, ctx: SessionContext) -> list[ReportGroup]:
@@ -209,6 +214,7 @@ def test_all_routes_require_owner(client: TestClient) -> None:
     assert client.get(f"{r}/reports/rep-1").status_code == 401
     assert client.delete(f"{r}/reports/rep-1").status_code == 401
     assert client.patch(f"{r}/reports/rep-1", json={"title": "New"}).status_code == 401
+    assert client.post(f"{r}/reports/rep-1/keep").status_code == 401
     assert client.get(f"{r}/report-groups").status_code == 401
     assert client.post(f"{r}/report-groups", json={"name": "Medical"}).status_code == 401
     assert client.patch(f"{r}/report-groups/grp-1", json={"name": "Health"}).status_code == 401
@@ -245,6 +251,8 @@ def test_list_reports_shape_and_total(client: TestClient, repo: FakeAuthRepo) ->
     assert row["title"] == "1918 Flu Death-Toll Estimates"
     # The owner's folder rides the listing so the Reports tab can group by it.
     assert row["group_id"] == "grp-1"
+    # A report's expiry rides the listing so the Reports tab can show "expires in N days".
+    assert row["expires_at"] is not None
     # The listing carries no body — that's the detail read's job.
     assert "report_md" not in row
 
@@ -309,6 +317,22 @@ def test_rename_report_204_under_owner_ctx(
     # An empty title is rejected at the edge (min_length=1) — never reaches the library.
     assert client.patch(f"{r}/reports/rep-1", json={"title": ""}).status_code == 422
     assert "renamed_report" not in library.calls
+
+
+def test_keep_report_204_under_owner_ctx(
+    client: TestClient, repo: FakeAuthRepo, library: FakeResearchLibrary
+) -> None:
+    login(client, repo)
+    assert client.post("/api/research-library/reports/rep-1/keep").status_code == 204
+    ctx, rid = library.calls["kept_report"]  # type: ignore[misc]
+    assert rid == "rep-1"
+    # A full-owner context (never a jerv-style narrowed scope) is the trusted executor.
+    assert isinstance(ctx, SessionContext) and ctx.principal_kind == "owner"
+    assert ctx.owner_scoped is False
+    # A missing / non-uuid id resolves to None first → a clean 404, no write attempted.
+    del library.calls["kept_report"]
+    assert client.post("/api/research-library/reports/ghost/keep").status_code == 404
+    assert "kept_report" not in library.calls
 
 
 # --- report folders --------------------------------------------------------------------

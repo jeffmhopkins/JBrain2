@@ -207,6 +207,9 @@ class LibraryReport:
     # The source mode (`web`|`library`|`library_first`); lets the owner UI flag a report
     # drawn from private notes before it's shared. NULL for a pre-0142 legacy row → `web`.
     source_mode: str = "web"
+    # When this report auto-expires (REPORT_EXPIRY_PLAN.md); None = keep forever. Surfaced so
+    # the library can show "expires in N days" and offer Keep.
+    expires_at: datetime | None = None
 
 
 def _row_to_library_report(row: Any) -> LibraryReport:
@@ -220,12 +223,13 @@ def _row_to_library_report(row: Any) -> LibraryReport:
         rounds=int(row.rounds or 1),
         group_id=(str(row.group_id) if row.group_id is not None else None),
         source_mode=row.source_mode or "web",
+        expires_at=row.expires_at,
     )
 
 
 _SELECT_LIBRARY = (
     "SELECT id, question, title, complexity, created_at, sub_agents, rounds, group_id,"
-    " source_mode FROM app.research_reports WHERE status = 'done'"
+    " source_mode, expires_at FROM app.research_reports WHERE status = 'done'"
 )
 
 # The (generous) ceiling on an RLS-scoped, unpaged report listing — a research-share folder
@@ -573,6 +577,27 @@ async def rename_report(
                     " WHERE id = cast(:rid AS uuid) RETURNING id"
                 ),
                 {"title": title, "rid": report_id},
+            )
+        ).first()
+    return updated is not None
+
+
+async def keep_report(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, report_id: str
+) -> bool:
+    """Clear one report's expiry (`expires_at = NULL`), so a report that would auto-expire is
+    kept forever (REPORT_EXPIRY_PLAN.md, W4). Runs under the OWNER's context — the trusted
+    executor, never jerv. Idempotent: a report already kept (or already gone) is a harmless
+    no-op. Returns True when a row was updated. The caller validates the report is in the
+    owner's scope before calling."""
+    async with scoped_session(maker, ctx) as session:
+        updated = (
+            await session.execute(
+                text(
+                    "UPDATE app.research_reports SET expires_at = NULL"
+                    " WHERE id = cast(:rid AS uuid) RETURNING id"
+                ),
+                {"rid": report_id},
             )
         ).first()
     return updated is not None
