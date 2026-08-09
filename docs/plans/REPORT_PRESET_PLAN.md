@@ -51,6 +51,14 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   shared synth prompt still appends inline `[^n]` markers + a `## Sources` list; the objective
   corrals them to sentence/paragraph ends and a trailing section, but a dedicated spoken/`audio`
   output_kind that suppresses them is the clean follow-up if the TTS layer voices them.
+  Gathering (2026-08-09 tune, from a live run that came back headline-thin — 57 of 60 sources
+  never opened, four sections empty): the five angles now NAME authoritative, fetchable sources
+  per category (AP/Reuters/NPR-text for national+world; CNBC/Reuters/AP/Fed/BLS for economy; the
+  AI labs + TechCrunch/Verge/Ars for AI; Spaceflight Now/NASASpaceflight for space; NWS-MLB +
+  Space Coast Daily/Talk of Titusville/Orlando-TV for local — Florida Today is flagged PAYWALLED),
+  and the objective requires each angle to OPEN ≥3 real articles and pull specifics (not skim
+  headlines) before calling a category empty. A systemic follow-up — flagging paywalled/blocked
+  domains in the fetch/search layer so they're auto-excluded for ~24h — is under research.
 
 **Engine seam** (`deep_research.py`). `_run` gained `plan_override` + `enforce_headings`.
 The single branch is at the PLAN phase: with a `plan_override` the planner is skipped and the
