@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-08-08
+> **Status:** Living · **Last verified:** 2026-08-09
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -41,6 +41,13 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   independent reviews: ship the cheap waves now (W0 trim + metadata, W1 umbrellas
   19→4), and **gate** the catalog machinery (W2/W3) behind resolving the
   mode-(a)/native-tool-calling contradiction and a pre-built selection-accuracy eval.
+- `DEEP_RESEARCH_MODULE_SPLIT_PLAN.md` — break the ~2,300-line `deep_research.py`
+  orchestrator monolith into topic modules (`research_sources.py`, `research_directives.py`,
+  `research_report_view.py`, `research_backstops.py`), leaving `DeepResearchService` in
+  `deep_research.py`. A pure mechanical move with NO behaviour change; the one gotcha is
+  re-exporting the moved private helpers from `deep_research` so the tests' imports still
+  resolve. Its own PR, done in a git-push-capable session. Follows from the scratchpad work
+  (PR #1049).
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
 shipped and now live in `../archive/`. `EXTERNAL_VIDEO_INGESTION_PLAN.md`,

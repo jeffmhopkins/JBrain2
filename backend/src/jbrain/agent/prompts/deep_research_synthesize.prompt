@@ -49,8 +49,13 @@ Write the report as Markdown:
   cannot render it. Just `[^12]`.
   **Use ONLY these numbers** — the findings contain the sub-agents' own local `[^1]`, `[^2]`
   markers, but those are their private numbering; do NOT copy them, renumber to the
-  `SOURCES` list instead. End the report with a `## Sources` list echoing each number you
-  used with its title. Never invent a source or a number that is not in the `SOURCES`
+  `SOURCES` list instead. **Each finding is prefixed with the exact `SOURCES` numbers it
+  actually drew on** — a line like `Sources this finding drew on: [^3], [^7]` heads the
+  finding. When a claim comes from that finding, cite from ITS listed numbers: that binding
+  tells you which page backs the claim, so prefer it over guessing a source by title. Only
+  when a finding heads no such line, or a claim genuinely rests on more than one finding, fall
+  back to choosing the best-matching entry from the full `SOURCES` list. End the report with a
+  `## Sources` list echoing each number you used with its title. Never invent a source or a number that is not in the `SOURCES`
   list; if a claim has no backing source, drop it or say plainly it could not be confirmed.
   **A non-empty `SOURCES` list makes citing MANDATORY: whenever the list has one or more
   entries the report MUST carry `[^n]` markers inline — cite every claim some listed source

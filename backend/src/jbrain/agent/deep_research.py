@@ -61,6 +61,14 @@ from jbrain.agent.briefs import compose_feed_block, prepend_feed
 from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.research_presets import PresetError, RenderedPreset, render_preset
+from jbrain.agent.research_scratchpad import (
+    ANALYSIS,
+    CRITIQUE,
+    DRAFT,
+    RESEARCH,
+    ScratchEntry,
+    Scratchpad,
+)
 from jbrain.agent.spawn import SpawnService, _ChildResult
 from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.db.session import scoped_session
@@ -712,13 +720,85 @@ def _sources_block(sources: list[WebSource]) -> str:
     return "\n".join(lines)
 
 
-def _findings_block(results: list[_ChildResult]) -> str:
-    """The gathered summaries, wrapped once in the data/instruction boundary the
-    orchestration prompts declare inert (reusing the feeding-waves envelope, which
-    neutralizes any boundary sentinel and size-caps each summary). Only successful,
-    non-skipped findings are handed forward — a failed/empty child never becomes
-    material to analyze or synthesize over."""
-    fed = [(r.label, r.persona, r.summary) for r in results if r.ok and r.summary.strip()]
+def _findings_block(entries: list[ScratchEntry]) -> str:
+    """The findings a downstream stage reads FROM THE LEDGER, wrapped once in the
+    data/instruction boundary the orchestration prompts declare inert (reusing the
+    feeding-waves envelope, which neutralizes any boundary sentinel and size-caps each
+    summary). Only successful, non-empty entries are handed forward — a failed/empty child
+    never becomes material to analyze or synthesize over. Entry-based so a scope-filtered
+    `scratch.read(...)` drops straight in; the composed block is byte-identical to feeding
+    the raw children (`author`/`persona`/`text` mirror `label`/`persona`/`summary`)."""
+    fed = [(e.author, e.persona, e.text) for e in entries if e.ok and e.text.strip()]
+    return compose_feed_block(fed)
+
+
+def _stage_feed(produced: list[_ChildResult]) -> str:
+    """The sequential-staging feed inside `_gather_staged`: each earlier stage's successful
+    children fed forward into the next stage's brief. Kept child-based (not ledger-based)
+    because staging feeds WITHIN the gather round — before the round is recorded as RESEARCH
+    entries — and its intentional within-gather crosstalk is distinct from the cross-stage
+    visibility model the ledger expresses."""
+    fed = [(r.label, r.persona, r.summary) for r in produced if r.ok and r.summary.strip()]
+    return compose_feed_block(fed)
+
+
+def _source_index_map(sources: list[WebSource]) -> dict[str, int]:
+    """Canonical URL → its 1-based `[^n]` index in the final curated SOURCES registry, so a
+    finding's OWN reached pages can be resolved to the exact citation numbers the writer must
+    use. Keyed on `_canonical_url` — the same normalization `_collect_sources` deduped the
+    registry by — so a finding's page and its registry entry map to the same key regardless of
+    tracking params / http-vs-https / `www.`. First index wins (the registry is already
+    deduped, so a URL appears once)."""
+    out: dict[str, int] = {}
+    for i, ws in enumerate(sources, 1):
+        if not ws.url:
+            continue
+        key = _canonical_url(ws.url)
+        if key and key not in out:
+            out[key] = i
+    return out
+
+
+def _finding_source_markers(entry: ScratchEntry, index_map: dict[str, int]) -> list[int]:
+    """The SOURCES `[^n]` indices THIS finding's own research pages map to — deduped and in
+    registry order. Empty when none of the finding's pages survived curation (a curated-out
+    source simply isn't bound), so the writer falls back to the full list for that finding."""
+    seen: set[int] = set()
+    out: list[int] = []
+    for ws in entry.sources:
+        idx = index_map.get(_canonical_url(ws.url)) if ws.url else None
+        if idx is not None and idx not in seen:
+            seen.add(idx)
+            out.append(idx)
+    return sorted(out)
+
+
+def _cited_findings_block(entries: list[ScratchEntry], sources: list[WebSource]) -> str:
+    """The findings fed to the SYNTHESIZER (Phase 1.5) — each finding PREFIXED with the exact
+    SOURCES numbers its own research pages map to, e.g. `Sources this finding drew on: [^3],
+    [^7]`. This is the claim→source binding: instead of re-deriving each citation by
+    title-matching a claim against the whole registry (the mislabelled-citation failure this
+    targets — the writer is told the children's own `[^n]` are private and to renumber by
+    title), the writer cites a finding's claim against the source THAT finding actually drew
+    on. Robust to the child's own citation ordering (it uses only each entry's `web_sources`,
+    resolved through `_canonical_url`) and to curation (a page dropped from the registry is
+    simply not bound). The note is PREFIXED, not appended, so it survives the envelope's
+    per-summary size cap (which truncates the tail). Falls back to the plain block when the run
+    reached no sources — there is nothing to bind against."""
+    if not sources:
+        return _findings_block(entries)
+    index_map = _source_index_map(sources)
+    fed: list[tuple[str, str, str]] = []
+    for e in entries:
+        if not (e.ok and e.text.strip()):
+            continue
+        markers = _finding_source_markers(e, index_map)
+        if markers:
+            note = "Sources this finding drew on: " + ", ".join(f"[^{i}]" for i in markers)
+            body = f"{note}\n\n{e.text}"
+        else:
+            body = e.text
+        fed.append((e.author, e.persona, body))
     return compose_feed_block(fed)
 
 
@@ -1127,12 +1207,19 @@ class DeepResearchService:
         prior_time_reserve = ctx.tree.time_reserve
         ctx.tree.stage_reserve = DR_REVIEW_RESERVE
         ctx.tree.time_reserve = DR_REVIEW_TIME_RESERVE
+        # The run-scoped findings ledger (docs/plans/DEEP_RESEARCH_SCRATCHPAD_PLAN.md).
+        # Every stage records its output here with a visibility `scope`, and each consuming
+        # stage reads the scopes it is allowed to see — so "researchers never see each other,
+        # but the analyst/synthesize/critique/revise see the whole research set" is an explicit,
+        # queryable rule rather than implicit in which list each call is handed. In-memory: a
+        # deep-research run is one coroutine, so the ledger dies with the run (no DB, no RLS).
+        scratch = Scratchpad()
         try:
             # --- (2) GATHER — a sequential single-source pipeline, or a parallel fan -------
             if staged:
                 # Ordered stages, fed forward: extract from the source, then answer/fact-check
                 # what it found — no independent sibling re-derives the extraction.
-                gather = await self._gather_staged(ctx, staged, source_mode)
+                gathered = await self._gather_staged(ctx, staged, source_mode)
             else:
                 # Idea 3 — clamp gather to what the tree can seat AROUND the review reserve, so
                 # a run low on budget/time drops the angles it can't afford (and says so)
@@ -1147,7 +1234,7 @@ class DeepResearchService:
                     sub_questions = sub_questions[:seatable]
 
                 self._phase(ctx, 2, f"Researching {len(sub_questions)} angle(s)")
-                gather = await self._spawn.run_research_fan(
+                gathered = await self._spawn.run_research_fan(
                     ctx,
                     briefs=sub_questions,
                     persona=gather_persona,
@@ -1163,8 +1250,13 @@ class DeepResearchService:
             # the seed flows to the analyst cross-check and the synthesizer. It only ever reaches
             # library-family (no-web) agents — the invariant above pins a seeded run to `library`.
             if source_plan.seed:
-                gather = [_emr_seed_child(source_plan.seed), *gather]
-            gather_ok = any(r.ok for r in gather)
+                gathered = [_emr_seed_child(source_plan.seed), *gathered]
+            # Record the gather round into the ledger as RESEARCH entries. The children were
+            # spawned in isolation (a gather child holds no ledger access — no crosstalk), so
+            # from here the pipeline reads the research set through `scratch.read(...)`, which
+            # makes each stage's visibility explicit.
+            scratch.add_children(gathered, stage="gather", scope=RESEARCH)
+            gather_ok = any(e.ok for e in scratch.read({RESEARCH}))
             # An empty gather is fatal for `web`/`library` (there is nothing to synthesize
             # from, and a dry library must not silently reach the web). `library_first`
             # instead falls through: the reflect step treats the whole outline as a gap and
@@ -1181,18 +1273,21 @@ class DeepResearchService:
 
             # First committed round (gather): checkpoint + progress for a background run.
             if on_round is not None:
-                await on_round(1, sum(1 for r in gather if r.ok))
+                await on_round(1, sum(1 for e in scratch.read({RESEARCH}) if e.ok))
 
             # --- (3) ANALYZE — a review sub-agent fed the researchers' findings ----
-            # The cross-agent handoff: an analyst reads the whole gather roster (as escaped
-            # data) and cross-checks it before anything is written. It also gets the real
-            # pages those findings reached, so it can OPEN a source to check a claim rather
-            # than only re-searching from scratch.
+            # The cross-agent handoff: an analyst reads the whole gather roster (the RESEARCH
+            # scope, as escaped data) and cross-checks it before anything is written. It also
+            # gets the real pages those findings reached, so it can OPEN a source to check a
+            # claim rather than only re-searching from scratch. Recorded as the ANALYSIS entry
+            # (visible to reflect/synthesize/revise, not to the isolated gather researchers).
             self._phase(ctx, 3, "Cross-checking the findings")
-            gather_sources = _collect_sources(gather)
+            gather_sources = _collect_sources(scratch.children({RESEARCH}))
             analyst = await self._analyze(
-                ctx, question, gather, gather_sources, review_persona, source_mode
+                ctx, question, scratch.read({RESEARCH}), gather_sources, review_persona, source_mode
             )
+            if analyst is not None:
+                scratch.add_child(analyst, stage="analysis", scope=ANALYSIS)
             analysis = analyst.summary if analyst and analyst.ok else ""
 
             # --- (4/5) REFLECT + REFILL — one round (standard) or an adaptive loop ---
@@ -1203,23 +1298,29 @@ class DeepResearchService:
             # (diminishing returns), the pool can't seat the next fan, or the structural
             # round cap is hit — a resource-terminated loop, never infinite. In-request
             # and depth-1 throughout: the fan guards are exactly the standard ones.
-            refill: list[_ChildResult] = []
             coverage_limited = False
             useful_rounds = 0  # gap rounds that produced usable findings (honest `rounds`)
             max_rounds = DR_DEEPEST_MAX_ROUNDS if deepest else 1
             # New-source high-water mark for the diminishing-returns check (gather + analyst
             # already reached these before any refill round runs).
-            seen_sources = len(_collect_sources([*gather, *([analyst] if analyst else [])]))
+            seen_sources = len(_collect_sources(scratch.children({RESEARCH, ANALYSIS})))
             while useful_rounds < max_rounds:
                 self._phase(ctx, 4, "Checking coverage for gaps")
                 gaps, stable = await self._reflect(
-                    ctx, question, sections, gather + refill, analysis, deepest=deepest
+                    ctx, question, sections, scratch.read({RESEARCH}), analysis, deepest=deepest
                 )
                 gaps = gaps[:DR_MAX_GAP_QUESTIONS]
                 # `library_first` with a dry library on the FIRST pass: there were no
                 # findings to reflect on, so hand the whole planned outline to the web
-                # refill rather than synthesizing from nothing.
-                if source_mode == "library_first" and not gather_ok and not gaps and not refill:
+                # refill rather than synthesizing from nothing. (`useful_rounds == 0` is
+                # exactly "no gap round has committed yet" — refill entries only land after
+                # a round increments the counter.)
+                if (
+                    source_mode == "library_first"
+                    and not gather_ok
+                    and not gaps
+                    and not useful_rounds
+                ):
                     gaps = [brief for _, brief in sub_questions][:DR_MAX_GAP_QUESTIONS]
                 if not gaps:
                     break  # covered — nothing left worth a round
@@ -1250,26 +1351,29 @@ class DeepResearchService:
                     coverage_limited = True
                     break
                 useful_rounds += 1
-                refill += round_children
+                # A gap round's children join the RESEARCH scope — the reflect judge, the
+                # synthesizer, and the source registry all see refill exactly as they see gather.
+                scratch.add_children(round_children, stage="refill", scope=RESEARCH)
                 # A committed gap round: checkpoint + progress for a background run.
                 if on_round is not None:
-                    await on_round(1 + useful_rounds, sum(1 for r in gather + refill if r.ok))
+                    await on_round(
+                        1 + useful_rounds, sum(1 for e in scratch.read({RESEARCH}) if e.ok)
+                    )
                 # Diminishing returns (mechanical): a round that adds too few NEW sources
                 # isn't worth another — stop before spending the next round's budget.
-                now_sources = len(
-                    _collect_sources([*gather, *([analyst] if analyst else []), *refill])
-                )
+                now_sources = len(_collect_sources(scratch.children({RESEARCH, ANALYSIS})))
                 if deepest and (now_sources - seen_sources) < DR_DEEPEST_MIN_NEW_SOURCES:
                     break
                 seen_sources = now_sources
 
-            results = gather + refill
-
-            # The global citation registry: every real URL the findings + the analyst
-            # reached, deduped and numbered once. The report cites `[^n]` against THIS list
-            # (stable across the draft and the revise), so each marker maps to a tappable
-            # favicon and the sources are never lost between the sub-agents and the report.
-            sources = _collect_sources([*gather, *([analyst] if analyst else []), *refill])
+            # The global citation registry: every real URL the research findings + the analyst
+            # reached, collected ONCE from the ledger (RESEARCH + ANALYSIS entries) instead of
+            # recomputed over ad-hoc `[*gather, *analyst, *refill]` concatenations. The report
+            # cites `[^n]` against THIS list (stable across the draft and the revise), so each
+            # marker maps to a tappable favicon and no source is lost between the sub-agents and
+            # the report. The ledger's insertion order (gather → analyst → refill) preserves the
+            # first-seen numbering the previous concatenation produced.
+            sources = _collect_sources(scratch.children({RESEARCH, ANALYSIS}))
             # Rank the registry by relevance to the question and keep the on-topic head, reordered
             # so the real sources take the low `[^n]` slots — before the writer cites against it.
             # A thin-web-presence subject drags in keyword-collision noise (a namesake, dictionary
@@ -1279,12 +1383,15 @@ class DeepResearchService:
             sources = await self._curate_sources(question, sources)
 
             # --- (6) SYNTHESIZE the report ----------------------------------------
+            # The synthesizer reads the full RESEARCH set (every gather + refill finding) plus
+            # the analyst's cross-check and the source registry — the visibility the owner
+            # asked to guarantee for the writer.
             self._phase(ctx, _WRITE_STEP, _WRITE_LABEL)
             report = await self._synthesize(
                 ctx,
                 question,
                 sections,
-                results,
+                scratch.read({RESEARCH}),
                 analysis,
                 sources,
                 complexity=complexity,
@@ -1310,13 +1417,21 @@ class DeepResearchService:
                     ctx,
                     question,
                     sections,
-                    results,
+                    scratch.read({RESEARCH}),
                     analysis,
                     sources,
                     complexity=complexity,
                     critique=backstop,
                     directive=directive,
                 )
+
+            # Record the finished draft as the DRAFT entry — recorded AFTER the backstop
+            # re-synth so the ledger holds the exact draft the critique reads. It carries no
+            # backing child, so it never enters the roster or the source registry; it makes the
+            # DRAFT scope real for the critique/revise read model.
+            scratch.add_text(
+                author="draft report", persona="synthesis", stage="draft", scope=DRAFT, text=report
+            )
 
             # The draft is written — release the critique's slice (tokens AND time) for the
             # critique child, which now runs against the full remaining pool and clock.
@@ -1328,16 +1443,20 @@ class DeepResearchService:
             critic = await self._critique(
                 ctx, report, sources, review_persona, source_mode, record=source_plan.seed or ""
             )
+            if critic is not None:
+                scratch.add_child(critic, stage="critique", scope=CRITIQUE)
             critique = critic.summary if critic and critic.ok else ""
             revised = False
             if critique.strip():
                 self._phase(ctx, _REVISE_STEP, _REVISE_LABEL)
                 pre_revise = report
+                # Revise reads back the whole ledger it is allowed to see — the full RESEARCH
+                # set, the analyst's cross-check, and the critique of its own draft.
                 report = await self._synthesize(
                     ctx,
                     question,
                     sections,
-                    results,
+                    scratch.read({RESEARCH}),
                     analysis,
                     sources,
                     complexity=complexity,
@@ -1359,15 +1478,16 @@ class DeepResearchService:
 
         analyzed = bool(analysis.strip())
         rounds = 1 + useful_rounds  # gather + the gap rounds that produced usable findings
-        # The full cast that actually ran, in run order — research findings PLUS the
-        # analyst and critique review children — so the reopened report shows who ran, not
-        # just the sources. `results` (gather+refill) stays the synthesis input.
-        roster = [*gather, *([analyst] if analyst else []), *refill, *([critic] if critic else [])]
+        # The full cast that actually ran, in run order — research findings PLUS the analyst
+        # and critique review children — read straight off the ledger (insertion order IS run
+        # order: gather → analyst → refill → critic; the DRAFT text entry has no backing child,
+        # so it never enters the roster). The RESEARCH entries stay the synthesis input.
+        roster = scratch.children()
         log.info(
             "deep_research.done",
             source_mode=source_mode,
             complexity=complexity,
-            findings=sum(1 for r in results if r.ok),
+            findings=sum(1 for e in scratch.read({RESEARCH}) if e.ok),
             children=len(roster),
             rounds=rounds,
             analyzed=analyzed,
@@ -1585,7 +1705,7 @@ class DeepResearchService:
             persona = _stage_persona(source_mode, stage.web)
             # Feed EVERY prior successful finding forward (each capped + boundary-neutralized
             # by the envelope), so a late stage sees the whole chain, not just its predecessor.
-            feed = _findings_block([r for r in produced if r.ok])
+            feed = _stage_feed([r for r in produced if r.ok])
             brief = prepend_feed(feed, stage.brief)
             self._phase(ctx, 2, f"Stage {i + 1}/{len(stages)}: {stage.title}")
             children = await self._spawn.run_research_fan(
@@ -1603,7 +1723,7 @@ class DeepResearchService:
         self,
         ctx: ToolContext,
         question: str,
-        gather: list[_ChildResult],
+        gather: list[ScratchEntry],
         sources: list[WebSource],
         persona: str = "review",
         source_mode: str = _DEFAULT_SOURCE_MODE,
@@ -1654,7 +1774,7 @@ class DeepResearchService:
         ctx: ToolContext,
         question: str,
         sections: list[str],
-        gather: list[_ChildResult],
+        gather: list[ScratchEntry],
         analysis: str,
         *,
         deepest: bool = False,
@@ -1746,7 +1866,7 @@ class DeepResearchService:
         ctx: ToolContext,
         question: str,
         sections: list[str],
-        results: list[_ChildResult],
+        results: list[ScratchEntry],
         analysis: str,
         sources: list[WebSource],
         *,
@@ -1770,7 +1890,11 @@ class DeepResearchService:
             + f"Question:\n{question}\n\n"
             + f"{_shape_directive(directive.output_kind, complexity)}\n\n"
             + f"Outline (section headings, in order):\n{_outline_text(sections)}\n\n"
-            + f"Findings:\n{_findings_block(results)}"
+            # Phase 1.5: each finding is prefixed with the SOURCES numbers it actually drew on,
+            # so the writer cites a claim against the source that finding reached instead of
+            # re-guessing by title (the mislabelled-citation failure mode). Falls back to the
+            # plain block with no sources to bind against.
+            + f"Findings:\n{_cited_findings_block(results, sources)}"
         )
         if sources:
             # The canonical, pre-numbered source registry (real URLs). The synthesizer
