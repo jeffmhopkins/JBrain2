@@ -1,7 +1,7 @@
 # Dynamic Portal Fetch — resolvers for JS/POST government search portals ("dinosaurs")
 
 > **Status:** In progress (adversarial review incorporated — see "Review outcomes" below) ·
-> **Last verified:** 2026-08-08 · **Wave order (revised):** P3✅ → P1✅ → P2◻️
+> **Last verified:** 2026-08-09 · **Wave order (revised):** P3✅ → P1✅ → P2⏸️ (deferred — see below)
 > (the dependency-free honesty backstop shipped FIRST; see Review outcomes R-Q1)
 
 Give the research fan a way to actually *query* dynamic government search portals — the
@@ -247,7 +247,46 @@ selection") for the new tool.
 - `test_agents.py` — `portal_search ∈ RESEARCH_TOOLS ∩ JERV_TOOLS`, so the clamp passes it
   to a `research` child; it is absent from library/reports personas.
 
-### Wave P2 — FL DFS licensee adapter + registry extensibility ◻️
+### Wave P2 — FL DFS licensee adapter + registry extensibility ⏸️ DEFERRED
+
+**Deferred after a full reverse-engineering pass (2026-08-09) — the DFS licensee portal is
+automation-hardened and cannot be driven by a guarded GET/POST.** This is NOT the "guess the
+endpoint" risk R1 warned about; the endpoint and its flow were fully mapped against the live site,
+and the finding is a harder gate:
+
+- The real search is `POST https://licenseesearch.fldfs.com/Home/GetLicenseeSearchListPartialView`
+  (driven by `/Scripts/MainSearch/LicenseeSearch.js`), returning a results *partial view*. The
+  detail pages are the static `…/Licensee/<id>` we already fetch — so the name→id→detail SHAPE is
+  as R1 hoped.
+- BUT the POST is gated by a **custom, session-correlated `csrf_token`** (a hidden field the page
+  injects, matched to the `ASP.NET_SessionId`; a stale/absent token returns `{"redirect":"/"}` —
+  the JS comment literally says "CSRF token expired"). A single-session GET→extract-token→POST
+  clears that gate (verified: HTTP 200).
+- **However, even a valid-token POST returns a rows-EMPTY partial (~1259 bytes, just the export
+  script) for EVERY query** — by name (`Collige`), by a common name (`Smith`), and by the exact
+  license numbers `W690060`/`W818802`. The server refuses to execute the query for a non-browser
+  client, consistent with the Google "unusual traffic" bot interstitial hit on `/Licensee?lastName=`.
+
+So the portal only runs its search for a real browser executing the page's JS/bot-scoring. Driving
+it needs a **scripted headless browser** (load page → fill form → submit → read the results
+partial), which is beyond BOTH this plan's v1 "no headless browser" Non-goal AND the current
+solver tier's capability (Byparr/FlareSolverr `request.get` renders a URL; it does not fill+submit
+a form). Sunbiz (P1) shipped because its `SearchResults` is a clean server-rendered GET; DFS is a
+different, hardened class of portal.
+
+**What still protects the owner in the meantime:** P3's "search form, not results" detector already
+makes an un-queryable DFS fetch degrade honestly (never "no record"), and the static
+`…/Licensee/<id>` detail page is fetchable+citable once an id is known. The P1 framework keeps
+`fl_dfs` a one-file add the day the scripted-browser capability exists.
+
+**Follow-on (a separate, larger effort — not this plan's v1):** add a scripted-browser egress tier
+(or a cookie-carrying GET→POST primitive plus whatever clears the bot-score) and then write
+`fl_dfs` against the `GetLicenseeSearchListPartialView` flow documented above, gated on a captured
+fixture whose results row carries the `/Licensee/<id>` id (the R1 gate, still binding).
+
+---
+
+_Original P2 scope (retained for the follow-on):_
 
 **Scope.** The `fl_dfs` adapter (the DICE POST search → licensee rows with the static
 `licenseesearch.fldfs.com/Licensee/<id>` `detail_url`), config `dfs_dice_url` /
