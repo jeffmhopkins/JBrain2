@@ -8112,6 +8112,13 @@ button.small {
 .fb-shell .fb-act-foot {
   margin-top: -6px;
   margin-bottom: -6px;
+  /* The foot is chrome, not answer: its chip labels ("Thought", "Worked · N steps")
+     and the reasoning/tool-step disclosure ride inside the same .bubble as the prose,
+     so a drag-select that the bubble-clamp keeps in the turn would otherwise sweep them
+     into a copy. Take the whole strip out of text selection — a manual select + copy on
+     an agent turn grabs only the answer text (the copy button stays the way to lift it). */
+  -webkit-user-select: none;
+  user-select: none;
 }
 .fb-shell .fb-act-foot.bare {
   /* leads a still-thinking bubble (no answer yet): flush to the top, no rule */
