@@ -67,7 +67,10 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   fetching a saved report via `research_report(action=read)` and reproducing it verbatim when the
   owner asks to see the full text — the earlier "don't re-paste" rule had let jerv confabulate a
   fresh briefing (invented entertainment items + a launch that never happened) instead of reading
-  the stored one.
+  the stored one. (3) The `deep_research_report` card gained a **read-aloud play button** next to
+  copy/download (`registry.tsx` `DeepResearchReport`, threaded through `ToolView`/`ViewProps` from
+  the surface's `useReadAloud`), so the owner plays the report's TTS straight from the card — which
+  removes the reason to have jerv paste the text into a turn at all (the root cause of the confab).
 
 **Engine seam** (`deep_research.py`). `_run` gained `plan_override` + `enforce_headings`.
 The single branch is at the PLAN phase: with a `plan_override` the planner is skipped and the

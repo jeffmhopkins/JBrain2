@@ -1389,6 +1389,60 @@ describe("ToolView registry", () => {
     expect(onOpenSession).toHaveBeenCalledWith("s9");
   });
 
+  it("offers a read-aloud play button on the report that speaks the report markdown", () => {
+    const onToggle = vi.fn();
+    const { getByLabelText, queryByLabelText, rerender } = render(
+      <ToolView
+        readAloud={{ playing: null, onToggle }}
+        payload={payload({
+          view: "deep_research_report",
+          data: {
+            question: "Q",
+            complexity: "deep",
+            report_md: "The full report body.",
+            rounds: 1,
+          },
+        })}
+      />,
+    );
+    // Tapping Play speaks the report body under a report-specific key (distinct from the turn).
+    fireEvent.click(getByLabelText("Read the report aloud"));
+    expect(onToggle).toHaveBeenCalledWith("dr-report:Q", "The full report body.");
+
+    // When that key is the one playing, the control becomes Stop.
+    rerender(
+      <ToolView
+        readAloud={{ playing: "dr-report:Q", onToggle }}
+        payload={payload({
+          view: "deep_research_report",
+          data: {
+            question: "Q",
+            complexity: "deep",
+            report_md: "The full report body.",
+            rounds: 1,
+          },
+        })}
+      />,
+    );
+    expect(getByLabelText("Stop reading the report aloud")).toBeInTheDocument();
+
+    // No read-aloud capability → no play control at all.
+    rerender(
+      <ToolView
+        payload={payload({
+          view: "deep_research_report",
+          data: {
+            question: "Q",
+            complexity: "deep",
+            report_md: "The full report body.",
+            rounds: 1,
+          },
+        })}
+      />,
+    );
+    expect(queryByLabelText(/read the report aloud/i)).toBeNull();
+  });
+
   it("badges a library-scoped run and reads its corpus children as their base role", () => {
     const { getByText } = render(
       <ToolView

@@ -63,6 +63,15 @@ export interface ViewProps {
    * out-of-card plan_status surfaces (composer pill + Chats badge) in sync. Only the
    * plan_card view uses it (JERV_PLANNING_TOOL_PLAN.md). */
   onPlanChanged?: (() => void) | undefined;
+  /** Read-aloud (TTS) control, present only when read-aloud is on and an engine can
+   * speak. A view that renders its own long text (the deep-research report) uses it to
+   * offer a play button: `onToggle(key, markdown)` speaks that text (or pauses it if the
+   * same key is already playing), and `playing` is the key speaking now (null = silent).
+   * The key must be distinct from the turn's own key so the two don't fight. Absent = no
+   * play control. */
+  readAloud?:
+    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
+    | undefined;
 }
 
 // Tone/flag is an enum, never a color (DESIGN.md): the component maps it to a
@@ -1262,6 +1271,20 @@ function DownloadIcon(): ReactNode {
     </svg>
   );
 }
+function PlayIcon(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+function StopIcon(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}
 
 function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
   const ran = typeof data.ran === "number" ? data.ran : 0;
@@ -1440,7 +1463,7 @@ function DeepestRun({ data }: ViewProps): ReactNode {
   );
 }
 
-function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
+function DeepResearchReport({ data, onOpenSession, readAloud }: ViewProps): ReactNode {
   const question = typeof data.question === "string" ? data.question : "";
   const complexity = typeof data.complexity === "string" ? data.complexity : "";
   const reportMd = typeof data.report_md === "string" ? data.report_md : "";
@@ -1518,6 +1541,27 @@ function DeepResearchReport({ data, onOpenSession }: ViewProps): ReactNode {
         {question && <span className="tv-dr-q">{question}</span>}
         {reportMd && (
           <div className="tv-dr-actions">
+            {/* Read the report aloud (TTS) straight from the card — no need to paste it into
+                the chat to reach the turn's play button (REPORT_PRESET_PLAN.md). A distinct
+                key from the turn so playing the report doesn't collide with the turn's audio. */}
+            {readAloud &&
+              (() => {
+                const playKey = `dr-report:${question}`;
+                const isPlaying = readAloud.playing === playKey;
+                return (
+                  <button
+                    type="button"
+                    className={`tv-dr-act${isPlaying ? " playing" : ""}`}
+                    onClick={() => readAloud.onToggle(playKey, reportMd)}
+                    aria-label={
+                      isPlaying ? "Stop reading the report aloud" : "Read the report aloud"
+                    }
+                    title={isPlaying ? "Stop" : "Read aloud"}
+                  >
+                    {isPlaying ? <StopIcon /> : <PlayIcon />}
+                  </button>
+                );
+              })()}
             <button
               type="button"
               className={`tv-dr-act${copied ? " done" : ""}`}
@@ -3764,11 +3808,15 @@ export function ToolView({
   onOpenSession,
   onDeferredComplete,
   onPlanChanged,
+  readAloud,
 }: {
   payload: ViewPayload;
   onOpenSession?: ((sessionId: string) => void) | undefined;
   onDeferredComplete?: ((resumeMessage: string) => void) | undefined;
   onPlanChanged?: (() => void) | undefined;
+  readAloud?:
+    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
+    | undefined;
 }): ReactNode {
   const Component = REGISTRY[payload.view];
   if (!Component) return null;
@@ -3780,6 +3828,7 @@ export function ToolView({
         onOpenSession={onOpenSession}
         onDeferredComplete={onDeferredComplete}
         onPlanChanged={onPlanChanged}
+        readAloud={readAloud}
       />
     </div>
   );

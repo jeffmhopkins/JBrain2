@@ -10304,6 +10304,10 @@ button.small {
 .fb-shell .tv-dr-act.done {
   color: var(--green, #8fbc9a);
 }
+/* Speaking now — the report's read-aloud button lit in the research amber accent. */
+.fb-shell .tv-dr-act.playing {
+  color: var(--amber, #c9a36a);
+}
 .fb-shell .tv-dr-act svg {
   width: 15px;
   height: 15px;
