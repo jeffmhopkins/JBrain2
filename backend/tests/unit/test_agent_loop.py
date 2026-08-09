@@ -687,6 +687,24 @@ def stream_router_with(
     return LlmRouter({"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}), fake
 
 
+def stream_router_local(
+    turns: list[LlmTurn], stream_chunks: list[list[str]] | None = None
+) -> tuple[LlmRouter, FakeLlmClient]:
+    """A router pinned to the local (gpt-oss) provider — the harmony route whose tool-call rounds
+    can leak analysis onto the content channel."""
+    fake = FakeLlmClient(turns=turns, stream_chunks=stream_chunks or [])
+    # Pin agent.turn so the task route (local) wins over the prompt's strength tier — otherwise
+    # the tier would resolve to the default cloud model and the local client wouldn't be hit.
+    return (
+        LlmRouter(
+            {"local": fake},
+            {"agent.turn": ("local", "gpt-oss-120b")},
+            pinned=frozenset({"agent.turn"}),
+        ),
+        fake,
+    )
+
+
 async def collect(
     loop: AgentLoop, scopes: tuple[str, ...] = ("general",), message: str = "what do I know?"
 ) -> list[ChatEvent]:
@@ -883,6 +901,36 @@ async def test_run_stream_emits_tool_call_and_result_around_dispatch() -> None:
         DoneEvent(stop_reason="end_turn"),
         GeneralKnowledgeEvent(),
     ]
+
+
+async def test_run_stream_hides_a_leaked_tool_round_analysis_on_the_local_route() -> None:
+    # The local gpt-oss harmony route can emit a tool-call round's ANALYSIS on the content
+    # channel (seen after a tool result in a multi-tool turn). That content is leaked thinking,
+    # not the answer — it must surface as reasoning and never glue in front of the real reply.
+    turns = [
+        LlmTurn(
+            "We produced the report. Now call write_plan_result, then confirm.",
+            (ToolCall("c1", "search", {"q": "x"}),),
+            "tool_use",
+            LlmUsage(10, 5),
+        ),
+        LlmTurn("Step 3 done — generated the comparison.", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, _ = stream_router_local(
+        turns,
+        stream_chunks=[
+            ["We produced the report. Now call write_plan_result, then confirm."],
+            ["Step 3 done — generated the comparison."],
+        ],
+    )
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    answer = "".join(e.text for e in events if isinstance(e, TextDelta))
+    reasoning = "".join(e.text for e in events if isinstance(e, ReasoningDelta))
+    # The leaked tool-round analysis is NOT in the visible answer …
+    assert answer == "Step 3 done — generated the comparison."
+    assert "write_plan_result" not in answer
+    # … it is routed to the thinking trace instead.
+    assert "Now call write_plan_result" in reasoning
 
 
 async def test_run_stream_tool_result_carries_structured_sources() -> None:
