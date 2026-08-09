@@ -26,6 +26,7 @@ from jbrain.web.fetch import (
     FetchResult,
     WebFetcher,
     WebFetchError,
+    extract_matches,
     is_youtube_url,
     window_text,
 )
@@ -204,6 +205,74 @@ def _present_fetch(
     return ToolOutput(body, web_sources=(source,))
 
 
+def _present_extract(result: FetchResult, url: str, pattern: str) -> str:
+    """Render extract mode (`extract=true`): every regex match from the WHOLE page as a compact
+    numbered list — the matched text, any capture groups, and a short context snippet — instead
+    of a page window. Lets the model pull explicit data (dates, prices, ids, table cells) off a
+    long page in one call, without reading or paging the whole thing. `pattern` is the caller's
+    `find`, already validated to compile; extract always treats it as a regex."""
+    text = result.full_text or result.text
+    if not text:
+        # An empty page (or the offset>0 tail of one) has nothing to scan — same honest stop the
+        # normal path gives, phrased for extraction.
+        return f"That page ({url}) had no readable text to extract from."
+    matches, total = extract_matches(text, pattern)
+    if not total:
+        return (
+            f"No match for regex '{pattern}' in {result.url} ({len(text)} chars). Check the"
+            " pattern (it is matched case-insensitively over the whole page), or web_fetch"
+            " without extract to read the page and see its actual wording."
+        )
+    header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
+    header += (
+        f"[Extracted {total} match(es) for regex '{pattern}' from the whole page"
+        f" ({len(text)} chars); showing {len(matches)}. Each line is the match, then its capture"
+        " groups if any, then the surrounding context.]"
+    )
+    lines = []
+    for i, m in enumerate(matches, 1):
+        line = f"{i}. {m.match}"
+        if m.groups:
+            line += "  [groups: " + " | ".join(m.groups) + "]"
+        line += f"\n   …{m.context}…  (offset {m.offset})"
+        lines.append(line)
+    body = header + "\n\n" + "\n".join(lines)
+    if total > len(matches):
+        body += (
+            f"\n\n[+{total - len(matches)} more match(es) beyond the first {len(matches)} shown."
+            " Narrow the pattern to isolate what you need, or web_fetch without extract and page"
+            " through with offset to read every occurrence in context.]"
+        )
+    if result.truncated:
+        # The full text itself is short of the real page (byte cap), so matches past that point
+        # were never scanned — don't let the model read the count as exhaustive.
+        body += (
+            "\n\n[The page was too large to download in full, so any matches past the size cap"
+            " are not included in this count.]"
+        )
+    source = WebSource(url=result.url, title=result.title or result.url, read=True)
+    return ToolOutput(body, web_sources=(source,))
+
+
+def _present_result(
+    result: FetchResult,
+    *,
+    url: str,
+    offset: int,
+    find: str,
+    find_regex: bool,
+    outline_only: bool,
+    extract: bool,
+) -> str:
+    """Dispatch a fetched result to the right renderer — extract mode, outline-only, or the
+    normal windowed view — so the POST, YouTube, and GET paths present identically."""
+    if extract:
+        return _present_extract(result, url, find)
+    if outline_only:
+        return _present_outline(result)
+    return _present_fetch(result, url, offset, find, find_regex)
+
+
 def build_web_handlers(
     search: SearxngClient,
     fetcher: WebFetcher,
@@ -280,10 +349,20 @@ def build_web_handlers(
         find = str(arguments.get("find", "")).strip()
         outline_only = _coerce_bool(arguments.get("outline"))
         find_regex = _coerce_bool(arguments.get("regex"))
+        extract = _coerce_bool(arguments.get("extract"))
         method = (str(arguments.get("method", "GET")).strip() or "GET").upper()
+        # Extract mode pulls every regex match off the page instead of returning a window, so it
+        # needs a pattern to match — reject it early rather than fetching for nothing.
+        if extract and not find:
+            return (
+                "web_fetch extract=true needs a find pattern — the regex to pull from the page"
+                ' (e.g. find="CVE-\\d{4}-\\d+", extract=true to list every CVE id). Add find, or'
+                " drop extract to read the page normally."
+            )
         # Validate a regex `find` up front — before any fetch or the failed-fetch memo — so a bad
         # pattern gives a clean, correctable error rather than a dead-URL mark or an empty result.
-        if find and find_regex:
+        # Extract always treats `find` as a regex, so it validates even without regex=true.
+        if find and (find_regex or extract):
             try:
                 re.compile(find)
             except re.error as exc:
@@ -322,9 +401,15 @@ def build_web_handlers(
             except WebFetchError as exc:
                 return str(exc)
             await _remember(ctx, result, url, "web_fetch")
-            if outline_only:
-                return _present_outline(result)
-            return _present_fetch(result, url, offset, find, find_regex)
+            return _present_result(
+                result,
+                url=url,
+                offset=offset,
+                find=find,
+                find_regex=find_regex,
+                outline_only=outline_only,
+                extract=extract,
+            )
         # A YouTube URL reads as a lightweight title+channel+description+captions view (no media
         # download, no GPU) that pages/keyword-jumps like any page. A None result (unresolvable —
         # private, geo-blocked, not really a video) falls through to a normal HTML fetch.
@@ -338,10 +423,14 @@ def build_web_handlers(
                     markdown, url=url, title=title, offset=offset, find=find, find_regex=find_regex
                 )
                 await _remember(ctx, result, url, "youtube")
-                return (
-                    _present_outline(result)
-                    if outline_only
-                    else _present_fetch(result, url, offset, find, find_regex)
+                return _present_result(
+                    result,
+                    url=url,
+                    offset=offset,
+                    find=find,
+                    find_regex=find_regex,
+                    outline_only=outline_only,
+                    extract=extract,
                 )
         # Break the re-fetch loop: a URL that already failed this turn (a 404 the model
         # keeps reconstructing, a bot-wall) will keep failing, so refuse it without a
@@ -365,9 +454,15 @@ def build_web_handlers(
             ctx.failed_fetches[key] = exc.status or 0
             return str(exc)
         await _remember(ctx, result, url, "web_fetch")
-        if outline_only:
-            return _present_outline(result)
-        return _present_fetch(result, url, offset, find, find_regex)
+        return _present_result(
+            result,
+            url=url,
+            offset=offset,
+            find=find,
+            find_regex=find_regex,
+            outline_only=outline_only,
+            extract=extract,
+        )
 
     async def read_artifact_tool(arguments: dict, ctx: ToolContext) -> str:
         # read_artifact is only registered when the artifact store is wired, so these are

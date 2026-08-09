@@ -1,6 +1,6 @@
 ---
 name: web_fetch
-version: 11
+version: 12
 permission: web
 params:
   type: object
@@ -48,6 +48,20 @@ params:
         substring — e.g. find="202[56]-\\d\\d-\\d\\d", regex=true to jump to the first ISO date
         in 2025 or 2026. An invalid pattern returns an error you can correct. Leave unset for a
         plain text search (the default), so characters like . + ( ) are matched literally.
+        (In extract mode find is ALWAYS a regex, so this flag is not needed there.)
+    extract:
+      type: boolean
+      description: >-
+        If true, return ONLY the parts of the page that match the find regex — a numbered list of
+        every match across the WHOLE page (with any capture groups and a bit of surrounding
+        context), instead of the page text. Requires find, which is always treated as a
+        case-insensitive regular expression here. Use this to pull explicit, structured data off a
+        page without reading it: find="\\$\\d[\\d,]*\\.\\d\\d", extract=true for every dollar
+        amount; find="[\\w.]+@[\\w.]+", extract=true for every email; find="Total:\\s*(\\d+)",
+        extract=true to capture the number after each "Total:". Put the value you want in a ( )
+        capture group and it is reported per match. The match count is exact; a very long list is
+        capped (the true total is still reported). This is the accurate way to enumerate items on a
+        page — prefer it over reading and eyeballing when what you need is a well-defined pattern.
     offset:
       type: integer
       description: >-
@@ -77,7 +91,10 @@ section (best for a big page — e.g. a specific year or name in a long table), 
 outline=true (or read the auto-appended section list) to see the page's headings and jump
 to one by its offset, or page through with offset when the reply says text remains below.
 Don't answer from the first window alone when the part you need (e.g. the last rows of a
-long list) may be elsewhere in the page. For a YouTube URL this returns the video's title,
+long list) may be elsewhere in the page. When what you need is a well-defined PATTERN rather
+than a section — every date, price, id, email, or the value after a fixed label — pass
+find="<regex>" with extract=true to get back just the matches from the whole page (with capture
+groups), instead of reading it window by window; it is the accurate way to enumerate such items. For a YouTube URL this returns the video's title,
 channel, description, and — below the description in the SAME page — the video's FULL caption
 transcript when it has captions. That transcript IS the complete spoken content: to give the
 whole thing, page through every window with offset (the reply names the exact next offset and

@@ -101,6 +101,12 @@ _MAX_MATCH_OFFSETS = 20
 # Cap the section outline (markdown headings + offsets) surfaced for a large page — enough to
 # navigate a long article's structure without a heading line per row of a giant table.
 _MAX_OUTLINE = 50
+# Cap the matches surfaced in extract mode — enough to pull every date/price/id off a normal
+# page without flooding the reply when a pattern hits a giant table; the true total is reported.
+_MAX_EXTRACT_MATCHES = 100
+# Chars of context surfaced on each side of an extracted match — enough to verify the hit (the
+# label before a value, the sentence around a name) while keeping each match to one compact line.
+_EXTRACT_CONTEXT = 60
 # A markdown heading line: 1–6 '#', a space, the title (trailing '#'s tolerated). The extracted
 # text is markdown (trafilatura / the fallback), so section headings are exactly these lines.
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(\S.*?)[ \t#]*$", re.MULTILINE)
@@ -402,6 +408,56 @@ def _find_offsets(
             offsets.append(i)
         i = hay.find(pin, i + step)
     return tuple(offsets), total
+
+
+@dataclass(frozen=True)
+class ExtractMatch:
+    """One regex match from extract mode: the matched span, its capture groups (empty when the
+    pattern has none — a None group becomes ""), the character offset in the FULL extracted text
+    (so the model can `offset` there to read around it), and a whitespace-collapsed context
+    window around it so the model can verify the hit without re-reading the page."""
+
+    match: str
+    groups: tuple[str, ...]
+    offset: int
+    context: str
+
+
+def extract_matches(
+    text: str,
+    pattern: str,
+    *,
+    max_matches: int = _MAX_EXTRACT_MATCHES,
+    context: int = _EXTRACT_CONTEXT,
+) -> tuple[tuple[ExtractMatch, ...], int]:
+    """Every case-insensitive match of `pattern` in `text` as (capped_list, true_total) — the
+    engine behind extract mode. The caller validates the pattern compiles; a bad pattern here
+    defensively yields no matches. Zero-width matches are skipped so a pattern like `a*` can't
+    flood the list. Each match carries its capture groups (so a grouped pattern extracts FIELDS,
+    not just the whole span — e.g. the number out of `Price: \\$(\\d+)`) and a collapsed context
+    snippet; the capped list bounds the reply while `true_total` still reports every occurrence."""
+    try:
+        compiled = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        return (), 0
+    out: list[ExtractMatch] = []
+    total = 0
+    for m in compiled.finditer(text):
+        if m.start() == m.end():
+            continue  # skip zero-width matches so `a*`/`(?=x)` can't flood the list
+        total += 1
+        if len(out) < max_matches:
+            lo = max(0, m.start() - context)
+            hi = min(len(text), m.end() + context)
+            out.append(
+                ExtractMatch(
+                    match=m.group(0),
+                    groups=tuple(g if g is not None else "" for g in m.groups()),
+                    offset=m.start(),
+                    context=" ".join(text[lo:hi].split()),
+                )
+            )
+    return tuple(out), total
 
 
 def _outline(text: str) -> tuple[tuple[tuple[int, int, str], ...], int]:
