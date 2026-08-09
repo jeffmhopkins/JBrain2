@@ -742,6 +742,66 @@ def _stage_feed(produced: list[_ChildResult]) -> str:
     return compose_feed_block(fed)
 
 
+def _source_index_map(sources: list[WebSource]) -> dict[str, int]:
+    """Canonical URL → its 1-based `[^n]` index in the final curated SOURCES registry, so a
+    finding's OWN reached pages can be resolved to the exact citation numbers the writer must
+    use. Keyed on `_canonical_url` — the same normalization `_collect_sources` deduped the
+    registry by — so a finding's page and its registry entry map to the same key regardless of
+    tracking params / http-vs-https / `www.`. First index wins (the registry is already
+    deduped, so a URL appears once)."""
+    out: dict[str, int] = {}
+    for i, ws in enumerate(sources, 1):
+        if not ws.url:
+            continue
+        key = _canonical_url(ws.url)
+        if key and key not in out:
+            out[key] = i
+    return out
+
+
+def _finding_source_markers(entry: ScratchEntry, index_map: dict[str, int]) -> list[int]:
+    """The SOURCES `[^n]` indices THIS finding's own research pages map to — deduped and in
+    registry order. Empty when none of the finding's pages survived curation (a curated-out
+    source simply isn't bound), so the writer falls back to the full list for that finding."""
+    seen: set[int] = set()
+    out: list[int] = []
+    for ws in entry.sources:
+        idx = index_map.get(_canonical_url(ws.url)) if ws.url else None
+        if idx is not None and idx not in seen:
+            seen.add(idx)
+            out.append(idx)
+    return sorted(out)
+
+
+def _cited_findings_block(entries: list[ScratchEntry], sources: list[WebSource]) -> str:
+    """The findings fed to the SYNTHESIZER (Phase 1.5) — each finding PREFIXED with the exact
+    SOURCES numbers its own research pages map to, e.g. `Sources this finding drew on: [^3],
+    [^7]`. This is the claim→source binding: instead of re-deriving each citation by
+    title-matching a claim against the whole registry (the mislabelled-citation failure this
+    targets — the writer is told the children's own `[^n]` are private and to renumber by
+    title), the writer cites a finding's claim against the source THAT finding actually drew
+    on. Robust to the child's own citation ordering (it uses only each entry's `web_sources`,
+    resolved through `_canonical_url`) and to curation (a page dropped from the registry is
+    simply not bound). The note is PREFIXED, not appended, so it survives the envelope's
+    per-summary size cap (which truncates the tail). Falls back to the plain block when the run
+    reached no sources — there is nothing to bind against."""
+    if not sources:
+        return _findings_block(entries)
+    index_map = _source_index_map(sources)
+    fed: list[tuple[str, str, str]] = []
+    for e in entries:
+        if not (e.ok and e.text.strip()):
+            continue
+        markers = _finding_source_markers(e, index_map)
+        if markers:
+            note = "Sources this finding drew on: " + ", ".join(f"[^{i}]" for i in markers)
+            body = f"{note}\n\n{e.text}"
+        else:
+            body = e.text
+        fed.append((e.author, e.persona, body))
+    return compose_feed_block(fed)
+
+
 def _opt_str(v: object) -> str | None:
     """A non-blank string argument, else None — for optional string params like the EMR
     seed's `emr_since`/`emr_until` date bounds."""
@@ -1830,7 +1890,11 @@ class DeepResearchService:
             + f"Question:\n{question}\n\n"
             + f"{_shape_directive(directive.output_kind, complexity)}\n\n"
             + f"Outline (section headings, in order):\n{_outline_text(sections)}\n\n"
-            + f"Findings:\n{_findings_block(results)}"
+            # Phase 1.5: each finding is prefixed with the SOURCES numbers it actually drew on,
+            # so the writer cites a claim against the source that finding reached instead of
+            # re-guessing by title (the mislabelled-citation failure mode). Falls back to the
+            # plain block with no sources to bind against.
+            + f"Findings:\n{_cited_findings_block(results, sources)}"
         )
         if sources:
             # The canonical, pre-numbered source registry (real URLs). The synthesizer
