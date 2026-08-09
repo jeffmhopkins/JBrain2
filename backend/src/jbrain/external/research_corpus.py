@@ -156,8 +156,10 @@ async def persist_report(
                     "  :coverage_limited, :truncated, cast(:sources AS jsonb), :source_mode,"
                     "  :tool, 'done',"
                     # NULL retention → NULL expires_at (keep forever); an int → now() + N days.
-                    "  CASE WHEN :retention_days IS NOT NULL"
-                    "   THEN now() + make_interval(days => :retention_days) END)"
+                    # Cast the bind explicitly: both uses of the param are otherwise untyped, so
+                    # asyncpg can't infer $n's type (AmbiguousParameterError) — the cast pins it.
+                    "  CASE WHEN cast(:retention_days AS integer) IS NOT NULL"
+                    "   THEN now() + make_interval(days => cast(:retention_days AS integer)) END)"
                     " ON CONFLICT (question_hash, tool) DO UPDATE SET"
                     "  session_id = EXCLUDED.session_id, question = EXCLUDED.question,"
                     "  report_md = EXCLUDED.report_md, summary = EXCLUDED.summary,"
