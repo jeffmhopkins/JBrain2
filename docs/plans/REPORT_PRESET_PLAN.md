@@ -67,7 +67,14 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   fetching a saved report via `research_report(action=read)` and reproducing it verbatim when the
   owner asks to see the full text — the earlier "don't re-paste" rule had let jerv confabulate a
   fresh briefing (invented entertainment items + a launch that never happened) instead of reading
-  the stored one. (3) The `deep_research_report` card gained a **read-aloud play button** next to
+  the stored one. A follow-up run then exposed the real gathering bug: a live run opened only 4 of
+  60 sources (the launch pages) and reported everything else from search SNIPPETS, which the
+  synthesizer then dropped as uncited — so the sections read "could not be confirmed". Root fix at
+  the tool: `web_search` (v2) now states in its description AND in every result header that a
+  title/snippet is an UNVERIFIED LEAD that must be `web_fetch`ed before it is reported or cited —
+  "if you did not fetch it, you do not know it". This targets the local model's search-heavy,
+  fetch-light habit at the point of use, for every research agent, not just this preset.
+  (3) The `deep_research_report` card gained a **read-aloud play button** next to
   copy/download (`registry.tsx` `DeepResearchReport`, threaded through `ToolView`/`ViewProps` from
   the surface's `useReadAloud`), so the owner plays the report's TTS straight from the card — which
   removes the reason to have jerv paste the text into a turn at all (the root cause of the confab).
