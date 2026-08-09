@@ -148,6 +148,25 @@ GEOFENCE_SWEEP_ACTION = ActionSpec(
     category="maintenance",
 )
 
+# The research-report expiry sweep (REPORT_EXPIRY_PLAN.md): hard-delete library reports whose
+# opt-in TTL (`expires_at`) has passed — e.g. a daily_news briefing seven days on. Like the
+# sweeps above it is in-code only (NOT in the app.actions seed, whose RLS test asserts an exact
+# set); the worker composes it into its registry and a migration seeds its nightly schedule +
+# pipeline. Re-firing is idempotent (a row already reaped is simply gone), and a single bounded
+# DELETE over the partial `expires_at` index is cheap. Runs under SYSTEM_CTX (a system sweep
+# legitimately reaches the corpus scope, exactly like persist_report's write, E1).
+EXPIRE_RESEARCH_REPORTS_ACTION = ActionSpec(
+    name="expire_research_reports",
+    version=1,
+    handler="expire_research_reports",
+    domain_optional=True,
+    mutating=True,
+    cost_class="cheap",
+    dedup_key_expr=None,
+    description="Delete research-library reports past their expiry.",
+    category="maintenance",
+)
+
 # A monotonic UTC clock the tick reads through, so a test can inject a frozen one
 # and prove next_run_at advances deterministically (no real timer, N3).
 Clock = Callable[[], datetime]
@@ -470,6 +489,7 @@ REAPABLE_IDLE_SWEEPS: frozenset[str] = frozenset(
         "reconcile_pending_integration",
         "reconcile_unembedded_notes",
         "geofence_sweep",
+        "expire_research_reports",
     }
 )
 
@@ -554,5 +574,23 @@ def geofence_sweep_handler(
         from jbrain.locations.geofence import sweep_geofences
 
         return await sweep_geofences(maker)
+
+    return handler
+
+
+def expire_research_reports_handler(
+    maker: async_sessionmaker[AsyncSession],
+) -> Callable[[dict[str, Any]], Awaitable[int]]:
+    """Wrap the research-report expiry sweep as a queue handler, fireable on a recurring
+    schedule + on demand from Ops. It takes no payload — the sweep finds its own work (every
+    report whose `expires_at` has passed) — and runs under SYSTEM_CTX inside `expire_reports`
+    (a system sweep legitimately reaches the corpus scope, E1). Idempotent: a row already
+    reaped is gone, so re-firing deletes nothing extra (E4). Returns the number of reports
+    deleted so the worker reaps an idle (0-work) fire's run (REAPABLE_IDLE_SWEEPS)."""
+
+    async def handler(_payload: dict[str, Any]) -> int:
+        from jbrain.external.research_corpus import expire_reports
+
+        return await expire_reports(maker)
 
     return handler

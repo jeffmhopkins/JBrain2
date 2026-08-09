@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Report Expiry · B — pill + one-tap pin</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --green-tint:rgba(143,188,154,.13); --amber-tint:rgba(201,163,106,.13);
+    --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--amber-tint);color:var(--amber);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--amber-tint);color:var(--amber);font-weight:600;}
+  .phone{width:390px;height:760px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .body{flex:1;overflow-y:auto;padding:12px 14px 26px;}
+  .rcard{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:13px;margin-bottom:10px;position:relative;}
+  .rhead{display:flex;gap:9px;align-items:flex-start;}
+  .rq{flex:1;min-width:0;font-size:15px;font-weight:600;line-height:1.34;cursor:pointer;}
+  .kebab{flex:none;background:none;border:none;color:var(--text-3);padding:2px 3px;cursor:pointer;margin:-2px -3px 0 0;}
+  .chiprow{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap;align-items:center;}
+  .cxbadge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;text-transform:capitalize;}
+  .cxbadge.deep{background:var(--violet-tint);color:var(--violet);}
+  .cxbadge.brief{background:var(--amber-tint);color:var(--amber);}
+  /* B — a countdown PILL in the chip row + a one-tap pin button, no sheet needed to keep */
+  .exppill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--amber-tint);color:var(--amber);font-variant-numeric:tabular-nums;}
+  .exppill.soon{background:var(--rose-tint);color:var(--rose);}
+  .exppill svg{width:12px;height:12px;}
+  .keepbtn{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);cursor:pointer;}
+  .keepbtn:active{background:var(--green-tint);color:var(--green);}
+  .keepbtn svg{width:13px;height:13px;}
+  .keptpill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:999px;color:var(--text-3);}
+  .keptpill svg{width:13px;height:13px;}
+  .rfoot{font-size:12px;color:var(--text-3);margin-top:10px;display:flex;align-items:center;gap:7px;}
+  .rfoot .ddot{width:7px;height:7px;border-radius:999px;background:var(--amber);}
+  .toast{position:absolute;left:16px;right:16px;bottom:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:130;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast svg{width:16px;height:16px;color:var(--green);flex:none;}
+  .toast .undo{margin-left:auto;color:var(--steel);font-weight:600;cursor:pointer;background:none;border:none;font:inherit;font-size:13px;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Report Expiry · B — pill + one-tap pin</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    <b>Prominent and fast.</b> The countdown is an amber <b>pill</b> in the chip row (rose in
+    its last day), and a <b>Keep</b> pin sits right on the card — one tap stops it expiring,
+    no sheet. Kept reports show a quiet “kept” marker. Tap <b>Keep</b> on a card to try it
+    (with undo).
+  </div>
+  <div class="phone">
+    <div class="bar"><span class="ttl">Research Library</span></div>
+    <div class="body" id="body"></div>
+    <div class="toast" id="toast"></div>
+  </div>
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));}
+const clock='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+const pin='<svg viewBox="0 0 24 24"><path d="M12 17v5M8 3h8l-1 6 3 3H6l3-3-1-6z"/></svg>';
+const infinity='<svg viewBox="0 0 24 24"><path d="M6 12c0-2 1.5-3.5 3.5-3.5S12 10 12 12s1 3.5 3 3.5S18 14 18 12s-1.5-3.5-3.5-3.5S12 10 12 12s-1 3.5-3 3.5S3 14 3 12"/></svg>';
+let ITEMS=[
+  {id:'n1',title:'Daily news briefing for Friday, August 9, 2026',cx:'brief',date:'Aug 9',expires:6},
+  {id:'n2',title:'Daily news briefing for Thursday, August 8, 2026',cx:'brief',date:'Aug 8',expires:1},
+  {id:'n3',title:'Daily news briefing for Sunday, August 3, 2026',cx:'brief',date:'Aug 3',expires:0},
+  {id:'p1',title:'Accountability profile — J. Rivera for County Commission',cx:'deep',date:'Aug 2',expires:null},
+];
+let undoState=null;
+function expChip(it){
+  if(it.expires===null)return `<span class="keptpill">${infinity}kept</span>`;
+  const label=it.expires===0?'today':it.expires===1?'1d left':`${it.expires}d left`;
+  return `<span class="exppill${it.expires<=1?' soon':''}">${clock}${label}</span>
+    <button class="keepbtn" onclick="keep('${it.id}')">${pin}Keep</button>`;
+}
+function card(it){
+  return `<div class="rcard" data-id="${it.id}">
+    <div class="rhead">
+      <span class="rq">${it.title}</span>
+      <button class="kebab" aria-label="Menu"><svg width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+    </div>
+    <div class="chiprow"><span class="cxbadge ${it.cx}">${it.cx}</span>${expChip(it)}</div>
+    <div class="rfoot"><span class="ddot"></span>research · ${it.date}</div>
+  </div>`;
+}
+function render(){document.getElementById('body').innerHTML=ITEMS.map(card).join('');}
+function keep(id){const it=ITEMS.find(i=>i.id===id);undoState={id,prev:it.expires};it.expires=null;render();
+  toast(`Kept — it won’t expire.`,true);}
+function undo(){if(!undoState)return;const it=ITEMS.find(i=>i.id===undoState.id);it.expires=undoState.prev;undoState=null;render();hideToast();}
+function toast(msg,withUndo){const t=document.getElementById('toast');
+  t.innerHTML=`<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>${msg}${withUndo?'<button class="undo" onclick="undo()">Undo</button>':''}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>{t.classList.remove('show');undoState=null;},4000);}
+function hideToast(){document.getElementById('toast').classList.remove('show');clearTimeout(toast._t);}
+render();
+</script>
+</body>
+</html>

@@ -1045,6 +1045,9 @@ export interface ReportListItem {
   /** `web` | `library` | `library_first` — flags a report drawn from private notes, so the
    * Share sheet can warn before publishing it. */
   source_mode: string;
+  /** When this report auto-expires (ISO); null = keep forever. The Reports tab shows
+   * "expires in N days" and offers Keep (REPORT_EXPIRY_PLAN.md). */
+  expires_at: string | null;
 }
 
 /** An owner-named folder on the Research Library's Reports tab (mirrors TaskGroup). */
@@ -2739,6 +2742,13 @@ export const api = {
 
   async deleteResearchReport(id: string): Promise<void> {
     await request(`/api/research-library/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  /** Keep a report forever — clear its expiry so the nightly sweep won't reap it. */
+  async keepResearchReport(id: string): Promise<void> {
+    await request(`/api/research-library/reports/${encodeURIComponent(id)}/keep`, {
+      method: "POST",
+    });
   },
 
   /** Set the owner-chosen display title, overriding the LLM-generated heading. */

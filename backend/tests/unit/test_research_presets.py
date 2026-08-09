@@ -17,21 +17,28 @@ def test_shipped_candidate_profile_loads_and_declares_its_variables() -> None:
     assert len(preset.angles) == 5
 
 
-def test_shipped_daily_news_loads_variable_free_and_renders() -> None:
-    # The daily briefing takes NO variables — it's a one-call daily run, so it must load with an
-    # empty `variables` tuple and render cleanly from an empty dict (no unfilled slots leak).
+def test_shipped_daily_news_is_dated_and_retained() -> None:
+    # The daily briefing's ONLY variable is `today` — auto-supplied by the engine at run time
+    # (so it stays a one-call preset for the caller) and used to date the question, which keeps
+    # each day a distinct dedup row. It opts into a 7-day TTL (REPORT_EXPIRY_PLAN.md).
     assert "daily_news" in rp.available()
     preset = rp.get("daily_news")
     assert preset is not None
-    assert preset.variables == ()
+    assert preset.variables == ("today",)
+    assert preset.retention_days == 7
     assert preset.output_kind == "brief"  # `report` would balloon past a 10-minute read
     assert preset.source_mode == "web"
     assert preset.sections[0] == "Good Morning"
     assert preset.sections[-1] == "That's Your Briefing"
     assert len(preset.angles) == 5  # runs under DR_MAX_BREADTH (=5) with no clamping
-    r = rp.render_preset("daily_news", {})
+    r = rp.render_preset("daily_news", {"today": "Friday, August 09, 2026"})
+    assert "Friday, August 09, 2026" in r.question
     for text in (r.question, r.objective, *r.sections, *(b for _, b in r.angles)):
         assert "{{" not in text and "}}" not in text
+    # Two different run dates yield different questions → distinct (question_hash) rows, so a
+    # week of briefings coexists instead of upserting in place.
+    other = rp.render_preset("daily_news", {"today": "Saturday, August 10, 2026"})
+    assert other.question != r.question
 
 
 def test_render_substitutes_every_slot_across_all_fields() -> None:
@@ -81,3 +88,39 @@ def test_coerce_defaults_and_angle_title_fallback() -> None:
     assert preset.source_mode == "web"  # default
     assert preset.variables == ("x",)
     assert preset.angles[0][0] == "research {{x}}"  # title falls back to the brief
+    assert preset.retention_days is None  # absent → keep forever
+
+
+def test_retention_days_parsed_and_carried_through_render(monkeypatch: pytest.MonkeyPatch) -> None:
+    preset = rp._coerce_preset(
+        "ephemeral",
+        {
+            "question": "News {{x}}",
+            "sections": ["One"],
+            "angles": [{"brief": "gather {{x}}"}],
+            "retention_days": 7,
+        },
+    )
+    assert preset.retention_days == 7
+    # Register it so render_preset resolves it, and confirm the scalar TTL survives render
+    # (it carries no `{{var}}`, so it passes straight through to the engine).
+    monkeypatch.setitem(rp._PRESETS, "ephemeral", preset)
+    assert rp.render_preset("ephemeral", {"x": "today"}).retention_days == 7
+    # A preset without the field renders as keep-forever (None), the default path unchanged.
+    keep = rp.render_preset("candidate_profile", {"candidate": "A", "office": "B"})
+    assert keep.retention_days is None
+
+
+@pytest.mark.parametrize("bad", [0, -1, 3.5, True, "7", "seven"])
+def test_retention_days_rejects_non_positive_int(bad: object) -> None:
+    with pytest.raises(rp.PresetError) as exc:
+        rp._coerce_preset(
+            "p",
+            {
+                "question": "q",
+                "sections": ["S"],
+                "angles": [{"brief": "b"}],
+                "retention_days": bad,
+            },
+        )
+    assert "retention_days" in str(exc.value)

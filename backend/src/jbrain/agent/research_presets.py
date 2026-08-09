@@ -59,6 +59,10 @@ class Preset:
     sections: tuple[str, ...]
     angles: tuple[tuple[str, str], ...]  # (title, brief)
     variables: tuple[str, ...]
+    # Optional TTL (REPORT_EXPIRY_PLAN.md): N days after which the nightly expiry sweep reaps
+    # the persisted report. None = keep forever (the default; candidate_profile omits it,
+    # daily_news sets 7). A scalar policy, not a `{{var}}` slot.
+    retention_days: int | None
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,9 @@ class RenderedPreset:
     source_mode: str
     sections: tuple[str, ...]
     angles: tuple[tuple[str, str], ...]
+    # The preset's TTL, passed straight through render (it carries no `{{var}}`), so the engine
+    # stamps `expires_at` on the persisted report. None = keep forever.
+    retention_days: int | None
 
 
 def _slots(text: str) -> set[str]:
@@ -133,6 +140,23 @@ def _coerce_preset(name: str, raw: object) -> Preset:
         raise PresetError(f"preset {name!r}: `objective` must be a string")
     output_kind = str(raw.get("output_kind") or "report")
     source_mode = str(raw.get("sources") or "web")
+    # Optional TTL. Absent → None (keep forever). Present → a positive int (days); a bool,
+    # non-int, or non-positive value is a load-time refusal (fail fast at startup, like every
+    # other malformed field) rather than a silently ignored policy.
+    retention_raw = raw.get("retention_days")
+    retention_days: int | None = None
+    if retention_raw is not None:
+        # A bool is an int subclass, so exclude it explicitly; only a positive int is a valid TTL.
+        is_pos_int = (
+            isinstance(retention_raw, int)
+            and not isinstance(retention_raw, bool)
+            and retention_raw > 0
+        )
+        if not is_pos_int:
+            raise PresetError(
+                f"preset {name!r}: `retention_days` must be a positive integer (days)"
+            )
+        retention_days = retention_raw
     # The variables the caller must supply = every slot used anywhere in the template.
     used: set[str] = set()
     for text in (question, objective, *sections, *(b for _, b in angles), *(t for t, _ in angles)):
@@ -147,6 +171,7 @@ def _coerce_preset(name: str, raw: object) -> Preset:
         sections=sections,
         angles=tuple(angles),
         variables=tuple(sorted(used)),
+        retention_days=retention_days,
     )
 
 
@@ -201,4 +226,5 @@ def render_preset(name: str, variables: dict[str, str]) -> RenderedPreset:
             )
             for i, (t, b) in enumerate(preset.angles)
         ),
+        retention_days=preset.retention_days,
     )

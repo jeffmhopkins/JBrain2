@@ -6,6 +6,7 @@ Embedding vectors are deterministic fakes (the embed container never runs in tes
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -24,7 +25,9 @@ from jbrain.embed import ResearchReportEmbedder
 from jbrain.external.report_titler import ResearchReportTitler
 from jbrain.external.research_corpus import (
     delete_report,
+    expire_reports,
     fetch_report,
+    keep_report,
     list_reports,
     list_reports_for_session,
     persist_report,
@@ -243,6 +246,168 @@ async def test_source_mode_round_trips(maker) -> None:  # noqa: F811
     )
     web = await fetch_report(maker, web_id)
     assert web is not None and web.source_mode == "web"
+
+
+async def _expires_at(maker, report_id: str):  # noqa: ANN001, ANN202
+    async with scoped_session(maker, OWNER) as s:
+        return (
+            await s.execute(
+                text("SELECT expires_at FROM app.research_reports WHERE id = :r"), {"r": report_id}
+            )
+        ).scalar_one()
+
+
+async def test_retention_stamps_and_refreshes_expires_at(maker) -> None:  # noqa: F811
+    """A retention-bearing persist stamps expires_at ≈ now + N days; no retention → NULL (keep
+    forever); a re-run refreshes the TTL off the new now() (REPORT_EXPIRY_PLAN.md, W1)."""
+    await _clear_reports(maker)
+
+    # No retention → NULL expires_at (the keep-forever default, every existing row).
+    keep_id = await persist_report(
+        maker,
+        session_id=None,
+        question="a report to keep forever",
+        report_md="## Body\n\ntext",
+        complexity="deep",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+    )
+    assert await _expires_at(maker, keep_id) is None
+
+    # retention_days=7 → expires_at set ~7 days out (server clock; assert a generous window).
+    ttl_id = await persist_report(
+        maker,
+        session_id=None,
+        question="a daily briefing that expires",
+        report_md="## Body\n\ntext",
+        complexity="brief",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+        retention_days=7,
+    )
+    first = await _expires_at(maker, ttl_id)
+    assert first is not None
+    async with scoped_session(maker, OWNER) as s:
+        # 6–8 day window absorbs any test-clock skew while proving it's ~7, not 1 or 30.
+        within = (
+            await s.execute(
+                text("SELECT :e BETWEEN now() + interval '6 days' AND now() + interval '8 days'"),
+                {"e": first},
+            )
+        ).scalar_one()
+    assert within is True
+
+    # A re-run of the SAME question (dedup upsert) refreshes expires_at off the new now().
+    again = await persist_report(
+        maker,
+        session_id=None,
+        question="a daily briefing that expires",
+        report_md="## Body\n\nrevised",
+        complexity="brief",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+        retention_days=7,
+    )
+    assert again == ttl_id
+    assert (await _expires_at(maker, ttl_id)) >= first  # rolled forward (or equal within a tick)
+
+
+async def test_expire_reports_reaps_only_past_ttl(maker) -> None:  # noqa: F811
+    """The sweep hard-deletes reports whose expires_at has passed, leaves keep-forever (NULL)
+    and not-yet-due rows, is idempotent, and (running under the default SYSTEM_CTX) can delete
+    across the corpus `external` scope (REPORT_EXPIRY_PLAN.md, W2)."""
+    await _clear_reports(maker)
+    keep_id = await persist_report(
+        maker,
+        session_id=None,
+        question="keep me forever",
+        report_md="## Body\n\ntext",
+        complexity="deep",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+    )
+    ttl_id = await persist_report(
+        maker,
+        session_id=None,
+        question="expire me in a week",
+        report_md="## Body\n\ntext",
+        complexity="brief",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+        retention_days=7,
+    )
+
+    # Before the TTL is due, the sweep reaps nothing — the frozen `now` drives the cutoff.
+    assert await expire_reports(maker, now=datetime.now(UTC)) == 0
+    assert await fetch_report(maker, ttl_id) is not None
+
+    # Eight days on, the TTL row is reaped; the keep-forever row is untouched.
+    reaped = await expire_reports(maker, now=datetime.now(UTC) + timedelta(days=8))
+    assert reaped == 1
+    assert await fetch_report(maker, ttl_id) is None
+    assert await fetch_report(maker, keep_id) is not None
+
+    # Idempotent: a second sweep at the same instant deletes nothing more.
+    assert await expire_reports(maker, now=datetime.now(UTC) + timedelta(days=8)) == 0
+
+
+async def test_keep_report_clears_expiry_and_survives_the_sweep(maker) -> None:  # noqa: F811
+    """keep_report nulls a report's TTL so the sweep no longer reaps it, and the cleared
+    expiry surfaces in the listing (REPORT_EXPIRY_PLAN.md, W4)."""
+    await _clear_reports(maker)
+    rid = await persist_report(
+        maker,
+        session_id=None,
+        question="a briefing the owner wants to keep",
+        report_md="## Body\n\ntext",
+        complexity="brief",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+        retention_days=7,
+    )
+    assert await _expires_at(maker, rid) is not None
+    # The listing carries the expiry so the UI can show "expires in N days".
+    reports, _ = await list_reports(maker, limit=10)
+    assert reports[0].expires_at is not None
+
+    # Keep it (owner ctx) → expiry cleared; idempotent; and now the far-future sweep spares it.
+    assert await keep_report(maker, OWNER, rid) is True
+    assert await _expires_at(maker, rid) is None
+    assert await keep_report(maker, OWNER, rid) is True  # idempotent (already kept)
+    reports2, _ = await list_reports(maker, limit=10)
+    assert reports2[0].expires_at is None
+    assert await expire_reports(maker, now=datetime.now(UTC) + timedelta(days=999)) == 0
+    assert await fetch_report(maker, rid) is not None
 
 
 async def test_list_reports_counts_and_pages(maker) -> None:  # noqa: F811

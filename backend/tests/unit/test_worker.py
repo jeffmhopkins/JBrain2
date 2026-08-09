@@ -656,6 +656,9 @@ async def test_run_registers_all_job_handlers(
         # The geofence reconciler backstop (Phase 7 Wave 3c) — in-code only, not in
         # ACTION_SPECS / the app.actions seed; a migration seeds its schedule.
         "geofence_sweep",
+        # The research-report expiry sweep (REPORT_EXPIRY_PLAN.md) — in-code only, not in
+        # ACTION_SPECS / the app.actions seed; a migration seeds its nightly schedule.
+        "expire_research_reports",
         # Phase-6 hygiene sweeps — in-code only (a migration seeds the schedules).
         "entity_hygiene",
         "reembed_stale",

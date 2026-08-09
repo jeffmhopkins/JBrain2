@@ -41,6 +41,7 @@ import {
   MessageIcon,
   MoreIcon,
   PencilIcon,
+  PinIcon,
   ReorderIcon,
   SearchIcon,
   TrashIcon,
@@ -76,6 +77,27 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime())
     ? ""
     : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Whole days from now until an ISO instant, rounded up; null for no/unparseable date. */
+function daysUntil(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? null : Math.ceil((t - Date.now()) / 86_400_000);
+}
+
+/** The spoken expiry clause for a report ("expires in 3 days"), or null when it never
+ * expires. A report ≤1 day out is "soon" (rendered rose) — see fmtExpirySoon. */
+function fmtExpiry(iso: string | null): string | null {
+  const d = daysUntil(iso);
+  if (d === null) return null;
+  if (d <= 0) return "expires today";
+  if (d === 1) return "expires tomorrow";
+  return `expires in ${d} days`;
+}
+function fmtExpirySoon(iso: string | null): boolean {
+  const d = daysUntil(iso);
+  return d !== null && d <= 1;
 }
 
 function itemId(item: Item): string {
@@ -392,6 +414,24 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
       setFlash("Report renamed.");
     } catch (e) {
       setReports((rs) => rs?.map((r) => (r.id === report.id ? { ...r, title: prev } : r)) ?? rs);
+      setFlash(errMsg(e));
+    }
+  }
+
+  // Keep a report forever — clear its expiry so the nightly sweep won't reap it. Optimistic
+  // (the expiry clause vanishes at once); revert + surface on failure.
+  async function keepReport(report: ReportListItem) {
+    setMenuFor(null);
+    if (!report.expires_at) return;
+    const prev = report.expires_at;
+    setReports((rs) => rs?.map((r) => (r.id === report.id ? { ...r, expires_at: null } : r)) ?? rs);
+    try {
+      await api.keepResearchReport(report.id);
+      setFlash("Kept — this report won't expire.");
+    } catch (e) {
+      setReports(
+        (rs) => rs?.map((r) => (r.id === report.id ? { ...r, expires_at: prev } : r)) ?? rs,
+      );
       setFlash(errMsg(e));
     }
   }
@@ -725,6 +765,7 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
             setMenuFor(null);
             setRenameFor(row);
           }}
+          onKeep={() => void keepReport(menuFor.row as ReportListItem)}
           onMoveToFolder={() => {
             const row = menuFor.row as ReportListItem;
             setMenuFor(null);
@@ -850,6 +891,15 @@ function ReportRow({
             </span>
             {" · "}
             <span>{fmtDate(row.created_at)}</span>
+            {/* An opt-in TTL (daily_news et al.) — muted amber, rose in its final day. */}
+            {row.expires_at && (
+              <>
+                {" · "}
+                <span className={`rl-exp${fmtExpirySoon(row.expires_at) ? " rl-exp-soon" : ""}`}>
+                  {fmtExpiry(row.expires_at)}
+                </span>
+              </>
+            )}
           </span>
         </span>
         <ChevronRightIcon size={16} />
@@ -919,6 +969,7 @@ function ActionSheet({
   onView,
   onOpenInJerv,
   onRename,
+  onKeep,
   onMoveToFolder,
   onShare,
   onCopyReport,
@@ -933,6 +984,7 @@ function ActionSheet({
   onView: () => void;
   onOpenInJerv: () => void;
   onRename: () => void;
+  onKeep: () => void;
   onMoveToFolder: () => void;
   onShare: () => void;
   onCopyReport: () => void;
@@ -955,6 +1007,12 @@ function ActionSheet({
         </button>
         {item.kind === "report" ? (
           <>
+            {/* Keep — only for a report that would otherwise expire (clears its TTL). */}
+            {item.row.expires_at && (
+              <button type="button" className="rl-action rl-action-keep" onClick={onKeep}>
+                <PinIcon size={19} /> Keep this report (stop it expiring)
+              </button>
+            )}
             <button type="button" className="rl-action" onClick={onRename}>
               <PencilIcon size={19} /> Rename
             </button>

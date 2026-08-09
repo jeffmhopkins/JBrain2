@@ -59,6 +59,9 @@ class ReportListOut(BaseModel):
     # `web` | `library` | `library_first` — lets the Share sheet warn before publishing a
     # report drawn from the owner's private notes.
     source_mode: str = "web"
+    # When this report auto-expires (REPORT_EXPIRY_PLAN.md); None = keep forever. The Reports
+    # tab shows "expires in N days" and offers Keep.
+    expires_at: datetime | None = None
 
 
 class ReportHitOut(BaseModel):
@@ -284,6 +287,19 @@ async def rename_report(
     if record is None:
         raise HTTPException(status_code=404, detail="no report with that id in scope")
     await lib.rename_report(ctx_for(principal), record.id, title=body.title.strip())
+
+
+@router.post("/reports/{report_id}/keep", status_code=204)
+async def keep_report(request: Request, principal: OwnerDep, report_id: str) -> None:
+    # Clear a report's expiry so it's kept forever (REPORT_EXPIRY_PLAN.md, W4). Resolve within
+    # the owner's external read scope first — tolerates a non-uuid id (a clean 404, not a 500
+    # from `cast(:id AS uuid)`) and confirms the row is in-scope before the full-owner write.
+    # Owner-initiated, so it bypasses jerv's proposal path; idempotent.
+    lib = get_library(request)
+    record = await lib.fetch_report(principal.id, report_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="no report with that id in scope")
+    await lib.keep_report(ctx_for(principal), record.id)
 
 
 # --- report folders --------------------------------------------------------------------

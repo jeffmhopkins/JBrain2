@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 9
+version: 10
 permission: web
 cost_class: expensive
 params:
@@ -100,5 +100,6 @@ So to compare the candidates in a race: run `candidate_profile` for each candida
   surfacing notable SpaceX / Tesla / Elon Musk news), then local Space Coast news for Port St.
   John and Titusville (severe weather, an imminent launch, or serious local events). Neutral
   multi-source synthesis, no sports or entertainment, about ten minutes read aloud. Takes NO
-  variables — call it once for today's briefing. Reach for it whenever the owner wants his news
-  brief / morning briefing / "what's the news today".
+  variables — call it once for today's briefing (the run date is filled in automatically, so
+  each day is a separate report, and briefings auto-expire after 7 days). Reach for it whenever
+  the owner wants his news brief / morning briefing / "what's the news today".
