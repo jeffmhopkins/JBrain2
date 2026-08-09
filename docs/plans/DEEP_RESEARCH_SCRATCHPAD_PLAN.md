@@ -5,8 +5,11 @@
 > with unit coverage and a byte-identical no-regression seam. **P1.5 = the behavioral change**:
 > the synthesizer is fed a per-finding claim→source binding so it cites the source a finding
 > actually drew on instead of re-guessing by title — the anti-mislabelling fix (§8).
-> **Not yet on-box validated** — the citation path is delicate (see the v9–v16 history), so the
-> effect on real citation quality wants a run against the actual box/model before it's relied on.
+> **On-box validated** (2026-08-09, real `gpt-oss-120b` via the debug console): an A/B of the
+> synthesize step on a controlled scenario that reproduces the v12/v14 title-match failure —
+> with vs. without the binding — cited the provenance-correct source 9/9 claims WITH the binding
+> vs. 2/9 without (6/9 mis-attributed to a title-lure distractor). A clear improvement, no
+> regression; the prompt is now at v12 (§8). See §8 for the harness + full result.
 > P2 = the scope-model unlocks — feed the ANALYSIS entry into the critique, per-researcher
 > partitioning for a comparison run — deferred until a comparison/partitioned mode needs them.)
 
@@ -170,16 +173,25 @@ against the source THAT finding actually reached.
   per-finding binding and making title-matching the FALLBACK (a finding with no binding line,
   or a claim that spans findings). Every existing must-cite / all-noise-escape / on-topic rule
   is unchanged. Only the synthesize path changed — the analyst/reflect feed (`_findings_block`)
-  and the critique are byte-stable. **Version note:** the prompt's `version` field is held at
-  **v11** on this branch so the existing `test_deep_research.py` version pin passes without
-  re-pushing that large file; bumping it to **v12** and updating the pin (+ a phrase assertion)
-  is a trivial follow-up when this integrates.
-- **Caveat — do not skip.** This changes the delicate citation path and is **NOT on-box
-  validated**. The unit tests prove the binding is computed and fed correctly; whether the local
-  model (gpt-oss-120b) actually cites better with it is an empirical question the v9–v16 lineage
-  says must be checked on the real box before the improvement is relied on. Reverting is a
-  one-liner (`_cited_findings_block` → `_findings_block` in `_synthesize`; drop the prompt
-  clause).
+  and the critique are byte-stable. The prompt's `version` field is now **v12**, tracked by the
+  `test_deep_research.py` pin plus a "sources this finding drew on" phrase assertion.
+- **On-box validated (2026-08-09).** The delicate citation path was checked against the real
+  `gpt-oss-120b` before relying on it, via the debug console's `/complete-async` (task
+  `agent.turn` → gpt-oss-120b @ medium). An A/B fed the SAME synthesize inputs two ways — the
+  pre-P1.5 prompt + `_findings_block` (OLD) vs. the shipped prompt + `_cited_findings_block`
+  (NEW) — over a controlled scenario built to reproduce the v12/v14 mislabelling: each claim's
+  finding drew on a generically-titled source while the registry also held a distractor whose
+  TITLE was the perfect lexical match, so title-matching is lured to the wrong page and the
+  binding points home. Result over 3 trials/arm (9 claim-citations each): **NEW cited the
+  provenance-correct source 9/9; OLD 2/9, mis-attributing 6/9 to the title-lure distractor**
+  (the energy-density and cost claims went to the wrong source in every OLD trial). A clear,
+  consistent improvement in citation attribution, no sign of regression. One orthogonal
+  observation: one NEW trial emitted fullwidth `【^n】` brackets — a pre-existing gpt-oss quirk
+  the prompt already warns against, unrelated to and not induced by P1.5; the attribution was
+  still correct. Synthesize was validated in isolation deliberately: it is the only step P1.5
+  touched, and an isolated A/B removes the confound of a full run's nondeterministic web fetches.
+  Reverting, if ever needed, stays a one-liner (`_cited_findings_block` → `_findings_block` in
+  `_synthesize`; drop the prompt clause).
 
 Tests (`test_research_scratchpad.py`): the index map + per-finding markers (dedup via
 `_canonical_url`, registry order, a curated-out page binds nothing); `_cited_findings_block`
