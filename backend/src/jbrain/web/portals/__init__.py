@@ -11,9 +11,11 @@ from jbrain.web.portals.base import (
     advertised_capabilities,
     select_resolvers,
 )
+from jbrain.web.portals.fl_dfs import FlDfsResolver
 from jbrain.web.portals.fl_sunbiz import FlSunbizResolver
 
 __all__ = [
+    "FlDfsResolver",
     "FlSunbizResolver",
     "PortalResolver",
     "PortalResult",

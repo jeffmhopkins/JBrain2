@@ -450,6 +450,46 @@ async def test_fetch_html_http_error_raises() -> None:
         await WebFetcher(transport=httpx.MockTransport(handle)).fetch_html("https://p.example/x")
 
 
+async def test_submit_form_primes_session_then_posts_with_cookie_and_token() -> None:
+    # The stateful portal flow: GET primes a session (Set-Cookie) + carries a CSRF token the
+    # caller reads out; the POST must ride the SAME cookie jar and the token the build_body read.
+    seen: dict[str, str] = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                text='<form action="/"><input name="csrf_token" value="TOK123"/></form>',
+                headers={"content-type": "text/html", "set-cookie": "SESS=abc; Path=/"},
+            )
+        seen["cookie"] = request.headers.get("cookie", "")
+        seen["body"] = request.content.decode()
+        return httpx.Response(
+            200, text="<table>results here</table>", headers={"content-type": "text/html"}
+        )
+
+    def build(page_html: str) -> str:
+        import re as _re
+
+        tok = _re.search(r'name="csrf_token" value="([^"]*)"', page_html).group(1)  # type: ignore[union-attr]
+        return f"csrf_token={tok}&IndividualLNameFilter=Smith"
+
+    final_url, html = await WebFetcher(transport=httpx.MockTransport(handle)).submit_form(
+        "https://p.example/", "https://p.example/", build
+    )
+    assert "results here" in html
+    assert "SESS=abc" in seen["cookie"]  # the GET's session cookie rode the POST
+    assert "csrf_token=TOK123" in seen["body"]  # build_body read the primed page's token
+
+
+async def test_submit_form_refuses_a_private_host() -> None:
+    # Both hops run the SSRF guard; a private page_url is refused before any egress (real resolve).
+    with pytest.raises(WebFetchError):
+        await WebFetcher().submit_form(
+            "http://169.254.169.254/", "http://169.254.169.254/", lambda _p: "q=x"
+        )
+
+
 async def test_web_fetch_tool_post_returns_the_json() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

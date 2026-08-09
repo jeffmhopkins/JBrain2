@@ -10,7 +10,7 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.portaltools import build_portal_handlers
 from jbrain.db.session import SessionContext
 from jbrain.web.fetch import WebFetcher
-from jbrain.web.portals import FlSunbizResolver
+from jbrain.web.portals import FlDfsResolver, FlSunbizResolver
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
 
@@ -31,6 +31,36 @@ def _handlers(handler, *, url: str = "https://search.sunbiz.org"):  # noqa: ANN0
 
     handlers = build_portal_handlers(fetcher, (FlSunbizResolver(url),), emit=_emit)
     return handlers["portal_search"], fired
+
+
+_DFS_PAGE = '<html><body><form action="/"><input name="csrf_token" value="T"/></form></body></html>'
+_DFS_RESULTS = (
+    "<html><body><table><tbody>"
+    '<tr data-licensee-id="1876293" data-license-num="W690060" '
+    'data-licensee-name="COLLIGE, FRANK WILLIAM">'
+    '<td><a href="/Licensee/1876293">COLLIGE, FRANK WILLIAM</a></td></tr>'
+    "</tbody></table></body></html>"
+)
+
+
+async def test_portal_search_dispatches_license_to_dfs_and_returns_websource() -> None:
+    # Two configured resolvers; kind=license must route to the DFS adapter (its session GET→POST
+    # flow) and surface the licensee detail URL as a citable WebSource.
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = _DFS_PAGE if request.method == "GET" else _DFS_RESULTS
+        return httpx.Response(200, text=body, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle))
+    resolvers = (
+        FlSunbizResolver("https://search.sunbiz.org"),
+        FlDfsResolver("https://dfs.example"),
+    )
+    tool = build_portal_handlers(fetcher, resolvers)["portal_search"]
+    out = await tool({"name": "Collige", "jurisdiction": "FL", "kind": "license"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert len(out.web_sources) == 1
+    assert out.web_sources[0].url == "https://dfs.example/Licensee/1876293"
+    assert out.web_sources[0].title == "COLLIGE, FRANK WILLIAM"
 
 
 async def test_portal_search_returns_websources_for_each_detail_url() -> None:

@@ -123,6 +123,12 @@ class Settings(BaseSettings):
     # never model-supplied; only a public entity name goes out. Empty disables the resolver (the
     # tool reports it "not configured") while the sidecar still loads.
     sunbiz_url: str = "https://search.sunbiz.org"
+    # FL DFS licensee registry backing jerv's `portal_search(kind="license")` resolver — a
+    # session + CSRF-gated ASP.NET search a plain web_fetch can't drive. The resolver replays the
+    # portal's own GET-page→POST-form flow through the shared SSRF-guarded WebFetcher and returns
+    # each licensee's STATIC /Licensee/<id> detail URL (DYNAMIC_PORTAL_FETCH_PLAN.md P2). Pinned
+    # here, never model-supplied; only a public name goes out. Empty disables the resolver.
+    dfs_licensee_url: str = "https://licenseesearch.fldfs.com"
     # A pinned reader endpoint web_fetch falls back to when a direct fetch is blocked
     # (bot-walled 403/429) or comes back empty (a JS-rendered shell our static extractor
     # can't see). A reader renders the page with a real browser and returns clean

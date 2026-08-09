@@ -47,6 +47,7 @@ import ipaddress
 import json
 import re
 import socket
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urldefrag, urljoin, urlparse
@@ -805,6 +806,63 @@ class WebFetcher:
         except httpx.HTTPError as exc:
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
             log.warning("web.fetch_html_failed", error=repr(exc), status=status)
+            raise WebFetchError(_fetch_error_message(status), status=status) from exc
+        return final_url, raw.decode(_charset(resp_content_type) or "utf-8", errors="replace")
+
+    async def submit_form(
+        self,
+        page_url: str,
+        action_url: str,
+        build_body: Callable[[str], str],
+        *,
+        content_type: str = "application/x-www-form-urlencoded",
+    ) -> tuple[str, str]:
+        """Prime a session on `page_url`, then POST a form to `action_url` on the SAME httpx
+        client — so the session cookie the GET set (and any page-embedded CSRF token the caller
+        reads out) ride the POST. `build_body(page_html)` is the caller's pure function that reads
+        the primed page's hidden form fields (incl. a CSRF token) and returns the urlencoded POST
+        body — HTML/form parsing stays in the resolver; egress stays here. BOTH hops run through
+        the same per-hop SSRF guard (`_send_following_safe_redirects`), byte cap, and browser
+        headers as `fetch()`; no reader/solver escalation. Returns `(final_url, html)` of the POST.
+        This is the stateful GET→POST a session+CSRF gov-portal search needs (a browser's
+        get-then-submit, minus the JS) — DYNAMIC_PORTAL_FETCH_PLAN.md P2."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+            ) as client:
+                get_resp = await self._send_following_safe_redirects(
+                    client, "GET", page_url, headers=BROWSER_HEADERS
+                )
+                if not _is_textual(get_resp.headers.get("content-type", "")):
+                    await get_resp.aclose()
+                    raise WebFetchError("that portal's search page did not return HTML")
+                page_raw, _ = await _read_capped(get_resp)
+                page_html = page_raw.decode(
+                    _charset(get_resp.headers.get("content-type", "")) or "utf-8", errors="replace"
+                )
+                body = build_body(page_html)
+                payload = body.encode("utf-8")
+                if len(payload) > _MAX_POST_BODY:
+                    raise WebFetchError("that portal form body is too large to send")
+                headers = {
+                    **BROWSER_HEADERS,
+                    "Content-Type": content_type,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": page_url,
+                }
+                post_resp = await self._send_following_safe_redirects(
+                    client, "POST", action_url, headers=headers, content=payload
+                )
+                resp_content_type = post_resp.headers.get("content-type", "")
+                final_url = str(post_resp.url)
+                if not _is_textual(resp_content_type):
+                    await post_resp.aclose()
+                    kind = resp_content_type or "unknown"
+                    raise WebFetchError(f"that portal did not return a text response ({kind})")
+                raw, _ = await _read_capped(post_resp)
+        except httpx.HTTPError as exc:
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            log.warning("web.submit_form_failed", error=repr(exc), status=status)
             raise WebFetchError(_fetch_error_message(status), status=status) from exc
         return final_url, raw.decode(_charset(resp_content_type) or "utf-8", errors="replace")
 
