@@ -87,6 +87,8 @@ _PHASE = {
     "summarize": "summarizing",
     "research_library": "researching",
     "review_library": "reviewing",
+    "research_scout": "scouting",
+    "research_fetch": "reading",
 }
 
 

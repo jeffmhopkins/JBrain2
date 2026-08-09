@@ -69,11 +69,40 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   fresh briefing (invented entertainment items + a launch that never happened) instead of reading
   the stored one. A follow-up run then exposed the real gathering bug: a live run opened only 4 of
   60 sources (the launch pages) and reported everything else from search SNIPPETS, which the
-  synthesizer then dropped as uncited — so the sections read "could not be confirmed". Root fix at
-  the tool: `web_search` (v2) now states in its description AND in every result header that a
+  synthesizer then dropped as uncited — so the sections read "could not be confirmed". A tool-level
+  nudge — `web_search` (v2) now states in its description AND every result header that a
   title/snippet is an UNVERIFIED LEAD that must be `web_fetch`ed before it is reported or cited —
-  "if you did not fetch it, you do not know it". This targets the local model's search-heavy,
-  fetch-light habit at the point of use, for every research agent, not just this preset.
+  helped but did NOT change the local model's behaviour: a verify run still opened only 4 of 60
+  sources and its own `## Sources` list tagged every citation "(search result)", i.e. the whole
+  briefing was still snippet-derived. So the fix moved from nudging to STRUCTURE:
+
+  **Two-phase (scout → read) gather (the structural cure).** A preset that sets `min_reads` opts its
+  gather into two phases instead of the single all-in-one `research` fan:
+  - **scout** — a fan of the new `research_scout` persona (SEARCH-ONLY: `web_search` + clock, NO
+    `web_fetch`), one child per angle. Each surfaces candidate URLs; the engine keeps only their
+    `web_sources` and DISCARDS their prose, so a snippet claim can never become a finding.
+  - **read** — a fan of the new `research_fetch` persona (FETCH-ONLY: `web_fetch` + clock, NO
+    `web_search`) over the pooled candidates. The missing search tool is the point: a reader's only
+    path to a useful answer is to OPEN the pages it was handed, so it reports only real page text.
+
+  The engine (`_gather_scout_then_read` / `_candidate_pool` in `deep_research.py`) ranks each
+  angle's candidates by embedding relevance and ROUND-ROBINS them (one per angle before any angle's
+  second), so the read budget — bounded by the tree's 12-agent ceiling, reserving slots for the
+  analyst + critique — spreads across categories. Only the reader (fetched) findings reach the
+  RESEARCH ledger, so the SYNTHESIZER has no unopened snippet to cite; a totally-blocked read
+  refuses rather than falling back to scout prose (strict fetched-only). A fetch-first run also SKIPS
+  the reflect→refill gap loop (a refill re-searches, which would smuggle snippets back). It is OPT-IN
+  (via `min_reads`; `daily_news` sets 12) because it suits fetch-light NEWS-style gathering ("find
+  articles, read them") but NOT investigative research, which needs the plain `research` persona's
+  interleaved `web_search` + `portal_search` + verify-an-absence loop (candidate_profile).
+
+  **Grounding critique gate (the universal net).** For the paths NOT converted to scout→read
+  (default questions, candidate research, the deepest lane), robustness comes from a strengthened
+  critique: a web-capable critic now runs a GROUNDING SWEEP over every concrete claim (named
+  person/place/org, event, date, number) — opening its cited page to confirm the page actually
+  reports THAT claim, checking STATUS/TENSE (a scheduled launch is not a completed one), and flagging
+  any fabrication or unsupported claim EXPLICITLY as one to CUT or hedge so the revise pass removes
+  it. This fires on every deep-research run, not just presets.
   (3) The `deep_research_report` card gained a **read-aloud play button** next to
   copy/download (`registry.tsx` `DeepResearchReport`, threaded through `ToolView`/`ViewProps` from
   the surface's `useReadAloud`), so the owner plays the report's TTS straight from the card — which

@@ -16,6 +16,12 @@ sources: web
 # Keep only a rolling week of briefings: the nightly expiry sweep reaps a run 7 days on
 # (REPORT_EXPIRY_PLAN.md). Combined with the dated question below, each day is its own row.
 retention_days: 7
+# Read floor: the fewest pages the run must actually OPEN before it writes. The local model is
+# search-heavy but fetch-light — it kept reporting national/economy/AI from snippets it never
+# opened, which the writer then dropped as uncited (the "(search result)" briefing). When a
+# gather round opens fewer than this, the engine force-fetches the top unopened results via the
+# read-only fetch persona, so the briefing rests on real article text (REPORT_PRESET_PLAN.md).
+min_reads: 12
 
 # `{{today}}` is auto-supplied by the engine (the run date) — no caller variable needed, so this
 # stays a one-call preset. Dating the question makes each day a DISTINCT dedup row, so the week's

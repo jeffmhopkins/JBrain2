@@ -63,6 +63,12 @@ class Preset:
     # the persisted report. None = keep forever (the default; candidate_profile omits it,
     # daily_news sets 7). A scalar policy, not a `{{var}}` slot.
     retention_days: int | None
+    # Optional gather READ floor: the fewest web pages the run must actually OPEN (web_fetch,
+    # not just search-list) before it writes. When gather comes back under it, the engine
+    # force-fetches the top unopened results via the fetch-only persona so the writer cites
+    # real page text, not snippets (the daily_news fetch-light failure). None = no floor (the
+    # default; every existing preset omits it). A scalar policy, not a `{{var}}` slot.
+    min_reads: int | None
 
 
 @dataclass(frozen=True)
@@ -82,6 +88,8 @@ class RenderedPreset:
     # The preset's TTL, passed straight through render (it carries no `{{var}}`), so the engine
     # stamps `expires_at` on the persisted report. None = keep forever.
     retention_days: int | None
+    # The preset's gather read floor, passed straight through render. None = no floor.
+    min_reads: int | None
 
 
 def _slots(text: str) -> set[str]:
@@ -105,6 +113,17 @@ def _render(text: str, variables: dict[str, str], *, where: str) -> str:
     if missing:
         raise PresetError(f"{where}: missing variable(s) {sorted(missing)}")
     return out
+
+
+def _pos_int_field(preset: str, field: str, value: object) -> int | None:
+    """A scalar preset policy that is either absent (None) or a positive integer. A bool is an
+    int subclass, so exclude it explicitly; anything non-positive or non-int is a load-time
+    refusal (fail fast at startup) rather than a silently dropped policy."""
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    raise PresetError(f"preset {preset!r}: `{field}` must be a positive integer")
 
 
 def _coerce_preset(name: str, raw: object) -> Preset:
@@ -140,23 +159,14 @@ def _coerce_preset(name: str, raw: object) -> Preset:
         raise PresetError(f"preset {name!r}: `objective` must be a string")
     output_kind = str(raw.get("output_kind") or "report")
     source_mode = str(raw.get("sources") or "web")
-    # Optional TTL. Absent → None (keep forever). Present → a positive int (days); a bool,
-    # non-int, or non-positive value is a load-time refusal (fail fast at startup, like every
-    # other malformed field) rather than a silently ignored policy.
-    retention_raw = raw.get("retention_days")
-    retention_days: int | None = None
-    if retention_raw is not None:
-        # A bool is an int subclass, so exclude it explicitly; only a positive int is a valid TTL.
-        is_pos_int = (
-            isinstance(retention_raw, int)
-            and not isinstance(retention_raw, bool)
-            and retention_raw > 0
-        )
-        if not is_pos_int:
-            raise PresetError(
-                f"preset {name!r}: `retention_days` must be a positive integer (days)"
-            )
-        retention_days = retention_raw
+    # Optional scalar policies. Absent → None (the feature is off). Present → a positive int; a
+    # bool, non-int, or non-positive value is a load-time refusal (fail fast at startup, like
+    # every other malformed field) rather than a silently ignored policy.
+    #   retention_days — the persisted report's TTL in days (REPORT_EXPIRY_PLAN.md).
+    #   min_reads      — the gather read floor: the fewest pages the run must OPEN before it
+    #                    writes (the engine force-fetches to reach it — REPORT_PRESET_PLAN.md).
+    retention_days = _pos_int_field(name, "retention_days", raw.get("retention_days"))
+    min_reads = _pos_int_field(name, "min_reads", raw.get("min_reads"))
     # The variables the caller must supply = every slot used anywhere in the template.
     used: set[str] = set()
     for text in (question, objective, *sections, *(b for _, b in angles), *(t for t, _ in angles)):
@@ -172,6 +182,7 @@ def _coerce_preset(name: str, raw: object) -> Preset:
         angles=tuple(angles),
         variables=tuple(sorted(used)),
         retention_days=retention_days,
+        min_reads=min_reads,
     )
 
 
@@ -227,4 +238,5 @@ def render_preset(name: str, variables: dict[str, str]) -> RenderedPreset:
             for i, (t, b) in enumerate(preset.angles)
         ),
         retention_days=preset.retention_days,
+        min_reads=preset.min_reads,
     )

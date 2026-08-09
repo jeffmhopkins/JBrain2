@@ -176,6 +176,10 @@ class _FakeSpawn:
         refill_ok: bool = True,
         analyst_ok: bool = True,
         critique_ok: bool = True,
+        # The two-phase (scout → read) gather: the scout fan's success and each reader fan's.
+        # Default both True so a fetch-first preset run's happy path needs no extra wiring.
+        scout_ok: bool = True,
+        reader_ok: bool = True,
         refuse_labels: frozenset[str] = frozenset(),
         # How many DISTINCT web sources each research child reaches. Default 1 (unchanged);
         # raise it so a deepest gap round can clear DR_DEEPEST_MIN_NEW_SOURCES and the loop
@@ -192,6 +196,8 @@ class _FakeSpawn:
         self.finding_summary = finding_summary
         self.analyst_ok = analyst_ok
         self.critique_ok = critique_ok
+        self.scout_ok = scout_ok
+        self.reader_ok = reader_ok
         self.refuse_labels = set(refuse_labels)
         self._research_fans = 0
 
@@ -217,17 +223,31 @@ class _FakeSpawn:
         # research_reports are the gather/refill producers; review|review_library|
         # review_reports are the analyst/critique.
         is_review = persona in ("review", "review_library", "review_reports")
-        is_research = persona in (
-            "research",
-            "research_library",
-            "research_deep",
-            "research_reports",
+        is_scout = persona == "research_scout"
+        is_reader = persona == "research_fetch"
+        is_research = (
+            persona
+            in (
+                "research",
+                "research_library",
+                "research_deep",
+                "research_reports",
+            )
+            or is_scout
+            or is_reader
         )
         # A reports-family producer reads the owner's stored reports and emits NO web citation
         # (the compare carries no fresh citations), so it never attaches a WebSource below.
         emits_sources = is_research and persona != "research_reports"
+        # Only the READER phase (research_fetch) actually OPENS pages: its sources are `read`,
+        # the scout's search hits are not — exactly the flag `_candidate_pool` selects on.
+        read_flag = is_reader
         if is_review:
             ok = self.analyst_ok if first_label == "cross-check" else self.critique_ok
+        elif is_scout:
+            ok = self.scout_ok
+        elif is_reader:
+            ok = self.reader_ok
         else:
             self._research_fans += 1
             ok = self.gather_ok if self._research_fans == 1 else self.refill_ok
@@ -251,7 +271,11 @@ class _FakeSpawn:
                 # corpus tools emit the same WebSource chips as web_search.
                 web_sources=(
                     tuple(
-                        WebSource(url=f"https://ex.com/{label}/{k}", title=f"Src {label} {k}")
+                        WebSource(
+                            url=f"https://ex.com/{label}/{k}",
+                            title=f"Src {label} {k}",
+                            read=read_flag,
+                        )
                         for k in range(self.sources_per_child)
                     )
                     if ok and emits_sources
@@ -1794,6 +1818,121 @@ async def test_reports_mode_empty_gather_refuses_with_run_profiles_message() -> 
     assert "run the per-candidate profiles first" in out
 
 
+async def test_fetch_first_preset_scouts_then_reads() -> None:
+    """The daily_news preset (min_reads set, web) runs the two-phase gather: a search-only
+    SCOUT fan over its angles, then a fetch-only READER fan — and NO ordinary web gather fan.
+    The search-based reflect→refill loop is skipped (re-searching would smuggle snippets back)."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    out = await _svc(router, spawn).research(_ctx(), {"preset": "daily_news"})
+    assert isinstance(out, ToolOutput)
+    assert not any("PLANNER" in c["system"] for c in router.calls)  # preset skips the planner
+    personas = [f["persona"] for f in spawn.fans]
+    # Scout THEN read, and the ordinary `research` gather persona never runs.
+    assert "research_scout" in personas and "research_fetch" in personas
+    assert "research" not in personas
+    assert personas.index("research_scout") < personas.index("research_fetch")
+    # The scout fan carried the preset's five fixed angles; the reader fan opens real URLs.
+    scout = next(f for f in spawn.fans if f["persona"] == "research_scout")
+    assert len(scout["briefs"]) == 5
+    reader = next(f for f in spawn.fans if f["persona"] == "research_fetch")
+    assert "Pages to open:" in reader["briefs"][0][1] and "ex.com" in reader["briefs"][0][1]
+    # No coverage/refill loop on a fetch-first run.
+    assert not _reflected(router)
+    # The analyst + critique still run.
+    assert any(f["persona"] == "review" for f in spawn.fans)
+
+
+async def test_fetch_first_writer_sees_only_fetched_findings_never_scout_snippets() -> None:
+    """The load-bearing guarantee: the synthesizer is fed ONLY the reader (fetched) findings —
+    a scout's search-snippet prose never reaches the writer, so it cannot be reported or
+    'cited' as a fact (the root cause of the '(search result)' briefing)."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"preset": "daily_news"})
+    synth = router.synth_calls[0]
+    assert "research_fetch finding" in synth  # fetched findings ARE handed to the writer
+    assert "research_scout finding" not in synth  # scout prose is discarded, never fed
+
+
+async def test_fetch_first_refuses_when_every_reader_is_blocked() -> None:
+    """Strict fetched-only: if every reader comes back empty (all pages blocked), the gather is
+    empty and the run REFUSES — it never falls back to the scouts' unfetched snippet prose."""
+    router, spawn = _FakeRouter(), _FakeSpawn(reader_ok=False)
+    out = await _svc(router, spawn).research(_ctx(), {"preset": "daily_news"})
+    # A reader fan WAS attempted; then the empty-gather refusal fired (no snippet fallback).
+    assert any(f["persona"] == "research_fetch" for f in spawn.fans)
+    assert isinstance(out, str) and out.startswith("Refused:")
+    assert not router.synth_calls  # nothing written from snippets
+
+
+async def test_non_fetch_first_preset_keeps_the_single_pass_gather() -> None:
+    """A preset WITHOUT min_reads (candidate_profile) is unchanged: the ordinary `research`
+    gather persona runs and neither two-phase persona is ever spawned."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(
+        _ctx(),
+        {"preset": "candidate_profile", "variables": {"candidate": "Jane Doe", "office": "Senate"}},
+    )
+    personas = {f["persona"] for f in spawn.fans}
+    assert "research" in personas
+    assert "research_scout" not in personas and "research_fetch" not in personas
+
+
+async def test_candidate_pool_round_robins_across_angles() -> None:
+    """The reader candidates are interleaved one-per-angle (round-robin) so a tight read budget
+    still touches every category, not just the first angle's list. With no embedder the per-angle
+    order is preserved, so the interleave is deterministic."""
+    svc = _svc(_FakeRouter(), _FakeSpawn())  # embed=None → ranking is identity
+
+    def scout(label: str, n: int) -> _ChildResult:
+        return _ChildResult(
+            label=label,
+            persona="research_scout",
+            summary="scouted",
+            ok=True,
+            session_id=f"s-{label}",
+            web_sources=tuple(
+                WebSource(url=f"https://{label}.com/{k}", title=f"{label}{k}", read=False)
+                for k in range(n)
+            ),
+        )
+
+    pool = await svc._candidate_pool("q", [scout("a", 3), scout("b", 2), scout("c", 1)])
+    # Round-robin: a0, b0, c0, a1, b1, a2 — one per angle before any angle's second.
+    assert [ws.url for ws in pool] == [
+        "https://a.com/0",
+        "https://b.com/0",
+        "https://c.com/0",
+        "https://a.com/1",
+        "https://b.com/1",
+        "https://a.com/2",
+    ]
+
+
+async def test_web_critique_runs_a_grounding_sweep_that_flags_fabrications_to_cut() -> None:
+    """The universal anti-hallucination net: a web run's critique must run a GROUNDING SWEEP —
+    every concrete claim traced to a source that states it, status/tense checked, fabrications
+    flagged — and frame flags as cut/hedge instructions so the revision removes them."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "some web question"})
+    brief = _critique_brief(spawn)
+    assert "GROUNDING SWEEP" in brief
+    assert "STATUS/TENSE" in brief  # a plan written as a completed event is flagged
+    assert "must be removed or hedged" in brief  # flags are cut-instructions for the revise
+
+
+async def test_reports_mode_critique_has_no_web_grounding_sweep_but_still_cuts() -> None:
+    """A no-web mode (reports) critique can't open web pages, so it carries no web GROUNDING
+    SWEEP — but the cut/hedge framing for unsupported claims still applies universally."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(
+        _ctx(),
+        {"preset": "compare_candidates", "variables": {"office": "Senate", "candidates": "A, B"}},
+    )
+    brief = _critique_brief(spawn)
+    assert "GROUNDING SWEEP" not in brief  # no web_fetch in reports mode
+    assert "must be removed or hedged" in brief  # the cut framing is universal
+
+
 def test_missing_headings_matches_markdown_heading_lines_case_insensitively() -> None:
     report = "# Summary\nblah\n## Campaign Finance\ndetail\nprose mentioning Assessment inline"
     # Present as headings (any case); "Assessment" only appears in prose, so it's missing.
@@ -2105,7 +2244,8 @@ def _critique_brief(spawn: _FakeSpawn) -> str:
     fan = next(
         f
         for f in spawn.fans
-        if f["persona"] in ("review", "review_library") and f["briefs"][0][0] == "critique"
+        if f["persona"] in ("review", "review_library", "review_reports")
+        and f["briefs"][0][0] == "critique"
     )
     return fan["briefs"][0][1]
 

@@ -265,6 +265,8 @@ SUBAGENT_PERSONAS = frozenset(
         "research_reports",
         "review_reports",
         "research_deep",
+        "research_scout",
+        "research_fetch",
     }
 )
 
@@ -277,6 +279,17 @@ SUBAGENT_PERSONAS = frozenset(
 # parent's at dispatch.
 RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time", "portal_search"})
 REVIEW_TOOLS = RESEARCH_TOOLS
+# The two-phase (scout → read) gather personas (REPORT_PRESET_PLAN.md), each the deliberate
+# HALF of `research`'s web toolkit so the phases can't blur:
+# - research_scout: SEARCH-ONLY — `web_search` + clock, NO `web_fetch`. It surfaces candidate
+#   URLs for an angle; the engine keeps its hits and discards its prose, so a snippet claim can
+#   never become a finding.
+# - research_fetch: READ-ONLY — `web_fetch` + clock, NO `web_search`. It OPENS the URLs it is
+#   handed and reports only what the pages say. The missing search tool is the point: the child
+#   cannot fall back to summarizing a snippet, so its only path to a useful answer is to fetch.
+# Both are leaves (no spawn), KB-less, and ⊆ jerv's tools (the parent⊆child clamp keeps them).
+SCOUT_TOOLS = frozenset({"web_search", "current_time"})
+FETCH_TOOLS = frozenset({"web_fetch", "current_time"})
 # research_deep: the TASK-AGENT tier of a deepest-research run (max_depth=2). Identical to
 # `research` — same web sandbox, no KB, no location — PLUS the one-shot `decompose_research`
 # tool, so a task agent may split a genuinely compound sub-question into a bounded fan of
@@ -427,6 +440,23 @@ AGENTS: dict[str, AgentProfile] = {
         "review",
         "review.prompt",
         tools=REVIEW_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
+    # The two-phase gather personas (REPORT_PRESET_PLAN.md). scout SEARCHES an angle to surface
+    # candidate URLs (no fetch); fetch OPENS the URLs it's handed and reports only page text (no
+    # search). 2x like the other web children — a focused search / a page read plus its summary.
+    "research_scout": _profile(
+        "research_scout",
+        "research_scout.prompt",
+        tools=SCOUT_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
+    "research_fetch": _profile(
+        "research_fetch",
+        "research_fetch.prompt",
+        tools=FETCH_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=2,
     ),
