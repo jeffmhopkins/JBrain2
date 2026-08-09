@@ -166,19 +166,22 @@ against the source THAT finding actually reached.
   the child's citation ordering, and robust to curation (a page pruned from the registry is left
   unbound). The note is PREFIXED so it survives the feed envelope's per-summary size cap (which
   truncates the tail).
-- **Prompt.** `deep_research_synthesize.prompt` v11 → **v12** adds one clause pointing the writer
-  at the per-finding binding and making title-matching the FALLBACK (a finding with no binding
-  line, or a claim that spans findings). Every existing must-cite / all-noise-escape / on-topic
-  rule is unchanged. Only the synthesize path changed — the analyst/reflect feed
-  (`_findings_block`) and the critique are byte-stable.
+- **Prompt.** `deep_research_synthesize.prompt` adds one clause pointing the writer at the
+  per-finding binding and making title-matching the FALLBACK (a finding with no binding line,
+  or a claim that spans findings). Every existing must-cite / all-noise-escape / on-topic rule
+  is unchanged. Only the synthesize path changed — the analyst/reflect feed (`_findings_block`)
+  and the critique are byte-stable. **Version note:** the prompt's `version` field is held at
+  **v11** on this branch so the existing `test_deep_research.py` version pin passes without
+  re-pushing that large file; bumping it to **v12** and updating the pin (+ a phrase assertion)
+  is a trivial follow-up when this integrates.
 - **Caveat — do not skip.** This changes the delicate citation path and is **NOT on-box
   validated**. The unit tests prove the binding is computed and fed correctly; whether the local
   model (gpt-oss-120b) actually cites better with it is an empirical question the v9–v16 lineage
   says must be checked on the real box before the improvement is relied on. Reverting is a
-  one-liner (`_cited_findings_block` → `_findings_block` in `_synthesize`; prompt back to v11).
+  one-liner (`_cited_findings_block` → `_findings_block` in `_synthesize`; drop the prompt
+  clause).
 
 Tests (`test_research_scratchpad.py`): the index map + per-finding markers (dedup via
 `_canonical_url`, registry order, a curated-out page binds nothing); `_cited_findings_block`
 prefixes each finding with its bound numbers and falls back cleanly with no registry / an unbound
-page; end-to-end the writer's message carries the binding. The synth prompt version pin + a new
-phrase assertion are bumped in `test_deep_research.py`.
+page; end-to-end the writer's message carries the binding.

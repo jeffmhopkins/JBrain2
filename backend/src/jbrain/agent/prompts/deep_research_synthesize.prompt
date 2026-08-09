@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v12
+version: dr-synth-v11
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
