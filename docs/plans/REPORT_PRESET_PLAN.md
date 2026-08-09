@@ -38,16 +38,19 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   not just the campaign site; verify an absence before asserting it), and its objective
   carries the per-section fill spec + the `Not established — …` sentinel for an empty section.
 - `backend/src/jbrain/agent/presets/daily_news.preset` — a spoken, text-to-speech-ready daily
-  news briefing for the owner's morning commute. No variables (a one-call daily run); `output_kind:
-  brief` so it stays ~10 minutes read aloud (a preset forces `complexity=deep`, so `report` would
-  balloon). Its objective carries the spoken-format discipline (numbers/dates written as said, no
-  tables/links/markers in the body, spoken attribution + transitions) and the neutral multi-source
-  synthesis rule; its five angles pull the last day's new developments with heavy weight on the
-  space industry and AI (always surfacing SpaceX/Tesla/Musk) and a narrow, impact-first local scope
-  (Port St. John & Titusville: severe weather, an imminent launch, or serious local events). Known
-  limitation: the shared synth prompt still appends inline `[^n]` markers + a `## Sources` list; the
-  objective corrals them to sentence/paragraph ends and a trailing section, but a dedicated
-  spoken/`audio` output_kind that suppresses them is the clean follow-up if the TTS layer voices them.
+  news briefing for the owner's morning commute. One-call for the caller (its single `{{today}}`
+  variable is auto-supplied by the engine — see REPORT_EXPIRY_PLAN.md), and dated so each day is a
+  distinct library row rather than clobbering yesterday; `output_kind: brief` so it stays ~10
+  minutes read aloud (a preset forces `complexity=deep`, so `report` would balloon). It opts into a
+  `retention_days: 7` TTL, so the nightly expiry sweep keeps only a rolling week. Its objective
+  carries the spoken-format discipline (numbers/dates written as said, no tables/links/markers in
+  the body, spoken attribution + transitions) and the neutral multi-source synthesis rule; its five
+  angles pull the last day's new developments with heavy weight on the space industry and AI
+  (always surfacing SpaceX/Tesla/Musk) and a narrow, impact-first local scope (Port St. John &
+  Titusville: severe weather, an imminent launch, or serious local events). Known limitation: the
+  shared synth prompt still appends inline `[^n]` markers + a `## Sources` list; the objective
+  corrals them to sentence/paragraph ends and a trailing section, but a dedicated spoken/`audio`
+  output_kind that suppresses them is the clean follow-up if the TTS layer voices them.
 
 **Engine seam** (`deep_research.py`). `_run` gained `plan_override` + `enforce_headings`.
 The single branch is at the PLAN phase: with a `plan_override` the planner is skipped and the

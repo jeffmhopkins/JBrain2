@@ -110,12 +110,18 @@ async def persist_report(
     sources: list[dict[str, Any]],
     source_mode: str | None = None,
     tool: str | None = None,
+    retention_days: int | None = None,
 ) -> str:
     """Upsert the library row for one completed report and enqueue its summary embedding. Keyed on
     `(question_hash, tool)` (migration 0148): a re-run of the same question BY THE SAME TOOL
     replaces the older report (newest wins) and NULLs the embedding so `embed_research_report`
     re-fills it, while a deep and a deepest report on one question coexist as distinct rows.
-    Runs under `SYSTEM_CTX`."""
+    Runs under `SYSTEM_CTX`.
+
+    `retention_days` (REPORT_EXPIRY_PLAN.md): when set, stamp `expires_at = now() + N days` so the
+    nightly `expire_research_reports` sweep reaps the row; None leaves `expires_at` NULL (keep
+    forever — the default). A re-run REFRESHES `expires_at` off the new `now()`, so the clock
+    restarts each time the same question is re-persisted (or clears it if retention is dropped)."""
     params = {
         "session_id": session_id or None,
         "question": question,
@@ -134,6 +140,8 @@ async def persist_report(
         # The library column is NOT NULL DEFAULT 'deep_research' (0148); a None from a
         # pre-tag caller is the deep_research tool.
         "tool": tool or "deep_research",
+        # NULL = keep forever; an int stamps expires_at = now() + N days (below).
+        "retention_days": retention_days,
     }
     async with scoped_session(maker, SYSTEM_CTX) as session:
         report_id = (
@@ -142,11 +150,14 @@ async def persist_report(
                     "INSERT INTO app.research_reports"
                     " (session_id, question, question_hash, report_md, summary, complexity,"
                     "  rounds, sub_agents, analyzed, revised, coverage_limited, truncated,"
-                    "  sources, source_mode, tool, status)"
+                    "  sources, source_mode, tool, status, expires_at)"
                     " VALUES (cast(:session_id AS uuid), :question, :question_hash, :report_md,"
                     "  :summary, :complexity, :rounds, :sub_agents, :analyzed, :revised,"
                     "  :coverage_limited, :truncated, cast(:sources AS jsonb), :source_mode,"
-                    "  :tool, 'done')"
+                    "  :tool, 'done',"
+                    # NULL retention → NULL expires_at (keep forever); an int → now() + N days.
+                    "  CASE WHEN :retention_days IS NOT NULL"
+                    "   THEN now() + make_interval(days => :retention_days) END)"
                     " ON CONFLICT (question_hash, tool) DO UPDATE SET"
                     "  session_id = EXCLUDED.session_id, question = EXCLUDED.question,"
                     "  report_md = EXCLUDED.report_md, summary = EXCLUDED.summary,"
@@ -155,6 +166,9 @@ async def persist_report(
                     "  revised = EXCLUDED.revised, coverage_limited = EXCLUDED.coverage_limited,"
                     "  truncated = EXCLUDED.truncated, sources = EXCLUDED.sources,"
                     "  source_mode = EXCLUDED.source_mode,"
+                    # Refresh the TTL off the new now() on every re-run (or clear it if the
+                    # re-run carries no retention), so the newest write owns the clock.
+                    "  expires_at = EXCLUDED.expires_at,"
                     "  tool = EXCLUDED.tool, status = 'done', created_at = now(),"
                     # NULL the derived slots on a re-run so the follow-up jobs re-fill
                     # them against the newest report (title tracks the question, which
@@ -510,6 +524,34 @@ async def delete_report(
             )
         ).first()
     return deleted is not None
+
+
+async def expire_reports(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext | None = None,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Hard-delete every report whose TTL has passed (`expires_at < now`), leaving NULL
+    (keep-forever) rows and not-yet-due ones untouched. Returns the number deleted, so the
+    nightly sweep's run is reaped on an idle (0-work) night (REPORT_EXPIRY_PLAN.md, W2).
+
+    `now` is injectable so a frozen test clock drives the cutoff (the scheduler's N3 app-side
+    clock discipline); omitted → SQL `now()`. Runs under `SYSTEM_CTX` by default — a system
+    maintenance sweep legitimately reaches the corpus `external` scope, exactly like
+    `persist_report`'s write does — mirroring the other nightly sweeps."""
+    async with scoped_session(maker, ctx or SYSTEM_CTX) as session:
+        deleted = (
+            await session.execute(
+                text(
+                    "DELETE FROM app.research_reports"
+                    " WHERE expires_at IS NOT NULL AND expires_at < coalesce(:now, now())"
+                    " RETURNING id"
+                ),
+                {"now": now},
+            )
+        ).all()
+    return len(deleted)
 
 
 async def rename_report(

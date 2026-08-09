@@ -627,6 +627,10 @@ async def run() -> None:
         # projector hook or inline transition. In-code only (not the app.actions
         # seed); a migration seeds its schedule + pipeline. Runs as the full owner.
         "geofence_sweep": scheduler.geofence_sweep_handler(maker),
+        # The research-report expiry sweep (REPORT_EXPIRY_PLAN.md): hard-delete library reports
+        # whose opt-in TTL has passed (e.g. a daily_news briefing after 7 days). In-code only
+        # (not the app.actions seed); a migration seeds its nightly schedule + pipeline.
+        "expire_research_reports": scheduler.expire_research_reports_handler(maker),
         # Phase-6 hygiene sweeps (docs/archive/HYGIENE_SWEEPS_PLAN.md): core-data
         # maintenance, no LLM,
         # in-code only (a migration seeds the schedules, disabled by default). entity_hygiene
@@ -682,6 +686,7 @@ async def run() -> None:
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
             scheduler.GEOFENCE_SWEEP_ACTION,
+            scheduler.EXPIRE_RESEARCH_REPORTS_ACTION,
             TRANSCRIBE_ATTACHMENT_SPEC,
             VIDEO_ANALYSIS_SPEC,
             ANALYZE_STREAM_URL_SPEC,

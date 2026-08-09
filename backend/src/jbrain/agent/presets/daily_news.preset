@@ -13,8 +13,14 @@ name: daily_news
 description: A spoken, text-to-speech-ready daily news briefing for the morning commute — top national, economy, world, heavy space-industry and AI coverage (always SpaceX/Tesla/Musk), then local Space Coast (Port St. John & Titusville). Neutral multi-source synthesis, no sports or entertainment, about ten minutes read aloud.
 output_kind: brief
 sources: web
+# Keep only a rolling week of briefings: the nightly expiry sweep reaps a run 7 days on
+# (REPORT_EXPIRY_PLAN.md). Combined with the dated question below, each day is its own row.
+retention_days: 7
 
-question: "Daily news briefing — national, space, AI, and the Space Coast (Port St. John & Titusville)"
+# `{{today}}` is auto-supplied by the engine (the run date) — no caller variable needed, so this
+# stays a one-call preset. Dating the question makes each day a DISTINCT dedup row, so the week's
+# briefings coexist instead of clobbering one another (the fixed-question runs would upsert in place).
+question: "Daily news briefing for {{today}} — national, space, AI, and the Space Coast (Port St. John & Titusville)"
 
 objective: |
   Produce a SPOKEN DAILY NEWS BRIEFING to be read aloud by a text-to-speech system during the
@@ -73,9 +79,9 @@ objective: |
   - Move between topics with spoken transitions the ear expects: "Now to the economy…", "Turning
     overseas…", "In space news…", "And here at home on the Space Coast…". Say "here's what's
     coming up", not "read on".
-  - OPEN with a short spoken good-morning that names the weekday and date and gives the one-line
-    headline of the day, then a quick "here's what's coming up". CLOSE with a brief sign-off that
-    names the day and wishes him a safe drive.
+  - OPEN with a short spoken good-morning that names the weekday and date — today is {{today}} —
+    and gives the one-line headline of the day, then a quick "here's what's coming up". CLOSE with
+    a brief sign-off that names the day and wishes him a safe drive.
 
   LENGTH: aim for about TEN MINUTES read aloud — roughly one thousand three hundred to one thousand
   six hundred words. Reach that by COVERING MORE STORIES, never by padding any one. Give each story
@@ -85,8 +91,8 @@ objective: |
 
   Section fill spec (use each heading in order; they organize the read, and each opens with a
   spoken transition as above):
-  - Good Morning: the greeting, weekday and date, the headline of the day, and "here's what's
-    coming up".
+  - Good Morning: the greeting, the weekday and date ({{today}}), the headline of the day, and
+    "here's what's coming up".
   - Top National Stories: the biggest national story plus key politics and government news.
   - Business & the Economy: markets, jobs, inflation, interest rates, and major company moves.
   - Around the World: the major international and geopolitical developments only.

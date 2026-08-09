@@ -49,6 +49,7 @@ import math
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -147,6 +148,10 @@ class Directive:
 
     objective: str
     output_kind: str = _DEFAULT_OUTPUT_KIND
+    # Optional TTL for the persisted report: N days after which the nightly expiry sweep
+    # reaps it (REPORT_EXPIRY_PLAN.md). None = keep forever (the default for every run that
+    # doesn't opt in). Set by a preset's `retention_days` field, e.g. daily_news → 7.
+    retention_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -497,6 +502,14 @@ def _refuse(reason: str) -> str:
     return f"Refused: {reason}"
 
 
+def _today_str() -> str:
+    """The run date as a spoken, human date string (e.g. "Friday, August 09, 2026"), auto-supplied
+    as the `{{today}}` preset variable. It carries two jobs: it dates a daily preset's question so
+    each day is a distinct dedup row, and it gives the writer the day to voice in a spoken briefing.
+    UTC is fine — a morning-commute run is the same calendar day in UTC as in US Eastern."""
+    return datetime.now(UTC).strftime("%A, %B %d, %Y")
+
+
 def _title(text: str, i: int) -> str:
     """A short display title for a child row — whitespace-collapsed and, if long, capped at
     a WHOLE-word boundary (with an ellipsis) so the row never shows a half-word. A blank
@@ -839,10 +852,16 @@ class DeepResearchService:
         variables = args.get("variables")
         if variables is not None and not isinstance(variables, dict):
             return _refuse("`variables` must be an object mapping preset variable names to values.")
+        # Auto-supply a `today` run-date variable (caller-overridable) available to EVERY preset.
+        # It is what keeps a fixed-question daily preset from de-dup-clobbering yesterday's run:
+        # daily_news's question is `… — {{today}}`, so each day's question_hash differs and the
+        # week's briefings coexist as distinct rows (REPORT_EXPIRY_PLAN.md, W3). A preset that
+        # doesn't reference {{today}} simply ignores the extra variable (render errors only on a
+        # MISSING slot, never an unused one), so this is inert for candidate_profile et al.
+        rendered_vars: dict[str, str] = {"today": _today_str()}
+        rendered_vars.update({str(k): str(v) for k, v in (variables or {}).items()})
         try:
-            rp: RenderedPreset = render_preset(
-                preset_name, {str(k): str(v) for k, v in (variables or {}).items()}
-            )
+            rp: RenderedPreset = render_preset(preset_name, rendered_vars)
         except PresetError as exc:
             return _refuse(str(exc))
         if rp.output_kind not in _OUTPUT_KINDS:
@@ -874,7 +893,11 @@ class DeepResearchService:
             "sections": list(rp.sections),
             "stages": [],
         }
-        directive = Directive(objective=rp.objective or rp.question, output_kind=rp.output_kind)
+        directive = Directive(
+            objective=rp.objective or rp.question,
+            output_kind=rp.output_kind,
+            retention_days=rp.retention_days,
+        )
         source_plan = SourcePlan(source_mode=rp.source_mode, seed=None, sink=_SINK_EXTERNAL)
         return await self._run(
             ctx,
@@ -1375,6 +1398,9 @@ class DeepResearchService:
                 tool=_tool_tag(directive.output_kind, deepest),
                 # A background run has no inline delivery, so a lost write is a failed run.
                 require_persist=require_persist,
+                # Opt-in TTL: a retention-bearing directive (a preset like daily_news) stamps
+                # `expires_at` so the nightly sweep reaps the row; None keeps it forever.
+                retention_days=directive.retention_days,
             )
         return ToolOutput(
             _frame(
@@ -1417,6 +1443,7 @@ class DeepResearchService:
         source_mode: str = _DEFAULT_SOURCE_MODE,
         tool: str = "deep_research",
         require_persist: bool = False,
+        retention_days: int | None = None,
     ) -> None:
         """Write the finished report into the library. Best-effort by default (a DB error is
         swallowed — the report the owner already sees never depends on it), but fail-closed
@@ -1444,6 +1471,7 @@ class DeepResearchService:
                 sources=[{"url": ws.url, "title": ws.title, "read": ws.read} for ws in sources],
                 source_mode=source_mode,
                 tool=tool,
+                retention_days=retention_days,
             )
         except Exception:  # noqa: BLE001 - best-effort; the report already rendered
             log.warning("deep_research.persist_failed", exc_info=True)
