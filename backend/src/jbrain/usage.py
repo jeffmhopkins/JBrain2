@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from types import TracebackType
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -24,6 +25,20 @@ from jbrain.llm.types import LlmUsage
 USAGE_CTX = SessionContext(principal_id="llm-usage", principal_kind="owner")
 
 DAYS_WINDOW = 30
+
+
+def _resolve_zone(tz_name: str | None) -> tuple[ZoneInfo, str]:
+    """The zone the day/month buckets roll over in (the owner's IANA display zone),
+    degrading to UTC for an unset/unknown name so a bad zone never breaks the usage
+    card — the same degrade-to-UTC the agent clock uses. The returned label is fed
+    back into SQL `AT TIME ZONE`, so it is only ever a name Postgres also accepts."""
+    if tz_name:
+        try:
+            return ZoneInfo(tz_name), tz_name
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    return ZoneInfo("UTC"), "UTC"
+
 
 # Per-unit-of-work token tally. The recorder is the SINGLE chokepoint every LLM
 # call passes through, so a caller (the worker, around one job) opens a scope and
@@ -125,9 +140,17 @@ def _bucket(rows: list[UsageRow], prices: dict[str, dict[str, float]]) -> dict[s
 
 
 def summarize_usage(
-    rows: list[UsageRow], prices: dict[str, dict[str, float]], today: date
+    rows: list[UsageRow],
+    all_time_rows: list[UsageRow],
+    prices: dict[str, dict[str, float]],
+    today: date,
 ) -> dict[str, Any]:
-    """The /api/ops/llm-usage payload, computed from pre-aggregated rows."""
+    """The /api/ops/llm-usage payload, computed from pre-aggregated rows. `rows` are
+    the windowed day-buckets (today/month/last-30-days); `all_time_rows` are the
+    full-ledger (provider, model) sums that feed the never-pruned all-time total —
+    a separate set because the all-time figure spans beyond the fetch window. `day`
+    on every row is already the owner-local calendar day, so today/month boundaries
+    below compare against a local `today`."""
     month_start = today.replace(day=1)
     window_start = today - timedelta(days=DAYS_WINDOW - 1)
     month_rows = [r for r in rows if r.day >= month_start]
@@ -144,6 +167,9 @@ def summarize_usage(
     return {
         "today": _bucket([r for r in rows if r.day == today], prices),
         "month": _bucket(month_rows, prices),
+        # The all-time total: a full-table sum of the append-only, never-pruned
+        # ledger, so it is the true lifetime token spend (not just the fetch window).
+        "all_time": _bucket(all_time_rows, prices),
         "by_task": [
             {"task": task, **_bucket(task_rows, prices)}
             for task, task_rows in sorted(
@@ -164,18 +190,27 @@ async def usage_summary(
     ctx: SessionContext,
     prices: dict[str, dict[str, float]],
     *,
+    tz_name: str | None = None,
     today: date | None = None,
 ) -> dict[str, Any]:
-    today = today or datetime.now(UTC).date()
+    """`tz_name` is the owner's IANA display zone (unset/unknown → UTC): today/month
+    roll over at that zone's local midnight, not UTC's, so the buckets match the
+    owner's calendar day."""
+    zone, tz_label = _resolve_zone(tz_name)
+    today = today or datetime.now(zone).date()
     # The month can start more than 30 days back (and vice versa on the 1st):
-    # fetch the union window once and slice in Python.
-    since = min(today.replace(day=1), today - timedelta(days=DAYS_WINDOW - 1))
+    # fetch the union window once and slice in Python. The lower bound is that
+    # window-start's LOCAL midnight expressed as a UTC instant, so a row is
+    # included exactly when its local day is in range (independent of the zone's
+    # offset). The day buckets are cut in the same zone via `AT TIME ZONE`.
+    start_day = min(today.replace(day=1), today - timedelta(days=DAYS_WINDOW - 1))
+    since = datetime(start_day.year, start_day.month, start_day.day, tzinfo=zone).astimezone(UTC)
     async with scoped_session(maker, ctx) as session:
         records = (
             await session.execute(
                 text(
                     """
-                    SELECT (created_at AT TIME ZONE 'UTC')::date AS day,
+                    SELECT (created_at AT TIME ZONE :tz)::date AS day,
                            task, provider, model,
                            sum(input_tokens)::bigint AS input_tokens,
                            sum(output_tokens)::bigint AS output_tokens
@@ -184,7 +219,23 @@ async def usage_summary(
                     GROUP BY 1, 2, 3, 4
                     """
                 ),
-                {"since": datetime(since.year, since.month, since.day, tzinfo=UTC)},
+                {"since": since, "tz": tz_label},
+            )
+        ).all()
+        # The all-time total is unbounded by the window: sum the whole ledger,
+        # grouped by (provider, model) only so the lifetime cost can still be
+        # priced. The ledger is append-only and never pruned, so this is exact.
+        all_time = (
+            await session.execute(
+                text(
+                    """
+                    SELECT provider, model,
+                           sum(input_tokens)::bigint AS input_tokens,
+                           sum(output_tokens)::bigint AS output_tokens
+                    FROM app.llm_usage
+                    GROUP BY 1, 2
+                    """
+                )
             )
         ).all()
     rows = [
@@ -198,4 +249,17 @@ async def usage_summary(
         )
         for r in records
     ]
-    return summarize_usage(rows, prices, today)
+    # `day`/`task` are irrelevant to the all-time bucket (only provider/model drive
+    # cost); fill them with placeholders so the shared UsageRow/_bucket path applies.
+    all_time_rows = [
+        UsageRow(
+            day=today,
+            task="",
+            provider=r.provider,
+            model=r.model,
+            input_tokens=int(r.input_tokens),
+            output_tokens=int(r.output_tokens),
+        )
+        for r in all_time
+    ]
+    return summarize_usage(rows, all_time_rows, prices, today)

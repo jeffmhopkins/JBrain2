@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-08-06 — two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
+> **Status:** Living · **Last verified:** 2026-08-09 — LLM token accounting: the AI usage card gained an all-time lifetime total (full-ledger `SUM` of the append-only `llm_usage`, unbounded by the fetch window), and today/month buckets now roll over at the owner's local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC when unset) instead of UTC. The centralized recorder (`LlmRouter._record` → `SqlUsageRecorder`) remains the single chokepoint every production LLM call passes through. Prior: two ingestion-robustness fixes for note-plus-image capture. (1) The capture-race gate: `POST /notes` carries an `attachments_expected` count (migration 0154) so ingest and the integration reconciler defer integration until the promised attachments land (bounded by a settle window), preventing a premature body-only pass when the image uploads after the note. (2) Per-source extraction: the note body and each attachment now extract in separate `note.extract` calls (`prompt.group_texts_by_source`) so a content-rich attachment can't crowd the body's own facts out of a shared budget (the note losing its "car loan for the Kia" edges once the card image's OCR was present). Prior: per-kind conflict policy + commit-vs-review for Ingest V2 Levers A/B; same-name guard on the agent's own `existing` resolution.
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -552,9 +552,12 @@ deliberate per-task/tier choice.
 (`llm_usage`: task, provider, model, input/output tokens, timestamp) —
 written fire-and-forget so accounting can never fail or slow a call.
 Owner-only RLS (telemetry, not domain data; still gets the standard
-isolation test). Surfaced live on the Ops screen as an **AI usage card**:
-today / this month totals with per-task breakdown, aggregated by
-`date_trunc` at query time.
+isolation test). The ledger is append-only and never pruned, so it is the
+lifetime ground truth. Surfaced live on the LLM Settings screen as an **AI
+usage card**: today / this month / all-time totals with per-task breakdown,
+aggregated at query time. The today/month buckets roll over at the owner's
+local midnight (SQL `AT TIME ZONE` against `owner_timezone`, degrading to UTC
+when unset); the all-time total is a full-ledger `SUM` bounded by no window.
 
 **Cost estimates [decided]**: the card shows estimated dollars alongside
 tokens, computed at query time from a config price table

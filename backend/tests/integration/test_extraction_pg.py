@@ -34,7 +34,7 @@ from jbrain.main import create_app
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.storage import FsBlobStore
-from jbrain.usage import SqlUsageRecorder
+from jbrain.usage import SqlUsageRecorder, usage_summary
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
@@ -394,6 +394,67 @@ async def test_llm_usage_is_owner_only(maker: async_sessionmaker[AsyncSession]) 
                     " output_tokens) VALUES (gen_random_uuid(), 't', 'p', 'm', 1, 1)"
                 )
             )
+
+
+async def test_usage_summary_buckets_by_local_midnight_and_sums_all_time(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The day/month buckets roll over at the owner's local midnight (via SQL
+    `AT TIME ZONE`), and the all-time total is a full-ledger sum independent of
+    the fetch window. Runs against real Postgres because both behaviours live in
+    SQL. Tolerant of rows other tests left behind: the ledger is never truncated,
+    so assertions use deltas/membership, not absolute table totals."""
+    # Baseline for the append-only all-time sum before this test's own inserts.
+    base = await rows(
+        maker,
+        OWNER,
+        "SELECT coalesce(sum(input_tokens), 0) AS i, coalesce(sum(output_tokens), 0) AS o"
+        " FROM app.llm_usage",
+    )
+    base_in, base_out = int(base[0].i), int(base[0].o)
+
+    # 03:30 UTC on the 9th is still the 8th in New York (EDT, -4): a row whose UTC
+    # calendar day and owner-local calendar day differ, so the bucket zone matters.
+    marker = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.llm_usage"
+                " (id, task, provider, model, input_tokens, output_tokens, created_at)"
+                " VALUES (:id, 'tz.probe', 'xai', 'grok-4.3', 111, 222,"
+                " '2026-08-09 03:30:00+00')"
+            ),
+            {"id": marker},
+        )
+
+    # The SQL bucket expression itself: the local zone lands the row on the 8th,
+    # UTC on the 9th — proving the bound :tz param drives the calendar day.
+    probe = await rows(
+        maker,
+        OWNER,
+        "SELECT (created_at AT TIME ZONE :tz)::date AS local_day,"
+        " (created_at AT TIME ZONE 'UTC')::date AS utc_day"
+        " FROM app.llm_usage WHERE id = :id",
+        tz="America/New_York",
+        id=marker,
+    )
+    assert probe[0].local_day == date(2026, 8, 8)
+    assert probe[0].utc_day == date(2026, 8, 9)
+
+    # Through the summary: with today = the 9th in New York, the probe belongs to
+    # the 8th's bucket (local midnight), so it shows in the 30-day series under the
+    # local day, not the UTC one.
+    summary = await usage_summary(
+        maker, OWNER, {}, tz_name="America/New_York", today=date(2026, 8, 9)
+    )
+    days = {d["date"]: d for d in summary["days"]}
+    assert "2026-08-08" in days
+    assert days["2026-08-08"]["input_tokens"] >= 111  # >= tolerates co-located rows
+
+    # All-time is the whole ledger, unbounded by the window: exactly the prior
+    # total plus this test's probe row.
+    assert summary["all_time"]["input_tokens"] == base_in + 111
+    assert summary["all_time"]["output_tokens"] == base_out + 222
 
 
 # --- analyze_note end to end --------------------------------------------------
@@ -1577,9 +1638,11 @@ async def test_analysis_and_review_api_round_trip(
 
             # --- ops usage card: tokens landed, grok-4.3 is priced.
             usage = client.get("/api/ops/llm-usage").json()
-            assert set(usage) == {"today", "month", "by_task", "days"}
+            assert set(usage) == {"today", "month", "all_time", "by_task", "days"}
             assert usage["today"]["input_tokens"] >= 1
             assert usage["today"]["cost_usd"] is not None
+            # All-time is a full-ledger sum, so it is at least this month's spend.
+            assert usage["all_time"]["input_tokens"] >= usage["month"]["input_tokens"]
             assert any(t["task"] == "note.extract" for t in usage["by_task"])
             assert usage["days"]
     finally:

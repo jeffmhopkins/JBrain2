@@ -2119,6 +2119,7 @@ function applyResolution(
 const LLM_USAGE: LlmUsage = {
   today: { input_tokens: 41_200, output_tokens: 12_400, cost_usd: 0.08 },
   month: { input_tokens: 1_240_000, output_tokens: 338_000, cost_usd: 2.41 },
+  all_time: { input_tokens: 48_900_000, output_tokens: 12_600_000, cost_usd: 94.7 },
   by_task: [
     { task: "note.extract", input_tokens: 982_000, output_tokens: 241_000, cost_usd: 1.83 },
     { task: "entity.disambiguate", input_tokens: 141_000, output_tokens: 52_000, cost_usd: 0.31 },

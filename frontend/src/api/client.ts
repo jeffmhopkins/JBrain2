@@ -984,6 +984,8 @@ export interface DayUsage extends UsageTotals {
 export interface LlmUsage {
   today: UsageTotals;
   month: UsageTotals;
+  /** Lifetime token total: a full sum of the never-pruned usage ledger. */
+  all_time: UsageTotals;
   by_task: TaskUsage[];
   days: DayUsage[];
 }

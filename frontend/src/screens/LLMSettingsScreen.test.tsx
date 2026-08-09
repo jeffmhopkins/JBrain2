@@ -92,6 +92,7 @@ function initialSettings(): LlmSettings {
 const USAGE = {
   today: { input_tokens: 41_200, output_tokens: 12_400, cost_usd: 0.08 },
   month: { input_tokens: 1_240_000, output_tokens: 338_000, cost_usd: 2.41 },
+  all_time: { input_tokens: 48_900_000, output_tokens: 12_600_000, cost_usd: 94.7 },
   by_task: [
     { task: "note.extract", input_tokens: 982_000, output_tokens: 241_000, cost_usd: 1.83 },
     // No price-table entry: the line must omit the cost cleanly.
@@ -1524,13 +1525,15 @@ describe("LLMSettingsScreen", () => {
     );
   });
 
-  it("AI usage drawer: expands to today/month and per-task spend, k/M + null cost", async () => {
+  it("AI usage drawer: expands to today/month/all-time and per-task spend, k/M + null cost", async () => {
     render(<LLMSettingsScreen />);
     fireEvent.click(await screen.findByRole("button", { name: /AI usage/i }));
 
     expect(await screen.findByText("41k in · 12k out · ~$0.08")).toBeInTheDocument();
     // The month line shows both in the collapsed-header summary and the row.
     expect(screen.getAllByText("1.2M in · 338k out · ~$2.41").length).toBeGreaterThan(0);
+    // All-time: a lifetime total well beyond the month, formatted in millions.
+    expect(screen.getByText("48.9M in · 12.6M out · ~$94.70")).toBeInTheDocument();
     expect(screen.getByText("note.extract")).toBeInTheDocument();
     expect(screen.getByText("982k in · 241k out · ~$1.83")).toBeInTheDocument();
     // vision.ocr has no price-table entry — tokens only, no guessed cost.
