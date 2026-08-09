@@ -61,6 +61,13 @@ services:
     image: jbrain2-api:local
     build:
       context: ./src/backend
+      # Build provenance stamped into the image so the debug /version route can
+      # report the deployed revision. update-inner.sh exports these from the freshly
+      # reset `src` worktree; a plain `docker compose build` leaves them "unknown".
+      args:
+        JBRAIN_GIT_SHA: ${JBRAIN_GIT_SHA:-unknown}
+        JBRAIN_GIT_DESCRIBE: ${JBRAIN_GIT_DESCRIBE:-unknown}
+        JBRAIN_BUILD_TIME: ${JBRAIN_BUILD_TIME:-unknown}
     restart: unless-stopped
     environment: &api_env
       JBRAIN_DATABASE_URL: postgresql+asyncpg://jbrain_app:${APP_DB_PASSWORD}@db:5432/jbrain
