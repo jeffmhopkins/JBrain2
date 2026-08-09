@@ -79,6 +79,17 @@ objective: |
     sources and they carried nothing relevant.
   - Skip PAYWALLED pages you cannot read (e.g. a "subscriber only" / e-edition page) and move to a
     free source rather than burning the budget on a page that returns no body.
+  - PREFER PRIMARIES OVER ROUNDUPS. A monthly/weekly "what happened this month" roundup, a
+    generic "today's trending news" aggregator, a "daily AI digest" blog, or a "latest news
+    bulletin" wire-dump is a LEAD, not a citation. Never source a SPECIFIC dated event to one:
+    open the wire service (the Associated Press, Reuters) or the primary/operator page that
+    actually reports THAT event, and cite that. If only a roundup carries it, say so and treat it
+    as unconfirmed rather than stating it as established fact.
+  - GET THE STATUS/TENSE RIGHT — do not turn a plan into an event. Report a launch, a release, a
+    vote, or a ruling as HAVING HAPPENED only when a source confirms it actually occurred. A
+    launch SCHEDULE, a countdown page, a press-release announcement, or a "coming up" blog is a
+    PLAN — say "is scheduled for" / "plans to", never "launched" / "released". When unsure whether
+    something already happened, say it is scheduled or reported-planned, not done.
 
   HOW IT MUST SOUND (text-to-speech formatting — follow this exactly):
   - Write in plain, natural spoken American English. One idea per sentence. Put the subject first.
@@ -206,8 +217,14 @@ angles:
       (apnews.com/hub/world-news), and BBC News (bbc.com/news/world). For each item report the
       date, the outlet(s), and a factual summary with the specifics from the opened article,
       synthesized from MULTIPLE outlets; attribute every claim and flag single-source or disputed
-      ones. Skip stale items and minor market noise, but do not leave either area empty without
-      having opened at least two of its sources. No opinion, no sports, no entertainment.
+      ones. IMPORTANT: some wire sites (Reuters, CNBC, the Associated Press) frequently bot-wall a
+      fetch. If one blocks you, do NOT fall back to a generic roundup and do NOT leave the section
+      empty — pivot to FETCH-FRIENDLY outlets that reliably open: the text-only NPR site
+      (text.npr.org), BBC News (bbc.com/news/business and bbc.com/news/world), PBS NewsHour, and
+      the Fed / BLS primaries for figures. A walled site is not "no news". Both BUSINESS and WORLD
+      should carry at least one real item on an ordinary day; only report a section empty after
+      opening at least two fetch-friendly sources for it. Skip stale items and minor market noise.
+      No opinion, no sports, no entertainment.
   - title: "Local Space Coast — Port St. John & Titusville"
     brief: >-
       Gather today's LOCAL news for the Space Coast, focused on PORT ST. JOHN and TITUSVILLE,
