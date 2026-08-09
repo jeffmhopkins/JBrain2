@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-08-05
+> **Status:** Living · **Last verified:** 2026-08-09
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -73,6 +73,18 @@ scripts/debug-connect.sh whoami
 - A connection/timeout error → **reachability**: your sandbox's network egress
   can't reach the box's public host. The token is fine, but you can't connect
   from here. Tell the owner; you may need a different network policy or channel.
+
+Then confirm **which build is actually running** — don't guess whether a merge is
+live:
+
+```bash
+scripts/debug-connect.sh version
+```
+
+`git_sha`/`git_describe` are the commit the running image was built from; compare
+against the branch you just merged. If `started_at` is *older* than `build_time`,
+a new image was built but the container wasn't recreated — the box is still on the
+prior code.
 
 ## 4. Drive it
 

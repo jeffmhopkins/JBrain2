@@ -10,6 +10,8 @@
 #   ./.jbrain-debug-token      a gitignored file at the repo root (recommended)
 #
 #   scripts/debug-connect.sh whoami
+#   scripts/debug-connect.sh version                   # git rev the running server was built from
+#   scripts/debug-connect.sh version-history           # timeline of deployed versions
 #   scripts/debug-connect.sh complete --strength high --system "Be terse" "ping"
 #   echo "long prompt..." | scripts/debug-connect.sh complete --task agent.turn
 #   scripts/debug-connect.sh vision <attachment_id> --task vision.caption --system "..."
@@ -28,7 +30,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -85,6 +87,14 @@ cmd="${1:-help}"
 
 case "$cmd" in
   whoami) _call GET /api/debug/whoami | _pp ;;
+
+  version) _call GET /api/debug/version | _pp ;;  # git rev the running server was built from
+
+  version-history) # [--limit N] — recorded history of deployed versions, newest first
+    lim=50
+    [ "${1:-}" = "--limit" ] && { lim="$2"; shift 2; }
+    _call GET "/api/debug/version/history?limit=$lim" | _pp
+    ;;
 
   complete)
     SYSTEM="" TASK="" STRENGTH="" MAXTOK="" SCHEMA=""
