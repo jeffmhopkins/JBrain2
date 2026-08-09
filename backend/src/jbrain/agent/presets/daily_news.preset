@@ -64,6 +64,22 @@ objective: |
   - When a notable claim rests on only ONE outlet or is disputed, say so briefly ("so far reported
     only by …", "which other outlets have not confirmed") instead of stating it flatly.
 
+  GO DEEP — READ THE ARTICLES, DON'T SKIM HEADLINES (this is what makes the briefing worth
+  hearing, and it is where past runs failed — they searched but opened almost nothing):
+  - A search-results snippet is a LEAD, never a story. For every item you report, actually OPEN
+    (fetch) the underlying article or primary page and pull the SPECIFICS — the numbers, names,
+    dates, quotes, and the "why it matters" — from the body, not the headline.
+  - Each research angle MUST open at least THREE real articles/primary pages from its named
+    sources below; a section built only from headlines or one source is a failure. Report only
+    what an OPENED page actually said (the writer can only cite pages that were read).
+  - Do NOT declare a whole category empty from a thin search. On any ordinary day there is
+    national, economic, world, and AI news. If a category looks empty, BROADEN the query, try a
+    different named source, and open a top-headlines/section page before concluding there is
+    nothing — "nothing found" is only honest after you have actually opened two of the named
+    sources and they carried nothing relevant.
+  - Skip PAYWALLED pages you cannot read (e.g. a "subscriber only" / e-edition page) and move to a
+    free source rather than burning the budget on a page that returns no body.
+
   HOW IT MUST SOUND (text-to-speech formatting — follow this exactly):
   - Write in plain, natural spoken American English. One idea per sentence. Put the subject first.
     Keep sentences and paragraphs short — short paragraphs are where the voice pauses.
@@ -83,11 +99,13 @@ objective: |
     and gives the one-line headline of the day, then a quick "here's what's coming up". CLOSE with
     a brief sign-off that names the day and wishes him a safe drive.
 
-  LENGTH: aim for about TEN MINUTES read aloud — roughly one thousand three hundred to one thousand
-  six hundred words. Reach that by COVERING MORE STORIES, never by padding any one. Give each story
-  two to four spoken sentences: what happened, who says so, and why it matters to him. If a whole
-  section genuinely has nothing new worth reporting today, say so in one short sentence and move on
-  — do not invent filler.
+  LENGTH: aim for the FULL about-TEN-MINUTES read aloud — roughly one thousand three hundred to one
+  thousand six hundred words. This length must come from real reported SUBSTANCE, not padding:
+  cover MORE stories (aim for ten to fourteen across the sections) AND give each one two to four
+  spoken sentences of specifics drawn from an opened article — what happened, who reported it, the
+  key numbers or names, and why it matters to him. A one-line-per-story headline read is too thin;
+  develop each item. If, after actually opening the named sources, a whole section genuinely has
+  nothing new today, say so in one short sentence and move on — never invent filler.
 
   Section fill spec (use each heading in order; they organize the read, and each opens with a
   spoken transition as above):
@@ -123,61 +141,92 @@ angles:
       Gather the last twenty-four to forty-eight hours of SPACE INDUSTRY news as of today,
       worldwide and national: NASA, SpaceX, Blue Origin, United Launch Alliance, Rocket Lab and
       other operators — launches, mission milestones, contracts and awards, anomalies or scrubs,
-      and space policy. SEPARATELY, pull the LAUNCH SCHEDULE for the NEXT TWENTY-FOUR HOURS from
-      Cape Canaveral Space Force Station and Kennedy Space Center (check Space Coast launch
-      schedules and range sources): for any imminent launch report the vehicle, payload/mission,
-      the launch window time, and any road or beach closures or sonic-boom notice for the Titusville
-      and Port St. John area. Always capture notable SpaceX news specifically. For each item report
-      the date, the outlet(s) that carried it, and a plain factual summary; synthesize across
-      multiple outlets rather than one, prefer primary sources (the operator, NASA, the range) and
-      wire services, and note when a claim is single-source or disputed. Skip stale items with no
-      new development. No opinion, no sports, no entertainment.
+      and space policy. OPEN and READ at least three of these fetchable sources (don't stop at
+      search snippets): Spaceflight Now (spaceflightnow.com/news and its launch reports),
+      NASASpaceflight (nasaspaceflight.com), Space.com (space.com/news), Ars Technica's space
+      section (arstechnica.com/space), NASA's own site (nasa.gov/news-release), Reuters
+      (reuters.com/science) and SpaceX (spacex.com/launches). SEPARATELY, OPEN the LAUNCH SCHEDULE
+      for the NEXT TWENTY-FOUR HOURS — Spaceflight Now's launch schedule (spaceflightnow.com/launch-schedule)
+      and NASASpaceflight's schedule — and for any imminent launch report the vehicle,
+      payload/mission, the launch window time, and any road or beach closures or sonic-boom notice
+      for the Titusville and Port St. John area. Always capture notable SpaceX news specifically.
+      For each item report the date, the outlet(s) that carried it, and a factual summary with the
+      real specifics (vehicle, payload count, booster, site, outcome) pulled from the opened
+      article — not just the headline; synthesize across multiple outlets, prefer primary sources
+      (the operator, NASA, the range), and note when a claim is single-source or disputed. Skip
+      stale items. No opinion, no sports, no entertainment.
   - title: "AI, technology, Tesla & Elon Musk"
     brief: >-
       Gather the last twenty-four to forty-eight hours of ARTIFICIAL INTELLIGENCE and TECHNOLOGY
       news as of today: major AI model or product releases, company moves (the big AI labs and
       cloud/chip makers), notable research results, regulation, and significant cybersecurity or
-      big-tech developments. SEPARATELY capture any notable TESLA and ELON MUSK news (the company,
-      its products, and Musk's business actions) not already about SpaceX. For each item report the
-      date, the outlet(s), and a plain factual summary; synthesize across multiple outlets, prefer
-      primary sources (the company's own announcement, a research paper) and wire services, and flag
-      hype, single-source claims, or disputed figures rather than repeating them as fact. Skip stale
-      items with no new development. No opinion, no sports, no entertainment.
+      big-tech developments. OPEN and READ at least three of these named sources — do NOT rely on
+      low-quality aggregators. Primary/company: OpenAI (openai.com/news), Anthropic
+      (anthropic.com/news), Google DeepMind (deepmind.google/discover/blog), Meta AI, Microsoft,
+      Nvidia. Tech press: TechCrunch (techcrunch.com), The Verge (theverge.com), Ars Technica
+      (arstechnica.com), VentureBeat, and Reuters Technology (reuters.com/technology). SEPARATELY
+      capture any notable TESLA and ELON MUSK news (the company, its products, Musk's business
+      actions) not already about SpaceX — from Reuters, the Associated Press, and Electrek
+      (electrek.co), plus Musk's/company's own posts. For each item report the date, the outlet(s),
+      and a factual summary with the real specifics (model name and what's new, benchmark or price
+      figures the source states, who shipped it) pulled from the opened article — never invent a
+      benchmark or number. Prefer the company's own announcement plus a second independent outlet;
+      flag hype, single-source claims, or disputed figures rather than repeating them as fact. If
+      nothing major shipped today, report the most significant AI development of the last day or
+      two — do not leave this empty without having opened at least two of the sources above. No
+      opinion, no sports, no entertainment.
   - title: "National politics & government"
     brief: >-
-      Gather the last twenty-four hours of TOP NATIONAL news as of today: the single biggest story
-      plus the key politics and government developments (the White House, Congress, the courts,
-      major federal agencies, elections). For each, report the date, the outlets that carried it,
-      and a plain factual account of WHAT HAPPENED. Synthesize a neutral account from MULTIPLE
-      outlets across the spectrum — lead with wire-service reporting (the Associated Press, Reuters)
-      and primary documents; treat any one outlet's framing as a single account, not the fact.
-      Attribute claims to their source, keep opinion and punditry out, and note when a claim is
-      contested or carried by only one outlet. Skip stale stories with no new development. No
-      sports, no entertainment.
+      Gather the last twenty-four hours of TOP NATIONAL (U.S.) news as of today: the single biggest
+      story plus the key politics and government developments (the White House, Congress, the
+      courts, major federal agencies, elections). OPEN and READ at least three top-headlines/section
+      pages from these fetchable wire and public-media sources — a keyword search alone is not
+      enough: the Associated Press top news and politics (apnews.com/hub/ap-top-news,
+      apnews.com/hub/politics), Reuters US (reuters.com/world/us), the text-only NPR site
+      (text.npr.org — very fetch-friendly), PBS NewsHour (pbs.org/newshour/politics), and The Hill
+      (thehill.com). Then pull the day's top three-to-five items and, for each, report the date, the
+      outlets that carried it, and a factual account of WHAT HAPPENED with the specifics (who, what,
+      the numbers/vote/ruling) from the opened article. Synthesize a neutral account from MULTIPLE
+      outlets across the spectrum — lead with the wire services and primary documents; treat any one
+      outlet's framing as a single account, not the fact. Attribute claims, keep opinion and
+      punditry out, and note when a claim is contested or single-source. Do not conclude "nothing"
+      without having opened AP and one other source. Skip stale stories. No sports, no entertainment.
   - title: "Economy, markets & the world"
     brief: >-
-      Gather the last twenty-four hours as of today across two areas. (1) BUSINESS & THE ECONOMY:
+      Gather the last twenty-four hours as of today across two areas; OPEN and READ at least three
+      real articles/section pages total (not just search snippets). (1) BUSINESS & THE ECONOMY —
       markets, jobs and unemployment, inflation, interest-rate and Federal Reserve news, and major
-      company or industry moves — report figures the way a source states them (do not invent or
-      round numbers into being). (2) THE WORLD: the major international and geopolitical
-      developments only (conflicts, elections, diplomacy, disasters of clear significance). For
-      each item report the date, the outlet(s), and a plain factual summary synthesized from
-      MULTIPLE outlets; prefer wire services and primary sources, attribute every claim, and note
-      single-source or disputed claims. Skip stale items and minor market noise. No opinion, no
-      sports, no entertainment.
+      company or industry moves — from CNBC (cnbc.com/economy, cnbc.com/markets), Reuters Business
+      and Markets (reuters.com/business, reuters.com/markets), the Associated Press business hub
+      (apnews.com/hub/business), and MarketWatch; for official figures use the primary source (the
+      Federal Reserve federalreserve.gov, the Bureau of Labor Statistics bls.gov). Report figures
+      exactly the way a source states them — never invent or round a number into being. (2) THE
+      WORLD — the major international and geopolitical developments only (conflicts, elections,
+      diplomacy, significant disasters) — from Reuters World (reuters.com/world), AP World
+      (apnews.com/hub/world-news), and BBC News (bbc.com/news/world). For each item report the
+      date, the outlet(s), and a factual summary with the specifics from the opened article,
+      synthesized from MULTIPLE outlets; attribute every claim and flag single-source or disputed
+      ones. Skip stale items and minor market noise, but do not leave either area empty without
+      having opened at least two of its sources. No opinion, no sports, no entertainment.
   - title: "Local Space Coast — Port St. John & Titusville"
     brief: >-
       Gather today's LOCAL news for the Space Coast, focused on PORT ST. JOHN and TITUSVILLE,
       Florida, and admit ONLY three kinds of item. (1) SEVERE WEATHER: any weather alert, warning,
       or notable severe-weather forecast affecting the Titusville / Port St. John / north Brevard
-      area today (check the National Weather Service Melbourne office and local outlets). (2) An
-      imminent ROCKET LAUNCH in the next twenty-four hours from Cape Canaveral or Kennedy Space
-      Center and its LOCAL effects — road or beach closures, the window time, sonic-boom notice.
-      (3) VIOLENT CRIME or another genuinely serious or notable local event. Draw on local outlets
-      (Florida Today / the Space Coast section, Space Coast Daily, Talk of Titusville, and the
-      Brevard coverage from FOX 35 Orlando and Spectrum News 13) plus the National Weather Service.
-      Include a broader Brevard County or Florida item ONLY if it plausibly IMPACTS the listener —
-      his safety, commute, cost of living, or the space industry — and skip routine county or state
-      news. For each item report the date, the outlet(s), and a plain factual summary; attribute
-      claims, and prefer official sources for weather and public-safety facts. No opinion, no
-      sports, no entertainment, no obituaries or human-interest filler.
+      area today. Use the National Weather Service Melbourne office as the primary source — OPEN the
+      live active-alerts feed for the north-Brevard zone (api.weather.gov/alerts/active?area=FL,
+      and the Melbourne office at weather.gov/mlb) and read any alert's headline, area, and expiry.
+      (2) An imminent ROCKET LAUNCH in the next twenty-four hours from Cape Canaveral or Kennedy
+      Space Center and its LOCAL effects — road or beach closures, the window time, sonic-boom
+      notice (cross-check the space angle's launch schedule). (3) VIOLENT CRIME or another genuinely
+      serious or notable local event. OPEN at least two FREE local outlets (do NOT waste the budget
+      on Florida Today — it is PAYWALLED and returns no readable body): Space Coast Daily
+      (spacecoastdaily.com), Talk of Titusville (talkoftitusville.com), and the Brevard coverage
+      from the Orlando TV stations — Click Orlando / WESH (clickorlando.com/news/local, wesh.com),
+      WFTV (wftv.com), and FOX 35 (fox35orlando.com/tag/us/fl/brevard-county); for crime, the
+      Brevard County Sheriff. Include a broader Brevard County or Florida item ONLY if it plausibly
+      IMPACTS the listener — his safety, commute, cost of living, or the space industry — and skip
+      routine county or state news. For each item report the date, the outlet(s), and a factual
+      summary from the opened page; prefer official sources for weather and public-safety facts, and
+      report a category as clear only after actually checking the NWS feed and at least one local
+      outlet. No opinion, no sports, no entertainment, no obituaries or human-interest filler.
