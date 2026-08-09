@@ -19,6 +19,7 @@ from jbrain.agent.research_scratchpad import (
     CRITIQUE,
     DRAFT,
     RESEARCH,
+    ScratchEntry,
     Scratchpad,
 )
 from jbrain.agent.spawn import _ChildResult
@@ -183,3 +184,92 @@ async def test_gather_researchers_are_spawned_in_isolation() -> None:
         f for f in spawn.fans if f["persona"] == "review" and f["briefs"][0][0] == "cross-check"
     )
     assert FEED_OPEN in analyst["briefs"][0][1]  # the analyst DOES read the whole set
+
+
+# --- Phase 1.5: per-finding source binding (cite the finding's own source, not a title guess) --
+
+
+def _ws(url: str, title: str = "t") -> WebSource:
+    return WebSource(url=url, title=title)
+
+
+def test_source_markers_bind_a_finding_to_the_registry_deduped_and_ordered() -> None:
+    """A finding's own pages resolve to the exact SOURCES `[^n]` indices — deduped (a
+    tracking-param variant of the same page counts once, via `_canonical_url`), in registry
+    order — and a page curated out of the registry binds nothing."""
+    from jbrain.agent.deep_research import _finding_source_markers, _source_index_map
+
+    sources = [_ws("https://a.com/1"), _ws("https://b.com/2"), _ws("https://c.com/3")]
+    index_map = _source_index_map(sources)
+    e = ScratchEntry(
+        author="g1",
+        persona="research",
+        stage="gather",
+        scope=RESEARCH,
+        text="finding",
+        # reached c and b (out of order, with a tracking-param dup of b) → [2, 3].
+        sources=(
+            _ws("https://c.com/3"),
+            _ws("https://b.com/2?utm_source=x"),
+            _ws("https://b.com/2"),
+        ),
+    )
+    assert _finding_source_markers(e, index_map) == [2, 3]
+    curated_out = ScratchEntry(
+        author="g2",
+        persona="research",
+        stage="gather",
+        scope=RESEARCH,
+        text="finding",
+        sources=(_ws("https://z.com/9"),),
+    )
+    assert _finding_source_markers(curated_out, index_map) == []
+
+
+def test_cited_findings_block_prefixes_each_finding_with_its_bound_sources() -> None:
+    """The synthesizer's feed heads each finding with the SOURCES numbers it drew on, so a
+    claim is cited against the source THAT finding reached — not re-guessed by title."""
+    from jbrain.agent.deep_research import _cited_findings_block
+
+    sources = [_ws("https://a.com/1"), _ws("https://b.com/2")]
+    s = Scratchpad()
+    s.add_children(
+        [
+            _child("g1", summary="alpha finding", sources=(_ws("https://a.com/1"),)),
+            _child("g2", summary="beta finding", sources=(_ws("https://b.com/2"),)),
+        ],
+        stage="gather",
+        scope=RESEARCH,
+    )
+    block = _cited_findings_block(s.read({RESEARCH}), sources)
+    assert "Sources this finding drew on: [^1]" in block  # g1 → a.com is registry [^1]
+    assert "Sources this finding drew on: [^2]" in block  # g2 → b.com is registry [^2]
+    assert "alpha finding" in block and "beta finding" in block  # the finding text survives
+
+
+def test_cited_findings_block_falls_back_when_nothing_binds() -> None:
+    """No registry → the plain block (nothing to bind against); a finding whose page isn't in
+    the registry carries no binding note but keeps its text."""
+    from jbrain.agent.deep_research import _cited_findings_block
+
+    s = Scratchpad()
+    s.add_children([_child("g1", summary="alpha")], stage="gather", scope=RESEARCH)
+    assert _cited_findings_block(s.read({RESEARCH}), []) == _findings_block(s.read({RESEARCH}))
+
+    s2 = Scratchpad()
+    s2.add_children(
+        [_child("g1", summary="alpha", sources=(_ws("https://a.com/1"),))],
+        stage="gather",
+        scope=RESEARCH,
+    )
+    block = _cited_findings_block(s2.read({RESEARCH}), [_ws("https://other.com/9")])
+    assert "Sources this finding drew on" not in block  # a.com absent from the registry
+    assert "alpha" in block
+
+
+async def test_writer_findings_carry_the_source_binding_end_to_end() -> None:
+    """Driving the real service: the writer's message prefixes each finding with the SOURCES
+    number its own page maps to, so the citation binding reaches the synthesizer for real."""
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _svc(router, spawn).research(_ctx(), {"question": "Q"})
+    assert "Sources this finding drew on:" in router.synth_calls[0]

@@ -1,10 +1,14 @@
 # Deep-research scratchpad — a run-scoped findings ledger
 
-> **Status:** In progress · **Last verified:** 2026-08-09 · **Waves:** P1✅ P2◻️
+> **Status:** In progress · **Last verified:** 2026-08-09 · **Waves:** P1✅ P1.5✅ P2◻️
 > (P1 = the in-memory ledger + the scope-model refactor of `deep_research._run`, shipped
-> with unit coverage and a byte-identical no-regression seam. P2 = the scope-model unlocks —
-> feed the ANALYSIS entry into the critique, per-researcher partitioning for a comparison
-> run — deferred until a comparison/partitioned mode needs them.)
+> with unit coverage and a byte-identical no-regression seam. **P1.5 = the behavioral change**:
+> the synthesizer is fed a per-finding claim→source binding so it cites the source a finding
+> actually drew on instead of re-guessing by title — the anti-mislabelling fix (§8).
+> **Not yet on-box validated** — the citation path is delicate (see the v9–v16 history), so the
+> effect on real citation quality wants a run against the actual box/model before it's relied on.
+> P2 = the scope-model unlocks — feed the ANALYSIS entry into the critique, per-researcher
+> partitioning for a comparison run — deferred until a comparison/partitioned mode needs them.)
 
 Reconciled with the root `CLAUDE.md` non-negotiables: no new datastore (the ledger is an
 in-memory object that lives and dies with one in-request run — no migration, no RLS table,
@@ -142,3 +146,39 @@ whole-pipeline no-regression proof.
   the prompt-discipline + mechanical-backstop lineage that shipped the v12/v14/v16 fixes (e.g.
   a "cited number appears verbatim in a cited source" backstop, reusing the one-retry re-synth
   pattern). Not in scope here.
+
+## 8. Phase 1.5 — the claim→source binding (landed)
+
+P1 made each ledger entry carry its own reached pages; P1.5 uses them. The synthesizer's feed
+now **prefixes each finding with the exact `SOURCES` numbers that finding's own research pages
+map to** — a line like `Sources this finding drew on: [^3], [^7]` heading the finding
+(`_cited_findings_block`). This is the anti-mislabelling fix the four-researcher review
+identified: the writer was told the children's own `[^n]` are private numbering and to renumber
+"by choosing the source whose title best backs that claim" (the synth prompt) — i.e. it
+re-derived every citation by title-matching against the whole registry, the documented root of
+the v12/v14 mislabelled-citation failures. With the binding, a claim from a finding is cited
+against the source THAT finding actually reached.
+
+- **A binding, not a renumber.** It does NOT rewrite the children's inline `[^n]` (whose order
+  is "the order the sources appeared" — a per-child order the existing design deliberately does
+  not trust). It uses only each entry's `web_sources`, resolved through `_canonical_url` (the
+  same dedup key the registry uses) to the FINAL curated registry index — correct regardless of
+  the child's citation ordering, and robust to curation (a page pruned from the registry is left
+  unbound). The note is PREFIXED so it survives the feed envelope's per-summary size cap (which
+  truncates the tail).
+- **Prompt.** `deep_research_synthesize.prompt` v11 → **v12** adds one clause pointing the writer
+  at the per-finding binding and making title-matching the FALLBACK (a finding with no binding
+  line, or a claim that spans findings). Every existing must-cite / all-noise-escape / on-topic
+  rule is unchanged. Only the synthesize path changed — the analyst/reflect feed
+  (`_findings_block`) and the critique are byte-stable.
+- **Caveat — do not skip.** This changes the delicate citation path and is **NOT on-box
+  validated**. The unit tests prove the binding is computed and fed correctly; whether the local
+  model (gpt-oss-120b) actually cites better with it is an empirical question the v9–v16 lineage
+  says must be checked on the real box before the improvement is relied on. Reverting is a
+  one-liner (`_cited_findings_block` → `_findings_block` in `_synthesize`; prompt back to v11).
+
+Tests (`test_research_scratchpad.py`): the index map + per-finding markers (dedup via
+`_canonical_url`, registry order, a curated-out page binds nothing); `_cited_findings_block`
+prefixes each finding with its bound numbers and falls back cleanly with no registry / an unbound
+page; end-to-end the writer's message carries the binding. The synth prompt version pin + a new
+phrase assertion are bumped in `test_deep_research.py`.
