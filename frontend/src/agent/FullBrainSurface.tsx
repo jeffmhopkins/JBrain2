@@ -305,6 +305,13 @@ export function FullBrainSurface({
                       }
                     : undefined
                 }
+                // The raw keyed capability (not the turn-bound `audio`) so a card inside the
+                // turn — the deep-research report — can play its own text under its own key.
+                readAloud={
+                  readAloud
+                    ? { playing: readAloud.playing, onToggle: readAloud.onToggle }
+                    : undefined
+                }
               />
             ))}
             {fb.messages.length === 0 && (
@@ -602,6 +609,7 @@ function Bubble({
   onDeferredComplete,
   onPlanChanged,
   audio,
+  readAloud,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
@@ -628,6 +636,13 @@ function Bubble({
    * `onToggleAuto` (long-press) flips auto-play. Absent = read-aloud off (no control,
    * labelled copy). */
   audio?: AudioControl | undefined;
+  /** The raw read-aloud capability (keyed play/pause) for a card that speaks its OWN text
+   * — the deep-research report's play button. `onToggle(key, markdown)` speaks that text
+   * under a key distinct from the turn's, so the two never collide. Absent = read-aloud
+   * off. */
+  readAloud?:
+    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
+    | undefined;
 }): ReactNode {
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
@@ -842,6 +857,7 @@ function Bubble({
           onOpenSession={onOpenSession}
           onDeferredComplete={onDeferredComplete}
           onPlanChanged={onPlanChanged}
+          readAloud={readAloud}
         />
       ))}
       {stagedAffordance}
