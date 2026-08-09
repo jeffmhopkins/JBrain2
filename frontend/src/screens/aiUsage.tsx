@@ -33,7 +33,7 @@ export function AiUsageCard() {
       .then((u) => {
         // Telemetry fails quietly: a missing/malformed payload is treated as
         // "no data yet", never an exception that takes the screen down with it.
-        if (!stale && u?.today && u.month) setUsage(u);
+        if (!stale && u?.today && u.month && u.all_time) setUsage(u);
       })
       .catch(() => {});
     return () => {
@@ -71,6 +71,10 @@ export function AiUsageCard() {
               <div className="usage-row">
                 <span className="usage-label">this month</span>
                 <span className="usage-value">{usageLine(usage.month)}</span>
+              </div>
+              <div className="usage-row">
+                <span className="usage-label">all time</span>
+                <span className="usage-value">{usageLine(usage.all_time)}</span>
               </div>
               {usage.by_task.length > 0 && (
                 <div className="usage-tasks">

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from jbrain import ops_metrics
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
+from jbrain.api.settings import get_settings_store
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
@@ -440,12 +441,14 @@ async def metrics_history(
 async def llm_usage(
     request: Request, principal: PrincipalDep, settings: SettingsDep
 ) -> dict[str, object]:
-    """The AI usage card: today/month totals, per-task breakdown, last 30
+    """The AI usage card: today/month/all-time totals, per-task breakdown, last 30
     days — costs estimated at query time from the config price table
-    (docs/reference/ANALYSIS.md "Token accounting" / "Cost estimates")."""
+    (docs/reference/ANALYSIS.md "Token accounting" / "Cost estimates"). The
+    today/month buckets roll over at the owner's local midnight, not UTC's."""
     maker = cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
     ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
-    return await usage_summary(maker, ctx, settings.llm_prices)
+    tz_name = await get_settings_store(request).owner_timezone(ctx)
+    return await usage_summary(maker, ctx, settings.llm_prices, tz_name=tz_name)
 
 
 @router.post("/update", status_code=202)

@@ -102,7 +102,7 @@ def test_summary_buckets_today_month_by_task_days() -> None:
         row(day=date(2026, 6, 3), task="entity.disambiguate", inp=1_000_000, out=0),
         row(day=date(2026, 5, 20), inp=999, out=999),  # last month, within 30d
     ]
-    summary = summarize_usage(rows, PRICES, TODAY)
+    summary = summarize_usage(rows, [], PRICES, TODAY)
 
     assert summary["today"] == {
         "input_tokens": 4_000_000,
@@ -118,28 +118,49 @@ def test_summary_buckets_today_month_by_task_days() -> None:
     assert [d["date"] for d in summary["days"]] == ["2026-05-20", "2026-06-03", "2026-06-10"]
 
 
+def test_all_time_bucket_sums_full_ledger_beyond_the_window() -> None:
+    # The windowed `rows` are just today; the all-time rows carry the lifetime
+    # total, which spans years the window never fetches. all_time must be the sum
+    # of ITS rows, wholly independent of today/month.
+    rows = [row(inp=1_000, out=500)]
+    all_time_rows = [
+        row(day=date(2024, 1, 1), inp=10_000_000, out=4_000_000),
+        row(day=date(2025, 6, 1), model="mystery-model", inp=2_000_000, out=0),
+    ]
+    summary = summarize_usage(rows, all_time_rows, PRICES, TODAY)
+    assert summary["all_time"]["input_tokens"] == 12_000_000
+    assert summary["all_time"]["output_tokens"] == 4_000_000
+    # Only the priceable model contributes to cost; the unpriceable one still
+    # counts tokens above. 10M in + 4M out at grok-4.3 = $12.50 + $10.00.
+    assert summary["all_time"]["cost_usd"] == 22.5
+    # The lifetime total does not leak into today/month.
+    assert summary["today"]["input_tokens"] == 1_000
+    assert summary["month"]["input_tokens"] == 1_000
+
+
 def test_unknown_models_count_tokens_but_not_cost() -> None:
     rows = [
         row(inp=1_000_000, out=0),
         row(model="mystery-model", inp=2_000_000, out=0),
     ]
-    today = summarize_usage(rows, PRICES, TODAY)["today"]
+    today = summarize_usage(rows, [], PRICES, TODAY)["today"]
     assert today["input_tokens"] == 3_000_000  # tokens are the ground truth
     assert today["cost_usd"] == 1.25  # only the priceable model contributes
 
 
 def test_cost_null_when_nothing_priceable() -> None:
     rows = [row(model="mystery-model")]
-    assert summarize_usage(rows, PRICES, TODAY)["today"]["cost_usd"] is None
+    assert summarize_usage(rows, [], PRICES, TODAY)["today"]["cost_usd"] is None
 
 
 def test_empty_usage_is_zeros_with_null_cost() -> None:
-    summary = summarize_usage([], PRICES, TODAY)
+    summary = summarize_usage([], [], PRICES, TODAY)
     assert summary["today"] == {"input_tokens": 0, "output_tokens": 0, "cost_usd": None}
+    assert summary["all_time"] == {"input_tokens": 0, "output_tokens": 0, "cost_usd": None}
     assert summary["days"] == [] and summary["by_task"] == []
 
 
 def test_days_window_excludes_older_than_thirty_days() -> None:
     rows = [row(day=date(2026, 5, 1)), row(day=date(2026, 5, 12))]
-    summary = summarize_usage(rows, PRICES, TODAY)
+    summary = summarize_usage(rows, [], PRICES, TODAY)
     assert [d["date"] for d in summary["days"]] == ["2026-05-12"]
