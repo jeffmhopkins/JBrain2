@@ -175,7 +175,7 @@ from jbrain.web import (
     WebFetcher,
     WikidataClient,
 )
-from jbrain.web.portals import FlSunbizResolver
+from jbrain.web.portals import FlDfsResolver, FlSunbizResolver
 from jbrain.web.youtube import youtube_page
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.lint import WIKI_LINT_SPEC
@@ -521,7 +521,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # tool, which reaches it through the shared SSRF-guarded web_fetcher. Adding a portal is a
         # new adapter + one construction line here. Always registered so the sidecar has its
         # handler; an unconfigured resolver reports "not configured".
-        app.state.portal_resolvers = (FlSunbizResolver(settings.sunbiz_url),)
+        app.state.portal_resolvers = (
+            FlSunbizResolver(settings.sunbiz_url),
+            FlDfsResolver(settings.dfs_licensee_url),
+        )
         web_handlers.update(
             build_portal_handlers(web_fetcher, app.state.portal_resolvers, emit=brain_emit)
         )

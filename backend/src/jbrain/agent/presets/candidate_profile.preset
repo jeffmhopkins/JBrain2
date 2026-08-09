@@ -51,7 +51,12 @@ objective: |
     not the ballot name.
   - AN EMPTY PORTAL IS NOT PROOF OF ABSENCE. A government search app (a state license lookup, a
     court-docket search) that returns nothing readable to the fetch is NOT evidence the record
-    does not exist — a dynamic portal often cannot be read directly. Record such a result as
+    does not exist — a dynamic portal often cannot be read directly. For a STATE business registry
+    or a STATE professional-license lookup, use `portal_search(name, jurisdiction=<2-letter state>,
+    kind="business" | "license")`, which runs the portal's real search and returns each hit's
+    citable detail page (e.g. an individual's own license + number) instead of the bare search
+    form; `web_fetch` of a search form now says so explicitly ("search form, not results"), which
+    is never a "no record" finding. Where no adapter covers the portal, record the result as
     "not verifiable via <source> as of the run date", try an alternate path (the portal's
     result/detail URL or search endpoint, a cached copy, an official disciplinary-action index,
     or news coverage of the record) before concluding anything, and NEVER upgrade "the search
