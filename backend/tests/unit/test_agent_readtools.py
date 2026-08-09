@@ -1365,8 +1365,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "deep_research.tool": (
             "deep_research",
-            8,
-            "e4664655195e3cd5ca942eccbd71a1ee1ba0dea30fbe4528621129495f9f6a8a",
+            9,
+            "af5615c79195574cb24c13c422542d95db0956aa1ca0557a7ebe8dc16ce3d43f",
         ),
         "deep_produce.tool": (
             "deep_produce",

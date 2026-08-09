@@ -1,0 +1,177 @@
+# A SPOKEN daily-news briefing for the owner's morning commute — written to be READ ALOUD by a
+# text-to-speech system while driving, not read on a screen. It pins a fixed morning-radio arc
+# (greeting → national → economy → world → space → AI/tech → local Space Coast → sign-off) and
+# five gather angles that pull the last day's genuinely-new developments, synthesized NEUTRALLY
+# from multiple outlets. Takes NO variables — it's a one-call daily run; the research agents work
+# "the last 24 hours as of today". Heavy weight on the space industry and on AI, and it always
+# surfaces notable SpaceX / Tesla / Elon Musk news. Local focus is Port St. John & Titusville,
+# and local items are admitted only when they matter for the drive or personal impact. Uses
+# output_kind `brief` (a preset forces complexity=deep, so `report` would balloon past a 10-minute
+# read); the concrete length + spoken-format discipline live in the objective below.
+# See docs/plans/REPORT_PRESET_PLAN.md.
+name: daily_news
+description: A spoken, text-to-speech-ready daily news briefing for the morning commute — top national, economy, world, heavy space-industry and AI coverage (always SpaceX/Tesla/Musk), then local Space Coast (Port St. John & Titusville). Neutral multi-source synthesis, no sports or entertainment, about ten minutes read aloud.
+output_kind: brief
+sources: web
+
+question: "Daily news briefing — national, space, AI, and the Space Coast (Port St. John & Titusville)"
+
+objective: |
+  Produce a SPOKEN DAILY NEWS BRIEFING to be read aloud by a text-to-speech system during the
+  owner's morning drive to work. The listener is driving and cannot look at a screen: every word
+  has to work by EAR. This is a briefing to be HEARD, not a report to be read.
+
+  WHAT TO COVER (in this priority order):
+  - National news: politics and government, and the single biggest national story of the day.
+  - Business and the economy: markets, jobs, inflation, interest rates, major company moves.
+  - The world: the major international and geopolitical developments only.
+  - THE SPACE INDUSTRY — cover this HEAVILY: NASA, SpaceX, Blue Origin, United Launch Alliance,
+    Kennedy Space Center and Cape Canaveral, launches, contracts, missions, and space policy.
+  - ARTIFICIAL INTELLIGENCE and technology — cover this HEAVILY too: major AI model releases,
+    company and research developments, and notable tech and cybersecurity news.
+  - ALWAYS surface notable news about SpaceX, Tesla, and Elon Musk when there is any.
+  - Local Space Coast news — see the strict local scope below.
+
+  WHAT TO LEAVE OUT: no sports, and no entertainment or celebrity gossip. Skip stale stories that
+  have no genuinely NEW development in the last day — this is today's news, not a recap.
+
+  LOCAL SCOPE (narrow and impact-first):
+  - The primary local area is PORT ST. JOHN and TITUSVILLE, Florida.
+  - Admit a local item ONLY if it falls in one of these three buckets: (1) severe weather or a
+    weather alert affecting the Space Coast today; (2) a rocket launch scheduled in the NEXT 24
+    HOURS from Cape Canaveral or Kennedy Space Center, with any road or beach closures, launch
+    window time, and sonic-boom notice; (3) violent crime or another genuinely serious or notable
+    local event.
+  - Broader Brevard County or Florida-wide news belongs in the briefing ONLY when it plausibly
+    IMPACTS the listener — his safety, his commute, his cost of living, or the space industry.
+    Skip routine county and state news that does not touch him.
+
+  UNBIASED, NEUTRAL SYNTHESIS (the load-bearing discipline):
+  - For each story, synthesize ONE plain, factual account from MULTIPLE outlets across the
+    spectrum — not a single outlet's take. Report what HAPPENED. Prefer wire services (the
+    Associated Press, Reuters) and primary sources; treat any single outlet's framing as one
+    account, not the fact.
+  - Keep opinion, punditry, and analysis OUT. No loaded or emotional adjectives, no editorializing,
+    no telling the listener what to think. Attribute every claim in plain spoken words ("according
+    to the Associated Press", "Reuters reports", "the company said") rather than asserting it in
+    your own voice.
+  - When a notable claim rests on only ONE outlet or is disputed, say so briefly ("so far reported
+    only by …", "which other outlets have not confirmed") instead of stating it flatly.
+
+  HOW IT MUST SOUND (text-to-speech formatting — follow this exactly):
+  - Write in plain, natural spoken American English. One idea per sentence. Put the subject first.
+    Keep sentences and paragraphs short — short paragraphs are where the voice pauses.
+  - Write numbers, dates, and times the way they should be SAID: "thirty-two", "about four
+    hundred", "January ninth", "nine fifteen a.m.", "twenty twenty-six". Spell symbols as words
+    ("percent", "dollars"). Spell out initialisms that are read letter by letter ("the F.B.I.",
+    "the U.S."), but leave acronyms that are said as a word alone ("NASA", "NATO", "SpaceX").
+  - NO tables, NO bullet lists, NO links or web addresses, NO emoji, and NO citation numbers or
+    source markers spoken inside the body — never read a URL or a footnote number aloud. Do the
+    attribution in words instead. (The tool will still append a written "Sources" list; keep it
+    at the very END, after the spoken sign-off, and place any inline citation markers only at the
+    END of a sentence or paragraph, never mid-sentence, so the reader can skip them cleanly.)
+  - Move between topics with spoken transitions the ear expects: "Now to the economy…", "Turning
+    overseas…", "In space news…", "And here at home on the Space Coast…". Say "here's what's
+    coming up", not "read on".
+  - OPEN with a short spoken good-morning that names the weekday and date and gives the one-line
+    headline of the day, then a quick "here's what's coming up". CLOSE with a brief sign-off that
+    names the day and wishes him a safe drive.
+
+  LENGTH: aim for about TEN MINUTES read aloud — roughly one thousand three hundred to one thousand
+  six hundred words. Reach that by COVERING MORE STORIES, never by padding any one. Give each story
+  two to four spoken sentences: what happened, who says so, and why it matters to him. If a whole
+  section genuinely has nothing new worth reporting today, say so in one short sentence and move on
+  — do not invent filler.
+
+  Section fill spec (use each heading in order; they organize the read, and each opens with a
+  spoken transition as above):
+  - Good Morning: the greeting, weekday and date, the headline of the day, and "here's what's
+    coming up".
+  - Top National Stories: the biggest national story plus key politics and government news.
+  - Business & the Economy: markets, jobs, inflation, interest rates, and major company moves.
+  - Around the World: the major international and geopolitical developments only.
+  - Space Industry: heavy coverage — NASA, SpaceX, Blue Origin, ULA, launches, contracts,
+    missions, and space policy (national and global; the local launch-in-24-hours item goes in the
+    Space Coast section).
+  - Artificial Intelligence & Tech: major AI and technology developments, and any notable Tesla or
+    Elon Musk news not already covered under space.
+  - Around the Space Coast: local news for Port St. John and Titusville within the strict local
+    scope — today's severe weather, any launch in the next twenty-four hours with closures and
+    window time, and violent crime or other genuinely notable local events; Brevard or Florida
+    items only when they impact him.
+  - That's Your Briefing: a short spoken sign-off naming the day and wishing him a safe drive.
+
+sections:
+  - "Good Morning"
+  - "Top National Stories"
+  - "Business & the Economy"
+  - "Around the World"
+  - "Space Industry"
+  - "Artificial Intelligence & Tech"
+  - "Around the Space Coast"
+  - "That's Your Briefing"
+
+angles:
+  - title: "Space industry & launch outlook"
+    brief: >-
+      Gather the last twenty-four to forty-eight hours of SPACE INDUSTRY news as of today,
+      worldwide and national: NASA, SpaceX, Blue Origin, United Launch Alliance, Rocket Lab and
+      other operators — launches, mission milestones, contracts and awards, anomalies or scrubs,
+      and space policy. SEPARATELY, pull the LAUNCH SCHEDULE for the NEXT TWENTY-FOUR HOURS from
+      Cape Canaveral Space Force Station and Kennedy Space Center (check Space Coast launch
+      schedules and range sources): for any imminent launch report the vehicle, payload/mission,
+      the launch window time, and any road or beach closures or sonic-boom notice for the Titusville
+      and Port St. John area. Always capture notable SpaceX news specifically. For each item report
+      the date, the outlet(s) that carried it, and a plain factual summary; synthesize across
+      multiple outlets rather than one, prefer primary sources (the operator, NASA, the range) and
+      wire services, and note when a claim is single-source or disputed. Skip stale items with no
+      new development. No opinion, no sports, no entertainment.
+  - title: "AI, technology, Tesla & Elon Musk"
+    brief: >-
+      Gather the last twenty-four to forty-eight hours of ARTIFICIAL INTELLIGENCE and TECHNOLOGY
+      news as of today: major AI model or product releases, company moves (the big AI labs and
+      cloud/chip makers), notable research results, regulation, and significant cybersecurity or
+      big-tech developments. SEPARATELY capture any notable TESLA and ELON MUSK news (the company,
+      its products, and Musk's business actions) not already about SpaceX. For each item report the
+      date, the outlet(s), and a plain factual summary; synthesize across multiple outlets, prefer
+      primary sources (the company's own announcement, a research paper) and wire services, and flag
+      hype, single-source claims, or disputed figures rather than repeating them as fact. Skip stale
+      items with no new development. No opinion, no sports, no entertainment.
+  - title: "National politics & government"
+    brief: >-
+      Gather the last twenty-four hours of TOP NATIONAL news as of today: the single biggest story
+      plus the key politics and government developments (the White House, Congress, the courts,
+      major federal agencies, elections). For each, report the date, the outlets that carried it,
+      and a plain factual account of WHAT HAPPENED. Synthesize a neutral account from MULTIPLE
+      outlets across the spectrum — lead with wire-service reporting (the Associated Press, Reuters)
+      and primary documents; treat any one outlet's framing as a single account, not the fact.
+      Attribute claims to their source, keep opinion and punditry out, and note when a claim is
+      contested or carried by only one outlet. Skip stale stories with no new development. No
+      sports, no entertainment.
+  - title: "Economy, markets & the world"
+    brief: >-
+      Gather the last twenty-four hours as of today across two areas. (1) BUSINESS & THE ECONOMY:
+      markets, jobs and unemployment, inflation, interest-rate and Federal Reserve news, and major
+      company or industry moves — report figures the way a source states them (do not invent or
+      round numbers into being). (2) THE WORLD: the major international and geopolitical
+      developments only (conflicts, elections, diplomacy, disasters of clear significance). For
+      each item report the date, the outlet(s), and a plain factual summary synthesized from
+      MULTIPLE outlets; prefer wire services and primary sources, attribute every claim, and note
+      single-source or disputed claims. Skip stale items and minor market noise. No opinion, no
+      sports, no entertainment.
+  - title: "Local Space Coast — Port St. John & Titusville"
+    brief: >-
+      Gather today's LOCAL news for the Space Coast, focused on PORT ST. JOHN and TITUSVILLE,
+      Florida, and admit ONLY three kinds of item. (1) SEVERE WEATHER: any weather alert, warning,
+      or notable severe-weather forecast affecting the Titusville / Port St. John / north Brevard
+      area today (check the National Weather Service Melbourne office and local outlets). (2) An
+      imminent ROCKET LAUNCH in the next twenty-four hours from Cape Canaveral or Kennedy Space
+      Center and its LOCAL effects — road or beach closures, the window time, sonic-boom notice.
+      (3) VIOLENT CRIME or another genuinely serious or notable local event. Draw on local outlets
+      (Florida Today / the Space Coast section, Space Coast Daily, Talk of Titusville, and the
+      Brevard coverage from FOX 35 Orlando and Spectrum News 13) plus the National Weather Service.
+      Include a broader Brevard County or Florida item ONLY if it plausibly IMPACTS the listener —
+      his safety, commute, cost of living, or the space industry — and skip routine county or state
+      news. For each item report the date, the outlet(s), and a plain factual summary; attribute
+      claims, and prefer official sources for weather and public-safety facts. No opinion, no
+      sports, no entertainment, no obituaries or human-interest filler.
