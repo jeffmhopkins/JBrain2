@@ -39,6 +39,7 @@ def _resolve_zone(tz_name: str | None) -> tuple[ZoneInfo, str]:
             pass
     return ZoneInfo("UTC"), "UTC"
 
+
 # Per-unit-of-work token tally. The recorder is the SINGLE chokepoint every LLM
 # call passes through, so a caller (the worker, around one job) opens a scope and
 # the recorder tallies that scope's tokens here. A ContextVar is task-local and
