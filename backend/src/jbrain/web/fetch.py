@@ -132,11 +132,17 @@ class WebFetchError(RuntimeError):
 
     `status` carries the upstream HTTP status when the failure was an HTTP error
     (else None), so a caller can tell a definitive 404/410 (the page is gone —
-    don't launder it through the reader) apart from a bot-wall 403/429."""
+    don't launder it through the reader) apart from a bot-wall 403/429.
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
+    `transient` marks a failure that is NOT the site's fault — a timeout, a DNS
+    miss, a 5xx — so the domain-skip recorder never blocklists a host over a
+    passing glitch. A PERSISTENT block (paywall, bot-wall, a 4xx that isn't 5xx)
+    stays `transient=False`, the default, so it is the only kind worth recording."""
+
+    def __init__(self, message: str, *, status: int | None = None, transient: bool = False) -> None:
         super().__init__(message)
         self.status = status
+        self.transient = transient
 
 
 class SearchFormError(WebFetchError):
@@ -242,6 +248,39 @@ def _is_challenge_page(title: str, text: str) -> bool:
         ):
             return True
     return words < _CHALLENGE_TINY_WORDS and any(m in b for m in _CHALLENGE_WEAK_MARKERS)
+
+
+# --- Paywall / subscriber-wall detection -------------------------------------
+# A metered/subscriber site often answers 200 with a SHORT wall in place of the article
+# ("Subscribe to continue reading"), which the extractor pulls as the page's "content" —
+# a fetch that reads as a success but carries no readable article. Detecting it makes that
+# an honest block (`_fetch_direct` raises, the handler records the domain for the 24h skip)
+# instead of a fake cited source.
+#
+# Precision over recall, exactly like `_is_challenge_page`: a false positive DROPS A REAL
+# ARTICLE, so every marker is a CANONICAL wall phrase AND the verdict is gated on a SHORT
+# body — a long article that merely mentions "subscribe" (a newsletter CTA at the foot of
+# real prose) must never match.
+_PAYWALL_MARKERS = (
+    "subscribe to continue reading",
+    "this content is for subscribers",
+    "to continue reading, subscribe",
+    "already a subscriber",
+    "create a free account to keep reading",
+    "subscribers only",
+)
+_PAYWALL_SHORT_WORDS = 200  # a bare wall is a sentence or two; a real article clears this easily
+
+
+def _is_paywall_page(title: str, text: str) -> bool:
+    """Whether (title, extracted text) is a paywall/subscriber wall rather than the article —
+    a SHORT body carrying a canonical subscribe-wall phrase. Gated on length (like
+    `_is_challenge_page`) so a full article that mentions "subscribe" in passing is never
+    flagged, keeping the precision bar that a false positive would drop a real page."""
+    if len(text.split()) >= _PAYWALL_SHORT_WORDS:
+        return False
+    b = text.lower()
+    return any(m in b for m in _PAYWALL_MARKERS)
 
 
 # --- "Search form, not results" detection (honest degradation for un-queryable portals) ------
@@ -715,8 +754,14 @@ class WebFetcher:
             # non-existent URL — search for the right one) from a transient glitch, rather
             # than reading the same "couldn't fetch right now" for both.
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            # A timeout/DNS/connection error (no HTTP status) or a 5xx is the site glitching,
+            # not blocking us — mark it transient so the domain-skip recorder ignores it. A 4xx
+            # (a real refusal) stays non-transient, the only kind worth blocklisting.
+            transient = status is None or status >= 500
             log.warning("web.fetch_failed", error=repr(exc), status=status)
-            raise WebFetchError(_fetch_error_message(status), status=status) from exc
+            raise WebFetchError(
+                _fetch_error_message(status), status=status, transient=transient
+            ) from exc
         raw_html = ""
         if "pdf" in content_type.lower():
             # A linked PDF (common in research) is real text, not a dead end: pull its
@@ -735,6 +780,16 @@ class WebFetcher:
         if _is_challenge_page(title, text):
             log.warning("web.challenge_blocked", url=final_url, via="direct", title=title[:80])
             raise WebFetchError("that URL returned a bot-challenge page, not its content")
+        # A metered/subscriber wall served in place of the article: raise (non-transient, so the
+        # handler records the domain for the 24h skip) rather than cite a "subscribe to read"
+        # stub as content. Status stays None, so `fetch` still tries the reader — which may
+        # render the article past a soft wall, exactly as it does for a bot-challenge.
+        if _is_paywall_page(title, text):
+            log.warning("web.paywall_blocked", url=final_url, via="direct", title=title[:80])
+            raise WebFetchError(
+                "that URL is a paywalled/subscriber-only page, not readable content",
+                transient=False,
+            )
         # An un-queried search form (a dynamic gov portal served as its empty form): raise a
         # DISTINCT error so `fetch()` surfaces "the query was not executed" WITHOUT trying the
         # reader/solver — a renderer can't submit the form, so that recovery is pure waste.
@@ -799,8 +854,11 @@ class WebFetcher:
                 raw, body_truncated = await _read_capped(resp)
         except httpx.HTTPError as exc:
             status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            transient = status is None or status >= 500
             log.warning("web.fetch_post_failed", error=repr(exc), status=status)
-            raise WebFetchError(_fetch_error_message(status), status=status) from exc
+            raise WebFetchError(
+                _fetch_error_message(status), status=status, transient=transient
+            ) from exc
         decoded = raw.decode(_charset(resp_content_type) or "utf-8", errors="replace")
         if "json" in resp_content_type.lower():
             title, text = "", _pretty_json(decoded)
@@ -1081,7 +1139,9 @@ def guard_public_host(url: str, *, skip_dns: bool = False) -> None:
     try:
         infos = socket.getaddrinfo(parsed.hostname, parsed.port or 0, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise WebFetchError("that host could not be resolved") from exc
+        # A DNS miss is a transient/network condition, not the site refusing us — never a
+        # reason to blocklist the domain, so mark it transient for the skip recorder.
+        raise WebFetchError("that host could not be resolved", transient=True) from exc
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
         if not _is_public(ip):

@@ -4,6 +4,7 @@ client. These back the `web_search` / `web_fetch` tools, which only the sandboxe
 jerv agent may call.
 """
 
+from jbrain.web.domain_health import DomainSkipRepo
 from jbrain.web.favicon import FaviconFetcher, FaviconResult
 from jbrain.web.federal_register import FederalRegisterClient, Notice
 from jbrain.web.fetch import FetchResult, WebFetcher, WebFetchError
@@ -21,6 +22,7 @@ from jbrain.web.wikidata import WikidataClient, WikidataEntity
 
 __all__ = [
     "CourtListenerClient",
+    "DomainSkipRepo",
     "FaviconFetcher",
     "FaviconResult",
     "FederalRegisterClient",

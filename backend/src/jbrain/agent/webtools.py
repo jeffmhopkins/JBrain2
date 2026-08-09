@@ -21,9 +21,13 @@ from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.tool_artifacts import ToolArtifactRepo
 from jbrain.storage import BlobStore
+from jbrain.web.domain_health import DomainSkipRepo
+from jbrain.web.favicon import normalize_host
 from jbrain.web.fetch import (
+    _GONE_STATUSES,
     POST_CONTENT_TYPES,
     FetchResult,
+    SearchFormError,
     WebFetcher,
     WebFetchError,
     extract_matches,
@@ -66,6 +70,23 @@ def _fetch_key(url: str) -> str:
         return urlunsplit((parts.scheme.lower(), netloc, parts.path.rstrip("/"), parts.query, ""))
     except ValueError:
         return url.strip().lower()
+
+
+def _block_reason(exc: WebFetchError) -> str | None:
+    """The skip-list reason a WebFetchError warrants, or None to NOT record it. Only a
+    PERSISTENT hard block earns a 24h entry: a paywall (status 401/402 or the paywall
+    message) → 'paywalled'; a bot-wall (a challenge page, or status 403/429) → 'bot_blocked'.
+    A transient glitch (timeout/DNS/5xx), a definitive 404/410 (the page is gone, not the
+    site), and a SearchFormError (the query never ran — not the site's fault) all return None,
+    so a passing failure never blocklists a domain."""
+    if isinstance(exc, SearchFormError) or exc.transient or exc.status in _GONE_STATUSES:
+        return None
+    msg = str(exc).lower()
+    if exc.status in {401, 402} or "paywall" in msg or "subscriber" in msg:
+        return "paywalled"
+    if exc.status in {403, 429} or "bot-challenge" in msg:
+        return "bot_blocked"
+    return None
 
 
 def _coerce_offset(raw: object) -> int:
@@ -280,6 +301,7 @@ def build_web_handlers(
     youtube: YoutubeFetch | None = None,
     artifacts: ToolArtifactRepo | None = None,
     blobs: BlobStore | None = None,
+    domain_skips: DomainSkipRepo | None = None,
 ) -> dict[str, ToolHandler]:
     """`emit(kind, text)`, if given, fires a best-effort wall-display tendril event the
     moment jerv reaches out to the web (see jbrain.agent.brainevents). The query / URL
@@ -290,7 +312,10 @@ def build_web_handlers(
     given, persist a fetched page as a cross-turn artifact (the heavy text in the blob
     store) so `read_artifact` can re-read/continue it later without a network re-fetch
     (docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md); both absent disables that (and the
-    read_artifact tool is not registered)."""
+    read_artifact tool is not registered). `domain_skips`, if given, is the 24h
+    paywall/bot-wall skip list (docs/plans/DOMAIN_HEALTH_PLAN.md): web_fetch short-circuits
+    a listed host without a network call and records a fresh persistent block, and web_search
+    drops listed hosts from its results with a transparency note; None disables both."""
 
     async def _remember(ctx: ToolContext, result: FetchResult, url: str, kind: str) -> None:
         """Best-effort: persist the fetched page's FULL text as a cross-turn artifact so a
@@ -321,6 +346,19 @@ def build_web_handlers(
         except Exception:  # noqa: BLE001 - a persistence hiccup must never sink the fetch
             log.warning("web_fetch.remember_failed", url=url, exc_info=True)
 
+    async def _record_block(url: str, exc: WebFetchError) -> None:
+        """Record a PERSISTENT hard block (paywall / bot-wall) on this URL's domain for the
+        24h skip list, best-effort. A transient glitch, a 404/410, or a search form is not a
+        block (`_block_reason` returns None) and is never recorded — so a passing failure never
+        blocklists a real site."""
+        if domain_skips is None:
+            return
+        reason = _block_reason(exc)
+        host = normalize_host(url)
+        if reason is None or host is None:
+            return
+        await domain_skips.record(host, reason, url)
+
     async def web_search_tool(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
         if not query:
@@ -334,17 +372,41 @@ def build_web_handlers(
             return str(exc)
         if not hits:
             return f"No web results for '{query}'."
-        lines = [f"- {h.title}\n  {h.url}\n  {h.snippet}" for h in hits]
+        # Drop hits on a host recently found paywalled/bot-walled/unreadable (the 24h skip
+        # list) — reading one would only waste a fetch on a wall — and tell the model how many
+        # were hidden so it knows the result set was pruned, not thin.
+        blocked = await domain_skips.active_hosts() if domain_skips is not None else frozenset()
+        kept = [h for h in hits if normalize_host(h.url) not in blocked]
+        hidden = len(hits) - len(kept)
+        note = (
+            f"\n\n({hidden} result(s) hidden as known-paywalled or inaccessible.)" if hidden else ""
+        )
+        if not kept:
+            return (
+                f"No usable web results for '{query}': all {hidden} were on sites recently found"
+                " paywalled or inaccessible (skipped for the next day). Try a different query."
+            )
+        lines = [f"- {h.title}\n  {h.url}\n  {h.snippet}" for h in kept]
         # The structured twin of the text: one citation source per hit, in the same
         # order the model reads them, so a `[^n]` marker resolves to a real URL the
         # search reached (and a favicon chip), never to a string the model invents.
-        web_sources = tuple(WebSource(url=h.url, title=h.title) for h in hits)
-        return ToolOutput("Web results:\n" + "\n".join(lines), web_sources=web_sources)
+        web_sources = tuple(WebSource(url=h.url, title=h.title) for h in kept)
+        return ToolOutput("Web results:\n" + "\n".join(lines) + note, web_sources=web_sources)
 
     async def web_fetch_tool(arguments: dict, ctx: ToolContext) -> str:
         url = str(arguments.get("url", "")).strip()
         if not url:
             return "web_fetch needs a url."
+        # Short-circuit a host on the 24h skip list (recently paywalled / bot-walled /
+        # unreadable): re-fetching it would only hit the same wall, so refuse WITHOUT a network
+        # call and point the model at web_search for the same information elsewhere.
+        if domain_skips is not None:
+            host = normalize_host(url)
+            if host is not None and host in await domain_skips.active_hosts():
+                return (
+                    "that site was recently unreadable (paywall or bot-wall) and is being"
+                    " skipped for the next day; web_search for the same information elsewhere"
+                )
         offset = _coerce_offset(arguments.get("offset"))
         find = str(arguments.get("find", "")).strip()
         outline_only = _coerce_bool(arguments.get("outline"))
@@ -399,6 +461,7 @@ def build_web_handlers(
                     content_type=content_type,
                 )
             except WebFetchError as exc:
+                await _record_block(url, exc)
                 return str(exc)
             await _remember(ctx, result, url, "web_fetch")
             return _present_result(
@@ -452,6 +515,10 @@ def build_web_handlers(
         except WebFetchError as exc:
             # Remember the miss so an identical re-fetch this turn short-circuits above.
             ctx.failed_fetches[key] = exc.status or 0
+            # A persistent hard block (paywall / bot-wall) also lands the DOMAIN on the 24h
+            # skip list so later fetches/searches across turns skip it (best-effort, no-op for
+            # a transient glitch / 404 / search form).
+            await _record_block(url, exc)
             return str(exc)
         await _remember(ctx, result, url, "web_fetch")
         return _present_result(
