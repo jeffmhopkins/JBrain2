@@ -1830,3 +1830,195 @@ async def test_read_artifact_unknown_id_is_a_clean_message() -> None:
     )
     out = str(await handlers["read_artifact"]({"id": "nope"}, _chat_ctx()))
     assert "no page or transcript" in out.lower()
+
+
+# --- domain skip list (24h paywall/bot-wall skip) --------------------------
+# docs/plans/DOMAIN_HEALTH_PLAN.md: a persistent hard block records the DOMAIN for 24h;
+# later searches drop it (reporting the count) and later fetches short-circuit. These run
+# as unit tests with a fake repo (no DB); the RLS/upsert are proven in the integration test.
+
+from typing import Any  # noqa: E402
+
+from jbrain.web.domain_health import DomainSkipRepo  # noqa: E402
+
+
+class _FakeDomainSkips:
+    """A stand-in DomainSkipRepo: a fixed active set + a log of recorded blocks, so the
+    webtools seams test without a database."""
+
+    def __init__(self, active: frozenset[str] = frozenset()) -> None:
+        self._active = frozenset(active)
+        self.recorded: list[tuple[str, str, str]] = []
+
+    async def active_hosts(self) -> frozenset[str]:
+        return self._active
+
+    async def record(self, host: str, reason: str, url: str) -> None:
+        self.recorded.append((host, reason, url))
+
+
+# A short subscriber wall served 200 in place of the article (the metered-site shape).
+_PAYWALL_HTML = (
+    b"<html><head><title>Members Only</title></head><body>"
+    b"<h1>Members Only</h1>"
+    b"<p>Subscribe to continue reading this article.</p></body></html>"
+)
+
+
+def test_is_paywall_page_precision() -> None:
+    from jbrain.web.fetch import _is_paywall_page
+
+    # A short wall carrying a canonical subscribe phrase → blocked.
+    assert _is_paywall_page("Members Only", "Subscribe to continue reading.")
+    assert _is_paywall_page("", "This content is for subscribers.")
+    # A long article that merely CONTAINS the phrase must NOT be flagged (length gate).
+    long_article = ("word " * 260) + "subscribe to continue reading"
+    assert not _is_paywall_page("A real article", long_article)
+    # An ordinary short page is not a paywall.
+    assert not _is_paywall_page("Hi There", "Heading. First para. Second para.")
+
+
+async def test_paywalled_fetch_raises_non_transient() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_PAYWALL_HTML, headers={"content-type": "text/html"})
+
+    with pytest.raises(WebFetchError) as excinfo:
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://wall.example/a")
+    assert "paywall" in str(excinfo.value).lower()
+    assert excinfo.value.transient is False  # a persistent block, so it IS recordable
+
+
+async def test_a_timeout_is_flagged_transient() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out")
+
+    with pytest.raises(WebFetchError) as excinfo:
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://slow.example/a")
+    assert excinfo.value.transient is True  # a glitch, not the site's fault
+    assert excinfo.value.status is None
+
+
+async def test_a_5xx_is_flagged_transient() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, headers={"content-type": "text/html"})
+
+    with pytest.raises(WebFetchError) as excinfo:
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://down.example/a")
+    assert excinfo.value.transient is True
+    assert excinfo.value.status == 503
+
+
+async def test_a_404_is_not_transient_and_not_recordable() -> None:
+    from jbrain.agent.webtools import _block_reason
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, headers={"content-type": "text/html"})
+
+    with pytest.raises(WebFetchError) as excinfo:
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/gone")
+    assert excinfo.value.status == 404
+    assert excinfo.value.transient is False  # a real HTTP status, but the page is GONE
+    assert _block_reason(excinfo.value) is None  # 404/410 never blocklists the domain
+
+
+def test_block_reason_classifies_persistent_blocks_only() -> None:
+    from jbrain.agent.webtools import _block_reason
+    from jbrain.web.fetch import SearchFormError
+
+    assert _block_reason(WebFetchError("paywalled/subscriber-only page")) == "paywalled"
+    assert _block_reason(WebFetchError("nope", status=402)) == "paywalled"
+    assert _block_reason(WebFetchError("bot-challenge page")) == "bot_blocked"
+    assert _block_reason(WebFetchError("nope", status=403)) == "bot_blocked"
+    assert _block_reason(WebFetchError("nope", status=429)) == "bot_blocked"
+    # Not recordable: a 404/410, a transient glitch, a search form, or an unclassifiable error.
+    assert _block_reason(WebFetchError("gone", status=404)) is None
+    assert _block_reason(WebFetchError("glitch", status=500, transient=True)) is None
+    assert _block_reason(SearchFormError("a search form, not results")) is None
+    assert _block_reason(WebFetchError("some other error")) is None
+
+
+async def test_web_search_drops_a_blocked_host_and_reports_the_count() -> None:
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_OK)),
+        WebFetcher(),
+        domain_skips=cast(DomainSkipRepo, _FakeDomainSkips(frozenset({"a.example"}))),
+    )
+    out = await handlers["web_search"]({"query": "python"}, CTX)
+    assert isinstance(out, ToolOutput)
+    # The blocked host is gone; the clean one stays; the model is told one was hidden.
+    assert "https://a.example/1" not in str(out)
+    assert "https://b.example/2" in str(out)
+    assert "1 result(s) hidden" in str(out)
+    assert [s.url for s in out.web_sources] == ["https://b.example/2"]
+
+
+async def test_web_search_with_no_blocked_hosts_is_unchanged() -> None:
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_OK)),
+        WebFetcher(),
+        domain_skips=cast(DomainSkipRepo, _FakeDomainSkips()),
+    )
+    out = await handlers["web_search"]({"query": "python"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert "hidden" not in str(out)
+    assert [s.url for s in out.web_sources] == ["https://a.example/1", "https://b.example/2"]
+
+
+async def test_web_fetch_short_circuits_a_blocked_host_without_a_network_call() -> None:
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""),
+        WebFetcher(transport=httpx.MockTransport(handle)),
+        domain_skips=cast(DomainSkipRepo, _FakeDomainSkips(frozenset({"blocked.example"}))),
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://blocked.example/p"}, _fresh_ctx()))
+    assert calls["n"] == 0  # never hit the network
+    assert "skipped" in out.lower()
+    assert "web_search" in out
+
+
+async def test_web_fetch_records_a_paywall_block() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_PAYWALL_HTML, headers={"content-type": "text/html"})
+
+    repo = _FakeDomainSkips()
+    handlers = build_web_handlers(
+        SearxngClient(""),
+        WebFetcher(transport=httpx.MockTransport(handle)),
+        domain_skips=cast(DomainSkipRepo, repo),
+    )
+    await handlers["web_fetch"]({"url": "https://wall.example/a"}, _fresh_ctx())
+    assert repo.recorded == [("wall.example", "paywalled", "https://wall.example/a")]
+
+
+async def test_web_fetch_does_not_record_a_404() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, headers={"content-type": "text/html"})
+
+    repo = _FakeDomainSkips()
+    handlers = build_web_handlers(
+        SearxngClient(""),
+        WebFetcher(transport=httpx.MockTransport(handle)),
+        domain_skips=cast(DomainSkipRepo, repo),
+    )
+    await handlers["web_fetch"]({"url": "https://gone.example/x"}, _fresh_ctx())
+    assert repo.recorded == []  # a definitive 404 is the page, not the site — never recorded
+
+
+async def test_domain_skip_repo_fails_open_without_a_db() -> None:
+    # A maker that blows up the moment it is used: active_hosts fails open to empty, and
+    # record swallows the error — neither ever raises into a fetch/search.
+    repo = DomainSkipRepo(cast(Any, object()))
+    assert await repo.active_hosts() == frozenset()
+    await repo.record("x.example", "paywalled", "https://x.example/a")  # no exception
+
+
+async def test_domain_skip_repo_ignores_an_invalid_reason() -> None:
+    # An out-of-CHECK reason returns before touching the DB — a broken maker is never reached.
+    repo = DomainSkipRepo(cast(Any, object()))
+    await repo.record("x.example", "not_a_reason", "https://x.example/a")  # no exception

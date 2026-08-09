@@ -164,6 +164,7 @@ from jbrain.usage import SqlUsageRecorder
 from jbrain.vision import RapidOcrClient
 from jbrain.web import (
     CourtListenerClient,
+    DomainSkipRepo,
     FaviconFetcher,
     FederalRegisterClient,
     GrokipediaClient,
@@ -455,6 +456,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # in the row) so a follow-up turn re-reads/continues it via read_artifact instead of a
         # network re-fetch. Its own AgentSessionRepo (app.state.agent_sessions is built later).
         app.state.tool_artifacts = ToolArtifactRepo(maker, AgentSessionRepo(maker))
+        # The 24h paywall/bot-wall skip list (docs/plans/DOMAIN_HEALTH_PLAN.md): global SYSTEM
+        # reference data (app.blocked_domains), so it needs only the sessionmaker — it reads and
+        # records under SYSTEM_CTX. web_fetch short-circuits a listed host and records a fresh
+        # persistent block; web_search drops listed hosts from its results.
+        app.state.domain_skips = DomainSkipRepo(maker)
         web_handlers = build_web_handlers(
             searxng,
             web_fetcher,
@@ -462,6 +468,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             youtube=youtube_fetch,
             artifacts=app.state.tool_artifacts,
             blobs=app.state.blob_store,
+            domain_skips=app.state.domain_skips,
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).

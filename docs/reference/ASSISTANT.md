@@ -522,6 +522,13 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   re-fetch and no lost place. The store is a generic, opt-in base (`ToolArtifactRepo`); `ocr`
   and `gmail_read` are the next intended clients (`docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md`).
 
+  **Paywalled/blocked domains are auto-skipped for 24h.** When `web_fetch` hits a persistent
+  hard block on a site (a paywall/subscriber wall, a bot-challenge wall), the **domain** is
+  recorded in a global 24h skip list (`app.blocked_domains`, `DomainSkipRepo`): later
+  `web_fetch`es of that host short-circuit without a network call, and `web_search` drops its
+  hits with a "(N hidden as known-paywalled or inaccessible)" note — never for a 404 (page
+  gone) or a transient glitch (`docs/plans/DOMAIN_HEALTH_PLAN.md`).
+
   **Deep-research reports stay visible across turns too.** A `deep_research`/`deep_produce`
   return is intra-turn like any tool result, so jerv used to lose sight of a finished run and
   deny it happened ("that was only the JSON prompt / it hasn't run yet") even though the report
