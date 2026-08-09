@@ -58,7 +58,16 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   Space Coast Daily/Talk of Titusville/Orlando-TV for local — Florida Today is flagged PAYWALLED),
   and the objective requires each angle to OPEN ≥3 real articles and pull specifics (not skim
   headlines) before calling a category empty. A systemic follow-up — flagging paywalled/blocked
-  domains in the fetch/search layer so they're auto-excluded for ~24h — is under research.
+  domains in the fetch/search layer so they're auto-excluded for ~24h — shipped
+  (DOMAIN_HEALTH_PLAN.md). A second live run (2026-08-09) drove two more fixes: (1) the preset now
+  forbids sourcing a specific dated event to a monthly/"trending" roundup (open the wire/primary
+  instead) and adds a status/tense guard (a schedule or press release is a PLAN — "scheduled for",
+  never "launched"), and names fetch-friendly economy/world fallbacks (text.npr.org, BBC) so a
+  bot-walled Reuters/CNBC/AP doesn't leave Business/World empty; (2) `jerv.prompt` (v44) now REQUIRES
+  fetching a saved report via `research_report(action=read)` and reproducing it verbatim when the
+  owner asks to see the full text — the earlier "don't re-paste" rule had let jerv confabulate a
+  fresh briefing (invented entertainment items + a launch that never happened) instead of reading
+  the stored one.
 
 **Engine seam** (`deep_research.py`). `_run` gained `plan_override` + `enforce_headings`.
 The single branch is at the PLAN phase: with a `plan_override` the planner is skipped and the
