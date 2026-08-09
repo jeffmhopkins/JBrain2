@@ -111,10 +111,21 @@ const SERVICE_GROUPS: { label: string; services: string[] }[] = [
   // and typically stopped, so they get their own card and don't drag the AI
   // group's roll-up to "down" when they're not running.
   { label: "AI - Optional", services: ["comfyui", "jcode"] },
-  // Outward networking + web access.
+  // Outward networking + web access (byparr is the reader's bot-challenge solver
+  // escalation), plus the on-box compute-job launcher.
   {
     label: "Infra",
-    services: ["proxy", "cloudflared", "reader", "searxng", "rapidocr", "mqtt", "mqtt-ingest"],
+    services: [
+      "proxy",
+      "cloudflared",
+      "reader",
+      "byparr",
+      "searxng",
+      "rapidocr",
+      "jlaunch",
+      "mqtt",
+      "mqtt-ingest",
+    ],
   },
   // The on-box neural wall display that renders read-aloud (piper TTS).
   { label: "Display", services: ["wall"] },
