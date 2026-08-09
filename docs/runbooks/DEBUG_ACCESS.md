@@ -1,6 +1,6 @@
 # Owner debug console (assistant access for live prompt iteration)
 
-> **Status:** Living · **Last verified:** 2026-08-05
+> **Status:** Living · **Last verified:** 2026-08-09
 
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read
@@ -75,6 +75,8 @@ Two gates protect the surface, both fail-closed:
 | Route | Purpose |
 |-------|---------|
 | `GET /whoami` | Token label, kind, and the fixed scope set (`llm.complete`, `sql.read`, `logs.read`, `llm.routing`, `host.read`, `host.metrics`, `web.fetch`). |
+| `GET /version` | The git revision the **running server** was built from — `git_sha`, `git_describe`, and `build_time`, baked into the image at build time (`deploy/update-inner.sh` → Dockerfile ARG/ENV), plus `started_at` (this process's boot time). Answers "is the merge I just made actually deployed?" without guessing; `started_at` behind `build_time` means the new image built but the container wasn't recreated. `"unknown"` on a plain local build. |
+| `GET /version/history` | The recorded **timeline of deployed versions**, newest first (`app.deploy_history` — the app appends one row on boot whenever its baked `git_sha` changes, so a plain restart adds nothing). Each row is `{git_sha, git_describe, build_time, deployed_at}`; the interval `[deployed_at, next row)` is when that build was live, so an *older* timestamped record (a research run, an ingest) can be tied to the build that produced it. Owner-only read. |
 | `POST /complete` | Run one `system` + `user_text` prompt through the **LLM adapter** (non-negotiable #1 — never a provider SDK) against whatever model is currently routed; returns the text/parsed JSON, token usage, and the **resolved provider:model**. Route by a known `task` (so the live per-task override applies) or a raw `strength` tier. Synchronous — fine for quick calls. |
 | `POST /complete-async` → `GET /jobs/{id}` | Same completion, but as a **background job**: submit returns a `job_id` at once; poll `/jobs/{id}` until `done`. For a slow model (a long, high-effort local extraction takes minutes) this avoids holding a request open past a proxy's timeout — e.g. the Cloudflare Tunnel's ~100s edge limit. In-memory + best-effort (a restart drops in-flight jobs). |
 | `POST /vision` | Run one vision task (`vision.ocr` / `vision.caption`) over an **on-box attachment** (by id) through the **LLM adapter**, optionally with a candidate `system` prompt — the image-layer twin of `/complete` for iterating the OCR/caption prompts against the real vision model. Image bytes load via the storage abstraction (non-negotiable #2); the attachment lookup runs in the same read-only owner context as `/sql`. Reuses the `llm.complete` scope (vision IS a completion). |

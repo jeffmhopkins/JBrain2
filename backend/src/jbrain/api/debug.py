@@ -46,6 +46,7 @@ from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, UserMessage
 from jbrain.models.notes import Attachment
+from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 from jbrain.web.fetch import WebFetcher, WebFetchError
@@ -110,6 +111,72 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             "host.metrics",
             "web.fetch",
         ],
+    )
+
+
+class VersionOut(BaseModel):
+    # The git commit the running server's image was built from (baked at build
+    # time — see config.Settings.git_sha), and a friendlier `git describe` string.
+    git_sha: str
+    git_describe: str
+    # When that image was built and when THIS process started — together they answer
+    # "did the box actually restart onto the newly-published build?" (a stamped build
+    # sitting behind a process that started before it means the deploy didn't recreate).
+    build_time: str
+    started_at: str | None
+
+
+@router.get("/version")
+async def version(request: Request, settings: SettingsDep, _p: DebugDep) -> VersionOut:
+    """The exact source revision the running server was built from — baked into the
+    image at build time, so an external assistant can confirm what is deployed
+    instead of guessing whether a merge is live. `started_at` is when this process
+    came up (a fresh image only takes effect once the container is recreated)."""
+    started = getattr(request.app.state, "started_at", None)
+    return VersionOut(
+        git_sha=settings.git_sha,
+        git_describe=settings.git_describe,
+        build_time=settings.build_time,
+        started_at=started.isoformat() if started is not None else None,
+    )
+
+
+class DeployRow(BaseModel):
+    git_sha: str
+    git_describe: str
+    build_time: str
+    # When this version was first seen running — the interval [deployed_at, next row)
+    # is when it was live, so a record's timestamp maps to the build that produced it.
+    deployed_at: str
+
+
+class VersionHistoryOut(BaseModel):
+    deploys: list[DeployRow]
+
+
+@router.get("/version/history")
+async def version_history(
+    request: Request,
+    _p: DebugDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> VersionHistoryOut:
+    """The recorded history of deployed versions, newest first (app.deploy_history —
+    one row per version change, written on boot). Lets an assistant answer *retro*-
+    actively which build was live when an older run happened, not just what runs now.
+    Read-only owner query, like /sql."""
+    async with scoped_session(_maker(request), _OWNER_CTX) as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        rows = await DeployHistoryRepo().recent(session, limit)
+    return VersionHistoryOut(
+        deploys=[
+            DeployRow(
+                git_sha=r.git_sha,
+                git_describe=r.git_describe,
+                build_time=r.build_time,
+                deployed_at=r.deployed_at.isoformat(),
+            )
+            for r in rows
+        ]
     )
 
 

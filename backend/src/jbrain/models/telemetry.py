@@ -3,8 +3,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Integer, Text, func
+from sqlalchemy import BigInteger, DateTime, Integer, Text, func, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jbrain.models.core import Base
@@ -27,6 +28,58 @@ class LlmUsage(Base):
     input_tokens: Mapped[int] = mapped_column(Integer)
     output_tokens: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DeployHistory(Base):
+    """One row per change in the version the running server was built from
+    (migration 0160). The app appends a row on boot when its baked `git_sha`
+    differs from the newest existing one, so this is a deduped timeline of what
+    shipped and from when — enough to say which build produced any timestamped
+    record. Owner-only RLS (a build revision is not domain data)."""
+
+    __tablename__ = "deploy_history"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    git_sha: Mapped[str] = mapped_column(Text)
+    git_describe: Mapped[str] = mapped_column(Text, default="unknown")
+    build_time: Mapped[str] = mapped_column(Text, default="unknown")
+    deployed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DeployHistoryRepo:
+    """Read/append the deploy history. The write is idempotent by design — recording
+    the same running version twice (e.g. a plain restart onto the same image) adds no
+    row, so the table stays a clean per-version timeline rather than a boot log."""
+
+    async def record_if_changed(
+        self, session: AsyncSession, *, git_sha: str, git_describe: str, build_time: str
+    ) -> DeployHistory | None:
+        """Append a row for this version unless the newest row already carries the same
+        `git_sha`. Returns the new row, or None when nothing changed."""
+        latest = (
+            await session.execute(
+                select(DeployHistory).order_by(DeployHistory.deployed_at.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest is not None and latest.git_sha == git_sha:
+            return None
+        row = DeployHistory(git_sha=git_sha, git_describe=git_describe, build_time=build_time)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def recent(self, session: AsyncSession, limit: int = 50) -> list[DeployHistory]:
+        """The deploy history, newest first."""
+        return list(
+            (
+                await session.execute(
+                    select(DeployHistory).order_by(DeployHistory.deployed_at.desc()).limit(limit)
+                )
+            ).scalars()
+        )
 
 
 class HostMetric(Base):

@@ -18,6 +18,18 @@ class Settings(BaseSettings):
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"
 
+    # Build provenance baked into the image at build time (deploy/update-inner.sh
+    # computes it from the freshly-reset `src` worktree → Dockerfile ARG/ENV →
+    # these JBRAIN_GIT_*/JBRAIN_BUILD_TIME vars). This is the git commit the RUNNING
+    # server was actually built from, so the debug console can report what is
+    # deployed instead of anyone guessing. Baked, not read at runtime: the container
+    # has no .git, and the built image — not the src worktree, which can race ahead
+    # of the last successful build — is the truth about what is running. "unknown"
+    # on a dev or un-stamped build.
+    git_sha: str = "unknown"
+    git_describe: str = "unknown"
+    build_time: str = "unknown"
+
     # MQTT secure spine (JBrain360, opt-in `mqtt` compose profile). The broker
     # (Mosquitto + go-auth) calls the API's /internal/mqtt-* endpoints; the ingest
     # consumer connects to the broker as a server-side subscriber authenticated by

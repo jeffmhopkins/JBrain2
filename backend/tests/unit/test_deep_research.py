@@ -964,13 +964,14 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     via its `namesake` assertion). LLM judgment itself can't be unit-tested; the prose can."""
     from jbrain.agent.deep_research import _SYNTH
 
-    assert _SYNTH.version == "dr-synth-v10"  # pin the version bump (parity with the plan test)
+    assert _SYNTH.version == "dr-synth-v11"  # pin the version bump (parity with the plan test)
     synth = _SYNTH.body.lower()
     assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
     assert "not licence to drop all citations" in synth  # the give-up path stays closed
     assert "a fabricated citation is worse than an honest gap" in synth  # all-noise escape valve
     assert "how many entries are plausibly on-topic" in synth  # v9: gate before the escape
     assert "consists exclusively of" in synth  # v9: forbid the confabulated Scope note
+    assert "report the current" in synth  # v11: multi-row records → current state, no cherry-pick
 
 
 # --- report depth: the synthesizer is handed a length target by complexity --

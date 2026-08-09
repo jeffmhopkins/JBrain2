@@ -1,4 +1,5 @@
 import asyncio
+import datetime as dt
 import functools
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -115,6 +116,7 @@ from jbrain.connectors.geocoding import geocode_connectors
 from jbrain.connectors.medical import medical_connectors
 from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
+from jbrain.db.session import scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
@@ -143,6 +145,7 @@ from jbrain.locations.ratelimit import TokenBucket
 from jbrain.locations.viewscope import SqlViewScopeRepo
 from jbrain.media import ffmpeg_available
 from jbrain.models.images import GeneratedImageRepo
+from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notify import NotifyBus
 from jbrain.push import SqlFcmTokenRepo
@@ -229,6 +232,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app.state.engine = engine
         app.state.session_maker = maker
+        # When this process came up — the debug /version route pairs it with the
+        # image's baked build_time so an operator can tell a freshly-published build
+        # from one still running behind an un-recreated container.
+        app.state.started_at = dt.datetime.now(dt.UTC)
+        # Record the running build in deploy_history so any timestamped record can later
+        # be tied to the version that was live when it was produced. Only for a STAMPED
+        # image (a real deploy carries a git_sha) — a dev/un-stamped build is skipped, so
+        # this never touches the DB in tests — and strictly best-effort: a telemetry write
+        # must never block or fail app startup. record_if_changed dedupes a plain restart.
+        if settings.git_sha != "unknown":
+            try:
+                async with scoped_session(maker, SYSTEM_CTX) as session:
+                    await DeployHistoryRepo().record_if_changed(
+                        session,
+                        git_sha=settings.git_sha,
+                        git_describe=settings.git_describe,
+                        build_time=settings.build_time,
+                    )
+            except Exception:  # noqa: BLE001 - telemetry must never crash boot
+                structlog.get_logger().warning("deploy_history.record_failed", exc_info=True)
         # In-flight chat turns, detached from their SSE response so a backgrounded PWA
         # can't kill them; keyed by run_id for the Stop endpoint and shutdown cleanup.
         app.state.live_turns = {}

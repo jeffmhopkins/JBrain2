@@ -237,6 +237,47 @@ def test_whoami_reports_scopes(debug_client: tuple[TestClient, str]) -> None:
     assert "web.fetch" in body["scopes"]
 
 
+def test_version_reports_the_baked_build_provenance() -> None:
+    # The build args stamped into the image surface verbatim, and started_at is set at
+    # lifespan start — so an external assistant reads the deployed revision, not a guess.
+    app = create_app(
+        _settings(
+            git_sha="abc123def456",
+            git_describe="v1.2.3-4-gabc123d",
+            build_time="2026-08-09T00:00:00Z",
+        )
+    )
+    repo = FakeAuthRepo()
+    with TestClient(app) as client:
+        app.state.auth_repo = repo
+        key, _ = asyncio.run(auth_service.mint_capability(repo, "claude", ttl_hours=24))
+        body = client.get("/api/debug/version", headers=_auth(key)).json()
+    assert body["git_sha"] == "abc123def456"
+    assert body["git_describe"] == "v1.2.3-4-gabc123d"
+    assert body["build_time"] == "2026-08-09T00:00:00Z"
+    assert body["started_at"] is not None  # stamped when the process came up
+
+
+def test_version_defaults_to_unknown_on_an_unstamped_build(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, key = debug_client
+    body = client.get("/api/debug/version", headers=_auth(key)).json()
+    assert body["git_sha"] == "unknown"  # a plain local build carries no stamp
+
+
+def test_version_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/version").status_code == 401
+
+
+def test_version_history_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    # The bearer check runs before the route body, so this exercises gating without a DB
+    # (the owner round-trip + dedupe against real Postgres lives in the RLS isolation test).
+    client, _ = debug_client
+    assert client.get("/api/debug/version/history").status_code == 401
+
+
 # --- self-service token lifecycle (console kill switch) ---------------------
 
 

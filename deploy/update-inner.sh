@@ -99,7 +99,15 @@ if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
   docker compose --profile local-llm stop local-llm || true
 fi
 
-echo "[update] building images"
+# Stamp the image with the exact source revision being built so the running server
+# can report what is deployed (debug /version) — no more guessing whether a merge is
+# live. Computed from the just-reset `src` mirror (safe.directory was marked above);
+# a fetch/build failure would have aborted before here, so these describe real HEAD.
+JBRAIN_GIT_SHA="$(git -C src rev-parse HEAD 2>/dev/null || echo unknown)"
+JBRAIN_GIT_DESCRIBE="$(git -C src describe --tags --always --dirty 2>/dev/null || echo unknown)"
+JBRAIN_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export JBRAIN_GIT_SHA JBRAIN_GIT_DESCRIBE JBRAIN_BUILD_TIME
+echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
 docker compose $JCODE_PROFILE build
 
 echo "[update] running migrations"

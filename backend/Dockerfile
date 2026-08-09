@@ -21,6 +21,18 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Build provenance: the git revision + build time of the source COPY'd above, so
+# the running server can report exactly what is deployed (debug /version). Set by
+# deploy/update-inner.sh via compose build args; "unknown" on a plain local build.
+# Placed after the heavy layers so re-stamping a new SHA rebuilds only these
+# trivial trailing layers, not the uv sync.
+ARG JBRAIN_GIT_SHA=unknown
+ARG JBRAIN_GIT_DESCRIBE=unknown
+ARG JBRAIN_BUILD_TIME=unknown
+ENV JBRAIN_GIT_SHA=$JBRAIN_GIT_SHA \
+    JBRAIN_GIT_DESCRIBE=$JBRAIN_GIT_DESCRIBE \
+    JBRAIN_BUILD_TIME=$JBRAIN_BUILD_TIME
+
 # Pinned uid: the host bind-mounts the local-models dir into this container, and
 # scripts/local-llm-setup.sh chowns that host dir to this same uid so the non-root
 # app can re-stamp llama-swap.yaml on a settings change (staging, a context-window
