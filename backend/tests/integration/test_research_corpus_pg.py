@@ -300,9 +300,7 @@ async def test_retention_stamps_and_refreshes_expires_at(maker) -> None:  # noqa
         # 6–8 day window absorbs any test-clock skew while proving it's ~7, not 1 or 30.
         within = (
             await s.execute(
-                text(
-                    "SELECT :e BETWEEN now() + interval '6 days' AND now() + interval '8 days'"
-                ),
+                text("SELECT :e BETWEEN now() + interval '6 days' AND now() + interval '8 days'"),
                 {"e": first},
             )
         ).scalar_one()
