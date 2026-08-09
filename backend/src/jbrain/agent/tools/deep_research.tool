@@ -95,3 +95,10 @@ of composing the run yourself. Available presets:
   it reads and compares them; if a profile is missing it says so.
 So to compare the candidates in a race: run `candidate_profile` for each candidate, then run
 `compare_candidates` once over the field.
+- `daily_news` — a spoken, text-to-speech-ready daily news briefing for the owner's morning
+  commute: top national, economy, and world news, HEAVY space-industry and AI coverage (always
+  surfacing notable SpaceX / Tesla / Elon Musk news), then local Space Coast news for Port St.
+  John and Titusville (severe weather, an imminent launch, or serious local events). Neutral
+  multi-source synthesis, no sports or entertainment, about ten minutes read aloud. Takes NO
+  variables — call it once for today's briefing. Reach for it whenever the owner wants his news
+  brief / morning briefing / "what's the news today".

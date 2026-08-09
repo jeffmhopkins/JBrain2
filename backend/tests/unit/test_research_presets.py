@@ -17,6 +17,23 @@ def test_shipped_candidate_profile_loads_and_declares_its_variables() -> None:
     assert len(preset.angles) == 5
 
 
+def test_shipped_daily_news_loads_variable_free_and_renders() -> None:
+    # The daily briefing takes NO variables — it's a one-call daily run, so it must load with an
+    # empty `variables` tuple and render cleanly from an empty dict (no unfilled slots leak).
+    assert "daily_news" in rp.available()
+    preset = rp.get("daily_news")
+    assert preset is not None
+    assert preset.variables == ()
+    assert preset.output_kind == "brief"  # `report` would balloon past a 10-minute read
+    assert preset.source_mode == "web"
+    assert preset.sections[0] == "Good Morning"
+    assert preset.sections[-1] == "That's Your Briefing"
+    assert len(preset.angles) == 5  # runs under DR_MAX_BREADTH (=5) with no clamping
+    r = rp.render_preset("daily_news", {})
+    for text in (r.question, r.objective, *r.sections, *(b for _, b in r.angles)):
+        assert "{{" not in text and "}}" not in text
+
+
 def test_render_substitutes_every_slot_across_all_fields() -> None:
     r = rp.render_preset(
         "candidate_profile", {"candidate": "Jane Doe", "office": "U.S. Senate (Florida)"}
