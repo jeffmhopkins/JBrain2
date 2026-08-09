@@ -1535,6 +1535,118 @@ async def test_web_fetch_tool_rejects_an_invalid_regex_without_fetching() -> Non
     assert calls["n"] == 0  # bailed before any fetch, so no dead-URL memo either
 
 
+# --- extract mode (regex → matches, not a window) -----------------------------
+
+
+def test_extract_matches_returns_capture_groups_and_true_total() -> None:
+    from jbrain.web.fetch import extract_matches
+
+    text = "Total: 12 items, Total: 7 items, Total: 340 items"
+    matches, total = extract_matches(text, r"Total:\s*(\d+)")
+    assert total == 3
+    assert [m.match for m in matches] == ["Total: 12", "Total: 7", "Total: 340"]
+    assert [m.groups for m in matches] == [("12",), ("7",), ("340",)]
+    assert matches[0].offset == 0  # offset into the full text, for a follow-up read
+    assert "Total: 12 items" in matches[0].context  # context surrounds the hit
+
+
+def test_extract_matches_skips_zero_width_so_a_star_pattern_cannot_flood() -> None:
+    from jbrain.web.fetch import extract_matches
+
+    # `a*` matches empty strings everywhere; those must not become matches.
+    matches, total = extract_matches("banana", "a*")
+    assert total == 3  # the three runs of "a", not a match at every position
+    assert all(m.match for m in matches)
+
+
+def test_extract_matches_caps_the_list_but_keeps_the_real_count() -> None:
+    from jbrain.web.fetch import _MAX_EXTRACT_MATCHES, extract_matches
+
+    text = "x9 " * (_MAX_EXTRACT_MATCHES + 25)
+    matches, total = extract_matches(text, r"x\d")
+    assert total == _MAX_EXTRACT_MATCHES + 25  # every occurrence counted
+    assert len(matches) == _MAX_EXTRACT_MATCHES  # but the returned list is capped
+
+
+async def test_web_fetch_tool_extract_lists_matches_from_the_whole_page() -> None:
+    # Two ISO dates far apart on a long page — extract pulls both, not just the first window.
+    content = "2025-01-01" + ("q" * 40_000) + "2026-12-31"
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain_body(content)))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/d", "find": r"20\d\d-\d\d-\d\d", "extract": True},
+            _fresh_ctx(),
+        )
+    )
+    assert "extracted 2 match(es)" in out.lower()
+    assert "2025-01-01" in out and "2026-12-31" in out
+
+
+async def test_web_fetch_tool_extract_reports_capture_groups() -> None:
+    content = "Price: $12.50 here and Price: $9.99 there"
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain_body(content)))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/p", "find": r"Price: \$(\d+\.\d\d)", "extract": True},
+            _fresh_ctx(),
+        )
+    )
+    assert "groups: 12.50" in out and "groups: 9.99" in out
+
+
+async def test_web_fetch_tool_extract_no_match_says_so() -> None:
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(_plain_body("no digits here")))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/p", "find": r"\d{4}", "extract": True}, _fresh_ctx()
+        )
+    )
+    assert "no match for regex" in out.lower()
+
+
+async def test_web_fetch_tool_extract_without_find_is_rejected_before_fetching() -> None:
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, content=b"x", headers={"content-type": "text/plain"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(
+        await handlers["web_fetch"]({"url": "https://x.example/p", "extract": True}, _fresh_ctx())
+    )
+    assert "needs a find pattern" in out.lower()
+    assert calls["n"] == 0  # rejected before any network call
+
+
+async def test_web_fetch_tool_extract_validates_the_regex_even_without_regex_flag() -> None:
+    # Extract always treats find as a regex, so a bad pattern is caught even if regex is unset.
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, content=b"x", headers={"content-type": "text/plain"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(
+        await handlers["web_fetch"](
+            {"url": "https://x.example/p", "find": "a(b", "extract": True}, _fresh_ctx()
+        )
+    )
+    assert "invalid regex" in out.lower()
+    assert calls["n"] == 0
+
+
 # --- cross-turn tool-result artifacts (CROSS_TURN_TOOL_RESULTS_PLAN.md) ---------
 
 import hashlib  # noqa: E402
