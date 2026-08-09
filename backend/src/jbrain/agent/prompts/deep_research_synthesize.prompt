@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v10
+version: dr-synth-v11
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
@@ -117,6 +117,16 @@ Write the report as Markdown:
   For an association, prefer to name what the finding does carry — the study design
   (retrospective series, registry, database analysis, RCT) and whether it was adjusted —
   over a number it never gave.
+- **Dates and multi-row records — report the CURRENT state, never a cherry-picked or invented
+  span.** Trace every date, date range, issue/expiry, or "as of" to a finding that states it;
+  never invent a start or end a source does not show. When a source record has MULTIPLE rows or
+  entries (a license's appointments, a filing/registration history, a holdings or roster table,
+  a list of positions), do NOT collapse them into one span or single out one row — read the whole
+  record and report the CURRENT / active state (the still-valid entries as of the run), treating
+  superseded or expired rows as history only, noted if they matter. An expired row sitting beside
+  active ones does NOT make the whole record expired or lapsed; conflating one row's dates with the
+  record's overall status (e.g. calling a still-active license "expired 2023" because one
+  appointment lapsed then) is a fabrication of the same kind as inventing a number.
 - **Never assert a negative the findings did not establish — "not found" is not "does not
   exist".** A confident absence claim ("has no committee on file", "no degree is documented",
   "never held office", "the record shows nothing") is a factual claim, and it is only true if a
