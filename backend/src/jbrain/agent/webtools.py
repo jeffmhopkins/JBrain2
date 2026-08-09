@@ -391,7 +391,14 @@ def build_web_handlers(
         # order the model reads them, so a `[^n]` marker resolves to a real URL the
         # search reached (and a favicon chip), never to a string the model invents.
         web_sources = tuple(WebSource(url=h.url, title=h.title) for h in kept)
-        return ToolOutput("Web results:\n" + "\n".join(lines) + note, web_sources=web_sources)
+        # These are UNVERIFIED leads: a title+snippet is not a fact. Remind the model, at the
+        # moment it reads them, that it must web_fetch a result before treating its content as
+        # real — otherwise agents summarize snippets and the synthesizer drops the uncited claims.
+        header = (
+            "Web results — UNVERIFIED LEADS (a title/snippet is NOT a fact; web_fetch a result and"
+            " read the page before reporting or citing anything from it):"
+        )
+        return ToolOutput(header + "\n" + "\n".join(lines) + note, web_sources=web_sources)
 
     async def web_fetch_tool(arguments: dict, ctx: ToolContext) -> str:
         url = str(arguments.get("url", "")).strip()

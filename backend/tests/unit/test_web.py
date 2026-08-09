@@ -1290,7 +1290,8 @@ async def test_web_search_tool_formats_results() -> None:
         _searx(lambda r: httpx.Response(200, json=_SEARX_OK)), WebFetcher()
     )
     out = await handlers["web_search"]({"query": "python"}, CTX)
-    assert "Web results:" in out
+    # The header warns that results are unverified leads that must be fetched before use.
+    assert "Web results" in out and "UNVERIFIED LEADS" in out and "web_fetch" in out
     assert "https://a.example/1" in out and "Result one" in out
 
 
