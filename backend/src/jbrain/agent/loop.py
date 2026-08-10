@@ -197,6 +197,31 @@ def guardrails_for_effort(
     )
 
 
+@dataclass
+class SearchBudget:
+    """A hard, engine-enforced ceiling on how many `web_search` calls one agent may make
+    this run — the mechanical backstop for a persona whose PROMPT states a search budget
+    the model then ignores (the deep-research scout: gpt-oss treats a named-source list as
+    a checklist and searches once per outlet, running to the step cap regardless of the
+    "AT MOST N searches" wording; MODEL_PROMPTING.md). The `web_search` handler counts each
+    call against `used`, refuses the call once `used >= limit`, and annotates every result
+    with what's left, so the contract holds no matter the model or reasoning effort. Not
+    frozen — `used` is incremented in place; one instance is built per `run` (per child),
+    so the scope is exactly this agent's turn. `web_fetch` is deliberately uncapped: a
+    lead-following scout must stay free to open a hub and follow it to the real article."""
+
+    limit: int
+    used: int = 0
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.limit - self.used)
+
+    @property
+    def exhausted(self) -> bool:
+        return self.used >= self.limit
+
+
 @dataclass(frozen=True)
 class ToolContext:
     """What a tool handler receives: the RLS scope its reads must run under, and
@@ -254,6 +279,11 @@ class ToolContext:
     # loop reuses one ToolContext for a whole turn, and the default_factory gives each turn
     # its own memo, so the scope is exactly "this run"; only failed fetches ever land here.
     failed_fetches: dict[str, int] = field(default_factory=dict)
+    # A hard `web_search` ceiling for this run (None = uncapped, the default for every
+    # persona but the scout). The `web_search` handler counts calls against it, refuses
+    # once spent, and appends the remaining count to each result. Mutated in place (like
+    # `failed_fetches`) — the frozen field is the reference, `used` is not frozen.
+    search_budget: "SearchBudget | None" = None
 
 
 @dataclass(frozen=True)
@@ -576,6 +606,9 @@ class AgentLoop:
         # has been this call. The spawn service forwards it as a child context-fill meter,
         # the non-streaming twin of run_stream's UsageEvent.
         on_usage: Callable[[int, int], None] | None = None,
+        # A hard per-run `web_search` ceiling (None = uncapped). The scout persona passes
+        # its budget so the engine — not the prompt — stops the over-search (see SearchBudget).
+        search_budget: int | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         hidden = await self._hidden()
@@ -593,6 +626,7 @@ class AgentLoop:
             agent_tools=allowed,
             tree=tree,
             run_id=run_id,
+            search_budget=SearchBudget(limit=search_budget) if search_budget else None,
         )
         # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
         # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.

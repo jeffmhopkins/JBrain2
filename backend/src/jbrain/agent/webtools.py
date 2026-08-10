@@ -363,15 +363,44 @@ def build_web_handlers(
         query = str(arguments.get("query", "")).strip()
         if not query:
             return "web_search needs a non-empty query."
+        # Hard search budget (scouts only; None = uncapped). Enforced HERE, in the engine,
+        # because the prompt's "AT MOST N searches" ceiling is one gpt-oss ignores — it runs
+        # to the step cap regardless (MODEL_PROMPTING.md). Refuse once spent, WITHOUT a network
+        # call, and point the model at web_fetch + returning its sources. The check and the
+        # increment sit together with no await between them, so even a concurrently-dispatched
+        # batch of searches can't slip past the ceiling.
+        budget = ctx.search_budget
+        if budget is not None and budget.exhausted:
+            return (
+                f"SEARCH BUDGET SPENT — you have used all {budget.limit} of your web_search "
+                "calls and cannot search again. Do not keep trying to search. Open the leads "
+                "you already found with web_fetch, then END your reply with the RECOMMENDED "
+                "SOURCES: block."
+            )
+        if budget is not None:
+            budget.used += 1
+        budget_note = ""
+        if budget is not None:
+            left = budget.remaining
+            budget_note = (
+                f"\n\n[SEARCH BUDGET: {left} web_search call(s) left of {budget.limit}"
+                + (
+                    " — that was your LAST one; stop searching, web_fetch your leads, and return"
+                    " your RECOMMENDED SOURCES."
+                    if left == 0
+                    else ". web_fetch is unlimited."
+                )
+                + "]"
+            )
         limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
         if emit:
             emit("web_search", query)
         try:
             hits = await search.search(query, limit)
         except WebSearchError as exc:
-            return str(exc)
+            return str(exc) + budget_note
         if not hits:
-            return f"No web results for '{query}'."
+            return f"No web results for '{query}'." + budget_note
         # Drop hits on a host recently found paywalled/bot-walled/unreadable (the 24h skip
         # list) — reading one would only waste a fetch on a wall — and tell the model how many
         # were hidden so it knows the result set was pruned, not thin.
@@ -385,6 +414,7 @@ def build_web_handlers(
             return (
                 f"No usable web results for '{query}': all {hidden} were on sites recently found"
                 " paywalled or inaccessible (skipped for the next day). Try a different query."
+                + budget_note
             )
         lines = [f"- {h.title}\n  {h.url}\n  {h.snippet}" for h in kept]
         # The structured twin of the text: one citation source per hit, in the same
@@ -398,7 +428,9 @@ def build_web_handlers(
             "Web results — UNVERIFIED LEADS (a title/snippet is NOT a fact; web_fetch a result and"
             " read the page before reporting or citing anything from it):"
         )
-        return ToolOutput(header + "\n" + "\n".join(lines) + note, web_sources=web_sources)
+        return ToolOutput(
+            header + "\n" + "\n".join(lines) + note + budget_note, web_sources=web_sources
+        )
 
     async def web_fetch_tool(arguments: dict, ctx: ToolContext) -> str:
         url = str(arguments.get("url", "")).strip()

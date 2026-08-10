@@ -7,7 +7,16 @@
 > set against this guide. Fixes that landed, all keyed to the gpt-oss behaviours below: the
 > `research_scout` prompt (v5) traded a soft "stop early" plea for a countable ceiling and marks
 > the angle's named sources a MENU not a checklist (contradiction-sensitivity + "exhaustive
-> inflates"); the daily_news angle briefs were slimmed to remove the "at least three / don't
+> inflates"). A **second** live run (post-redeploy) showed the v5 prompt ceiling did **not**
+> hold — the scouts still ran 12-27 `web_search` calls each, straight to the effort-scaled step
+> cap (~42 tool calls, ~11 min for the worst) — confirming a prompt-stated tool budget is not
+> self-enforcing on gpt-oss (it does not reliably count its own tool calls). So the ceiling moved
+> into the **engine**: `SearchBudget` (loop.py) hard-caps `web_search` at `SCOUT_SEARCH_BUDGET`
+> (8), the handler refuses calls past it and appends the remaining count to every result, and the
+> prompt (v6) states the same 8 and notes it is enforced. `web_fetch` stays uncapped (a scout
+> must follow a hub to the real article). The lesson generalizes — see "Prompt budgets need an
+> engine backstop" under *Behaviours to design around*. The daily_news angle briefs were slimmed
+> to remove the "at least three / don't
 > conclude empty / pivot" checklist; the synthesizer (`dr-synth-v13`) was made length-NEUTRAL so
 > the per-run target line wins (it no longer hard-codes "8-10 pages / comprehensive", which fought
 > the `brief`/spoken target), then (`dr-synth-v14`) given a countable coverage rule after a live
@@ -133,7 +142,17 @@ response format and emits a hidden chain-of-thought before its answer.
 - **High effort → runaway pre-tool reasoning.** At high effort it can reason for a
   long time before making its first tool call. Prompts for tool-driven personas
   should push it to act early ("think briefly, then search") rather than plan
-  exhaustively.
+  exhaustively. (Corollary: **do not** raise a tool-driven persona to high effort to
+  make it "follow the budget better" — that is reasoning-bound advice; higher effort
+  buys *more* exhaustive planning and a *larger* step cap, i.e. more tool calls. The
+  scout runs at `low` for exactly this reason.)
+- **Prompt budgets need an engine backstop.** A "call this tool AT MOST N times"
+  ceiling stated only in the prompt is **not** self-enforcing: gpt-oss does not
+  reliably count its own tool calls and will run to the step cap regardless (the
+  research scout kept over-searching under a v5 prompt that plainly said "AT MOST 6").
+  When a tool-call count actually matters, enforce it in the loop/handler and let the
+  prompt merely describe it — `SearchBudget` (loop.py) caps the scout's `web_search`
+  and annotates each result with the remaining count. Prompt = intent; engine = ceiling.
 - **"Be exhaustive / comprehensive" inflates verbosity.** These phrases produce
   padded output. Ask for *tight*, *focused*, *lead-with-the-answer* instead.
 - **Never instruct or reference the hidden chain-of-thought.** Do not tell it to
