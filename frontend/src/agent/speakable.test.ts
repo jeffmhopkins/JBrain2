@@ -1,5 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { chunkStream, engineForVoice, speakable } from "./speakable.js";
+import { chunkStream, engineForVoice, reportToSpeech, speakable } from "./speakable.js";
+
+describe("reportToSpeech", () => {
+  const REPORT = [
+    "**Bottom-line:** the day's news.",
+    "",
+    "### Good Morning",
+    "Good morning, it's Sunday. Here's what's coming up.",
+    "",
+    "### Top National Stories",
+    "The FAA proposed a new rule.",
+    "",
+    "---",
+    "",
+    "## Sources",
+    "[^1]: Florida Space Report – https://spacereport.blogspot.com/",
+  ].join("\n");
+
+  it("drops heading lines so the greeting isn't doubled, and cuts the Sources section", () => {
+    const out = reportToSpeech(REPORT);
+    // Heading LINES gone (not just the '#'): no bare "Good Morning" / "Top National Stories".
+    expect(out).not.toMatch(/^\s*#/m);
+    expect(out).not.toMatch(/Good Morning\n/); // the header text, on its own line, is gone
+    // The prose (including the spoken "Good morning" greeting) stays.
+    expect(out).toContain("Good morning, it's Sunday.");
+    expect(out).toContain("The FAA proposed a new rule.");
+    // The Sources section (heading + URLs) is cut entirely — TTS never reads the URL.
+    expect(out).not.toContain("spacereport.blogspot.com");
+    expect(out).not.toMatch(/Sources/);
+  });
+
+  it("read aloud, the greeting is spoken once", () => {
+    const spoken = speakable(reportToSpeech(REPORT));
+    // "good morning" appears once (the greeting), not twice (header + greeting).
+    expect(spoken.toLowerCase().match(/good morning/g)?.length).toBe(1);
+    expect(spoken).not.toContain("blogspot");
+  });
+});
 
 /** Feed `full` to chunkStream in `steps` growing prefixes (simulating streaming), advancing
  * a raw cursor, then flush — returning every clip emitted in order. */

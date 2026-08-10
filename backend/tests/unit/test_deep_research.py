@@ -1882,11 +1882,11 @@ async def test_non_fetch_first_preset_keeps_the_single_pass_gather() -> None:
     assert "research_scout" not in personas and "research_fetch" not in personas
 
 
-def _scout(label: str, urls: list[tuple[str, bool]]) -> _ChildResult:
+def _scout(label: str, urls: list[tuple[str, bool]], summary: str = "scouted") -> _ChildResult:
     return _ChildResult(
         label=label,
         persona="research_scout",
-        summary="scouted",
+        summary=summary,
         ok=True,
         session_id=f"s-{label}",
         web_sources=tuple(WebSource(url=u, title=u, read=r) for u, r in urls),
@@ -1921,6 +1921,33 @@ async def test_angle_candidates_include_opened_urls_and_dedupe_across_angles() -
     groups = dict(await svc._angle_candidates("q", scouts, read_target=10))
     assert {ws.url for ws in groups["A"]} == {"https://x.com/shared", "https://a.com/opened"}
     assert {ws.url for ws in groups["B"]} == {"https://b.com/only"}  # shared went to A, not B
+
+
+async def test_angle_candidates_read_only_the_scouts_recommended_urls() -> None:
+    """Explicit recommendation: the scout TOUCHED a hub it only navigated through plus the real
+    article, but its `RECOMMENDED SOURCES:` block lists only the article — so the reader opens the
+    article, never the hub. This keeps a briefing off the blogs a scout only used to find news."""
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    scout = _scout(
+        "Space",
+        [("https://hub.com/section", True), ("https://ap.com/article-42", True)],
+        summary=(
+            "Found the launch story on the hub.\n\n"
+            "RECOMMENDED SOURCES:\nhttps://ap.com/article-42\n"
+        ),
+    )
+    groups = dict(await svc._angle_candidates("q", [scout], read_target=10))
+    assert [ws.url for ws in groups["Space"]] == ["https://ap.com/article-42"]  # hub excluded
+
+
+async def test_angle_candidates_fall_back_when_no_recommendation_block() -> None:
+    """If the scout emitted no `RECOMMENDED SOURCES:` block (or none of its picks were reached),
+    the pool falls back to everything it touched — never empty when the scout found URLs."""
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    urls = [("https://a.com/1", False), ("https://a.com/2", True)]
+    scout = _scout("Space", urls, summary="notes")
+    groups = dict(await svc._angle_candidates("q", [scout], read_target=10))
+    assert {ws.url for ws in groups["Space"]} == {"https://a.com/1", "https://a.com/2"}
 
 
 async def test_web_critique_runs_a_grounding_sweep_that_flags_fabrications_to_cut() -> None:

@@ -14,6 +14,12 @@ export function toUtterance(prose: string, engine?: SpeakEngine): string;
  * (default piper) — toProse composed with toUtterance. Shared verbatim with the wall display. */
 export function speakable(md: string, engine?: SpeakEngine): string;
 
+/** Prepare a deep-research REPORT's Markdown for read-aloud: drop the section-heading LINES (a
+ * spoken briefing shouldn't voice "## Good Morning", which doubles the greeting) and the trailing
+ * Sources/References/Citations section (TTS would read the URLs). Returns Markdown; the caller
+ * still runs it through speakable/chunkStream. Only the report read-aloud path opts in. */
+export function reportToSpeech(md: string): string;
+
 /** The utterance profile a box voice id renders through: a Kokoro voice ("kokoro-…") →
  * "kokoro", any other id → "piper". Threads the right engine into speakable/chunkStream from
  * the chosen voice alone, so text is normalized for the engine that actually renders it. */

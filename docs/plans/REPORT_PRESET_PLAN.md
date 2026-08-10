@@ -1,6 +1,6 @@
 # Report Presets & Batch Runs — uniform reports, run down a list
 
-> **Status:** In progress · **Last verified:** 2026-08-10 · **Waves:** P1✅ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-08-10 (live-run tuned) · **Waves:** P1✅ P2◻️ P3◻️
 
 The deep-research engine plans each report's shape fresh every run, so two reports on
 comparable subjects (say, two candidates on the same ballot) come out structurally
@@ -82,15 +82,20 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
     `web_fetch` + clock), one child per angle. It searches AND FOLLOWS LEADS — opening a
     hub/section/search page to reach the *specific* article URLs behind it, and briefly confirming
     a candidate is a real, on-topic, fetchable article — then surfaces those URLs. Its PROSE is
-    DISCARDED (only the URLs it TOUCHED become candidates, via `_angle_candidates`), so it can never
-    leak a snippet claim; but with fetch it hands the reader real article URLs instead of a hub the
-    reader would only see headlines on. (The split is by ROLE, not a hard tool line — the earlier
-    search-only scout was handed the reader's "open and read the articles" brief, which it had no
-    tool for, so it flailed; `_scout_brief` now reframes each angle as a scouting task.) The scout
-    prompt (v3) is BOUNDED: search by topic+outlet — never stuff an exact date into the query, which
-    pulls calendar/almanac pages ("50 fun facts about August") — and STOP after ~3-5 confirmed
-    leads rather than an exhaustive sweep (a live run over-searched 20-34 times per angle, a
-    26-minute scout phase).
+    DISCARDED, so it can never leak a snippet claim; but with fetch it hands the reader real article
+    URLs instead of a hub the reader would only see headlines on. (The split is by ROLE, not a hard
+    tool line — the earlier search-only scout was handed the reader's "open and read the articles"
+    brief, which it had no tool for, so it flailed; `_scout_brief` now reframes each angle as a
+    scouting task.) EXPLICIT RECOMMENDATION (v4): the scout ends its reply with a machine-read
+    `RECOMMENDED SOURCES:` URL list, and `_angle_candidates` reads ONLY those (via `_recommended_urls`,
+    falling back to all touched URLs if the block is absent) — so a hub/aggregator/blog the scout
+    merely OPENED to navigate is kept OUT of the read set. This is the fix for a live briefing that
+    read three blogs the scout only used to *find* the news (`spacereport.blogspot`, a WordPress "AI
+    news bulletin board", a local-news home page) instead of the AP/Reuters/operator primaries it had
+    actually located. The scout prompt is also BOUNDED (v3): search by topic+outlet — never stuff an
+    exact date into the query, which pulls calendar/almanac pages ("50 fun facts about August") — and
+    STOP after ~3-5 confirmed leads rather than an exhaustive sweep (a live run over-searched 20-34
+    times per angle, a 26-minute scout phase).
   - **read** — a fan of the `research_fetch` persona (the READER: `web_fetch` + clock, NO
     `web_search`), ONE reader per angle. The missing search tool is the point: it can't wander off
     searching, so its whole job is the deep read the writer's findings rest on.
@@ -126,6 +131,10 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   copy/download (`registry.tsx` `DeepResearchReport`, threaded through `ToolView`/`ViewProps` from
   the surface's `useReadAloud`), so the owner plays the report's TTS straight from the card — which
   removes the reason to have jerv paste the text into a turn at all (the root cause of the confab).
+  The card feeds the read-aloud through `speakable.reportToSpeech` first, which drops the section
+  HEADING lines (a spoken brief shouldn't voice "## Good Morning", which read aloud doubles the
+  "Good morning…" greeting) and the trailing `## Sources` block (TTS would otherwise read the URL
+  list aloud) — so the written card keeps its structure while the spoken read is clean prose.
 
 **Engine seam** (`deep_research.py`). `_run` gained `plan_override` + `enforce_headings`.
 The single branch is at the PLAN phase: with a `plan_override` the planner is skipped and the
