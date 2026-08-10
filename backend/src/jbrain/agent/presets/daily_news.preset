@@ -165,101 +165,54 @@ sections:
 angles:
   - title: "Space industry & launch outlook"
     brief: >-
-      Gather the last twenty-four to forty-eight hours of SPACE INDUSTRY news as of today,
-      worldwide and national: NASA, SpaceX, Blue Origin, United Launch Alliance, Rocket Lab and
-      other operators — launches, mission milestones, contracts and awards, anomalies or scrubs,
-      and space policy. OPEN and READ at least three of these fetchable sources (don't stop at
-      search snippets): Spaceflight Now (spaceflightnow.com/news and its launch reports),
-      NASASpaceflight (nasaspaceflight.com), Space.com (space.com/news), Ars Technica's space
-      section (arstechnica.com/space), NASA's own site (nasa.gov/news-release), Reuters
-      (reuters.com/science) and SpaceX (spacex.com/launches). SEPARATELY, OPEN the LAUNCH SCHEDULE
-      for the NEXT TWENTY-FOUR HOURS — Spaceflight Now's launch schedule (spaceflightnow.com/launch-schedule)
-      and NASASpaceflight's schedule — and for any imminent launch report the vehicle,
-      payload/mission, the launch window time, and any road or beach closures or sonic-boom notice
-      for the Titusville and Port St. John area. Always capture notable SpaceX news specifically.
-      For each item report the date, the outlet(s) that carried it, and a factual summary with the
-      real specifics (vehicle, payload count, booster, site, outcome) pulled from the opened
-      article — not just the headline; synthesize across multiple outlets, prefer primary sources
-      (the operator, NASA, the range), and note when a claim is single-source or disputed. Skip
-      stale items. No opinion, no sports, no entertainment.
+      SPACE INDUSTRY news of the last day or two, worldwide and national — NASA, SpaceX, Blue
+      Origin, United Launch Alliance, Rocket Lab and other operators: launches, mission milestones,
+      contracts and awards, anomalies or scrubs, and space policy; always include notable SpaceX
+      items. Good fetchable primaries (a menu — sample two or three, not all): Spaceflight Now
+      (spaceflightnow.com), NASASpaceflight (nasaspaceflight.com), Space.com (space.com/news); the
+      operator's or NASA's own page beats a roundup. Also open the launch schedule for the next 24
+      hours (spaceflightnow.com/launch-schedule): for any imminent Cape Canaveral or Kennedy launch,
+      find the story with the vehicle, payload, window time, and any Titusville / Port St. John road,
+      beach, or sonic-boom notice. Prefer specific articles over aggregators; skip paywalled pages.
   - title: "AI, technology, Tesla & Elon Musk"
     brief: >-
-      Gather the last twenty-four to forty-eight hours of ARTIFICIAL INTELLIGENCE and TECHNOLOGY
-      news as of today: major AI model or product releases, company moves (the big AI labs and
-      cloud/chip makers), notable research results, regulation, and significant cybersecurity or
-      big-tech developments. OPEN and READ at least three of these named sources — do NOT rely on
-      low-quality aggregators. Primary/company: OpenAI (openai.com/news), Anthropic
-      (anthropic.com/news), Google DeepMind (deepmind.google/discover/blog), Meta AI, Microsoft,
-      Nvidia. Tech press: TechCrunch (techcrunch.com), The Verge (theverge.com), Ars Technica
-      (arstechnica.com), VentureBeat, and Reuters Technology (reuters.com/technology). SEPARATELY
-      capture any notable TESLA and ELON MUSK news (the company, its products, Musk's business
-      actions) not already about SpaceX — from Reuters, the Associated Press, and Electrek
-      (electrek.co), plus Musk's/company's own posts. For each item report the date, the outlet(s),
-      and a factual summary with the real specifics (model name and what's new, benchmark or price
-      figures the source states, who shipped it) pulled from the opened article — never invent a
-      benchmark or number. Prefer the company's own announcement plus a second independent outlet;
-      flag hype, single-source claims, or disputed figures rather than repeating them as fact. If
-      nothing major shipped today, report the most significant AI development of the last day or
-      two — do not leave this empty without having opened at least two of the sources above. No
-      opinion, no sports, no entertainment.
+      ARTIFICIAL INTELLIGENCE and TECHNOLOGY news of the last day or two — major model or product
+      releases, big-lab and chip/cloud company moves, notable research, regulation, and significant
+      cybersecurity or big-tech news. Good sources (a menu — sample two or three): TechCrunch
+      (techcrunch.com), The Verge (theverge.com), Ars Technica (arstechnica.com); when a release is a
+      specific company's, grab that company's own post too (e.g. openai.com/news, anthropic.com/news,
+      deepmind.google/discover/blog). Also find any notable TESLA or ELON MUSK news not already about
+      SpaceX — Electrek (electrek.co) or Reuters. Prefer a primary announcement over a "daily AI
+      digest" aggregator or roundup; skip paywalled pages.
   - title: "National politics & government"
     brief: >-
-      Gather the last twenty-four hours of TOP NATIONAL (U.S.) news as of today: the single biggest
-      story plus the key politics and government developments (the White House, Congress, the
-      courts, major federal agencies, elections). OPEN and READ at least three top-headlines/section
-      pages from these fetchable wire and public-media sources — a keyword search alone is not
-      enough: the Associated Press top news and politics (apnews.com/hub/ap-top-news,
-      apnews.com/hub/politics), Reuters US (reuters.com/world/us), the text-only NPR site
-      (text.npr.org — very fetch-friendly), PBS NewsHour (pbs.org/newshour/politics), and The Hill
-      (thehill.com). Then pull the day's top three-to-five items and, for each, report the date, the
-      outlets that carried it, and a factual account of WHAT HAPPENED with the specifics (who, what,
-      the numbers/vote/ruling) from the opened article. Synthesize a neutral account from MULTIPLE
-      outlets across the spectrum — lead with the wire services and primary documents; treat any one
-      outlet's framing as a single account, not the fact. Attribute claims, keep opinion and
-      punditry out, and note when a claim is contested or single-source. Do not conclude "nothing"
-      without having opened AP and one other source. Skip stale stories. No sports, no entertainment.
+      Top U.S. NATIONAL news of the last day — the single biggest story plus key politics and
+      government (the White House, Congress, the courts, major federal agencies, elections). Good
+      fetchable sources (a menu — work two): the Associated Press (apnews.com/hub/ap-top-news and
+      apnews.com/hub/politics) and the text-only NPR site (text.npr.org, very fetch-friendly);
+      Reuters US (reuters.com/world/us) if it opens. Open a top-news or politics section page to
+      reach the specific stories behind the headlines, and confirm them as real dated articles.
+      Prefer wire services and primary documents over a single outlet's take; skip paywalled pages.
   - title: "Economy, markets & the world"
     brief: >-
-      Gather the last twenty-four hours as of today across two areas; OPEN and READ at least three
-      real articles/section pages total (not just search snippets). (1) BUSINESS & THE ECONOMY —
-      markets, jobs and unemployment, inflation, interest-rate and Federal Reserve news, and major
-      company or industry moves — from CNBC (cnbc.com/economy, cnbc.com/markets), Reuters Business
-      and Markets (reuters.com/business, reuters.com/markets), the Associated Press business hub
-      (apnews.com/hub/business), and MarketWatch; for official figures use the primary source (the
-      Federal Reserve federalreserve.gov, the Bureau of Labor Statistics bls.gov). Report figures
-      exactly the way a source states them — never invent or round a number into being. (2) THE
-      WORLD — the major international and geopolitical developments only (conflicts, elections,
-      diplomacy, significant disasters) — from Reuters World (reuters.com/world), AP World
-      (apnews.com/hub/world-news), and BBC News (bbc.com/news/world). For each item report the
-      date, the outlet(s), and a factual summary with the specifics from the opened article,
-      synthesized from MULTIPLE outlets; attribute every claim and flag single-source or disputed
-      ones. IMPORTANT: some wire sites (Reuters, CNBC, the Associated Press) frequently bot-wall a
-      fetch. If one blocks you, do NOT fall back to a generic roundup and do NOT leave the section
-      empty — pivot to FETCH-FRIENDLY outlets that reliably open: the text-only NPR site
-      (text.npr.org), BBC News (bbc.com/news/business and bbc.com/news/world), PBS NewsHour, and
-      the Fed / BLS primaries for figures. A walled site is not "no news". Both BUSINESS and WORLD
-      should carry at least one real item on an ordinary day; only report a section empty after
-      opening at least two fetch-friendly sources for it. Skip stale items and minor market noise.
-      No opinion, no sports, no entertainment.
+      Two areas from the last day. (1) BUSINESS & THE ECONOMY — markets, jobs, inflation,
+      interest-rate and Federal Reserve news, and major company moves. (2) THE WORLD — the major
+      international and geopolitical developments only (conflicts, elections, diplomacy, significant
+      disasters). Good sources (a menu — sample two or three that open cleanly): CNBC
+      (cnbc.com/economy), BBC News (bbc.com/news/business and bbc.com/news/world, reliably
+      fetch-friendly), the Associated Press (apnews.com/hub/business, apnews.com/hub/world-news); for
+      official figures the Federal Reserve (federalreserve.gov) or the Bureau of Labor Statistics
+      (bls.gov). Reuters / CNBC / AP sometimes bot-wall a fetch — if one won't open, just use BBC or
+      text.npr.org instead. Prefer primary / wire stories over roundups; skip paywalled pages.
   - title: "Local Space Coast — Port St. John & Titusville"
     brief: >-
-      Gather today's LOCAL news for the Space Coast, focused on PORT ST. JOHN and TITUSVILLE,
-      Florida, and admit ONLY three kinds of item. (1) SEVERE WEATHER: any weather alert, warning,
-      or notable severe-weather forecast affecting the Titusville / Port St. John / north Brevard
-      area today. Use the National Weather Service Melbourne office as the primary source — OPEN the
-      live active-alerts feed for the north-Brevard zone (api.weather.gov/alerts/active?area=FL,
-      and the Melbourne office at weather.gov/mlb) and read any alert's headline, area, and expiry.
-      (2) An imminent ROCKET LAUNCH in the next twenty-four hours from Cape Canaveral or Kennedy
-      Space Center and its LOCAL effects — road or beach closures, the window time, sonic-boom
-      notice (cross-check the space angle's launch schedule). (3) VIOLENT CRIME or another genuinely
-      serious or notable local event. OPEN at least two FREE local outlets (do NOT waste the budget
-      on Florida Today — it is PAYWALLED and returns no readable body): Space Coast Daily
-      (spacecoastdaily.com), Talk of Titusville (talkoftitusville.com), and the Brevard coverage
-      from the Orlando TV stations — Click Orlando / WESH (clickorlando.com/news/local, wesh.com),
-      WFTV (wftv.com), and FOX 35 (fox35orlando.com/tag/us/fl/brevard-county); for crime, the
-      Brevard County Sheriff. Include a broader Brevard County or Florida item ONLY if it plausibly
-      IMPACTS the listener — his safety, commute, cost of living, or the space industry — and skip
-      routine county or state news. For each item report the date, the outlet(s), and a factual
-      summary from the opened page; prefer official sources for weather and public-safety facts, and
-      report a category as clear only after actually checking the NWS feed and at least one local
-      outlet. No opinion, no sports, no entertainment, no obituaries or human-interest filler.
+      Today's LOCAL Space Coast news for PORT ST. JOHN and TITUSVILLE, Florida — admit ONLY: (1)
+      SEVERE WEATHER affecting the Titusville / Port St. John / north-Brevard area; primary source
+      the National Weather Service Melbourne active-alerts feed (api.weather.gov/alerts/active?area=FL,
+      and weather.gov/mlb). (2) An imminent ROCKET LAUNCH in the next 24 hours from Cape Canaveral or
+      Kennedy and its local road/beach closures, window time, and sonic-boom notice (cross-check the
+      space angle). (3) VIOLENT CRIME or another genuinely serious or notable local event. Good free
+      local outlets (a menu — sample one or two): Space Coast Daily (spacecoastdaily.com) and Click
+      Orlando / WESH (clickorlando.com/news/local). Do NOT use Florida Today (paywalled). A broader
+      Brevard / Florida item only if it plausibly affects his safety, commute, cost of living, or the
+      space industry — skip routine county or state news, obituaries, and human-interest filler.

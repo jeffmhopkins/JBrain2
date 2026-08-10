@@ -92,10 +92,24 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
     merely OPENED to navigate is kept OUT of the read set. This is the fix for a live briefing that
     read three blogs the scout only used to *find* the news (`spacereport.blogspot`, a WordPress "AI
     news bulletin board", a local-news home page) instead of the AP/Reuters/operator primaries it had
-    actually located. The scout prompt is also BOUNDED (v3): search by topic+outlet — never stuff an
-    exact date into the query, which pulls calendar/almanac pages ("50 fun facts about August") — and
-    STOP after ~3-5 confirmed leads rather than an exhaustive sweep (a live run over-searched 20-34
-    times per angle, a 26-minute scout phase).
+    actually located. The scout is also BOUNDED (v5) against over-searching — a live run had each
+    scout run 34-36 `web_search` calls (a ~26-minute scout phase). Three gpt-oss-120b prompting
+    researchers (armed with `docs/reference/MODEL_PROMPTING.md`) traced it to that model's
+    contradiction-sensitivity: the scout received the angle briefs, written for the all-in-one
+    research persona ("open and READ at least three of these ~12 sources, cover HEAVILY, don't
+    conclude a category empty, pivot to another outlet if one blocks") — a named-source CHECKLIST the
+    model swept one search at a time, in direct conflict with the scout's soft "stop early" plea.
+    The fix is prompt-only (no budget/effort change), in three layers: (1) scout prompt v5 replaces
+    the ignored "stop early" plea with ONE countable ceiling stated once — AT MOST 6 `web_search`
+    calls and 5 URLs, whichever comes first, `web_fetch` unlimited — plus "the named sources are a
+    MENU to sample, not a checklist" and an explicit priority ("when the brief conflicts with the
+    search budget, the budget wins"); (2) `_scout_brief` is now a SHORT wrapper (marks the task as
+    scouting + the angle as topic-plus-menu) rather than re-stacking rules (which gpt-oss reads as
+    conflict); (3) the daily_news angle briefs are SLIMMED to a ~3-source menu with the "at least
+    three / SEPARATELY open / don't conclude empty / pivot" checklist language removed (they feed
+    only the scout in fetch-first mode, so this is safe). Also (from v3): search by topic+outlet,
+    never stuff an exact date into the query (it pulls calendar/almanac pages like "50 fun facts
+    about August").
   - **read** — a fan of the `research_fetch` persona (the READER: `web_fetch` + clock, NO
     `web_search`), ONE reader per angle. The missing search tool is the point: it can't wander off
     searching, so its whole job is the deep read the writer's findings rest on.

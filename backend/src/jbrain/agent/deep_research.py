@@ -778,18 +778,18 @@ def _recommended_urls(summary: str) -> set[str]:
 
 
 def _scout_brief(angle_brief: str) -> str:
-    """Wrap a preset angle in a SCOUTING framing so the scout locates sources instead of trying
-    to write the report. The raw angle briefs say "OPEN and READ three articles and pull the
-    specifics" — that's the READER's job; handed verbatim to a scout it reads as an impossible
-    order and demoralizes it. This reframes the angle as "which pages to LOCATE" while keeping its
-    named-source guidance intact."""
+    """Wrap a preset angle in a tight SCOUTING framing. The angle briefs were written for the
+    all-in-one research persona (they say "open and read at least three of these ~12 sources,
+    cover heavily, don't conclude empty, pivot …") — a checklist that, handed to a scout, drove
+    it to run one search per named outlet (~30-36 searches; MODEL_PROMPTING.md: gpt-oss treats a
+    named list as a to-do list and over-searches on contradictory quotas). The scout PROMPT (v5)
+    now carries the search budget + "sources are a menu, not a checklist" rule, so this wrapper is
+    deliberately SHORT — it just marks the task as scouting and the angle as topic-plus-menu,
+    without re-stacking the rules (which the model reads as conflict)."""
     return (
-        "SCOUTING TASK — find the best SPECIFIC, fetchable article URLs for the angle below. A "
-        "separate reader will open them and write the findings, so you are LOCATING sources, not "
-        "writing the report. Follow leads: open a hub/section/search page to reach the actual "
-        "stories, confirm a candidate is a real on-topic article, and surface its URL. In the "
-        "angle below, wording like 'open and read' or 'pull the specifics' describes what a GOOD "
-        "source covers — for you it means which pages to LOCATE for the reader:\n\n" + angle_brief
+        "SCOUTING TASK. Use the angle below only for its TOPIC and its named sources (a menu to "
+        "sample, not a checklist). Find a handful of specific article URLs within your search "
+        "budget; a reader opens them and writes the findings.\n\n" + angle_brief
     )
 
 
