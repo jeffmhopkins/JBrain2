@@ -1705,9 +1705,10 @@ class DeepResearchService:
                 # strictly WORSE on the gates than the pre-revise draft, in which case keep the
                 # pre-revise text. (Generalizes the old "revise dropped all citations" guard to
                 # every gate while never overruling a legitimate same-or-better semantic revise.)
-                if _gate_score(report, sources, enforce).score < _gate_score(
-                    pre_revise, sources, enforce
-                ).score:
+                if (
+                    _gate_score(report, sources, enforce).score
+                    < _gate_score(pre_revise, sources, enforce).score
+                ):
                     log.warning("deep_research.revise_regressed_gate", reached=len(sources))
                     report = pre_revise
                     revised = False
