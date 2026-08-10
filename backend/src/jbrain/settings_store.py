@@ -8,6 +8,7 @@ the OcrPipeline reads it per job and the Settings screen round-trips it.
 """
 
 import json
+from collections.abc import Sequence
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -160,6 +161,16 @@ BRAIN_READ_ALOUD_ENGINE_DEFAULT: ReadAloudEngine = "piper"
 # /settings/llm/jcode-model PUT validates the id against the live installed +
 # tool-capable choices before storing, so a junk/unprovisioned id can't land here.
 JCODE_MODEL_KEY = "jcode_model"
+
+# Box-exclusivity flag for code mode: while non-empty, it holds the served-model name the
+# coder (jcode) has reserved the unified-memory box for. Set on jcode power ON, cleared on
+# OFF. Read box-wide (via SYSTEM_CTX) by the residency coordinator — which then refuses to
+# load ANY other model (no eviction of the coder, no contending big-model load) — and by the
+# worker loop, which pauses its background job/scheduler work. This makes code mode fully
+# exclusive: on a 128 GB Strix Halo box two ~60 GB models (gpt-oss-120b + the coder) can't
+# co-reside, and a background deep-research load contending with an open jcode session OOM'd
+# the box; reserving the box for the coder removes that contention by construction.
+CODE_MODE_HOLD_KEY = "code_mode_hold_name"
 
 # The planner model for code mode's grok `plan` subagent — the second half of the jcode
 # LLM card. Absent/non-string = "" (unset): the api falls back to the
@@ -517,6 +528,23 @@ class SqlSettingsStore:
         installed + tool-capable choices first); "" clears it back to the default."""
         await self.upsert(ctx, JCODE_MODEL_KEY, model_id)
         return model_id
+
+    async def code_mode_hold_names(self, ctx: SessionContext) -> frozenset[str]:
+        """The served-model names code mode has reserved the box for while it's ON (jcode's own
+        executor + planner), or an empty set when code mode is off. While non-empty, residency
+        refuses to load any OTHER model and the worker pauses its job loop — code mode owns the
+        unified-memory box, which prevents the OOM from a background load contending with it.
+        Defensive: a non-list store, or any non-string / empty entry, is dropped."""
+        raw = await self.get(ctx, CODE_MODE_HOLD_KEY, [])
+        if not isinstance(raw, list):
+            return frozenset()
+        return frozenset(x for x in raw if isinstance(x, str) and x)
+
+    async def set_code_mode_hold_names(
+        self, ctx: SessionContext, served_models: Sequence[str]
+    ) -> None:
+        """Reserve the box for jcode's models (power ON), or release it with [] (OFF / boot)."""
+        await self.upsert(ctx, CODE_MODE_HOLD_KEY, sorted({m for m in served_models if m}))
 
     async def jcode_planner_model(self, ctx: SessionContext) -> str:
         """The stored planner selection for code mode: a served-model id, the

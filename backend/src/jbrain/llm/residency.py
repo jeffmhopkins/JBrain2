@@ -87,6 +87,13 @@ WindowsLoader = Callable[[], Awaitable[Mapping[str, int]]]
 # construction-time config default. Called before every load so a settings-screen change
 # takes effect with no restart; a read failure or junk value degrades to the config default.
 FractionLoader = Callable[[], Awaitable[float | None]]
+# Reads the served-model names code mode has reserved the box for (empty when code mode is
+# off) — jcode's own executor + planner. While non-empty, `ensure_room` refuses to load any
+# model NOT in the set (unless it's already resident) — code mode owns the box, so nothing
+# evicts its models and no contending big model co-loads past physical RAM. Read before every
+# load so toggling code mode takes effect with no restart; a read failure degrades to empty
+# (not held), never blocking a load on a housekeeping hiccup.
+HoldLoader = Callable[[], Awaitable[frozenset[str]]]
 
 
 class ResidencyError(Exception):
@@ -140,6 +147,7 @@ class ResidencyCoordinator:
         enabled: bool = False,
         free_ram_fraction: float = 0.25,
         fraction_loader: FractionLoader | None = None,
+        hold_loader: HoldLoader | None = None,
         box_lock: BoxLock | None = None,
     ) -> None:
         self._gateway = gateway
@@ -153,6 +161,10 @@ class ResidencyCoordinator:
         # loader, or the read fails — so the budget always has a floor.
         self._free_ram_fraction = free_ram_fraction
         self._fraction_loader = fraction_loader
+        # When code mode holds the box, this loads the reserved coder's served name ("" when
+        # code mode is off). While held, `ensure_room` refuses to load any other non-resident
+        # model, so nothing evicts the coder or co-loads a second large model past physical RAM.
+        self._hold_loader = hold_loader
         # Cross-process serialization of the evict+load path (pg_box_lock in production).
         # None → single-process behavior: evict only, and let the client trigger the load.
         # Set → hold the lock across evict AND the target load, so the loaded model's memory
@@ -213,6 +225,19 @@ class ResidencyCoordinator:
             if override is not None and 0.0 < override < 1.0:
                 return override
         return self._free_ram_fraction
+
+    async def _held_names(self) -> frozenset[str]:
+        """The served-model names code mode has reserved the box for, or an empty set (not
+        held). Read per-load so toggling code mode applies immediately; any hiccup degrades to
+        empty — a housekeeping failure must never block a legitimate load (best-effort, like the
+        rest of this coordinator)."""
+        if self._hold_loader is None:
+            return frozenset()
+        with contextlib.suppress(Exception):
+            names = await self._hold_loader()
+            if names:
+                return frozenset(names)
+        return frozenset()
 
     async def _footprint(self, served_model: str, windows: Mapping[str, int]) -> float:
         """A resident model's unified-memory footprint (GiB) at its served window — measured
@@ -337,6 +362,22 @@ class ResidencyCoordinator:
         (the client triggers the load), so single-process/cloud/test callers are unchanged."""
         if not self._enabled:
             return
+        # Code-mode exclusivity: while the box is reserved for code mode, refuse to load ANY
+        # model outside its reserved set (jcode's executor + planner). A model already resident
+        # may keep serving (no new load, no memory pressure), but a NON-resident, non-reserved
+        # model is refused — so nothing evicts code mode's models and no second large model
+        # co-loads past physical RAM (the unified-memory OOM this guards). The reserved models
+        # are exempt (they must be able to (re)load). Checked before the box lock so a refused
+        # load never contends for it.
+        held = await self._held_names()
+        if held and served_model not in held:
+            with contextlib.suppress(Exception):
+                if served_model in await self._gateway.running():
+                    return  # already resident — serving it needs no load
+            raise ResidencyError(
+                f"Code mode is holding the box for {sorted(held)}. Turn code mode off to run "
+                "other models (chat, vision, or background research)."
+            )
         if self._box_lock is None:
             await self._ensure_room_core(served_model, load_target=False)
             return
@@ -423,6 +464,13 @@ class ResidencyCoordinator:
         load against a down/cold gateway is suppressed, so the worst case is a wasted probe,
         never a failed turn."""
         if not self._enabled:
+            return
+        # While code mode holds the box, do NOT opportunistically reload displaced members — a
+        # restore load bypasses ensure_room's refusal, so this is where a stray model could
+        # slip in beside code mode's own. Skip; the members stay displaced and restore once the
+        # hold clears (jcode OFF clears the flag before it fires its own restore, so that path
+        # is unaffected).
+        if await self._held_names():
             return
         targets = set(self._displaced)
         if not targets:

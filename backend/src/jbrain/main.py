@@ -348,6 +348,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.embed_client = TeiEmbedClient(settings.embed_url)
         settings_store = SqlSettingsStore(maker)
         app.state.settings_store = settings_store
+        # Clear any stranded code-mode box reservation at startup. The flag is persisted, but a
+        # crash/reboot mid-code-session (e.g. earlyoom killing a process — the very incident this
+        # guards) would otherwise leave it set with no code session running, wedging the box:
+        # residency would refuse every load and the worker would stay paused, while the launcher
+        # shows code mode OFF (it reads live service state, not the flag). Boot is a safe reset —
+        # no model is warm yet — so releasing here can only cost a re-toggle if a session really
+        # was live across the restart, never a permanent wedge. Best-effort; a DB hiccup here
+        # must not block startup (the reservation simply isn't cleared, no worse than today).
+        with suppress(Exception):
+            await settings_store.set_code_mode_hold_names(SYSTEM_CTX, [])
         # Admin client for the local-model gateway (runtime loaded-state + unload).
         # Best-effort; the settings screen tolerates it being unreachable.
         app.state.local_gateway = LocalGatewayClient(settings.local_llm_url)
@@ -368,6 +378,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # free_ram_fraction config default above when unset. Read per load, so a change
             # applies with no restart. Wired identically in the worker (jbrain.worker).
             fraction_loader=lambda: settings_store.llm_local_free_ram_fraction(SYSTEM_CTX),
+            # Code-mode box reservation (jcode power ON writes it): while set, ensure_room
+            # refuses to load any model outside code mode's reserved set, so nothing evicts its
+            # models or co-loads past physical RAM. Read per load (SYSTEM_CTX), identically
+            # wired in the worker.
+            hold_loader=lambda: settings_store.code_mode_hold_names(SYSTEM_CTX),
             # Serialize evict+load against the worker process (which runs its own coordinator
             # over the same box) so a deferred worker load can't co-load past the floor here.
             box_lock=pg_box_lock(maker),
