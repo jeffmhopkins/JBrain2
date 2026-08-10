@@ -164,6 +164,27 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   Space-Coast utility the review found missing. The two fetch-layer contributors above (per-angle
   read cap, Reuters CAPTCHA) remain open.
 
+  **Citation apparatus moved from prompt to engine (`dr-synth-v16`).** The v15 prose rules did not
+  hold: the very next run DROPPED the `## Sources` block entirely (gpt-oss won't reliably do the
+  list bookkeeping, exactly as MODEL_PROMPTING predicts). A 7-researcher design sweep converged on
+  keeping the writer in-process (rejecting a spawned-writer — it breaks the `ROOT_RESERVE`
+  synthesis-always-completes budget invariant — and structured/typed output — it kills the live
+  stream and is fragile at a 12k-token brief) and enforcing the citation apparatus in code:
+  `_finalize_sources` rebuilds the trailing `## Sources` block as a NO-RENUMBER projection of the
+  in-body `[^n]` markers (both ASCII and fullwidth `【n】`, via `reflexion.cited_indices`) onto the
+  curated source registry, run once after the revise settles and before persist/return/view — so
+  duplicate defs, orphan entries, a missing block, and out-of-range markers are impossible by
+  construction, and the positional `[^n]`→`sources[n-1]` contract (persisted chips, view
+  `web_sources`) is untouched. The one-shot `_backstop_critique` became a scored gate set
+  (`_draft_gates` → `VerificationResult`): the existing zero-citation + missing-heading gates plus
+  a new dangling-citation gate (a marker past the registry — the one citation defect code can
+  detect but not fix), with a keep-the-better-attempt guard (`reflexion.strictly_improves`) on the
+  single corrective re-synth and on the revise (regression-only, generalizing the old
+  "revise dropped all citations" check). The prompt (v16) stops asking the writer to author or
+  reconcile the list. Freshness-as-today and over-length were deliberately NOT made code gates (no
+  finalize-time ground truth for staleness; length is whole-report-neutral by design) — they stay
+  with the reader date-stamp and the fuzzy `_critique`.
+
   **Owner-local, time-of-day-aware dates.** `_run_preset` reads the owner's stored timezone
   (`SettingsStore.owner_timezone`, fallback UTC) and auto-supplies two variables: `{{today}}` (the
   owner-local calendar day — an evening run in US Eastern is already the next UTC day, so a UTC date

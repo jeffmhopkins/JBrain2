@@ -27,6 +27,9 @@ from jbrain.agent.deep_research import (
     _canonical_url,
     _coerce_brief,
     _collect_sources,
+    _dangling_markers,
+    _finalize_sources,
+    _gate_score,
     _missing_headings,
     _sources_block,
 )
@@ -982,6 +985,16 @@ async def test_zero_citation_backstop_silent_when_draft_already_cited() -> None:
     assert "[^1]" in out.view.data["report_md"]  # type: ignore[attr-defined]
 
 
+async def test_run_appends_deterministic_sources_block() -> None:
+    """End-to-end: whatever the writer emits, the shipped report_md carries a code-built
+    `## Sources` block mirroring the in-body `[^n]` — the writer no longer owns the list."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())  # draft cites [^1]
+    spawn = _FakeSpawn(sources_per_child=2, critique_ok=False)
+    out = await _svc(router, spawn).research(_ctx(), {"question": "q"})
+    md = out.view.data["report_md"]  # type: ignore[attr-defined]
+    assert "## Sources" in md and "[^1]" in md.split("## Sources")[1]  # appended by the engine
+
+
 def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     """Guard the must-cite / all-noise-escape instructions against silent prose drift — the
     behavioral core of the citation fix. Whitespace-normalized so line-wrapping doesn't break a
@@ -989,7 +1002,7 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     enforces the zero-citation case deterministically, so the prompt no longer stacks it.)"""
     from jbrain.agent.deep_research import _SYNTH
 
-    assert _SYNTH.version == "dr-synth-v15"  # pin the version bump (parity with the plan test)
+    assert _SYNTH.version == "dr-synth-v16"  # pin the version bump (parity with the plan test)
     synth = " ".join(_SYNTH.body.lower().split())
     assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
     assert "sources this finding drew on" in synth  # v12/P1.5: the per-finding claim→source binding
@@ -1004,12 +1017,15 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     # section empty when on-topic findings exist for it (the delivered-content twin of absence).
     assert "earn brevity by keeping each item tight" in synth
     assert "no x appeared in the sources" in synth  # the false-empty claim the rule bans
-    # v15 (citation hygiene + no cross-section recycling): each source gets ONE number, the
-    # `## Sources` list mirrors the body one-to-one (no duplicate/orphan entries), and a
-    # section with no distinct finding is declared, never padded by recycling a neighbour.
-    assert "one number per source" in synth  # dedup: no duplicate [^n] definitions
-    assert "no orphan entry the prose never references" in synth  # bijection body↔list
+    # v15 (no cross-section recycling): a section with no distinct finding is declared, never
+    # padded by recycling a neighbour.
     assert "belongs to one section" in synth  # no cross-section restatement to fill a section
+    # v16 (citation hygiene moved to CODE): the writer keeps the one-number-per-source body
+    # discipline, but the `## Sources` list is now machine-appended (_finalize_sources), so the
+    # prompt STOPS asking the model to author/reconcile it — the instruction it kept botching.
+    assert "one number per source" in synth  # body-marker discipline stays
+    assert "appended for you automatically" in synth  # the list is code-owned now
+    assert "no orphan entry the prose never references" not in synth  # retired: code enforces it
 
 
 # --- report depth: the synthesizer is handed a length target by complexity --
@@ -2004,6 +2020,64 @@ def test_backstop_critique_combines_citation_and_heading_symptoms() -> None:
     assert _backstop_critique("# Summary [^1]", srcs, ["Summary"]) == ""
     # No sources → citation half is inert; no enforced sections → heading half inert.
     assert _backstop_critique("uncited", [], []) == ""
+
+
+def _reg(n: int) -> list[WebSource]:
+    return [WebSource(url=f"https://ex.com/{i}", title=f"Source {i}") for i in range(1, n + 1)]
+
+
+def test_finalize_sources_rebuilds_missing_block() -> None:
+    # run 9af52cab shape: body cites markers but the writer dropped the `## Sources` block.
+    report = "Body text [^2] and more [^1].\n\n### That's Your Briefing\nBye."
+    out = _finalize_sources(report, _reg(3))
+    assert out.rstrip().endswith("## Sources\n[^1] Source 1\n[^2] Source 2")  # appended, ascending
+    assert "[^3]" not in out.split("## Sources")[1]  # only CITED sources listed (no orphans)
+
+
+def test_finalize_sources_dedupes_and_drops_model_block() -> None:
+    # run 2e2cc531 shape: duplicate `[^22]`/`[^38]` defs + an orphan `[^37]` in a model block.
+    report = (
+        "OpenAI news [^2][^2] and a launch [^1].\n\n"
+        "## Sources\n[^1] X\n[^2] Y\n[^2] (duplicate for OpenAI) — openai.com\n"
+        "[^3] orphan never cited"
+    )
+    out = _finalize_sources(report, _reg(3))
+    block = out.split("## Sources")[1]
+    assert block.count("[^1]") == 1 and block.count("[^2]") == 1  # one def per source, no dup
+    assert "[^3]" not in block  # orphan (uncited) dropped
+    assert "duplicate" not in out  # the model's "(duplicate …)" line is gone
+
+
+def test_finalize_sources_drops_out_of_range_and_reads_fullwidth() -> None:
+    # A hallucinated [^99] (only 3 sources) is never fabricated into a block line; the fullwidth
+    # 【3】 form is still read as a citation (chips render both, the block writes ASCII).
+    report = "Real [^1], invented [^99], fullwidth 【3】."
+    out = _finalize_sources(report, _reg(3))
+    block = out.split("## Sources")[1]
+    assert "[^1]" in block and "[^3]" in block and "[^99]" not in block
+
+
+def test_finalize_sources_no_block_when_uncited() -> None:
+    # The honest all-noise / uncited case: zero resolvable markers ⇒ no `## Sources` heading at all
+    # (an empty block is worse than none), and any stray model block is stripped.
+    assert "## Sources" not in _finalize_sources("No citations here.", _reg(3))
+    assert "## Sources" not in _finalize_sources("Uncited.\n\n## Sources\n(stale)", _reg(3))
+
+
+def test_finalize_sources_is_idempotent_and_preserves_a_prior_section() -> None:
+    report = "Body [^1].\n\n## Methods and data sources\nnotes\n\n## Sources\n[^1] stale line"
+    once = _finalize_sources(report, _reg(1))
+    assert once == _finalize_sources(once, _reg(1))  # stable under re-application
+    assert "## Methods and data sources" in once  # exact-text match never eats a mid-doc heading
+
+
+def test_dangling_markers_and_gate_score() -> None:
+    srcs = _reg(3)
+    assert _dangling_markers("cites [^1] [^3]", srcs) == []  # all in range
+    assert _dangling_markers("cites [^1] [^9] [^0]", srcs) == [0, 9]  # out of range, ascending
+    # A draft with a dangling marker scores strictly below a clean one → drives the corrective
+    # re-synth and the keep-the-better-attempt guard.
+    assert _gate_score("clean [^1]", srcs, []).score > _gate_score("bad [^1] [^9]", srcs, []).score
 
 
 def test_sources_block_flags_search_only_entries_and_leaves_read_ones_clean() -> None:
