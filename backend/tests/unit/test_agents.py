@@ -359,12 +359,12 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
         ),
         "research": (
-            "agent-research-v15",
-            "2583f0a5be2b2dcc791749e87c472e8a8d6e23e690f9bab6f2d5c618fbd3a0fa",
+            "agent-research-v16",
+            "495de77a56f5bdd5bec9387ad64febb688363d53724d36ad0427f5b4a9c33bac",
         ),
         "review": (
-            "agent-review-v7",
-            "8f44bdf137df1101768b14978439eb31d59951c7bb0e8ac99b1f6faa3485692a",
+            "agent-review-v8",
+            "af54a4fdee68266e8ba6b5494bed81f6a9ebd67bb5f024f51eca9632a5133e17",
         ),
         "summarize": (
             "agent-summarize-v2",
@@ -395,8 +395,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "487ddb5461ab4b7040bcc894ca13d6d0819632c624ee8c1a0518ce90fbad24df",
         ),
         "research_scout": (
-            "agent-research-scout-v4",
-            "33df8ef9844ba79719e8c54acb4f31dc443e8d2704a4b1b3e844fb34b9dc4107",
+            "agent-research-scout-v5",
+            "e087b9f71a9f1012d2438a780587f62616e7320fc42549e1b693a3240548dd43",
         ),
         "research_fetch": (
             "agent-research-fetch-v1",

@@ -1,6 +1,25 @@
 # Model prompting reference — gpt-oss-120b & Qwen3-VL-30B
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-08-10
+
+> **Applied (2026-08-10):** a live daily-news run exposed the deep-research scout over-searching
+> (34-36 `web_search` calls/angle), and a parallel audit checked the whole deep-research prompt
+> set against this guide. Fixes that landed, all keyed to the gpt-oss behaviours below: the
+> `research_scout` prompt (v5) traded a soft "stop early" plea for a countable ceiling and marks
+> the angle's named sources a MENU not a checklist (contradiction-sensitivity + "exhaustive
+> inflates"); the daily_news angle briefs were slimmed to remove the "at least three / don't
+> conclude empty / pivot" checklist; the synthesizer (`dr-synth-v13`) was made length-NEUTRAL so
+> the per-run target line wins (it no longer hard-codes "8-10 pages / comprehensive", which fought
+> the `brief`/spoken target), then (`dr-synth-v14`) given a countable coverage rule after a live
+> run showed the writer compress ~13k of delivered reader findings into a 3k brief that declared
+> whole sections empty (dropping an AI-model update, a Senate primary, and two completed launches
+> the readers HAD fetched): brevity is now earned by keeping each delivered item tight, never by
+> dropping items, and "no X appeared in the sources" is banned whenever a finding delivered an X
+> (the delivered-content twin of the absence rule — "obeys countable output-shape rules"); the
+> `_critique` grounding gate was collapsed to one bounded,
+> prioritized pass and its double-`FIRST` removed; and `research` (v16) / `review` (v8) had their
+> stacked URL/verify restatements collapsed and a "highest-risk first" priority stated. The clean
+> in-repo templates the audit pointed to: the planner, the reflect judge, and the `_analyze` brief.
 
 Behavioural notes and prompting guidance for the two local models this box runs,
 so that every `.prompt` we write is shaped to the model that will actually

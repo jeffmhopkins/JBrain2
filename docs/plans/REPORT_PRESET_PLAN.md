@@ -92,10 +92,24 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
     merely OPENED to navigate is kept OUT of the read set. This is the fix for a live briefing that
     read three blogs the scout only used to *find* the news (`spacereport.blogspot`, a WordPress "AI
     news bulletin board", a local-news home page) instead of the AP/Reuters/operator primaries it had
-    actually located. The scout prompt is also BOUNDED (v3): search by topic+outlet — never stuff an
-    exact date into the query, which pulls calendar/almanac pages ("50 fun facts about August") — and
-    STOP after ~3-5 confirmed leads rather than an exhaustive sweep (a live run over-searched 20-34
-    times per angle, a 26-minute scout phase).
+    actually located. The scout is also BOUNDED (v5) against over-searching — a live run had each
+    scout run 34-36 `web_search` calls (a ~26-minute scout phase). Three gpt-oss-120b prompting
+    researchers (armed with `docs/reference/MODEL_PROMPTING.md`) traced it to that model's
+    contradiction-sensitivity: the scout received the angle briefs, written for the all-in-one
+    research persona ("open and READ at least three of these ~12 sources, cover HEAVILY, don't
+    conclude a category empty, pivot to another outlet if one blocks") — a named-source CHECKLIST the
+    model swept one search at a time, in direct conflict with the scout's soft "stop early" plea.
+    The fix is prompt-only (no budget/effort change), in three layers: (1) scout prompt v5 replaces
+    the ignored "stop early" plea with ONE countable ceiling stated once — AT MOST 6 `web_search`
+    calls and 5 URLs, whichever comes first, `web_fetch` unlimited — plus "the named sources are a
+    MENU to sample, not a checklist" and an explicit priority ("when the brief conflicts with the
+    search budget, the budget wins"); (2) `_scout_brief` is now a SHORT wrapper (marks the task as
+    scouting + the angle as topic-plus-menu) rather than re-stacking rules (which gpt-oss reads as
+    conflict); (3) the daily_news angle briefs are SLIMMED to a ~3-source menu with the "at least
+    three / SEPARATELY open / don't conclude empty / pivot" checklist language removed (they feed
+    only the scout in fetch-first mode, so this is safe). Also (from v3): search by topic+outlet,
+    never stuff an exact date into the query (it pulls calendar/almanac pages like "50 fun facts
+    about August").
   - **read** — a fan of the `research_fetch` persona (the READER: `web_fetch` + clock, NO
     `web_search`), ONE reader per angle. The missing search tool is the point: it can't wander off
     searching, so its whole job is the deep read the writer's findings rest on.
@@ -112,6 +126,24 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   (via `min_reads`; `daily_news` sets 12) because it suits fetch-light NEWS-style gathering ("find
   articles, read them") but NOT investigative research, which needs the plain `research` persona's
   interleaved `web_search` + `portal_search` + verify-an-absence loop (candidate_profile).
+
+  **Synth must not drop what the readers delivered (`dr-synth-v14`).** A live daily-news run
+  (2026-08-10) laid the real depth loss bare in the logs: the five readers returned ~13k chars of
+  specific, on-topic findings — the GPT-5.6 Sol update (Aug 6), the Minnesota Senate primary, the
+  New York Harbor boat deaths, two completed launches — yet the writer emitted a 3,093-char brief
+  that KEPT four items and declared three whole sections empty, even printing "the sources did not
+  include a new AI model release" while a reader had handed it exactly that. The drop was at
+  SYNTHESIS, not gather (and it was inconsistent: it kept a same-vintage Pentagon story while cutting
+  the others). The shared synth prompt's length rule let brevity be earned by CUTTING items; v14 adds
+  one countable coverage rule — a multi-topic brief covers every distinct story a finding delivered,
+  each held to the target's length (two-three spoken sentences), and "no X appeared in the sources"
+  is banned the moment a finding delivered an X (the delivered-content twin of the existing absence
+  rule; gpt-oss "obeys countable output-shape rules"). A recency target orders and picks the lead,
+  it does not licence silently dropping a delivered on-topic item. (Two adjacent contributors seen in
+  the same logs are left for a follow-up per the owner: the per-angle read cap `ceil(min_reads/angles)`
+  truncated accessible recommendations — an AP Fed-rates story, Claude Sonnet 5 — before the read
+  stage, and Reuters CAPTCHA-blocked every World/Economy fetch, hollowing those sections at the
+  fetch layer rather than the writer.)
 
   **Owner-local, time-of-day-aware dates.** `_run_preset` reads the owner's stored timezone
   (`SettingsStore.owner_timezone`, fallback UTC) and auto-supplies two variables: `{{today}}` (the
