@@ -300,6 +300,13 @@ FETCH_TOOLS = frozenset({"web_fetch", "current_time"})
 # so the scout can still follow a hub to the real article. Keep this in sync with the number the
 # research_scout prompt states.
 SCOUT_SEARCH_BUDGET = 8
+# The scout's HARD `web_fetch` ceiling, also engine-enforced. Capping search alone just moved
+# the runaway to fetches — a live run showed one scout open 23 pages through the reader fallback
+# over ~10 min while its 4 peers finished in 2-3 min. 10 lets a scout confirm a handful of leads
+# and follow a hub or two to the real articles; past it, the fetch handler refuses and tells the
+# scout to return its sources. Looser than the search cap (fetching IS the scout's confirm step),
+# but bounded so no single scout can drag the whole scout phase.
+SCOUT_FETCH_BUDGET = 10
 # research_deep: the TASK-AGENT tier of a deepest-research run (max_depth=2). Identical to
 # `research` — same web sandbox, no KB, no location — PLUS the one-shot `decompose_research`
 # tool, so a task agent may split a genuinely compound sub-question into a bounded fan of
@@ -370,11 +377,13 @@ class AgentProfile:
     tools: frozenset[str] | None
     reads_knowledge_base: bool
     budget_multiplier: int = 1
-    # A hard per-run `web_search` ceiling the engine enforces for this persona (None = uncapped,
-    # the default). Only the scout sets it: its prompt states a search budget gpt-oss ignores, so
-    # the loop counts calls against this and refuses past it (SearchBudget in loop.py). `web_fetch`
-    # is never capped by it.
+    # Hard per-run `web_search` / `web_fetch` ceilings the engine enforces for this persona
+    # (None = uncapped, the default). Only the scout sets them: its prompt states budgets gpt-oss
+    # ignores, so the loop counts calls against these and refuses past them (ToolCallBudget in
+    # loop.py). The reader (`research_fetch`) is deliberately left uncapped — it must open every
+    # URL it is handed.
     search_budget: int | None = None
+    fetch_budget: int | None = None
     # A per-persona grant of otherwise-excluded tools, admitted ahead of the registry's
     # web/NEVER_DEFAULT gates (toolregistry._admits `extra`). Lets a `tools=None` wildcard
     # agent hold ONE such tool without widening the wildcard for every web/spawn tool —
@@ -392,6 +401,7 @@ def _profile(
     budget_multiplier: int = 1,
     extra_tools: frozenset[str] = frozenset(),
     search_budget: int | None = None,
+    fetch_budget: int | None = None,
 ) -> AgentProfile:
     pf = load_prompt(_PROMPTS / filename)
     return AgentProfile(
@@ -404,6 +414,7 @@ def _profile(
         budget_multiplier=budget_multiplier,
         extra_tools=extra_tools,
         search_budget=search_budget,
+        fetch_budget=fetch_budget,
     )
 
 
@@ -470,6 +481,7 @@ AGENTS: dict[str, AgentProfile] = {
         reads_knowledge_base=False,
         budget_multiplier=2,
         search_budget=SCOUT_SEARCH_BUDGET,
+        fetch_budget=SCOUT_FETCH_BUDGET,
     ),
     "research_fetch": _profile(
         "research_fetch",

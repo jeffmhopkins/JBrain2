@@ -11,12 +11,15 @@
 > hold — the scouts still ran 12-27 `web_search` calls each, straight to the effort-scaled step
 > cap (~42 tool calls, ~11 min for the worst) — confirming a prompt-stated tool budget is not
 > self-enforcing on gpt-oss (it does not reliably count its own tool calls). So the ceiling moved
-> into the **engine**: `SearchBudget` (loop.py) hard-caps `web_search` at `SCOUT_SEARCH_BUDGET`
+> into the **engine**: `ToolCallBudget` (loop.py) hard-caps `web_search` at `SCOUT_SEARCH_BUDGET`
 > (8), the handler refuses calls past it and appends the remaining count to every result, and the
-> prompt (v6) states the same 8 and notes it is enforced. `web_fetch` stays uncapped (a scout
-> must follow a hub to the real article). The lesson generalizes — see "Prompt budgets need an
-> engine backstop" under *Behaviours to design around*. The daily_news angle briefs were slimmed
-> to remove the "at least three / don't
+> prompt (v6) states the same 8 and notes it is enforced. A **third** run then showed capping
+> search alone just moved the runaway to `web_fetch` — one scout looped to 23 reads (~10 min via
+> the reader fallback) while its 4 peers finished in 2-3 min — so `web_fetch` got the same engine
+> cap at `SCOUT_FETCH_BUDGET` (10) and the prompt (v7) states both. The reader (`research_fetch`)
+> stays uncapped — it must open every URL it is handed. The lesson generalizes — see "Prompt
+> budgets need an engine backstop" under *Behaviours to design around*. The daily_news angle
+> briefs were slimmed to remove the "at least three / don't
 > conclude empty / pivot" checklist; the synthesizer (`dr-synth-v13`) was made length-NEUTRAL so
 > the per-run target line wins (it no longer hard-codes "8-10 pages / comprehensive", which fought
 > the `brief`/spoken target), then (`dr-synth-v14`) given a countable coverage rule after a live
@@ -151,8 +154,11 @@ response format and emits a hidden chain-of-thought before its answer.
   reliably count its own tool calls and will run to the step cap regardless (the
   research scout kept over-searching under a v5 prompt that plainly said "AT MOST 6").
   When a tool-call count actually matters, enforce it in the loop/handler and let the
-  prompt merely describe it — `SearchBudget` (loop.py) caps the scout's `web_search`
-  and annotates each result with the remaining count. Prompt = intent; engine = ceiling.
+  prompt merely describe it — `ToolCallBudget` (loop.py) caps the scout's `web_search`
+  (8) and `web_fetch` (10) and annotates each result with the remaining count. Prompt =
+  intent; engine = ceiling. Expect whack-a-mole: capping one tool moved the scout's
+  runaway from searches to fetches, so both needed a ceiling — cap the *behaviour*
+  (total reach), not just the first symptom.
 - **"Be exhaustive / comprehensive" inflates verbosity.** These phrases produce
   padded output. Ask for *tight*, *focused*, *lead-with-the-answer* instead.
 - **Never instruct or reference the hidden chain-of-thought.** Do not tell it to

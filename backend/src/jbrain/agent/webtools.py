@@ -294,6 +294,17 @@ def _present_result(
     return _present_fetch(result, url, offset, find, find_regex)
 
 
+def _with_budget_note(out: str, note: str) -> str:
+    """Append a tool-budget note to a handler result while preserving a ToolOutput's
+    `web_sources` (a fetched page stays citable). Plain-str results just get the text
+    appended. A web_fetch ToolOutput only ever carries web_sources (see `_present_fetch`)."""
+    if not note:
+        return out
+    if isinstance(out, ToolOutput):
+        return ToolOutput(str(out) + note, web_sources=out.web_sources)
+    return out + note
+
+
 def build_web_handlers(
     search: SearxngClient,
     fetcher: WebFetcher,
@@ -473,6 +484,34 @@ def build_web_handlers(
                 )
         if method not in ("GET", "POST"):
             return "web_fetch method must be GET or POST."
+        # Hard fetch budget (scouts only; None = uncapped). Once web_search was capped, the
+        # scout's fetch loop became the new runaway — one scout pulled 23 pages through the
+        # reader fallback in ~10 min — so bound the reads too. web_fetch is the reader's
+        # lifeblood, so this ceiling is looser than search's; past it, refuse WITHOUT a network
+        # read and tell the scout to return its sources. Counted HERE, after arg validation, so
+        # only real fetch ATTEMPTS spend the budget (a bad-args return never does).
+        fbudget = ctx.fetch_budget
+        if fbudget is not None and fbudget.exhausted:
+            return (
+                f"FETCH BUDGET SPENT — you have opened all {fbudget.limit} of your web_fetch "
+                "pages and cannot fetch again. Stop opening pages. From what you have already "
+                "read, END your reply with the RECOMMENDED SOURCES: block (the best article "
+                "URLs you reached)."
+            )
+        if fbudget is not None:
+            fbudget.used += 1
+        fetch_note = ""
+        if fbudget is not None:
+            left = fbudget.remaining
+            fetch_note = (
+                f"\n\n[FETCH BUDGET: {left} web_fetch call(s) left of {fbudget.limit}"
+                + (
+                    " — that was your LAST page; stop fetching and return your RECOMMENDED SOURCES."
+                    if left == 0
+                    else "."
+                )
+                + "]"
+            )
         # A POST hits a JSON/search API endpoint the GET-only path can't. It does NOT take the
         # youtube path (a bare API call, not a video page) nor the failed-fetch backstop (that
         # keys a dead GET URL; the same endpoint is legitimately POSTed with different bodies) —
@@ -501,16 +540,19 @@ def build_web_handlers(
                 )
             except WebFetchError as exc:
                 await _record_block(url, exc)
-                return str(exc)
+                return _with_budget_note(str(exc), fetch_note)
             await _remember(ctx, result, url, "web_fetch")
-            return _present_result(
-                result,
-                url=url,
-                offset=offset,
-                find=find,
-                find_regex=find_regex,
-                outline_only=outline_only,
-                extract=extract,
+            return _with_budget_note(
+                _present_result(
+                    result,
+                    url=url,
+                    offset=offset,
+                    find=find,
+                    find_regex=find_regex,
+                    outline_only=outline_only,
+                    extract=extract,
+                ),
+                fetch_note,
             )
         # A YouTube URL reads as a lightweight title+channel+description+captions view (no media
         # download, no GPU) that pages/keyword-jumps like any page. A None result (unresolvable —
@@ -525,14 +567,17 @@ def build_web_handlers(
                     markdown, url=url, title=title, offset=offset, find=find, find_regex=find_regex
                 )
                 await _remember(ctx, result, url, "youtube")
-                return _present_result(
-                    result,
-                    url=url,
-                    offset=offset,
-                    find=find,
-                    find_regex=find_regex,
-                    outline_only=outline_only,
-                    extract=extract,
+                return _with_budget_note(
+                    _present_result(
+                        result,
+                        url=url,
+                        offset=offset,
+                        find=find,
+                        find_regex=find_regex,
+                        outline_only=outline_only,
+                        extract=extract,
+                    ),
+                    fetch_note,
                 )
         # Break the re-fetch loop: a URL that already failed this turn (a 404 the model
         # keeps reconstructing, a bot-wall) will keep failing, so refuse it without a
@@ -542,10 +587,11 @@ def build_web_handlers(
         prior = ctx.failed_fetches.get(key)
         if prior is not None:
             status = f"HTTP {prior}" if prior else "an error"
-            return (
+            return _with_budget_note(
                 f"You already fetched {url} this turn and it returned {status}. It will keep"
                 " failing — do not fetch it again. If it was a 404 the page does not exist at"
-                " that URL; web_search for the correct page (or a different source) instead."
+                " that URL; web_search for the correct page (or a different source) instead.",
+                fetch_note,
             )
         if emit:
             emit("web_fetch", url)
@@ -558,16 +604,19 @@ def build_web_handlers(
             # skip list so later fetches/searches across turns skip it (best-effort, no-op for
             # a transient glitch / 404 / search form).
             await _record_block(url, exc)
-            return str(exc)
+            return _with_budget_note(str(exc), fetch_note)
         await _remember(ctx, result, url, "web_fetch")
-        return _present_result(
-            result,
-            url=url,
-            offset=offset,
-            find=find,
-            find_regex=find_regex,
-            outline_only=outline_only,
-            extract=extract,
+        return _with_budget_note(
+            _present_result(
+                result,
+                url=url,
+                offset=offset,
+                find=find,
+                find_regex=find_regex,
+                outline_only=outline_only,
+                extract=extract,
+            ),
+            fetch_note,
         )
 
     async def read_artifact_tool(arguments: dict, ctx: ToolContext) -> str:

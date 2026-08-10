@@ -1076,9 +1076,11 @@ class SpawnService:
                         # The spawner's per-child reasoning effort (the router drops it
                         # for a non-reasoning child model).
                         reasoning_effort=plan.effort,
-                        # The persona's hard web_search ceiling (only the scout sets one) —
-                        # the engine-level cap the scout's prompt budget can't enforce alone.
+                        # The persona's hard web_search / web_fetch ceilings (only the scout
+                        # sets them) — the engine-level caps the scout's prompt budgets can't
+                        # enforce alone.
                         search_budget=profile.search_budget,
+                        fetch_budget=profile.fetch_budget,
                         # On step exhaustion, synthesize a final answer from what was
                         # gathered rather than returning an empty "(no answer)".
                         force_final_answer=True,
