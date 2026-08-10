@@ -240,7 +240,7 @@ class _FakeSpawn:
         # (the compare carries no fresh citations), so it never attaches a WebSource below.
         emits_sources = is_research and persona != "research_reports"
         # Only the READER phase (research_fetch) actually OPENS pages: its sources are `read`,
-        # the scout's search hits are not — exactly the flag `_candidate_pool` selects on.
+        # the scout's search hits are not (though a scout that followed a lead marks some `read`).
         read_flag = is_reader
         if is_review:
             ok = self.analyst_ok if first_label == "cross-check" else self.critique_ok
@@ -1836,6 +1836,11 @@ async def test_fetch_first_preset_scouts_then_reads() -> None:
     assert len(scout["briefs"]) == 5
     reader = next(f for f in spawn.fans if f["persona"] == "research_fetch")
     assert "Pages to open:" in reader["briefs"][0][1] and "ex.com" in reader["briefs"][0][1]
+    # One reader per angle, each NAMED after its angle (not a generic "read 3") — the reader
+    # labels are the scout's angle titles, so the UI row reads "Space industry…".
+    scout_titles = [title for title, _ in scout["briefs"]]
+    reader_titles = [title for title, _ in reader["briefs"]]
+    assert reader_titles == scout_titles
     # No coverage/refill loop on a fetch-first run.
     assert not _reflected(router)
     # The analyst + critique still run.
@@ -1877,55 +1882,45 @@ async def test_non_fetch_first_preset_keeps_the_single_pass_gather() -> None:
     assert "research_scout" not in personas and "research_fetch" not in personas
 
 
-async def test_candidate_pool_round_robins_across_angles() -> None:
-    """The reader candidates are interleaved one-per-angle (round-robin) so a tight read budget
-    still touches every category, not just the first angle's list. With no embedder the per-angle
-    order is preserved, so the interleave is deterministic."""
-    svc = _svc(_FakeRouter(), _FakeSpawn())  # embed=None → ranking is identity
-
-    def scout(label: str, n: int) -> _ChildResult:
-        return _ChildResult(
-            label=label,
-            persona="research_scout",
-            summary="scouted",
-            ok=True,
-            session_id=f"s-{label}",
-            web_sources=tuple(
-                WebSource(url=f"https://{label}.com/{k}", title=f"{label}{k}", read=False)
-                for k in range(n)
-            ),
-        )
-
-    pool = await svc._candidate_pool("q", [scout("a", 3), scout("b", 2), scout("c", 1)])
-    # Round-robin: a0, b0, c0, a1, b1, a2 — one per angle before any angle's second.
-    assert [ws.url for ws in pool] == [
-        "https://a.com/0",
-        "https://b.com/0",
-        "https://c.com/0",
-        "https://a.com/1",
-        "https://b.com/1",
-        "https://a.com/2",
-    ]
-
-
-async def test_candidate_pool_includes_urls_the_scout_opened() -> None:
-    """Option B: a scout can FETCH to follow a lead, so a URL it opened (read=True — e.g. a
-    confirmed article) is a recommendation too and must land in the pool, not just its unopened
-    search hits. Otherwise a scout that verified its best sources would hand the readers nothing."""
-    svc = _svc(_FakeRouter(), _FakeSpawn())
-    scout = _ChildResult(
-        label="a",
+def _scout(label: str, urls: list[tuple[str, bool]]) -> _ChildResult:
+    return _ChildResult(
+        label=label,
         persona="research_scout",
         summary="scouted",
         ok=True,
-        session_id="s-a",
-        web_sources=(
-            WebSource(url="https://a.com/hit", title="search hit", read=False),
-            WebSource(url="https://a.com/opened", title="confirmed article", read=True),
-        ),
+        session_id=f"s-{label}",
+        web_sources=tuple(WebSource(url=u, title=u, read=r) for u, r in urls),
     )
-    urls = {ws.url for ws in await svc._candidate_pool("q", [scout])}
-    assert urls == {"https://a.com/hit", "https://a.com/opened"}
+
+
+async def test_angle_candidates_are_grouped_and_labelled_by_angle() -> None:
+    """Each reader group is one angle's URLs paired with the angle's title (which becomes the
+    reader child's label — so the reader row is named after its scout, not a generic 'read 3'),
+    and the per-angle cap spreads the read target evenly (ceil(target/angles))."""
+    svc = _svc(_FakeRouter(), _FakeSpawn())  # embed=None → ranking is identity
+    scouts = [
+        _scout("Space", [("https://s.com/0", False), ("https://s.com/1", False)]),
+        _scout("Economy", [("https://e.com/0", False)]),
+    ]
+    groups = await svc._angle_candidates("q", scouts, read_target=4)  # ceil(4/2)=2 per angle
+    labels = [title for title, _ in groups]
+    assert labels == ["Space", "Economy"]  # named after the angles, in order
+    assert [ws.url for ws in dict(groups)["Space"]] == ["https://s.com/0", "https://s.com/1"]
+    assert [ws.url for ws in dict(groups)["Economy"]] == ["https://e.com/0"]
+
+
+async def test_angle_candidates_include_opened_urls_and_dedupe_across_angles() -> None:
+    """Option B: a URL the scout OPENED (read=True — a confirmed article) is a recommendation too,
+    so it's eligible. And a URL two angles both surface is read by only ONE reader (the first
+    angle keeps it), so the readers never double-open the same page."""
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    scouts = [
+        _scout("A", [("https://x.com/shared", False), ("https://a.com/opened", True)]),
+        _scout("B", [("https://x.com/shared", False), ("https://b.com/only", False)]),
+    ]
+    groups = dict(await svc._angle_candidates("q", scouts, read_target=10))
+    assert {ws.url for ws in groups["A"]} == {"https://x.com/shared", "https://a.com/opened"}
+    assert {ws.url for ws in groups["B"]} == {"https://b.com/only"}  # shared went to A, not B
 
 
 async def test_web_critique_runs_a_grounding_sweep_that_flags_fabrications_to_cut() -> None:

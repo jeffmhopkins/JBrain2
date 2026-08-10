@@ -82,19 +82,25 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
     `web_fetch` + clock), one child per angle. It searches AND FOLLOWS LEADS — opening a
     hub/section/search page to reach the *specific* article URLs behind it, and briefly confirming
     a candidate is a real, on-topic, fetchable article — then surfaces those URLs. Its PROSE is
-    DISCARDED (only the URLs it TOUCHED become candidates, via `_candidate_pool`), so it can never
+    DISCARDED (only the URLs it TOUCHED become candidates, via `_angle_candidates`), so it can never
     leak a snippet claim; but with fetch it hands the reader real article URLs instead of a hub the
     reader would only see headlines on. (The split is by ROLE, not a hard tool line — the earlier
     search-only scout was handed the reader's "open and read the articles" brief, which it had no
-    tool for, so it flailed; `_scout_brief` now reframes each angle as a scouting task.)
+    tool for, so it flailed; `_scout_brief` now reframes each angle as a scouting task.) The scout
+    prompt (v3) is BOUNDED: search by topic+outlet — never stuff an exact date into the query, which
+    pulls calendar/almanac pages ("50 fun facts about August") — and STOP after ~3-5 confirmed
+    leads rather than an exhaustive sweep (a live run over-searched 20-34 times per angle, a
+    26-minute scout phase).
   - **read** — a fan of the `research_fetch` persona (the READER: `web_fetch` + clock, NO
-    `web_search`) over the pooled candidates. The missing search tool is the point: it can't wander
-    off searching, so its whole job is the deep read the writer's findings rest on.
+    `web_search`), ONE reader per angle. The missing search tool is the point: it can't wander off
+    searching, so its whole job is the deep read the writer's findings rest on.
 
-  The engine (`_gather_scout_then_read` / `_candidate_pool` in `deep_research.py`) ranks each
-  angle's candidate URLs by embedding relevance and ROUND-ROBINS them (one per angle before any
-  angle's second), so the read budget — bounded by the tree's 12-agent ceiling, reserving slots for
-  the analyst + critique — spreads across categories. Only the reader (fetched) findings reach the
+  The engine (`_gather_scout_then_read` / `_angle_candidates` in `deep_research.py`) ranks each
+  angle's candidate URLs by embedding relevance and spawns ONE reader per angle — NAMED after the
+  angle (the scout's label), so a reader row reads "Space industry…" not a generic "read 3" —
+  reading that angle's top `ceil(min_reads / angles)` URLs (deduped across angles). The read
+  budget is bounded by the tree's 12-agent ceiling, reserving slots for the analyst + critique (5
+  scouts + 5 angle-readers + analyst + critique = 12). Only the reader (fetched) findings reach the
   RESEARCH ledger, so the SYNTHESIZER has no unopened snippet to cite; a totally-blocked read
   refuses rather than falling back to scout prose (strict fetched-only). A fetch-first run also SKIPS
   the reflect→refill gap loop (a refill re-searches, which would smuggle snippets back). It is OPT-IN
