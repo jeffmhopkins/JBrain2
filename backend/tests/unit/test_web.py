@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
-from jbrain.agent.loop import ToolContext, ToolOutput
+from jbrain.agent.loop import SearchBudget, ToolContext, ToolOutput
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.db.session import SessionContext
 from jbrain.web.fetch import SearchFormError, WebFetcher, WebFetchError
@@ -579,6 +579,67 @@ async def test_web_search_error_carries_no_web_sources() -> None:
     handlers = build_web_handlers(_searx(lambda r: httpx.Response(502)), WebFetcher())
     out = await handlers["web_search"]({"query": "q"}, CTX)
     assert not isinstance(out, ToolOutput) or not out.web_sources
+
+
+# --- scout search budget (the engine-enforced ceiling the prompt alone can't hold) ---
+
+
+def _budget_ctx(limit: int) -> ToolContext:
+    """A ToolContext carrying its own fresh, mutable SearchBudget — one per test so the
+    `used` counter never leaks between them."""
+    return ToolContext(
+        session=SessionContext(principal_kind="owner"),
+        scopes=(),
+        search_budget=SearchBudget(limit=limit),
+    )
+
+
+async def test_web_search_annotates_remaining_budget() -> None:
+    # Every search result tells the scout how many calls it has left — the "update the middle
+    # with searches left" contract — and points it at the uncapped web_fetch.
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_OK)), WebFetcher()
+    )
+    out = await handlers["web_search"]({"query": "python news"}, _budget_ctx(8))
+    assert isinstance(out, ToolOutput)  # a served search still carries its citation sources
+    assert "SEARCH BUDGET: 7 web_search call(s) left of 8" in str(out)
+    assert "web_fetch is unlimited" in str(out)
+
+
+async def test_web_search_last_call_note_then_refusal() -> None:
+    # A limit of 2: the 2nd search is flagged as the last, and the 3rd is REFUSED by the engine
+    # — no network call is made for it — regardless of what the model tries.
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_OK)
+
+    handlers = build_web_handlers(_searx(handle), WebFetcher())
+    ctx = _budget_ctx(2)
+
+    first = str(await handlers["web_search"]({"query": "one"}, ctx))
+    assert "SEARCH BUDGET: 1 web_search call(s) left of 2" in first
+
+    second = str(await handlers["web_search"]({"query": "two"}, ctx))
+    assert "SEARCH BUDGET: 0 web_search call(s) left of 2" in second
+    assert "that was your LAST one" in second
+
+    # The 7th-search-style overflow: refused before any network call, and told to fetch + return.
+    refused = str(await handlers["web_search"]({"query": "three"}, ctx))
+    assert "SEARCH BUDGET SPENT" in refused
+    assert "RECOMMENDED SOURCES" in refused
+    assert len(calls) == 2  # the refused search never reached the network
+
+
+async def test_web_search_uncapped_by_default_has_no_budget_note() -> None:
+    # No budget on the context (every persona but the scout): the result is byte-for-byte what it
+    # always was — no budget annotation leaks into an ordinary agent's search.
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_OK)), WebFetcher()
+    )
+    out = str(await handlers["web_search"]({"query": "python"}, CTX))
+    assert "SEARCH BUDGET" not in out
 
 
 async def test_fetch_rejects_non_http_scheme() -> None:

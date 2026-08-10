@@ -292,6 +292,14 @@ REVIEW_TOOLS = RESEARCH_TOOLS
 # Both are leaves (no spawn), KB-less, and ⊆ jerv's tools (the parent⊆child clamp keeps them).
 SCOUT_TOOLS = frozenset({"web_search", "web_fetch", "current_time"})
 FETCH_TOOLS = frozenset({"web_fetch", "current_time"})
+# The scout's HARD `web_search` ceiling, enforced by the engine (the web_search handler counts
+# against it and refuses past it) — not by the prompt, which states the same number but which
+# gpt-oss ignores, searching once per named outlet until the step cap stops it at ~40 tool calls
+# and ~11 min (a live daily-news run; MODEL_PROMPTING.md). 8 gives a multi-angle brief a few
+# aimed searches per facet with headroom, while capping the runaway. `web_fetch` stays uncapped
+# so the scout can still follow a hub to the real article. Keep this in sync with the number the
+# research_scout prompt states.
+SCOUT_SEARCH_BUDGET = 8
 # research_deep: the TASK-AGENT tier of a deepest-research run (max_depth=2). Identical to
 # `research` — same web sandbox, no KB, no location — PLUS the one-shot `decompose_research`
 # tool, so a task agent may split a genuinely compound sub-question into a bounded fan of
@@ -362,6 +370,11 @@ class AgentProfile:
     tools: frozenset[str] | None
     reads_knowledge_base: bool
     budget_multiplier: int = 1
+    # A hard per-run `web_search` ceiling the engine enforces for this persona (None = uncapped,
+    # the default). Only the scout sets it: its prompt states a search budget gpt-oss ignores, so
+    # the loop counts calls against this and refuses past it (SearchBudget in loop.py). `web_fetch`
+    # is never capped by it.
+    search_budget: int | None = None
     # A per-persona grant of otherwise-excluded tools, admitted ahead of the registry's
     # web/NEVER_DEFAULT gates (toolregistry._admits `extra`). Lets a `tools=None` wildcard
     # agent hold ONE such tool without widening the wildcard for every web/spawn tool —
@@ -378,6 +391,7 @@ def _profile(
     reads_knowledge_base: bool,
     budget_multiplier: int = 1,
     extra_tools: frozenset[str] = frozenset(),
+    search_budget: int | None = None,
 ) -> AgentProfile:
     pf = load_prompt(_PROMPTS / filename)
     return AgentProfile(
@@ -389,6 +403,7 @@ def _profile(
         reads_knowledge_base=reads_knowledge_base,
         budget_multiplier=budget_multiplier,
         extra_tools=extra_tools,
+        search_budget=search_budget,
     )
 
 
@@ -454,6 +469,7 @@ AGENTS: dict[str, AgentProfile] = {
         tools=SCOUT_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=2,
+        search_budget=SCOUT_SEARCH_BUDGET,
     ),
     "research_fetch": _profile(
         "research_fetch",
