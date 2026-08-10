@@ -101,14 +101,14 @@ DR_MAX_BREADTH = 5
 DR_SIMPLE_BREADTH = 2  # a `simple`-rated question researches fewer angles (breadth only)
 DR_MAX_GAP_QUESTIONS = 2
 # Two-phase (scout → read) gather (REPORT_PRESET_PLAN.md). A preset that sets `min_reads` opts
-# into it: a search-only SCOUT fan surfaces candidate URLs, then a fetch-only READER fan opens
-# the top `min_reads` of them and writes findings ONLY from the page text — so a fetch-light
-# model can never report from an unopened snippet (the "(search result)" failure the daily_news
-# brief hit). Bounded so the two fans + analyst + critique still fit the tree-wide agent ceiling:
-# DR_READ_BATCH pages per reader child (so ceil(reads/batch) readers), and the reader fan leaves
-# DR_READ_DOWNSTREAM_RESERVE agent slots free for the analyst + critique that run after gather
-# (fetch-first skips the search-based refill — re-searching would reintroduce the snippet path).
-DR_READ_BATCH = 2
+# into it: a lead-following SCOUT fan surfaces candidate URLs per angle, then a fetch-only READER
+# fan — ONE reader per angle, named after it — opens that angle's top candidates and writes
+# findings ONLY from the page text, so a fetch-light model can never report from an unopened
+# snippet (the "(search result)" failure the daily_news brief hit). `min_reads` is spread across
+# the angles (ceil per angle). Bounded so the two fans + analyst + critique fit the tree-wide agent
+# ceiling: the reader fan leaves DR_READ_DOWNSTREAM_RESERVE agent slots free for the analyst +
+# critique that run after gather (fetch-first skips the search-based refill — re-searching would
+# reintroduce the snippet path).
 DR_READ_DOWNSTREAM_RESERVE = 2
 # A single-source pipeline (the interview shape) runs its stages SEQUENTIALLY, so the count
 # is a hard bound on chained fans — capped low (extract → answer → fact-check → …). Fewer than
@@ -1851,13 +1851,15 @@ class DeepResearchService:
           Each searches and FOLLOWS LEADS (opens hub/section pages to reach the specific stories)
           to surface candidate article URLs; its PROSE is discarded, so a snippet claim can never
           become a finding. Only the URLs it touched (`web_sources`) survive, as the candidate pool.
-        - **READ** — fetch-only children (`research_fetch`: web_fetch, no web_search) OPEN the
-          top `read_target` candidates and write findings ONLY from the page text they read.
+        - **READ** — fetch-only children (`research_fetch`: web_fetch, no web_search), ONE per
+          angle: each opens its angle's top candidates and writes findings ONLY from the page text.
+          Naming it after the angle (the scout's label) makes a reader row read "Space industry…"
+          instead of a generic "read 3", and keeps each read coherently on one topic.
 
         The rest of the pipeline sees ONLY the reader findings — the writer literally has no
         unopened snippet to cite, so the "(search result)" briefing can't recur. Candidates are
-        pooled per-angle and round-robin interleaved, so the read budget (bounded by the tree's
-        agent ceiling) is spread across categories rather than soaked up by one topic.
+        grouped per-angle (deduped across angles) so the read budget (bounded by the tree's agent
+        ceiling) spreads across every category rather than being soaked up by one topic.
 
         Returns the reader (fetched) findings. Returns [] — NEVER the scout prose — when scouting
         surfaced no URL, the read budget can't seat a reader, or every reader came back empty; the
@@ -1878,58 +1880,65 @@ class DeepResearchService:
         scouts = await self._spawn.run_research_fan(
             ctx, briefs=scout_briefs, persona="research_scout", effort="low"
         )
-        pool = await self._candidate_pool(question, scouts)
-        if not pool:
+        groups = await self._angle_candidates(question, scouts, read_target)
+        if not groups:
             return []  # no URL to open — strictly nothing (never the scouts' snippet prose)
-        # --- READ: fetch-only children over the pooled candidates, batched. ---
-        targets = pool[:read_target]
-        batches = [targets[i : i + DR_READ_BATCH] for i in range(0, len(targets), DR_READ_BATCH)]
+        # --- READ: one fetch-only child per angle group, named after the angle. ---
         # Clamp the reader fan on three axes: the budget/time floors (`_seatable`); a headroom
         # that keeps DR_READ_DOWNSTREAM_RESERVE agent slots free for the analyst + critique that
         # still run after gather; and the fan's own total-agent admission (else `run_research_fan`
         # refuses it whole and opens nothing).
         headroom = tree.max_total_agents - tree.agents_spawned - DR_READ_DOWNSTREAM_RESERVE
-        seatable = min(_seatable(tree, len(batches)), max(headroom, 0))
+        seatable = min(_seatable(tree, len(groups)), max(headroom, 0))
         while seatable >= 1 and not tree.can_admit(seatable):
             seatable -= 1
-        batches = batches[:seatable]
-        if not batches:
+        groups = groups[:seatable]
+        if not groups:
             return []  # no budget to open a page — coverage-limited, not a snippet fallback
-        n_pages = sum(len(b) for b in batches)
-        self._phase(ctx, 2, f"Reading {n_pages} source(s)")
-        log.info("deep_research.scout_then_read", scouts=len(scouts), reading=n_pages)
-        briefs = [
-            (f"read {i + 1}", _reader_brief(question, batch)) for i, batch in enumerate(batches)
-        ]
+        n_pages = sum(len(urls) for _, urls in groups)
+        self._phase(ctx, 2, f"Reading {n_pages} source(s) across {len(groups)} angle(s)")
+        log.info(
+            "deep_research.scout_then_read",
+            scouts=len(scouts),
+            readers=len(groups),
+            reading=n_pages,
+        )
+        # The reader's label is the angle title, so its row reads "Space industry…", not "read 3".
+        briefs = [(title, _reader_brief(question, urls)) for title, urls in groups]
         readers = await self._spawn.run_research_fan(
             ctx, briefs=briefs, persona="research_fetch", effort="low"
         )
         # Only the fetched findings ever leave this method — [] if every reader was blocked/empty.
         return [r for r in readers if r.ok]
 
-    async def _candidate_pool(self, question: str, scouts: list[_ChildResult]) -> list[WebSource]:
-        """The reader phase's candidate URLs, built from EVERY URL each scout touched — the pages
-        it searched up AND the ones it opened to follow a lead (in Option B a scout fetches, so
-        'touched' is its recommendation, not just its unopened search hits). Each scout's URLs are
-        ranked by relevance to the question, then ROUND-ROBIN interleaved across scouts (angle 1's
-        best, angle 2's best, …, then each angle's second) and deduped by canonical URL. The
-        interleave is what guarantees category coverage — the first reads take one page per angle,
-        so a tight read budget still touches every section rather than emptying one angle's list."""
-        per_angle: list[list[WebSource]] = []
-        for c in scouts:
-            hits = [ws for ws in c.web_sources if ws.url]
-            if hits:
-                per_angle.append(await self._rank_unopened(question, hits))
-        out: list[WebSource] = []
+    async def _angle_candidates(
+        self, question: str, scouts: list[_ChildResult], read_target: int
+    ) -> list[tuple[str, list[WebSource]]]:
+        """Per-angle reader groups: each scout's touched URLs (the pages it searched up AND the
+        ones it opened to follow a lead — in Option B a scout fetches, so 'touched' is its
+        recommendation), ranked by relevance and capped so the read budget spreads evenly across
+        angles, paired with the scout's ANGLE TITLE (which becomes the reader child's label, so a
+        reader row reads 'Space industry…' — named like its scout — not a generic 'read 3').
+        Deduped by canonical URL ACROSS angles (first angle to surface a URL keeps it), so two
+        angles never read the same page. An angle whose scout surfaced no URL is dropped."""
+        # Spread `read_target` reads across the angles: ceil, so a target of 12 over 5 angles reads
+        # up to 3 each. It's a target, not a hard cap — the tree ceiling still bounds the fan.
+        per_angle_cap = max(1, -(-read_target // max(1, len(scouts))))
         seen: set[str] = set()
-        for i in range(max((len(lst) for lst in per_angle), default=0)):
-            for lst in per_angle:
-                if i < len(lst):
-                    key = _canonical_url(lst[i].url)
-                    if key and key not in seen:
-                        seen.add(key)
-                        out.append(lst[i])
-        return out
+        groups: list[tuple[str, list[WebSource]]] = []
+        for c in scouts:
+            ranked = await self._rank_unopened(question, [ws for ws in c.web_sources if ws.url])
+            picked: list[WebSource] = []
+            for ws in ranked:
+                key = _canonical_url(ws.url)
+                if key and key not in seen:
+                    seen.add(key)
+                    picked.append(ws)
+                if len(picked) >= per_angle_cap:
+                    break
+            if picked:
+                groups.append((c.label, picked))
+        return groups
 
     async def _rank_unopened(self, question: str, sources: list[WebSource]) -> list[WebSource]:
         """Candidate hits reordered most-relevant-first, so the reader phase spends its bounded

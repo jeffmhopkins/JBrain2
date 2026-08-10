@@ -395,8 +395,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "487ddb5461ab4b7040bcc894ca13d6d0819632c624ee8c1a0518ce90fbad24df",
         ),
         "research_scout": (
-            "agent-research-scout-v2",
-            "5487d6795e9622baefe66179e5e371eb338857fea64e5e3df62d79a861582854",
+            "agent-research-scout-v3",
+            "f51168d3a2828998f21c23cc2804a663709a6bafe663b9c33919856a520737eb",
         ),
         "research_fetch": (
             "agent-research-fetch-v1",
