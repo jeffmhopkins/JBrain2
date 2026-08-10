@@ -87,6 +87,12 @@ WindowsLoader = Callable[[], Awaitable[Mapping[str, int]]]
 # construction-time config default. Called before every load so a settings-screen change
 # takes effect with no restart; a read failure or junk value degrades to the config default.
 FractionLoader = Callable[[], Awaitable[float | None]]
+# Reads the served-model name code mode has reserved the box for ("" when code mode is off).
+# While non-empty, `ensure_room` refuses to load any OTHER (non-resident) model — the coder
+# owns the box, so nothing evicts it and no contending big model co-loads past physical RAM.
+# Read before every load so toggling code mode takes effect with no restart; a read failure
+# degrades to "" (not held), never blocking a load on a housekeeping hiccup.
+HoldLoader = Callable[[], Awaitable[str]]
 
 
 class ResidencyError(Exception):
@@ -140,6 +146,7 @@ class ResidencyCoordinator:
         enabled: bool = False,
         free_ram_fraction: float = 0.25,
         fraction_loader: FractionLoader | None = None,
+        hold_loader: HoldLoader | None = None,
         box_lock: BoxLock | None = None,
     ) -> None:
         self._gateway = gateway
@@ -153,6 +160,10 @@ class ResidencyCoordinator:
         # loader, or the read fails — so the budget always has a floor.
         self._free_ram_fraction = free_ram_fraction
         self._fraction_loader = fraction_loader
+        # When code mode holds the box, this loads the reserved coder's served name ("" when
+        # code mode is off). While held, `ensure_room` refuses to load any other non-resident
+        # model, so nothing evicts the coder or co-loads a second large model past physical RAM.
+        self._hold_loader = hold_loader
         # Cross-process serialization of the evict+load path (pg_box_lock in production).
         # None → single-process behavior: evict only, and let the client trigger the load.
         # Set → hold the lock across evict AND the target load, so the loaded model's memory
@@ -213,6 +224,18 @@ class ResidencyCoordinator:
             if override is not None and 0.0 < override < 1.0:
                 return override
         return self._free_ram_fraction
+
+    async def _held_name(self) -> str:
+        """The served-model name code mode has reserved the box for, or "" (not held). Read
+        per-load so toggling code mode applies immediately; any hiccup degrades to "" — a
+        housekeeping failure must never block a legitimate load."""
+        if self._hold_loader is None:
+            return ""
+        with contextlib.suppress(Exception):
+            name = await self._hold_loader()
+            if isinstance(name, str):
+                return name
+        return ""
 
     async def _footprint(self, served_model: str, windows: Mapping[str, int]) -> float:
         """A resident model's unified-memory footprint (GiB) at its served window — measured
@@ -337,6 +360,21 @@ class ResidencyCoordinator:
         (the client triggers the load), so single-process/cloud/test callers are unchanged."""
         if not self._enabled:
             return
+        # Code-mode exclusivity: while the box is reserved for the coder, refuse to load ANY
+        # other model. A model already resident may keep serving (no new load, no memory
+        # pressure), but a NON-resident model is refused — so nothing evicts the coder and no
+        # second large model co-loads past physical RAM (the unified-memory OOM this guards).
+        # The reserved coder itself is exempt (it must be able to (re)load). Checked before the
+        # box lock so a refused load never contends for it.
+        held = await self._held_name()
+        if held and served_model != held:
+            with contextlib.suppress(Exception):
+                if served_model in await self._gateway.running():
+                    return  # already resident — serving it needs no load
+            raise ResidencyError(
+                f"Code mode is holding the box for '{held}'. Turn code mode off to run other "
+                "models (chat, vision, or background research)."
+            )
         if self._box_lock is None:
             await self._ensure_room_core(served_model, load_target=False)
             return

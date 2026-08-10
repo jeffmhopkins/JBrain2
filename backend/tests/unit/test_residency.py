@@ -25,6 +25,7 @@ def _coord(
     used: float,
     enabled: bool = True,
     fraction_loader: object = None,
+    hold_loader: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -35,6 +36,7 @@ def _coord(
         enabled=enabled,
         free_ram_fraction=0.25,
         fraction_loader=fraction_loader,  # type: ignore[arg-type]
+        hold_loader=hold_loader,  # type: ignore[arg-type]
     )
 
 
@@ -74,6 +76,63 @@ async def test_ensure_room_evicts_nothing_when_it_fits(monkeypatch: pytest.Monke
     await coord.ensure_room("qwen3.5-4b")  # 4.6 → 44.6, well under the 96 ceiling
     assert gw.unloaded == []
     assert coord._displaced == set()  # noqa: SLF001
+
+
+# --- code-mode box reservation (hold_loader) --------------------------------
+
+
+async def _held(name: str) -> str:
+    return name
+
+
+@pytest.mark.asyncio
+async def test_hold_refuses_a_non_coder_load_and_evicts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # While code mode holds the box for the coder, a load of ANY other (non-resident) model is
+    # refused with ResidencyError and evicts NOTHING — nothing pulls the coder out or co-loads
+    # a second large model past physical RAM (the unified-memory OOM this guards).
+    gw = FakeLocalGateway(running={"qwen3-coder-next"})
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=59.6, hold_loader=lambda: _held("qwen3-coder-next")
+    )
+    with pytest.raises(ResidencyError):
+        await coord.ensure_room("gpt-oss-120b")
+    assert gw.unloaded == []  # the coder was never evicted
+
+
+@pytest.mark.asyncio
+async def test_hold_allows_the_reserved_coder_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The reserved coder is exempt — it must be able to (re)load while the hold is set.
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=40.0, hold_loader=lambda: _held("qwen3-coder-next")
+    )
+    await coord.ensure_room("qwen3-coder-next")  # no raise; fits, so no eviction
+    assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_hold_allows_an_already_resident_model_to_keep_serving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A model already resident may keep serving (no new load, no memory pressure) — only a
+    # NON-resident other model is refused. gpt-oss is resident beside the coder here.
+    gw = FakeLocalGateway(running={"qwen3-coder-next", "gpt-oss-120b"})
+    coord = _coord(
+        gw, monkeypatch, total=128.0, used=100.0, hold_loader=lambda: _held("qwen3-coder-next")
+    )
+    await coord.ensure_room("gpt-oss-120b")  # already resident → no raise, no evict
+    assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_hold_empty_is_normal_eviction(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Code mode off ("" held) → the loader is inert and normal eviction applies.
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=128.0, used=90.0, hold_loader=lambda: _held(""))
+    await coord.ensure_room("qwen3-coder-next")  # 90+59.6 > 96 → normal evict of gpt-oss
+    assert gw.unloaded == ["gpt-oss-120b"]
 
 
 # --- the live free-RAM floor override (fraction_loader) ----------------------

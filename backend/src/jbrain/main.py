@@ -368,6 +368,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # free_ram_fraction config default above when unset. Read per load, so a change
             # applies with no restart. Wired identically in the worker (jbrain.worker).
             fraction_loader=lambda: settings_store.llm_local_free_ram_fraction(SYSTEM_CTX),
+            # Code-mode box reservation (jcode power ON writes it): while set, ensure_room
+            # refuses to load any model but the coder, so nothing evicts it or co-loads past
+            # physical RAM. Read per load (SYSTEM_CTX), identically wired in the worker.
+            hold_loader=lambda: settings_store.code_mode_hold_name(SYSTEM_CTX),
             # Serialize evict+load against the worker process (which runs its own coordinator
             # over the same box) so a deferred worker load can't co-load past the floor here.
             box_lock=pg_box_lock(maker),

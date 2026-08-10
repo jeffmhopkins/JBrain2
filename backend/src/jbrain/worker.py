@@ -8,6 +8,7 @@ line keeps the service honest in `docker compose ps` and the Ops screen.
 """
 
 import asyncio
+import contextlib
 import inspect
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -365,11 +366,21 @@ async def run_loop(
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
             log.info("worker.heartbeat")
             last_heartbeat = now
+        # Code-mode box reservation: while jcode holds the box for the coder, PAUSE the
+        # background work that would load a model — the scheduler tick (which enqueues research
+        # like daily_news), the dispatcher, and the job claim below. Nothing then contends with
+        # the coder for unified memory (the OOM this guards; residency also refuses such a load
+        # as a backstop). Heartbeat + host-metrics keep running so the box stays observable
+        # through a code session; the paused work resumes the moment code mode toggles off.
+        held = False
+        if settings is not None:
+            with contextlib.suppress(Exception):
+                held = bool(await settings.code_mode_hold_name(queue.SYSTEM_CTX))
         # Run the scheduler tick on its own cadence: claim due schedules and
         # enqueue their bound pipelines (workflow/scheduler.py). Cheap when idle
         # (a single indexed due-query) and rides the same loop as the job claim,
         # so a nightly sweep needs no separate timer process.
-        if registry is not None and now - last_tick >= scheduler.TICK_SECONDS:
+        if not held and registry is not None and now - last_tick >= scheduler.TICK_SECONDS:
             await scheduler.run_tick_safely(maker, registry)
             last_tick = now
         # Run the dispatcher tick alongside the scheduler tick: claim undispatched
@@ -380,7 +391,8 @@ async def run_loop(
         # `workflow_dispatch_mode` and fault-swallowed exactly like the scheduler
         # tick, so it can never disturb the live job loop.
         if (
-            registry is not None
+            not held
+            and registry is not None
             and settings is not None
             and now - last_dispatch >= dispatcher.TICK_SECONDS
         ):
@@ -427,7 +439,11 @@ async def run_loop(
                     retired_predicate_cards=retired_cards,
                     predicate_sync_jobs=predicate_syncs,
                 )
-            if await process_one(maker, handlers, registry=registry, preconditions=preconditions):
+            # Claim + run one job — UNLESS code mode holds the box (then no job runs, so nothing
+            # loads a model that would contend with the coder; the job waits in the queue).
+            if not held and await process_one(
+                maker, handlers, registry=registry, preconditions=preconditions
+            ):
                 continue
         except asyncio.CancelledError:
             raise
@@ -488,6 +504,10 @@ async def run() -> None:
         # Same live floor override the api reads (Settings → LLM), so a change applies to
         # background jobs' model loads too — the worker is the second place this takes effect.
         fraction_loader=lambda: worker_settings_store.llm_local_free_ram_fraction(queue.SYSTEM_CTX),
+        # Code-mode box reservation: while jcode holds the box, a background job's model load
+        # is refused here too (belt-and-suspenders with the run_loop pause below), so it can
+        # never evict the coder or co-load past physical RAM.
+        hold_loader=lambda: worker_settings_store.code_mode_hold_name(queue.SYSTEM_CTX),
         # Serialize evict+load against the api process (which runs its own coordinator over
         # the same box) so a background job's model swap can't co-load past the free-RAM
         # floor while the api is loading for a chat turn — the cross-process double-load.

@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-07-31
+> **Status:** Living · **Last verified:** 2026-08-10
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -170,6 +170,20 @@ is **refused, not attempted**, on every path (the manual Load 409s, an auto-load
 completion), and nothing is evicted for it: loading it would only OOM-crash the box, so the
 app declines rather than trying. That guard is the app's; earlyoom below is the OS-level
 backstop for the rest.
+
+**Code mode reserves the box (exclusive while ON).** Two ~60 GB models — gpt-oss-120b and the
+Qwen3-Coder-Next coder — can't safely co-reside on 128 GB, and the swap between them has a
+load/unload memory transient the 15% floor doesn't cover. A background deep-research load
+contending with a freshly-opened jcode session drove the box past physical RAM and earlyoom
+took down a process. So while **code mode is ON**, it reserves the box for the coder: the jcode
+power toggle writes a `code_mode_hold_name` flag (the coder's served name), and while it is set
+(1) `residency.ensure_room` **refuses to load any other non-resident model** — nothing evicts
+the coder or co-loads a second large model — and (2) the **worker pauses** its job loop and
+scheduler tick, so no autonomous research/ingestion starts and contends. Chat, vision, and
+background jobs are declined with "code mode is holding the box — turn it off" until you toggle
+code mode OFF, which clears the flag and re-warms the general hot set (gpt-oss + vision). This
+makes the contention/OOM impossible by construction rather than relying on the swap transient
+staying under the floor.
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.
