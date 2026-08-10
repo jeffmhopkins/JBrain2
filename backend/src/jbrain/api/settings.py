@@ -46,12 +46,13 @@ class SettingsOut(BaseModel):
     # default — the runtime companion to brain_llm_stream (BRAIN_READ_ALOUD_KEY),
     # same localhost-bound / box-monitor-only caveat.
     brain_read_aloud: bool = False
-    # The piper voice id the read-aloud speaks answers in (BRAIN_ANSWER_VOICE_KEY) — the
-    # PWA renders its per-turn read-aloud through piper in this voice, and its Settings
-    # picker writes it. Defaults to Amy.
+    # The Kokoro voice id the read-aloud speaks answers in (BRAIN_ANSWER_VOICE_KEY) — the
+    # PWA renders its per-turn read-aloud on the box in this voice, and its Settings picker
+    # writes it. Defaults to af_heart.
     brain_answer_voice: str = BRAIN_ANSWER_VOICE_DEFAULT
-    # Which engine the PWA read-aloud renders with — "piper" (on-box, native fallback) or
-    # "native" (the browser's own voice). Defaults to piper.
+    # Which engine the PWA read-aloud renders with — "piper" (a legacy marker meaning on-box
+    # Kokoro, with a device-native fallback) or "native" (the browser's own voice). Defaults to
+    # on-box.
     brain_read_aloud_engine: Literal["piper", "native"] = "piper"
 
 

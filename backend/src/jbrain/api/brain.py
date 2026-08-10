@@ -1,14 +1,15 @@
-"""Authenticated proxy from the PWA to the on-box tts-stt service's piper renderer
-(deploy/tts-stt: GET /tts, GET /tts/voices).
+"""Authenticated proxy from the PWA to the on-box tts-stt service's Kokoro renderer
+(deploy/tts-stt: GET /tts, GET /tts/voices, GET /tts/health).
 
 The tts-stt service is UNauthenticated and LAN-only, so the PWA (which may be off
 the LAN entirely) can't reach it directly — but the api can, over the internal docker
 network (the same link brainevents.py already POSTs display markers on). This router
 lets the read-aloud voice picker and the read-aloud audio ride the owner's authenticated
-api session instead: it lists the installed voices and renders a clip on demand.
+api session instead: it lists the installed voices, reports the phonemizer health, and
+renders a clip on demand.
 
 It is on-box only (api -> tts-stt), never an egress under invariant #9. The text it
-forwards is the answer the OWNER asked to be read: piper renders it to audio and the api
+forwards is the answer the OWNER asked to be read: Kokoro renders it to audio and the api
 returns the audio; nothing is stored, and — unlike the wall's opt-in llm-stream — nothing
 is shown on the unauthenticated display, so there is no new exposure surface.
 """
@@ -32,7 +33,7 @@ _TTS_TEXT_CAP = 1000
 
 
 def _brain_base(request: Request) -> str:
-    """The `tts-stt` piper TTS base URL for this app, or "" when it isn't configured (the
+    """The `tts-stt` Kokoro TTS base URL for this app, or "" when it isn't configured (the
     proxy then 503s). Set at startup from JBRAIN_BRAIN_TTS_URL, so read-aloud + the voice
     picker reach the on-box renderer without touching an unauthenticated service directly."""
     base = getattr(request.app.state, "brain_tts_base_url", "")
@@ -41,34 +42,15 @@ def _brain_base(request: Request) -> str:
 
 @router.get("/brain/voices")
 async def brain_voices(principal: PrincipalDep, request: Request) -> JSONResponse:
-    """The installed piper voice ids (incl. curated multi-speaker entries), proxied from
-    the tts-stt service's GET /tts/voices as `{"voices": [...]}`. 503 when the service is
-    unconfigured or unreachable so the picker can fall back to "no voices"."""
+    """The installed Kokoro voice ids ("kokoro-<voice>"), proxied from the tts-stt service's
+    GET /tts/voices as `{"voices": [...]}`. 503 when the service is unconfigured or unreachable
+    so the picker can fall back to "no voices" (and read-aloud to the device voice)."""
     base = _brain_base(request)
     if not base:
         raise HTTPException(status_code=503, detail="tts service not configured")
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(f"{base}/tts/voices")
-        if resp.status_code != 200:
-            raise HTTPException(status_code=503, detail="tts service unavailable")
-        return JSONResponse(resp.json())
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail="tts service unreachable") from exc
-
-
-@router.get("/brain/speakers")
-async def brain_speakers(principal: PrincipalDep, request: Request) -> JSONResponse:
-    """Per multi-speaker model, its speaker names ordered by piper index, proxied from the
-    tts-stt service's GET /tts/speakers as `{"speakers": {"<stem>": ["<name>", ...]}}`. The
-    Settings voice explorer shuffles across this roster to audition every speaker. 503 when
-    the service is unconfigured/unreachable so the explorer can hide itself."""
-    base = _brain_base(request)
-    if not base:
-        raise HTTPException(status_code=503, detail="tts service not configured")
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{base}/tts/speakers")
         if resp.status_code != 200:
             raise HTTPException(status_code=503, detail="tts service unavailable")
         return JSONResponse(resp.json())
@@ -109,7 +91,7 @@ async def brain_tts(
     trail: int | None = None,
 ) -> Response:
     """Render `text` to a WAV in `voice` (a voice id from /brain/voices) via the on-box
-    piper/Kokoro and return the audio. The PWA read-aloud and the Settings "play sample" button
+    Kokoro and return the audio. The PWA read-aloud and the Settings "play sample" button
     both call this. Text is bounded; `lead` (silence pad, ms) and the audiobook-pacing controls
     `speed`/`trail` (ms) are clamped and passed through so a multi-clip reply plays gaplessly and
     the reading style (set by the PWA's markup-vs-prose classifier) reaches the box."""

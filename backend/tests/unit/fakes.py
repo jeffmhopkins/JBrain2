@@ -459,8 +459,8 @@ class FakeSettingsStore:
         return self.values.get("brain_read_aloud", False) is True
 
     async def brain_answer_voice(self, ctx: object) -> str:
-        raw = self.values.get("brain_answer_voice", "en_US-amy-medium")
-        return raw if isinstance(raw, str) and raw else "en_US-amy-medium"
+        raw = self.values.get("brain_answer_voice", "kokoro-af_heart")
+        return raw if isinstance(raw, str) and raw else "kokoro-af_heart"
 
     async def brain_read_aloud_engine(self, ctx: object) -> str:
         raw = self.values.get("brain_read_aloud_engine", "piper")

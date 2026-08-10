@@ -152,16 +152,16 @@ async def test_brain_answer_voice_defaults_to_amy_and_round_trips(
 
     store = SqlSettingsStore(maker)
     # Absent → Amy, so read-aloud always has a valid voice.
-    assert await store.brain_answer_voice(OWNER) == "en_US-amy-medium"
+    assert await store.brain_answer_voice(OWNER) == "kokoro-af_heart"
 
-    await store.upsert(OWNER, BRAIN_ANSWER_VOICE_KEY, "en_US-libritts_r-medium#3922")
-    assert await store.brain_answer_voice(OWNER) == "en_US-libritts_r-medium#3922"
+    await store.upsert(OWNER, BRAIN_ANSWER_VOICE_KEY, "kokoro-am_michael")
+    assert await store.brain_answer_voice(OWNER) == "kokoro-am_michael"
 
     # A non-string / empty stored value reads back as the default.
     await store.upsert(OWNER, BRAIN_ANSWER_VOICE_KEY, "")
-    assert await store.brain_answer_voice(OWNER) == "en_US-amy-medium"
+    assert await store.brain_answer_voice(OWNER) == "kokoro-af_heart"
     await store.upsert(OWNER, BRAIN_ANSWER_VOICE_KEY, 5)
-    assert await store.brain_answer_voice(OWNER) == "en_US-amy-medium"
+    assert await store.brain_answer_voice(OWNER) == "kokoro-af_heart"
 
 
 async def test_brain_read_aloud_engine_defaults_piper_and_round_trips(
