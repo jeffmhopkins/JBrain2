@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-08-04
+> **Status:** Living · **Last verified:** 2026-08-10
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -29,7 +29,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `rapidocr` | RapidOCR (PP-OCR / ONNX, CPU) | Deterministic OCR: cross-validates the VLM `vision.ocr` extraction (stores a `tool="rapidocr"` row) and backs the direct `ocr` tools (jerv + the jcode sandbox, which reaches it via the api bridge). Default-on; the engine lazy-loads on first call and idle-unloads. See `../plans/RAPIDOCR_PLAN.md`. | internal |
 | `jlaunch` | `jlaunch` control server | Self-serve launcher for long one-shot scientific computations (first spec: the Erdős–Straus census to 10¹²). Clones a code-defined repo read-only, runs it as a supervised job with a live terminal + start/stop/kill, collects the artifact, and mints a public `/results/{token}` share page. Three Erdős–Straus specs ship: the Python census (clones the repo) and **native Rust reruns to 10¹² and 10¹³** (`es-census`, built from `research/es-census` and baked into the image — no clone) whose windowed SPF factorization is complete to √a (fixing the Python path's non-minimal R above ~1.3×10¹¹) and which stream output in bounded memory so they scale past 10¹². Default-on; isolated `jlaunch` network, CPU/mem uncapped by design (meant to use the box for hours) — the Python run's worker pool is sized to RAM, not core count, so it doesn't OOM. See `../archive/JLAUNCH_PLAN.md`. | jlaunch |
 | `wall` | stdlib Python | Unauthenticated **neural-wall display** for the host's own monitor / a LAN kiosk — host vitals only (GPU %, RAM, power), no DB, its own LAN port :8800; forwards read-aloud to `tts-stt`. | internal |
-| `tts-stt` | whisper.cpp + piper + kokoro | The box's **speech I/O**: warm text-to-speech (:8801, the read-aloud renderer — piper voices plus baked-in Kokoro-82M voices) + whisper.cpp speech-to-text (:8080). Default-on; both TTS engines' voices ride the image build, so no provisioning step — the STT model is the one opt-in (`jbrain enable-whisper`). | internal |
+| `tts-stt` | whisper.cpp + kokoro | The box's **speech I/O**: warm text-to-speech (:8801, the read-aloud renderer — baked-in Kokoro-82M voices) + whisper.cpp speech-to-text (:8080). Default-on; the Kokoro voices ride the image build, so no provisioning step — the STT model is the one opt-in (`jbrain enable-whisper`). Kokoro is the sole on-box engine; the browser's native voice is the only fallback. | internal |
 
 **Opt-in — compose-profile guarded (never start on a stock deploy):**
 
@@ -43,12 +43,12 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `mqtt-ingest` | `mqtt` | (with `mqtt`) | Server-side subscriber streaming published OwnTracks fixes into the location hypertable. |
 
 **STT model — opt-in, but _not_ profile-guarded:** the `tts-stt` container is
-default-on (read-aloud / piper TTS is always available); it is *not* a compose
+default-on (read-aloud / Kokoro TTS is always available); it is *not* a compose
 profile. Only its whisper.cpp speech-to-text GGML model is a heavy opt-in
 download — `jbrain enable-whisper` (`scripts/whisper-setup.sh`) fetches the model,
 writes `whisper-models/llama-swap.yaml`, sets `WHISPER_URL`, and force-recreates
-the always-on service so STT starts alongside piper. Until then the entrypoint
-runs piper only, so a stock box still serves read-aloud.
+the always-on service so STT starts alongside Kokoro TTS. Until then the entrypoint
+runs TTS only, so a stock box still serves read-aloud.
 
 **One-shot (`tools` profile):** `migrate` (`alembic upgrade head`, the only container with DDL rights) · `wipe` (destructive first-install reset, double-guarded).
 
@@ -76,10 +76,11 @@ opted in. Full runbook: `../runbooks/STRIX_HALO_SETUP.md`; prompting behaviour:
   Lightning fast path. Emits live `b_preview` frames so the chat shows a
   progressive image. See `../archive/IMAGE_GEN_*_PLAN.md`.
 - **`tts-stt`** — whisper.cpp behind its own llama-swap (plus warm TTS) so transcription
-  works without local LLMs; load-on-demand, unload-after. Read-aloud renders with piper by
-  default; **Kokoro-82M** (Apache-2.0, more natural) is baked alongside and offered as extra
-  `kokoro-<voice>` picks in Settings — the same warm-model seam, no provisioning step. A box
-  without the Kokoro weights simply lists no Kokoro voices.
+  works without local LLMs; load-on-demand, unload-after. Read-aloud renders with **Kokoro-82M**
+  (Apache-2.0, natural) — the sole on-box engine, baked into the image and offered as
+  `kokoro-<voice>` picks in Settings via the warm-model seam, no provisioning step. A box
+  without the Kokoro weights simply lists no Kokoro voices and read-aloud falls back to the
+  browser's native voice (the only fallback).
 
 Stock deploys route LLM calls to the cloud (Anthropic / xAI) through the LLM
 adapter; the local services are an opt-in swap, chosen per task in **LLM

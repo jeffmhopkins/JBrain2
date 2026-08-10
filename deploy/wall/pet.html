@@ -437,11 +437,10 @@ async function initSound(){let voices=[];
  try{voices=((await(await fetch('/tts/voices',{cache:'no-store'})).json()).voices)||[];}catch(e){}
  if(!voices.length)return;                                // no voices on the box -> pet stays silent
  // Voice the pet through Kokoro (the natural engine an agent read-aloud turn uses), preferring
- // its default af_heart, then any Kokoro voice; fall back to piper (amy / first) on a box
- // without the Kokoro weights baked so the pet still talks.
+ // its default af_heart, then any Kokoro voice, then whatever the box lists first.
  petVoice=voices.includes('kokoro-af_heart')?'kokoro-af_heart'
    :voices.find(v=>v.startsWith('kokoro-'))
-   ||(voices.includes('en_US-amy-medium')?'en_US-amy-medium':voices[0]);
+   ||voices[0];
  soundBtn.hidden=false;}
 soundBtn.addEventListener('click',()=>{
  soundOn=true;soundBtn.hidden=true;startKeepAlive();

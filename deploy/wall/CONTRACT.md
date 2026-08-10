@@ -82,7 +82,7 @@ window.ServerBrain.injectError(): void   // force an API error blip
   ],
   read_aloud: false           // held display-config flag (brain_read_aloud), not an event:
                               // the page shows its read-aloud voice panel only when this is
-                              // true AND piper voices are installed. Pushed out-of-band via
+                              // true AND Kokoro voices are installed. Pushed out-of-band via
                               // POST /event {kind:'read_aloud', on}; absent in the pure demo.
 }
 ```

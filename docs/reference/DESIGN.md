@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-06
+> **Status:** Living · **Last verified:** 2026-08-10
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -769,23 +769,21 @@ local append with an amber "pending sync" chip until the outbox clears.
   sentence-by-sentence so it starts talking without waiting for the whole answer;
   long-press again to disarm. Auto-play is a device-local, persisted preference. The
   **engine** is chosen in **Settings → Read-aloud voice** (`brain_read_aloud_engine`):
-  **Piper** renders each sentence on the box in the chosen voice (`brain_answer_voice`,
+  **Kokoro** renders each sentence on the box in the chosen voice (`brain_answer_voice`,
   streamed back over the api's `/api/brain/tts` proxy and played back-to-back) and
-  falls back to the device's native voice when the box is unreachable or a clip fails to
-  render (the failure is logged on the box, since a silent fall back reads as the wrong
-  voice); **Native** uses
-  the device's own Web Speech voice. In Piper mode the same card offers the voice picker
-  — any installed voice, including a multi-speaker model's individual speakers (e.g.
-  LibriTTS 3922) — a *play sample* button, and a *read custom text* button; that voice also
-  reads the wall display's answers. **Read custom text** opens a full-screen surface that is
-  mostly a text area (paste a note or a book chapter, or **Upload .md** to drop a `.md`/`.txt`
-  file's contents into the area to review and edit) with an **Upload .md**, **Play/Stop**, and
-  **Export audio** foot — Play renders the text on the box clip-by-clip and plays it gaplessly
-  in the chosen voice; Export renders the whole thing and downloads it as a single WAV. The
-  text is normalized for the same engine that renders the chosen voice (a Kokoro voice on
-  Kokoro's profile), so custom text reads exactly as a chat answer in that voice does. On-box
-  (Piper/Kokoro) only, since it needs the box to render capturable audio; a back button is its
-  explicit exit. With read-aloud on, the copy button drops its "Copy" label
+  falls back to the device's native voice when the box is unreachable, has no Kokoro weights,
+  or a clip fails to render (the failure is logged on the box, since a silent fall back reads
+  as the wrong voice); **Native** uses
+  the device's own Web Speech voice. In Kokoro mode the same card offers the voice picker
+  — any installed `kokoro-<voice>` — a *play sample* button, and a *read custom text* button;
+  that voice also reads the wall display's answers. **Read custom text** opens a full-screen
+  surface that is mostly a text area (paste a note or a book chapter, or **Upload .md** to drop
+  a `.md`/`.txt` file's contents into the area to review and edit) with an **Upload .md**,
+  **Play/Stop**, and **Export audio** foot — Play renders the text on the box clip-by-clip and
+  plays it gaplessly in the chosen voice; Export renders the whole thing and downloads it as a
+  single WAV. The text is normalized on Kokoro's profile, so custom text reads exactly as a chat
+  answer in that voice does. On-box (Kokoro) only, since it needs the box to render capturable
+  audio; a back button is its explicit exit. With read-aloud on, the copy button drops its "Copy" label
   to just the icon so the pair fits on the foot line.
 
 ## Navigation: the card launcher (no bottom nav)

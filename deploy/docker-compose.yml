@@ -402,15 +402,15 @@ services:
     networks: [internal]
 
   # tts-stt — the box's speech I/O in one always-on container: whisper.cpp speech-to-text
-  # (llama-swap on :8080, the api reaches it at http://tts-stt:8080) AND warm piper
+  # (llama-swap on :8080, the api reaches it at http://tts-stt:8080) AND warm Kokoro
   # text-to-speech (piper_server.py on :8801, reached by the api's read-aloud proxy and the
   # wall's /tts forward). DEFAULT-ON (no profile) — read-aloud must not depend on enabling
   # STT. Built on the official llama-swap unified image (llama-swap + ffmpeg, Vulkan) with
-  # whisper.cpp's server + Python/piper + the baked default voices layered on
-  # (deploy/Dockerfile.tts-stt). /dev/dri + the GIDs give whisper the iGPU; piper is CPU.
+  # whisper.cpp's server + Python/Kokoro + the baked Kokoro weights layered on
+  # (deploy/Dockerfile.tts-stt). /dev/dri + the GIDs give whisper the iGPU; Kokoro is CPU.
   # The CONTAINER is default-on (TTS always available); STT's GGML model is a heavy opt-in
   # download provisioned by `jbrain enable-whisper` (scripts/whisper-setup.sh), which also
-  # sets WHISPER_URL so the api starts using it. Until then the entrypoint runs piper only
+  # sets WHISPER_URL so the api starts using it. Until then the entrypoint runs TTS only
   # (no whisper config -> no llama-swap), so a stock box serves read-aloud, not a dead STT
   # port. Internal only — neither port is published.
   tts-stt:
@@ -419,17 +419,13 @@ services:
       context: ./src
       dockerfile: deploy/Dockerfile.tts-stt
       args:
-        # The base providing llama-swap + ffmpeg; whisper.cpp + piper are layered on top.
+        # The base providing llama-swap + ffmpeg; whisper.cpp + Kokoro are layered on top.
         WHISPER_BASE: ${WHISPER_IMAGE:-ghcr.io/mostlygeek/llama-swap:vulkan}
     restart: unless-stopped
     environment:
-      # piper (TTS) — baked voices at /opt/piper-voices, extras dropped in the mounted dir;
-      # pre-warm the default answer voice so the first read-aloud clip isn't slow.
+      # Kokoro (TTS) — weights baked at /opt/kokoro; the warm server holds the model resident.
       BRAIN_TTS_PORT: "8801"
-      BRAIN_PIPER_VOICES_DIR: /tts/voices
-      BRAIN_PIPER_BAKED_VOICES_DIR: /opt/piper-voices
-      BRAIN_PIPER_PREWARM: en_US-amy-medium
-    # The launcher starts the piper server (background, :8801) then execs llama-swap
+    # The launcher starts the Kokoro TTS server (background, :8801) then execs llama-swap
     # (foreground, :8080). Overrides the image's hardcoded `-config /app/config.yaml`
     # entrypoint (which would load a bundled sample and crash-loop). --watch-config on
     # llama-swap hot-reloads a model swap. Blank CMD so Docker can't re-append the default.

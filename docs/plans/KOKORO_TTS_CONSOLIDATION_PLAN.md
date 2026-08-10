@@ -1,6 +1,6 @@
 # JBrain2 — Kokoro TTS Consolidation
 
-> **Status:** In progress · **Last verified:** 2026-08-10 · **Waves:** W1✅ W2◻️ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-08-10 · **Waves:** W1✅ W2✅ W3◻️ W4◻️
 
 Standardize read-aloud on **Kokoro only**, collapse the three overlapping text
 normalizers into **one on the box**, make the misaki-vs-espeak phonemizer path
@@ -97,23 +97,29 @@ wall answer/markdown ──(raw)────────────────
 - *Deferred to W4:* surface `g2p` in the Settings panel (rides the pronunciation
   UI's GUI gate).
 
-### W2 — Remove Piper ◻️
+### W2 — Remove Piper ✅
 
 - **Box:** delete the piper voice resolver, warm cache, curated multi-speaker
   machinery, and `_prewarm`; `tts_wav` renders Kokoro only; `piper_voices()` →
   Kokoro ids. Rename left only where it doesn't churn callers. Make the Kokoro
-  weight fetch + misaki venv build **fatal/loud** in `Dockerfile.tts-stt` (drop the
-  non-fatal `|| echo` swallow) so a box always has Kokoro or the build fails.
+  weight fetch + misaki venv build **loud but NON-FATAL** in `Dockerfile.tts-stt`
+  (keep the `|| …` non-fatal structure; only the message goes loud — an
+  unmistakable multi-line stderr banner) so a transient weight-fetch blip can't
+  abort an otherwise-fine `jbrain update`, yet a real outage is greppable in the
+  build/`docker logs`. Browser-native is the fallback when the box has no Kokoro,
+  so the build must never be fatal on a Kokoro hiccup.
 - **Backend:** `brain.py` voices/speakers reflect Kokoro-only; `settings_store`
   `brain_answer_voice` default → a Kokoro voice; `brain_read_aloud_engine` domain
   → `kokoro | native`.
 - **Frontend:** `engineForVoice` retired (always Kokoro); Settings engine control
   → Kokoro | Native; voice picker Kokoro-only.
-- **Wall:** read-aloud uses a Kokoro voice; drop baked piper voices.
-- **Docs/setup:** `install-tts.sh`, `deploy/tts-stt/README.md`, `SERVICES.md`,
-  `dev-setup.sh` reconciled. Tests updated across all four surfaces.
-- *Risk:* Kokoro is now the only box voice — W1 health + the loud provisioning are
-  the mitigations; browser-native covers box-unreachable.
+- **Wall:** read-aloud uses a Kokoro voice (`kokoro-af_heart` / `kokoro-am_michael`);
+  drop baked piper voices.
+- **Docs/setup:** `install-tts.sh` deleted, `deploy/tts-stt/README.md`,
+  `SERVICES.md`, `DESIGN.md` reconciled. Tests updated across all four surfaces.
+- *Risk:* Kokoro is now the only box voice — W1 health + the loud (non-fatal)
+  provisioning are the mitigations; browser-native covers box-unreachable and a
+  box that built without Kokoro.
 
 ### W3 — Collapse to one box normalizer ◻️
 

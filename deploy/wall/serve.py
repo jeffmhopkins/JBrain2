@@ -109,7 +109,7 @@ _posted_lock = threading.Lock()
 # Persistent read-aloud switch, pushed by the app ({"kind": "read_aloud", "on": bool} to
 # /event) from the brain_read_aloud setting. Unlike the queued tendril events this is a
 # held boolean surfaced in every /stats, so the page shows/hides its voice panel on it (in
-# addition to piper voices being installed). Default OFF: a fresh/restarted display speaks
+# addition to Kokoro voices being installed). Default OFF: a fresh/restarted display speaks
 # nothing until the app re-pushes the flag (it does so on the setting change and each turn).
 _read_aloud = [False]
 
@@ -444,7 +444,7 @@ def _shape(util, mem, power, temp, load, uptime_h,
         # web-tool calls -> reach-out tendrils (drained by the page each poll).
         "events": events or [],
         # Persistent read-aloud switch (brain_read_aloud) — the page shows its voice panel
-        # only when this is on AND piper voices are installed.
+        # only when this is on AND Kokoro voices are installed.
         "read_aloud": bool(read_aloud),
         "host": {"load_1m": round(load, 2), "uptime_h": uptime_h},
     }

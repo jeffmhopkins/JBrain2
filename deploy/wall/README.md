@@ -2,7 +2,7 @@
 
 > Read-aloud TTS moved to the `tts-stt` service (`deploy/tts-stt`); this wall keeps a thin
 > `/tts*` **forward** to it so the kiosk browser fetches audio same-origin. See that README
-> for piper, voices, and the warm model cache.
+> for Kokoro, voices, and the warm model cache.
 
 
 A dark, glowing neural-network animation of the JBrain2 host's live status, for
@@ -70,25 +70,25 @@ kit knows several patterns and switches it up every four bars) until you stop; *
 nearest **block** and throws it the way the pet faces (press again to let go).
 
 **Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same on-box
-piper `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice — `en_US-amy-medium`
+Kokoro `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice — `kokoro-af_heart`
 if installed), and each action fires a short, volume-capped WebAudio cue (a chirp to jump, a
 wobble to wiggle, a robot beep, …). A display tab can't autoplay audio, so a one-time **🔊 tap
 for sound** button (bottom-right) unlocks it and primes the OS audio sink; after that the pet
-just plays. No piper voices on the box → the button never appears and speech stays silent
+just plays. No Kokoro voices on the box → the button never appears and speech stays silent
 (the WebAudio cues still play once unlocked) — unlike the neural wall's read-aloud, this is
 *not* gated on the `brain_read_aloud` setting, since the pet is its own surface.
 
 ## Deployment (auto-started, auto-updated)
 
 It runs as the `wall` service in `deploy/docker-compose.yml` — a default service on a thin
-stdlib `python:3.12-slim` image (`deploy/Dockerfile.wall`; no piper — read-aloud audio is
+stdlib `python:3.12-slim` image (`deploy/Dockerfile.wall`; no TTS engine — read-aloud audio is
 rendered by the `tts-stt` service and forwarded here), so the standard deploy flow owns its
 lifecycle:
 
 - **`jbrain update`** brings it up and keeps it current via `docker compose up
   -d`. The page still hot-reloads with no rebuild: `serve.py` re-reads `index.html`
   from the bind mount on every request, so a git reset of `src/` serves the new page
-  immediately. (A change to `serve.py`, or a piper/base bump, takes effect on the
+  immediately. (A change to `serve.py`, or a base-image bump, takes effect on the
   container's next rebuild + restart, which `jbrain update` does.)
 - It needs **no GPU device and no extra mounts** — Docker already exposes the
   host's `/sys` (read-only) and non-namespaced `/proc` to every container, which
@@ -200,43 +200,39 @@ teal popup naming what's running, and `{"kind": "task_stop", "text": name}` (sam
 retire it when it finishes. Several hold at once, so a couple of concurrent workflows each get
 their own card — a quiet twin of the prompt popup.
 
-### Read aloud (optional TTS — server-side piper)
+### Read aloud (optional TTS — server-side Kokoro)
 
 The **Read aloud** panel (bottom-right) reads turns aloud. Speech is rendered **on the box** by
-[`piper`](https://github.com/OHF-Voice/piper1-gpl): `serve.py` exposes `GET /tts?voice=<id>&text=…`
-(returns a WAV) and `GET /tts/voices` (the installed voice ids), and the page plays the clip through an
+**Kokoro-82M** (`kokoro_onnx`), held resident by the warm `piper_server.py` so a clip renders in
+~0.1 s: `serve.py` forwards to it, exposing `GET /tts?voice=<id>&text=…` (returns a WAV) and
+`GET /tts/voices` (the installed Kokoro voice ids), and the page plays the clip through an
 `<audio>` element — keeping the browser's flaky Web Speech engine (speech-dispatcher cold start,
 silent first-word drops) out of the path entirely.
 
-Two independent voices — **Joe** reads prompts and **Amy** reads answers by default — each an enable
-checkbox + a picker over the installed voice ids (add more and they show up automatically); both
-persist in `localStorage`. Markdown is stripped before speaking.
+Two independent voices — **`kokoro-am_michael`** reads prompts and **`kokoro-af_heart`** reads
+answers by default — each an enable checkbox + a picker over the installed voice ids (add more and
+they show up automatically); both persist in `localStorage`. Markdown is stripped before speaking.
 
-**Voice ids and speakers.** A single-speaker model is one voice, its id the file stem
-(`en_US-amy-medium`). A **multi-speaker** model (e.g. `en_US-libritts_r-medium`, which carries
-hundreds of speakers) contributes one voice per *curated* speaker — id `"<stem>#<speaker>"`, e.g.
-`en_US-libritts_r-medium#3922` (a second, female agent voice). Curation lives in `CURATED_SPEAKERS`
-in `serve.py` (keyed by model stem → speaker names from the model's `.onnx.json` `speaker_id_map`); an
-uncurated multi-speaker model falls back to its default speaker so it stays usable. `serve.py` resolves
-the id's speaker index and passes it to piper as `--speaker`.
+**Voice ids.** Kokoro serves many English voices from one shared model + a voice-styles bin; each is
+an id `kokoro-<voice>` (e.g. `kokoro-af_heart`, `kokoro-am_michael` — the American + British v1.0
+voices, since read-aloud renders `lang=en-us`). The picker lists whatever the box reports from
+`GET /tts/voices`; a box without the Kokoro weights baked lists none, and read-aloud then uses the
+device's native voice.
 
-**The PWA reads aloud too.** The in-chat read-aloud (per-turn play button) can render through this
-same piper, reached from the PWA over the authenticated api proxy `GET /api/brain/tts` /
+**The PWA reads aloud too.** The in-chat read-aloud (per-turn play button) renders through this
+same Kokoro server, reached from the PWA over the authenticated api proxy `GET /api/brain/tts` /
 `GET /api/brain/voices` (the api → this on-box service, internal network only). **Settings → Read-aloud
-voice** picks the engine (`brain_read_aloud_engine`): **piper** (the voice — any id above, speakers
-included, chosen via `brain_answer_voice`, which is also the wall's answer voice; a *play sample*
-button auditions it) with an automatic fall back to the **device's native (Web Speech) voice** when
-this box is unreachable **or a clip fails to render**, or **native** to always use the device voice.
-A silent fall back can look like "the wrong voice" (the native default is often male), so a failed
-render is logged — `docker logs tts-stt` shows a `[tts] render failed …` line naming the cause
-(a timeout points at `BRAIN_PIPER_TIMEOUT_S`; a non-zero exit at a bad/corrupt model).
+voice** picks the engine (`brain_read_aloud_engine`): **Kokoro** (the voice — any `kokoro-<voice>` id
+above, chosen via `brain_answer_voice`, which is also the wall's answer voice; a *play sample* button
+auditions it) with an automatic fall back to the **device's native (Web Speech) voice** when this box
+is unreachable, has no Kokoro weights, **or a clip fails to render**, or **Native** to always use the
+device voice. A silent fall back can look like "the wrong voice" (the native default is often male),
+so a failed render is logged — `docker logs tts-stt` shows a `[tts] render failed …` line naming the
+cause.
 
 **The whole reply, not an excerpt.** The page splits a reply into sentence-sized clips and plays them
 back-to-back through one queue: the first clip renders while the rest queue, so speech starts fast, the
-*entire* answer is read, and no single giant piper render risks the per-clip timeout
-(`BRAIN_PIPER_TIMEOUT_S`, default 60 s — piper cold-loads the model on every clip, so a big
-multi-speaker voice on a busy box needs headroom, else only that voice times out into the native
-fall back). Only the first clip of a
+*entire* answer is read, and no single giant render risks a per-clip timeout. Only the first clip of a
 turn carries the silence pad — continuation clips request `?lead=0` so the sentences run together
 instead of gapping between each.
 
@@ -246,19 +242,19 @@ on three fronts: (1) while a voice is enabled it runs a **permanently-silent Web
 holds one live stream on the sink, so the sink never goes idle (suspend keys on stream *presence*, not
 level, so it's truly silent); (2) it **primes** the `<audio>`→sink path with one silent clip
 (`GET /tts/silence`) the moment read-aloud activates, so the very first utterance after a fresh load
-isn't clipped by the sink's cold start; (3) as a last backstop, `serve.py` prepends a short lead of
-silence to the first clip (`BRAIN_PIPER_LEAD_MS`, default 400 ms).
+isn't clipped by the sink's cold start; (3) as a last backstop, `piper_server.py` prepends a short lead
+of silence to the first clip (`BRAIN_TTS_LEAD_MS`, default 400 ms).
 
-`piper` **and the default voice models** (Joe, Amy, and the multi-speaker `libritts_r` — its curated
-speaker 3922 is a second female agent voice) ship **baked into the tts-stt image**
-(`deploy/Dockerfile.tts-stt`, at `/opt/piper-voices` — outside the read-only `/app` bind mount
-that would otherwise shadow them). So there is **nothing to provision and no env var to set**: the
-feature is driven entirely by one Settings toggle. A **new baked voice lands on the next `jbrain update`**:
-`update-inner.sh` runs `docker compose build` (which re-bakes this image — a changed voice tuple
-invalidates the fetch layer's cache) and then `up -d` (which recreates the container from the new
-image). A container **restart alone does not re-bake** — restarting reuses the existing image, so use
-`jbrain update` (or a manual `docker compose build tts-stt && docker compose up -d tts-stt`)
-for a voice bump, not the Ops "restart all".
+**Kokoro** and its weights (`kokoro-v1.0.onnx` + `voices-v1.0.bin`, ~340 MB) ship **baked into the
+tts-stt image** (`deploy/Dockerfile.tts-stt`, at `/opt/kokoro`). So there is **nothing to provision on
+the host and no env var to set**: the feature is driven entirely by one Settings toggle. Provisioning
+is **loud but non-fatal** — a transient weight-fetch blip prints an `!!!!! [kokoro] …` banner in the
+build log and the box falls back to browser-native rather than failing the build. A **new baked voice
+lands on the next `jbrain update`**: `update-inner.sh` runs `docker compose build` (which re-bakes this
+image) and then `up -d` (which recreates the container from the new image). A container **restart alone
+does not re-bake** — restarting reuses the existing image, so use `jbrain update` (or a manual
+`docker compose build tts-stt && docker compose up -d tts-stt`) for a voice bump, not the Ops
+"restart all".
 
 **One switch — the toggle.** The voice panel shows only when the owner turns on **Settings → Read
 wall display aloud** (the `brain_read_aloud` app setting, **off by default** — the runtime companion
@@ -268,24 +264,21 @@ and again each chat turn, so flipping it shows/hides the panel live with no rede
 ephemeral, so it stays off until the next push after a restart. Like *Stream LLM*, it only speaks the
 streamed prompt/answer text, so enable it only for a localhost-bound / box-monitor-only display.
 
-A stock `jbrain update` rebuilds the image (which re-bakes the voices), so read-aloud is ready the
-moment you flip the toggle — no `.env` edit, no download step.
+A stock `jbrain update` rebuilds the image (which re-bakes the Kokoro weights), so read-aloud is ready
+the moment you flip the toggle — no `.env` edit, no host download step.
 
-Add more voices by dropping `<name>.onnx` + `<name>.onnx.json` in the mounted `voices/` dir (scanned
-alongside the baked defaults; a dropped-in name overrides a baked one) — grab English voices from the
-[piper voices list](https://github.com/OHF-Voice/piper1-gpl/blob/main/VOICES.md). For run-on-host dev
-(`python3 serve.py` directly, no image), `bash deploy/tts-stt/install-tts.sh` installs piper +
-the models into `voices/`. Env knobs (all optional): `BRAIN_PIPER_BIN` (default `piper`),
-`BRAIN_PIPER_VOICES_DIR` (mounted extras, default `/app/voices`), `BRAIN_PIPER_BAKED_VOICES_DIR`
-(baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`, and `BRAIN_PIPER_TIMEOUT_S`
-(per-clip render cap, default 60 s). Text is passed to piper on
-**stdin** (never a shell arg) and the `voice` param is validated against the installed set, so there
-is no command-injection or path-traversal surface.
+Adding a Kokoro voice needs no host provisioning: every voice already lives in the baked
+voice-styles bin, so a voice added to the curated roster (`CURATED_KOKORO_VOICES` in
+`piper_server.py`) rides the next `jbrain update` and appears in the picker. Env knobs (all
+optional): `BRAIN_TTS_PORT` (default 8801), `BRAIN_KOKORO_DIR` (baked weights, default
+`/opt/kokoro`), `BRAIN_TTS_LEAD_MS` (first-clip silence pad), `BRAIN_KOKORO_SPEED`, and
+`BRAIN_KOKORO_TRAIL_MS`. The `voice` param is validated against the installed set, so there is no
+path-traversal surface.
 
 **Verbose TTS tracing follows a debug session — no env flag.** While an owner-authorized
 debug-console token is live (minted in **Settings → Debug tokens**), the api pushes a
 `tts_debug` flag to the display each turn (latched like `read_aloud`), switching on a
-per-clip trace: each render logs the voice AS RECEIVED, the model + resolved `--speaker`,
+per-clip trace: each render logs the voice AS RECEIVED, the resolved Kokoro voice,
 byte count and elapsed ms — so you can confirm the box rendered the requested voice rather
 than the PWA falling back to its native voice. It clears automatically when the token
 lapses or is revoked. (Failures always log, debug session or not.) Read the trace via
