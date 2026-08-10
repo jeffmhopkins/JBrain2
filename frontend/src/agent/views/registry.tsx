@@ -1279,10 +1279,13 @@ function PlayIcon(): ReactNode {
     </svg>
   );
 }
-function StopIcon(): ReactNode {
+// Two bars — the pause state the play glyph becomes while the report is speaking,
+// matching the turn's read-aloud button (FullBrainSurface PauseGlyph).
+function PauseIcon(): ReactNode {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
-      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <rect x="6" y="5" width="4" height="14" rx="1" />
+      <rect x="14" y="5" width="4" height="14" rx="1" />
     </svg>
   );
 }
@@ -1555,11 +1558,11 @@ function DeepResearchReport({ data, onOpenSession, readAloud }: ViewProps): Reac
                     className={`tv-dr-act${isPlaying ? " playing" : ""}`}
                     onClick={() => readAloud.onToggle(playKey, reportToSpeech(reportMd))}
                     aria-label={
-                      isPlaying ? "Stop reading the report aloud" : "Read the report aloud"
+                      isPlaying ? "Pause reading the report aloud" : "Read the report aloud"
                     }
-                    title={isPlaying ? "Stop" : "Read aloud"}
+                    title={isPlaying ? "Pause" : "Read aloud"}
                   >
-                    {isPlaying ? <StopIcon /> : <PlayIcon />}
+                    {isPlaying ? <PauseIcon /> : <PlayIcon />}
                   </button>
                 );
               })()}
