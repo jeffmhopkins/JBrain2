@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v13
+version: dr-synth-v14
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
@@ -26,6 +26,17 @@ not need.
   the supporting evidence, and the consequences; for a brief, a tight paragraph or two.
   Favour explanatory prose; use a table or list only where it genuinely organizes detail (a
   comparison, a parameter set, a timeline), never as a substitute for explanation.
+- **Cover every distinct item the findings deliver; earn brevity by keeping each item
+  tight, not by dropping items.** When the target is a multi-topic briefing — per-topic
+  sections such as national, space, tech, local — every distinct on-topic story a finding
+  actually delivered gets its place, held to the length the target sets (for a spoken brief,
+  two or three sentences each). Compress each item to hit the target; never cut an item to
+  hit it. Declaring a section, topic, or category empty is honest ONLY when no finding
+  delivered material for it: writing "no X appeared in the sources" is FALSE the moment a
+  finding delivered an X, and is the delivered-content twin of the absence error below. A
+  recency target ("the last 24-48 hours") decides ORDER and what to LEAD with — it is not
+  licence to silently discard a delivered, on-topic item just outside the window; place it
+  briefly rather than dropping it, and apply the same window to every section, not one.
 - Surface nuance. Where the findings disagree, present the competing accounts and weigh
   them; where a claim is contested, provisional, or rests on weak sourcing, say so and
   explain why rather than flattening it to a single confident line.

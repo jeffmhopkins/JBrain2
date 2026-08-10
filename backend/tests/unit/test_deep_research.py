@@ -989,7 +989,7 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     enforces the zero-citation case deterministically, so the prompt no longer stacks it.)"""
     from jbrain.agent.deep_research import _SYNTH
 
-    assert _SYNTH.version == "dr-synth-v13"  # pin the version bump (parity with the plan test)
+    assert _SYNTH.version == "dr-synth-v14"  # pin the version bump (parity with the plan test)
     synth = " ".join(_SYNTH.body.lower().split())
     assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
     assert "sources this finding drew on" in synth  # v12/P1.5: the per-finding claim→source binding
@@ -999,6 +999,11 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     # v13 (MODEL_PROMPTING.md): the shared SYSTEM prompt is length-NEUTRAL — the per-run target
     # line carries the length, so the prompt must not hard-code a long-report framing.
     assert "eight to ten pages" not in synth and "comprehensive" not in synth
+    # v14: brevity is earned by keeping each delivered item tight, never by dropping items —
+    # a multi-topic brief covers every distinct story a finding delivered and never declares a
+    # section empty when on-topic findings exist for it (the delivered-content twin of absence).
+    assert "earn brevity by keeping each item tight" in synth
+    assert "no x appeared in the sources" in synth  # the false-empty claim the rule bans
 
 
 # --- report depth: the synthesizer is handed a length target by complexity --

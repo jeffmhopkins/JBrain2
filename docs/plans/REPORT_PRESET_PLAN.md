@@ -127,6 +127,24 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   articles, read them") but NOT investigative research, which needs the plain `research` persona's
   interleaved `web_search` + `portal_search` + verify-an-absence loop (candidate_profile).
 
+  **Synth must not drop what the readers delivered (`dr-synth-v14`).** A live daily-news run
+  (2026-08-10) laid the real depth loss bare in the logs: the five readers returned ~13k chars of
+  specific, on-topic findings — the GPT-5.6 Sol update (Aug 6), the Minnesota Senate primary, the
+  New York Harbor boat deaths, two completed launches — yet the writer emitted a 3,093-char brief
+  that KEPT four items and declared three whole sections empty, even printing "the sources did not
+  include a new AI model release" while a reader had handed it exactly that. The drop was at
+  SYNTHESIS, not gather (and it was inconsistent: it kept a same-vintage Pentagon story while cutting
+  the others). The shared synth prompt's length rule let brevity be earned by CUTTING items; v14 adds
+  one countable coverage rule — a multi-topic brief covers every distinct story a finding delivered,
+  each held to the target's length (two-three spoken sentences), and "no X appeared in the sources"
+  is banned the moment a finding delivered an X (the delivered-content twin of the existing absence
+  rule; gpt-oss "obeys countable output-shape rules"). A recency target orders and picks the lead,
+  it does not licence silently dropping a delivered on-topic item. (Two adjacent contributors seen in
+  the same logs are left for a follow-up per the owner: the per-angle read cap `ceil(min_reads/angles)`
+  truncated accessible recommendations — an AP Fed-rates story, Claude Sonnet 5 — before the read
+  stage, and Reuters CAPTCHA-blocked every World/Economy fetch, hollowing those sections at the
+  fetch layer rather than the writer.)
+
   **Owner-local, time-of-day-aware dates.** `_run_preset` reads the owner's stored timezone
   (`SettingsStore.owner_timezone`, fallback UTC) and auto-supplies two variables: `{{today}}` (the
   owner-local calendar day — an evening run in US Eastern is already the next UTC day, so a UTC date

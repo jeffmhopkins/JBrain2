@@ -10,7 +10,13 @@
 > inflates"); the daily_news angle briefs were slimmed to remove the "at least three / don't
 > conclude empty / pivot" checklist; the synthesizer (`dr-synth-v13`) was made length-NEUTRAL so
 > the per-run target line wins (it no longer hard-codes "8-10 pages / comprehensive", which fought
-> the `brief`/spoken target); the `_critique` grounding gate was collapsed to one bounded,
+> the `brief`/spoken target), then (`dr-synth-v14`) given a countable coverage rule after a live
+> run showed the writer compress ~13k of delivered reader findings into a 3k brief that declared
+> whole sections empty (dropping an AI-model update, a Senate primary, and two completed launches
+> the readers HAD fetched): brevity is now earned by keeping each delivered item tight, never by
+> dropping items, and "no X appeared in the sources" is banned whenever a finding delivered an X
+> (the delivered-content twin of the absence rule — "obeys countable output-shape rules"); the
+> `_critique` grounding gate was collapsed to one bounded,
 > prioritized pass and its double-`FIRST` removed; and `research` (v16) / `review` (v8) had their
 > stacked URL/verify restatements collapsed and a "highest-risk first" priority stated. The clean
 > in-repo templates the audit pointed to: the planner, the reflect judge, and the `_analyze` brief.
