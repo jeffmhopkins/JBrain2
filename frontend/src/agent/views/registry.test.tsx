@@ -1409,7 +1409,7 @@ describe("ToolView registry", () => {
     fireEvent.click(getByLabelText("Read the report aloud"));
     expect(onToggle).toHaveBeenCalledWith("dr-report:Q", "The full report body.");
 
-    // When that key is the one playing, the control becomes Stop.
+    // When that key is the one playing, the control becomes Pause (matching the turn).
     rerender(
       <ToolView
         readAloud={{ playing: "dr-report:Q", onToggle }}
@@ -1424,7 +1424,7 @@ describe("ToolView registry", () => {
         })}
       />,
     );
-    expect(getByLabelText("Stop reading the report aloud")).toBeInTheDocument();
+    expect(getByLabelText("Pause reading the report aloud")).toBeInTheDocument();
 
     // No read-aloud capability → no play control at all.
     rerender(
