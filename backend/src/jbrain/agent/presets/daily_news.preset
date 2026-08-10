@@ -172,8 +172,11 @@ angles:
       (spaceflightnow.com), NASASpaceflight (nasaspaceflight.com), Space.com (space.com/news); the
       operator's or NASA's own page beats a roundup. Also open the launch schedule for the next 24
       hours (spaceflightnow.com/launch-schedule): for any imminent Cape Canaveral or Kennedy launch,
-      find the story with the vehicle, payload, window time, and any Titusville / Port St. John road,
-      beach, or sonic-boom notice. Prefer specific articles over aggregators; skip paywalled pages.
+      find the story with the vehicle, payload, the exact launch WINDOW / T-0, and the launch STATUS
+      — whether this is the PRIMARY attempt or a BACKUP/reset after a scrub (if scrubbed, the reason
+      and the new time), the backup opportunity if the primary slips, and the launch-weather "go"
+      odds if the source gives them. Capture any Titusville / Port St. John road, beach, or
+      sonic-boom notice. Prefer specific articles over aggregators; skip paywalled pages.
   - title: "AI, technology, Tesla & Elon Musk"
     brief: >-
       ARTIFICIAL INTELLIGENCE and TECHNOLOGY news of the last day or two — major model or product

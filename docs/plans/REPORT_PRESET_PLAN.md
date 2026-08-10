@@ -145,6 +145,25 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
   stage, and Reuters CAPTCHA-blocked every World/Economy fetch, hollowing those sections at the
   fetch layer rather than the writer.)
 
+  **Citation hygiene, no recycling, and freshness (`dr-synth-v15`, reader `agent-research-fetch-v2`).**
+  A frontier review of a later daily-news run (2026-08-10) surfaced three OUTPUT defects the pipeline
+  didn't guard, all confirmed in the report row: the writer emitted DUPLICATE footnote definitions
+  (`[^22]`/`[^38]` each defined twice, one with a literal "(duplicate …)" line), left an ORPHAN
+  source (`[^37]` Doge in the `## Sources` list, cited nowhere in the body), and PADDED the "Around
+  the World" section by restating a domestic wind-lease story rather than declaring it had no
+  international finding. v15 adds two rules: one number per source with the `## Sources` list a
+  one-to-one mirror of the in-body markers (reconcile before finishing — drop uncited entries, no
+  duplicate/orphan numbers), and each delivered story belongs to ONE section (a section with no
+  distinct finding is declared, never filled by recycling a neighbour). Freshness — the review's
+  "recycled/stale" complaint (a week-old market close, a past-day weather alert written as today's) —
+  is fixed at the READER (`agent-research-fetch-v2`): each finding now carries the page's own
+  publication date and flags anything dated well before the run day, and a matching v15 synth rule
+  forbids presenting a stale page's figures as current (attach the date or drop the item). Finally,
+  the `daily_news` "Space industry & launch outlook" angle now asks for launch STATUS — primary vs.
+  backup/reset-after-scrub (with reason), the backup opportunity, and launch-weather odds — the
+  Space-Coast utility the review found missing. The two fetch-layer contributors above (per-angle
+  read cap, Reuters CAPTCHA) remain open.
+
   **Owner-local, time-of-day-aware dates.** `_run_preset` reads the owner's stored timezone
   (`SettingsStore.owner_timezone`, fallback UTC) and auto-supplies two variables: `{{today}}` (the
   owner-local calendar day — an evening run in US Eastern is already the next UTC day, so a UTC date
