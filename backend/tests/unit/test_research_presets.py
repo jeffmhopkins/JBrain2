@@ -18,26 +18,29 @@ def test_shipped_candidate_profile_loads_and_declares_its_variables() -> None:
 
 
 def test_shipped_daily_news_is_dated_and_retained() -> None:
-    # The daily briefing's ONLY variable is `today` — auto-supplied by the engine at run time
-    # (so it stays a one-call preset for the caller) and used to date the question, which keeps
-    # each day a distinct dedup row. It opts into a 7-day TTL (REPORT_EXPIRY_PLAN.md).
+    # The daily briefing's variables — `today` and `now` — are both auto-supplied by the engine at
+    # run time (owner-local), so it stays a one-call preset for the caller. `today` dates the
+    # question (keeping each day a distinct dedup row); `now` carries the time of day for the
+    # "last 24 hours up to now" window. It opts into a 7-day TTL (REPORT_EXPIRY_PLAN.md).
     assert "daily_news" in rp.available()
     preset = rp.get("daily_news")
     assert preset is not None
-    assert preset.variables == ("today",)
+    assert preset.variables == ("now", "today")
     assert preset.retention_days == 7
+    assert preset.min_reads == 12  # opts into the two-phase scout→read gather
     assert preset.output_kind == "brief"  # `report` would balloon past a 10-minute read
     assert preset.source_mode == "web"
     assert preset.sections[0] == "Good Morning"
     assert preset.sections[-1] == "That's Your Briefing"
     assert len(preset.angles) == 5  # runs under DR_MAX_BREADTH (=5) with no clamping
-    r = rp.render_preset("daily_news", {"today": "Friday, August 09, 2026"})
+    vars0 = {"today": "Friday, August 09, 2026", "now": "Friday, August 09, 2026 at 6:15 AM EDT"}
+    r = rp.render_preset("daily_news", vars0)
     assert "Friday, August 09, 2026" in r.question
     for text in (r.question, r.objective, *r.sections, *(b for _, b in r.angles)):
         assert "{{" not in text and "}}" not in text
     # Two different run dates yield different questions → distinct (question_hash) rows, so a
     # week of briefings coexists instead of upserting in place.
-    other = rp.render_preset("daily_news", {"today": "Saturday, August 10, 2026"})
+    other = rp.render_preset("daily_news", {**vars0, "today": "Saturday, August 10, 2026"})
     assert other.question != r.question
 
 

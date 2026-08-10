@@ -1908,6 +1908,26 @@ async def test_candidate_pool_round_robins_across_angles() -> None:
     ]
 
 
+async def test_candidate_pool_includes_urls_the_scout_opened() -> None:
+    """Option B: a scout can FETCH to follow a lead, so a URL it opened (read=True — e.g. a
+    confirmed article) is a recommendation too and must land in the pool, not just its unopened
+    search hits. Otherwise a scout that verified its best sources would hand the readers nothing."""
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    scout = _ChildResult(
+        label="a",
+        persona="research_scout",
+        summary="scouted",
+        ok=True,
+        session_id="s-a",
+        web_sources=(
+            WebSource(url="https://a.com/hit", title="search hit", read=False),
+            WebSource(url="https://a.com/opened", title="confirmed article", read=True),
+        ),
+    )
+    urls = {ws.url for ws in await svc._candidate_pool("q", [scout])}
+    assert urls == {"https://a.com/hit", "https://a.com/opened"}
+
+
 async def test_web_critique_runs_a_grounding_sweep_that_flags_fabrications_to_cut() -> None:
     """The universal anti-hallucination net: a web run's critique must run a GROUNDING SWEEP —
     every concrete claim traced to a source that states it, status/tense checked, fabrications
@@ -2238,6 +2258,26 @@ async def test_persist_carries_the_read_flag_into_the_source_registry(monkeypatc
         {"url": "https://ex.com/read", "title": "Read", "read": True},
         {"url": "https://ex.com/hit", "title": "Hit", "read": False},
     ]
+
+
+def test_date_variables_are_owner_local_and_time_of_day() -> None:
+    """`{{today}}` is the owner-local calendar day and `{{now}}` carries the time of day, so a
+    time-sensitive preset frames its window against the real moment; a bad/absent zone falls back
+    to UTC and never raises."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from jbrain.agent.deep_research import _now_str, _owner_zone, _today_str
+
+    evening = datetime(2026, 8, 10, 20, 30, tzinfo=ZoneInfo("America/New_York"))
+    assert _today_str(evening) == "Monday, August 10, 2026"
+    now = _now_str(evening)
+    assert "Monday, August 10, 2026" in now and "8:30 PM" in now
+    # A US-Eastern evening is already the NEXT calendar day in UTC — the local date must not drift.
+    assert _today_str(evening) != _today_str(evening.astimezone(ZoneInfo("UTC")))
+    # Fail-safe: an unknown or missing zone → UTC, never an exception.
+    assert _owner_zone("Not/AZone").key == "UTC"
+    assert _owner_zone(None).key == "UTC"
 
 
 def _critique_brief(spawn: _FakeSpawn) -> str:

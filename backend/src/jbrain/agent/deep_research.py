@@ -49,9 +49,10 @@ import math
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from sqlalchemy import text
@@ -526,12 +527,35 @@ def _refuse(reason: str) -> str:
     return f"Refused: {reason}"
 
 
-def _today_str() -> str:
+def _owner_zone(tz_name: str | None):  # -> ZoneInfo
+    """The owner's IANA zone, or UTC when unset/unrecognized. A bad zone must never crash a
+    render (mirrors SettingsStore.owner_timezone's fail-safe), so any error falls back to UTC."""
+    if tz_name:
+        try:
+            return ZoneInfo(tz_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    return ZoneInfo("UTC")
+
+
+def _today_str(now_local: datetime) -> str:
     """The run date as a spoken, human date string (e.g. "Friday, August 09, 2026"), auto-supplied
-    as the `{{today}}` preset variable. It carries two jobs: it dates a daily preset's question so
-    each day is a distinct dedup row, and it gives the writer the day to voice in a spoken briefing.
-    UTC is fine — a morning-commute run is the same calendar day in UTC as in US Eastern."""
-    return datetime.now(UTC).strftime("%A, %B %d, %Y")
+    as the `{{today}}` preset variable. It dates a daily preset's question so each day is a distinct
+    dedup row, and gives the writer the day to voice. Computed in the OWNER's local timezone — an
+    evening run in US Eastern is already the next calendar day in UTC, so a UTC date would be a day
+    ahead and split the dedup row (REPORT_PRESET_PLAN.md)."""
+    return now_local.strftime("%A, %B %d, %Y")
+
+
+def _now_str(now_local: datetime) -> str:
+    """The current LOCAL date + time of day, auto-supplied as `{{now}}`. It lets a time-sensitive
+    preset frame its window relative to the ACTUAL moment (a "last 24 hours up to now" briefing run
+    at 6 a.m. is really yesterday's news; run at 8 p.m., today's), rather than a bare calendar date
+    that reads the same morning or night. Zone abbreviation included so the model knows the
+    offset."""
+    stamp = now_local.strftime("%A, %B %-d, %Y at %-I:%M %p")
+    zone = now_local.strftime("%Z") or "UTC"
+    return f"{stamp} {zone}"
 
 
 def _title(text: str, i: int) -> str:
@@ -734,6 +758,22 @@ def _sources_block(sources: list[WebSource]) -> str:
         suffix = "" if ws.read else "  (search result — not opened)"
         lines.append(f"[^{i}] {ws.title or ws.url} — {ws.url}{suffix}")
     return "\n".join(lines)
+
+
+def _scout_brief(angle_brief: str) -> str:
+    """Wrap a preset angle in a SCOUTING framing so the scout locates sources instead of trying
+    to write the report. The raw angle briefs say "OPEN and READ three articles and pull the
+    specifics" — that's the READER's job; handed verbatim to a scout it reads as an impossible
+    order and demoralizes it. This reframes the angle as "which pages to LOCATE" while keeping its
+    named-source guidance intact."""
+    return (
+        "SCOUTING TASK — find the best SPECIFIC, fetchable article URLs for the angle below. A "
+        "separate reader will open them and write the findings, so you are LOCATING sources, not "
+        "writing the report. Follow leads: open a hub/section/search page to reach the actual "
+        "stories, confirm a candidate is a real on-topic article, and surface its URL. In the "
+        "angle below, wording like 'open and read' or 'pull the specifics' describes what a GOOD "
+        "source covers — for you it means which pages to LOCATE for the reader:\n\n" + angle_brief
+    )
 
 
 def _reader_brief(question: str, sources: list[WebSource]) -> str:
@@ -951,6 +991,20 @@ class DeepResearchService:
             require_persist=require_persist,
         )
 
+    async def _owner_tz(self, ctx: ToolContext) -> str | None:
+        """The owner's stored IANA timezone, or None (→ UTC) when no DB is wired (headless/test),
+        the setting is unset, or the read fails. Best-effort: a settings hiccup must never fail a
+        preset render — it just falls back to UTC dates."""
+        if self._maker is None:
+            return None
+        try:
+            from jbrain.settings_store import SqlSettingsStore
+
+            return await SqlSettingsStore(self._maker).owner_timezone(ctx.session)
+        except Exception:  # noqa: BLE001 - a settings read must never crash a run; UTC is the fallback.
+            log.warning("deep_research.owner_tz_read_failed", exc_info=True)
+            return None
+
     async def _run_preset(
         self,
         ctx: ToolContext,
@@ -974,7 +1028,11 @@ class DeepResearchService:
         # week's briefings coexist as distinct rows (REPORT_EXPIRY_PLAN.md, W3). A preset that
         # doesn't reference {{today}} simply ignores the extra variable (render errors only on a
         # MISSING slot, never an unused one), so this is inert for candidate_profile et al.
-        rendered_vars: dict[str, str] = {"today": _today_str()}
+        # Date variables in the OWNER's timezone (fallback UTC), so `{{today}}` matches the owner's
+        # calendar day and `{{now}}` carries the time of day — a "last 24 hours up to now" run in
+        # the morning surfaces yesterday's news, the same run at night surfaces today's.
+        now_local = datetime.now(_owner_zone(await self._owner_tz(ctx)))
+        rendered_vars: dict[str, str] = {"today": _today_str(now_local), "now": _now_str(now_local)}
         rendered_vars.update({str(k): str(v) for k, v in (variables or {}).items()})
         try:
             rp: RenderedPreset = render_preset(preset_name, rendered_vars)
@@ -1789,10 +1847,10 @@ class DeepResearchService:
         """Two-phase open-web gather (REPORT_PRESET_PLAN.md) — the structural cure for the
         fetch-light local model that reported (and hallucinated) from search PREVIEWS:
 
-        - **SCOUT** — one search-only child per angle (`research_scout`: web_search, no
-          web_fetch). Each surfaces candidate URLs for its angle; their PROSE is discarded, so a
-          snippet claim can never become a finding. Only their `web_sources` (the hits) survive,
-          as the candidate pool.
+        - **SCOUT** — one lead-following child per angle (`research_scout`: web_search + web_fetch).
+          Each searches and FOLLOWS LEADS (opens hub/section pages to reach the specific stories)
+          to surface candidate article URLs; its PROSE is discarded, so a snippet claim can never
+          become a finding. Only the URLs it touched (`web_sources`) survive, as the candidate pool.
         - **READ** — fetch-only children (`research_fetch`: web_fetch, no web_search) OPEN the
           top `read_target` candidates and write findings ONLY from the page text they read.
 
@@ -1808,11 +1866,14 @@ class DeepResearchService:
         tree = ctx.tree
         if tree is None:
             return []
-        # --- SCOUT: search-only, one child per angle. Prose discarded; hits kept. ---
+        # --- SCOUT: search + follow leads, one child per angle. Prose discarded; URLs kept. ---
         # Clamp to what the tree can seat around the review reserve (honest degradation on a
         # budget-/time-starved run), exactly as the flat gather does — the scouts still leave the
         # reader phase and the analyst/critique their slices via the reserves already carved off.
-        scout_briefs = sub_questions[: _seatable(tree, len(sub_questions))]
+        # Each angle brief is reframed as a SCOUTING task so the scout locates sources instead of
+        # trying to write the report (its raw "open and read the articles" wording is the reader's).
+        angles = sub_questions[: _seatable(tree, len(sub_questions))]
+        scout_briefs = [(title, _scout_brief(brief)) for title, brief in angles]
         self._phase(ctx, 2, f"Scouting {len(scout_briefs)} angle(s) for sources")
         scouts = await self._spawn.run_research_fan(
             ctx, briefs=scout_briefs, persona="research_scout", effort="low"
@@ -1847,15 +1908,16 @@ class DeepResearchService:
         return [r for r in readers if r.ok]
 
     async def _candidate_pool(self, question: str, scouts: list[_ChildResult]) -> list[WebSource]:
-        """The reader phase's candidate URLs, built from the scouts' search hits: each scout's
-        unopened hits ranked by relevance to the question, then ROUND-ROBIN interleaved across
-        scouts (angle 1's best, angle 2's best, …, then each angle's second) and deduped by
-        canonical URL. The interleave is what guarantees category coverage — the first reads
-        take one page per angle, so a tight read budget still touches every section rather than
-        emptying one angle's list first."""
+        """The reader phase's candidate URLs, built from EVERY URL each scout touched — the pages
+        it searched up AND the ones it opened to follow a lead (in Option B a scout fetches, so
+        'touched' is its recommendation, not just its unopened search hits). Each scout's URLs are
+        ranked by relevance to the question, then ROUND-ROBIN interleaved across scouts (angle 1's
+        best, angle 2's best, …, then each angle's second) and deduped by canonical URL. The
+        interleave is what guarantees category coverage — the first reads take one page per angle,
+        so a tight read budget still touches every section rather than emptying one angle's list."""
         per_angle: list[list[WebSource]] = []
         for c in scouts:
-            hits = [ws for ws in c.web_sources if ws.url and not ws.read]
+            hits = [ws for ws in c.web_sources if ws.url]
             if hits:
                 per_angle.append(await self._rank_unopened(question, hits))
         out: list[WebSource] = []

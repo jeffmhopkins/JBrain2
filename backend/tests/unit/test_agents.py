@@ -221,18 +221,18 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
         assert SPAWN_TOOL not in (p.tools or frozenset())
 
 
-def test_scout_and_fetch_personas_are_the_two_halves_of_the_web_toolkit() -> None:
-    """The two-phase gather personas split `research`'s web toolkit so the phases can't blur:
-    research_scout SEARCHES (web_search, NO web_fetch) and research_fetch READS (web_fetch, NO
-    web_search). Both are KB-less leaves, hold no location, and ⊆ jerv (the parent⊆child clamp
-    keeps them)."""
+def test_scout_and_fetch_personas_split_the_gather_by_role() -> None:
+    """The two-phase gather personas split by ROLE: research_scout is the lead-follower
+    (web_search + web_fetch — it searches AND opens hubs to reach the real article URLs), and
+    research_fetch is the reader (web_fetch, and NO web_search so it can't wander off searching).
+    Both are KB-less leaves, hold no location, and ⊆ jerv (the parent⊆child clamp keeps them)."""
     from jbrain.agent.agents import FETCH_TOOLS, SCOUT_TOOLS
 
     scout, fetch = (AGENTS["research_scout"], AGENTS["research_fetch"])
-    assert scout.tools == SCOUT_TOOLS == frozenset({"web_search", "current_time"})
+    assert scout.tools == SCOUT_TOOLS == frozenset({"web_search", "web_fetch", "current_time"})
     assert fetch.tools == FETCH_TOOLS == frozenset({"web_fetch", "current_time"})
-    # The defining split: scout can't fetch, fetch can't search.
-    assert "web_fetch" not in (scout.tools or frozenset())
+    # The scout can follow leads (fetch); the reader is fetch-only — it never searches.
+    assert "web_fetch" in (scout.tools or frozenset())
     assert "web_search" not in (fetch.tools or frozenset())
     for p in (scout, fetch):
         assert p.reads_knowledge_base is False
@@ -395,8 +395,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "487ddb5461ab4b7040bcc894ca13d6d0819632c624ee8c1a0518ce90fbad24df",
         ),
         "research_scout": (
-            "agent-research-scout-v1",
-            "f98134eeff8071dc5beeaeb2ca6277851773226610ce2db9e8b1372b02e93794",
+            "agent-research-scout-v2",
+            "5487d6795e9622baefe66179e5e371eb338857fea64e5e3df62d79a861582854",
         ),
         "research_fetch": (
             "agent-research-fetch-v1",
