@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
-from jbrain.agent.loop import SearchBudget, ToolContext, ToolOutput
+from jbrain.agent.loop import ToolCallBudget, ToolContext, ToolOutput
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.db.session import SessionContext
 from jbrain.web.fetch import SearchFormError, WebFetcher, WebFetchError
@@ -585,12 +585,21 @@ async def test_web_search_error_carries_no_web_sources() -> None:
 
 
 def _budget_ctx(limit: int) -> ToolContext:
-    """A ToolContext carrying its own fresh, mutable SearchBudget — one per test so the
+    """A ToolContext carrying its own fresh, mutable search ToolCallBudget — one per test so the
     `used` counter never leaks between them."""
     return ToolContext(
         session=SessionContext(principal_kind="owner"),
         scopes=(),
-        search_budget=SearchBudget(limit=limit),
+        search_budget=ToolCallBudget(limit=limit),
+    )
+
+
+def _fetch_budget_ctx(limit: int) -> ToolContext:
+    """A ToolContext with a fresh fetch ToolCallBudget (search left uncapped)."""
+    return ToolContext(
+        session=SessionContext(principal_kind="owner"),
+        scopes=(),
+        fetch_budget=ToolCallBudget(limit=limit),
     )
 
 
@@ -640,6 +649,59 @@ async def test_web_search_uncapped_by_default_has_no_budget_note() -> None:
     )
     out = str(await handlers["web_search"]({"query": "python"}, CTX))
     assert "SEARCH BUDGET" not in out
+
+
+async def test_web_fetch_annotates_remaining_budget() -> None:
+    # A served fetch tells the scout how many pages it has left AND stays citable (web_sources
+    # preserved through the annotation).
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = await handlers["web_fetch"]({"url": "https://x.example/p"}, _fetch_budget_ctx(10))
+    assert isinstance(out, ToolOutput)
+    assert out.web_sources and out.web_sources[0].url == "https://x.example/p"
+    assert "FETCH BUDGET: 9 web_fetch call(s) left of 10" in str(out)
+
+
+async def test_web_fetch_last_page_note_then_refusal() -> None:
+    # A limit of 2: the 2nd fetch is flagged as the last, the 3rd is REFUSED with no network
+    # read — the fix for the scout that looped to 23 fetches.
+    urls: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    ctx = _fetch_budget_ctx(2)
+
+    first = str(await handlers["web_fetch"]({"url": "https://x.example/1"}, ctx))
+    assert "FETCH BUDGET: 1 web_fetch call(s) left of 2" in first
+
+    second = str(await handlers["web_fetch"]({"url": "https://x.example/2"}, ctx))
+    assert "FETCH BUDGET: 0 web_fetch call(s) left of 2" in second
+    assert "that was your LAST page" in second
+
+    refused = str(await handlers["web_fetch"]({"url": "https://x.example/3"}, ctx))
+    assert "FETCH BUDGET SPENT" in refused
+    assert "RECOMMENDED SOURCES" in refused
+    assert not any("x.example/3" in u for u in urls)  # the refused fetch never hit the network
+
+
+async def test_web_fetch_uncapped_by_default_has_no_budget_note() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://x.example/p"}, CTX))
+    assert "FETCH BUDGET" not in out
 
 
 async def test_fetch_rejects_non_http_scheme() -> None:

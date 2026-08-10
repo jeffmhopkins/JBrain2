@@ -782,10 +782,11 @@ def _scout_brief(angle_brief: str) -> str:
     all-in-one research persona (they say "open and read at least three of these ~12 sources,
     cover heavily, don't conclude empty, pivot …") — a checklist that, handed to a scout, drove
     it to run one search per named outlet (~30-36 searches; MODEL_PROMPTING.md: gpt-oss treats a
-    named list as a to-do list and over-searches on contradictory quotas). The scout PROMPT (v6)
+    named list as a to-do list and over-searches on contradictory quotas). The scout PROMPT (v7)
     carries the search budget + "sources are a menu, not a checklist" rule — and the engine now
-    hard-caps `web_search` at SCOUT_SEARCH_BUDGET (the prompt number the model alone won't honor,
-    so the loop enforces it; SearchBudget in loop.py) — so this wrapper is
+    hard-caps both `web_search` (SCOUT_SEARCH_BUDGET) and `web_fetch` (SCOUT_FETCH_BUDGET), the
+    prompt numbers the model alone won't honor, so the loop enforces them (ToolCallBudget in
+    loop.py) — so this wrapper is
     deliberately SHORT — it just marks the task as scouting and the angle as topic-plus-menu,
     without re-stacking the rules (which the model reads as conflict)."""
     return (
