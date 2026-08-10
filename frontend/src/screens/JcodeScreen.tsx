@@ -390,8 +390,12 @@ function JcodePowerModal({
   onClose: (latest: JcodePowerStatus | null) => void;
 }): ReactNode {
   const powerOn = action === "on";
-  // Powering off with live sessions holds at a confirm gate before halting anything.
-  const [confirmed, setConfirmed] = useState(powerOn || initial.live_sessions === 0);
+  // Hold at a confirm gate before doing anything destructive: powering ON over an active box
+  // turn (warming the coder ends it), or powering OFF with live sessions (stopping halts their
+  // shells). Otherwise the transition starts immediately.
+  const [confirmed, setConfirmed] = useState(
+    powerOn ? !initial.active_turn : initial.live_sessions === 0,
+  );
   const [phase, setPhase] = useState<"services" | "model" | "done" | "error">("services");
   const [services, setServices] = useState(initial.services);
   const [model, setModel] = useState<JcodeModelStatus | null>(null);
@@ -512,16 +516,26 @@ function JcodePowerModal({
         {!confirmed ? (
           <>
             <p className="jcode-empty">
-              {initial.live_sessions} session{initial.live_sessions === 1 ? "" : "s"} still running
-              — powering off stops the services and halts their shells (your checkouts are
-              preserved). Continue?
+              {powerOn ? (
+                <>
+                  A {initial.active_kind || "background"} turn is running on the box right now —
+                  activating code mode unloads its model to load the coder, which ends that turn (it
+                  won't resume). Continue?
+                </>
+              ) : (
+                <>
+                  {initial.live_sessions} session{initial.live_sessions === 1 ? "" : "s"} still
+                  running — powering off stops the services and halts their shells (your checkouts
+                  are preserved). Continue?
+                </>
+              )}
             </p>
             <div className="jcode-actions">
               <button type="button" className="jcode-act" onClick={() => onClose(null)}>
                 Cancel
               </button>
               <button type="button" className="jcode-act danger" onClick={() => setConfirmed(true)}>
-                Power off
+                {powerOn ? "End it & continue" : "Power off"}
               </button>
             </div>
           </>
