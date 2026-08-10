@@ -399,8 +399,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "6edbb93cd0ebf241c76019df3eddd18196134c0e7740819e7c6f34478d30659b",
         ),
         "research_fetch": (
-            "agent-research-fetch-v1",
-            "65dd6ecd5843f55e89871379ee3ee495d05623269b79ebb1e9981422b1dc67ae",
+            "agent-research-fetch-v2",
+            "bf5c2bc5214c14940c4a6c9c2dce9f71e6b655dfb33034c64245ddd7bdeca396",
         ),
     }
     assert set(pins) == AGENT_NAMES

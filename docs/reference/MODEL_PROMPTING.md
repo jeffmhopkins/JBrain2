@@ -27,8 +27,13 @@
 > whole sections empty (dropping an AI-model update, a Senate primary, and two completed launches
 > the readers HAD fetched): brevity is now earned by keeping each delivered item tight, never by
 > dropping items, and "no X appeared in the sources" is banned whenever a finding delivered an X
-> (the delivered-content twin of the absence rule — "obeys countable output-shape rules"); the
-> `_critique` grounding gate was collapsed to one bounded,
+> (the delivered-content twin of the absence rule — "obeys countable output-shape rules"), then
+> (`dr-synth-v15`) given citation-hygiene + no-recycling rules after a frontier review of a later
+> run caught duplicate footnote definitions, an orphan `## Sources` entry, and an "Around the World"
+> section padded by restating a domestic story (one number per source, list mirrors the body, each
+> story in one section); freshness was fixed at the reader (`agent-research-fetch-v2` date-stamps
+> each finding and flags stale pages) with a matching v15 rule against printing a stale figure as
+> today's; the `_critique` grounding gate was collapsed to one bounded,
 > prioritized pass and its double-`FIRST` removed; and `research` (v16) / `review` (v8) had their
 > stacked URL/verify restatements collapsed and a "highest-risk first" priority stated. The clean
 > in-repo templates the audit pointed to: the planner, the reflect judge, and the `_analyze` brief.

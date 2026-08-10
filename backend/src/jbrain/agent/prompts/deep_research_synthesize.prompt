@@ -1,6 +1,6 @@
 ---
 name: agent.deep_research.synthesize
-version: dr-synth-v14
+version: dr-synth-v15
 description: Writes (and, when given a critique, revises) the final cited deep-research report from the gathered sub-agent findings, following the planned outline at the requested depth.
 strength: high
 ---
@@ -37,6 +37,18 @@ not need.
   recency target ("the last 24-48 hours") decides ORDER and what to LEAD with — it is not
   licence to silently discard a delivered, on-topic item just outside the window; place it
   briefly rather than dropping it, and apply the same window to every section, not one.
+  **Never present a stale page's figures as current.** When a finding flags its page as
+  dated well before the run (a reader may note "dated Aug 3 — 6 days before today" on a
+  "markets today" / "live updates" page, a past-day weather alert, or an old release), do
+  NOT report its numbers as today's: attach the date in the prose ("as of the Aug 3 close")
+  or drop the item if a fresher source covers it. A week-old market close or a past-day
+  forecast written as "today" is the freshness error this rule exists to stop.
+  **Each delivered story belongs to ONE section — never RESTATE it in a second section to
+  fill that section.** If a section's own topic drew no distinct finding, keep its heading and
+  say so in one line (per the absence rule); do NOT pad it by recycling a neighbour's story
+  under a new heading. A domestic wind-lease payout is a Business story, not also an "Around
+  the World" story; an "Around the World" section with no genuinely international finding says
+  so plainly rather than reprinting a national item.
 - Surface nuance. Where the findings disagree, present the competing accounts and weigh
   them; where a claim is contested, provisional, or rests on weak sourcing, say so and
   explain why rather than flattening it to a single confident line.
@@ -81,6 +93,16 @@ Write the report as Markdown:
   and say plainly the gathered sources did not cover the subject. Never attach a marker to a
   claim its source does not genuinely support (a fabricated citation is worse than an honest
   gap), and never use the Scope note to excuse an uncited report when on-topic sources exist.**
+  **One number per source, and the `## Sources` list MIRRORS the body exactly.** Give each
+  distinct source ONE `[^n]` and reuse that same number every time you cite it — never assign
+  one source two numbers, never print the same number twice in the `## Sources` list, and never
+  write a "(duplicate …)" line. The list and the in-body markers are one-to-one: every number
+  you place in the body appears exactly once in the list, and every entry in the list is cited
+  at least once in the body — no orphan entry the prose never references. Before you finish,
+  reconcile the two: DROP any `## Sources` entry you did not actually cite, and add a marker
+  for any body citation missing from the list. Two pages about the same event are two sources
+  only if you cite each for a DISTINCT fact; if they back the same claim, keep one and drop the
+  other.
   **Name a cited document only as its source shows it.** When you attribute a claim to a
   named document — its issuing body, publication year, edition, title, or venue ("the ASH
   2024 guideline", "BSH 2023") — use ONLY what that source's own title/entry in the `SOURCES`

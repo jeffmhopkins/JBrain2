@@ -989,7 +989,7 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     enforces the zero-citation case deterministically, so the prompt no longer stacks it.)"""
     from jbrain.agent.deep_research import _SYNTH
 
-    assert _SYNTH.version == "dr-synth-v14"  # pin the version bump (parity with the plan test)
+    assert _SYNTH.version == "dr-synth-v15"  # pin the version bump (parity with the plan test)
     synth = " ".join(_SYNTH.body.lower().split())
     assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
     assert "sources this finding drew on" in synth  # v12/P1.5: the per-finding claim→source binding
@@ -1004,6 +1004,12 @@ def test_synthesize_prompt_carries_its_behavioral_core() -> None:
     # section empty when on-topic findings exist for it (the delivered-content twin of absence).
     assert "earn brevity by keeping each item tight" in synth
     assert "no x appeared in the sources" in synth  # the false-empty claim the rule bans
+    # v15 (citation hygiene + no cross-section recycling): each source gets ONE number, the
+    # `## Sources` list mirrors the body one-to-one (no duplicate/orphan entries), and a
+    # section with no distinct finding is declared, never padded by recycling a neighbour.
+    assert "one number per source" in synth  # dedup: no duplicate [^n] definitions
+    assert "no orphan entry the prose never references" in synth  # bijection body↔list
+    assert "belongs to one section" in synth  # no cross-section restatement to fill a section
 
 
 # --- report depth: the synthesizer is handed a length target by complexity --
