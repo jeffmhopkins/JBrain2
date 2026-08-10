@@ -320,15 +320,10 @@ describe("chunkStream", () => {
 });
 
 describe("engineForVoice", () => {
-  it("maps a Kokoro voice id to the kokoro profile and everything else to piper", () => {
+  it("always resolves to the kokoro profile (the only on-box engine)", () => {
     expect(engineForVoice("kokoro-af_heart")).toBe("kokoro");
     expect(engineForVoice("kokoro-bm_george")).toBe("kokoro");
-    expect(engineForVoice("en_US-amy-medium")).toBe("piper");
-    expect(engineForVoice("en_US-libritts_r-medium#3922")).toBe("piper");
-  });
-
-  it("falls back to piper for an empty or missing voice", () => {
-    expect(engineForVoice("")).toBe("piper");
-    expect(engineForVoice(undefined as unknown as string)).toBe("piper");
+    expect(engineForVoice("")).toBe("kokoro");
+    expect(engineForVoice(undefined as unknown as string)).toBe("kokoro");
   });
 });

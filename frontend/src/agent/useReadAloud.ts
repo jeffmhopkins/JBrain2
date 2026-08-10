@@ -89,7 +89,7 @@ export function useReadAloud(): ReadAloud {
   // Live copies read by the callbacks (which close over these without re-creating).
   const engineRef = useRef<ReadAloudEngine>("piper");
   const hasVoicesRef = useRef(false);
-  const answerVoiceRef = useRef("en_US-amy-medium");
+  const answerVoiceRef = useRef("kokoro-af_heart");
   // The current turn's pacing (from the markup-vs-prose classifier), read by fetchClip per clip.
   const paceRef = useRef<{ speed?: number; trail?: number }>({});
 

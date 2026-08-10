@@ -253,12 +253,10 @@ const ABBREVIATIONS = [
   [/\bapprox\.\s*/gi, "approximately "],
 ];
 
-// Per-engine utterance profiles — the pronunciation rules that depend on the voice's PHONEMIZER.
-// piper embeds espeak-ng and our Kokoro build phonemizes through espeak-ng too, so both share one
-// ruleset today; keeping the seam here means giving Kokoro its own (misaki-aware) profile later is
-// a config change, not a re-thread of the pipeline. Engine-agnostic work lives in toProse().
+// Utterance profile — the pronunciation rules that depend on the voice's PHONEMIZER. Kokoro is the
+// only on-box engine (piper was removed); the seam is kept so a future misaki-specific ruleset is a
+// config change, not a re-thread of the pipeline. Engine-agnostic work lives in toProse().
 const UTTERANCE_PROFILES = {
-  piper: { abbreviations: ABBREVIATIONS },
   kokoro: { abbreviations: ABBREVIATIONS },
 };
 
@@ -377,8 +375,8 @@ export function toProse(md) {
  * @param {"piper" | "kokoro"} [engine]
  * @returns {string}
  */
-export function toUtterance(prose, engine = "piper") {
-  const profile = UTTERANCE_PROFILES[engine] ?? UTTERANCE_PROFILES.piper;
+export function toUtterance(prose, engine = "kokoro") {
+  const profile = UTTERANCE_PROFILES[engine] ?? UTTERANCE_PROFILES.kokoro;
   let s = String(prose || "");
   // Latin abbreviations → words (before pause-authoring, so their interior dots aren't read
   // as sentence ends and the spoken aside carries a real pause).
@@ -481,7 +479,7 @@ export function toUtterance(prose, engine = "piper") {
  * @param {"piper" | "kokoro"} [engine]
  * @returns {string}
  */
-export function speakable(md, engine = "piper") {
+export function speakable(md, engine = "kokoro") {
   return toUtterance(toProse(md), engine);
 }
 
@@ -512,15 +510,14 @@ export function reportToSpeech(md) {
 }
 
 /**
- * The utterance profile a box voice id renders through: a Kokoro voice ("kokoro-…") phonemizes
- * via Kokoro, every other id via piper/espeak. Lets a caller thread the right engine into
- * speakable/chunkStream from the chosen voice alone — so custom text and a chat answer are
- * normalized for the SAME engine that will actually render them.
- * @param {string} voice
- * @returns {"piper" | "kokoro"}
+ * The utterance profile a box voice renders through. Kokoro is the only on-box engine now, so this
+ * always resolves to "kokoro" — the seam is kept so callers still thread an engine explicitly and a
+ * future profile split is a one-line change here.
+ * @param {string} _voice
+ * @returns {"kokoro"}
  */
-export function engineForVoice(voice) {
-  return String(voice || "").startsWith("kokoro-") ? "kokoro" : "piper";
+export function engineForVoice(_voice) {
+  return "kokoro";
 }
 
 // --- streaming chunker -----------------------------------------------------------------
@@ -636,7 +633,7 @@ function committedLen(raw) {
  * @param {"piper" | "kokoro"} [engine]
  * @returns {{ chunks: string[]; consumed: number }}
  */
-export function chunkStream(raw, flush, engine = "piper") {
+export function chunkStream(raw, flush, engine = "kokoro") {
   const committed = flush ? raw.length : committedLen(raw);
   if (committed <= 0) return { chunks: [], consumed: 0 };
   return { chunks: splitClips(speakable(raw.slice(0, committed), engine)), consumed: committed };
