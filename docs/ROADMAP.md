@@ -385,6 +385,17 @@ W2 (`ocr` / `gmail_read` adoption — proving the base is generic) + W3 (polish,
 optional turn-binding replay) open. A separately-tracked de-dup the research surfaced — unifying the
 near-identical research-report library and external-video corpus — is out of scope here.
 
+**In progress:** Kokoro TTS consolidation (build plan: `docs/plans/KOKORO_TTS_CONSOLIDATION_PLAN.md`) —
+standardize read-aloud on **Kokoro only** (remove Piper; the browser-native voice is the sole
+fallback), collapse the three overlapping text normalizers (`speakable.js`, the box `_speakable_text`,
+the wall `mdToPlain`) into **one on the box**, make the misaki-vs-espeak phonemizer path **visible**,
+and give the owner a **plain-respelling pronunciation list**. Fixes the reported symptoms — an unwanted
+pause after "U.S.", flat/uncharacteristic headings, and "Titusville" mispronounced (a `KOKORO_LEXICON`
+override that already exists but goes inert whenever the box silently drops to espeak) — at their root.
+W1 (phonemizer-path `/tts/health` + `/api/brain/tts/health` observability) shipped on-branch; W2 (remove
+Piper), W3 (collapse to one box normalizer, folding in the U.S./heading/coverage fixes), W4 (respelling
+lexicon + a GUI-gated Settings panel) open.
+
 **Shipped:** Grokipedia tool (build record: `docs/archive/GROKIPEDIA_TOOL_PLAN.md`, PR #993) — a jerv
 tool set (`grokipedia_search`/`outline`/`section`/`citations`/`related`) to search Grokipedia, traverse a page
 by its table of contents, drill into single sections without loading the whole article, and pull
