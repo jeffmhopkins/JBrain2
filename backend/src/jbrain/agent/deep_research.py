@@ -99,6 +99,16 @@ DR_DEFAULT_BREADTH = 4
 DR_MAX_BREADTH = 5
 DR_SIMPLE_BREADTH = 2  # a `simple`-rated question researches fewer angles (breadth only)
 DR_MAX_GAP_QUESTIONS = 2
+# Two-phase (scout → read) gather (REPORT_PRESET_PLAN.md). A preset that sets `min_reads` opts
+# into it: a search-only SCOUT fan surfaces candidate URLs, then a fetch-only READER fan opens
+# the top `min_reads` of them and writes findings ONLY from the page text — so a fetch-light
+# model can never report from an unopened snippet (the "(search result)" failure the daily_news
+# brief hit). Bounded so the two fans + analyst + critique still fit the tree-wide agent ceiling:
+# DR_READ_BATCH pages per reader child (so ceil(reads/batch) readers), and the reader fan leaves
+# DR_READ_DOWNSTREAM_RESERVE agent slots free for the analyst + critique that run after gather
+# (fetch-first skips the search-based refill — re-searching would reintroduce the snippet path).
+DR_READ_BATCH = 2
+DR_READ_DOWNSTREAM_RESERVE = 2
 # A single-source pipeline (the interview shape) runs its stages SEQUENTIALLY, so the count
 # is a hard bound on chained fans — capped low (extract → answer → fact-check → …). Fewer than
 # two stages is not a pipeline (one stage == a flat one-brief gather), so staging needs ≥2.
@@ -160,6 +170,12 @@ class Directive:
     # reaps it (REPORT_EXPIRY_PLAN.md). None = keep forever (the default for every run that
     # doesn't opt in). Set by a preset's `retention_days` field, e.g. daily_news → 7.
     retention_days: int | None = None
+    # Optional read target: when set (and the run is web-sourced), the gather switches to the
+    # two-phase scout→read pipeline and OPENS up to this many pages, writing findings only from
+    # the fetched text — the structural fix for a fetch-light model reporting from snippets
+    # (REPORT_PRESET_PLAN.md). None/0 = the ordinary single-pass gather (the default for every
+    # run that doesn't opt in). Set by a preset's `min_reads` field, e.g. daily_news.
+    min_reads: int | None = None
 
 
 @dataclass(frozen=True)
@@ -181,7 +197,7 @@ class SourcePlan:
 # library), `research_deep` (deepest task-agent tier).
 # Used to count findings regardless of which family a run's gather ran on.
 _RESEARCH_PERSONAS = frozenset(
-    {"research", "research_library", "research_reports", "research_deep"}
+    {"research", "research_library", "research_reports", "research_deep", "research_fetch"}
 )
 
 
@@ -720,6 +736,26 @@ def _sources_block(sources: list[WebSource]) -> str:
     return "\n".join(lines)
 
 
+def _reader_brief(question: str, sources: list[WebSource]) -> str:
+    """A reader child's brief: the topic plus the exact URLs to OPEN. The `research_fetch`
+    persona has no web_search, so this is a pure fetch list — open each page and report what it
+    actually says. Titles ride along only as a which-page-is-which hint; the child reports from
+    the fetched text, never the title (a title/snippet is exactly what this phase exists to get
+    past)."""
+    lines = "\n".join(f"- {ws.url}" + (f"  ({ws.title})" if ws.title else "") for ws in sources)
+    return (
+        f"Research topic: {question}\n\n"
+        "OPEN each of the web pages listed below with web_fetch and report the concrete "
+        "specifics each page actually states about the topic — names, numbers, dates, direct "
+        "quotes, what happened and WHEN, and the correct status/tense (a schedule or press "
+        "release is a PLAN, not a completed event). You have no search tool: do not look for "
+        "other pages, just open these. Write one short titled block per page. If a page is "
+        "paywalled, blocked, empty, or off-topic, say so in one line and move on. Report ONLY "
+        "what the fetched pages say — never fill a gap from memory.\n\n"
+        f"Pages to open:\n{lines}"
+    )
+
+
 def _findings_block(entries: list[ScratchEntry]) -> str:
     """The findings a downstream stage reads FROM THE LEDGER, wrapped once in the
     data/instruction boundary the orchestration prompts declare inert (reusing the
@@ -977,6 +1013,7 @@ class DeepResearchService:
             objective=rp.objective or rp.question,
             output_kind=rp.output_kind,
             retention_days=rp.retention_days,
+            min_reads=rp.min_reads,
         )
         source_plan = SourcePlan(source_mode=rp.source_mode, seed=None, sink=_SINK_EXTERNAL)
         return await self._run(
@@ -1159,7 +1196,8 @@ class DeepResearchService:
         # agents. In-request deepest (max_depth == MAX_DEPTH) and every standard run stay
         # single-tier with plain `research`. Web only — the library modes have no corpus
         # decompose twin — and gather only: a refill gap is already narrow.
-        if deepest and source_mode == "web" and ctx.tree.max_depth > MAX_DEPTH:
+        two_tier = deepest and source_mode == "web" and ctx.tree.max_depth > MAX_DEPTH
+        if two_tier:
             gather_persona = "research_deep"
 
         # Exfiltration invariant (DEEP_PRODUCE_PLAN.md): a seeded run is pinned to the
@@ -1195,6 +1233,18 @@ class DeepResearchService:
         # not a pipeline (one stage == a flat one-brief gather), so the flat parallel gather
         # below stays byte-for-byte the shipped behaviour for every ordinary research question.
         staged = plan["stages"] if len(plan["stages"]) >= DR_MIN_STAGES else []
+        # Fetch-first (scout → read): a search-only SCOUT fan surfaces candidate URLs, then a
+        # fetch-only READER fan opens them and writes findings ONLY from the page text — so the
+        # writer never sees an unfetched snippet, and the "(search result)" / hallucinated-
+        # from-a-preview failure can't recur (REPORT_PRESET_PLAN.md). OPT-IN via a preset's
+        # `min_reads`: it fits fetch-light NEWS-style gathering ("find articles, read them") but
+        # not investigative research, which needs the plain `research` persona's interleaved
+        # search + `portal_search` + verify-an-absence loop (candidate_profile). So it is gated —
+        # web mode, a min_reads target, not a staged pipeline, not the deepest two-tier lane.
+        # Robustness for the NON-opt-in paths comes from the grounding critique gate, not here.
+        fetch_first = (
+            bool(directive.min_reads) and source_mode == "web" and not staged and not two_tier
+        )
 
         # Reserve the review children's slice — TOKENS (`stage_reserve`) AND TIME
         # (`time_reserve`) — off the pool/deadline BEFORE gather runs. `children_exhausted`
@@ -1220,6 +1270,13 @@ class DeepResearchService:
                 # Ordered stages, fed forward: extract from the source, then answer/fact-check
                 # what it found — no independent sibling re-derives the extraction.
                 gathered = await self._gather_staged(ctx, staged, source_mode)
+            elif fetch_first:
+                # Scout the angles for URLs, then OPEN the top ones — the writer sees only
+                # fetched text. `min_reads` is truthy here (fetch_first guards it).
+                assert directive.min_reads is not None
+                gathered = await self._gather_scout_then_read(
+                    ctx, question, sub_questions, directive.min_reads
+                )
             else:
                 # Idea 3 — clamp gather to what the tree can seat AROUND the review reserve, so
                 # a run low on budget/time drops the angles it can't afford (and says so)
@@ -1300,7 +1357,10 @@ class DeepResearchService:
             # and depth-1 throughout: the fan guards are exactly the standard ones.
             coverage_limited = False
             useful_rounds = 0  # gap rounds that produced usable findings (honest `rounds`)
-            max_rounds = DR_DEEPEST_MAX_ROUNDS if deepest else 1
+            # A fetch-first run skips the gap loop: a refill re-searches, which would smuggle a
+            # snippet back into an otherwise fetched-only run. Its scout→read gather is the whole
+            # gather. Every other run keeps the normal reflect→refill (one round; deepest loops).
+            max_rounds = 0 if fetch_first else (DR_DEEPEST_MAX_ROUNDS if deepest else 1)
             # New-source high-water mark for the diminishing-returns check (gather + analyst
             # already reached these before any refill round runs).
             seen_sources = len(_collect_sources(scratch.children({RESEARCH, ANALYSIS})))
@@ -1719,6 +1779,121 @@ class DeepResearchService:
                 break
         return produced
 
+    async def _gather_scout_then_read(
+        self,
+        ctx: ToolContext,
+        question: str,
+        sub_questions: list[tuple[str, str]],
+        read_target: int,
+    ) -> list[_ChildResult]:
+        """Two-phase open-web gather (REPORT_PRESET_PLAN.md) — the structural cure for the
+        fetch-light local model that reported (and hallucinated) from search PREVIEWS:
+
+        - **SCOUT** — one search-only child per angle (`research_scout`: web_search, no
+          web_fetch). Each surfaces candidate URLs for its angle; their PROSE is discarded, so a
+          snippet claim can never become a finding. Only their `web_sources` (the hits) survive,
+          as the candidate pool.
+        - **READ** — fetch-only children (`research_fetch`: web_fetch, no web_search) OPEN the
+          top `read_target` candidates and write findings ONLY from the page text they read.
+
+        The rest of the pipeline sees ONLY the reader findings — the writer literally has no
+        unopened snippet to cite, so the "(search result)" briefing can't recur. Candidates are
+        pooled per-angle and round-robin interleaved, so the read budget (bounded by the tree's
+        agent ceiling) is spread across categories rather than soaked up by one topic.
+
+        Returns the reader (fetched) findings. Returns [] — NEVER the scout prose — when scouting
+        surfaced no URL, the read budget can't seat a reader, or every reader came back empty; the
+        caller then refuses an empty web gather (or marks a refill round coverage-limited). The
+        strict no-scout-fallback is the point: an unfetched snippet must never reach the writer."""
+        tree = ctx.tree
+        if tree is None:
+            return []
+        # --- SCOUT: search-only, one child per angle. Prose discarded; hits kept. ---
+        # Clamp to what the tree can seat around the review reserve (honest degradation on a
+        # budget-/time-starved run), exactly as the flat gather does — the scouts still leave the
+        # reader phase and the analyst/critique their slices via the reserves already carved off.
+        scout_briefs = sub_questions[: _seatable(tree, len(sub_questions))]
+        self._phase(ctx, 2, f"Scouting {len(scout_briefs)} angle(s) for sources")
+        scouts = await self._spawn.run_research_fan(
+            ctx, briefs=scout_briefs, persona="research_scout", effort="low"
+        )
+        pool = await self._candidate_pool(question, scouts)
+        if not pool:
+            return []  # no URL to open — strictly nothing (never the scouts' snippet prose)
+        # --- READ: fetch-only children over the pooled candidates, batched. ---
+        targets = pool[:read_target]
+        batches = [targets[i : i + DR_READ_BATCH] for i in range(0, len(targets), DR_READ_BATCH)]
+        # Clamp the reader fan on three axes: the budget/time floors (`_seatable`); a headroom
+        # that keeps DR_READ_DOWNSTREAM_RESERVE agent slots free for the analyst + critique that
+        # still run after gather; and the fan's own total-agent admission (else `run_research_fan`
+        # refuses it whole and opens nothing).
+        headroom = tree.max_total_agents - tree.agents_spawned - DR_READ_DOWNSTREAM_RESERVE
+        seatable = min(_seatable(tree, len(batches)), max(headroom, 0))
+        while seatable >= 1 and not tree.can_admit(seatable):
+            seatable -= 1
+        batches = batches[:seatable]
+        if not batches:
+            return []  # no budget to open a page — coverage-limited, not a snippet fallback
+        n_pages = sum(len(b) for b in batches)
+        self._phase(ctx, 2, f"Reading {n_pages} source(s)")
+        log.info("deep_research.scout_then_read", scouts=len(scouts), reading=n_pages)
+        briefs = [
+            (f"read {i + 1}", _reader_brief(question, batch)) for i, batch in enumerate(batches)
+        ]
+        readers = await self._spawn.run_research_fan(
+            ctx, briefs=briefs, persona="research_fetch", effort="low"
+        )
+        # Only the fetched findings ever leave this method — [] if every reader was blocked/empty.
+        return [r for r in readers if r.ok]
+
+    async def _candidate_pool(self, question: str, scouts: list[_ChildResult]) -> list[WebSource]:
+        """The reader phase's candidate URLs, built from the scouts' search hits: each scout's
+        unopened hits ranked by relevance to the question, then ROUND-ROBIN interleaved across
+        scouts (angle 1's best, angle 2's best, …, then each angle's second) and deduped by
+        canonical URL. The interleave is what guarantees category coverage — the first reads
+        take one page per angle, so a tight read budget still touches every section rather than
+        emptying one angle's list first."""
+        per_angle: list[list[WebSource]] = []
+        for c in scouts:
+            hits = [ws for ws in c.web_sources if ws.url and not ws.read]
+            if hits:
+                per_angle.append(await self._rank_unopened(question, hits))
+        out: list[WebSource] = []
+        seen: set[str] = set()
+        for i in range(max((len(lst) for lst in per_angle), default=0)):
+            for lst in per_angle:
+                if i < len(lst):
+                    key = _canonical_url(lst[i].url)
+                    if key and key not in seen:
+                        seen.add(key)
+                        out.append(lst[i])
+        return out
+
+    async def _rank_unopened(self, question: str, sources: list[WebSource]) -> list[WebSource]:
+        """Candidate hits reordered most-relevant-first, so the reader phase spends its bounded
+        budget on the pages most likely to matter. Uses the local embedder (no LLM tokens,
+        deterministic); FAIL-OPEN on every axis — no embedder wired, an embed error, or an
+        unexpected vector shape returns the input order unchanged, so ranking never strands a
+        read."""
+        if len(sources) < 2 or self._embed is None:
+            return sources
+        texts = [f"{ws.title or ws.url} — {_host(ws.url)}" for ws in sources]
+        try:
+            vecs = await self._embed.embed([question, *texts])
+        except Exception:  # noqa: BLE001 - ranking is a pure optimization; an embed-container
+            # error must never strand a read. A task cancellation is BaseException → propagates.
+            log.warning("deep_research.candidate_rank_failed", exc_info=True)
+            return sources
+        if len(vecs) != len(sources) + 1:
+            return sources
+        qvec, svecs = vecs[0], vecs[1:]
+        ranked = sorted(
+            zip(sources, (_cosine(qvec, sv) for sv in svecs), strict=True),
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        return [ws for ws, _ in ranked]
+
     async def _analyze(
         self,
         ctx: ToolContext,
@@ -2000,6 +2175,17 @@ class DeepResearchService:
             "confirm the cited source actually carries that body, year, and type, and flag any "
             "mislabelled year/society or a review or summary passed off as the primary "
             "guideline or study. "
+            # Grounding sweep (any domain, not just studies): the anti-hallucination net. Every
+            # concrete claim — a named person/place/org, an event, a date, a number — must trace
+            # to a source that actually states it.
+            "Then run a GROUNDING SWEEP over every concrete claim (named person, place, org, "
+            "event, date, number): open its cited page and confirm the page genuinely reports "
+            "THAT claim. Flag — as a claim that MUST BE CUT — any event, entity, quote, or fact "
+            "the cited page does NOT report at all (a fabrication), and any claim that cites no "
+            "source. Check STATUS/TENSE: a launch, release, vote, or ruling may be reported as "
+            "having HAPPENED only if the source confirms it occurred; a schedule, countdown, or "
+            "press-release announcement is a PLAN — flag any plan written as a completed event. "
+            "Flag any date, place, or named person the cited source does not state. "
             if verify
             else ""
         )
@@ -2030,7 +2216,9 @@ class DeepResearchService:
             "Judge it for factual accuracy, unsupported or over-confident claims, missing "
             f"corroboration, and gaps against the question it answers. {record_clause}{cite_clause}"
             f"{_supplement_clause(source_mode)} {fallback_clause}"
-            "Return a short, specific critique — the concrete problems to fix — not a rewrite."
+            "Return a short, specific critique — the concrete problems to fix — not a rewrite. "
+            "For each unsupported, fabricated, or unverifiable claim, say EXPLICITLY that it must "
+            "be removed or hedged, so the revision cuts it rather than restating it."
             + sources_note,
         )
         res = await self._spawn.run_research_fan(

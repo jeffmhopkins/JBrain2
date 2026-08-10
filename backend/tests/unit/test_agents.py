@@ -30,7 +30,7 @@ from jbrain.agent.agents import (
 )
 
 
-def test_thirteen_agents_are_defined() -> None:
+def test_fifteen_agents_are_defined() -> None:
     assert (
         frozenset(
             {
@@ -47,6 +47,8 @@ def test_thirteen_agents_are_defined() -> None:
                 "research_reports",
                 "review_reports",
                 "research_deep",
+                "research_scout",
+                "research_fetch",
             }
         )
         == AGENT_NAMES
@@ -219,6 +221,26 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
         assert SPAWN_TOOL not in (p.tools or frozenset())
 
 
+def test_scout_and_fetch_personas_are_the_two_halves_of_the_web_toolkit() -> None:
+    """The two-phase gather personas split `research`'s web toolkit so the phases can't blur:
+    research_scout SEARCHES (web_search, NO web_fetch) and research_fetch READS (web_fetch, NO
+    web_search). Both are KB-less leaves, hold no location, and ⊆ jerv (the parent⊆child clamp
+    keeps them)."""
+    from jbrain.agent.agents import FETCH_TOOLS, SCOUT_TOOLS
+
+    scout, fetch = (AGENTS["research_scout"], AGENTS["research_fetch"])
+    assert scout.tools == SCOUT_TOOLS == frozenset({"web_search", "current_time"})
+    assert fetch.tools == FETCH_TOOLS == frozenset({"web_fetch", "current_time"})
+    # The defining split: scout can't fetch, fetch can't search.
+    assert "web_fetch" not in (scout.tools or frozenset())
+    assert "web_search" not in (fetch.tools or frozenset())
+    for p in (scout, fetch):
+        assert p.reads_knowledge_base is False
+        assert "current_location" not in (p.tools or frozenset())
+        assert SPAWN_TOOL not in (p.tools or frozenset())
+        assert (p.tools or frozenset()) <= (AGENTS["jerv"].tools or frozenset())
+
+
 def test_library_subagent_personas_are_corpus_sandboxed_and_kb_less() -> None:
     """research_library/review_library are the corpus twins of research/review: their
     tools are the video-library reads (NO web), they read no knowledge base, hold no
@@ -244,7 +266,7 @@ def test_library_subagent_personas_are_corpus_sandboxed_and_kb_less() -> None:
 
 
 def test_spawn_set_matches_the_subagent_personas() -> None:
-    """The closed spawn set is exactly the eight child personas — `spawn_subagent`
+    """The closed spawn set is exactly the ten child personas — `spawn_subagent`
     validates against it BEFORE agent_for (which would otherwise resolve an unknown
     name to the KB-capable curator)."""
     assert (
@@ -258,6 +280,8 @@ def test_spawn_set_matches_the_subagent_personas() -> None:
                 "research_reports",
                 "review_reports",
                 "research_deep",
+                "research_scout",
+                "research_fetch",
             }
         )
         == SUBAGENT_PERSONAS
@@ -369,6 +393,14 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "review_reports": (
             "agent-review-reports-v2",
             "487ddb5461ab4b7040bcc894ca13d6d0819632c624ee8c1a0518ce90fbad24df",
+        ),
+        "research_scout": (
+            "agent-research-scout-v1",
+            "f98134eeff8071dc5beeaeb2ca6277851773226610ce2db9e8b1372b02e93794",
+        ),
+        "research_fetch": (
+            "agent-research-fetch-v1",
+            "65dd6ecd5843f55e89871379ee3ee495d05623269b79ebb1e9981422b1dc67ae",
         ),
     }
     assert set(pins) == AGENT_NAMES
