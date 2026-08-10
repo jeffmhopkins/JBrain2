@@ -33,7 +33,14 @@
 > section padded by restating a domestic story (one number per source, list mirrors the body, each
 > story in one section); freshness was fixed at the reader (`agent-research-fetch-v2` date-stamps
 > each finding and flags stale pages) with a matching v15 rule against printing a stale figure as
-> today's; the `_critique` grounding gate was collapsed to one bounded,
+> today's. The v15 citation-hygiene rules were then RETIRED into code (`dr-synth-v16`): a live run
+> showed gpt-oss still botching the bookkeeping (it dropped the `## Sources` block outright), so
+> `_finalize_sources` now rebuilds that block deterministically as a no-renumber projection of the
+> in-body `[^n]` markers onto the source registry (duplicates/orphans/missing/out-of-range become
+> impossible by construction), the one-shot `_backstop_critique` grew a dangling-citation gate and
+> a scored keep-the-better-attempt guard (`reflexion.strictly_improves`), and the prompt stopped
+> asking the model to author/reconcile the list — the exact "prompt = intent, engine = ceiling"
+> move, applied to the citation apparatus. The `_critique` grounding gate was collapsed to one bounded,
 > prioritized pass and its double-`FIRST` removed; and `research` (v16) / `review` (v8) had their
 > stacked URL/verify restatements collapsed and a "highest-risk first" priority stated. The clean
 > in-repo templates the audit pointed to: the planner, the reflect judge, and the `_analyze` brief.

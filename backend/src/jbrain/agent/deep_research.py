@@ -61,6 +61,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent.briefs import compose_feed_block, prepend_feed
 from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
 from jbrain.agent.loop import ToolContext, ToolOutput
+from jbrain.agent.reflexion import (
+    VerificationResult,
+    aggregate,
+    cited_indices,
+    strictly_improves,
+)
 from jbrain.agent.research_presets import PresetError, RenderedPreset, render_preset
 from jbrain.agent.research_scratchpad import (
     ANALYSIS,
@@ -498,19 +504,99 @@ _ZERO_CITATION_CRITIQUE = (
 )
 
 
-def _backstop_critique(report: str, sources: list[WebSource], enforce_sections: list[str]) -> str:
-    """The corrective critique for the ONE post-synth re-write, or "" if the draft is clean.
-    Combines the zero-citation symptom (sources reached but nothing cited) with the
-    missing-heading symptom (a preset's required section dropped), so a single re-synth fixes
-    whichever fired. `enforce_sections` is empty for a non-preset run, so its heading half is
-    inert there and the behaviour collapses to exactly the zero-citation backstop."""
-    parts: list[str] = []
-    if sources and not _CITE_MARKER.search(report):
-        parts.append(_ZERO_CITATION_CRITIQUE)
+def _dangling_markers(report: str, sources: list[WebSource]) -> list[int]:
+    """In-body `[^n]`/`【n】` markers that resolve to NO registry entry (n < 1 or
+    n > len(sources)) — the writer invented or mis-numbered a citation, so the marker
+    points at nothing. Code can DETECT this but not FIX it (only the model knows which real
+    source the claim belongs to, or whether to drop it), so it feeds the corrective re-synth
+    rather than being silently dropped — otherwise the finalize would leave a body marker with
+    no `## Sources` line and no favicon chip. Distinct, ascending."""
+    return sorted({n for n in cited_indices(report) if not 1 <= n <= len(sources)})
+
+
+def _dangling_critique(dangling: list[int], n_sources: int) -> str:
+    joined = ", ".join(f"[^{n}]" for n in dangling)
+    return (
+        f"CITATION DEFECT: these markers point past the SOURCES list, which has {n_sources} "
+        f"entries numbered 1–{n_sources}: {joined}. Re-cite each such claim against a real "
+        f"source number in that range, or remove the marker if no listed source backs the "
+        f"claim. Do NOT renumber the other markers."
+    )
+
+
+def _draft_gates(
+    report: str, sources: list[WebSource], enforce_sections: list[str]
+) -> list[VerificationResult]:
+    """The deterministic draft gates, one `VerificationResult` each (0..1 score + the
+    corrective issue text). A gate that passes contributes a clean 1.0 with no issue.
+    The gates: zero-citation (sources reached but nothing cited — the all-off-topic escape
+    over-applied), dangling-citation (a marker past the registry), and missing-heading (a
+    PRESET's locked outline dropped a required section). `enforce_sections` empty ⇒ the
+    heading gate is inert (a non-preset run). The scores drive the keep-the-better-attempt
+    decision; the issues concatenate into the ONE corrective re-synth's critique."""
+    results: list[VerificationResult] = []
+    if sources:
+        cited = bool(_CITE_MARKER.search(report))
+        issues = () if cited else (_ZERO_CITATION_CRITIQUE,)
+        results.append(VerificationResult(1.0 if cited else 0.0, issues))
+    markers = cited_indices(report)
+    dangling = _dangling_markers(report, sources)
+    if markers:
+        score = (len(markers) - len(dangling)) / len(markers)
+        issues = () if not dangling else (_dangling_critique(dangling, len(sources)),)
+        results.append(VerificationResult(score, issues))
     missing = _missing_headings(report, enforce_sections)
-    if missing:
-        parts.append(_missing_headings_critique(missing))
-    return "\n\n".join(parts)
+    if enforce_sections:
+        score = (len(enforce_sections) - len(missing)) / len(enforce_sections)
+        issues = () if not missing else (_missing_headings_critique(missing),)
+        results.append(VerificationResult(score, issues))
+    return results
+
+
+def _gate_score(
+    report: str, sources: list[WebSource], enforce_sections: list[str]
+) -> VerificationResult:
+    """The aggregate (mean) gate verdict for a draft — the axis the keep-the-better-attempt
+    guard scores a re-synth / revise against (`strictly_improves`)."""
+    return aggregate(_draft_gates(report, sources, enforce_sections))
+
+
+def _backstop_critique(report: str, sources: list[WebSource], enforce_sections: list[str]) -> str:
+    """The corrective critique for the ONE post-synth re-write, or "" if the draft is clean —
+    the concatenated issue text from every fired `_draft_gates` gate (zero-citation,
+    dangling-citation, missing-heading), so a single re-synth fixes whichever fired."""
+    return "\n\n".join(i for g in _draft_gates(report, sources, enforce_sections) for i in g.issues)
+
+
+# A `## Sources` / `## References` heading LINE (exact heading text, any level, case-insensitive).
+# Exact-text, not substring, so "## Data sources and methods" or a preset section never matches;
+# the block is conventionally LAST (the Scope note references "the sources listed below"), so the
+# LAST such heading is the real block and truncating from it to EOF strips it without eating prose.
+_SOURCES_SECTION_RE = re.compile(r"(?im)^[ \t]*#{1,6}[ \t]*(?:sources|references)[ \t]*$")
+
+
+def _finalize_sources(report: str, sources: list[WebSource]) -> str:
+    """Rebuild the report's trailing `## Sources` block DETERMINISTICALLY as a one-to-one
+    mirror of the in-body `[^n]` markers — the engine enforcing what the prompt can't. gpt-oss
+    is unreliable at this bookkeeping: it emits duplicate footnote definitions, orphan entries
+    the prose never cites, or drops the block entirely (all seen in live runs). So discard
+    whatever list it wrote and project the body's markers onto the canonical `sources` registry.
+
+    Pure and NO-RENUMBER: body marker integers and the `sources` array are untouched — `[^n]`
+    keeps binding positionally to `sources[n-1]` (== the persisted chips == the view's
+    `web_sources[n-1]`), so nothing downstream desyncs. Only the trailing prose list is rewritten.
+    Reads both ASCII `[^n]` and fullwidth `【n】` (via `cited_indices`) but writes ASCII. A marker
+    past the registry is dropped from the list (the dangling-citation gate is what corrects it
+    upstream); zero resolvable markers ⇒ no block at all (the honest all-noise / uncited case)."""
+    # Strip any model-authored Sources/References section: truncate from the LAST such heading.
+    matches = list(_SOURCES_SECTION_RE.finditer(report))
+    body = report[: matches[-1].start()] if matches else report
+    body = body.rstrip()
+    nums = sorted({n for n in cited_indices(body) if 1 <= n <= len(sources)})
+    if not nums:
+        return body + "\n"
+    lines = [f"[^{n}] {sources[n - 1].title or sources[n - 1].url}" for n in nums]
+    return body + "\n\n## Sources\n" + "\n".join(lines) + "\n"
 
 
 # Coalesce the stream: emit a preview at most every ~N new characters so the live report
@@ -1544,14 +1630,16 @@ class DeepResearchService:
             # Detecting the symptom and forcing one corrective write beats trusting a prose rule.
             # One retry only; a still-defective draft ships honestly. Runs before the critique
             # slice is released so the re-synth (a jerv call) isn't gated by it.
-            backstop = _backstop_critique(report, sources, sections if enforce_headings else [])
+            enforce = sections if enforce_headings else []
+            draft_gate = _gate_score(report, sources, enforce)
+            backstop = _backstop_critique(report, sources, enforce)
             if backstop:
                 log.warning(
                     "deep_research.backstop_retry",
                     reached=len(sources),
                     enforce_headings=enforce_headings,
                 )
-                report = await self._synthesize(
+                candidate = await self._synthesize(
                     ctx,
                     question,
                     sections,
@@ -1562,6 +1650,14 @@ class DeepResearchService:
                     critique=backstop,
                     directive=directive,
                 )
+                # Keep the re-synth ONLY if it scores strictly better across the gates: a retry
+                # that fixes one symptom but regresses another (e.g. cites at last but drops a
+                # required heading) must not ship a worse draft than the one that triggered it.
+                # Bounded to this single retry — a still-defective draft ships honestly.
+                if strictly_improves(_gate_score(candidate, sources, enforce), draft_gate):
+                    report = candidate
+                else:
+                    log.warning("deep_research.backstop_retry_not_kept", reached=len(sources))
 
             # Record the finished draft as the DRAFT entry — recorded AFTER the backstop
             # re-synth so the ledger holds the exact draft the critique reads. It carries no
@@ -1602,17 +1698,30 @@ class DeepResearchService:
                     directive=directive,
                 )
                 revised = True
-                # The zero-citation backstop guards the DRAFT; the revise pass is a second write
-                # that could itself drop every citation. If it regressed a cited draft to an
-                # uncited one while sources exist, keep the cited draft rather than ship the
-                # newly-uncited revision — the same must-cite invariant, applied to the final text.
-                if sources and _CITE_MARKER.search(pre_revise) and not _CITE_MARKER.search(report):
-                    log.warning("deep_research.revise_dropped_citations", reached=len(sources))
+                # The gates guard the DRAFT; the revise is a second write that could itself
+                # regress one — drop every citation, invent a dangling marker, drop a required
+                # heading. The revise is driven by the FUZZY critique (semantic gains the gates
+                # can't see), so this is REGRESSION-ONLY: keep the revision unless it scores
+                # strictly WORSE on the gates than the pre-revise draft, in which case keep the
+                # pre-revise text. (Generalizes the old "revise dropped all citations" guard to
+                # every gate while never overruling a legitimate same-or-better semantic revise.)
+                if _gate_score(report, sources, enforce).score < _gate_score(
+                    pre_revise, sources, enforce
+                ).score:
+                    log.warning("deep_research.revise_regressed_gate", reached=len(sources))
                     report = pre_revise
                     revised = False
         finally:
             ctx.tree.stage_reserve = prior_reserve
             ctx.tree.time_reserve = prior_time_reserve
+
+        # Rebuild the trailing `## Sources` block deterministically from the in-body markers +
+        # the registry (see `_finalize_sources`) — the engine enforcing the one-to-one mirror the
+        # writer is unreliable at. Runs on the FINAL shipped text, after the revise settles and
+        # BEFORE persist/return/view below, so the stored report, the framed reply, and the PWA
+        # view all carry the same corrected block. No-renumber, so the positional citation
+        # contract (the persisted chips, the view's web_sources) is untouched.
+        report = _finalize_sources(report, sources)
 
         analyzed = bool(analysis.strip())
         rounds = 1 + useful_rounds  # gather + the gap rounds that produced usable findings
