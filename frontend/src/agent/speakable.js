@@ -486,6 +486,32 @@ export function speakable(md, engine = "piper") {
 }
 
 /**
+ * Prepare a deep-research REPORT's Markdown for read-aloud: the report is a written artifact with
+ * visual scaffolding a listener shouldn't hear. Two removals (the body stays untouched):
+ *  - **section headings** — a spoken briefing shouldn't voice its `## Good Morning` labels; read
+ *    aloud they become terse sentences that double the prose ("Good Morning." then "Good morning,
+ *    it's Sunday…"). Drop the whole heading LINE (not just the `#`), leaving the prose to flow on
+ *    its own verbal transitions.
+ *  - **the trailing Sources/References/Citations section** — TTS would otherwise read the URL list
+ *    aloud ("Sources. florida spacereport dot blogspot dot com…").
+ * Returns Markdown (still fed through `speakable`/`chunkStream` by the caller), so only the report
+ * read-aloud path opts in — chat read-aloud is byte-unchanged.
+ * @param {string} md
+ * @returns {string}
+ */
+export function reportToSpeech(md) {
+  let s = String(md || "");
+  // Cut a trailing Sources/References/Citations heading and everything after it (to end).
+  s = s.replace(/\n\s*#{1,6}\s+(?:sources|references|citations)\b[\s\S]*$/i, "\n");
+  // Drop heading LINES entirely (the marker is `#{1,6}` at line start).
+  s = s
+    .split("\n")
+    .filter((line) => !/^\s{0,3}#{1,6}\s/.test(line))
+    .join("\n");
+  return s;
+}
+
+/**
  * The utterance profile a box voice id renders through: a Kokoro voice ("kokoro-…") phonemizes
  * via Kokoro, every other id via piper/espeak. Lets a caller thread the right engine into
  * speakable/chunkStream from the chosen voice alone — so custom text and a chat answer are

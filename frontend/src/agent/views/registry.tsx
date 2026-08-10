@@ -29,6 +29,7 @@ import { VideoAnalysis, type VideoFrame } from "../../components/VideoAnalysis";
 import { serverMetricSeries } from "../../components/serverMetricSeries";
 import { DeepestRunCard } from "../DeepResearchProgress";
 import { type CiteTarget, Markdown } from "../markdown";
+import { reportToSpeech } from "../speakable.js";
 import type { ToolActivity } from "../transcript";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
@@ -1552,7 +1553,7 @@ function DeepResearchReport({ data, onOpenSession, readAloud }: ViewProps): Reac
                   <button
                     type="button"
                     className={`tv-dr-act${isPlaying ? " playing" : ""}`}
-                    onClick={() => readAloud.onToggle(playKey, reportMd)}
+                    onClick={() => readAloud.onToggle(playKey, reportToSpeech(reportMd))}
                     aria-label={
                       isPlaying ? "Stop reading the report aloud" : "Read the report aloud"
                     }

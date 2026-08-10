@@ -760,6 +760,23 @@ def _sources_block(sources: list[WebSource]) -> str:
     return "\n".join(lines)
 
 
+_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+_REC_MARKER = re.compile(r"RECOMMENDED\s+SOURCES\s*:", re.IGNORECASE)
+
+
+def _recommended_urls(summary: str) -> set[str]:
+    """The canonical URLs the scout EXPLICITLY recommended — parsed from the `RECOMMENDED SOURCES:`
+    block it ends its reply with (the machine-read list of article URLs), or, if it emitted no such
+    block, every URL in its reply. These are the only pages the reader opens, so a hub/section/
+    aggregator the scout merely OPENED to navigate — and did not recommend — is kept OUT of the read
+    set (the fix for a briefing that read blogs the scout only used to find the real articles)."""
+    text = summary or ""
+    marker = _REC_MARKER.search(text)
+    if marker:
+        text = text[marker.end() :]
+    return {_canonical_url(u.rstrip(".,;)")) for u in _URL_RE.findall(text)}
+
+
 def _scout_brief(angle_brief: str) -> str:
     """Wrap a preset angle in a SCOUTING framing so the scout locates sources instead of trying
     to write the report. The raw angle briefs say "OPEN and READ three articles and pull the
@@ -1920,14 +1937,21 @@ class DeepResearchService:
         angles, paired with the scout's ANGLE TITLE (which becomes the reader child's label, so a
         reader row reads 'Space industry…' — named like its scout — not a generic 'read 3').
         Deduped by canonical URL ACROSS angles (first angle to surface a URL keeps it), so two
-        angles never read the same page. An angle whose scout surfaced no URL is dropped."""
+        angles never read the same page. An angle whose scout surfaced no URL is dropped.
+
+        Only the URLs the scout EXPLICITLY recommended (`_recommended_urls`) are eligible — a hub or
+        aggregator it merely opened to navigate is excluded — falling back to everything it touched
+        only if it emitted no usable recommendation list."""
         # Spread `read_target` reads across the angles: ceil, so a target of 12 over 5 angles reads
         # up to 3 each. It's a target, not a hard cap — the tree ceiling still bounds the fan.
         per_angle_cap = max(1, -(-read_target // max(1, len(scouts))))
         seen: set[str] = set()
         groups: list[tuple[str, list[WebSource]]] = []
         for c in scouts:
-            ranked = await self._rank_unopened(question, [ws for ws in c.web_sources if ws.url])
+            touched = [ws for ws in c.web_sources if ws.url]
+            rec = _recommended_urls(c.summary)
+            picks = [ws for ws in touched if _canonical_url(ws.url) in rec] or touched
+            ranked = await self._rank_unopened(question, picks)
             picked: list[WebSource] = []
             for ws in ranked:
                 key = _canonical_url(ws.url)
