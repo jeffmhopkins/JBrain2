@@ -279,16 +279,18 @@ SUBAGENT_PERSONAS = frozenset(
 # parent's at dispatch.
 RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time", "portal_search"})
 REVIEW_TOOLS = RESEARCH_TOOLS
-# The two-phase (scout → read) gather personas (REPORT_PRESET_PLAN.md), each the deliberate
-# HALF of `research`'s web toolkit so the phases can't blur:
-# - research_scout: SEARCH-ONLY — `web_search` + clock, NO `web_fetch`. It surfaces candidate
-#   URLs for an angle; the engine keeps its hits and discards its prose, so a snippet claim can
-#   never become a finding.
-# - research_fetch: READ-ONLY — `web_fetch` + clock, NO `web_search`. It OPENS the URLs it is
-#   handed and reports only what the pages say. The missing search tool is the point: the child
-#   cannot fall back to summarizing a snippet, so its only path to a useful answer is to fetch.
+# The two-phase (scout → read) gather personas (REPORT_PRESET_PLAN.md), split by ROLE (not by a
+# hard tool line): the scout finds sources, the reader writes findings from them.
+# - research_scout: the LEAD-FOLLOWER — `web_search` + `web_fetch` + clock. It searches and
+#   FOLLOWS LEADS (opens a hub/section/search page to discover the specific article URLs behind
+#   it), then surfaces those URLs. Its PROSE is discarded by the engine (only the URLs it touched
+#   become candidates), so it can never leak a snippet claim into the report — but with fetch it
+#   can hand the reader real ARTICLE URLs instead of a hub the reader would only see headlines on.
+# - research_fetch: the READER — `web_fetch` + clock, NO `web_search`. It OPENS the specific URLs
+#   it is handed and reports only what those pages say. The missing search tool is the point: it
+#   can't wander off searching, so its whole job is the deep read the writer's findings rest on.
 # Both are leaves (no spawn), KB-less, and ⊆ jerv's tools (the parent⊆child clamp keeps them).
-SCOUT_TOOLS = frozenset({"web_search", "current_time"})
+SCOUT_TOOLS = frozenset({"web_search", "web_fetch", "current_time"})
 FETCH_TOOLS = frozenset({"web_fetch", "current_time"})
 # research_deep: the TASK-AGENT tier of a deepest-research run (max_depth=2). Identical to
 # `research` — same web sandbox, no KB, no location — PLUS the one-shot `decompose_research`

@@ -1,6 +1,6 @@
 # Report Presets & Batch Runs — uniform reports, run down a list
 
-> **Status:** In progress · **Last verified:** 2026-08-09 · **Waves:** P1✅ P2◻️ P3◻️
+> **Status:** In progress · **Last verified:** 2026-08-10 · **Waves:** P1✅ P2◻️ P3◻️
 
 The deep-research engine plans each report's shape fresh every run, so two reports on
 comparable subjects (say, two candidates on the same ballot) come out structurally
@@ -78,23 +78,36 @@ runs the fixed plan; omit it and the run self-orchestrates exactly as before.
 
   **Two-phase (scout → read) gather (the structural cure).** A preset that sets `min_reads` opts its
   gather into two phases instead of the single all-in-one `research` fan:
-  - **scout** — a fan of the new `research_scout` persona (SEARCH-ONLY: `web_search` + clock, NO
-    `web_fetch`), one child per angle. Each surfaces candidate URLs; the engine keeps only their
-    `web_sources` and DISCARDS their prose, so a snippet claim can never become a finding.
-  - **read** — a fan of the new `research_fetch` persona (FETCH-ONLY: `web_fetch` + clock, NO
-    `web_search`) over the pooled candidates. The missing search tool is the point: a reader's only
-    path to a useful answer is to OPEN the pages it was handed, so it reports only real page text.
+  - **scout** — a fan of the `research_scout` persona (the LEAD-FOLLOWER: `web_search` +
+    `web_fetch` + clock), one child per angle. It searches AND FOLLOWS LEADS — opening a
+    hub/section/search page to reach the *specific* article URLs behind it, and briefly confirming
+    a candidate is a real, on-topic, fetchable article — then surfaces those URLs. Its PROSE is
+    DISCARDED (only the URLs it TOUCHED become candidates, via `_candidate_pool`), so it can never
+    leak a snippet claim; but with fetch it hands the reader real article URLs instead of a hub the
+    reader would only see headlines on. (The split is by ROLE, not a hard tool line — the earlier
+    search-only scout was handed the reader's "open and read the articles" brief, which it had no
+    tool for, so it flailed; `_scout_brief` now reframes each angle as a scouting task.)
+  - **read** — a fan of the `research_fetch` persona (the READER: `web_fetch` + clock, NO
+    `web_search`) over the pooled candidates. The missing search tool is the point: it can't wander
+    off searching, so its whole job is the deep read the writer's findings rest on.
 
   The engine (`_gather_scout_then_read` / `_candidate_pool` in `deep_research.py`) ranks each
-  angle's candidates by embedding relevance and ROUND-ROBINS them (one per angle before any angle's
-  second), so the read budget — bounded by the tree's 12-agent ceiling, reserving slots for the
-  analyst + critique — spreads across categories. Only the reader (fetched) findings reach the
+  angle's candidate URLs by embedding relevance and ROUND-ROBINS them (one per angle before any
+  angle's second), so the read budget — bounded by the tree's 12-agent ceiling, reserving slots for
+  the analyst + critique — spreads across categories. Only the reader (fetched) findings reach the
   RESEARCH ledger, so the SYNTHESIZER has no unopened snippet to cite; a totally-blocked read
   refuses rather than falling back to scout prose (strict fetched-only). A fetch-first run also SKIPS
   the reflect→refill gap loop (a refill re-searches, which would smuggle snippets back). It is OPT-IN
   (via `min_reads`; `daily_news` sets 12) because it suits fetch-light NEWS-style gathering ("find
   articles, read them") but NOT investigative research, which needs the plain `research` persona's
   interleaved `web_search` + `portal_search` + verify-an-absence loop (candidate_profile).
+
+  **Owner-local, time-of-day-aware dates.** `_run_preset` reads the owner's stored timezone
+  (`SettingsStore.owner_timezone`, fallback UTC) and auto-supplies two variables: `{{today}}` (the
+  owner-local calendar day — an evening run in US Eastern is already the next UTC day, so a UTC date
+  would drift a day ahead and split the dedup row) and `{{now}}` (local date + time of day).
+  `daily_news` frames its window as "the last 24 hours up to `{{now}}`", so a morning run leads with
+  yesterday's news and an evening run with today's, and the greeting fits the time of day.
 
   **Grounding critique gate (the universal net).** For the paths NOT converted to scout→read
   (default questions, candidate research, the deepest lane), robustness comes from a strengthened

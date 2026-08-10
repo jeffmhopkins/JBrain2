@@ -2,8 +2,9 @@
 # text-to-speech system while driving, not read on a screen. It pins a fixed morning-radio arc
 # (greeting → national → economy → world → space → AI/tech → local Space Coast → sign-off) and
 # five gather angles that pull the last day's genuinely-new developments, synthesized NEUTRALLY
-# from multiple outlets. Takes NO variables — it's a one-call daily run; the research agents work
-# "the last 24 hours as of today". Heavy weight on the space industry and on AI, and it always
+# from multiple outlets. Takes NO caller variables — the engine auto-supplies {{today}} and {{now}}
+# (owner-local); the agents work "the last 24 hours up to {{now}}" (a morning run → yesterday's
+# news, an evening run → today's). Heavy weight on the space industry and on AI, and it always
 # surfaces notable SpaceX / Tesla / Elon Musk news. Local focus is Port St. John & Titusville,
 # and local items are admitted only when they matter for the drive or personal impact. Uses
 # output_kind `brief` (a preset forces complexity=deep, so `report` would balloon past a 10-minute
@@ -16,11 +17,11 @@ sources: web
 # Keep only a rolling week of briefings: the nightly expiry sweep reaps a run 7 days on
 # (REPORT_EXPIRY_PLAN.md). Combined with the dated question below, each day is its own row.
 retention_days: 7
-# Read floor: the fewest pages the run must actually OPEN before it writes. The local model is
-# search-heavy but fetch-light — it kept reporting national/economy/AI from snippets it never
-# opened, which the writer then dropped as uncited (the "(search result)" briefing). When a
-# gather round opens fewer than this, the engine force-fetches the top unopened results via the
-# read-only fetch persona, so the briefing rests on real article text (REPORT_PRESET_PLAN.md).
+# Read target: opting into the two-phase scout→read gather and setting how many pages the reader
+# phase OPENS. The local model is search-heavy but fetch-light — it kept reporting from snippets it
+# never opened (the "(search result)" briefing). With min_reads set, scouts find/curate article
+# URLs and fetch-only readers open this many, so the briefing rests on real article text — never a
+# snippet (REPORT_PRESET_PLAN.md).
 min_reads: 12
 
 # `{{today}}` is auto-supplied by the engine (the run date) — no caller variable needed, so this
@@ -32,6 +33,13 @@ objective: |
   Produce a SPOKEN DAILY NEWS BRIEFING to be read aloud by a text-to-speech system during the
   owner's morning drive to work. The listener is driving and cannot look at a screen: every word
   has to work by EAR. This is a briefing to be HEARD, not a report to be read.
+
+  NEWS WINDOW: it is currently {{now}}. Cover the news of the LAST 24 HOURS UP TO RIGHT NOW — not
+  a fixed calendar date. This matters because of when it's run: run early in the morning, "the last
+  24 hours" is really YESTERDAY's news (little has happened overnight), so lead with yesterday's
+  developments; run in the evening, it's TODAY's. Judge every story's freshness against {{now}} in
+  the owner's local time — report what actually happened in that trailing-24-hour window, and skip
+  anything older that has no new development in it.
 
   WHAT TO COVER (in this priority order):
   - National news: politics and government, and the single biggest national story of the day.
@@ -112,9 +120,11 @@ objective: |
   - Move between topics with spoken transitions the ear expects: "Now to the economy…", "Turning
     overseas…", "In space news…", "And here at home on the Space Coast…". Say "here's what's
     coming up", not "read on".
-  - OPEN with a short spoken good-morning that names the weekday and date — today is {{today}} —
-    and gives the one-line headline of the day, then a quick "here's what's coming up". CLOSE with
-    a brief sign-off that names the day and wishes him a safe drive.
+  - OPEN with a short spoken greeting fit to the time of day — it is currently {{now}}, so a
+    "good morning" for a morning run, otherwise "good evening" / "here's your evening briefing" —
+    name the weekday and date ({{today}}), give the one-line headline, then a quick "here's what's
+    coming up". CLOSE with a brief sign-off that names the day and, on a morning run, wishes him a
+    safe drive.
 
   LENGTH: aim for the FULL about-TEN-MINUTES read aloud — roughly one thousand three hundred to one
   thousand six hundred words. This length must come from real reported SUBSTANCE, not padding:
@@ -126,8 +136,8 @@ objective: |
 
   Section fill spec (use each heading in order; they organize the read, and each opens with a
   spoken transition as above):
-  - Good Morning: the greeting, the weekday and date ({{today}}), the headline of the day, and
-    "here's what's coming up".
+  - Good Morning: the time-appropriate greeting (see {{now}}), the weekday and date ({{today}}),
+    the headline of the day, and "here's what's coming up".
   - Top National Stories: the biggest national story plus key politics and government news.
   - Business & the Economy: markets, jobs, inflation, interest rates, and major company moves.
   - Around the World: the major international and geopolitical developments only.
