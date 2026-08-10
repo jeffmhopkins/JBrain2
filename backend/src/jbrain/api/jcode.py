@@ -448,19 +448,24 @@ async def set_power(body: PowerBody, owner: OwnerDep, request: Request) -> dict[
     skipped."""
     if body.on:
         await _toggle_services(request, "start", _POWER_ON_SERVICES)
-        # Reserve the unified-memory box for the coder while code mode is ON: residency then
-        # refuses to load any other model and the worker pauses its background jobs, so nothing
-        # contends with the coder for RAM (the fix for the OOM when a background deep-research
-        # load collided with an open jcode session). Best-effort — a settings hiccup shouldn't
-        # fail the toggle; the box just isn't reserved (no worse than before this existed).
+        # Reserve the unified-memory box for CODE MODE'S OWN models while it is ON: residency
+        # then refuses to load any OTHER model and the worker pauses its background jobs, so
+        # nothing contends with the coder for RAM (the fix for the OOM when a background
+        # deep-research load collided with an open jcode session). The reserved set is the
+        # executor PLUS the planner (grok's `plan` subagent), so jcode's own plan↔execute swap
+        # isn't refused — only chat, vision, and background work are. Best-effort: a settings
+        # hiccup shouldn't fail the toggle; the box just isn't reserved (no worse than before).
         with contextlib.suppress(Exception):
-            served = _served_model(await _resolve_model(request, owner.id))
-            await _store(request).set_code_mode_hold_name(_owner_ctx(owner.id), served)
+            executor = _served_model(await _resolve_model(request, owner.id))
+            planner = await _resolve_planner_model(request, owner.id)  # "" for single-model
+            await _store(request).set_code_mode_hold_names(
+                _owner_ctx(owner.id), [executor, planner]
+            )
     else:
         # Release the box FIRST, so `_free_coder_and_restore` can reload the general hot set
         # (gpt-oss + vision) — a restore load would be refused while the hold is still set.
         with contextlib.suppress(Exception):
-            await _store(request).set_code_mode_hold_name(_owner_ctx(owner.id), "")
+            await _store(request).set_code_mode_hold_names(_owner_ctx(owner.id), [])
         await _toggle_services(request, "stop", tuple(reversed(_JCODE_SERVICES)))
         await _free_coder_and_restore(request, owner.id)
     return await _power_payload(request, owner.id)

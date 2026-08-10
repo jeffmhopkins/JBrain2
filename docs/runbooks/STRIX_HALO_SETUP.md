@@ -175,15 +175,22 @@ backstop for the rest.
 Qwen3-Coder-Next coder — can't safely co-reside on 128 GB, and the swap between them has a
 load/unload memory transient the 15% floor doesn't cover. A background deep-research load
 contending with a freshly-opened jcode session drove the box past physical RAM and earlyoom
-took down a process. So while **code mode is ON**, it reserves the box for the coder: the jcode
-power toggle writes a `code_mode_hold_name` flag (the coder's served name), and while it is set
-(1) `residency.ensure_room` **refuses to load any other non-resident model** — nothing evicts
-the coder or co-loads a second large model — and (2) the **worker pauses** its job loop and
-scheduler tick, so no autonomous research/ingestion starts and contends. Chat, vision, and
-background jobs are declined with "code mode is holding the box — turn it off" until you toggle
-code mode OFF, which clears the flag and re-warms the general hot set (gpt-oss + vision). This
-makes the contention/OOM impossible by construction rather than relying on the swap transient
-staying under the floor.
+took down a process. So while **code mode is ON**, it reserves the box for code mode's own
+models: the jcode power toggle writes a `code_mode_hold_name` flag holding the served names of
+**both** the coder (executor) **and** the plan subagent's model (so jcode's own plan↔execute
+swap isn't refused). While it is set (1) `residency.ensure_room` **refuses to load any model
+outside that set** unless already resident — nothing evicts code mode's models or co-loads a
+second large model — and (2) the **worker pauses** its job loop and scheduler tick, so no
+autonomous research/ingestion starts and contends. Chat, vision, and background jobs are
+declined with "code mode is holding the box — turn it off" until you toggle code mode OFF, which
+clears the flag and re-warms the general hot set (gpt-oss + vision). This makes the
+contention/OOM impossible by construction rather than relying on the swap transient staying
+under the floor. The flag is **cleared at API startup** so a crash/reboot mid-session (earlyoom,
+a redeploy) can't strand it — a stale hold would otherwise wedge the box (all loads refused,
+worker paused) while the launcher, which reads live service state, shows code mode OFF. Both the
+residency and worker reads **fail open** (a settings-read hiccup lifts the reservation rather
+than wedging on it), so a full DB outage — which also stops the job queue — is the only case
+that drops protection.
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.

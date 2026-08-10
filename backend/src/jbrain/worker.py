@@ -53,7 +53,7 @@ from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribeP
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator, pg_box_lock
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, pg_box_lock
 from jbrain.log_capture import LogScope, configure_logging
 from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
@@ -206,6 +206,14 @@ async def process_one(
             log.error("worker.job_failed_permanent", job_id=job.id, kind=job.kind, error=repr(exc))
             await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
             await _after_exhaustion(maker, job, exhausted)
+        except ResidencyError as exc:
+            # Code mode reserved the box mid-run: this job started before the run_loop pause
+            # engaged, and its model load was refused. DEFER (no attempt burned) so it simply
+            # waits for code mode to clear instead of exhausting its retry budget — the pause
+            # then keeps it un-claimed until the reservation lifts. The run step stays open (the
+            # job isn't done), like a precondition defer.
+            await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=repr(exc))
+            log.info("worker.job_deferred_code_mode", job_id=job.id, kind=job.kind)
         except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
             exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
             log.warning("worker.job_failed", job_id=job.id, kind=job.kind, error=repr(exc))
@@ -375,7 +383,7 @@ async def run_loop(
         held = False
         if settings is not None:
             with contextlib.suppress(Exception):
-                held = bool(await settings.code_mode_hold_name(queue.SYSTEM_CTX))
+                held = bool(await settings.code_mode_hold_names(queue.SYSTEM_CTX))
         # Run the scheduler tick on its own cadence: claim due schedules and
         # enqueue their bound pipelines (workflow/scheduler.py). Cheap when idle
         # (a single indexed due-query) and rides the same loop as the job claim,
@@ -506,8 +514,8 @@ async def run() -> None:
         fraction_loader=lambda: worker_settings_store.llm_local_free_ram_fraction(queue.SYSTEM_CTX),
         # Code-mode box reservation: while jcode holds the box, a background job's model load
         # is refused here too (belt-and-suspenders with the run_loop pause below), so it can
-        # never evict the coder or co-load past physical RAM.
-        hold_loader=lambda: worker_settings_store.code_mode_hold_name(queue.SYSTEM_CTX),
+        # never evict code mode's models or co-load past physical RAM.
+        hold_loader=lambda: worker_settings_store.code_mode_hold_names(queue.SYSTEM_CTX),
         # Serialize evict+load against the api process (which runs its own coordinator over
         # the same box) so a background job's model swap can't co-load past the free-RAM
         # floor while the api is loading for a chat turn — the cross-process double-load.

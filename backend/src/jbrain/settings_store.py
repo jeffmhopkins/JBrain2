@@ -8,6 +8,7 @@ the OcrPipeline reads it per job and the Settings screen round-trips it.
 """
 
 import json
+from collections.abc import Sequence
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -528,17 +529,22 @@ class SqlSettingsStore:
         await self.upsert(ctx, JCODE_MODEL_KEY, model_id)
         return model_id
 
-    async def code_mode_hold_name(self, ctx: SessionContext) -> str:
-        """The served-model name code mode has reserved the box for while it's ON, or "" when
-        code mode is off. While non-empty, residency refuses to load any other model and the
-        worker pauses its job loop — the coder owns the unified-memory box, which prevents the
-        OOM from a background load contending with it. A non-string store reads as unset."""
-        raw = await self.get(ctx, CODE_MODE_HOLD_KEY, "")
-        return raw if isinstance(raw, str) else ""
+    async def code_mode_hold_names(self, ctx: SessionContext) -> frozenset[str]:
+        """The served-model names code mode has reserved the box for while it's ON (jcode's own
+        executor + planner), or an empty set when code mode is off. While non-empty, residency
+        refuses to load any OTHER model and the worker pauses its job loop — code mode owns the
+        unified-memory box, which prevents the OOM from a background load contending with it.
+        Defensive: a non-list store, or any non-string / empty entry, is dropped."""
+        raw = await self.get(ctx, CODE_MODE_HOLD_KEY, [])
+        if not isinstance(raw, list):
+            return frozenset()
+        return frozenset(x for x in raw if isinstance(x, str) and x)
 
-    async def set_code_mode_hold_name(self, ctx: SessionContext, served_model: str) -> None:
-        """Reserve the box for `served_model` (jcode power ON), or release it with "" (OFF)."""
-        await self.upsert(ctx, CODE_MODE_HOLD_KEY, served_model or "")
+    async def set_code_mode_hold_names(
+        self, ctx: SessionContext, served_models: Sequence[str]
+    ) -> None:
+        """Reserve the box for jcode's models (power ON), or release it with [] (OFF / boot)."""
+        await self.upsert(ctx, CODE_MODE_HOLD_KEY, sorted({m for m in served_models if m}))
 
     async def jcode_planner_model(self, ctx: SessionContext) -> str:
         """The stored planner selection for code mode: a served-model id, the
