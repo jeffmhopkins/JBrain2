@@ -30,8 +30,10 @@ _DEFAULT_LIMIT = 6
 # in-process TTL cache collapses those repeats so identical searches leave the box once
 # per window. In-process and per-key, like the OwnTracks token bucket — adequate at
 # personal scale (one API process).
-_CACHE_TTL_S = 900.0  # 15 min: long enough to fold a run's (and near re-runs') repeats,
-# short enough that results stay fresh.
+_CACHE_TTL_S = 3600.0  # 60 min: a long deep-research run can itself exceed the old 15 min,
+# so a shorter window let mid-run repeats re-hit (and re-throttle) the upstreams; an hour
+# folds a whole run plus a near re-run, and daily-news queries are date-qualified so a fresh
+# day is a distinct key anyway — freshness within the hour isn't at risk.
 _CACHE_MAX_ENTRIES = 256  # LRU bound so the cache can't grow without limit.
 
 
