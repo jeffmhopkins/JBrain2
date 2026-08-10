@@ -2254,33 +2254,24 @@ class DeepResearchService:
         # reviewer has no web_fetch; it then falls back to independent corroboration against
         # the corpus (`_supplement_clause`), its prior behaviour.
         verify = _can_open_sources(source_mode) and bool(sources)
+        # One bounded, prioritized faithfulness rule (MODEL_PROMPTING.md: gpt-oss burns reasoning
+        # on "open the source for EVERY claim" vs "return a short critique", and reads stacked
+        # restatements as conflict — so: most load-bearing first, stop when the tool budget runs
+        # low, one pass instead of four). Keeps the GROUNDING SWEEP + STATUS/TENSE net.
         cite_clause = (
-            "FIRST check citation faithfulness: for each cited claim, open the source it "
-            "cites in the SOURCES list below and verify that source genuinely supports THAT "
-            "SPECIFIC claim — the same finding, endpoint, and population, not merely a related "
-            "or adjacent result. Flag any claim its cited source does NOT support, only partly "
-            "supports, extends beyond what it measured, contradicts, or that cites nothing at "
-            "all. Check every SPECIFIC QUANTITY against the cited source: a sample size or "
-            "study count, an effect size (odds/hazard/risk ratio, a 'doubling'/'tripling'), a "
-            "percentage, an incidence, or a rate — flag any that the source does not actually "
-            "state, including a number dressed with more precision than the source gives (a "
-            "confidence interval or pooled estimate it never reported). Also check ATTRIBUTION: "
-            "where the draft names a cited document — its issuing body, publication year, "
-            "edition, or document type ('the ASH 2024 guideline', 'BSH 2023 consensus') — "
-            "confirm the cited source actually carries that body, year, and type, and flag any "
-            "mislabelled year/society or a review or summary passed off as the primary "
-            "guideline or study. "
-            # Grounding sweep (any domain, not just studies): the anti-hallucination net. Every
-            # concrete claim — a named person/place/org, an event, a date, a number — must trace
-            # to a source that actually states it.
-            "Then run a GROUNDING SWEEP over every concrete claim (named person, place, org, "
-            "event, date, number): open its cited page and confirm the page genuinely reports "
-            "THAT claim. Flag — as a claim that MUST BE CUT — any event, entity, quote, or fact "
-            "the cited page does NOT report at all (a fabrication), and any claim that cites no "
-            "source. Check STATUS/TENSE: a launch, release, vote, or ruling may be reported as "
-            "having HAPPENED only if the source confirms it occurred; a schedule, countdown, or "
-            "press-release announcement is a PLAN — flag any plan written as a completed event. "
-            "Flag any date, place, or named person the cited source does not state. "
+            "Check citation faithfulness, working from the most load-bearing claims down and "
+            "stopping when your tool budget runs low — this is a GROUNDING SWEEP over the draft's "
+            "concrete claims (a named person, place, org, event, date, or number). Resolve each "
+            "to its page in the SOURCES list below and confirm that page genuinely states THAT "
+            "claim — the same finding, quantity, entity, and status, not a related or adjacent "
+            "one. Flag a claim when its cited page does not state it, states it more weakly, adds "
+            "precision the source never gave (a confidence interval or pooled estimate it never "
+            "reported), mislabels the source (wrong body, year, or document type; a review passed "
+            "off as the primary study), or reports a plan as a completed event. Check "
+            "STATUS/TENSE: a launch, release, vote, or ruling counts as HAPPENED only if the "
+            "source confirms it "
+            "occurred; a schedule, countdown, or press release is a PLAN. Flag a claim "
+            "that cites nothing. Treat every flagged claim as one to cut or hedge. "
             if verify
             else ""
         )
@@ -2294,13 +2285,14 @@ class DeepResearchService:
         # URLs — so this faithfulness pass fires even in `library` mode (where _can_open_sources
         # is false), closing the B3 gap: the critic checks the artifact's claims about the
         # owner's own history against the record and flags anything it invents/misstates.
+        # Sequenced BEFORE the citation check (not a second "FIRST" — a competing top priority is
+        # exactly the contradiction gpt-oss burns reasoning on). Fires even in `library` mode.
         record_clause = (
-            "This is a RECORDS-GROUNDED plan. FIRST verify every factual claim it makes about "
-            "the owner's own history — a lab value, count, date, diagnosis, encounter, "
-            "medication, or trend — against the owner's record provided above. Flag any value, "
-            "date, diagnosis, or event the record does NOT contain: the plan must never invent "
-            "or misstate a number, result, or history detail the record doesn't support. Also "
-            "flag any step stated as a firm instruction rather than a hypothetical option. "
+            "This is a RECORDS-GROUNDED plan. Before checking cited sources, check the claims it "
+            "makes about the owner's own history — a lab value, count, date, diagnosis, encounter, "
+            "medication, or trend — against the owner's record provided above, flagging any value, "
+            "date, diagnosis, or event the record does NOT contain and any step stated as a firm "
+            "instruction rather than a hypothetical option. "
             if record.strip()
             else ""
         )

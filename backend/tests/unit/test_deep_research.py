@@ -983,20 +983,22 @@ async def test_zero_citation_backstop_silent_when_draft_already_cited() -> None:
 
 
 def test_synthesize_prompt_carries_its_behavioral_core() -> None:
-    """Guard the must-cite / all-noise-escape / on-topic-count-gate instructions against silent
-    prose drift — the behavioral core of the citation fix (the plan prompt gets the same guard
-    via its `namesake` assertion). LLM judgment itself can't be unit-tested; the prose can."""
+    """Guard the must-cite / all-noise-escape instructions against silent prose drift — the
+    behavioral core of the citation fix. Whitespace-normalized so line-wrapping doesn't break a
+    match. (v13 collapsed the on-topic-count-gate prose — the code backstop `_backstop_critique`
+    enforces the zero-citation case deterministically, so the prompt no longer stacks it.)"""
     from jbrain.agent.deep_research import _SYNTH
 
-    assert _SYNTH.version == "dr-synth-v12"  # pin the version bump (parity with the plan test)
-    synth = _SYNTH.body.lower()
+    assert _SYNTH.version == "dr-synth-v13"  # pin the version bump (parity with the plan test)
+    synth = " ".join(_SYNTH.body.lower().split())
     assert "mandatory" in synth  # a non-empty SOURCES list forces inline citation
     assert "sources this finding drew on" in synth  # v12/P1.5: the per-finding claim→source binding
     assert "not licence to drop all citations" in synth  # the give-up path stays closed
     assert "a fabricated citation is worse than an honest gap" in synth  # all-noise escape valve
-    assert "how many entries are plausibly on-topic" in synth  # v9: gate before the escape
-    assert "consists exclusively of" in synth  # v9: forbid the confabulated Scope note
     assert "report the current" in synth  # v11: multi-row records → current state, no cherry-pick
+    # v13 (MODEL_PROMPTING.md): the shared SYSTEM prompt is length-NEUTRAL — the per-run target
+    # line carries the length, so the prompt must not hard-code a long-report framing.
+    assert "eight to ten pages" not in synth and "comprehensive" not in synth
 
 
 # --- report depth: the synthesizer is handed a length target by complexity --
