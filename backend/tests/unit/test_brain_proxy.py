@@ -81,6 +81,7 @@ def test_voices_and_tts_require_auth() -> None:
         app.state.auth_repo = FakeAuthRepo()
         assert anon.get("/api/brain/voices").status_code == 401
         assert anon.get("/api/brain/speakers").status_code == 401
+        assert anon.get("/api/brain/tts/health").status_code == 401
         assert anon.get("/api/brain/tts", params={"text": "hi", "voice": "v"}).status_code == 401
 
 
@@ -98,6 +99,23 @@ def test_speakers_proxies_the_roster(client: TestClient, monkeypatch: pytest.Mon
 def test_speakers_503_when_display_unconfigured(client: TestClient) -> None:
     client.app.state.brain_tts_base_url = ""  # type: ignore[attr-defined]
     assert client.get("/api/brain/speakers").status_code == 503
+
+
+def test_tts_health_proxies_the_engine_status(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The diagnostic the Settings panel reads: is the box on misaki (lexicon live) or espeak?
+    status = {"kokoro_available": True, "g2p": "espeak", "lexicon_entries": 1, "voice_count": 5}
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, json_data=status))
+    resp = client.get("/api/brain/tts/health")
+    assert resp.status_code == 200
+    assert resp.json() == status
+    assert calls == [("http://tts-stt:8801/tts/health", None)]
+
+
+def test_tts_health_503_when_display_unconfigured(client: TestClient) -> None:
+    client.app.state.brain_tts_base_url = ""  # type: ignore[attr-defined]
+    assert client.get("/api/brain/tts/health").status_code == 503
 
 
 def test_voices_proxies_the_installed_list(

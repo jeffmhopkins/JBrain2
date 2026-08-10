@@ -417,6 +417,37 @@ def test_kokoro_lexicon_emits_misaki_override(
     assert _FakeG2P.calls[-1] == "say [Kokoro](/kˈOkəɹO/) now"
 
 
+def test_tts_health_reports_misaki_when_loaded(kokoro_server: types.ModuleType) -> None:
+    # misaki is stubbed importable in these tests, so a baked-Kokoro box reports the misaki path —
+    # the one where the KOKORO_LEXICON phoneme overrides (e.g. "Titusville") actually apply.
+    kokoro_server._g2p_holder.clear()
+    health = kokoro_server.tts_health()
+    assert health["kokoro_available"] is True
+    assert health["g2p"] == "misaki"
+    assert health["lexicon_entries"] == len(kokoro_server.KOKORO_LEXICON)
+    assert health["voice_count"] >= 1
+
+
+def test_tts_health_reports_espeak_when_misaki_absent(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The silent-fallback case the endpoint exists to surface: Kokoro baked but misaki missing →
+    # g2p "espeak", meaning the phoneme lexicon overrides are inert and seeded words regress.
+    for name in ("misaki", "misaki.en", "misaki.espeak"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    kokoro_server._g2p_holder.clear()
+    health = kokoro_server.tts_health()
+    assert health["kokoro_available"] is True
+    assert health["g2p"] == "espeak"
+
+
+def test_tts_health_g2p_unavailable_without_kokoro(server: types.ModuleType) -> None:
+    # No Kokoro weights baked → g2p is "unavailable" (never misaki/espeak); no load is attempted.
+    health = server.tts_health()
+    assert health["kokoro_available"] is False
+    assert health["g2p"] == "unavailable"
+
+
 # --- Speakable-text normalization (°F / mph / compass / "City, ST") ------------------------
 
 

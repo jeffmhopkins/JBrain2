@@ -76,6 +76,28 @@ async def brain_speakers(principal: PrincipalDep, request: Request) -> JSONRespo
         raise HTTPException(status_code=503, detail="tts service unreachable") from exc
 
 
+@router.get("/brain/tts/health")
+async def brain_tts_health(principal: PrincipalDep, request: Request) -> JSONResponse:
+    """Which phonemizer the on-box Kokoro is ACTUALLY using, proxied from the tts-stt service's
+    GET /tts/health as `{"kokoro_available": bool, "g2p": "misaki"|"espeak"|"unavailable", ...}`.
+    `g2p == "espeak"` means Kokoro fell back off misaki (a silent, stderr-only degrade), so the
+    KOKORO_LEXICON pronunciation overrides are inert and seeded words like "Titusville"
+    mispronounce again — the Settings panel shows this instead of it needing an SSH log grep. The
+    first call pre-warms misaki (a one-time multi-second spaCy load), hence the generous timeout.
+    503 when the service is unconfigured/unreachable so the panel can show "unknown"."""
+    base = _brain_base(request)
+    if not base:
+        raise HTTPException(status_code=503, detail="tts service not configured")
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(f"{base}/tts/health")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=503, detail="tts service unavailable")
+        return JSONResponse(resp.json())
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="tts service unreachable") from exc
+
+
 @router.get("/brain/tts")
 async def brain_tts(
     principal: PrincipalDep,

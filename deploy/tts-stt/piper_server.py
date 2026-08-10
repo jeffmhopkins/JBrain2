@@ -448,6 +448,26 @@ def _kokoro_wav(
     return _pad(data, lead, trail)
 
 
+def tts_health() -> dict[str, Any]:
+    """A readiness snapshot the app surfaces so a SILENT espeak fallback is visible, not guessed.
+    Kokoro phonemizes through misaki when its spaCy G2P loaded, else through kokoro-onnx's built-in
+    espeak — and the KOKORO_LEXICON phoneme overrides apply ONLY on the misaki path, so an espeak
+    fallback silently un-fixes every seeded word (e.g. "Titusville"). `g2p` is "unavailable" when
+    Kokoro isn't baked at all, else "misaki"/"espeak" for what a render WOULD use right now. Loading
+    the G2P is the same lazy, cached, non-fatal step a first Kokoro render triggers, so hitting this
+    also pre-warms misaki."""
+    kokoro = _kokoro_available()
+    g2p = "unavailable"
+    if kokoro:
+        g2p = "misaki" if _load_g2p() is not None else "espeak"
+    return {
+        "kokoro_available": kokoro,
+        "g2p": g2p,
+        "lexicon_entries": len(KOKORO_LEXICON),
+        "voice_count": len(piper_voices()),
+    }
+
+
 # --- Speakable-text normalization (engine-agnostic; runs before piper OR Kokoro) ------------
 # Expands symbols/abbreviations an answer writes tersely but a voice should SPEAK in full. Distinct
 # from KOKORO_LEXICON (which fixes single-word PHONEMES on the misaki path only): these are plain
@@ -683,6 +703,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps({"voices": piper_voices()}).encode(), "application/json")
         elif path == "/tts/speakers":
             self._send(200, json.dumps({"speakers": piper_speakers()}).encode(), "application/json")
+        elif path == "/tts/health":
+            self._send(200, json.dumps(tts_health()).encode(), "application/json")
         elif path == "/tts/silence":
             self._send(200, _silence_wav(600), "audio/wav")
         elif path == "/tts":
