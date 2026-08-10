@@ -300,6 +300,99 @@ def test_power_off_stops_only_jcode_services_in_reverse_order() -> None:
     assert body["on"] is False
 
 
+# The served name the coder resolves to — the resident set is compared against it to decide
+# whether a running turn would be disrupted by swapping in the coder.
+_CODER_SERVED = jcode._served_model("qwen3-coder-next")
+
+
+def _turn_app(
+    sup: _FakeSupervisor,
+    *,
+    resident: set[str],
+    running: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    cancels: list[str] | None = None,
+) -> FastAPI:
+    """A power app wired to observe an in-flight box turn: `resident` is what the gateway
+    reports loaded, `running` the queue's running-job kinds (both faked). `cancels`, when
+    given, records the reasons passed to queue.cancel_running."""
+    app = _power_app(OWNER, sup, local_llm_enabled=True, gateway=_FakeGateway(resident))
+    app.state.session_maker = object()  # queue fns are faked; _maker only needs the attr present
+
+    async def _running(*_a: object, **_k: object) -> list[str]:
+        return list(running)
+
+    monkeypatch.setattr(jcode.queue, "running_kinds", _running)
+
+    async def _cancel(*_a: object, reason: str = "", **_k: object) -> list[str]:
+        if cancels is not None:
+            cancels.append(reason)
+        return list(running)
+
+    monkeypatch.setattr(jcode.queue, "cancel_running", _cancel)
+    return app
+
+
+def test_power_status_flags_active_turn_when_reasoning_model_resident(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sup = _FakeSupervisor({"local-llm": "running", "jcode": "running"})
+    app = _turn_app(
+        sup, resident={"gpt-oss-120b"}, running=["deep_research"], monkeypatch=monkeypatch
+    )
+    body = TestClient(app).get("/api/jcode/power").json()
+    # A job is running AND a non-coder model is resident → the swap would end it.
+    assert body["active_turn"] is True
+    assert body["active_kind"] == "deep_research"
+
+
+def test_power_status_no_active_turn_when_only_coder_resident(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sup = _FakeSupervisor({"local-llm": "running", "jcode": "running"})
+    # A job is running, but nothing non-coder is resident → warming the coder disrupts nothing.
+    app = _turn_app(
+        sup, resident={_CODER_SERVED}, running=["deep_research"], monkeypatch=monkeypatch
+    )
+    body = TestClient(app).get("/api/jcode/power").json()
+    assert body["active_turn"] is False
+    assert body["active_kind"] == ""
+
+
+def test_power_status_no_active_turn_when_queue_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    sup = _FakeSupervisor({"local-llm": "running", "jcode": "running"})
+    app = _turn_app(sup, resident={"gpt-oss-120b"}, running=[], monkeypatch=monkeypatch)
+    body = TestClient(app).get("/api/jcode/power").json()
+    assert body["active_turn"] is False
+
+
+def test_power_on_cancels_the_disruptive_active_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    sup = _FakeSupervisor({"local-llm": "exited", "jcode": "exited"})
+    cancels: list[str] = []
+    app = _turn_app(
+        sup,
+        resident={"gpt-oss-120b"},
+        running=["deep_research"],
+        monkeypatch=monkeypatch,
+        cancels=cancels,
+    )
+    body = TestClient(app).post("/api/jcode/power", json={"on": True}).json()
+    assert body["on"] is True
+    assert cancels == ["cancelled: code mode activated"]  # the running turn was ended
+
+
+def test_power_on_does_not_cancel_a_non_disruptive_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    sup = _FakeSupervisor({"local-llm": "exited", "jcode": "exited"})
+    cancels: list[str] = []
+    # A job runs on the separate embed/TEI service — nothing reasoning-resident, so the coder
+    # swap wouldn't touch it and it must be left to finish.
+    app = _turn_app(
+        sup, resident=set(), running=["embed_note"], monkeypatch=monkeypatch, cancels=cancels
+    )
+    TestClient(app).post("/api/jcode/power", json={"on": True})
+    assert cancels == []
+
+
 def test_power_off_unloads_coder_and_rewarms_general_without_stopping_gateway() -> None:
     # The decoupled OFF path: instead of stopping local-llm, free the coder by unloading it
     # from the still-running gateway and re-warm the general hot set (gpt-oss-120b + vision).

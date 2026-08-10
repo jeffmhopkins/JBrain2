@@ -18,6 +18,8 @@ function powerStatus(over: Partial<JcodePowerStatus> = {}): JcodePowerStatus {
     size_gb: 49.6,
     hosting: true,
     live_sessions: 0,
+    active_turn: false,
+    active_kind: "",
     ...over,
   };
 }
@@ -280,5 +282,22 @@ describe("JcodeScreen (launcher)", () => {
     expect(set).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /^power off/i }));
     await waitFor(() => expect(set).toHaveBeenCalledWith(false));
+  });
+
+  it("powering on over an active box turn asks to confirm before ending it", async () => {
+    vi.spyOn(api, "jcodeSessions").mockRejectedValue(new ApiError(502, "down"));
+    vi.spyOn(api, "externalSessions").mockResolvedValue([]);
+    vi.spyOn(api, "jcodePower").mockResolvedValue(
+      powerStatus({ on: false, active_turn: true, active_kind: "deep_research" }),
+    );
+    const set = vi.spyOn(api, "jcodeSetPower").mockResolvedValue(powerStatus({ on: true }));
+    render(<JcodeScreen onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /power on/i }));
+    // The confirm gate names the running turn and holds before anything is started.
+    expect(await screen.findByText(/deep_research turn is running/i)).toBeInTheDocument();
+    expect(set).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /end it & continue/i }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith(true));
   });
 });

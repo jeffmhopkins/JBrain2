@@ -22,6 +22,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from jbrain import queue
 from jbrain.api.deps import JcodeAccessDep, OwnerDep
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
@@ -91,6 +92,18 @@ def _served_model(model_id: str) -> str:
     resolve via the catalog to be correct)."""
     m = local_catalog.get(model_id)
     return m.served_model if m else model_id
+
+
+def _turn_disrupted_by_coder(
+    running_kinds: Sequence[str], resident: Sequence[str], coder_served: str
+) -> bool:
+    """Whether an in-flight on-box turn would be ENDED by activating code mode: a worker job
+    is running AND a non-coder model is resident in the gateway — the model that handler is
+    mid-call on, which warming the coder unloads. A job on the separate embed/TEI service
+    leaves nothing reasoning-resident, so it isn't flagged: activating code mode wouldn't
+    disrupt it (and it must not be cancelled). The launcher gates its power-on toggle on this,
+    and `set_power` cancels exactly this turn once the owner confirms."""
+    return bool(running_kinds) and any(r != coder_served for r in resident)
 
 
 async def _resolve_planner_model(request: Request, owner_id: str) -> str:
@@ -369,6 +382,18 @@ async def _power_payload(request: Request, owner_id: str) -> dict[str, object]:
     services = [{"name": s, "running": states.get(s) == "running"} for s in _JCODE_SERVICES]
     model = await _model_payload(request, owner_id)
     live = await _live_statuses(request)
+    # An on-box worker turn (e.g. a running report) using the reasoning model right now: the
+    # launcher warns before powering on, because warming the coder unloads that model and ends
+    # the turn. Reuses the already-fetched `resident` list — no extra gateway round-trip.
+    # Best-effort: this hint must never fail the status the launcher polls, so a queue read
+    # error just reports "no active turn" (default to not warning, not to a spurious warning).
+    active = False
+    active_kind = ""
+    with contextlib.suppress(Exception):
+        running = await queue.running_kinds(_maker(request), _owner_ctx(owner_id))
+        resident = cast("Sequence[str]", model["resident"])
+        if _turn_disrupted_by_coder(running, resident, cast(str, model["served"])):
+            active, active_kind = True, running[0]
     return {
         # `on` only when EVERY jcode-only service is running; `provisioned` when they all
         # exist as containers at all (else there's nothing to toggle on this box). Scoped to
@@ -383,6 +408,10 @@ async def _power_payload(request: Request, owner_id: str) -> dict[str, object]:
         "size_gb": model["size_gb"],
         "hosting": model["hosting"],
         "live_sessions": sum(1 for status in live.values() if status != "stopped"),
+        # A running box turn the coder swap would end (and its kind, for the confirm copy) —
+        # so the launcher can prompt before activating code mode instead of silently killing it.
+        "active_turn": active,
+        "active_kind": active_kind,
     }
 
 
@@ -461,6 +490,20 @@ async def set_power(body: PowerBody, owner: OwnerDep, request: Request) -> dict[
             await _store(request).set_code_mode_hold_names(
                 _owner_ctx(owner.id), [executor, planner]
             )
+        # End any in-flight on-box turn the coder warm would break (the launcher has already
+        # confirmed the interruption behind its active-turn prompt). Cancel only a turn that
+        # WOULD be disrupted — a job on the separate embed/TEI service isn't touched by the
+        # swap, so it's left to finish. The cancel forces the job terminal before its model is
+        # unloaded, so the worker's own failure handling can't requeue it. Best-effort: a queue
+        # hiccup must not block bringing code mode up (the reservation already guards the RAM).
+        with contextlib.suppress(Exception):
+            running = await queue.running_kinds(_maker(request), _owner_ctx(owner.id))
+            model = await _model_payload(request, owner.id)
+            resident = cast("Sequence[str]", model["resident"])
+            if _turn_disrupted_by_coder(running, resident, cast(str, model["served"])):
+                await queue.cancel_running(
+                    _maker(request), _owner_ctx(owner.id), reason="cancelled: code mode activated"
+                )
     else:
         # Release the box FIRST, so `_free_coder_and_restore` can reload the general hot set
         # (gpt-oss + vision) — a restore load would be refused while the hold is still set.

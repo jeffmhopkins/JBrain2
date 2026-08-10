@@ -257,6 +257,54 @@ async def queued_depth(maker: async_sessionmaker[AsyncSession], ctx: SessionCont
     return int(count or 0)
 
 
+async def running_kinds(maker: async_sessionmaker[AsyncSession], ctx: SessionContext) -> list[str]:
+    """The kinds of every job currently RUNNING (status='running'), oldest-claimed first.
+    The single-threaded worker runs at most one at a time, but this returns a list so a
+    future multi-worker deployment reads correctly. The code-mode launcher uses it to warn
+    that activating code mode will interrupt an in-flight on-box turn."""
+    async with scoped_session(maker, ctx) as session:
+        rows = (
+            await session.execute(
+                text("SELECT kind FROM app.jobs WHERE status = 'running' ORDER BY locked_at")
+            )
+        ).all()
+    return [row.kind for row in rows]
+
+
+async def cancel_running(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, *, reason: str
+) -> list[str]:
+    """Permanently end every RUNNING job, returning the kinds cancelled.
+
+    Used when code mode is activated over an in-flight on-box turn (the owner confirmed the
+    interruption in the launcher): warming the coder is about to unload the reasoning model
+    out from under the running handler, so the job will fail regardless — mark it terminally
+    failed FIRST, forcing `attempts` to the ceiling, so the worker's own failure handling
+    can't requeue it. This matters because `fail()` has no `status='running'` guard: without
+    the maxed attempts it would bump a not-yet-exhausted job back to 'queued'. A cancelled
+    report does not resurrect (matching the owner's choice); self-healing kinds (ingest /
+    embed / integration) are re-enqueued by their reconcile sweeps independently of this."""
+    async with scoped_session(maker, ctx) as session:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    UPDATE app.jobs
+                    SET status = 'failed',
+                        attempts = max_attempts,
+                        last_error = :reason,
+                        locked_at = NULL,
+                        finished_at = now()
+                    WHERE status = 'running'
+                    RETURNING kind
+                    """
+                ),
+                {"reason": reason},
+            )
+        ).all()
+    return [row.kind for row in rows]
+
+
 async def has_active_analysis(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,

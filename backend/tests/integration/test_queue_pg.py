@@ -162,6 +162,59 @@ async def test_exhausted_attempts_fail_permanently(
     assert await queue.claim(maker, OWNER) is None
 
 
+async def test_running_kinds_reports_only_claimed_jobs(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    await quiesce_jobs(maker)
+    # Queued (not yet claimed) jobs are not "running".
+    job_id = await queue.enqueue(maker, OWNER, "deep_research", {"topic": "x"})
+    assert await queue.running_kinds(maker, OWNER) == []
+    # Claiming flips it to 'running' — now it shows.
+    job = await queue.claim(maker, OWNER)
+    assert job is not None and job.id == job_id
+    assert await queue.running_kinds(maker, OWNER) == ["deep_research"]
+    await queue.complete(maker, OWNER, job_id)
+    assert await queue.running_kinds(maker, OWNER) == []
+
+
+async def test_cancel_running_is_terminal_and_cannot_be_requeued(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    await quiesce_jobs(maker)
+    job_id = await queue.enqueue(maker, OWNER, "deep_research", {"topic": "y"})
+    job = await queue.claim(maker, OWNER)
+    assert job is not None and job.id == job_id and job.attempts == 0
+
+    cancelled = await queue.cancel_running(maker, OWNER, reason="cancelled: code mode activated")
+    assert cancelled == ["deep_research"]
+    row = await job_row(maker, job_id)
+    assert row["status"] == "failed"
+    assert row["attempts"] == 5  # forced to max_attempts
+    assert row["finished_at"] is not None
+    assert row["last_error"] == "cancelled: code mode activated"
+    # A cancelled job does not resurrect.
+    assert await queue.claim(maker, OWNER) is None
+
+    # The worker's own late failure handling (its model was yanked mid-call) must NOT requeue
+    # the job: fail() has no status guard, but the maxed attempts keep it exhausted/failed.
+    assert await queue.fail(maker, OWNER, job_id, "gateway EOF") is True
+    assert (await job_row(maker, job_id))["status"] == "failed"
+    assert await queue.claim(maker, OWNER) is None
+
+
+async def test_cancel_running_is_a_noop_when_nothing_runs(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    await quiesce_jobs(maker)
+    # A queued-but-unclaimed job is untouched (only 'running' jobs are cancelled).
+    job_id = await queue.enqueue(maker, OWNER, "ingest_note", {"note_id": "safe"})
+    assert await queue.cancel_running(maker, OWNER, reason="nothing here") == []
+    assert (await job_row(maker, job_id))["status"] == "queued"
+    claimed = await queue.claim(maker, OWNER)
+    assert claimed is not None and claimed.id == job_id
+    await queue.complete(maker, OWNER, job_id)
+
+
 async def test_permanent_fail_reports_exhaustion_immediately(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

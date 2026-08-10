@@ -3228,6 +3228,8 @@ export const mockFetch: typeof fetch = async (input, init) => {
       size_gb: 49.6,
       hosting: true,
       live_sessions: jcodePowerOn ? jcodeSessions.filter((s) => s.status !== "stopped").length : 0,
+      active_turn: false,
+      active_kind: "",
     });
   }
   if (path === "/api/jcode/sessions" && method === "GET") return json(jcodeSessions);

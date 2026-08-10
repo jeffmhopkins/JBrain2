@@ -192,6 +192,20 @@ residency and worker reads **fail open** (a settings-read hiccup lifts the reser
 than wedging on it), so a full DB outage — which also stops the job queue — is the only case
 that drops protection.
 
+The reservation stops *new* contention, but a report can already be **mid-generation** on
+gpt-oss when you open code mode. Warming the coder unloads gpt-oss out from under it, so the
+launcher surfaces that turn instead of killing it silently: `/jcode/power` reports `active_turn`
+— true when a worker job is **running** AND a non-coder model is **resident** (precisely the turn
+the coder swap would end; a job on the separate embed/TEI service leaves nothing reasoning-resident
+and isn't flagged). When it's set, toggling code mode **on** holds at a confirm gate ("a
+`<kind>` turn is running … activating code mode ends it") before starting anything. On confirm,
+`set_power` **cancels** that turn — `queue.cancel_running` marks it terminally failed with
+`attempts` forced to the ceiling, so the worker's own mid-call failure handling can't requeue it
+(`queue.fail` has no `status='running'` guard). A cancelled report does **not** resurrect (matching
+the deliberate "end it" choice); self-healing kinds (ingest/embed/integration) are re-enqueued by
+their reconcile sweeps regardless. Cancel is scoped to the disruptive turn only, so a background
+embed/ingest job on the TEI service is left to finish.
+
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.
 

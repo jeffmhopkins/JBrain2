@@ -124,4 +124,9 @@ export interface JcodePowerStatus {
   size_gb: number;
   hosting: boolean;
   live_sessions: number;
+  /** An on-box worker turn (e.g. a running report) is using the reasoning model right now, so
+   * activating code mode would unload that model and END the turn. Drives the power-on confirm. */
+  active_turn: boolean;
+  /** The kind of the running job (e.g. "deep_research") for the confirm copy; "" when none. */
+  active_kind: string;
 }
