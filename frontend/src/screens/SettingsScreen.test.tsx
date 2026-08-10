@@ -18,33 +18,19 @@ function stubSettingsFetch(
     mode: initial,
     brainStream: false,
     brainReadAloud: false,
-    brainAnswerVoice: opts.answerVoice ?? "en_US-amy-medium",
+    brainAnswerVoice: opts.answerVoice ?? "kokoro-af_heart",
     engine: "piper" as "piper" | "native",
   };
-  const boxVoices = opts.voices ?? [
-    "en_US-amy-medium",
-    "en_US-joe-medium",
-    "en_US-libritts_r-medium#3922",
-    "kokoro-af_heart",
-    "kokoro-am_michael",
-    "kokoro-bf_emma",
-  ];
+  const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
   const puts: unknown[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
-    // The read-aloud voice picker loads the box's installed piper voices on mount.
+    // The read-aloud voice picker loads the box's installed Kokoro voices on mount.
     if (path === "/api/brain/voices") {
       return new Response(JSON.stringify({ voices: boxVoices }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
-    }
-    // The voice explorer loads the multi-speaker roster on mount (a small stand-in list).
-    if (path === "/api/brain/speakers") {
-      return new Response(
-        JSON.stringify({ speakers: { "en_US-libritts_r-medium": ["3922", "1234", "6272"] } }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
     }
     // A voice sample renders a WAV via the api proxy — an empty audio blob is enough.
     if (path.startsWith("/api/brain/tts")) {
@@ -176,60 +162,22 @@ describe("SettingsScreen read-wall-display-aloud toggle", () => {
 });
 
 describe("SettingsScreen read-aloud voice picker", () => {
-  it("defaults to the Piper model, listing piper voices only (Kokoro is a model, not an option)", async () => {
+  it("defaults to the Kokoro model, listing the box's Kokoro voices (no Piper button)", async () => {
     const { puts } = stubSettingsFetch();
     setup();
     const models = within(await screen.findByLabelText("Read-aloud model"));
-    expect(models.getByRole("button", { name: "Piper" })).toHaveAttribute("aria-pressed", "true");
-    expect(models.getByRole("button", { name: "Kokoro" })).toBeInTheDocument();
+    expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute("aria-pressed", "true");
     expect(models.getByRole("button", { name: "Native" })).toBeInTheDocument();
-    const select = (await screen.findByLabelText("Read-aloud voice")) as HTMLSelectElement;
-    expect(within(select).getByRole("option", { name: "Libritts_r · 3922" })).toBeInTheDocument();
-    expect(within(select).getByRole("option", { name: "Amy" })).toBeInTheDocument();
-    // Kokoro is a model button now — no "Kokoro" entry, and no Kokoro voices, in the piper dropdown.
-    expect(within(select).queryByRole("option", { name: "Kokoro" })).toBeNull();
-    expect(within(select).queryByRole("option", { name: "Heart · American F" })).toBeNull();
-    expect(screen.queryByLabelText("Kokoro voice")).toBeNull();
-    fireEvent.change(select, { target: { value: "en_US-libritts_r-medium#3922" } });
-    await waitFor(() =>
-      expect(puts).toContainEqual({ brain_answer_voice: "en_US-libritts_r-medium#3922" }),
-    );
-  });
-
-  it("switches to the Kokoro model, showing the Kokoro voice list and PUTting a pick", async () => {
-    const { puts } = stubSettingsFetch();
-    setup();
-    const models = within(await screen.findByLabelText("Read-aloud model"));
-    // Selecting the Kokoro model defaults to the first Kokoro voice and swaps in its voice list.
-    fireEvent.click(models.getByRole("button", { name: "Kokoro" }));
-    await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "kokoro-af_heart" }));
-    // The piper Voice dropdown gives way to the Kokoro one.
-    await waitFor(() => expect(screen.queryByLabelText("Read-aloud voice")).toBeNull());
-    const sub = (await screen.findByLabelText("Kokoro voice")) as HTMLSelectElement;
-    expect(within(sub).getByRole("option", { name: "Heart · American F" })).toBeInTheDocument();
-    expect(within(sub).getByRole("option", { name: "Michael · American M" })).toBeInTheDocument();
-    expect(within(sub).getByRole("option", { name: "Emma · British F" })).toBeInTheDocument();
-    fireEvent.change(sub, { target: { value: "kokoro-bf_emma" } });
-    await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "kokoro-bf_emma" }));
-  });
-
-  it("switches back to Piper from Kokoro, reverting the answer voice to a piper id", async () => {
-    const { puts } = stubSettingsFetch("full", { answerVoice: "kokoro-af_heart" });
-    setup();
-    const models = within(await screen.findByLabelText("Read-aloud model"));
-    // Starts on Kokoro (saved kokoro voice); its voice list is shown.
-    await waitFor(() =>
-      expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute(
-        "aria-pressed",
-        "true",
-      ),
-    );
-    expect(screen.getByLabelText("Kokoro voice")).toBeInTheDocument();
-    // Clicking Piper reverts the answer voice to the first piper id and swaps the list back.
-    fireEvent.click(models.getByRole("button", { name: "Piper" }));
-    await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "en_US-amy-medium" }));
-    await waitFor(() => expect(screen.queryByLabelText("Kokoro voice")).toBeNull());
-    expect(screen.getByLabelText("Read-aloud voice")).toBeInTheDocument();
+    // Piper is gone — Kokoro is the only on-box model.
+    expect(models.queryByRole("button", { name: "Piper" })).toBeNull();
+    const select = (await screen.findByLabelText("Kokoro voice")) as HTMLSelectElement;
+    expect(within(select).getByRole("option", { name: "Heart · American F" })).toBeInTheDocument();
+    expect(
+      within(select).getByRole("option", { name: "Michael · American M" }),
+    ).toBeInTheDocument();
+    expect(within(select).getByRole("option", { name: "Emma · British F" })).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "kokoro-am_michael" } });
+    await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "kokoro-am_michael" }));
   });
 
   it("keeps a saved Kokoro model selected on a box that lists no Kokoro voices", async () => {
@@ -238,7 +186,7 @@ describe("SettingsScreen read-aloud voice picker", () => {
     // surface, so the selection stays visible + recoverable.
     stubSettingsFetch("full", {
       answerVoice: "kokoro-af_sky",
-      voices: ["en_US-amy-medium", "en_US-joe-medium"],
+      voices: ["kokoro-af_heart", "kokoro-am_michael"],
     });
     setup();
     const models = within(await screen.findByLabelText("Read-aloud model"));
@@ -254,11 +202,9 @@ describe("SettingsScreen read-aloud voice picker", () => {
     const off = onReadAloudSettings((p) => seen.push(p as Record<string, unknown>));
     stubSettingsFetch();
     setup();
-    const select = await screen.findByLabelText("Read-aloud voice");
-    fireEvent.change(select, { target: { value: "en_US-libritts_r-medium#3922" } });
-    await waitFor(() =>
-      expect(seen).toContainEqual({ brain_answer_voice: "en_US-libritts_r-medium#3922" }),
-    );
+    const select = await screen.findByLabelText("Kokoro voice");
+    fireEvent.change(select, { target: { value: "kokoro-am_michael" } });
+    await waitFor(() => expect(seen).toContainEqual({ brain_answer_voice: "kokoro-am_michael" }));
     off();
   });
 
@@ -267,14 +213,17 @@ describe("SettingsScreen read-aloud voice picker", () => {
     setup();
     const models = within(await screen.findByLabelText("Read-aloud model"));
     await waitFor(() =>
-      expect(models.getByRole("button", { name: "Piper" })).toHaveAttribute("aria-pressed", "true"),
+      expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
     );
-    expect(screen.getByLabelText("Read-aloud voice")).toBeInTheDocument();
+    expect(screen.getByLabelText("Kokoro voice")).toBeInTheDocument();
 
     fireEvent.click(models.getByRole("button", { name: "Native" }));
     await waitFor(() => expect(puts).toContainEqual({ brain_read_aloud_engine: "native" }));
     // Native uses the device voice — the on-box voice picker drops away.
-    await waitFor(() => expect(screen.queryByLabelText("Read-aloud voice")).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText("Kokoro voice")).toBeNull());
   });
 
   it("opens the read-custom-text surface from the voice picker", async () => {
@@ -313,48 +262,6 @@ describe("SettingsScreen read-aloud voice picker", () => {
     const sample = await screen.findByRole("button", { name: "Play sample" });
     fireEvent.click(sample);
     await waitFor(() => expect(played).toHaveLength(1));
-  });
-
-  it("shuffles a random speaker, auditions it, and keeps it as the answer voice", async () => {
-    const played: string[] = [];
-    class FakeAudio {
-      onended: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      constructor(src: string) {
-        played.push(src);
-      }
-      play() {
-        this.onended?.();
-        return Promise.resolve();
-      }
-      pause() {}
-    }
-    vi.stubGlobal("Audio", FakeAudio);
-    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:x" });
-    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
-    const { puts } = stubSettingsFetch();
-    setup();
-    // Keep is disabled until a speaker has been auditioned.
-    const explorer = within(await screen.findByLabelText("Discover a voice"));
-    expect(explorer.getByRole("button", { name: "Keep this voice" })).toBeDisabled();
-    // Shuffle auditions a random speaker (renders a sample) and enables Keep.
-    fireEvent.click(explorer.getByRole("button", { name: "Shuffle" }));
-    await waitFor(() => expect(played).toHaveLength(1));
-    const keep = explorer.getByRole("button", { name: "Keep this voice" });
-    await waitFor(() => expect(keep).not.toBeDisabled());
-    fireEvent.click(keep);
-    // The kept voice is one of the roster's speakers, saved as "<model>#<name>".
-    await waitFor(() =>
-      expect(
-        puts.some(
-          (p) =>
-            typeof (p as { brain_answer_voice?: string }).brain_answer_voice === "string" &&
-            /^en_US-libritts_r-medium#(3922|1234|6272)$/.test(
-              (p as { brain_answer_voice: string }).brain_answer_voice,
-            ),
-        ),
-      ).toBe(true),
-    );
   });
 });
 
