@@ -605,6 +605,38 @@ def test_audio_fx_failure_falls_back_to_dry_audio(
     assert _wav_frames(out) == 100  # the dry Kokoro render survives an fx failure
 
 
+def test_pad_survives_a_streaming_wav_with_placeholder_sizes(
+    kokoro_server: types.ModuleType,
+) -> None:
+    # Regression: ffmpeg streams to a pipe and can't backfill the WAV chunk sizes, leaving
+    # placeholder 0xFFFFFFFF lengths. _pad must NOT copy that bogus frame count into the output
+    # header — doing so overflowed the 32-bit WAV size field and 500'd every effect render.
+    good = kokoro_server._floats_to_wav([0.0, 0.1, -0.1] * 10, 24000)  # 30 real frames
+    b = bytearray(good)
+    b[4:8] = (0xFFFFFFFF).to_bytes(4, "little")  # RIFF chunk size → placeholder
+    b[40:44] = (0xFFFFFFFF).to_bytes(4, "little")  # data chunk size → placeholder
+    out = kokoro_server._pad(bytes(b), 5, 5)  # 5 ms lead + trail @ 24 kHz = 120 frames each
+    with wave.open(io.BytesIO(out), "rb") as w:  # must parse, not raise
+        assert w.getnframes() == 30 + 120 + 120
+
+
+def test_effect_render_rewraps_ffmpeg_pcm_into_a_valid_wav(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # _apply_fx asks ffmpeg for RAW PCM (-f s16le) and re-wraps it with correct sizes, so the
+    # finished clip is always a valid WAV. Simulate ffmpeg returning 40 frames of PCM.
+    def fake_run(cmd, input=None, capture_output=False, timeout=None, check=False):  # type: ignore[no-untyped-def]
+        assert "s16le" in cmd  # raw PCM out, not a pipe-broken WAV
+        return _FakeProc(b"\x00\x01" * 40)  # 40 mono 16-bit frames
+
+    monkeypatch.setattr(kokoro_server.subprocess, "run", fake_run)
+    out = kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, pitch=4.0)
+    assert out is not None
+    with wave.open(io.BytesIO(out), "rb") as w:
+        assert w.getframerate() == 24000
+        assert w.getnframes() == 40
+
+
 # --- narrator voice blending ---------------------------------------------------------------
 
 
