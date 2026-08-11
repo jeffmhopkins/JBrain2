@@ -163,9 +163,32 @@ async def test_context_overflow_400_is_a_typed_error_no_retry() -> None:
 
 
 async def test_generic_400_stays_a_plain_bad_response() -> None:
-    # A 400 unrelated to context must NOT be misclassified as an overflow.
+    # A 400 unrelated to context must NOT be misclassified as an overflow — including one
+    # that merely mentions "context" with a "too long" value (the old loose matcher's trap).
     with pytest.raises(LlmBadResponseError) as ei:
         await _post_400({"error": {"message": "invalid tool arguments"}})
+    assert not isinstance(ei.value, LlmContextOverflowError)
+    with pytest.raises(LlmBadResponseError) as ei2:
+        await _post_400({"error": {"message": "field 'context' value too long"}})
+    assert not isinstance(ei2.value, LlmContextOverflowError)
+
+
+async def test_cloud_overflow_is_not_context_typed() -> None:
+    # Only a LOCAL model's overflow becomes the typed error (the "raise the window in
+    # Settings" advice is local-only). The SAME body from a cloud provider stays generic.
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=_CTX_OVERFLOW_BODY)
+
+    with pytest.raises(LlmBadResponseError) as ei:
+        await post_json(
+            "https://example.test/x",
+            headers={},
+            payload={},
+            provider="xai",
+            request_timeout=1.0,
+            transport=httpx.MockTransport(handle),
+            sleep=SleepRecorder(),
+        )
     assert not isinstance(ei.value, LlmContextOverflowError)
 
 

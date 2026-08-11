@@ -93,6 +93,13 @@ _TURN_IDLE_S = 900.0
 # readable, real-time bursts without overrunning the display's stream slots.
 _THINK_FLUSH_S = 0.7
 
+# Hard ceiling on the pre-turn auto-title call. It runs BEFORE the main response streams and
+# outside the turn's own wall-clock/idle watchdogs, so without a bound a degraded title model
+# (retryable 5xx/network → the adapter's 4× backoff, minutes) would stall first-token latency.
+# Best-effort: on timeout the title is skipped and the turn proceeds. Generous enough to cover
+# a cold model load + a quick title on the small models titling typically uses.
+_AUTOTITLE_TIMEOUT_S = 30.0
+
 # A ceiling on the owner's CONCURRENT detached chat turns. A turn runs detached from its
 # SSE socket, so a PWA that lost its in-memory single-in-flight guard (a full reload) could
 # POST a fresh turn while the old one still runs — and each turn can dispatch a deep_research
@@ -526,8 +533,14 @@ async def _maybe_autotitle(
     if session.title.strip():
         return
     with contextlib.suppress(Exception):
-        title = await SessionTitler(get_llm_router(request)).title_for(
-            question=question, spec_override=spec_override
+        # Time-bounded so a slow/degraded title model can't hold the turn's first token
+        # (this runs before the main stream and outside the turn watchdogs). On timeout the
+        # suppress swallows the TimeoutError and the turn starts untitled.
+        title = await asyncio.wait_for(
+            SessionTitler(get_llm_router(request)).title_for(
+                question=question, spec_override=spec_override
+            ),
+            timeout=_AUTOTITLE_TIMEOUT_S,
         )
         if title:
             await sessions.rename(owner_ctx, session.id, title)
@@ -918,6 +931,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             here=here,
             here_as_of=here_as_of,
             context_window=context_window,
+            # The prior turn's persisted fill seeds the live meter's mid-stream base, so a
+            # follow-up turn's running estimate starts at the real carried context (not a
+            # char-count guess) and the bar climbs from where it sat instead of dipping.
+            context_seed=session.context_tokens or 0,
             # The root of this turn's sub-agent tree (depth 0): a fresh shared fan
             # state owns the tree-wide caps AND the shared token budget (sized off the
             # root's own per-turn cap × the locked spawn multiplier, with the root
@@ -1072,8 +1089,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # lets shutdown `gather` the turn and so guarantee the run-log close lands
             # before the engine pool is disposed (otherwise a detached write races a dead
             # pool and strands the run in 'running'). Suppress so a write failure never
-            # masks the outcome. Episodic memory and auto-titling stay on the `done` path
-            # only: a half-finished answer shouldn't seed the agent's recall or name it.
+            # masks the outcome. Episodic memory stays on the `done` path only: a
+            # half-finished answer shouldn't seed the agent's recall. (Auto-titling now runs
+            # up front, before the stream, from the question alone — so a turn that later
+            # errors is still named, which is fine: the title derives from the question.)
             try:
                 if (
                     not persisted

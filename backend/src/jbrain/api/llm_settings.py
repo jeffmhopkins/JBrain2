@@ -1002,6 +1002,13 @@ async def apply_overrides(
     for task in body.tasks:
         if task not in TASK_DEFAULTS:
             raise HTTPException(status_code=422, detail=f"unknown task: {task}")
+        # The auto-title tasks are hidden from the picker and follow the chat model (the
+        # router ignores their own overrides); reject a direct write so a pin can't be
+        # created that the router would only ignore anyway.
+        if task in _HIDDEN_TASKS:
+            raise HTTPException(
+                status_code=422, detail=f"task is not independently routable: {task}"
+            )
     overrides = await store.llm_task_overrides(ctx)
     choices = {c.id: c for c in provider_choices(settings)}
     for task, choice in body.tasks.items():

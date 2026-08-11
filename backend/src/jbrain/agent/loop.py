@@ -84,22 +84,13 @@ SYSTEM_STRENGTH: str = _SYSTEM.strength
 TURN_MAX_TOKENS: int = 16384
 
 
-# Live context-meter cadence: while a step generates, emit a ROUGH running token estimate
-# at most this often so the PWA's meter climbs during the stream instead of jumping only at
-# each step's end. The exact count still lands in the per-step UsageEvent; these in-between
-# ticks are approximate (see _approx_prompt_tokens). ~4 chars/token is the usual English
-# rule of thumb — good enough for a "how close to the limit" gauge, not a billing figure.
+# Live context-meter cadence: while a step generates, emit a running token count at most this
+# often so the PWA's meter climbs during the stream instead of jumping only at each step's
+# end. Only the OUTPUT portion is estimated (~4 chars/token, the usual English rule of thumb);
+# the prompt base is the last EXACT input we knew, never a char-count guess — so the bar never
+# dips. The exact count still lands in the per-step UsageEvent and corrects the estimate.
 _USAGE_FLUSH_S = 0.5
 _CHARS_PER_TOKEN = 4
-
-
-def _approx_prompt_tokens(system_prompt: str, messages: Sequence[LlmMessage]) -> int:
-    """A rough prompt-token estimate (~chars/4) for the LIVE meter only. The exact prompt
-    size arrives in the step's real UsageEvent; this is the base the mid-stream ticks add
-    the running output onto so the meter doesn't drop to zero before the step settles.
-    Text-only: images/tool schemas undercount, corrected the moment the step's usage lands."""
-    chars = len(system_prompt) + sum(len(getattr(m, "text", "") or "") for m in messages)
-    return chars // _CHARS_PER_TOKEN
 
 
 def _grounding_corpus(sources: Sequence[NoteSource], entities: Sequence[EntityRef]) -> list[str]:
@@ -871,6 +862,7 @@ class AgentLoop:
         here: tuple[float, float] | None = None,
         here_as_of: datetime | None = None,
         context_window: int | None = None,
+        context_seed: int = 0,
         depth: int = 0,
         tree: TreeState | None = None,
         run_id: str | None = None,
@@ -962,10 +954,13 @@ class AgentLoop:
         surfaced_sources: list[NoteSource] = []
         surfaced_entities: list[EntityRef] = []
         mutated = False
-        # The exact prompt size of the LAST completed step — the live meter's mid-stream base
-        # is floored at this so the context never appears to SHRINK between steps (the char/4
-        # estimate undercounts; the conversation only grows).
-        last_real_input = 0
+        # The live meter's mid-stream base: the EXACT prompt size we last knew — the prior
+        # turn's persisted fill to start (context_seed), then each completed step's real input.
+        # Seeding with a real number (never a char-count estimate) is what keeps the meter from
+        # dipping when a turn opens: the mid-stream ticks only ADD the running output on top of
+        # this floor, and the exact per-step UsageEvent corrects it. context only grows, so
+        # flooring at the last real input never lets the bar shrink mid-turn.
+        last_real_input = context_seed
         # The local gpt-oss route leaks a tool-round's analysis onto the content channel; buffer
         # that round's text and route it to the thinking trace instead of the answer (see
         # `_hide_tool_round_text`). A hosted model keeps its live per-chunk stream byte-for-byte.
@@ -977,12 +972,11 @@ class AgentLoop:
             # arrives (a tool call is signalled only at the end), so buffer the round's text and
             # commit it once we know whether the round is a tool call (hide) or the answer (show).
             round_text: list[str] = []
-            # Live meter: while this step streams, emit a throttled ROUGH running estimate —
-            # this step's (estimated) prompt size plus the tokens generated so far — so the
-            # PWA's context meter climbs during generation, not only at the step's end. The
-            # exact figure lands in the per-step UsageEvent below and corrects it. Only when a
-            # window was given (the /chat path; tests/headless callers pass none).
-            est_prompt = _approx_prompt_tokens(system_prompt, messages) if context_window else 0
+            # Live meter: while this step streams, emit a throttled running estimate — the last
+            # KNOWN prompt size (last_real_input, a real figure) plus the tokens generated so far
+            # (~chars/4) — so the PWA's context meter climbs during generation, not only at the
+            # step's end. The exact figure lands in the per-step UsageEvent below and corrects it.
+            # Only when a window was given (the /chat path; tests/headless callers pass none).
             streamed_chars = 0
             # Start the clock now so the first tick waits a full interval — a step that
             # finishes fast just rides its exact end-of-step UsageEvent, no estimate noise.
@@ -1019,7 +1013,7 @@ class AgentLoop:
                     if now - last_meter >= _USAGE_FLUSH_S:
                         last_meter = now
                         yield UsageEvent(
-                            input_tokens=max(est_prompt, last_real_input),
+                            input_tokens=last_real_input,
                             output_tokens=streamed_chars // _CHARS_PER_TOKEN,
                             context_window=context_window,
                         )

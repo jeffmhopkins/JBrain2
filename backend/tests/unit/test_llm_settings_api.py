@@ -330,6 +330,20 @@ def test_put_routes_a_task_to_an_enabled_local_model() -> None:
     assert stored["vision.ocr"] == {"spec": "local:qwen3-vl-30b-a3b"}
 
 
+def test_put_rejects_a_hidden_title_task() -> None:
+    # The title tasks are hidden AND the router ignores their overrides; a direct PUT that
+    # tries to pin one is refused (422) rather than silently stored and ignored.
+    settings = Settings(
+        secure_cookies=False,
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        xai_api_key="test-xai",
+        anthropic_api_key="test-anthropic",
+    )
+    c, _ = _authed_client(settings)
+    resp = c.put("/api/settings/llm", json={"tasks": {"session.title": {"provider": "grok"}}})
+    assert resp.status_code == 422
+
+
 def test_title_tasks_are_hidden_from_the_picker() -> None:
     # Auto-generated titles run on the chat's OWN model (jbrain.agent.titler passes the
     # turn's model), so they are not independently routable — the per-task picker must not
