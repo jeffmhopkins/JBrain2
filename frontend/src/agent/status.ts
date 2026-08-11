@@ -58,7 +58,8 @@ const STOP_LABELS: Record<string, string> = {
   budget: "Stopped — hit the budget",
   max_steps: "Stopped — too many steps",
   too_many_errors: "Stopped — tools kept failing",
-  context_overflow: "This model ran out of context — raise its window in Settings or start a new chat",
+  context_overflow:
+    "This model ran out of context — raise its window in Settings or start a new chat",
   error: "Something went wrong",
 };
 
