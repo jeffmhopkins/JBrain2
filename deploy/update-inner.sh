@@ -142,17 +142,20 @@ if [ -n "$LOCAL_LLM_RUNNING" ]; then
   docker compose --profile local-llm up -d local-llm || true
 fi
 
-# OPT-IN: track the newest llama.cpp on the gateway so a freshly-released model's
-# architecture is supported without a manual digest bump. LOCAL_LLM_AUTO_UPDATE=true
-# rebuilds the gateway on the FLOATING base tag (default kyuz0 :vulkan-radv, which tracks
-# llama.cpp master; override with LOCAL_LLM_BASE_FLOATING, e.g. a rocm-* tag) with --pull,
-# then smoke-tests it (jbrain.cli local-llm-smoketest: load a model + a gpt-oss tool probe).
-# If the new build can't load a model or breaks tool calls, roll BACK to the pinned,
-# known-good LOCAL_LLM_BASE so a bad upstream build never leaves the box unable to serve.
-# Absent/false keeps the reproducible pinned digest — see docs/runbooks/STRIX_HALO_SETUP.md
-# ("Reproducibility / trust"). Gated on LOCAL_LLM_RUNNING (so LOCAL_LLM_ENABLED=true), and
-# best-effort: every branch is guarded so a hiccup never aborts the update (set -e).
-if [ -n "$LOCAL_LLM_RUNNING" ] && grep -q '^LOCAL_LLM_AUTO_UPDATE=true' .env; then
+# DEFAULT-ON: track the newest llama.cpp on the gateway so a freshly-released model's
+# architecture is supported WITHOUT any manual step — the owner drives this box from the
+# PWA with no terminal (CLAUDE.md #10), so "edit .env / re-run a command" is not a path
+# they have. Every update rebuilds the gateway on the FLOATING base tag (default kyuz0
+# :vulkan-radv, which tracks llama.cpp master; override with LOCAL_LLM_BASE_FLOATING, e.g.
+# a rocm-* tag) with --pull, then smoke-tests it (jbrain.cli local-llm-smoketest: load a
+# model + a gpt-oss tool probe). If the new build can't load a model or breaks tool calls,
+# roll BACK to the pinned, known-good LOCAL_LLM_BASE so a bad upstream build never leaves
+# the box unable to serve — the rollback net is what makes tracking master safe by default.
+# Opt OUT with LOCAL_LLM_AUTO_UPDATE=false to freeze the reproducible pinned digest (see
+# docs/runbooks/STRIX_HALO_SETUP.md, "Reproducibility / trust"). Gated on LOCAL_LLM_RUNNING
+# (so LOCAL_LLM_ENABLED=true), and best-effort: every branch is guarded so a hiccup never
+# aborts the update (set -e).
+if [ -n "$LOCAL_LLM_RUNNING" ] && ! grep -q '^LOCAL_LLM_AUTO_UPDATE=false' .env; then
   FLOATING="$(sed -n 's/^LOCAL_LLM_BASE_FLOATING=//p' .env | tail -n1)"
   [ -n "$FLOATING" ] || FLOATING="docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv"
   echo "[update] LOCAL_LLM_AUTO_UPDATE: rebuilding gateway on newest llama.cpp ($FLOATING)"
