@@ -33,7 +33,7 @@ describe("speakable golden corpus", () => {
 
   it("normalizes a Markdown LLM answer (heading, lists, bold, inline code, link, table-free)", () => {
     expect(speakable(ANSWER)).toBe(
-      "Summary. The API returned two hundred OK in one.5s. Key points: Latency dropped twenty percent. See the docs for details. Steps: one. Restart the service. two. Re run the check.",
+      "Summary: The API returned two hundred OK in one.5s. Key points: Latency dropped twenty percent. See the docs for details. Steps: one. Restart the service. two. Re run the check.",
     );
   });
 
@@ -41,7 +41,7 @@ describe("speakable golden corpus", () => {
     // Structural pass: markdown/markers gone, numbers/percent still raw, newlines preserved.
     expect(toProse(ANSWER)).toBe(
       [
-        "Summary",
+        "Summary:",
         "",
         "The API returned 200 OK in 1.5s. Key points:",
         "",
