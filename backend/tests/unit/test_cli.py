@@ -33,6 +33,45 @@ def patched_store(monkeypatch: pytest.MonkeyPatch) -> FakeSettingsStore:
     return store
 
 
+def test_smoketest_skips_when_hosting_off(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+    # Hosting off or nothing installed → nothing to test, exit 0 (the update path keeps the
+    # floated build). No gateway client is even constructed.
+    class _Settings:
+        local_llm_enabled = False
+        local_models: list[str] = []
+        local_llm_url = "http://local-llm:8080/v1"
+
+    monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
+    assert cli.main(["local-llm-smoketest"]) == 0
+    assert "skipping" in capsys.readouterr().out
+
+
+def test_smoketest_exit_code_follows_the_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The CLI maps run_smoketest's ok flag to the process exit code the update path reads:
+    # 0 keeps the newest build, 1 triggers the rollback.
+    import jbrain.llm.local_gateway as gateway_mod
+    import jbrain.llm.smoketest as smoketest_mod
+
+    class _Settings:
+        local_llm_enabled = True
+        local_models = ["gpt-oss-120b", "qwen3.5-0.8b"]
+        local_llm_url = "http://local-llm:8080/v1"
+
+    monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(gateway_mod, "LocalGatewayClient", lambda url: object())
+
+    async def _pass(models: object, gw: object) -> tuple[bool, list[str]]:
+        return True, ["load OK"]
+
+    async def _fail(models: object, gw: object) -> tuple[bool, list[str]]:
+        return False, ["load FAILED"]
+
+    monkeypatch.setattr(smoketest_mod, "run_smoketest", _pass)
+    assert cli.main(["local-llm-smoketest"]) == 0
+    monkeypatch.setattr(smoketest_mod, "run_smoketest", _fail)
+    assert cli.main(["local-llm-smoketest"]) == 1
+
+
 def test_local_remove_ids_prints_queue(patched_store: FakeSettingsStore, capsys: Any) -> None:
     patched_store.values["llm_local_remove_requested"] = ["gpt-oss-120b", "glm-4.5-air"]
     assert cli.main(["local-remove-ids"]) == 0

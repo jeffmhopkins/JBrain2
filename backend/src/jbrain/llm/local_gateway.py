@@ -137,6 +137,48 @@ class LocalGatewayClient:
         except httpx.HTTPError as exc:
             log.info("local_gateway.warm_skipped", model=served_model, error=str(exc))
 
+    async def tool_probe(self, served_model: str) -> None:
+        """Send one tool-CARRYING completion (1 token, discarded) to verify the build's
+        tool-call path doesn't crash the upstream — the post-upgrade smoke guard
+        (jbrain.llm.smoketest) for the opt-in `LOCAL_LLM_AUTO_UPDATE` path. A rolling
+        llama.cpp build once regressed gpt-oss's harmony tool grammar so tool turns
+        returned HTTP 500; this catches that class of breakage before the box keeps the
+        new build. Raises LocalGatewayError on any non-2xx or unreachable, which the
+        update path reads as 'roll back to the pinned base'. A readiness probe like
+        `_warm` (not a functional LLM call), so it lives here rather than on the adapter.
+        The tool is enum-free on purpose (STRIX_HALO_SETUP.md's gpt-oss enum caveat)."""
+        body = {
+            "model": served_model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "noop",
+                        "description": "A no-op probe tool; do not call it.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "ok": {"type": "boolean", "description": "unused probe field"}
+                            },
+                        },
+                    },
+                }
+            ],
+            "max_tokens": 1,
+            "stream": False,
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 120.0), transport=self._transport
+            ) as client:
+                resp = await client.post(
+                    f"{self._root}/upstream/{served_model}/v1/chat/completions", json=body
+                )
+                resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LocalGatewayError(str(exc)) from exc
+
     async def tail_logs(self) -> str:
         """The gateway's own recent stdout — the llama-swap wrapper plus the upstream
         llama-server, interleaved exactly as the engine emits them. This is the inference

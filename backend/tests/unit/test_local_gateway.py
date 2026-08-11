@@ -97,6 +97,28 @@ async def test_load_warm_up_is_best_effort() -> None:
     await _client(handle).load("a")  # no raise
 
 
+async def test_tool_probe_posts_a_tool_carrying_completion() -> None:
+    body: dict[str, object] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        body.update(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    await _client(handle).tool_probe("gpt-oss-120b")
+    # A tool-CARRYING turn (that's the point — it exercises the build's tool grammar),
+    # capped at one discarded token, against the served model's completions path.
+    assert isinstance(body["tools"], list) and body["tools"]
+    assert body["model"] == "gpt-oss-120b"
+    assert body["max_tokens"] == 1
+
+
+async def test_tool_probe_raises_on_a_gateway_error() -> None:
+    # A build whose tool path crashes the upstream returns a non-2xx — the smoke test's
+    # rollback signal, so (unlike the best-effort warm-up) this MUST surface.
+    with pytest.raises(LocalGatewayError):
+        await _client(lambda r: httpx.Response(500)).tool_probe("gpt-oss-120b")
+
+
 def test_parse_running_tolerates_messy_shapes() -> None:
     assert _parse_running({"models": ["x", {"id": "y"}, {"name": "z"}, 5, {}]}) == {"x", "y", "z"}
     assert _parse_running("garbage") == set()
