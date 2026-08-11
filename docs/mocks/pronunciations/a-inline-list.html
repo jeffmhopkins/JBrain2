@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pronunciations · A — Inline list</title>
+    <style>
+      :root {
+        --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+        --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --rose: #cf8a8f;
+        --accent: var(--steel);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #000; color: var(--text); display: flex; justify-content: center; padding: 20px; }
+      .phone { width: 400px; max-width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 28px; overflow: hidden; }
+      header { padding: 18px 20px 6px; }
+      .crumb { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+      h1 { font-size: 22px; margin: 4px 0 0; }
+      .body { padding: 12px 16px 28px; }
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; margin-top: 14px; }
+      .card-h { padding: 14px 16px 6px; }
+      .card-h .t { font-size: 16px; font-weight: 600; }
+      .card-h .d { font-size: 12.5px; color: var(--text-2); margin-top: 3px; line-height: 1.4; }
+      .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500;
+        padding: 4px 10px; border-radius: 999px; margin: 8px 16px 2px; }
+      .chip.ok { color: var(--green); background: rgba(143, 188, 154, 0.13); }
+      .chip.warn { color: var(--amber); background: rgba(201, 163, 106, 0.13); }
+      .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+      .rows { margin-top: 8px; }
+      .row { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); min-height: 52px; }
+      .row .word { font-size: 15px; font-weight: 500; }
+      .row .arrow { color: var(--text-3); }
+      .row .say { color: var(--text-2); font-size: 14px; flex: 1; }
+      .icon-btn { background: none; border: none; color: var(--text-2); padding: 8px; border-radius: 10px; cursor: pointer; font-size: 15px; line-height: 1; }
+      .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+      .icon-btn.play.playing { color: var(--steel); }
+      .add-row { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); color: var(--steel); font-size: 14.5px; font-weight: 500; cursor: pointer; }
+      .add-row:hover { background: var(--surface-2); }
+      .adder { border-top: 1px solid var(--border); padding: 14px 16px; display: none; gap: 10px; flex-direction: column; }
+      .adder.open { display: flex; }
+      .field { display: flex; flex-direction: column; gap: 4px; }
+      .field label { font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+      input { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; color: var(--text); font-size: 16px; padding: 11px 12px; }
+      input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+      .adder .two { display: flex; gap: 10px; }
+      .adder .two .field { flex: 1; }
+      .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+      .btn { border-radius: 12px; padding: 9px 14px; font-size: 14px; font-weight: 600; border: 1px solid transparent; cursor: pointer; }
+      .btn.primary { background: var(--steel); color: #0e0f11; }
+      .btn.ghost { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+      .btn.test { background: none; color: var(--steel); border-color: rgba(127,167,201,0.4); margin-right: auto; }
+      .empty { padding: 18px 16px; color: var(--text-2); font-size: 13.5px; border-top: 1px solid var(--border); }
+      .note { font-size: 11.5px; color: var(--text-3); margin: 10px 16px 0; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div class="phone">
+      <header>
+        <div class="crumb">Settings › Read aloud</div>
+        <h1>Pronunciations</h1>
+      </header>
+      <div class="body">
+        <div class="chip ok" id="health"><span class="dot"></span> Voice engine: misaki ✓</div>
+        <div class="card">
+          <div class="card-h">
+            <div class="t">How to say a word</div>
+            <div class="d">Type a word and how it should sound. Read-aloud says it your way — no
+              phonetics needed. Applies everywhere the box reads text.</div>
+          </div>
+          <div class="rows" id="rows"></div>
+          <div class="add-row" id="addToggle">＋ Add a pronunciation</div>
+          <div class="adder" id="adder">
+            <div class="two">
+              <div class="field"><label>Word</label><input id="w" placeholder="Titusville" /></div>
+              <div class="field"><label>Say it like</label><input id="s" placeholder="Tight us ville" /></div>
+            </div>
+            <div class="actions">
+              <button class="btn test" id="testNew">▷ Test</button>
+              <button class="btn ghost" id="cancel">Cancel</button>
+              <button class="btn primary" id="save">Save</button>
+            </div>
+          </div>
+        </div>
+        <div class="note">Tip: spell it the way it sounds, splitting into chunks with spaces —
+          “Cholmondeley → Chumley”, “GIF → jiff”.</div>
+      </div>
+    </div>
+    <script>
+      let lex = { Titusville: "Tight us ville", GIF: "jiff", Nginx: "engine ex" };
+      const rows = document.getElementById("rows");
+      function render() {
+        rows.innerHTML = "";
+        const keys = Object.keys(lex);
+        if (!keys.length) {
+          rows.innerHTML = '<div class="empty">No custom pronunciations yet. Add one below.</div>';
+          return;
+        }
+        for (const w of keys) {
+          const r = document.createElement("div");
+          r.className = "row";
+          r.innerHTML =
+            '<span class="word">' + w + '</span><span class="arrow">→</span>' +
+            '<span class="say">' + lex[w] + '</span>' +
+            '<button class="icon-btn play" title="Test">▷</button>' +
+            '<button class="icon-btn del" title="Remove">✕</button>';
+          r.querySelector(".play").onclick = (e) => {
+            const b = e.currentTarget; b.classList.add("playing"); b.textContent = "❚❚";
+            setTimeout(() => { b.classList.remove("playing"); b.textContent = "▷"; }, 900);
+          };
+          r.querySelector(".del").onclick = () => { delete lex[w]; render(); };
+          rows.appendChild(r);
+        }
+      }
+      const adder = document.getElementById("adder");
+      document.getElementById("addToggle").onclick = () => adder.classList.toggle("open");
+      document.getElementById("cancel").onclick = () => { adder.classList.remove("open"); w.value = s.value = ""; };
+      document.getElementById("save").onclick = () => {
+        const wv = w.value.trim(), sv = s.value.trim();
+        if (wv && sv) { lex[wv] = sv; w.value = s.value = ""; adder.classList.remove("open"); render(); }
+      };
+      document.getElementById("testNew").onclick = (e) => {
+        const b = e.currentTarget; b.textContent = "❚❚ Playing"; setTimeout(() => (b.textContent = "▷ Test"), 900);
+      };
+      // Toggle the health chip on tap, to preview both states.
+      const health = document.getElementById("health");
+      let ok = true;
+      health.onclick = () => {
+        ok = !ok;
+        health.className = "chip " + (ok ? "ok" : "warn");
+        health.innerHTML = '<span class="dot"></span> ' +
+          (ok ? "Voice engine: misaki ✓" : "Voice engine: espeak — pronunciations still work, quality limited");
+      };
+      render();
+    </script>
+  </body>
+</html>

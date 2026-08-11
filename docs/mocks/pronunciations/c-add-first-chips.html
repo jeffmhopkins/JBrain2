@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pronunciations · C — Add-first + chips</title>
+    <style>
+      :root {
+        --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+        --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66;
+        --steel: #7fa7c9; --green: #8fbc9a; --amber: #c9a36a; --rose: #cf8a8f;
+        --accent: var(--steel);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #000; color: var(--text); display: flex; justify-content: center; padding: 20px; }
+      .phone { width: 400px; max-width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 28px; overflow: hidden; }
+      header { padding: 18px 20px 6px; }
+      .crumb { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+      h1 { font-size: 22px; margin: 4px 0 2px; }
+      .sub { font-size: 13px; color: var(--text-2); line-height: 1.45; }
+      .body { padding: 12px 16px 28px; }
+      .chip-health { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 999px; margin: 8px 0 2px; }
+      .chip-health.ok { color: var(--green); background: rgba(143,188,154,0.13); }
+      .chip-health.warn { color: var(--amber); background: rgba(201,163,106,0.13); }
+      .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+      .compose { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 14px; margin-top: 12px; }
+      .compose .lead { font-size: 13.5px; color: var(--text-2); margin-bottom: 10px; }
+      .compose .lead b { color: var(--text); font-weight: 600; }
+      .two { display: flex; gap: 10px; }
+      .field { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+      .field label { font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+      input { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; color: var(--text); font-size: 16px; padding: 11px 12px; width: 100%; }
+      input:focus-visible { outline: 2px solid var(--accent); }
+      .compose .actions { display: flex; gap: 10px; margin-top: 12px; }
+      .btn { border-radius: 12px; padding: 11px 14px; font-size: 14px; font-weight: 600; border: 1px solid transparent; cursor: pointer; }
+      .btn.primary { background: var(--steel); color: #0e0f11; flex: 1; }
+      .btn.test { background: none; color: var(--steel); border-color: rgba(127,167,201,0.4); }
+      .btn.test.playing { background: rgba(127,167,201,0.16); }
+      .saved-h { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); margin: 20px 2px 8px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+      .pron { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 7px 8px 7px 13px; cursor: pointer; }
+      .pron:hover { border-color: #464a52; }
+      .pron .w { font-size: 14px; font-weight: 500; }
+      .pron .s { font-size: 12.5px; color: var(--text-2); }
+      .pron .arr { color: var(--text-3); font-size: 12px; }
+      .pron .x { color: var(--text-3); font-size: 13px; padding: 2px 5px; border-radius: 8px; }
+      .pron .x:hover { background: var(--surface-2); color: var(--rose); }
+      .empty { color: var(--text-2); font-size: 13.5px; padding: 4px 2px; }
+      .note { font-size: 11.5px; color: var(--text-3); margin-top: 16px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div class="phone">
+      <header>
+        <div class="crumb">Settings › Read aloud</div>
+        <h1>Pronunciations</h1>
+        <div class="sub">Teach read-aloud how to say a name or word — spell it the way it sounds.</div>
+      </header>
+      <div class="body">
+        <div class="chip-health ok" id="health"><span class="dot"></span> Voice engine: misaki ✓</div>
+        <div class="compose">
+          <div class="lead">Say <b id="wpv">a word</b> like <b id="spv">this</b>.</div>
+          <div class="two">
+            <div class="field"><label>Word</label><input id="w" placeholder="Titusville" /></div>
+            <div class="field"><label>Say it like</label><input id="s" placeholder="Tight us ville" /></div>
+          </div>
+          <div class="actions">
+            <button class="btn test" id="test">▷ Test</button>
+            <button class="btn primary" id="add">Add</button>
+          </div>
+        </div>
+        <div class="saved-h">Saved · <span id="n">3</span></div>
+        <div class="chips" id="chips"></div>
+        <div class="note">Tap a saved word to edit it. Examples: “Nginx → engine ex”, “GIF → jiff”,
+          “Worcestershire → wuster sher”.</div>
+      </div>
+    </div>
+    <script>
+      let lex = { Titusville: "Tight us ville", GIF: "jiff", Nginx: "engine ex" };
+      const chips = document.getElementById("chips"), n = document.getElementById("n");
+      const w = document.getElementById("w"), s = document.getElementById("s");
+      const wpv = document.getElementById("wpv"), spv = document.getElementById("spv");
+      w.oninput = () => (wpv.textContent = w.value.trim() || "a word");
+      s.oninput = () => (spv.textContent = s.value.trim() || "this");
+      function render() {
+        chips.innerHTML = ""; n.textContent = Object.keys(lex).length;
+        if (!Object.keys(lex).length) { chips.innerHTML = '<div class="empty">Nothing saved yet.</div>'; return; }
+        for (const wd of Object.keys(lex)) {
+          const c = document.createElement("div"); c.className = "pron";
+          c.innerHTML = '<span class="w">' + wd + '</span><span class="arr">→</span><span class="s">' + lex[wd] + '</span><span class="x">✕</span>';
+          c.querySelector(".x").onclick = (e) => { e.stopPropagation(); delete lex[wd]; render(); };
+          c.onclick = () => { w.value = wd; s.value = lex[wd]; w.oninput(); s.oninput(); w.scrollIntoView({ behavior: "smooth" }); };
+          chips.appendChild(c);
+        }
+      }
+      document.getElementById("add").onclick = () => {
+        const wv = w.value.trim(), sv = s.value.trim();
+        if (wv && sv) { lex[wv] = sv; w.value = s.value = ""; w.oninput(); s.oninput(); render(); }
+      };
+      document.getElementById("test").onclick = (e) => {
+        const b = e.currentTarget; b.classList.add("playing"); b.textContent = "❚❚ Playing";
+        setTimeout(() => { b.classList.remove("playing"); b.textContent = "▷ Test"; }, 900);
+      };
+      const health = document.getElementById("health"); let ok = true;
+      health.onclick = () => { ok = !ok; health.className = "chip-health " + (ok ? "ok" : "warn");
+        health.innerHTML = '<span class="dot"></span> ' + (ok ? "Voice engine: misaki ✓" : "Voice engine: espeak — words still apply, quality limited"); };
+      render();
+    </script>
+  </body>
+</html>
