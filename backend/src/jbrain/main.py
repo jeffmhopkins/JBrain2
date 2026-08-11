@@ -12,7 +12,11 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
-from jbrain.agent.brainevents import build_event_emitter, build_flag_emitter
+from jbrain.agent.brainevents import (
+    build_event_emitter,
+    build_flag_emitter,
+    build_value_emitter,
+)
 from jbrain.agent.continuation import PlanContinuationRunner, run_plan_continuation_loop
 from jbrain.agent.deepest_tool import DeepestHandle
 from jbrain.agent.externaltools import build_external_handlers
@@ -431,6 +435,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # A separate emitter for the wall's persistent config flags (read_aloud): boolean
         # display config, not owner text, so it is not gated by the per-turn text switch.
         app.state.brain_flag_emit = build_flag_emitter(settings.brain_events_url)
+        # Sibling emitter for numeric/bool read-aloud config (answer_speed/pitch/chorus), so the
+        # wall display reflects the owner's chosen voice effects live, without a redeploy.
+        app.state.brain_value_emit = build_value_emitter(settings.brain_events_url)
         # The wall base URL (events URL minus /event) — kept for any wall-direct call.
         app.state.brain_base_url = settings.brain_events_url.removesuffix("/event")
         # TTS moved into the `tts-stt` service: the authenticated /api/brain/tts +

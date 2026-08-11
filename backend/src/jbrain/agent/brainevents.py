@@ -94,6 +94,39 @@ def build_flag_emitter(url: str) -> BrainFlagEmit:
     return emit_flag
 
 
+class BrainValueEmit(Protocol):
+    """The wall-display value emitter: `emit_value(kind, value)` ships a persistent NUMERIC or
+    boolean config value (e.g. answer_speed / answer_pitch / answer_chorus) the display holds and
+    reflects, NOT owner text. Like the flag emitter but carries a `value` rather than an `on`."""
+
+    def __call__(self, kind: str, value: float | bool) -> None: ...
+
+
+async def _post_value(url: str, kind: str, value: float | bool) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(url, json={"kind": kind, "value": value})
+    except Exception:  # noqa: BLE001 — display telemetry must never raise into a turn
+        pass
+
+
+def build_value_emitter(url: str) -> BrainValueEmit:
+    """Return `emit_value(kind, value)` that fire-and-forget POSTs a persistent config value to
+    the display, or a no-op when no URL is configured. Like build_flag_emitter, NOT gated by
+    `brain_text_enabled`: the read-aloud speed/pitch/chorus are display config, not owner text."""
+
+    def emit_value(kind: str, value: float | bool) -> None:
+        if not url:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no event loop (shouldn't happen inside a request) — skip silently
+        loop.create_task(_post_value(url, kind, value))
+
+    return emit_value
+
+
 def build_event_emitter(url: str) -> BrainEmit:
     """Return `emit(kind, text=None)` that fires a fire-and-forget POST to the display,
     or a no-op when no URL is configured (the default — the display is optional). `text`

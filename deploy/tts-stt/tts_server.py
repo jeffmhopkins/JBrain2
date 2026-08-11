@@ -29,6 +29,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -70,6 +71,27 @@ try:
     KOKORO_TRAIL_MS = int(os.environ.get("BRAIN_KOKORO_TRAIL_MS", "0"))
 except ValueError:
     KOKORO_TRAIL_MS = 0
+# Pitch shift in SEMITONES (Kokoro renders a fixed pitch; this shifts the finished audio). 0 =
+# no-op (unchanged). Per-request `pitch` on /tts overrides it. Applied AFTER render via ffmpeg,
+# so it composes with `speed` (which Kokoro applies natively). Clamped at use; parsed defensively.
+try:
+    KOKORO_PITCH = float(os.environ.get("BRAIN_KOKORO_PITCH", "0.0"))
+except ValueError:
+    KOKORO_PITCH = 0.0
+# A single ffmpeg atempo stage spans 0.5–2.0, exactly the tempo compensation for ±12 semitones,
+# so that is the pitch clamp — beyond it the voice is unusable anyway.
+KOKORO_PITCH_MAX_ST = 12.0
+# Chorus: a fixed two-voice ffmpeg `chorus` preset that thickens/doubles the voice. On/off only
+# (per-request `chorus=1`), env default below. Applied in the SAME ffmpeg pass as pitch.
+KOKORO_CHORUS = os.environ.get("BRAIN_KOKORO_CHORUS", "").strip().lower() in ("1", "true", "yes", "on")
+# in_gain:out_gain : then one delay/decay/speed/depth per chorused voice (two here).
+_CHORUS_FILTER = "chorus=0.6:0.9:50|60:0.4|0.32:0.25|0.4:2|2.3"
+# Robot: a whole voice character (on/off, per-request `robot=1`) — a slight pitch-up, a short
+# metallic echo, a band-pass (telephone-ish 200–3500 Hz), a formant EQ bump, and a gain lift.
+# The pitch stage is rebuilt per-sample-rate in _apply_fx; this is the fixed tail after it.
+KOKORO_ROBOT = os.environ.get("BRAIN_KOKORO_ROBOT", "").strip().lower() in ("1", "true", "yes", "on")
+_ROBOT_PITCH_RATIO = 1.08
+_ROBOT_TAIL = "aecho=0.8:0.7:7|14:0.5|0.3,highpass=f=200,lowpass=f=3500,equalizer=f=1500:t=q:w=1.5:g=4,volume=1.8"
 # The exposed Kokoro voices: the ENGLISH v1.0 roster only (American af_/am_, British bf_/bm_) —
 # read-aloud renders with lang="en-us", so the model's French/Japanese/etc. voices would
 # mispronounce English and are deliberately omitted. Names are the model's own voice ids and are
@@ -273,12 +295,55 @@ def _blend_style(kokoro: Any, blend: tuple[tuple[str, float], ...]) -> Any:
     return style
 
 
+def _pitch_stage(sample_rate: int, ratio: float) -> str:
+    """The ffmpeg pitch-shift-without-tempo-change sub-chain for a frequency `ratio`: asetrate
+    reinterprets the samples at a new rate (pitch AND tempo up), aresample restores the file rate,
+    atempo undoes the tempo change — leaving only the pitch move, duration unchanged."""
+    return f"asetrate={int(round(sample_rate * ratio))},aresample={sample_rate},atempo={1.0 / ratio:.6f}"
+
+
+def _apply_fx(
+    wav: bytes, sample_rate: int, semitones: float, chorus: bool, robot: bool
+) -> bytes:
+    """Apply the optional post-render audio effects in ONE ffmpeg pass (ffmpeg is bundled in the
+    tts-stt base image): a pitch shift, a chorus, and/or a robot voice. Pitch uses the asetrate →
+    aresample → atempo chain (pitch only, duration unchanged; a single atempo spans 0.5–2.0 = ±12
+    semitones, the caller's clamp). Chorus is a fixed two-voice thickener. Robot is a whole
+    character: a slight pitch-up + metallic echo + telephone band-pass + formant bump + gain.
+    NON-FATAL: on any failure the original audio is returned — an effect is a nicety, never a
+    reason to drop a clip. Callers skip this entirely when no effect is active, so the dry path
+    never spawns ffmpeg."""
+    stages: list[str] = []
+    if semitones:
+        stages.append(_pitch_stage(sample_rate, 2.0 ** (semitones / 12.0)))
+    if chorus:
+        stages.append(_CHORUS_FILTER)
+    if robot:
+        stages.append(f"{_pitch_stage(sample_rate, _ROBOT_PITCH_RATIO)},{_ROBOT_TAIL}")
+    if not stages:
+        return wav
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "wav", "-i", "pipe:0",
+             "-af", ",".join(stages), "-f", "wav", "pipe:1"],
+            input=wav, capture_output=True, timeout=30, check=True,
+        )
+        return proc.stdout or wav
+    except Exception as exc:  # noqa: BLE001 — an fx hiccup degrades to the dry clip, not silence
+        print(f"[tts] audio-fx failed (pitch {semitones:+.1f} st, chorus={chorus}, robot={robot}), "
+              f"using dry audio: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return wav
+
+
 def _kokoro_wav(
     text: str,
     voice_id: str,
     lead_ms: int | None,
     speed: float | None = None,
     trail_ms: int | None = None,
+    pitch: float | None = None,
+    chorus: bool | None = None,
+    robot: bool | None = None,
 ) -> bytes | None:
     """Render `text` with the warm Kokoro engine for a "kokoro-<voice>" id (already normalized by
     tts_wav to a valid id, so an unknown name never reaches the engine). None (→ device native)
@@ -286,9 +351,17 @@ def _kokoro_wav(
     _synth_lock (a
     multi-second one-time cost); only the synth call is serialised (onnxruntime isn't safe to
     Run concurrently on one session). `speed`/`trail_ms` default to the KOKORO_SPEED/TRAIL_MS env
-    (audiobook pacing); `speed` is clamped here, `trail_ms` is bounded by the /tts handler / env."""
+    (audiobook pacing); `speed` is clamped here, `trail_ms` is bounded by the /tts handler / env.
+    `pitch` (semitones, default KOKORO_PITCH) and `chorus` (default KOKORO_CHORUS) are post-render
+    ffmpeg effects; pitch is clamped here and both are skipped when off (no ffmpeg on the dry path)."""
     name = voice_id[len(KOKORO_ID_PREFIX) :]
     spd = max(0.5, min(2.0, KOKORO_SPEED if speed is None else speed))
+    pit = max(
+        -KOKORO_PITCH_MAX_ST,
+        min(KOKORO_PITCH_MAX_ST, KOKORO_PITCH if pitch is None else pitch),
+    )
+    cho = KOKORO_CHORUS if chorus is None else chorus
+    rob = KOKORO_ROBOT if robot is None else robot
     if not _kokoro_available():
         print(f"[tts] render failed for {voice_id!r}: kokoro not installed", file=sys.stderr)
         return None
@@ -317,6 +390,8 @@ def _kokoro_wav(
             if samples is None:  # no misaki, or it just failed — Kokoro's built-in espeak
                 samples, sample_rate = kokoro.create(text, voice=voice_arg, speed=spd, lang="en-us")
         data = _floats_to_wav(samples, int(sample_rate))
+        if pit or cho or rob:  # a post-render effect is active — one ffmpeg pass (with speed)
+            data = _apply_fx(data, int(sample_rate), pit, cho, rob)
     except Exception as exc:  # noqa: BLE001 — any synth failure must surface, not crash the server
         print(f"[tts] render failed for {voice_id!r} (kokoro): {type(exc).__name__}: {exc}",
               file=sys.stderr)
@@ -540,15 +615,20 @@ def tts_wav(
     lead_ms: int | None = None,
     speed: float | None = None,
     trail_ms: int | None = None,
+    pitch: float | None = None,
+    chorus: bool | None = None,
+    robot: bool | None = None,
 ) -> bytes | None:
     """Render `text` to a WAV in the requested Kokoro `voice` and return the audio. `voice` is
     normalized to a valid "kokoro-<voice>" id (a stale/unknown id falls back to the default voice)
     so a bad id never traverses to a wrong render. None when Kokoro isn't provisioned or the render
     fails; every None path is logged (a silent None degrades the reply to the device's native
-    voice). `speed`/`trail_ms` are the audiobook-pacing controls (both env-defaulted, per-request
-    override, clamped in _kokoro_wav / the /tts handler)."""
+    voice). `speed`/`trail_ms`/`pitch`/`chorus`/`robot` are the pacing + effect controls (all
+    env-defaulted, with a per-request override, clamped/handled in _kokoro_wav / the /tts handler)."""
     text = _speakable_text(text)  # expand °F/mph/compass/"City, ST" before phonemizing
-    return _kokoro_wav(text, _resolve_kokoro_voice(voice), lead_ms, speed, trail_ms)
+    return _kokoro_wav(
+        text, _resolve_kokoro_voice(voice), lead_ms, speed, trail_ms, pitch, chorus, robot
+    )
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -599,7 +679,20 @@ class Handler(BaseHTTPRequestHandler):
                     trail_ms = max(0, min(3000, int(raw)))
             except (TypeError, ValueError):
                 trail_ms = None
-            wav = tts_wav(text, qs.get("voice", [""])[0], lead_ms, speed, trail_ms)
+            pitch = None
+            try:
+                raw = qs.get("pitch", [None])[0]
+                if raw is not None:
+                    pitch = max(-KOKORO_PITCH_MAX_ST, min(KOKORO_PITCH_MAX_ST, float(raw)))
+            except (TypeError, ValueError):
+                pitch = None
+            raw = qs.get("chorus", [None])[0]
+            chorus = None if raw is None else raw.strip().lower() in ("1", "true", "yes", "on")
+            raw = qs.get("robot", [None])[0]
+            robot = None if raw is None else raw.strip().lower() in ("1", "true", "yes", "on")
+            wav = tts_wav(
+                text, qs.get("voice", [""])[0], lead_ms, speed, trail_ms, pitch, chorus, robot
+            )
             if wav is None:
                 self._send(503, b"tts unavailable", "text/plain")
             else:

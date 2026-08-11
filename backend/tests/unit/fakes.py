@@ -466,6 +466,26 @@ class FakeSettingsStore:
         raw = self.values.get("brain_read_aloud_engine", "piper")
         return raw if raw in ("piper", "native") else "piper"
 
+    async def brain_answer_speed(self, ctx: object) -> float:
+        try:
+            val = float(self.values.get("brain_answer_speed", 1.0))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 1.0
+        return max(0.5, min(2.0, val))
+
+    async def brain_answer_pitch(self, ctx: object) -> float:
+        try:
+            val = float(self.values.get("brain_answer_pitch", 0.0))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0.0
+        return max(-12.0, min(12.0, val))
+
+    async def brain_answer_chorus(self, ctx: object) -> bool:
+        return self.values.get("brain_answer_chorus", False) is True
+
+    async def brain_answer_robot(self, ctx: object) -> bool:
+        return self.values.get("brain_answer_robot", False) is True
+
     async def pronunciation_lexicon(self, ctx: object) -> dict[str, str]:
         raw = self.values.get("pronunciation_lexicon", {})
         if not isinstance(raw, dict):
