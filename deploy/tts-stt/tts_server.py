@@ -355,6 +355,14 @@ def tts_health() -> dict[str, Any]:
 # from KOKORO_LEXICON (which fixes single-word PHONEMES on the misaki path only): these are plain
 # text rewrites, so both engines benefit. Extend the maps below to cover a new symbol/abbreviation.
 
+# Curly "smart" quotes -> ASCII. misaki mis-tokenizes a contraction/possessive written with a curly
+# apostrophe (U+2019): "Here's" phonemizes as "here ess" (the clitic 's' becomes the LETTER name),
+# where a straight ' reads as the "-z" contraction. Some words (it's/today's) survive in misaki's
+# lexicon and some don't, so normalize unconditionally — every downstream rule and BOTH engines
+# (misaki + espeak) then see plain quotes. This is the single chokepoint all render text passes
+# through, so it fixes the PWA and wall paths alike. Doubles are folded too (harmless, same intent).
+_SMART_QUOTES = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+
 # US Postal state codes -> spoken name, applied ONLY in the "City, ST" shape (a comma + a
 # Capitalized word before the code) so a bare "IN"/"OR"/"ME" — real English words — is never
 # touched outside that location signal. Heuristic, not perfect: "Yes, OK" would expand too; the
@@ -495,6 +503,7 @@ def _date_sub(m: "re.Match[str]") -> str:
 def _speakable_text(text: str) -> str:
     """Rewrite terse symbols/abbreviations to their spoken words before phonemizing. Ordered so a
     state ("Omaha, NE") is expanded before the compass pass could read its "NE" as "northeast"."""
+    text = text.translate(_SMART_QUOTES)  # curly ’ → ' so misaki reads "Here’s", not "here ess"
     text = _DATE_RE.sub(_date_sub, text)
     text = _DEGREE_RE.sub(lambda m: f" degrees {_DEGREE_UNITS[m.group(1)]}", text)
     text = text.replace("°", " degrees")

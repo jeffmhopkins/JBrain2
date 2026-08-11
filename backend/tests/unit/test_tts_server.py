@@ -316,6 +316,15 @@ def test_speakable_text_expands_the_weather_sentence(server: types.ModuleType) -
     assert "°" not in said and " FL " not in said and " mph" not in said
 
 
+def test_speakable_text_normalizes_curly_quotes(server: types.ModuleType) -> None:
+    # A curly apostrophe makes misaki read a contraction's clitic as the LETTER "ess" ("Here’s" →
+    # "here ess"); folding smart quotes to ASCII before phonemizing fixes it (and covers doubles).
+    said = server._speakable_text("Here’s today’s headline")
+    assert said == "Here's today's headline"
+    assert "’" not in said
+    assert server._speakable_text("“quoted”") == '"quoted"'
+
+
 def test_speakable_text_degree_units_and_bare_degree(server: types.ModuleType) -> None:
     assert server._speakable_text("20 °C to 30°C") == "20 degrees Celsius to 30 degrees Celsius"
     assert server._speakable_text("0 °K is absolute zero") == "0 degrees Kelvin is absolute zero"
