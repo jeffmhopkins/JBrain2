@@ -498,13 +498,28 @@ export function toUtterance(prose, engine = "kokoro") {
   // Token normalization.
   s = s.replace(URL_RE, (_m, host) => domainWords(host));
   s = s.replace(WWW_RE, (_m, host) => domainWords(host));
-  // Currency: $1,250.50 → one thousand two hundred fifty dollars (and fifty cents).
-  s = s.replace(/([$€£¥])\s?(\d[\d,]*)(?:\.(\d{2}))?/g, (_m, sym, whole, cents) => {
-    const unit = { $: "dollars", "€": "euros", "£": "pounds", "¥": "yen" }[sym];
-    const main = numberToWords(whole.replace(/,/g, ""));
-    if (cents && cents !== "00") return `${main} ${unit} and ${numberToWords(cents)} cents`;
-    return `${main} ${unit}`;
-  });
+  // Currency: $1,250.50 → "... dollars and fifty cents"; $16.8 billion → "sixteen point eight
+  // billion dollars"; $5 million → "five million dollars"; $16.8 → "sixteen point eight dollars".
+  // The unit trails the amount, so a magnitude word (million/billion/…) and a non-cents decimal read
+  // in the right order — the old two-decimal-only regex dropped both (matching "$16" out of "$16.8
+  // billion" and orphaning ".8 billion"). A bare two-decimal amount still reads as dollars-and-cents.
+  s = s.replace(
+    /([$€£¥])\s?(\d[\d,]*(?:\.\d+)?)(?:\s+(trillion|billion|million|thousand)\b)?/gi,
+    (_m, sym, amount, magnitude) => {
+      const unit = { $: "dollars", "€": "euros", "£": "pounds", "¥": "yen" }[sym];
+      const clean = amount.replace(/,/g, "");
+      const cents =
+        !magnitude && /\.\d{2}$/.test(clean) ? clean.slice(clean.indexOf(".") + 1) : null;
+      if (cents !== null) {
+        const whole = numberToWords(clean.slice(0, clean.indexOf(".")));
+        return cents === "00"
+          ? `${whole} ${unit}`
+          : `${whole} ${unit} and ${numberToWords(cents)} cents`;
+      }
+      const num = numberToWords(clean);
+      return magnitude ? `${num} ${magnitude.toLowerCase()} ${unit}` : `${num} ${unit}`;
+    },
+  );
   // Percent: 50% → fifty percent (before the generic % symbol map).
   s = s.replace(
     /(\d[\d,]*(?:\.\d+)?)\s?%/g,
@@ -529,16 +544,21 @@ export function toUtterance(prose, engine = "kokoro") {
   // Emoji: verbalize the allow-list, drop the rest.
   for (const [glyph, word] of Object.entries(EMOJI_WORDS)) s = s.split(glyph).join(word);
   s = s.replace(EMOJI_STRIP, " ");
-  // Dashes vs compound hyphens. An em/en/bar dash, or a spaced hyphen, is a clause break → a
+  // Dashes vs compound hyphens. An em/bar dash, or a SPACED en-dash/hyphen, is a clause break → a
   // comma beat ("yours—let's see" → "yours, let's see", "guess it — great" → "guess it, great").
-  // A hyphen BETWEEN two word characters is a compound ("large‑scale", "well-known", "Bob‑verse"):
-  // espeak MASHES an ASCII compound into one word ("largescale"), so split it to a space for two
-  // clean words — how a person reads it, no pause. Covers the ASCII, Unicode and non-breaking
-  // hyphens (U+2010/U+2011). Numeric ranges (3–5 → "three to five") were handled above.
+  // But a CLOSED-UP dash between two word characters is a compound, NOT a pause: an ASCII/Unicode
+  // hyphen ("large‑scale", "well-known") that espeak would otherwise MASH into one word, AND a
+  // closed-up en-dash relation ("U.S.–Iran" → "U S Iran", "New York–London") that the old
+  // all-en-dashes-to-comma rule turned into an awkward "U S, Iran" pause. Both split to a space for
+  // two clean words. Covers the ASCII, Unicode and non-breaking hyphens (U+2010/U+2011) and the
+  // en-dash (U+2013). Numeric ranges (3–5 → "three to five") were handled above; a leftover en-dash
+  // (not a word–word compound, not spaced) falls through to a comma beat as before.
   s = s
-    .replace(/\s*[–—―]\s*/g, ", ")
+    .replace(/\s*[—―]\s*/g, ", ")
+    .replace(/\s+–\s*|\s*–\s+/g, ", ")
     .replace(/\s+-\s+/g, ", ")
-    .replace(/(?<=[^\W_])[-‐‑](?=[^\W_])/g, " ");
+    .replace(/(?<=[^\W_])[-‐‑–](?=[^\W_])/g, " ")
+    .replace(/\s*–\s*/g, ", ");
   // Parentheticals: piper carries no pause across ( ), so it races the aside into the
   // surrounding clause in one breath. Bracket it with commas instead — a beat on each side —
   // so "spending (target 5%) and reaffirm" reads as "spending, target five percent, and

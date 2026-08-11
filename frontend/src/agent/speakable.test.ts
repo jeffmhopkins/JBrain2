@@ -120,6 +120,14 @@ describe("speakable", () => {
     expect(speakable("It cost $1,250.50 today.")).toBe(
       "It cost one thousand two hundred fifty dollars and fifty cents today.",
     );
+    // Magnitude words and non-cents decimals put the unit AFTER the amount (a regression: the old
+    // regex matched only "$16" out of "$16.8 billion" and orphaned ".8 billion").
+    expect(speakable("Revenue hit $16.8 billion.")).toBe(
+      "Revenue hit sixteen point eight billion dollars.",
+    );
+    expect(speakable("a $5 million round")).toBe("a five million dollars round.");
+    expect(speakable("worth $1.2 trillion")).toBe("worth one point two trillion dollars.");
+    expect(speakable("about $16.8 here")).toBe("about sixteen point eight dollars here.");
     expect(speakable("Up 50% this week.")).toBe("Up fifty percent this week.");
     expect(speakable("Pick 3-5 items.")).toBe("Pick three to five items.");
     expect(speakable("Version 3.14 shipped.")).toBe("Version three point one four shipped.");
@@ -187,6 +195,12 @@ describe("speakable", () => {
     expect(speakable("quick round - then swap")).toBe("quick round, then swap.");
     // Numeric ranges still read as "to", not a comma.
     expect(speakable("pick 3-5 of them")).toBe("pick three to five of them.");
+    // A closed-up en-dash relation is a compound, not a clause break: "U.S.–Iran" must not read
+    // "U S, Iran" (the reported awkward pause) — it reads as a space between the two clean words.
+    expect(speakable("the U.S.–Iran conflict escalated")).toBe("the U S Iran conflict escalated.");
+    expect(speakable("a New York–London flight")).toBe("a New York London flight.");
+    // A SPACED en-dash is still a clause break → comma beat.
+    expect(speakable("hold on – almost there")).toBe("hold on, almost there.");
   });
 
   it("speaks inequalities and relations instead of dropping the glyph (which inverts meaning)", () => {
