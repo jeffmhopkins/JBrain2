@@ -17,6 +17,7 @@ import structlog
 from jbrain.llm.errors import (
     LlmAuthError,
     LlmBadResponseError,
+    LlmContextOverflowError,
     LlmRateLimitError,
     LlmTransientError,
 )
@@ -25,6 +26,41 @@ log = structlog.get_logger()
 
 MAX_TRIES = 4
 BASE_DELAY_SECONDS = 0.5
+
+
+def _looks_like_context_overflow(body_text: str) -> bool:
+    """Whether a rejected request's body says the prompt outgrew the context window.
+    llama.cpp/llama-swap answers 400 with "the request exceeds the available context
+    size ... n_ctx = ...". Matched on SPECIFIC context-length phrases (wording shifts a
+    little across builds) — deliberately NOT a loose "context" + "too long" heuristic,
+    which misfires on unrelated 400s (a tool-arg validation error naming a `context`
+    field, say). Only the CLASSIFICATION reads the body — the raised error carries none
+    of it (bodies can echo the private prompt)."""
+    t = body_text.lower()
+    return any(
+        needle in t
+        for needle in (
+            "n_ctx",
+            "context size",
+            "context window",
+            "context length",
+            "exceeds the available context",
+            "exceed the context",
+            "exceeds the context",
+        )
+    )
+
+
+def _terminal_4xx(provider: str, status_code: int, body_text: str) -> LlmBadResponseError:
+    """The exception for a non-retryable 4xx: a context-overflow subtype when a LOCAL
+    model's body says the prompt exceeded its window (so the UI can tell the owner to
+    raise the on-box window — advice that only applies to a local model), else a plain
+    bad-response. A cloud overflow stays a generic bad-response: "raise the window in
+    Settings" is meaningless for a hosted model. Neither carries the body — just the
+    status and provider."""
+    if provider == "local" and _looks_like_context_overflow(body_text):
+        return LlmContextOverflowError(f"{provider}: context window exceeded")
+    return LlmBadResponseError(f"{provider}: HTTP {status_code}")
 
 
 async def post_json(
@@ -63,7 +99,7 @@ async def post_json(
         elif resp.status_code >= 500:
             last_error = LlmTransientError(f"{provider}: HTTP {resp.status_code}")
         else:
-            raise LlmBadResponseError(f"{provider}: HTTP {resp.status_code}")
+            raise _terminal_4xx(provider, resp.status_code, resp.text)
         log.warning("llm.retry", provider=provider, status=resp.status_code, attempt=attempt + 1)
     raise last_error
 
@@ -124,7 +160,9 @@ async def stream_sse(
                         elif resp.status_code >= 500:
                             last_error = LlmTransientError(f"{provider}: HTTP {resp.status_code}")
                         else:
-                            raise LlmBadResponseError(f"{provider}: HTTP {resp.status_code}")
+                            # Body already pulled by aread() above; classify (context
+                            # overflow vs generic) without logging it.
+                            raise _terminal_4xx(provider, resp.status_code, resp.text)
                         log.warning(
                             "llm.retry",
                             provider=provider,

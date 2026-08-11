@@ -426,7 +426,7 @@ describe("LLMSettingsScreen", () => {
     ];
     s.tasks = [
       { id: "vision.ocr", label: "Vision OCR", provider: "grok", reasoning_effort: null },
-      { id: "session.title", label: "Session title", provider: "grok", reasoning_effort: "low" },
+      { id: "triage.classify", label: "Inbox triage", provider: "grok", reasoning_effort: "low" },
     ];
     vi.stubGlobal(
       "fetch",

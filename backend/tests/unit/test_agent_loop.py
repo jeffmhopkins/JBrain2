@@ -7,6 +7,8 @@ import contextlib
 import hashlib
 from typing import Any
 
+import pytest
+
 from jbrain.agent.contracts import (
     ChatEvent,
     DoneEvent,
@@ -839,6 +841,45 @@ async def test_run_stream_emits_usage_when_a_context_window_is_given() -> None:
         UsageEvent(input_tokens=1000, output_tokens=50, context_window=32768),
         UsageEvent(input_tokens=1800, output_tokens=20, context_window=32768),
     ]
+
+
+async def test_run_stream_emits_a_live_running_estimate_while_it_streams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As a step STREAMS, the meter should climb — the loop emits a throttled running count
+    # (the last-known REAL prompt size + tokens generated so far) between the coarse
+    # end-of-step events. Drive the throttle clock so a tick fires per chunk, then assert an
+    # intermediate UsageEvent lands BEFORE the exact end-of-step one, and the exact one closes.
+    import jbrain.agent.loop as loop_mod
+
+    clock = iter([100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0])
+    monkeypatch.setattr(loop_mod.time, "monotonic", lambda: next(clock))
+
+    router, _ = stream_router_with(
+        [LlmTurn("hello world", (), "end_turn", LlmUsage(1234, 7))],
+        stream_chunks=[["hello ", "world"]],
+    )
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    usage = [
+        e
+        async for e in loop.run_stream(
+            session=OWNER,
+            scopes=("general",),
+            conversation=[UserMessage(text="hi")],
+            context_window=32768,
+            context_seed=1000,  # the prior turn's fill — the live base, never a char estimate
+        )
+        if isinstance(e, UsageEvent)
+    ]
+    # A live tick rode the stream: its input is the SEEDED real base (1000, not a char
+    # estimate, and never dipping below it), output is a running count. The exact end-of-step
+    # event still closes and corrects both to the real 1234/7.
+    assert len(usage) >= 2
+    assert usage[-1] == UsageEvent(input_tokens=1234, output_tokens=7, context_window=32768)
+    live = usage[0]
+    assert live.context_window == 32768
+    assert live.input_tokens == 1000  # the seeded real base, held until the exact event lands
+    assert live.output_tokens > 0  # running generated-token count
 
 
 async def test_run_stream_omits_usage_without_a_context_window() -> None:

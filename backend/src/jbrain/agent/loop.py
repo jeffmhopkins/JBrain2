@@ -10,6 +10,7 @@ the loop's concern; what a tool *does* is the handler's.
 import asyncio
 import contextlib
 import json
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -81,6 +82,15 @@ SYSTEM_STRENGTH: str = _SYSTEM.strength
 # default 4096 risked truncating a long answer mid-stream. Applies per ReAct step,
 # not per chain.
 TURN_MAX_TOKENS: int = 16384
+
+
+# Live context-meter cadence: while a step generates, emit a running token count at most this
+# often so the PWA's meter climbs during the stream instead of jumping only at each step's
+# end. Only the OUTPUT portion is estimated (~4 chars/token, the usual English rule of thumb);
+# the prompt base is the last EXACT input we knew, never a char-count guess — so the bar never
+# dips. The exact count still lands in the per-step UsageEvent and corrects the estimate.
+_USAGE_FLUSH_S = 0.5
+_CHARS_PER_TOKEN = 4
 
 
 def _grounding_corpus(sources: Sequence[NoteSource], entities: Sequence[EntityRef]) -> list[str]:
@@ -852,6 +862,7 @@ class AgentLoop:
         here: tuple[float, float] | None = None,
         here_as_of: datetime | None = None,
         context_window: int | None = None,
+        context_seed: int = 0,
         depth: int = 0,
         tree: TreeState | None = None,
         run_id: str | None = None,
@@ -943,6 +954,13 @@ class AgentLoop:
         surfaced_sources: list[NoteSource] = []
         surfaced_entities: list[EntityRef] = []
         mutated = False
+        # The live meter's mid-stream base: the EXACT prompt size we last knew — the prior
+        # turn's persisted fill to start (context_seed), then each completed step's real input.
+        # Seeding with a real number (never a char-count estimate) is what keeps the meter from
+        # dipping when a turn opens: the mid-stream ticks only ADD the running output on top of
+        # this floor, and the exact per-step UsageEvent corrects it. context only grows, so
+        # flooring at the last real input never lets the bar shrink mid-turn.
+        last_real_input = context_seed
         # The local gpt-oss route leaks a tool-round's analysis onto the content channel; buffer
         # that round's text and route it to the thinking trace instead of the answer (see
         # `_hide_tool_round_text`). A hosted model keeps its live per-chunk stream byte-for-byte.
@@ -954,6 +972,15 @@ class AgentLoop:
             # arrives (a tool call is signalled only at the end), so buffer the round's text and
             # commit it once we know whether the round is a tool call (hide) or the answer (show).
             round_text: list[str] = []
+            # Live meter: while this step streams, emit a throttled running estimate — the last
+            # KNOWN prompt size (last_real_input, a real figure) plus the tokens generated so far
+            # (~chars/4) — so the PWA's context meter climbs during generation, not only at the
+            # step's end. The exact figure lands in the per-step UsageEvent below and corrects it.
+            # Only when a window was given (the /chat path; tests/headless callers pass none).
+            streamed_chars = 0
+            # Start the clock now so the first tick waits a full interval — a step that
+            # finishes fast just rides its exact end-of-step UsageEvent, no estimate noise.
+            last_meter = time.monotonic()
             async for part in self._router.converse_stream(
                 self._task,
                 system=system_prompt,
@@ -977,6 +1004,19 @@ class AgentLoop:
                         yield ReasoningDelta(text=part.text)
                 else:
                     turn = part
+                # Throttled live-meter tick: count streamed content (answer + thinking) as
+                # generated tokens on top of the step's prompt. Cheap and best-effort; the
+                # real UsageEvent at step end is the source of truth.
+                if context_window is not None and isinstance(part, (TextChunk, ReasoningChunk)):
+                    streamed_chars += len(part.text)
+                    now = time.monotonic()
+                    if now - last_meter >= _USAGE_FLUSH_S:
+                        last_meter = now
+                        yield UsageEvent(
+                            input_tokens=last_real_input,
+                            output_tokens=streamed_chars // _CHARS_PER_TOKEN,
+                            context_window=context_window,
+                        )
             if turn is not None and hide_tool_round_text and round_text:
                 # Commit the buffered round now that its stop_reason is known: a tool-call round's
                 # content is leaked harmony analysis → show it as thinking, never the answer; the
@@ -1001,6 +1041,7 @@ class AgentLoop:
                     yield ev
                 return
             spent_call = turn.usage.input_tokens + turn.usage.output_tokens
+            last_real_input = turn.usage.input_tokens  # floor for the next step's live ticks
             cost += spent_call
             if tree is not None:
                 tree.charge(spent_call)
