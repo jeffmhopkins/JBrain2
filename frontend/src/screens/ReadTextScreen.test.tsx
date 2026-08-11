@@ -85,6 +85,8 @@ describe("concatWav", () => {
   });
 });
 
+const FX = { speed: 1, pitch: 0, chorus: false, robot: false };
+
 describe("ReadTextScreen", () => {
   it("plays the typed text, rendering one clip per sentence and showing Stop while it runs", async () => {
     const { texts } = stubTts();
@@ -92,7 +94,7 @@ describe("ReadTextScreen", () => {
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:x" });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
 
-    render(<ReadTextScreen voice="en_US-amy-medium" onClose={vi.fn()} />);
+    render(<ReadTextScreen voice="en_US-amy-medium" fx={FX} onClose={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Text to read aloud"), {
       target: { value: "One. Two. Three." },
     });
@@ -102,6 +104,46 @@ describe("ReadTextScreen", () => {
     await waitFor(() => expect(texts).toEqual(["One.", "Two.", "Three."]));
     // Playback drains synchronously via FakeAudio, so the control returns to Play.
     await waitFor(() => expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument());
+  });
+
+  it("applies the owner's voice effects (speed/pitch/chorus/robot) to every rendered clip", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const path = String(input);
+        if (path.startsWith("/api/brain/tts")) {
+          urls.push(path);
+          return new Response(makeWavBuffer([1, 2]), {
+            status: 200,
+            headers: { "Content-Type": "audio/wav" },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      }),
+    );
+    vi.stubGlobal("Audio", FakeAudio);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:x" });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
+
+    render(
+      <ReadTextScreen
+        voice="kokoro-af_heart"
+        fx={{ speed: 1.5, pitch: -4, chorus: true, robot: true }}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Text to read aloud"), {
+      target: { value: "Hello there." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+
+    await waitFor(() => expect(urls).toHaveLength(1));
+    const q = new URL(urls[0] ?? "", "http://x").searchParams;
+    expect(q.get("speed")).toBe("1.5");
+    expect(q.get("pitch")).toBe("-4");
+    expect(q.get("chorus")).toBe("1");
+    expect(q.get("robot")).toBe("1");
   });
 
   it("exports the whole text to a single downloaded WAV", async () => {
@@ -122,7 +164,7 @@ describe("ReadTextScreen", () => {
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:out" });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
 
-    render(<ReadTextScreen voice="en_US-amy-medium" onClose={vi.fn()} />);
+    render(<ReadTextScreen voice="en_US-amy-medium" fx={FX} onClose={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Text to read aloud"), {
       target: { value: "Chapter one. It begins." },
     });
@@ -155,7 +197,7 @@ describe("ReadTextScreen", () => {
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:out" });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
 
-    render(<ReadTextScreen voice="en_US-amy-medium" onClose={vi.fn()} />);
+    render(<ReadTextScreen voice="en_US-amy-medium" fx={FX} onClose={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Text to read aloud"), {
       target: { value: "Chapter one. It begins." },
     });
@@ -171,7 +213,9 @@ describe("ReadTextScreen", () => {
 
   it("loads an uploaded .md file's contents into the text area", async () => {
     stubTts();
-    const { container } = render(<ReadTextScreen voice="en_US-amy-medium" onClose={vi.fn()} />);
+    const { container } = render(
+      <ReadTextScreen voice="en_US-amy-medium" fx={FX} onClose={vi.fn()} />,
+    );
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(["# Chapter\n\nOnce upon a time."], "story.md", {
       type: "text/markdown",
@@ -185,7 +229,7 @@ describe("ReadTextScreen", () => {
 
   it("disables the actions until there is text", () => {
     stubTts();
-    render(<ReadTextScreen voice="en_US-amy-medium" onClose={vi.fn()} />);
+    render(<ReadTextScreen voice="en_US-amy-medium" fx={FX} onClose={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Play" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Export audio" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Text to read aloud"), {
@@ -198,7 +242,7 @@ describe("ReadTextScreen", () => {
   it("closes via the back button", () => {
     stubTts();
     const onClose = vi.fn();
-    render(<ReadTextScreen voice="en_US-amy-medium" onClose={onClose} />);
+    render(<ReadTextScreen voice="en_US-amy-medium" fx={FX} onClose={onClose} />);
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(onClose).toHaveBeenCalled();
   });
