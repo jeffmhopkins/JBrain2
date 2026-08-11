@@ -73,10 +73,19 @@ RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
 # 3.14 — never a broken build or a dead TTS. The final import check tears the venv down unless the
 # whole stack loads, so the entrypoint's presence test can't pick a half-built venv. Keep the
 # "misaki" token here in step with tts_server.py's _load_g2p (the test guards it).
+#
+# CPU torch index: misaki[en] pulls spaCy → spacy-curated-transformers → torch, and torch's DEFAULT
+# wheels drag in the full NVIDIA CUDA stack (~2-3 GB of nvidia-*/cuda-* wheels). On this AMD box
+# that is useless (we run trf=False, the small CNN model — torch isn't even used at runtime), and
+# fetching multiple GB during `docker build` is exactly what made this venv step fail (non-fatally,
+# so the image still "built" without misaki → silent espeak). Pinning torch to the CPU index drops
+# the entire CUDA stack to one self-contained `torch==*+cpu` wheel, so the build is lean + reliable.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN ( uv python install 3.12 \
    && uv venv --python 3.12 /opt/tts-venv \
-   && uv pip install --python /opt/tts-venv --no-cache kokoro-onnx==0.4.7 "misaki[en]" \
+   && uv pip install --python /opt/tts-venv --no-cache \
+        --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match \
+        kokoro-onnx==0.4.7 "misaki[en]" \
    && /opt/tts-venv/bin/python -m spacy download en_core_web_sm \
    && /opt/tts-venv/bin/python -c "import kokoro_onnx, misaki.en" ) \
  || { echo >&2 "!!!!! [kokoro] ============================================================"; \

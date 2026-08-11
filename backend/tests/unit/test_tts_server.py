@@ -446,6 +446,12 @@ def test_dockerfile_builds_misaki_in_a_py312_venv(server: types.ModuleType) -> N
     assert "/opt/tts-venv/bin/python" in entrypoint, (
         "the entrypoint must prefer the 3.12 TTS venv so misaki's G2P is actually used"
     )
+    # misaki[en] pulls torch via spaCy; its DEFAULT wheels drag in ~2-3 GB of NVIDIA CUDA wheels
+    # that fail the venv build on this AMD box (non-fatally → silent espeak). The CPU torch index
+    # keeps it to one +cpu wheel — guard it so the CUDA bulk can't creep back and break the build.
+    assert "download.pytorch.org/whl/cpu" in dockerfile, (
+        "pin torch to the CPU index so the misaki venv build doesn't fetch the NVIDIA CUDA stack"
+    )
 
 
 # --- W2: audiobook pacing (speed + trailing silence) ---------------------------------------
