@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { reportToSpeech } from "../agent/speakable.js";
 import { type ReportDetail, type VideoDetail, api } from "../api/client";
 import { confidenceColor } from "../components/AudioTranscript";
-import { ResearchDetailScreen, citedSourceCount } from "./ResearchDetailScreen";
+import { ReportDetailBody, ResearchDetailScreen, citedSourceCount } from "./ResearchDetailScreen";
 
 const REPORT: ReportDetail = {
   id: "r1",
@@ -127,6 +128,69 @@ describe("ResearchDetailScreen", () => {
     });
     render(<ResearchDetailScreen kind="report" id="r1" syncStatus="synced" onClose={noop} />);
     expect(await screen.findByText("1 cited · 3 reached")).toBeInTheDocument();
+  });
+
+  it("offers a working read-aloud control on the opened report when a voice engine is available", async () => {
+    // The reported gap: a report opened from the Research Library had no play button (only the
+    // deep-research chat card did). With read-aloud on + a device voice, the detail layer now
+    // shows it and tapping speaks the report through the same TTS path.
+    vi.spyOn(api, "researchReport").mockResolvedValue(REPORT);
+    vi.spyOn(api, "getSettings").mockResolvedValue({
+      brain_read_aloud: true,
+      brain_answer_voice: "en_US-amy-medium",
+      brain_read_aloud_engine: "native",
+    } as unknown as Awaited<ReturnType<typeof api.getSettings>>);
+    vi.spyOn(api, "brainVoices").mockResolvedValue([]);
+    const speak = vi.fn();
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: { speak, cancel: vi.fn() },
+    });
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: class {
+        text: string;
+        constructor(t: string) {
+          this.text = t;
+        }
+      },
+    });
+    render(<ResearchDetailScreen kind="report" id="r1" syncStatus="synced" onClose={noop} />);
+    const play = await screen.findByRole("button", { name: "Read the report aloud" });
+    fireEvent.click(play);
+    await waitFor(() => expect(speak).toHaveBeenCalledTimes(1));
+    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
+  });
+});
+
+describe("ReportDetailBody read-aloud", () => {
+  it("speaks the report through TTS under a report-specific key when Play is tapped", () => {
+    const onToggle = vi.fn();
+    render(<ReportDetailBody report={REPORT} readAloud={{ playing: null, onToggle }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Read the report aloud" }));
+    // A key distinct from any chat turn's, and the normalized speakable form of the report body.
+    expect(onToggle).toHaveBeenCalledWith(
+      `rl-report:${REPORT.id}`,
+      reportToSpeech(REPORT.report_md),
+    );
+  });
+
+  it("flips to a Pause control while this report is the one speaking", () => {
+    render(
+      <ReportDetailBody
+        report={REPORT}
+        readAloud={{ playing: `rl-report:${REPORT.id}`, onToggle: vi.fn() }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Pause reading the report aloud" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Read the report aloud" })).toBeNull();
+  });
+
+  it("renders no play control without a read-aloud prop (the public share view)", () => {
+    render(<ReportDetailBody report={REPORT} />);
+    expect(screen.queryByRole("button", { name: /the report aloud/i })).toBeNull();
   });
 });
 
