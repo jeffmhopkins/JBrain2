@@ -1,10 +1,10 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-07-31
+> **Status:** Living · **Last verified:** 2026-08-11
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
-LLM maintains a wiki built **exclusively from notes as primary sources**. Over
-time it extends to a personal agent, structured records (lists, labs,
+LLM maintains a wiki built **exclusively from notes as primary sources**. Around
+that core it also runs a personal agent, structured records (lists, labs,
 appointments), guided-intake share links, and Life360-style location tracking.
 
 > For the concrete inventory of **every** container (core + opt-in), the on-box

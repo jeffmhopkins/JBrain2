@@ -1,11 +1,11 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-08-02
+> **Status:** Living · **Last verified:** 2026-08-11
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
 
-## Status (2026-07)
+## Status (2026-08)
 
 **Phases 0–4 and the Phase 5 workflow engine are shipped.** Notes,
 ingestion/search, the v3 note→graph analysis pipeline (extract → Integrator →
@@ -216,8 +216,11 @@ The location + family + intake slices shipped; build records are under
   the workflow engine, motion-adaptive dense trails (migrations 0059–0064/0073).
 - **Family tracker + app map** ✅ (`archive/PHASE7_FAMILY_TRACKER_PLAN.md`,
   `_APP_MAP_PLAN.md`) — MQTT ingest, pairing/view-scope, the live member map
-  (migrations 0067/0075). *Deferred:* the M7c ops runbook + Android FCM
-  registration hardening.
+  (migrations 0067/0075). *Deferred:* the M7c ops runbook. (Push notifications
+  shipped **self-hosted** — the Android owner app's `NotificationRelayService`
+  holds an SSE connection to `/api/notifications/stream`; there is no Firebase/FCM
+  in the codebase, so the earlier "Android FCM registration hardening" line is
+  moot.)
 - **Location assistant** ✅ (`archive/LOCATION_ASSISTANT_PLAN.md`) — owner-only
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
