@@ -31,16 +31,16 @@ def test_sums_every_gguf_in_the_model_dir(tmp_path: Path) -> None:
 
 def test_sums_gguf_nested_in_a_quant_subdir(tmp_path: Path) -> None:
     # Unsloth's UD-Q* shards land in a <id>/<quant>/ subdir; the footprint must count
-    # them recursively (so disk_gb isn't null for the 235B), while ignoring hf's
-    # .cache/ staging.
-    model = tmp_path / "qwen3-235b-a22b"
-    (model / "UD-Q3_K_XL").mkdir(parents=True)
-    _write(model / "UD-Q3_K_XL" / "shard-00001-of-00002.gguf", int(1.0 * _GIB))
-    _write(model / "UD-Q3_K_XL" / "shard-00002-of-00002.gguf", int(1.5 * _GIB))
+    # them recursively (so disk_gb isn't null for a sharded model like Nemotron), while
+    # ignoring hf's .cache/ staging.
+    model = tmp_path / "nemotron-3-super-120b"
+    (model / "UD-Q4_K_XL").mkdir(parents=True)
+    _write(model / "UD-Q4_K_XL" / "shard-00001-of-00002.gguf", int(1.0 * _GIB))
+    _write(model / "UD-Q4_K_XL" / "shard-00002-of-00002.gguf", int(1.5 * _GIB))
     cache = model / ".cache" / "huggingface" / "download"
     cache.mkdir(parents=True)
     _write(cache / "stale-00001-of-00002.gguf", int(5.0 * _GIB))  # must NOT count
-    assert local_weights.weights_size_gb(str(tmp_path), "qwen3-235b-a22b") == 2.5
+    assert local_weights.weights_size_gb(str(tmp_path), "nemotron-3-super-120b") == 2.5
 
 
 def test_missing_model_dir_is_none(tmp_path: Path) -> None:
@@ -63,15 +63,15 @@ def test_dir_size_counts_partial_downloads_including_the_hf_cache(tmp_path: Path
     # The progress reader counts EVERY file recursively, including the in-flight
     # shards huggingface streams into the `.cache/huggingface/download/*.incomplete`
     # SUBDIR before renaming them up — so the bar climbs through the whole download
-    # instead of reading 0 until a ~50 GB shard finishes (the bug that left a 94 GB
-    # in-progress 235B reading 0% on the box).
-    model = tmp_path / "qwen3-235b-a22b"
+    # instead of reading 0 until a ~50 GB shard finishes (the bug that left a large
+    # in-progress sharded model reading 0% on the box).
+    model = tmp_path / "nemotron-3-super-120b"
     model.mkdir()
     _write(model / "shard-00001-of-00003.gguf", int(1.0 * _GIB))  # one shard done, moved up
     cache = model / ".cache" / "huggingface" / "download"
     cache.mkdir(parents=True)
     _write(cache / "shard-00002-of-00003.gguf.incomplete", int(0.5 * _GIB))  # still downloading
-    assert local_weights.dir_size_gb(str(tmp_path), "qwen3-235b-a22b") == 1.5
+    assert local_weights.dir_size_gb(str(tmp_path), "nemotron-3-super-120b") == 1.5
 
 
 def test_dir_size_is_zero_for_a_started_empty_dir(tmp_path: Path) -> None:

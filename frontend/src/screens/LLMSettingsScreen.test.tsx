@@ -940,7 +940,7 @@ describe("LLMSettingsScreen", () => {
     s.local_hosting_enabled = true;
     s.host_memory = { total_gb: 128, used_gb: 0 };
     s.local_models = [
-      lm({ id: "qwen3-235b-a22b", label: "Qwen3-235B-A22B", tiers: ["high"], size_gb: 104 }),
+      lm({ id: "qwen3.6-27b", label: "Qwen3.6 27B", tiers: ["vision", "high"], size_gb: 28 }),
     ];
     const calls: string[] = [];
     vi.stubGlobal(
@@ -950,7 +950,7 @@ describe("LLMSettingsScreen", () => {
         const method = (init?.method ?? "GET").toUpperCase();
         if (path === "/api/settings/llm" && method === "GET")
           return new Response(JSON.stringify(s), { status: 200 });
-        if (path.endsWith("/qwen3-235b-a22b/install") && method === "POST") {
+        if (path.endsWith("/qwen3.6-27b/install") && method === "POST") {
           calls.push(path);
           const m0 = s.local_models[0];
           if (m0) m0.queued = true;
@@ -978,14 +978,14 @@ describe("LLMSettingsScreen", () => {
     // A single tap both queues the install AND kicks the download — no system update.
     fireEvent.click(await screen.findByRole("button", { name: "Install" }));
     await waitFor(() =>
-      expect(calls).toContain("/api/settings/llm/local-models/qwen3-235b-a22b/install"),
+      expect(calls).toContain("/api/settings/llm/local-models/qwen3.6-27b/install"),
     );
     await waitFor(() => expect(calls).toContain("/api/ops/local-provision"));
     // No system-update endpoint is ever touched.
     expect(calls).not.toContain("/api/ops/update");
 
     // The queue bar appears with the GB tally.
-    expect(await screen.findByText(/1 to download · 104 GB/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 to download · 28 GB/)).toBeInTheDocument();
   });
 
   it("surfaces the download bar for a pending uninstall with nothing queued to install", async () => {
@@ -1038,12 +1038,12 @@ describe("LLMSettingsScreen", () => {
     s.host_memory = { total_gb: 128, used_gb: 0 };
     s.local_models = [
       lm({
-        id: "qwen3-235b-a22b",
-        label: "Qwen3-235B-A22B",
-        tiers: ["high"],
-        size_gb: 104,
+        id: "qwen3.6-27b",
+        label: "Qwen3.6 27B",
+        tiers: ["vision", "high"],
+        size_gb: 28,
         queued: true,
-        download_gb: 52, // half-way through the download
+        download_gb: 14, // half-way through the download
       }),
     ];
     vi.stubGlobal(
@@ -1054,8 +1054,8 @@ describe("LLMSettingsScreen", () => {
     await screen.findByRole("button", { name: /On-box LLMs/i });
     fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
 
-    // 52 / 104 GB on disk → 50%.
-    expect(await screen.findByText(/52 \/ 104 GB · 50%/)).toBeInTheDocument();
+    // 14 / 28 GB on disk → 50%.
+    expect(await screen.findByText(/14 \/ 28 GB · 50%/)).toBeInTheDocument();
   });
 
   it("points at the CLI when local hosting is off", async () => {
@@ -1279,11 +1279,11 @@ describe("LLMSettingsScreen", () => {
     // On disk (disk_gb set) but NOT enabled — an orphaned alt dropped from the roster.
     s.local_models = [
       lm({
-        id: "qwen3-235b-a22b",
-        label: "Qwen3-235B-A22B",
-        tiers: ["high"],
-        size_gb: 104,
-        disk_gb: 97,
+        id: "qwen3.6-27b",
+        label: "Qwen3.6 27B",
+        tiers: ["vision", "high"],
+        size_gb: 28,
+        disk_gb: 26,
       }),
     ];
     const calls: string[] = [];
@@ -1294,7 +1294,7 @@ describe("LLMSettingsScreen", () => {
         const method = (init?.method ?? "GET").toUpperCase();
         if (path === "/api/settings/llm" && method === "GET")
           return new Response(JSON.stringify(s), { status: 200 });
-        if (path.endsWith("/qwen3-235b-a22b/uninstall") && method === "POST") {
+        if (path.endsWith("/qwen3.6-27b/uninstall") && method === "POST") {
           calls.push(path);
           const m0 = s.local_models[0];
           if (m0) m0.remove_queued = true;
@@ -1319,14 +1319,14 @@ describe("LLMSettingsScreen", () => {
     // plain Install, and the meta shows the on-disk size, not the ~estimate.
     expect(await screen.findByRole("button", { name: "Enable" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
-    expect(screen.getByText(/97 GB on disk/)).toBeInTheDocument();
+    expect(screen.getByText(/26 GB on disk/)).toBeInTheDocument();
 
     // Remove reclaims the orphaned weights — a tap-to-confirm danger button.
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(calls).toEqual([]); // armed — nothing fired yet
     fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
     await waitFor(() =>
-      expect(calls).toContain("/api/settings/llm/local-models/qwen3-235b-a22b/uninstall"),
+      expect(calls).toContain("/api/settings/llm/local-models/qwen3.6-27b/uninstall"),
     );
     expect(await screen.findByText("uninstalling")).toBeInTheDocument();
   });

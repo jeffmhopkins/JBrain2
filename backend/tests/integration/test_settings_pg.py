@@ -331,8 +331,8 @@ async def test_llm_local_provision_requested_round_trip_and_dedups(
     store = SqlSettingsStore(maker)
     assert await store.llm_local_provision_requested(OWNER) == []
 
-    await store.set_llm_local_provision_requested(OWNER, ["qwen3-235b-a22b", "qwen3-235b-a22b"])
-    assert await store.llm_local_provision_requested(OWNER) == ["qwen3-235b-a22b"]
+    await store.set_llm_local_provision_requested(OWNER, ["nemotron-3-super-120b", "nemotron-3-super-120b"])
+    assert await store.llm_local_provision_requested(OWNER) == ["nemotron-3-super-120b"]
 
     # Non-list / non-string entries are dropped on read.
     await store.upsert(OWNER, LLM_LOCAL_PROVISION_REQUESTED_KEY, ["a", 5, "a", None, "b"])
@@ -371,7 +371,7 @@ async def test_llm_local_settings_are_owner_only(
     store = SqlSettingsStore(maker)
     await store.set_llm_local_context_window(OWNER, model_id="gpt-oss-120b", window=65536)
     await store.set_llm_local_unavailable(OWNER, ["gpt-oss-120b"])
-    await store.set_llm_local_provision_requested(OWNER, ["qwen3-235b-a22b"])
+    await store.set_llm_local_provision_requested(OWNER, ["nemotron-3-super-120b"])
     await store.set_llm_local_remove_requested(OWNER, ["gpt-oss-120b"])
     assert await store.llm_local_context_windows(UNSCOPED) == {}
     assert await store.llm_local_unavailable(UNSCOPED) == []

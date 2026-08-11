@@ -66,13 +66,13 @@ def test_render_enables_prompt_prefix_cache_reuse_for_every_model(tmp_path: Path
 
 def test_render_adds_reasoning_format_only_for_thinking_models(tmp_path: Path) -> None:
     _lay_down(tmp_path)
-    (tmp_path / "qwen3-next-80b-a3b-thinking").mkdir()
-    (tmp_path / "qwen3-next-80b-a3b-thinking" / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    (tmp_path / "nemotron-3-super-120b").mkdir()
+    (tmp_path / "nemotron-3-super-120b" / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
     manifest = [
         *_manifest(),
         {
-            "id": "qwen3-next-80b-a3b-thinking",
-            "served_model": "qwen3-next-80b-a3b-thinking",
+            "id": "nemotron-3-super-120b",
+            "served_model": "nemotron-3-super-120b",
             "gguf_include": "*UD-Q4_K_XL*.gguf",
             "mmproj_include": None,
             "context_window": 32768,
@@ -92,7 +92,7 @@ def test_render_reads_reasoning_format_off_the_real_catalog_manifest(tmp_path: P
     # off the asdict(LocalModel) manifest, so feed the REAL catalog entry (not a
     # hand-built dict) through asdict → render. Renaming the dataclass field would break
     # production silently; this test would catch it where the literal-key tests can't.
-    thinking = local_catalog.get("qwen3-next-80b-a3b-thinking")
+    thinking = local_catalog.get("nemotron-3-super-120b")
     assert thinking is not None
     (tmp_path / thinking.id).mkdir()
     (tmp_path / thinking.id / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
@@ -100,20 +100,25 @@ def test_render_reads_reasoning_format_off_the_real_catalog_manifest(tmp_path: P
     assert "--reasoning-format deepseek" in text
 
 
-def test_render_appends_extra_server_args_off_the_real_catalog_manifest(tmp_path: Path) -> None:
-    # Guards the field-name contract end to end: the MTP variant's self-speculative-decoding
-    # flags must reach the gateway command. Feed the REAL catalog entry through asdict →
-    # render (not a hand-built dict) so renaming the dataclass field would fail here.
-    mtp = local_catalog.get("qwen3.5-122b-a10b-mtp")
-    assert mtp is not None
-    (tmp_path / mtp.id).mkdir()
-    (tmp_path / mtp.id / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
-    # The MTP entry is vision-capable, so its manifest carries an mmproj glob render()
-    # resolves — lay the projector down too, else resolve_weight raises before the args.
-    (tmp_path / mtp.id / "mmproj-F16.gguf").write_bytes(b"\0")
-    text = llama_swap_config.render([asdict(mtp)], str(tmp_path))
+def test_render_appends_extra_server_args_from_the_manifest(tmp_path: Path) -> None:
+    # extra_server_args (e.g. an MTP build's self-speculative-decoding flags) must reach the
+    # gateway command verbatim. No catalog model currently ships them, so feed a synthetic
+    # manifest entry carrying the field — this guards the render path that reads it.
+    (tmp_path / "spec-model").mkdir()
+    (tmp_path / "spec-model" / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    manifest = [
+        {
+            "id": "spec-model",
+            "served_model": "spec-model",
+            "gguf_include": "*UD-Q4_K_XL*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+            "recommended": False,
+            "extra_server_args": ["--spec-type", "draft-mtp", "--spec-draft-n-max", "6"],
+        }
+    ]
+    text = llama_swap_config.render(manifest, str(tmp_path))
     assert "--spec-type draft-mtp --spec-draft-n-max 6" in text
-    assert "--mmproj" in text
     # A model with no extra_server_args emits none of it.
     _lay_down(tmp_path)
     plain = llama_swap_config.render(_manifest(), str(tmp_path))
@@ -191,37 +196,42 @@ def test_resolve_weight_finds_shards_nested_in_a_quant_subdir(tmp_path: Path) ->
     # Unsloth's UD-Q* repos nest the shards in a quant subdir, so hf saves them under
     # <id>/<quant>/. The resolver must find them recursively and return the path
     # RELATIVE to the model dir (so the gateway's -m /models/<id>/<rel> resolves), not
-    # raise "download incomplete" as it did on the box for the 235B.
-    sub = tmp_path / "qwen3-235b-a22b" / "UD-Q3_K_XL"
+    # raise "download incomplete" as it did on the box for a large sharded model.
+    sub = tmp_path / "nemotron-3-super-120b" / "UD-Q4_K_XL"
     sub.mkdir(parents=True)
     for i in (1, 2, 3):
-        (sub / f"Qwen3-235B-UD-Q3_K_XL-0000{i}-of-00003.gguf").write_bytes(b"\0")
+        (sub / f"Nemotron-3-Super-UD-Q4_K_XL-0000{i}-of-00003.gguf").write_bytes(b"\0")
     # An hf .cache staging dir alongside must be ignored.
-    cache = tmp_path / "qwen3-235b-a22b" / ".cache" / "huggingface" / "download"
+    cache = tmp_path / "nemotron-3-super-120b" / ".cache" / "huggingface" / "download"
     cache.mkdir(parents=True)
-    (cache / "Qwen3-235B-UD-Q3_K_XL-00001-of-00003.gguf").write_bytes(b"\0")
+    (cache / "Nemotron-3-Super-UD-Q4_K_XL-00001-of-00003.gguf").write_bytes(b"\0")
 
-    rel = llama_swap_config.resolve_weight(str(tmp_path), "qwen3-235b-a22b", "*UD-Q3_K_XL*.gguf")
-    assert rel == "UD-Q3_K_XL/Qwen3-235B-UD-Q3_K_XL-00001-of-00003.gguf"
+    rel = llama_swap_config.resolve_weight(
+        str(tmp_path), "nemotron-3-super-120b", "*UD-Q4_K_XL*.gguf"
+    )
+    assert rel == "UD-Q4_K_XL/Nemotron-3-Super-UD-Q4_K_XL-00001-of-00003.gguf"
 
 
 def test_render_resolves_a_nested_quant_subdir_into_the_model_path(tmp_path: Path) -> None:
-    model = tmp_path / "qwen3-235b-a22b" / "UD-Q3_K_XL"
+    model = tmp_path / "nemotron-3-super-120b" / "UD-Q4_K_XL"
     model.mkdir(parents=True)
-    (model / "Qwen3-235B-UD-Q3_K_XL-00001-of-00002.gguf").write_bytes(b"\0")
-    (model / "Qwen3-235B-UD-Q3_K_XL-00002-of-00002.gguf").write_bytes(b"\0")
+    (model / "Nemotron-3-Super-UD-Q4_K_XL-00001-of-00002.gguf").write_bytes(b"\0")
+    (model / "Nemotron-3-Super-UD-Q4_K_XL-00002-of-00002.gguf").write_bytes(b"\0")
     manifest = [
         {
-            "id": "qwen3-235b-a22b",
-            "served_model": "qwen3-235b-a22b",
-            "gguf_include": "*UD-Q3_K_XL*.gguf",
+            "id": "nemotron-3-super-120b",
+            "served_model": "nemotron-3-super-120b",
+            "gguf_include": "*UD-Q4_K_XL*.gguf",
             "mmproj_include": None,
             "context_window": 32768,
             "recommended": False,
         }
     ]
     text = llama_swap_config.render(manifest, str(tmp_path))
-    assert "/models/qwen3-235b-a22b/UD-Q3_K_XL/Qwen3-235B-UD-Q3_K_XL-00001-of-00002.gguf" in text
+    assert (
+        "/models/nemotron-3-super-120b/UD-Q4_K_XL/Nemotron-3-Super-UD-Q4_K_XL-00001-of-00002.gguf"
+        in text
+    )
 
 
 def test_write_is_atomic_and_round_trips(tmp_path: Path) -> None:

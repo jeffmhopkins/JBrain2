@@ -163,79 +163,75 @@ def test_llama_4_scout_is_a_vision_alt_at_int4() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
-def test_qwen3_235b_is_a_text_only_alt_high_tier_at_3bit() -> None:
-    m = local_catalog.get("qwen3-235b-a22b")
-    assert m is not None
-    assert m.tiers == ("high",)
-    assert not m.supports_vision and m.mmproj_include is None
-    # Instruct-2507 is non-thinking — not in the reasoning gating set.
-    assert not m.supports_reasoning
-    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
-    # The 3-bit dynamic quant the manifest pulls.
-    assert m.quant == "UD-Q3_K_XL"
-    assert "UD-Q3_K_XL" in m.gguf_include
-    assert m.hf_repo == "unsloth/Qwen3-235B-A22B-Instruct-2507-GGUF"
-    # Alternate, not part of the default resident set the install prompt offers.
-    assert m.id not in local_catalog.recommended_ids()
-    assert m.spec == "local:qwen3-235b-a22b"
-
-
-def test_qwen35_122b_mtp_is_a_faster_vision_speculative_variant() -> None:
-    # The MTP (multi-token-prediction) build of the 122B: same model + vision tower + a draft
-    # head for self-speculative decoding, wired via --spec-type flags in extra_server_args.
-    m = local_catalog.get("qwen3.5-122b-a10b-mtp")
+def test_qwen36_27b_is_a_dense_vision_hybrid_reasoner_high_tier() -> None:
+    # Qwen3.6-27B: a DENSE 27B multimodal (text + vision) hybrid reasoner at 8-bit. The compact
+    # vision + high-tier entry that replaced the removed 122B/235B/Next flagships. Thinking is
+    # the enable_thinking chat-template toggle (hybrid), and it emits <think> so it pins
+    # --reasoning-format deepseek like the other Qwen hybrids.
+    m = local_catalog.get("qwen3.6-27b")
     assert m is not None
     assert m.tiers == ("vision", "high")
-    # Vision-capable and ships a projector (the MTP repo mirrors the base repo's mmproj).
-    assert m.supports_vision and m.mmproj_include == "mmproj-F16.gguf"
-    assert m.supports_tools
-    # Same hybrid-reasoner profile as the standard entry.
+    # Vision-capable and ships a projector (the well-formed check enforces this too).
+    assert m.supports_vision and m.supports_tools
+    # The projector include is the EXACT F16 name, not a glob: this repo also has a
+    # `mmproj-BF16.gguf` that a `mmproj*F16.gguf` glob would wrongly match.
+    from fnmatch import fnmatch
+
+    assert m.mmproj_include == "mmproj-F16.gguf"
+    assert fnmatch("mmproj-F16.gguf", m.mmproj_include)
+    assert not fnmatch("mmproj-BF16.gguf", m.mmproj_include)
+    assert not fnmatch("mmproj-F32.gguf", m.mmproj_include)
+    # Hybrid reasoner: in the gating set, <think> split via deepseek, on/off via enable_thinking.
     assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
     assert m.served_model in local_catalog.REASONING_SERVED_MODELS
-    # A distinct served name and repo from the standard build.
-    assert m.spec == "local:qwen3.5-122b-a10b-mtp"
-    assert m.hf_repo == "unsloth/Qwen3.5-122B-A10B-MTP-GGUF"
-    assert m.quant == "UD-Q4_K_XL" and "UD-Q4_K_XL" in m.gguf_include
-    # The self-speculative-decoding flags the gateway needs to actually get the speedup.
-    assert m.extra_server_args == ("--spec-type", "draft-mtp", "--spec-draft-n-max", "6")
+    # 8-bit (near-lossless) from Unsloth's Qwen3.6 GGUF repo; the Q4 twin shares the repo.
+    assert m.quant == "Q8_0" and "Q8_0" in m.gguf_include
+    assert m.hf_repo == "unsloth/Qwen3.6-27B-GGUF"
+    assert m.spec == "local:qwen3.6-27b"
+    assert m.size_gb == 27.5
+    # Serves the conservative gateway default with its native 262k window as the ceiling
+    # (YaRN-extensible to ~1M upstream, but the arch window is what the picker exposes).
     assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
-    # Ceiling capped at 128k (below the 256k arch max) for memory on a 128 GB box.
-    assert m.native_context_window == 131072 and m.max_context_window == 131072
+    assert m.native_context_window == 262144 and m.max_context_window == 262144
+    # Opt-in: the recommended default set stays the two resident models.
     assert m.id not in local_catalog.recommended_ids()
 
 
-def test_qwen3_next_is_a_text_only_alt_high_tier() -> None:
-    m = local_catalog.get("qwen3-next-80b-a3b")
-    assert m is not None
-    assert m.tiers == ("high",)
-    assert not m.supports_vision and m.mmproj_include is None
-    # Alternate, not part of the default resident set the install prompt offers.
-    assert m.id not in local_catalog.recommended_ids()
-    assert m.spec == "local:qwen3-next-80b-a3b"
-
-
-def test_qwen3_next_thinking_is_a_reasoning_deepseek_format_alt() -> None:
-    # The Thinking checkpoint is a separate model from the Instruct sibling: same size,
-    # but an always-on reasoning model that emits <think> and needs --reasoning-format
-    # deepseek wired. It is NOT a hybrid — it has no thinking off switch.
-    m = local_catalog.get("qwen3-next-80b-a3b-thinking")
-    assert m is not None
-    assert m.tiers == ("high",)
-    assert not m.supports_vision and m.mmproj_include is None
-    assert m.supports_reasoning and m.reasoning_format == "deepseek"
-    assert not m.hybrid_thinking
-    assert m.supports_tools
+def test_qwen36_27b_q4_is_the_interactive_twin() -> None:
+    # The Q4_K_M twin of the Q8 entry: same dense 27B + repo + projector, ~16 GiB. On this
+    # bandwidth-bound box a dense 27B runs materially faster at Q4, so this is the interactive
+    # daily driver while the Q8 twin is the quality-first option.
+    m = local_catalog.get("qwen3.6-27b-q4")
+    q8 = local_catalog.get("qwen3.6-27b")
+    assert m is not None and q8 is not None
+    assert m.tiers == ("vision", "high")
+    assert m.supports_vision and m.supports_tools
+    # The projector stays F16 even at Q4 weights (fine text degrades first under quantization).
+    assert m.mmproj_include == "mmproj-F16.gguf"
+    # Same hybrid-reasoner profile as the Q8 twin.
+    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
     assert m.served_model in local_catalog.REASONING_SERVED_MODELS
-    assert "Thinking" in m.hf_repo
-    # Alternate, not part of the default resident set the install prompt offers.
+    # Q4_K_M from the SAME repo as the Q8 default, but a DISTINCT served name (both can be
+    # provisioned side by side) and materially lighter weights.
+    assert m.quant == "Q4_K_M" and "Q4_K_M" in m.gguf_include
+    assert m.hf_repo == q8.hf_repo == "unsloth/Qwen3.6-27B-GGUF"
+    assert m.spec == "local:qwen3.6-27b-q4"
+    assert m.served_model != q8.served_model
+    assert m.size_gb == 16.5 and m.size_gb < q8.size_gb
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144
     assert m.id not in local_catalog.recommended_ids()
-    # The <think>-emitting entries all pin --reasoning-format deepseek: this always-on
-    # checkpoint plus the two Qwen hybrids. The harmony/GLM reasoners keep llama.cpp's
-    # auto (empty), so reasoning_format is NOT just a synonym for supports_reasoning.
+
+
+def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
+    # --reasoning-format deepseek is pinned ONLY for entries that emit <think> inline: the two
+    # Qwen3.6 hybrids, the two small Qwen3.5 hybrids, and the Nemotron hybrid. The harmony/GLM
+    # reasoners keep llama.cpp's auto (empty reasoning_format), so the field is NOT just a
+    # synonym for supports_reasoning — renaming or mis-wiring it would fail here.
     assert {x.id for x in local_catalog.CATALOG if x.reasoning_format} == {
-        "qwen3-next-80b-a3b-thinking",
+        "qwen3.6-27b",
+        "qwen3.6-27b-q4",
         "nemotron-3-super-120b",
-        "qwen3.5-122b-a10b-mtp",
         "qwen3.5-0.8b",
         "qwen3.5-4b",
     }
