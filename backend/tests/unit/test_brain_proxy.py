@@ -212,6 +212,7 @@ def test_tts_omits_effect_params_when_absent(
     calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
     client.get("/api/brain/tts", params={"text": "hi", "voice": "kokoro-af_heart"})
     _url, params = calls[0]
+    assert params is not None
     assert "pitch" not in params and "chorus" not in params and "robot" not in params
 
 
