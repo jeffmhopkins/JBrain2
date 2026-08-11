@@ -517,8 +517,13 @@ class LlmRouter:
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
+        spec_override: str | None = None,
     ) -> LlmResult:
-        provider, model, reasoning_effort = await self._resolve_live(task, strength)
+        # `spec_override` is the per-call model pick (the omnibox's per-conversation
+        # agent model) — same precedence as in converse_stream, so a background
+        # completion (e.g. the session titler) can run on the exact model the chat
+        # turn will use, no separate route and no model swap.
+        provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
         client = self._clients[provider]
         await self._admit_local(provider, model)
         start = time.perf_counter()

@@ -69,8 +69,8 @@ const GROUP_DEFS: GroupDef[] = [
     key: "low",
     accent: "light",
     name: "Low reasoning",
-    desc: "Cheap, frequent one-shots — classify & title.",
-    taskIds: ["entity.disambiguate", "session.title", "triage.classify"],
+    desc: "Cheap, frequent one-shots — classify & extract.",
+    taskIds: ["entity.disambiguate", "triage.classify"],
   },
   {
     key: "vision",

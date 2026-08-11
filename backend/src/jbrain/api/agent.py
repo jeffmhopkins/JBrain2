@@ -515,16 +515,19 @@ async def _maybe_autotitle(
     sessions: AgentSessionRepo,
     session: AgentSessionInfo,
     question: str,
-    answer_parts: list[str],
+    spec_override: str | None,
 ) -> None:
-    """Name a chat the owner left untitled, from its first exchange. Owner-only
-    metadata, best-effort: a failed or empty title leaves the chat untitled (the
-    UI shows a placeholder) and never breaks the turn that produced it."""
+    """Name a chat the owner left untitled — UP FRONT, from its opening message, run as
+    a quick turn on the SAME model this chat turn will use (`spec_override`), so titling
+    never routes to a different model or forces a cold reload/swap. Owner-only metadata,
+    best-effort: a failed or empty title leaves the chat untitled (the UI shows a
+    placeholder) and never delays or breaks the turn that follows. The rename persists to
+    the DB (the session record the PWA reads); the in-memory `session` is immutable."""
     if session.title.strip():
         return
     with contextlib.suppress(Exception):
         title = await SessionTitler(get_llm_router(request)).title_for(
-            question=question, answer="".join(answer_parts)
+            question=question, spec_override=spec_override
         )
         if title:
             await sessions.rename(owner_ctx, session.id, title)
@@ -891,6 +894,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # near-real-time, not one dump at settle. Any residual flushes at done.
         think_buf = ""
         last_think = 0.0
+        # Name an untitled chat BEFORE the main response streams, on this turn's own model
+        # (model_override — already the one about to run, so no swap/reload). A quick title
+        # turn from the opening message; best-effort inside _maybe_autotitle, so a slow or
+        # failed title never blocks or breaks the turn.
+        await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, model_override)
         stream = loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,
@@ -991,9 +999,6 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     body.attachment_ids,
                     acc.reasoning_text,
                     omit_user_turn=body.deferred_outcome,
-                )
-                await _maybe_autotitle(
-                    request, owner_ctx, sessions, session, body.message, acc.answer
                 )
                 # Persist the turn's context fill so the meter restores on reopen
                 # (best-effort — the transcript above is the record of the turn; this

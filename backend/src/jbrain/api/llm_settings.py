@@ -73,6 +73,13 @@ TASK_LABELS: dict[str, str] = {
     "pet.statue": "JPet — statue sculptor",
 }
 
+# Auto-generated titles are NOT independently routable: they run as a quick turn on the
+# chat's own model (jbrain.agent.titler passes the turn's model; the router also has them
+# follow agent.turn via _FOLLOW_PRIMARY_MODEL). Hiding them from the per-task picker avoids
+# offering a control that does nothing — and stops a stale pick from swapping in a second
+# model just to name a chat. They stay in TASK_DEFAULTS (the router still routes them).
+_HIDDEN_TASKS: frozenset[str] = frozenset({"session.title", "research.title"})
+
 
 # Tasks that send image content to the model and so require a vision-capable provider:
 # the ingest vision.* tasks plus the agent's analyze_image route (agent.vision). The
@@ -392,7 +399,11 @@ async def _snapshot(
         ],
         reasoning_efforts=list(REASONING_EFFORTS),
         reasoning_default=REASONING_DEFAULT,
-        tasks=[_effective(settings, task, overrides) for task in TASK_DEFAULTS],
+        tasks=[
+            _effective(settings, task, overrides)
+            for task in TASK_DEFAULTS
+            if task not in _HIDDEN_TASKS
+        ],
         local_hosting_enabled=settings.local_llm_enabled,
         local_models=[
             _local_model_info(

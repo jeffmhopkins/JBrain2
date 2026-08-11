@@ -74,7 +74,12 @@ def test_get_defaults_grok_and_low_for_empty_store(
     # reasoning bucket (right-by-default), not a single global level: the arbiters
     # default high, the one-shots low, everything else medium; a vision task on a
     # reasoning-capable cloud provider falls back to the global default.
-    assert {t["id"] for t in body["tasks"]} == set(TASK_DEFAULTS)
+    # Every routed task lists EXCEPT the auto-title tasks, which are hidden from the
+    # picker (they run on the chat's own model, not a separate route).
+    assert {t["id"] for t in body["tasks"]} == set(TASK_DEFAULTS) - {
+        "session.title",
+        "research.title",
+    }
     effort = {t["id"]: t["reasoning_effort"] for t in body["tasks"]}
     assert all(t["provider"] == "grok" for t in body["tasks"])
     assert effort["integrate.note"] == "high"
@@ -84,7 +89,6 @@ def test_get_defaults_grok_and_low_for_empty_store(
     assert effort["note.extract"] == "medium"
     assert effort["video.summarize"] == "medium"
     assert effort["entity.disambiguate"] == "low"
-    assert effort["session.title"] == "low"
     assert effort["triage.classify"] == "low"
     # Vision tasks have no bucket effort; on grok (reasoning-capable) they show the
     # global fallback default.
@@ -326,51 +330,21 @@ def test_put_routes_a_task_to_an_enabled_local_model() -> None:
     assert stored["vision.ocr"] == {"spec": "local:qwen3-vl-30b-a3b"}
 
 
-def test_titles_follow_the_agent_model_in_the_snapshot() -> None:
-    # A title with no override of its own follows agent.turn's route — so re-routing the chat
-    # model to local shows the titles running there too, not on their raw off-box default.
+def test_title_tasks_are_hidden_from_the_picker() -> None:
+    # Auto-generated titles run on the chat's OWN model (jbrain.agent.titler passes the
+    # turn's model), so they are not independently routable — the per-task picker must not
+    # list them, or a stale pick would swap in a second model just to name a chat. They
+    # stay in TASK_DEFAULTS (the router still routes them); only the settings surface hides.
     settings = Settings(
         secure_cookies=False,
         database_url="postgresql+asyncpg://nobody@localhost:1/none",
         xai_api_key="test-xai",
         anthropic_api_key="test-anthropic",
-        local_llm_enabled=True,
-        local_models=["gpt-oss-120b"],
     )
     c, _ = _authed_client(settings)
-    resp = c.put(
-        "/api/settings/llm",
-        json={"tasks": {"agent.turn": {"provider": "gpt-oss-120b", "reasoning_effort": "medium"}}},
-    )
-    assert resp.status_code == 200
-    tasks = {t["id"]: t for t in resp.json()["tasks"]}
-    assert (
-        tasks["agent.turn"]["provider"] == "gpt-oss-120b"
-    )  # the operator re-routed the chat model
-    # research.title / session.title carry no override, so the screen shows them following it...
-    assert tasks["research.title"]["provider"] == "gpt-oss-120b"
-    assert tasks["session.title"]["provider"] == "gpt-oss-120b"
-    # ...while keeping their OWN low effort, not agent.turn's medium.
-    assert tasks["research.title"]["reasoning_effort"] == "low"
-
-
-def test_an_explicit_title_override_still_shows_over_the_follow() -> None:
-    settings = Settings(
-        secure_cookies=False,
-        database_url="postgresql+asyncpg://nobody@localhost:1/none",
-        xai_api_key="test-xai",
-        anthropic_api_key="test-anthropic",
-        local_llm_enabled=True,
-        local_models=["gpt-oss-120b"],
-    )
-    c, _ = _authed_client(settings)
-    c.put("/api/settings/llm", json={"tasks": {"agent.turn": {"provider": "gpt-oss-120b"}}})
-    resp = c.put("/api/settings/llm", json={"tasks": {"research.title": {"provider": "grok"}}})
-    assert resp.status_code == 200
-    tasks = {t["id"]: t for t in resp.json()["tasks"]}
-    # An explicit pin wins over the follow: research.title shows grok, session.title still follows.
-    assert tasks["research.title"]["provider"] == "grok"
-    assert tasks["session.title"]["provider"] == "gpt-oss-120b"
+    ids = {t["id"] for t in c.get("/api/settings/llm").json()["tasks"]}
+    assert "session.title" not in ids and "research.title" not in ids
+    assert "agent.turn" in ids  # the routable tasks are still offered
 
 
 def test_put_accepts_non_grok_provider_without_reasoning_effort() -> None:
