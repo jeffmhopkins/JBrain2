@@ -197,13 +197,14 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     assert restart > up, "the gateway restart must follow the stack `up -d`"
 
 
-def test_update_gateway_auto_update_is_opt_in_smoke_tested_and_rolls_back() -> None:
-    # OPT-IN: LOCAL_LLM_AUTO_UPDATE=true floats the gateway onto the newest llama.cpp
-    # (--pull on the FLOATING base tag) so a freshly-released model's architecture is
-    # supported without a manual digest bump, then SMOKE-TESTS the build. A failed
-    # smoke rolls BACK to the pinned, known-good base, so tracking master never leaves
-    # the box unable to serve. Gated on LOCAL_LLM_RUNNING (set only under
-    # LOCAL_LLM_ENABLED), so a stock cloud stack with no gateway is never touched.
+def test_update_gateway_auto_update_is_default_on_smoke_tested_and_rolls_back() -> None:
+    # DEFAULT-ON (the owner has no terminal — CLAUDE.md #10): every update floats the
+    # gateway onto the newest llama.cpp (--pull on the FLOATING base tag) so a
+    # freshly-released model's architecture is supported with no manual step, then
+    # SMOKE-TESTS the build. A failed smoke rolls BACK to the pinned, known-good base,
+    # so tracking master never leaves the box unable to serve. It must be OPT-OUT
+    # (LOCAL_LLM_AUTO_UPDATE=false), NOT opt-in, and gated on LOCAL_LLM_RUNNING (set
+    # only under LOCAL_LLM_ENABLED) so a stock cloud stack with no gateway is untouched.
     lines = (DEPLOY / "update-inner.sh").read_text().splitlines()
     text = "\n".join(lines)
 
@@ -218,8 +219,21 @@ def test_update_gateway_auto_update_is_opt_in_smoke_tested_and_rolls_back() -> N
             None,
         )
 
-    assert "LOCAL_LLM_AUTO_UPDATE=true" in text, (
-        "the gateway auto-update must be opt-in"
+    # The gate is an OPT-OUT: run unless the operator explicitly set the flag to false.
+    gate = next(
+        (
+            ln
+            for ln in lines
+            if "LOCAL_LLM_AUTO_UPDATE=false" in ln and not ln.lstrip().startswith("#")
+        ),
+        None,
+    )
+    assert gate is not None, (
+        "auto-update must be default-on, opt-out via LOCAL_LLM_AUTO_UPDATE=false"
+    )
+    assert "! grep" in gate, "the gate must RUN unless =false is present (negated grep)"
+    assert "grep -q '^LOCAL_LLM_AUTO_UPDATE=true'" not in text, (
+        "auto-update must not be opt-in (=true) — the owner has no terminal to set .env"
     )
     assert "LOCAL_LLM_RUNNING" in text, (
         "auto-update must be gated on the gateway being enabled"

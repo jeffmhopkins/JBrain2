@@ -436,33 +436,42 @@ below are what it does and how to verify:
 | `/dev/dri` permission denied in container | host render GID not written — check `.env` `RENDER_GID`, re-run `enable-local-models`. |
 
 ## Reproducibility / trust
-The gateway base is a **community** image. Once a tag works, pin it by digest in
-`.env`: `LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:<digest>`.
-This is the default (`deploy/Dockerfile.local-llm`): the rolling `:vulkan-radv` tag
-tracks llama.cpp master, and a floating build once let a gpt-oss tool-call grammar
-regression ride in unnoticed, so the reproducible pin is the safe default.
+The gateway base is a **community** image, pinned by digest in
+`deploy/Dockerfile.local-llm` (`LOCAL_LLM_BASE`): the rolling `:vulkan-radv` tag tracks
+llama.cpp master, and a floating build once let a gpt-oss tool-call grammar regression
+ride in unnoticed, so a known-good digest is the reproducible baseline. That pinned
+digest is now the **rollback target** for the auto-update below, not a frozen ceiling —
+override it in `.env` (`LOCAL_LLM_BASE=…@sha256:<digest>`) to move the baseline, e.g. a
+`rocm-*` variant.
 
-### Tracking newest llama.cpp automatically (opt-in)
+### Tracking newest llama.cpp automatically (default-on)
 A **just-released** model can need a llama.cpp newer than the pinned base — its
 architecture won't load (llama-server exits at model-load: `upstream command exited
-prematurely` in `jbrain logs local-llm`; the recent Nemotron-3.5 hybrid-Mamba arch is
-the canonical case). To track master **without** giving up a working fallback, set in
-`/opt/jbrain2/.env`:
+prematurely` in the gateway log; the Nemotron-3.5 hybrid-Mamba arch is the canonical
+case). So on a box with local hosting enabled, **every `jbrain update` (host or PWA)
+auto-updates the gateway** — no flag, no shell step (the owner drives this box from the
+PWA, no terminal): it rebuilds on the **floating** tag with `docker compose build --pull`
+(a cheap manifest check when llama.cpp hasn't moved; a real rebuild when it has), then
+**smoke-tests** the build — loads the smallest installed model and, when gpt-oss is
+installed, runs one tool-carrying probe (the exact surface the past regression broke).
+**If the smoke test fails, the update rolls the gateway back to the pinned
+`LOCAL_LLM_BASE`** and keeps serving, logging a `WARNING` to the update log. That
+rollback net is what makes tracking master safe by default: a bad upstream build never
+leaves the box unable to serve, and a good one lands automatically.
+
+Knobs (all optional, `.env`):
 
 ```
-LOCAL_LLM_AUTO_UPDATE=true
-# optional — the rolling tag to float onto (default below); rocm users point at a rocm-* tag
+# Freeze the gateway on the pinned base instead of tracking newest (reproducible builds):
+LOCAL_LLM_AUTO_UPDATE=false
+# The rolling tag to float onto (default below); rocm users point at a rocm-* tag:
 LOCAL_LLM_BASE_FLOATING=docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv
 ```
 
-Then every `jbrain update` (host or PWA) rebuilds the gateway on the **floating** tag
-with `docker compose build --pull` (a cheap manifest check when llama.cpp hasn't moved;
-a real rebuild when it has) and **smoke-tests** the new build — it loads the smallest
-installed model and, when gpt-oss is installed, runs one tool-carrying probe (the exact
-surface the past regression broke). **If the smoke test fails, the update rolls the
-gateway back to the pinned `LOCAL_LLM_BASE`** and keeps serving, logging a `WARNING` to
-the update log. So a bad upstream build never leaves the box unable to serve, and you
-still track newest between good builds. Leave `LOCAL_LLM_AUTO_UPDATE` unset to keep the
-pinned base frozen (the reproducible default). It's gated on `LOCAL_LLM_ENABLED`, so a
-stock cloud stack is never touched. Note this refreshes on **update**, not on a bare
-reboot — a reboot restarts the existing gateway image unchanged.
+Gated on `LOCAL_LLM_ENABLED`, so a stock cloud stack is never touched. Refreshes on
+**update**, not on a bare reboot — a reboot restarts the existing gateway image
+unchanged, so **run an update from the PWA (Ops → Update) to pick up a newer llama.cpp**.
+A still-unsupported architecture (the community image hasn't caught up to a day-old
+model yet) is NOT caught by the smoke test — it checks the smallest model + gpt-oss, not
+every model — so the floated build is kept and that one model simply keeps failing to
+load until upstream lands the arch; the next update retries automatically.
