@@ -175,8 +175,13 @@ def _pad(wav_bytes: bytes, lead_ms: int, trail_ms: int) -> bytes:
         lead = b"\x00" * (int(params.framerate * max(lead_ms, 0) / 1000) * frame)
         trail = b"\x00" * (int(params.framerate * max(trail_ms, 0) / 1000) * frame)
         out = io.BytesIO()
+        # Set the format fields individually — NOT setparams(), which would copy a bogus nframes
+        # from a streaming (placeholder-size) input header and overflow the 32-bit size on write.
+        # The writer derives the real frame count from the bytes we actually write.
         with wave.open(out, "wb") as o:
-            o.setparams(params)
+            o.setnchannels(params.nchannels)
+            o.setsampwidth(params.sampwidth)
+            o.setframerate(params.framerate)
             o.writeframes(lead + frames + trail)
         return out.getvalue()
     except (wave.Error, OSError, EOFError, ValueError):
@@ -238,6 +243,20 @@ def _floats_to_wav(samples: Any, sample_rate: int) -> bytes:
         w.setsampwidth(2)
         w.setframerate(sample_rate)
         w.writeframes(pcm.tobytes())
+    return out.getvalue()
+
+
+def _pcm_to_wav(pcm: bytes, sample_rate: int) -> bytes:
+    """Wrap raw mono 16-bit little-endian PCM in a WAV header with CORRECT chunk sizes. Used to
+    re-wrap ffmpeg's effect output: ffmpeg streams to a pipe and so can't seek back to fill the
+    RIFF/data sizes, leaving placeholder (0xFFFFFFFF) lengths that later blow the stdlib WAV
+    writer's 32-bit size fields. Emitting raw PCM from ffmpeg and wrapping it here sidesteps that."""
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(pcm)
     return out.getvalue()
 
 
@@ -323,12 +342,16 @@ def _apply_fx(
     if not stages:
         return wav
     try:
+        # Output RAW mono PCM (not -f wav): ffmpeg can't seek a pipe, so a piped WAV carries
+        # placeholder chunk sizes that later overflow the stdlib WAV writer. Re-wrap the PCM here
+        # with correct sizes. Force the input's rate + mono so the wrapper's header matches.
         proc = subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "wav", "-i", "pipe:0",
-             "-af", ",".join(stages), "-f", "wav", "pipe:1"],
+             "-af", ",".join(stages), "-f", "s16le", "-acodec", "pcm_s16le",
+             "-ac", "1", "-ar", str(sample_rate), "pipe:1"],
             input=wav, capture_output=True, timeout=30, check=True,
         )
-        return proc.stdout or wav
+        return _pcm_to_wav(proc.stdout, sample_rate) if proc.stdout else wav
     except Exception as exc:  # noqa: BLE001 — an fx hiccup degrades to the dry clip, not silence
         print(f"[tts] audio-fx failed (pitch {semitones:+.1f} st, chorus={chorus}, robot={robot}), "
               f"using dry audio: {type(exc).__name__}: {exc}", file=sys.stderr)
