@@ -1,8 +1,6 @@
 # Dynamic Portal Fetch — resolvers for JS/POST government search portals ("dinosaurs")
 
-> **Status:** Shipped (all waves landed; adversarial review incorporated — see "Review outcomes") ·
-> **Last verified:** 2026-08-09 · **Wave order (revised):** P3✅ → P1✅ → P2✅ (no browser needed)
-> (the dependency-free honesty backstop shipped FIRST; see Review outcomes R-Q1)
+> **Status:** Shipped 2026-08 · `web/portals` resolver framework + FL Sunbiz/FL DFS adapters + `_is_search_form_page` honesty backstop · **Superseded-by:** —
 
 Give the research fan a way to actually *query* dynamic government search portals — the
 ones `web_fetch` can only see the empty search FORM of — and make an un-queryable portal

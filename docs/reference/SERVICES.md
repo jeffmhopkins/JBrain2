@@ -188,7 +188,7 @@ URL, live or on-demand, via yt-dlp + ffmpeg; a second SSRF-guarded outbound leg)
 (`web_search`/`web_fetch`) · **sub-agents** (`spawn_subagent`) · **planning**
 (`read_plan`/`write_plan` — an owner-approved, per-conversation plan jerv executes
 across turns; owner-initiated, owner-only approval, auto-continued between steps; see
-`../plans/JERV_PLANNING_TOOL_PLAN.md`) · **health
+`../archive/JERV_PLANNING_TOOL_PLAN.md`) · **health
 lookups** · **host telemetry** (`query_server_metrics`) · `current_time`.
 
 ### Knowledge pipeline (`backend/src/jbrain/analysis/`)

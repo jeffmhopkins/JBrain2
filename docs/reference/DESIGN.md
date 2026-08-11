@@ -1309,7 +1309,7 @@ so provenance is model-retyped and the reply must say where they came from). It 
 Tokens-only `.tv-cc-*`/`.tv-bar-*` classes; the frame matches the live `.tool-view`. Owner-
 facing chat artifact; never a note, never RAG-indexed.
 
-### `plan_card` tool-view (build plan `docs/plans/JERV_PLANNING_TOOL_PLAN.md` — binding mock: `docs/mocks/jerv-planning-mock.html`)
+### `plan_card` tool-view (build plan `docs/archive/JERV_PLANNING_TOOL_PLAN.md` — binding mock: `docs/mocks/jerv-planning-mock.html`)
 
 jerv's per-conversation **plan** — the surface for owner-initiated planning-and-auto-resume.
 jerv drafts a plan only when the owner **asks for one** (its `write_plan` tool), the owner
@@ -1398,7 +1398,7 @@ the live `.tool-view`. Like every view it is **data, not instruction** (I-1) and
 external resource (I-9). The non-happy states (coverage-limited / truncated / thin-sources)
 and a reference mock go through the mock gate before this is marked settled.
 
-### Deepest research — the in-flight surface (GUI gate settled: **A — backgrounded card**; reference mock `docs/mocks/deepest-research/compare.html`, build plan `docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md` R8)
+### Deepest research — the in-flight surface (GUI gate settled: **A — backgrounded card**; reference mock `docs/mocks/deepest-research/compare.html`, build plan `docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md` R8)
 
 `deepest_research` is a no-holds **background** run (two agent tiers, minutes-to-hours), so
 unlike `deep_research`'s live in-turn card it is surfaced as a *backgrounded* run whose

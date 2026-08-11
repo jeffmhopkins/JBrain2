@@ -1,6 +1,6 @@
 # Deep Research — Video-Library Source Modes — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** DV1✅ DV2✅ DV3◻️
+> **Status:** Shipped 2026-07 · migration 0142 (`source_mode`) + library sub-agent personas (0144) · **Superseded-by:** —
 
 A **`sources` knob** on the shipped `deep_research` tool that lets a research run
 draw from the owner's **external video library** (the `external_sources` /

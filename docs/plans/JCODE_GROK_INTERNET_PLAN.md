@@ -1,6 +1,6 @@
 # jcode grok Internet Access — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-07-31 · **Waves:** S0✅ S1✅ S2✅ S3✅ S4✅ S5✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped; S5 = the AGENTS.md/CLAUDE.md discovery hook so grok/claude actually reach for the shell helpers — the on-box banner alone didn't. CI covers the bridge/helpers/plumbing with fakes + a localhost stub; final on-box sign-off that the CLIs read the workspace-root memory file is pending. E1 = raw-egress toggle, deferred on the shared-container caveat in §6 — the UI toggle ships disabled)
+> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** S0✅ S1✅ S2✅ S3✅ S4✅ S5✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped; S5 = the AGENTS.md/CLAUDE.md discovery hook so grok/claude actually reach for the shell helpers — the on-box banner alone didn't. CI covers the bridge/helpers/plumbing with fakes + a localhost stub; final on-box sign-off that the CLIs read the workspace-root memory file is pending. E1 = raw-egress toggle, deferred on the shared-container caveat in §6 — the UI toggle ships disabled)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the search bridge runs
 > the same on-box SearXNG discipline jerv already uses (invariant #9 — no owner

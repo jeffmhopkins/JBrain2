@@ -1,6 +1,6 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-30 · **Waves:** W0✅ W1✅ W2◻️ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
+> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ (W4: currency ⚠ flag landed — §12.9)
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Wave 0
 (gates + fixtures) and Wave 1 (storage bedrock — schema defs, the `fhir_status`/supersession
@@ -1577,10 +1577,11 @@ Proven-empty tables, no parser (§10). Landed:
 Deferred to their planned waves: the `EmrImporter` wiring of the firewall guard + `fhir_status`
 population (W2), the `project_emr` projector (W2), and the parsers (W2/W3).
 
-### 12.7 Wave 2 — in progress (deterministic parse + lower landed)
+### 12.7 Wave 2 — shipped (deterministic parse + integration + projector + tools + intake)
 
-W2 remains ◻️ (not complete). The **deterministic front-half** is built and unit-tested
-(`backend/src/jbrain/ingest/emr/`):
+W2 is complete (✅). Its one-time residual — wiring the intake handler to the seeded
+`emr_import` trigger — landed in Wave 3 (§12.8). The **deterministic front-half** is built
+and unit-tested (`backend/src/jbrain/ingest/emr/`):
 
 - **`candidates.py`** — the typed parser-output model + analyte canonicalization (a curated LOINC
   subset + synonym map; `WBC`/`Leukocytes`/`White Blood Cell Count` → one code; an unmapped analyte

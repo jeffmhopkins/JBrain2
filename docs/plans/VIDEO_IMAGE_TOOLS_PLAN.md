@@ -1,6 +1,6 @@
 # Video/Image Inspection Tools — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** V0✅ V1✅ V2✅ V3✅ V4✅ V5✅ V6◻️ (all code + steering docs shipped on-branch; on-box end-to-end sign-off against the live VL/ffmpeg/ComfyUI models pending — CI covers the logic via fakes + real-Postgres testcontainers)
+> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** V0✅ V1✅ V2✅ V3✅ V4✅ V5✅ V6◻️ (all code + steering docs shipped on-branch; on-box end-to-end sign-off against the live VL/ffmpeg/ComfyUI models pending — CI covers the logic via fakes + real-Postgres testcontainers)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — every VLM call through
 > the LLM adapter (rule 1), every blob through the storage abstraction (rule 2),

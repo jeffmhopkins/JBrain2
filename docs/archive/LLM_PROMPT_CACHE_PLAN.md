@@ -1,6 +1,6 @@
 # Local LLM prompt cache — cache-stable prompt layout + gateway KV reuse
 
-> **Status:** Scheduled · **Last verified:** 2026-07-16 · **Waves:** W1◻️ W2◻️
+> **Status:** Shipped 2026-08 · on-box perf (cache-stable prompt layout + gateway `--cache-reuse`), no migration · **Superseded-by:** —
 
 Cut the first-token latency of on-box turns by making the large, static jerv /
 curator system prompts **reusable** across turns instead of re-prefilled every

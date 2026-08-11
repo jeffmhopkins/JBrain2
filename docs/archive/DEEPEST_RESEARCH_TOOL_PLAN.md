@@ -1,6 +1,6 @@
 # Deepest Research — a no-holds background research agent
 
-> **Status:** In progress · **Last verified:** 2026-07-28 · **Waves:** R0◻️ R1✅ R2✅ R3✅ R4✅ R5✅ R6✅ R7✅ R8✅
+> **Status:** Shipped 2026-07 · migrations 0146–0148 · R0 value-probe deliberately overridden by owner (see ROADMAP) · **Superseded-by:** —
 
 **Finish-off pass (2026-07-22).** The three remaining threads closed:
 - **Tool-aware report dedup** (was an R7 sub-item) — migration `0148` widens the dedup key

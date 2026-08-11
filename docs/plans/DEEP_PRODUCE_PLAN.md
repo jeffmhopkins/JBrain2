@@ -1,6 +1,6 @@
 # Deep Produce — one produce engine, two verbs
 
-> **Status:** In progress · **Last verified:** 2026-07-30 · **Waves:** W1✅ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** W1✅ W2✅ W3◻️
 
 Generalize the `deep_research` pipeline into a single **produce engine** behind an
 abstraction layer, surfaced as two verbs:
@@ -273,19 +273,16 @@ wave** that ever does template the system prompt:
 
 ## Waves
 
-> **W2 progress (on branch, 2026-07-30).** Landed + unit-tested: the seed-keyed `produce()`
-> split (seeded / refuse / plain), `_assemble_emr_seed` (reads labs+encounters on the caller's
-> own health-scoped session, reusing the read_labs/read_encounters RLS path), the `_run` seed
-> injection + web-fan-impossible (`library` pin) + external-write suppression + defense-in-depth
-> invariant, the `extra_tools` admission gate + curator grant, and the frontend fix so
-> `deep_produce` drives the deep-research timeline (not a stray fan card). **Remaining before
-> `deep_produce` drives the deep-research timeline (not a stray fan card); and **B3 —
-> the critic now verifies a seeded plan against the record** (`_critique(record=…)`, a
-> record-verification clause that fires regardless of `_can_open_sources`). **Remaining before
-> W2 merges:** an on-box curator run and CI's integration suite (the seed read reuses the
-> already-RLS-tested lab_results path, and the zero-`research_reports`-rows property is
-> unit-covered via persist-suppression, so no NEW table or RLS isolation test is required —
-> CLAUDE.md #3).
+> **W2 shipped.** Landed + unit-tested: the seed-keyed `produce()` split (seeded / refuse /
+> plain), `_assemble_emr_seed` (reads labs+encounters on the caller's own health-scoped session,
+> reusing the read_labs/read_encounters RLS path), the `_run` seed injection + web-fan-impossible
+> (`library` pin) + external-write suppression + defense-in-depth invariant, the `extra_tools`
+> admission gate + curator grant, the frontend fix so `deep_produce` drives the deep-research
+> timeline (not a stray fan card), and **B3 — the critic verifies a seeded plan against the
+> record** (`_critique(record=…)`, a record-verification clause that fires regardless of
+> `_can_open_sources`). The seed read reuses the already-RLS-tested `lab_results` path and the
+> zero-`research_reports`-rows property is unit-covered via persist-suppression, so no new table
+> or RLS isolation test was required (CLAUDE.md #3). **W3 (recipe registry + owner UI) remains.**
 
 **W1 stands alone.** W1 delivers a complete, shippable jerv capability — a standalone
 `deep_produce` verb that turns web/library research into a caller-chosen artifact (plan,

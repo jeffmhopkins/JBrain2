@@ -385,7 +385,7 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   when the owner asks**, the owner alone approves it (jerv can never self-approve — the
   anti-injection guard), the approved plan is re-injected each turn so jerv follows it, and
   a bounded, owner-interruptible auto-continuation loop runs the checklist step by step.
-  See `../plans/JERV_PLANNING_TOOL_PLAN.md`. The
+  See `../archive/JERV_PLANNING_TOOL_PLAN.md`. The
   **Grokipedia umbrella** (`grokipedia(action=search|outline|section|citations|related)`, one
   action-dispatched tool — TOOL_CATALOG_PLAN.md) is a `web`-gated, jerv-only read of xAI's
   encyclopedia over the **open internet — no xAI key** (API-first via Grokipedia's own
@@ -527,7 +527,7 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   recorded in a global 24h skip list (`app.blocked_domains`, `DomainSkipRepo`): later
   `web_fetch`es of that host short-circuit without a network call, and `web_search` drops its
   hits with a "(N hidden as known-paywalled or inaccessible)" note — never for a 404 (page
-  gone) or a transient glitch (`docs/plans/DOMAIN_HEALTH_PLAN.md`).
+  gone) or a transient glitch (`docs/archive/DOMAIN_HEALTH_PLAN.md`).
 
   **Deep-research reports stay visible across turns too.** A `deep_research`/`deep_produce`
   return is intra-turn like any tool result, so jerv used to lose sight of a finished run and

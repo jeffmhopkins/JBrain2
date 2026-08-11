@@ -1,11 +1,11 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-08-02
+> **Status:** Living · **Last verified:** 2026-08-11
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
 
-## Status (2026-07)
+## Status (2026-08)
 
 **Phases 0–4 and the Phase 5 workflow engine are shipped.** Notes,
 ingestion/search, the v3 note→graph analysis pipeline (extract → Integrator →
@@ -216,8 +216,11 @@ The location + family + intake slices shipped; build records are under
   the workflow engine, motion-adaptive dense trails (migrations 0059–0064/0073).
 - **Family tracker + app map** ✅ (`archive/PHASE7_FAMILY_TRACKER_PLAN.md`,
   `_APP_MAP_PLAN.md`) — MQTT ingest, pairing/view-scope, the live member map
-  (migrations 0067/0075). *Deferred:* the M7c ops runbook + Android FCM
-  registration hardening.
+  (migrations 0067/0075). *Deferred:* the M7c ops runbook. (Push notifications
+  shipped **self-hosted** — the Android owner app's `NotificationRelayService`
+  holds an SSE connection to `/api/notifications/stream`; there is no Firebase/FCM
+  in the codebase, so the earlier "Android FCM registration hardening" line is
+  moot.)
 - **Location assistant** ✅ (`archive/LOCATION_ASSISTANT_PLAN.md`) — owner-only
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
@@ -253,14 +256,18 @@ The location + family + intake slices shipped; build records are under
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an
 encrypted zip + inline password, normalized in place into cited, health-firewalled `measurement`
 and `event` facts, surfaced through `lab_results`/`encounters` projections and
-`read_labs`/`read_encounters` tools. Wave 0 (gates + synthetic fixtures) complete; W1–W5 open.
-Subsumes the earlier "typed `lab_results`" line (a photographed lab report becomes queryable rows
-citing its note).
+`read_labs`/`read_encounters` tools. Waves 0–3 shipped (the per-system parsers, deterministic
+integration, the `emr_projection`, the `read_labs`/`read_encounters` tools, and encrypted intake +
+the two-stage `emr_import`/`emr_parse` worker pipeline); W4 partial (the analyte-currency flag
+landed); W5 (Phase-6 wiki surfacing) blocked on Phase 6. Subsumes the earlier "typed `lab_results`"
+line (a photographed lab report becomes queryable rows citing its note).
 
-**Scheduled:** Local LLM prompt cache (build plan: `docs/plans/LLM_PROMPT_CACHE_PLAN.md`) — cut
+**Shipped:** Local LLM prompt cache (build record: `docs/archive/LLM_PROMPT_CACHE_PLAN.md`) — cut
 on-box first-token latency by keeping the static jerv/curator system-prompt prefix reusable across
-turns: W1 makes the prompt prefix byte-stable (move the volatile `now_block` to the tail), W2 turns
-on llama-server's `--cache-reuse`/slot flags. Both waves open.
+turns: W1 made the prompt prefix byte-stable (moved the volatile `now_block`/presence to the tail,
+`api/agent.py`), W2 turned on llama-server's `--cache-reuse 256` (`llm/llama_swap_config.py`). Both
+waves shipped, no migration. *Deferred (optional):* `--slot-save-path` disk persistence and a
+`-np`/`--parallel` second slot were scoped as evaluations and not taken.
 
 **Scheduled:** Entity-graph ingest V2 (build plan: `docs/plans/ENTITY_GRAPH_INGEST_V2_PLAN.md`) —
 cut the ingest review-inbox noise the owner hit without changing the pipeline structure: remove the
@@ -295,18 +302,20 @@ on-branch (D1 spine, D2 refill round + critique, D3 the `deep_research_report` t
 steering) with full backend + frontend unit suites; the D3 mock-gate sign-off and on-box budget /
 wall-clock tuning remain before it is marked settled.
 
-**In progress:** Deepest research (build plan: `docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md`) — a
+**Shipped:** Deepest research (build record: `docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md`) — a
 no-holds `deepest_research`: an autonomous, resumable background run that recurses two agent tiers
 (orchestrator → task agent → sub agent), loops until covered or an owner-set token/wall-clock
 ceiling, checkpoints its state, streams periodic progress back to the initiating chat, and lands a
 cited report in the existing `research_reports` library. Red-teamed across five adversarial reviews;
-§4 documents a real brief-laundering egress-exfil channel the shipped web sandbox does not defend,
-closed as a hard R2 build blocker. R1 (the adaptive reflect→refill loop shipped as
-`deep_research(mode="deepest")`, in-request and depth-1) landed on-branch; the background lane,
-two-tier recursion, checkpoint/resume, and progress channel (R2–R8) remain.
+§4's brief-laundering egress-exfil channel was closed as a hard R2 build blocker. Build waves R1–R8
+shipped (migrations 0146–0148: the `research_deep` persona, `research_run_state`, tool-aware
+`(question_hash, tool)` dedup) — the background lane, two-tier recursion, checkpoint/resume, and
+progress channel are all live. *Deliberately skipped:* R0, a value-probe/kill-gate the owner
+overrode to build the full stack — it never fired, and the coverage-gap probe it would have run is
+not on the path.
 
-**In progress:** Deep research — video-library source modes (build plan:
-`docs/plans/DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md`) — a `sources` knob on the shipped `deep_research` tool so
+**Shipped:** Deep research — video-library source modes (build record:
+`docs/archive/DEEP_RESEARCH_VIDEO_SOURCES_PLAN.md`) — a `sources` knob on the `deep_research` tool so
 a run can draw from the owner's external video library (`external_sources`/`external_source_chunks`) instead
 of, or ahead of, the open web: `web` (default, unchanged), `library` (exclusive to the video corpus), and
 `library_first` (the library is the primary gather pass; the web fills only the reflect→refill gap round).
@@ -315,10 +324,10 @@ corpus-searching `research_library`); the plan→gather→reflect→refill→syn
 budget, and the report view are otherwise unchanged, and video hits already cite as timestamped `[^n]`
 `WebSource` chips. Explicitly **not** the deferred KB-scoped deep research (the owner's notes/wiki/entities
 stay out of scope); the video corpus is non-sensitive third-party content jerv already reads safely. DV1
-(routing + flag, migration 0141 — the `sources` param, the `research_library`/`review_library` corpus
-personas, and per-mode gather/refill/review routing) and DV2 (jerv steering, `source_mode` persistence via
-migration 0142, and the report-view provenance chip) landed on-branch; a conditional DV3 (owner GUI-gate
-sign-off on the trivial-reuse chip) remains.
+(routing + flag — the `sources` param, the `research_library`/`review_library` corpus personas via
+migration 0144, and per-mode gather/refill/review routing), DV2 (jerv steering, `source_mode` persistence
+via migration 0142, and the report-view provenance chip), and DV3 (the source-mode chip) all shipped.
+*Open follow-ons:* an attachment-video "fourth mode" and library-mode breadth tuning.
 
 **In progress:** Deep produce (build plan: `docs/plans/DEEP_PRODUCE_PLAN.md`) — generalize the shipped
 `deep_research` pipeline into one `produce()` engine behind an abstraction layer, surfaced as two
@@ -335,10 +344,47 @@ web-fan suppression, fail-closed grounding refusal, `external`-write suppression
 a narrow, documented carve-out to `EMR_IMPORT_PLAN.md`'s no-clinical-decision-support line; W3 is the
 recipe registry + owner UI. Adversarially reviewed (42 findings, 19 confirmed after verification) and
 hardened before scheduling. **W1 shipped** (PR #965 — the standalone jerv `deep_produce` verb, the
-single-`_run` refactor, `output_kind` shaping byte-stable for reports); W2 (curator seed) + W3 open.
+single-`_run` refactor, `output_kind` shaping byte-stable for reports); **W2 shipped** — the curator
+seeded/health path: `_assemble_emr_seed` reads labs+encounters under RLS in the parent, the seeded run
+pins `library` mode (web-fan impossible), refuses a non-health/empty read, and suppresses `external`
+writes, with a critic that verifies the seeded plan against the record. W3 (recipe registry + owner UI)
+open.
 The motivating recipe: `deep_produce(output_kind=plan)` from a
 curator call — a hypothetical treatment plan grounded in a medical-history date range and a library
 category, if symptoms were to recur.
+
+**Shipped:** jerv planning tool (build record: `docs/archive/JERV_PLANNING_TOOL_PLAN.md`) — an
+owner-approved, per-conversation **plan** jerv drafts (only when the owner asks), the owner alone
+approves (jerv can never self-approve — the anti-injection guard), then executes across turns. A
+jerv-only `read_plan`/`write_plan`/`write_plan_result` trio over an owner-only `agent_session_plans`
+row (migrations 0155, 0157–0159), the approved plan re-injected each turn, and a bounded,
+owner-interruptible auto-continuation loop that streams each step live, isolates multiple plans per
+chat, records per-step results + timing, and reconciles on reopen. Waves P1–P9.5 shipped.
+*Deferred:* post-approval body edits are not re-gated — a future "changed since approval" signal
+(a body hash captured at approve time) is noted, not built.
+
+**Shipped:** Dynamic portal fetch (build record: `docs/archive/DYNAMIC_PORTAL_FETCH_PLAN.md`) —
+resolver adapters (codename "dinosaurs") that let the research fan actually *query* dynamic JS/POST
+government search portals (FL Sunbiz corp search, FL DFS licensee search) through the SSRF-guarded
+`WebFetcher.submit_form` (no headless browser), surfaced as `WebSource`s in the `[^n]` registry, plus
+a precision `_is_search_form_page` detector so an un-adaptered portal degrades honestly. P1–P3
+shipped. *Open follow-ons:* per-resolver caching/throttle tuning, a per-adapter post-deploy smoke
+route, a scripted-browser tier for a genuinely JS-only portal, and more jurisdictions.
+
+**Shipped:** Blocked-domain skip list (build record: `docs/archive/DOMAIN_HEALTH_PLAN.md`) — a global
+24h paywall/bot-wall skip list (`app.blocked_domains`, migration 0163) so `web_fetch`/`web_search`
+stop wasting calls on a domain that just proved unreadable; precision `_is_paywall_page` + the
+existing bot-wall detector record the host for 24h, later fetches short-circuit and later searches
+drop it, never recording a 404/transient/search-form. *Deferred:* auto-recording the `unreadable`
+empty-JS-shell terminal (reserved, held back to avoid false positives), and running the paywall check
+on the reader/solver recovery path (today it runs only on the direct fetch).
+
+**Shipped:** Research-report expiry (build record: `docs/archive/REPORT_EXPIRY_PLAN.md`) — opt-in TTL
+for research-library reports plus the per-run dedup-key fix that makes it useful: `expires_at`
+(migration 0161) stamped from a preset's `retention_days`, a nightly `expire_research_reports` sweep
+(migration 0162), an auto-supplied `{{today}}` render variable so `daily_news` dates each day
+distinctly and self-expires after 7 days, and a "Keep this report" action that clears the TTL. W1–W4
+shipped.
 
 **Shipped:** Deep research staged single-source pipeline (build record:
 `docs/archive/DEEP_RESEARCH_STAGED_PIPELINE_PLAN.md`) — teach the shipped `deep_research`/`deep_produce`
