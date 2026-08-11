@@ -195,6 +195,12 @@ describe("speakable", () => {
     expect(speakable("quick round - then swap")).toBe("quick round, then swap.");
     // Numeric ranges still read as "to", not a comma.
     expect(speakable("pick 3-5 of them")).toBe("pick three to five of them.");
+    // A closed-up en-dash relation is a compound, not a clause break: "U.S.–Iran" must not read
+    // "U S, Iran" (the reported awkward pause) — it reads as a space between the two clean words.
+    expect(speakable("the U.S.–Iran conflict escalated")).toBe("the U S Iran conflict escalated.");
+    expect(speakable("a New York–London flight")).toBe("a New York London flight.");
+    // A SPACED en-dash is still a clause break → comma beat.
+    expect(speakable("hold on – almost there")).toBe("hold on, almost there.");
   });
 
   it("speaks inequalities and relations instead of dropping the glyph (which inverts meaning)", () => {

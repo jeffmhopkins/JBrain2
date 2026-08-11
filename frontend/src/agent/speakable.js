@@ -544,16 +544,21 @@ export function toUtterance(prose, engine = "kokoro") {
   // Emoji: verbalize the allow-list, drop the rest.
   for (const [glyph, word] of Object.entries(EMOJI_WORDS)) s = s.split(glyph).join(word);
   s = s.replace(EMOJI_STRIP, " ");
-  // Dashes vs compound hyphens. An em/en/bar dash, or a spaced hyphen, is a clause break → a
+  // Dashes vs compound hyphens. An em/bar dash, or a SPACED en-dash/hyphen, is a clause break → a
   // comma beat ("yours—let's see" → "yours, let's see", "guess it — great" → "guess it, great").
-  // A hyphen BETWEEN two word characters is a compound ("large‑scale", "well-known", "Bob‑verse"):
-  // espeak MASHES an ASCII compound into one word ("largescale"), so split it to a space for two
-  // clean words — how a person reads it, no pause. Covers the ASCII, Unicode and non-breaking
-  // hyphens (U+2010/U+2011). Numeric ranges (3–5 → "three to five") were handled above.
+  // But a CLOSED-UP dash between two word characters is a compound, NOT a pause: an ASCII/Unicode
+  // hyphen ("large‑scale", "well-known") that espeak would otherwise MASH into one word, AND a
+  // closed-up en-dash relation ("U.S.–Iran" → "U S Iran", "New York–London") that the old
+  // all-en-dashes-to-comma rule turned into an awkward "U S, Iran" pause. Both split to a space for
+  // two clean words. Covers the ASCII, Unicode and non-breaking hyphens (U+2010/U+2011) and the
+  // en-dash (U+2013). Numeric ranges (3–5 → "three to five") were handled above; a leftover en-dash
+  // (not a word–word compound, not spaced) falls through to a comma beat as before.
   s = s
-    .replace(/\s*[–—―]\s*/g, ", ")
+    .replace(/\s*[—―]\s*/g, ", ")
+    .replace(/\s+–\s*|\s*–\s+/g, ", ")
     .replace(/\s+-\s+/g, ", ")
-    .replace(/(?<=[^\W_])[-‐‑](?=[^\W_])/g, " ");
+    .replace(/(?<=[^\W_])[-‐‑–](?=[^\W_])/g, " ")
+    .replace(/\s*–\s*/g, ", ");
   // Parentheticals: piper carries no pause across ( ), so it races the aside into the
   // surrounding clause in one breath. Bracket it with commas instead — a beat on each side —
   // so "spending (target 5%) and reaffirm" reads as "spending, target five percent, and
