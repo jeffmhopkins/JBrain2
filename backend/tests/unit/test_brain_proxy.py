@@ -195,6 +195,7 @@ def test_tts_applies_the_owner_pronunciation_lexicon(
     )
     assert resp.status_code == 200
     _url, params = calls[0]
+    assert params is not None
     assert params["text"] == "visiting Tight us ville today"  # respelled, case-insensitive match
 
 
@@ -210,7 +211,9 @@ def test_tts_survives_a_lexicon_read_failure(
     calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
     resp = client.get("/api/brain/tts", params={"text": "hello there", "voice": "kokoro-af_heart"})
     assert resp.status_code == 200
-    assert calls[0][1]["text"] == "hello there"  # forwarded unchanged, no crash
+    params = calls[0][1]
+    assert params is not None
+    assert params["text"] == "hello there"  # forwarded unchanged, no crash
 
 
 def test_tts_rejects_blank_text(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
