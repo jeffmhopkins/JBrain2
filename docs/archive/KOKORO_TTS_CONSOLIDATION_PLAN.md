@@ -1,6 +1,6 @@
 # JBrain2 — Kokoro TTS Consolidation
 
-> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** W1✅ W2✅ W3✅ W4◻️
+> **Status:** Shipped 2026-08 · PR #1068 · **Waves:** W1✅ W2✅ W3✅ W4✅ · **Superseded-by:** —
 
 Standardize read-aloud on **Kokoro only**, collapse the three overlapping text
 normalizers into **one on the box**, make the misaki-vs-espeak phonemizer path
@@ -164,7 +164,7 @@ the risky, untestable wall rewrite.
   normalizer for two byte-identical copies — revisit only if the wall path needs the
   full verbalization set.
 
-### W4 — Owner-editable respelling lexicon + Settings panel ◻️ (built on-branch; marker flips on merge)
+### W4 — Owner-editable respelling lexicon + Settings panel ✅
 
 - `settings_store` key `pronunciation_lexicon` (`{word: respelling}`, sanitized +
   bounded: non-dict/blank/over-long dropped, ≤ 200 entries), exposed via
@@ -187,8 +187,8 @@ the risky, untestable wall rewrite.
 - Tests: store sanitize + round-trip (unit + Postgres integration), `/api/settings`
   round-trip, the brain.py substitution + read-failure fallback, and the panel
   (render/add/delete/health). ✅
-- *Note:* per `DOC_LIFECYCLE.md` the W4 header marker + this plan's archival happen in
-  the PR that MERGES the wave; everything above is complete on the branch.
+- All of W4 shipped in PR #1068 (the plan's last wave), which is why this doc is now
+  archived. Residual/deferred items are carried into `ROADMAP.md`.
 
 ## Non-negotiables touched
 

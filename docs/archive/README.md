@@ -1,6 +1,6 @@
 # JBrain2 — docs archive
 
-> **Status:** Living · **Last verified:** 2026-07-20
+> **Status:** Living · **Last verified:** 2026-08-11
 
 Historical documents: completed build plans, fulfilled contracts, rejected
 designs, and the design research that informed them. Kept for the audit trail
@@ -40,6 +40,7 @@ its ship evidence.
 | `WHISPER_TRANSCRIPTION_PLAN.md` | On-box whisper.cpp transcription. |
 | `READ_ALOUD_LEGIBILITY.md` | Read-aloud legibility + fluidity: shared `speakable` normalizer + stream-safe chunker + prefetch pump (W1/W2), and the `wall`/`tts-stt` split with warm piper (W0). |
 | `READ_ALOUD_AUDIOBOOK_PLAN.md` | Audiobook-grade Kokoro read-aloud: two-layer `toProse`/`toUtterance` split, misaki G2P + `KOKORO_LEXICON`, env-tunable pacing (speed + trailing silence), narrator voice blends, and an automatic markup-vs-prose classifier (no mode UI). W0–W4 shipped. |
+| `KOKORO_TTS_CONSOLIDATION_PLAN.md` | Standardised read-aloud on **Kokoro only** (removed Piper across box/backend/frontend/wall/docs; `piper_server.py`→`tts_server.py`; browser-native the sole fallback). Fixed the reported symptoms at root — the "U.S." pause (dotted-initialism collapse + streaming guard), flat headings (colon lead-in), and "Titusville" (an engine-agnostic owner **respelling lexicon** + `/tts/health` phonemizer-path visibility) — plus coverage gaps (inequalities/snake_case/times/phones/versions/ISO-dates). `speakable.js` is the single source of truth (the streaming chunker keeps it client-side; the literal box-side merge was deferred, see ROADMAP). Adds the Pronunciations settings panel (mock A). W1–W4, PR #1068. |
 | `INLINE_APPROVALS_PLAN.md` | Proposal approval moved into the conversation (inline variant-D card): per-leaf approve / decline-with-reason / correct-in-place + one Enact that returns a server-authored outcome to the assistant (the enact→agent feedback loop). Migration 0130. |
 | `CHAT_CHARTS_PLAN.md` | Interactive (zoom/pan) chart + lab-plot tool-views in Full Brain chat: the `InteractiveChart` engine, the `chart`/`lab_chart` tabbed views (GUI-gate variant C), `lab_chart` from `read_labs` trend, and the `chart_measurements` (grounded) + `render_chart` producers. |
 | `RESEARCH_LIBRARY_PLAN.md` | The owner-facing card-launcher **Research Library** (GUI variant B) over jerv's `external`-corpus artifacts — deep-research reports + video analyses: search / view / delete via an owner-gated `/api/research-library` API that reuses the existing corpus callables (no migration/grant), a detail layer (`<Markdown>` / `<VideoAnalysis>`), and per-item actions. PR #907; R1–R3 with both review gates. |

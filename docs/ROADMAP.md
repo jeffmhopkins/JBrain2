@@ -385,18 +385,23 @@ W2 (`ocr` / `gmail_read` adoption — proving the base is generic) + W3 (polish,
 optional turn-binding replay) open. A separately-tracked de-dup the research surfaced — unifying the
 near-identical research-report library and external-video corpus — is out of scope here.
 
-**In progress:** Kokoro TTS consolidation (build plan: `docs/plans/KOKORO_TTS_CONSOLIDATION_PLAN.md`) —
-standardize read-aloud on **Kokoro only** (remove Piper; the browser-native voice is the sole
-fallback), make `speakable.js` the single source of truth for text normalization, make the
-misaki-vs-espeak phonemizer path **visible**, and give the owner a **plain-respelling pronunciation
-list**. Fixes the reported symptoms — an unwanted pause after "U.S.", flat/uncharacteristic headings,
-and "Titusville" mispronounced (a `KOKORO_LEXICON` override that already exists but goes inert whenever
-the box silently drops to espeak) — at their root. W1 (phonemizer-path `/tts/health` observability), W2
-(remove Piper, incl. the `piper_server.py`→`tts_server.py` rename), and W3 (the read-aloud fixes — U.S.
-collapse, heading colon, and the coverage gaps — in `speakable.js`, plus a thin box-side mirror for the
-wall) shipped on-branch. W3 reframed the "collapse to one box normalizer" goal (the streaming chunker
-keeps `speakable.js` client-side; the box normalizer stays as a thin wall mirror rather than being
-merged away). W4 (respelling lexicon + a GUI-gated Settings panel) open.
+**Shipped:** Kokoro TTS consolidation (build record: `docs/archive/KOKORO_TTS_CONSOLIDATION_PLAN.md`,
+PR #1068) — standardized read-aloud on **Kokoro only** (removed Piper across box/backend/frontend/wall/
+docs; `piper_server.py`→`tts_server.py`; browser-native the sole fallback), made `speakable.js` the
+single source of truth for text normalization, made the misaki-vs-espeak phonemizer path **visible**
+(`/tts/health` + `/api/brain/tts/health`), and gave the owner a **plain-respelling pronunciation list**
+(sanitized settings key, applied by the `/api/brain/tts` proxy; the Pronunciations settings panel, mock
+A). Fixed the reported symptoms at root — the "U.S." pause (dotted-initialism collapse + streaming
+guard), flat headings (colon lead-in), and "Titusville" (engine-agnostic respelling + espeak-path
+visibility) — plus coverage gaps (inequalities, snake_case, times, phones, versions, ISO dates).
+**Carried deferrals:** (1) the *literal* single-normalizer merge — fully deleting the box
+`_speakable_text` by having the wall adopt `speakable.js` verbatim — was rejected as net-worse (it needs
+an untestable no-build-step wall rewrite + two byte-identical copies behind a parity guard); the box
+keeps a thin engine-agnostic mirror for the wall path instead. Revisit only if the wall is rebuilt with
+a bundler or needs the full verbalization set. (2) The box changes (`tts_server.py`, Dockerfile,
+entrypoint) require a `jbrain update`/rebuild to take effect; after deploy, verify `/tts/health` reports
+`g2p: misaki` (an `espeak` fallback there means the misaki venv isn't loading on the box — the residual
+root cause behind a still-wrong "Titusville").
 
 **Shipped:** Grokipedia tool (build record: `docs/archive/GROKIPEDIA_TOOL_PLAN.md`, PR #993) — a jerv
 tool set (`grokipedia_search`/`outline`/`section`/`citations`/`related`) to search Grokipedia, traverse a page
