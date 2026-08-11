@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { emitReadAloudSettings } from "../agent/readAloudBus";
 import type {
+  BrainTtsHealth,
   DebugToken,
   FeedConfig,
   GmailSettings,
@@ -31,11 +32,10 @@ const IMAGE_ANALYSIS_OPTIONS: { value: ImageAnalysisMode; label: string }[] = [
 // voice/speaker before choosing it — never real answer text.
 const VOICE_SAMPLE_TEXT = "This is how the assistant will sound when it reads your answers aloud.";
 
-// Read-aloud models surfaced as one Piper | Kokoro | Native control: "piper" and "kokoro" both
-// render on the box (the engine "piper"), "native" is the device's own voice.
-type ReadAloudModel = "piper" | "kokoro" | "native";
+// Read-aloud models surfaced as one Kokoro | Native control: "kokoro" renders on the box (the
+// on-box engine), "native" is the device's own voice.
+type ReadAloudModel = "kokoro" | "native";
 const MODEL_LABEL: Record<ReadAloudModel, string> = {
-  piper: "Piper",
   kokoro: "Kokoro",
   native: "Native",
 };
@@ -49,26 +49,16 @@ const KOKORO_ACCENT: Record<string, string> = {
   bm: "British M",
 };
 
-// Prettify a voice id for the picker: drop the "en_US-" locale + "-medium" quality, title-case
-// the model name, and surface a multi-speaker id's speaker after a dot —
-// "en_US-libritts_r-medium#3922" -> "Libritts_r · 3922", "en_US-amy-medium" -> "Amy". Kokoro
-// ids ("kokoro-af_heart") read as "Heart · American F" (name + accent/gender from the prefix).
+// Prettify a Kokoro voice id for the picker: "kokoro-af_heart" -> "Heart · American F" (name +
+// accent/gender from the prefix). An id without the accent prefix reads as "Kokoro · <name>".
 function voiceLabel(id: string): string {
-  if (id.startsWith("kokoro-")) {
-    const code = id.slice("kokoro-".length); // e.g. "af_heart"
-    const m = /^([ab][fm])_(.+)$/.exec(code);
-    const raw = (m?.[2] ?? code).replace(/_/g, " ");
-    const name = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : id;
-    const prefix = m?.[1];
-    const accent = prefix ? KOKORO_ACCENT[prefix] : undefined;
-    return accent ? `${name} · ${accent}` : `Kokoro · ${name}`;
-  }
-  const parts = id.split("#");
-  const model = parts[0] ?? id;
-  const speaker = parts[1];
-  const base = model.replace(/^[a-z]{2}_[A-Z]{2}-/, "").replace(/-(x_low|low|medium|high)$/, "");
-  const name = base ? base.charAt(0).toUpperCase() + base.slice(1) : id;
-  return speaker ? `${name} · ${speaker}` : name;
+  const code = id.startsWith("kokoro-") ? id.slice("kokoro-".length) : id; // e.g. "af_heart"
+  const m = /^([ab][fm])_(.+)$/.exec(code);
+  const raw = (m?.[2] ?? code).replace(/_/g, " ");
+  const name = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : id;
+  const prefix = m?.[1];
+  const accent = prefix ? KOKORO_ACCENT[prefix] : undefined;
+  return accent ? `${name} · ${accent}` : `Kokoro · ${name}`;
 }
 
 interface SettingsScreenProps {
@@ -90,29 +80,32 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // Stream real prompt/answer text to the on-box wall display (:8800). Off by default;
   // null until the server answers so the toggle doesn't flash the wrong state.
   const [brainStream, setBrainStream] = useState<boolean | null>(null);
-  // Read the streamed wall-display turns aloud (piper TTS on the box). Off by default;
+  // Read the streamed wall-display turns aloud (on-box TTS). Off by default;
   // null until the server answers. Companion to the stream toggle above.
   const [brainReadAloud, setBrainReadAloud] = useState<boolean | null>(null);
-  // The piper voice id the read-aloud speaks answers in, plus the box's installed voices
+  // The voice id the read-aloud speaks answers in, plus the box's installed voices
   // (null until fetched; [] when the display is unreachable / has no models) and the
   // "play sample" state. The sample audio ref lets a new sample stop the previous one.
   const [brainAnswerVoice, setBrainAnswerVoice] = useState<string | null>(null);
-  // Which engine the read-aloud renders with: "piper" (on-box, native fallback) or
-  // "native" (the device's own voice). null until the server answers.
+  // Which engine the read-aloud renders with: "piper" (the opaque on-box marker — Kokoro on the
+  // box, native fallback) or "native" (the device's own voice). null until the server answers.
   const [brainEngine, setBrainEngine] = useState<"piper" | "native" | null>(null);
   const [voices, setVoices] = useState<string[] | null>(null);
-  // Multi-speaker rosters (model stem -> speaker names ordered by piper index), for the voice
-  // explorer's shuffle. Null until fetched; {} when the box has no multi-speaker model.
-  const [speakers, setSpeakers] = useState<Record<string, string[]> | null>(null);
-  // The speaker index currently being auditioned in the explorer (null = none yet), and the
-  // "recently heard" rail (most-recent-first indices) so a good one clicked past isn't lost.
-  const [discoverIndex, setDiscoverIndex] = useState<number | null>(null);
-  const [discoverHistory, setDiscoverHistory] = useState<number[]>([]);
   const [samplePlaying, setSamplePlaying] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
   const sampleAudioRef = useRef<HTMLAudioElement | null>(null);
+  // The owner's read-aloud respelling map {word: "say it like"} and its inline editor. null
+  // until the server answers so the panel shows nothing rather than a flash of "empty". The
+  // engine health drives the voice-engine chip. `pronPlayingKey` tags which row is auditioning
+  // (a lexicon word, or "" for the add-form preview) so only that Test button shows playing.
+  const [lexicon, setLexicon] = useState<Record<string, string> | null>(null);
+  const [ttsHealth, setTtsHealth] = useState<BrainTtsHealth | null>(null);
+  const [pronAdding, setPronAdding] = useState(false);
+  const [pronWord, setPronWord] = useState("");
+  const [pronSay, setPronSay] = useState("");
+  const [pronPlayingKey, setPronPlayingKey] = useState<string | null>(null);
   // The "read custom text" overlay: paste arbitrary prose, play it in the chosen on-box voice
-  // or export it to a WAV file. Piper-engine only (it renders on the box), so it opens from the
+  // or export it to a WAV file. On-box engine only (it renders on the box), so it opens from the
   // voice picker below.
   const [readTextOpen, setReadTextOpen] = useState(false);
   // The owner's display timezone — synced from this device's zone on app load
@@ -131,6 +124,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         setBrainReadAloud(s.brain_read_aloud);
         setBrainAnswerVoice(s.brain_answer_voice);
         setBrainEngine(s.brain_read_aloud_engine);
+        setLexicon(s.pronunciation_lexicon ?? {});
         if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
       .catch(() => {
@@ -138,15 +132,21 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (!stale) {
           setImageMode("full");
           setBrainStream(false);
+          setLexicon({});
         }
       });
+    // The read-aloud engine's health drives the voice-engine chip. Its own defensive parse
+    // resolves to the all-off shape on a 503/bad body, so this never rejects.
+    api.brainTtsHealth().then((h) => {
+      if (!stale) setTtsHealth(h);
+    });
     return () => {
       stale = true;
     };
   }, []);
 
-  // Which piper voices the box has installed (incl. curated multi-speaker speakers), for
-  // the read-aloud voice picker. [] when the display is unreachable / has no models.
+  // Which voices the box has installed, for the read-aloud voice picker. [] when the display
+  // is unreachable / has no models.
   useEffect(() => {
     let stale = false;
     api
@@ -156,23 +156,6 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       })
       .catch(() => {
         if (!stale) setVoices([]);
-      });
-    return () => {
-      stale = true;
-    };
-  }, []);
-
-  // The multi-speaker rosters, for the voice explorer's shuffle. {} on any failure so the
-  // explorer simply doesn't render (the curated picker above still works).
-  useEffect(() => {
-    let stale = false;
-    api
-      .brainSpeakers()
-      .then((s) => {
-        if (!stale) setSpeakers(s);
-      })
-      .catch(() => {
-        if (!stale) setSpeakers({});
       });
     return () => {
       stale = true;
@@ -403,49 +386,30 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ brain_read_aloud_engine: next }).catch(() => {});
   }
 
-  // The read-aloud model is a view over two settings. "native" is the engine; "piper" and
-  // "kokoro" both render on-box (engine "piper") and differ only by whether the chosen answer
-  // voice is a Kokoro id ("kokoro-*"). Split the installed voices so each model shows its own.
+  // The read-aloud model is a view over two settings. "native" is the device's own voice;
+  // "kokoro" renders on-box (the opaque "piper" on-box engine). All installed voices are
+  // Kokoro ids ("kokoro-*") now.
   const installedVoices = voices ?? [];
   const kokoroVoices = installedVoices.filter((v) => v.startsWith("kokoro-"));
-  const piperVoiceIds = installedVoices.filter((v) => !v.startsWith("kokoro-"));
-  const answerIsKokoro = (brainAnswerVoice ?? "").startsWith("kokoro-");
   const currentModel: ReadAloudModel | null =
-    brainEngine === null
-      ? null
-      : brainEngine === "native"
-        ? "native"
-        : answerIsKokoro
-          ? "kokoro"
-          : "piper";
-  // Offer Kokoro only when the box has Kokoro voices — or one is already selected, so a saved
-  // Kokoro pick on a box that lists none still shows (and stays on) its model.
-  const models: ReadAloudModel[] =
-    kokoroVoices.length > 0 || currentModel === "kokoro"
-      ? ["piper", "kokoro", "native"]
-      : ["piper", "native"];
+    brainEngine === null ? null : brainEngine === "native" ? "native" : "kokoro";
+  // Kokoro is always offered — the box serves Kokoro on the on-box engine.
+  const models: ReadAloudModel[] = ["kokoro", "native"];
 
-  // Switch model: "native" flips the engine; "piper"/"kokoro" both render on-box (engine "piper")
-  // and steer the answer voice to that model's kind when it isn't already there.
+  // Switch model: "native" flips the engine; "kokoro" ensures the on-box engine (still the
+  // opaque "piper" literal) and steers the answer voice to a Kokoro id when it isn't already one.
   function pickModel(model: ReadAloudModel) {
     if (model === "native") {
       pickEngine("native");
       return;
     }
     if (brainEngine !== "piper") pickEngine("piper");
-    if (model === "kokoro" && !answerIsKokoro && kokoroVoices[0]) pickAnswerVoice(kokoroVoices[0]);
-    else if (model === "piper" && answerIsKokoro && piperVoiceIds[0])
-      pickAnswerVoice(piperVoiceIds[0]);
+    const answerIsKokoro = (brainAnswerVoice ?? "").startsWith("kokoro-");
+    if (!answerIsKokoro && kokoroVoices[0]) pickAnswerVoice(kokoroVoices[0]);
   }
 
-  // The one multi-speaker model the explorer shuffles across (libritts_r today), and its
-  // speaker roster ordered by piper index. Empty roster -> the explorer stays hidden.
-  const explorerModel = speakers ? (Object.keys(speakers)[0] ?? null) : null;
-  const roster: string[] = (explorerModel && speakers ? speakers[explorerModel] : []) ?? [];
-
-  // Render + play a short sample of `voice` on the box's piper, so a speaker can be
-  // auditioned before it's used. A new sample stops any previous one. Shared by the voice
-  // picker's "Play sample" and the explorer's shuffle/replay.
+  // Render + play a short sample of `voice` on the box, so a voice can be auditioned before
+  // it's used. A new sample stops any previous one.
   function playVoiceSample(voice: string) {
     if (!voice) return;
     setSampleError(null);
@@ -483,27 +447,66 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     if (brainAnswerVoice) playVoiceSample(brainAnswerVoice);
   }
 
-  // Voice explorer (Direction A — shuffle): audition speaker `i` of the multi-speaker
-  // roster, optionally recording it in the "recently heard" rail. LibriTTS speakers are
-  // anonymous indices, so shuffling + listening is the only way to find one you like.
-  function auditionSpeaker(i: number, remember: boolean) {
-    if (!explorerModel || i < 0 || i >= roster.length) return;
-    setDiscoverIndex(i);
-    if (remember)
-      setDiscoverHistory((h) => (h[0] === i ? h : [i, ...h.filter((x) => x !== i)].slice(0, 8)));
-    playVoiceSample(`${explorerModel}#${roster[i]}`);
+  // Render + play arbitrary `text` in the chosen on-box voice, so the owner can hear how a
+  // respelling will sound before saving it. Modeled on playVoiceSample; `key` tags which row is
+  // auditioning (a lexicon word, or "" for the add-form preview) so only that Test button shows
+  // playing. Reuses the shared sample-audio slot so a new play stops the previous one.
+  function playText(text: string, key: string) {
+    const value = text.trim();
+    if (!value) return;
+    const voice = brainAnswerVoice ?? kokoroVoices[0] ?? "kokoro-af_heart";
+    setSampleError(null);
+    sampleAudioRef.current?.pause();
+    sampleAudioRef.current = null;
+    setPronPlayingKey(key);
+    void api
+      .brainTts(voice, value)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        sampleAudioRef.current = audio;
+        const done = () => {
+          URL.revokeObjectURL(url);
+          setPronPlayingKey((k) => (k === key ? null : k));
+          if (sampleAudioRef.current === audio) sampleAudioRef.current = null;
+        };
+        audio.onended = done;
+        audio.onerror = () => {
+          done();
+          setSampleError("Couldn't play a sample — is the box reachable?");
+        };
+        void audio.play().catch(() => {
+          done();
+          setSampleError("Couldn't play a sample.");
+        });
+      })
+      .catch(() => {
+        setPronPlayingKey(null);
+        setSampleError("Couldn't reach the box to render a sample.");
+      });
   }
 
-  function shuffleSpeaker() {
-    if (roster.length === 0) return;
-    let next = Math.floor(Math.random() * roster.length);
-    if (next === discoverIndex && roster.length > 1) next = (next + 1) % roster.length;
-    auditionSpeaker(next, true);
+  // The respelling map is stored whole — PUT /api/settings REPLACES pronunciation_lexicon — so
+  // every mutation sends the FULL map. Optimistic: the local map updates before the write lands.
+  function saveLexicon(next: Record<string, string>) {
+    setLexicon(next);
+    void api.updateSettings({ pronunciation_lexicon: next }).catch(() => {});
   }
 
-  function keepSpeaker() {
-    if (discoverIndex === null || !explorerModel) return;
-    pickAnswerVoice(`${explorerModel}#${roster[discoverIndex]}`);
+  function addPronunciation() {
+    const word = pronWord.trim();
+    const say = pronSay.trim();
+    if (!word || !say) return;
+    saveLexicon({ ...(lexicon ?? {}), [word]: say });
+    setPronWord("");
+    setPronSay("");
+    setPronAdding(false);
+  }
+
+  function removePronunciation(word: string) {
+    const next = { ...(lexicon ?? {}) };
+    delete next[word];
+    saveLexicon(next);
   }
 
   return (
@@ -620,7 +623,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       <section className="settings-card">
         <h2 className="settings-label">Read wall display aloud</h2>
         <p className="settings-meta">
-          speaks each streamed chat turn out loud on the box, rendered by piper. companion to the
+          speaks each streamed chat turn out loud on the box, rendered by Kokoro. companion to the
           stream toggle above — it reads the same prompt and answer text, so it only speaks when
           streaming is on and the display is the box's own monitor. the display shows its voice
           panel only while this is on and voices are installed. off by default.
@@ -645,9 +648,8 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         <h2 className="settings-label">Read-aloud voice</h2>
         <p className="settings-meta">
           how the assistant reads answers aloud in chat (and on the wall display). pick a model:{" "}
-          <b>Piper</b> or the more natural <b>Kokoro</b> render on the box; <b>Native</b> uses this
-          device's built-in voice. the on-box models fall back to native when the box can't be
-          reached.
+          <b>Kokoro</b> renders natural voices on the box; <b>Native</b> uses this device's built-in
+          voice. Kokoro falls back to native when the box can't be reached.
         </p>
         <div className="theme-picker" aria-label="Read-aloud model">
           {models.map((model) => (
@@ -663,7 +665,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             </button>
           ))}
         </div>
-        {brainEngine === "piper" &&
+        {brainEngine !== "native" &&
           (voices === null ? (
             <div className="settings-value">…</div>
           ) : voices.length === 0 ? (
@@ -674,59 +676,28 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             </p>
           ) : (
             <>
-              {currentModel === "kokoro" ? (
-                <>
-                  <p className="settings-meta">
-                    Kokoro's natural English voices — American and British. play a sample to hear
-                    one before choosing it.
-                  </p>
-                  <label className="settings-field">
-                    Kokoro voice
-                    <select
-                      aria-label="Kokoro voice"
-                      value={brainAnswerVoice ?? ""}
-                      onChange={(e) => pickAnswerVoice(e.target.value)}
-                    >
-                      {/* Surface the saved Kokoro voice when the box doesn't list it so it isn't blank. */}
-                      {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
-                        <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
-                      )}
-                      {kokoroVoices.map((v) => (
-                        <option key={v} value={v}>
-                          {voiceLabel(v)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </>
-              ) : (
-                <>
-                  <p className="settings-meta">
-                    piper multi-speaker models (like LibriTTS) list their individual speakers. play
-                    a sample to hear one before choosing it.
-                  </p>
-                  <label className="settings-field">
-                    Voice
-                    <select
-                      aria-label="Read-aloud voice"
-                      value={brainAnswerVoice ?? ""}
-                      onChange={(e) => pickAnswerVoice(e.target.value)}
-                    >
-                      {/* Surface a stored piper voice the box no longer lists so the select isn't blank. */}
-                      {brainAnswerVoice &&
-                        !answerIsKokoro &&
-                        !voices.includes(brainAnswerVoice) && (
-                          <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
-                        )}
-                      {piperVoiceIds.map((v) => (
-                        <option key={v} value={v}>
-                          {voiceLabel(v)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </>
-              )}
+              <p className="settings-meta">
+                Kokoro's natural English voices — American and British. play a sample to hear one
+                before choosing it.
+              </p>
+              <label className="settings-field">
+                Kokoro voice
+                <select
+                  aria-label="Kokoro voice"
+                  value={brainAnswerVoice ?? ""}
+                  onChange={(e) => pickAnswerVoice(e.target.value)}
+                >
+                  {/* Surface the saved Kokoro voice when the box doesn't list it so it isn't blank. */}
+                  {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
+                    <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
+                  )}
+                  {kokoroVoices.map((v) => (
+                    <option key={v} value={v}>
+                      {voiceLabel(v)}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="settings-actions">
                 <button
                   type="button"
@@ -746,75 +717,126 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
                 </button>
               </div>
               {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
-              {currentModel !== "kokoro" && roster.length > 0 && (
-                <div className="voice-explorer" aria-label="Discover a voice">
-                  <p className="voice-explorer-cap">Discover a voice</p>
-                  <p className="settings-meta">
-                    LibriTTS ships {roster.length} anonymous speakers — no names or descriptions, so
-                    the only way to know one is to hear it. Shuffle for a random speaker, then keep
-                    the one you like.
-                  </p>
-                  <div className="ve-stage" aria-live="polite">
-                    {discoverIndex === null ? (
-                      <p className="ve-empty">Tap Shuffle to audition a random speaker.</p>
-                    ) : (
-                      <p className="ve-id">
-                        <span className="ve-num">Voice {discoverIndex + 1}</span>
-                        <span className="ve-of">of {roster.length}</span>
-                        <span className="ve-name">speaker {roster[discoverIndex]}</span>
-                      </p>
-                    )}
-                  </div>
-                  <div className="settings-actions">
-                    <button
-                      type="button"
-                      className="seg"
-                      disabled={samplePlaying}
-                      onClick={shuffleSpeaker}
-                    >
-                      {samplePlaying ? "Playing…" : "Shuffle"}
-                    </button>
-                    <button
-                      type="button"
-                      className="seg"
-                      disabled={discoverIndex === null || samplePlaying}
-                      onClick={() =>
-                        discoverIndex !== null && auditionSpeaker(discoverIndex, false)
-                      }
-                    >
-                      Play again
-                    </button>
-                    <button
-                      type="button"
-                      className="seg ve-keep"
-                      disabled={discoverIndex === null}
-                      onClick={keepSpeaker}
-                    >
-                      Keep this voice
-                    </button>
-                  </div>
-                  {discoverHistory.length > 0 && (
-                    <>
-                      <p className="ve-rail-cap">Recently heard</p>
-                      <div className="ve-rail" aria-label="Recently heard speakers">
-                        {discoverHistory.map((i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            className={`ve-chip${discoverIndex === i ? " ve-chip-on" : ""}`}
-                            disabled={samplePlaying}
-                            onClick={() => auditionSpeaker(i, false)}
-                          >
-                            {i + 1}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
             </>
           ))}
+
+        {/* Pronunciations — the owner's respelling map, on-box (Kokoro) only, gated the same
+            way as the voice picker. The whole map is PUT on every edit (REPLACE semantics). */}
+        {currentModel === "kokoro" && (
+          <div className="pron">
+            {ttsHealth && ttsHealth.g2p !== "unavailable" && (
+              <div
+                className={`pron-chip ${ttsHealth.g2p === "misaki" ? "pron-chip-ok" : "pron-chip-warn"}`}
+              >
+                <span className="pron-dot" />
+                {ttsHealth.g2p === "misaki"
+                  ? "Voice engine: misaki ✓"
+                  : "Voice engine: espeak — pronunciations still apply, quality limited"}
+              </div>
+            )}
+            <div className="pron-card">
+              <div className="pron-card-h">
+                <div className="pron-card-t">How to say a word</div>
+                <div className="pron-card-d">
+                  Type a word and how it should sound. Read-aloud says it your way — no phonetics
+                  needed. Applies everywhere the box reads text.
+                </div>
+              </div>
+              <div className="pron-rows" aria-label="Pronunciations">
+                {lexicon === null ? null : Object.keys(lexicon).length === 0 ? (
+                  <div className="pron-empty">No custom pronunciations yet. Add one below.</div>
+                ) : (
+                  Object.entries(lexicon).map(([word, say]) => (
+                    <div className="pron-row" key={word}>
+                      <span className="pron-word">{word}</span>
+                      <span className="pron-arrow">→</span>
+                      <span className="pron-say">{say}</span>
+                      <button
+                        type="button"
+                        className={`pron-icon-btn pron-icon-play${pronPlayingKey === word ? " pron-playing" : ""}`}
+                        title="Test"
+                        aria-label={`Test ${word}`}
+                        onClick={() => playText(say, word)}
+                      >
+                        {pronPlayingKey === word ? "❚❚" : "▷"}
+                      </button>
+                      <button
+                        type="button"
+                        className="pron-icon-btn"
+                        title="Remove"
+                        aria-label={`Remove ${word}`}
+                        onClick={() => removePronunciation(word)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              {pronAdding ? (
+                <div className="pron-adder">
+                  <div className="pron-two">
+                    <label className="pron-field">
+                      Word
+                      <input
+                        value={pronWord}
+                        placeholder="Titusville"
+                        aria-label="Word"
+                        onChange={(e) => setPronWord(e.target.value)}
+                      />
+                    </label>
+                    <label className="pron-field">
+                      Say it like
+                      <input
+                        value={pronSay}
+                        placeholder="Tight us ville"
+                        aria-label="Say it like"
+                        onChange={(e) => setPronSay(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="pron-actions">
+                    <button
+                      type="button"
+                      className="pron-btn pron-btn-test"
+                      disabled={!pronSay.trim()}
+                      onClick={() => playText(pronSay, "")}
+                    >
+                      {pronPlayingKey === "" ? "❚❚ Playing" : "▷ Test"}
+                    </button>
+                    <button
+                      type="button"
+                      className="pron-btn pron-btn-ghost"
+                      onClick={() => {
+                        setPronAdding(false);
+                        setPronWord("");
+                        setPronSay("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="pron-btn pron-btn-primary"
+                      disabled={!pronWord.trim() || !pronSay.trim()}
+                      onClick={addPronunciation}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="pron-add-row" onClick={() => setPronAdding(true)}>
+                  ＋ Add a pronunciation
+                </button>
+              )}
+            </div>
+            <p className="pron-note">
+              Tip: spell it the way it sounds, splitting into chunks with spaces — “Cholmondeley →
+              Chumley”, “GIF → jiff”.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="settings-card">

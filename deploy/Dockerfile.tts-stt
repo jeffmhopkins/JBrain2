@@ -1,4 +1,4 @@
-# The `tts-stt` speech service: whisper.cpp speech-to-text AND warm piper text-to-speech
+# The `tts-stt` speech service: whisper.cpp speech-to-text AND warm Kokoro text-to-speech
 # in one always-on container (the box's speech I/O).
 #
 # STT half — whisper.cpp's server compiled onto the official llama-swap unified Vulkan image
@@ -6,12 +6,13 @@
 # in the SAME base so the binary's glibc/libstdc++ match the runtime. A CPU build keeps it
 # self-contained (ggml falls back to CPU; large-v3-turbo is quick on the Strix Halo CPU).
 #
-# TTS half — Python + piper-tts + the baked default voices. piper_server.py (bind-mounted
-# at /tts, like the wall's serve.py) holds each voice's model resident and reuses it, so a
-# read-aloud clip renders in ~0.1s instead of cold-loading the model every call.
+# TTS half — Python + kokoro-onnx + the baked Kokoro weights. tts_server.py (bind-mounted
+# at /tts, like the wall's serve.py) holds the Kokoro model resident and reuses it, so a
+# read-aloud clip renders in ~0.1s instead of cold-loading the model every call. Kokoro is the
+# only on-box engine; the browser's native voice is the sole fallback when the box has no TTS.
 #
 # Both services are DEFAULT-ON now (dropped the opt-in `whisper` profile), so a stock deploy
-# has read-aloud (piper) and, once its model is provisioned, transcription (whisper).
+# has read-aloud (Kokoro) and, once its model is provisioned, transcription (whisper).
 
 ARG WHISPER_BASE=ghcr.io/mostlygeek/llama-swap:vulkan
 
@@ -35,68 +36,71 @@ FROM ${WHISPER_BASE}
 # STT: whisper-server onto PATH so the generated llama-swap config can invoke it by name.
 COPY --from=build /src/build/bin/whisper-server /usr/local/bin/whisper-server
 
-# TTS: Python runtime + piper (onnxruntime's OpenMP dep is libgomp1; espeak-ng is Kokoro's
-# phonemizer backend — kokoro-onnx bundles it via espeakng-loader, kept here as a belt-and-
-# suspenders). --break-system-packages installs into the container's system python (PEP 668) —
-# fine for a single-purpose image. piper-tts is the ALWAYS-ON half read-aloud depends on, so it
-# stays fatal; onnxruntime rides in as its dependency.
+# TTS: Python runtime + kokoro-onnx (onnxruntime rides in as its dependency, and libgomp1 is
+# onnxruntime's OpenMP dep; espeak-ng is Kokoro's phonemizer backend — kokoro-onnx bundles it
+# via espeakng-loader, kept here as a belt-and-suspenders). --break-system-packages installs
+# into the container's system python (PEP 668) — fine for a single-purpose image. This apt step
+# (the Python runtime + native deps) stays fatal; the kokoro-onnx pip install below is non-fatal
+# so a transient blip can't abort the build (the browser's native voice is then the fallback).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-pip libgomp1 espeak-ng \
- && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir --break-system-packages piper-tts
+ && rm -rf /var/lib/apt/lists/*
 
-# Kokoro-82M is an OPTIONAL second TTS engine — its pip install must NEVER fail the image build
-# (a Kokoro-only hiccup would otherwise abort the whole stack's `jbrain update`, since one build
-# recreates every service). On failure the image still builds and read-aloud runs piper-only; the
+# Kokoro-82M is the on-box TTS engine. Pinned to 0.4.7 — the newest release whose Requires-Python
+# (>=3.9, no upper bound) installs on this base image's Python 3.14; 0.4.8+/0.5.x cap at <3.14 and
+# pip refuses them here. Same Kokoro()/.create() API and same v1.0 model files as 0.5.x, so the
+# render code is unchanged. Bump when the base's Python moves. The install is NON-FATAL so a
+# transient pip blip can't abort the whole stack's `jbrain update` (one build recreates every
+# service); on failure the image still builds and the browser's native voice is the fallback. The
 # weight fetch below is skipped unless this import succeeds, so /opt/kokoro stays empty and
-# piper_server lists no Kokoro voices (never a dead, listed voice). Pinned to 0.4.7 — the newest
-# release whose Requires-Python (>=3.9, no upper bound) installs on this base image's Python 3.14;
-# 0.4.8+/0.5.x cap at <3.14 and pip refuses them here. Same Kokoro()/.create() API and same v1.0
-# model files as 0.5.x, so the render code is unchanged. Bump when the base's Python moves.
+# tts_server lists no Kokoro voices (never a dead, listed voice).
 RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
- || echo "[kokoro] pip install failed — read-aloud will run piper-only until the next build"
+ || { echo >&2 "!!!!! [kokoro] ============================================================"; \
+      echo >&2 "!!!!! [kokoro] system-python kokoro-onnx pip install FAILED"; \
+      echo >&2 "!!!!! [kokoro] the box has NO on-box TTS — read-aloud falls back to the"; \
+      echo >&2 "!!!!! [kokoro] browser's native voice until the next successful build"; \
+      echo >&2 "!!!!! [kokoro] ============================================================"; }
 
 # misaki — Kokoro's recommended G2P: better English pronunciation than espeak (POS-based
 # homographs, num2words), with an espeak fallback for OOV. Its spaCy stack has NO Python-3.14
 # wheels (spaCy tops out at cp313, misaki caps at <3.13) and this base image's system Python is
 # 3.14, so `pip install misaki[en]` on system python can only ever fail to build blis and fall
-# back to espeak. Instead build the FULL TTS Python stack in a self-contained Python 3.12 venv
-# (uv fetches a portable build) where every wheel exists — piper + kokoro + misaki[en] + its small
-# spaCy model (en_core_web_sm; piper_server uses trf=False to bound RAM) — and prefer it at runtime
-# (entrypoint.sh). NON-FATAL and self-cleaning: the system-python piper above stays the guaranteed
-# fallback, so a venv hiccup (or blocked egress) only means read-aloud runs piper-only on 3.14 —
-# never a broken build or a dead TTS. The final import check tears the venv down unless the whole
-# stack loads, so the entrypoint's presence test can't pick a half-built venv. Keep the "misaki"
-# token here in step with piper_server.py's _load_g2p (the test guards it).
+# back to espeak. Instead build the FULL Kokoro Python stack in a self-contained Python 3.12 venv
+# (uv fetches a portable build) where every wheel exists — kokoro + misaki[en] + its small spaCy
+# model (en_core_web_sm; tts_server uses trf=False to bound RAM) — and prefer it at runtime
+# (entrypoint.sh). NON-FATAL and self-cleaning: the system-python kokoro-onnx above stays the
+# on-box fallback, so a venv hiccup (or blocked egress) only means Kokoro runs on espeak G2P on
+# 3.14 — never a broken build or a dead TTS. The final import check tears the venv down unless the
+# whole stack loads, so the entrypoint's presence test can't pick a half-built venv. Keep the
+# "misaki" token here in step with tts_server.py's _load_g2p (the test guards it).
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN ( uv python install 3.12 \
    && uv venv --python 3.12 /opt/tts-venv \
-   && uv pip install --python /opt/tts-venv --no-cache piper-tts kokoro-onnx==0.4.7 "misaki[en]" \
+   && uv pip install --python /opt/tts-venv --no-cache kokoro-onnx==0.4.7 "misaki[en]" \
    && /opt/tts-venv/bin/python -m spacy download en_core_web_sm \
-   && /opt/tts-venv/bin/python -c "import piper, kokoro_onnx, misaki.en" ) \
- || { echo "[kokoro] py3.12 TTS venv unavailable — read-aloud runs piper-only on system python"; \
+   && /opt/tts-venv/bin/python -c "import kokoro_onnx, misaki.en" ) \
+ || { echo >&2 "!!!!! [kokoro] ============================================================"; \
+      echo >&2 "!!!!! [kokoro] py3.12 misaki G2P venv build FAILED — tearing it down"; \
+      echo >&2 "!!!!! [kokoro] Kokoro still runs on system python with the espeak G2P"; \
+      echo >&2 "!!!!! [kokoro] fallback; pronunciation is coarser until the next build"; \
+      echo >&2 "!!!!! [kokoro] ============================================================"; \
       rm -rf /opt/tts-venv; }
 
-# Baked default voices: Joe reads prompts, Amy reads answers, plus the multi-speaker
-# libritts_r model whose curated speaker 3922 is a second female agent voice. Fetched with
-# stdlib urllib (follows HF's CDN redirect) into /opt/piper-voices (outside the /tts mount).
-# This tuple is the baked source of truth and must stay in step with install-tts.sh's MODELS.
-RUN python3 -c "import urllib.request as u; from pathlib import Path; \
-d=Path('/opt/piper-voices'); d.mkdir(parents=True, exist_ok=True); \
-B='https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US'; \
-[ (print('[voices]', v, e, flush=True), u.urlretrieve(f'{B}/{v}/medium/en_US-{v}-medium{e}', d/f'en_US-{v}-medium{e}')) for v in ('joe','amy','libritts_r') for e in ('.onnx','.onnx.json') ]"
-
 # Kokoro-82M voices (Apache-2.0): ONE shared onnx model + a voice-styles bin that together serve
-# many voices, baked into /opt/kokoro — its OWN dir, so the piper voice glob never scans it. These
-# are the canonical kokoro-onnx release artifacts. Fetched with retry (they total ~340 MB from
-# GitHub). Like the pip step, this is NON-FATAL — a transient blip or blocked egress must not abort
-# an otherwise-fine `jbrain update`. The `|| echo` swallows the failure; a giving-up SystemExit
-# leaves /opt/kokoro empty-or-partial, and piper_server's weights-both-present gate then lists no
-# Kokoro voices (piper-only) rather than a broken one. Skipped entirely unless the package imported,
-# so weights are never present without a runtime to use them. The filenames must stay in step with
-# piper_server.py's KOKORO_MODEL/KOKORO_VOICES_FILE (the test guards this).
+# many voices (ids like "kokoro-af_heart"), baked into /opt/kokoro. These are the canonical
+# kokoro-onnx release artifacts. Fetched with retry (they total ~340 MB from GitHub). Like the pip
+# step, this is NON-FATAL — a transient blip or blocked egress must not abort an otherwise-fine
+# `jbrain update`. The banner below is LOUD but non-fatal; a giving-up SystemExit leaves /opt/kokoro
+# empty-or-partial, and tts_server's weights-both-present gate then lists no Kokoro voices (the
+# browser's native voice is the fallback) rather than a broken one. Skipped entirely unless the
+# package imported, so weights are never present without a runtime to use them. The filenames must
+# stay in step with tts_server.py's KOKORO_MODEL/KOKORO_VOICES_FILE (the test guards this).
 RUN python3 - <<'PY' \
- || echo "[kokoro] weight fetch unavailable — read-aloud will run piper-only until the next build"
+ || { echo >&2 "!!!!! [kokoro] ============================================================"; \
+      echo >&2 "!!!!! [kokoro] weight fetch FAILED — /opt/kokoro is empty or partial"; \
+      echo >&2 "!!!!! [kokoro] the box lists NO Kokoro voices; read-aloud falls back to"; \
+      echo >&2 "!!!!! [kokoro] the browser's native voice until the next successful build"; \
+      echo >&2 "!!!!! [kokoro] ============================================================"; }
 import importlib.util
 import time
 import urllib.request
@@ -122,6 +126,6 @@ for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
         raise SystemExit(f"[kokoro] giving up on {name}")
 PY
 
-# No app COPY: piper_server.py + entrypoint.sh are bind-mounted at /tts and launched via the
-# compose entrypoint (which starts the piper server, then execs llama-swap). Only the baked
-# voices + the whisper/piper runtimes live in the image.
+# No app COPY: tts_server.py + entrypoint.sh are bind-mounted at /tts and launched via the
+# compose entrypoint (which starts the TTS server, then execs llama-swap). Only the baked Kokoro
+# weights + the whisper/Kokoro runtimes live in the image.

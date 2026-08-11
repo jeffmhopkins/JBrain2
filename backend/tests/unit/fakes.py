@@ -459,12 +459,32 @@ class FakeSettingsStore:
         return self.values.get("brain_read_aloud", False) is True
 
     async def brain_answer_voice(self, ctx: object) -> str:
-        raw = self.values.get("brain_answer_voice", "en_US-amy-medium")
-        return raw if isinstance(raw, str) and raw else "en_US-amy-medium"
+        raw = self.values.get("brain_answer_voice", "kokoro-af_heart")
+        return raw if isinstance(raw, str) and raw else "kokoro-af_heart"
 
     async def brain_read_aloud_engine(self, ctx: object) -> str:
         raw = self.values.get("brain_read_aloud_engine", "piper")
         return raw if raw in ("piper", "native") else "piper"
+
+    async def pronunciation_lexicon(self, ctx: object) -> dict[str, str]:
+        raw = self.values.get("pronunciation_lexicon", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            w.strip(): s.strip()
+            for w, s in raw.items()
+            if isinstance(w, str) and isinstance(s, str) and w.strip() and s.strip()
+        }
+
+    async def set_pronunciation_lexicon(
+        self, ctx: object, lexicon: dict[str, str]
+    ) -> dict[str, str]:
+        # Store the SANITIZED map (mirrors the SQL store — it refuses to persist what it wouldn't
+        # read back), so store.values reflects what a reader would see.
+        self.values["pronunciation_lexicon"] = lexicon
+        clean = await self.pronunciation_lexicon(ctx)
+        self.values["pronunciation_lexicon"] = clean
+        return clean
 
     async def llm_task_overrides(self, ctx: object) -> dict[str, dict[str, str]]:
         # Mirrors the SQL store's sanitizing read (drops malformed entries).

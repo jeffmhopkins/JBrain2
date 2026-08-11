@@ -78,8 +78,8 @@ if ! grep -q '^JLAUNCH_TOKEN=..*' .env; then
   printf 'JLAUNCH_TOKEN=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
 fi
 
-# Read-aloud (server-side piper TTS) needs NOTHING here: piper AND the default voice
-# models are baked into the tts-stt image (deploy/Dockerfile.tts-stt), rebuilt
+# Read-aloud (server-side Kokoro TTS) needs NOTHING here: Kokoro AND its weights
+# are baked into the tts-stt image (deploy/Dockerfile.tts-stt), rebuilt
 # by the `docker compose build` below. It is driven entirely by the Settings toggle
 # (brain_read_aloud) at runtime — no env var, no host download, no provisioning step.
 

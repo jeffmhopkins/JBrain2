@@ -55,7 +55,7 @@ beforeEach(() => {
   // Default: native engine, no box voices — the native path, as the pre-piper hook behaved.
   getSettings.mockReset().mockResolvedValue({
     brain_read_aloud: true,
-    brain_answer_voice: "en_US-amy-medium",
+    brain_answer_voice: "kokoro-af_heart",
     brain_read_aloud_engine: "native",
   });
   brainVoices.mockReset().mockResolvedValue([]);
@@ -236,10 +236,10 @@ describe("useReadAloud piper engine", () => {
     Reflect.deleteProperty(window, "speechSynthesis");
     getSettings.mockResolvedValue({
       brain_read_aloud: true,
-      brain_answer_voice: "en_US-libritts_r-medium#3922",
+      brain_answer_voice: "kokoro-am_michael",
       brain_read_aloud_engine: "piper",
     });
-    brainVoices.mockResolvedValue(["en_US-amy-medium", "en_US-libritts_r-medium#3922"]);
+    brainVoices.mockResolvedValue(["kokoro-af_heart", "kokoro-am_michael"]);
   });
 
   it("is available when the setting is on and the box has voices", async () => {
@@ -253,7 +253,7 @@ describe("useReadAloud piper engine", () => {
     await act(async () => result.current.toggle("a", "**Hello** `world` [link](http://x)"));
     await waitFor(() => expect(audios).toHaveLength(1));
     expect(brainTts).toHaveBeenCalledWith(
-      "en_US-libritts_r-medium#3922",
+      "kokoro-am_michael",
       "Hello world link.",
       undefined,
       undefined, // markup turn → no speed override
@@ -349,7 +349,7 @@ describe("useReadAloud piper engine", () => {
   it("uses the device voice when the engine is native even with box voices", async () => {
     getSettings.mockResolvedValue({
       brain_read_aloud: true,
-      brain_answer_voice: "en_US-amy-medium",
+      brain_answer_voice: "kokoro-af_heart",
       brain_read_aloud_engine: "native",
     });
     stubNative();

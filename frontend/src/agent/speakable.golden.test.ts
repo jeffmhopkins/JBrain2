@@ -33,7 +33,7 @@ describe("speakable golden corpus", () => {
 
   it("normalizes a Markdown LLM answer (heading, lists, bold, inline code, link, table-free)", () => {
     expect(speakable(ANSWER)).toBe(
-      "Summary. The API returned two hundred OK in one.5s. Key points: Latency dropped twenty percent. See the docs for details. Steps: one. Restart the service. two. Re run the check.",
+      "Summary: The API returned two hundred OK in one.5s. Key points: Latency dropped twenty percent. See the docs for details. Steps: one. Restart the service. two. Re run the check.",
     );
   });
 
@@ -41,7 +41,7 @@ describe("speakable golden corpus", () => {
     // Structural pass: markdown/markers gone, numbers/percent still raw, newlines preserved.
     expect(toProse(ANSWER)).toBe(
       [
-        "Summary",
+        "Summary:",
         "",
         "The API returned 200 OK in 1.5s. Key points:",
         "",
@@ -58,10 +58,10 @@ describe("speakable golden corpus", () => {
     expect(toUtterance(toProse(ANSWER))).toBe(speakable(ANSWER));
   });
 
-  it("kokoro and piper share one ruleset today (the seam is wired but not yet diverged)", () => {
-    // W1 gives kokoro its own misaki-aware profile; until then output must match byte-for-byte.
-    expect(speakable(STORY, "kokoro")).toBe(speakable(STORY, "piper"));
-    expect(speakable(ANSWER, "kokoro")).toBe(speakable(ANSWER, "piper"));
+  it("defaults to the kokoro profile (the only on-box engine)", () => {
+    // Kokoro is the sole engine now; the explicit-engine call and the default must agree.
+    expect(speakable(STORY, "kokoro")).toBe(speakable(STORY));
+    expect(speakable(ANSWER, "kokoro")).toBe(speakable(ANSWER));
   });
 });
 

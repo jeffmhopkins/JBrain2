@@ -372,20 +372,14 @@ const SETTINGS: AppSettings = {
   owner_timezone: null,
   brain_llm_stream: false,
   brain_read_aloud: false,
-  brain_answer_voice: "en_US-amy-medium",
+  brain_answer_voice: "kokoro-af_heart",
+  // The opaque "on-box" engine marker (Kokoro on the box, native fallback).
   brain_read_aloud_engine: "piper",
+  pronunciation_lexicon: {},
 };
 
-// The box's installed piper voices, for the read-aloud voice picker mock — one curated
-// multi-speaker entry (libritts_r 3922) alongside the two single-speaker defaults.
-const BRAIN_VOICES = ["en_US-amy-medium", "en_US-joe-medium", "en_US-libritts_r-medium#3922"];
-
-// The multi-speaker libritts_r roster the Settings voice explorer shuffles across — speaker
-// names ordered by piper index (index 0 is the curated female speaker 3922). A synthetic
-// 902-entry list in dev; the real box reads the names from the model's speaker_id_map.
-const BRAIN_SPEAKERS: Record<string, string[]> = {
-  "en_US-libritts_r-medium": ["3922", ...Array.from({ length: 901 }, (_, i) => String(1000 + i))],
-};
+// The box's installed Kokoro voices, for the read-aloud voice picker mock.
+const BRAIN_VOICES = ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
 
 // Per-task LLM routing fixture (GET/PUT /api/settings/llm). Only grok carries
 // a reasoning level; reasoning_effort is null for any task off grok, mirroring
@@ -3581,9 +3575,16 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json({ job_id: id("job") }, 202);
   }
 
-  // The on-box piper TTS, proxied through the api (read-aloud voice picker + samples).
+  // The on-box TTS, proxied through the api (read-aloud voice picker + samples).
   if (path === "/api/brain/voices" && method === "GET") return json({ voices: BRAIN_VOICES });
-  if (path === "/api/brain/speakers" && method === "GET") return json({ speakers: BRAIN_SPEAKERS });
+  if (path === "/api/brain/tts/health" && method === "GET") {
+    return json({
+      kokoro_available: true,
+      g2p: "misaki",
+      lexicon_entries: Object.keys(SETTINGS.pronunciation_lexicon).length,
+      voice_count: BRAIN_VOICES.length,
+    });
+  }
   if (path.startsWith("/api/brain/tts") && method === "GET") {
     // A tiny empty WAV stand-in — enough for a same-origin <audio> load in dev; tests
     // stub the api layer directly rather than exercising this.
@@ -3615,6 +3616,16 @@ export const mockFetch: typeof fetch = async (input, init) => {
       } else if (key === "brain_read_aloud_engine") {
         if (value !== "piper" && value !== "native") return json({ detail: "bad engine" }, 422);
         SETTINGS.brain_read_aloud_engine = value;
+      } else if (key === "pronunciation_lexicon") {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          return json({ detail: "bad pronunciation_lexicon" }, 422);
+        }
+        // Mirror the store's sanitize: keep non-blank word→say string pairs.
+        SETTINGS.pronunciation_lexicon = Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).filter(
+            ([w, s]) => typeof s === "string" && w.trim() && s.trim(),
+          ) as [string, string][],
+        );
       } else {
         return json({ detail: `unknown key ${key}` }, 422);
       }

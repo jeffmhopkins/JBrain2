@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Warm-model piper TTS server for the JBrain2 `tts-stt` speech service.
+"""Warm-model Kokoro TTS server for the JBrain2 `tts-stt` speech service.
 
-The box's read-aloud voice: renders answer text to WAV with piper and returns the
-audio. Unlike the old per-clip `piper` subprocess (which COLD-LOADED the ~60-78 MB
-model every render — the dominant latency and the source of gappy playback), this
-holds each voice's model resident via `piper.voice.PiperVoice` and reuses it, so a
-clip renders in ~0.1 s instead of ~1.5 s. It shares the `tts-stt` container with the
-whisper.cpp STT server (llama-swap, a separate process on :8080); this is the TTS
-half, on :8801.
+The box's read-aloud voice: renders answer text to WAV with Kokoro-82M and returns the
+audio. The ~310 MB Kokoro model loads once (lazily, on the first render) and is held
+resident so each clip renders fast instead of cold-loading the model every time. It
+shares the `tts-stt` container with the whisper.cpp STT server (llama-swap, a separate
+process on :8080); this is the TTS half, on :8801.
 
 Reached over the internal docker network only (no LAN port): the authenticated api
 proxies it for the PWA read-aloud + Settings sample (`/api/brain/tts`,
@@ -15,18 +13,18 @@ proxies it for the PWA read-aloud + Settings sample (`/api/brain/tts`,
 touches NO database and NO user data — only the answer TEXT the owner asked to be
 read, rendered to audio and returned; nothing is stored.
 
-A single-speaker `.onnx` (+ its `.onnx.json`) is one selectable voice named by its
-file stem; a MULTI-speaker model (e.g. libritts_r) contributes one voice per CURATED
-speaker, id "<stem>#<speaker>". Voices are found across the mounted extras dir then
-the baked defaults dir, so the service needs no configuration — Joe/Amy (+ the
-multi-speaker libritts_r) are baked into the image.
+Kokoro is ONE onnx model + a voice-styles bin that together serve many voices, each a
+selectable id "kokoro-<voice>". Phonemization goes through misaki (better English than
+espeak, and the ONLY path on which the KOKORO_LEXICON pronunciation overrides apply); when
+misaki is unavailable Kokoro falls back to its own built-in espeak — GET /tts/health reports
+which. When Kokoro itself isn't provisioned the box lists no voices and read-aloud falls back
+to the caller's own device voice (there is no other on-box engine — piper was removed).
 
-Stdlib + piper only — no web framework.
+Stdlib only — no web framework, no piper.
 """
 
 from __future__ import annotations
 
-import contextlib
 import io
 import json
 import os
@@ -41,36 +39,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from piper import PiperVoice, SynthesisConfig
-
-PIPER_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_VOICES_DIR", "/opt/piper-voices"))
-PIPER_BAKED_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_BAKED_VOICES_DIR", "/opt/piper-voices"))
 # A short lead of silence so a cold audio-sink resume clips the silence, not the first
 # word (the page's WebAudio keep-alive is the real fix; this is a backstop). Requested
 # only on the FIRST clip of a turn — continuation clips send ?lead=0 for gapless playback.
-PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
+LEAD_MS = int(os.environ.get("BRAIN_TTS_LEAD_MS", "400"))
 # Longest single render the page requests — it splits a reply into sentence-sized clips,
 # so this bounds one chunk, not the whole answer.
 TTS_CHUNK_CAP = 1000
-# Pre-warm this voice at startup so the very first read-aloud clip doesn't pay the
-# one-time model load (~8 s on a big multi-speaker model). "" skips pre-warming.
-PREWARM_VOICE = os.environ.get("BRAIN_PIPER_PREWARM", "en_US-amy-medium")
 
-# A multi-speaker piper model carries hundreds of speakers; we surface only a curated
-# few as named voices (id "<stem>#<speaker>"), keyed by model file stem -> the speaker
-# names to expose (as they appear in the model's `.onnx.json` speaker_id_map). libritts_r
-# speaker 3922 (piper index 0) is a second, female agent voice. Add names to expose more.
-CURATED_SPEAKERS: dict[str, tuple[str, ...]] = {
-    "en_US-libritts_r-medium": ("3922",),
-}
-
-# --- Kokoro-82M: a second, more natural TTS engine baked beside piper (Apache-2.0) ----------
-# Unlike piper (one .onnx per voice), Kokoro is ONE onnx model + a voice-styles bin that
-# together serve many voices; both live in their OWN dir so the piper `*.onnx` glob never tries
-# to load the Kokoro model as a PiperVoice. We surface a set as ids "kokoro-<voice>", selectable
-# ONLY when the weights are baked on disk — a box without them lists no Kokoro voices rather than
-# dead entries. Keep KOKORO_MODEL/KOKORO_VOICES_FILE in step with the bake block in
-# Dockerfile.tts-stt (the test guards this).
+# --- Kokoro-82M: the on-box TTS engine (Apache-2.0) -----------------------------------------
+# Kokoro is ONE onnx model + a voice-styles bin that together serve many voices, all under the
+# one KOKORO_DIR. We surface a curated set as ids "kokoro-<voice>", selectable ONLY when the
+# weights are baked on disk — a box without them lists no voices (read-aloud then uses the
+# device voice) rather than dead entries. Keep KOKORO_MODEL/KOKORO_VOICES_FILE in step with the
+# bake block in Dockerfile.tts-stt (the test guards this).
 KOKORO_DIR = Path(os.environ.get("BRAIN_KOKORO_DIR", "/opt/kokoro"))
 KOKORO_MODEL = "kokoro-v1.0.onnx"
 KOKORO_VOICES_FILE = "voices-v1.0.bin"
@@ -79,7 +61,7 @@ KOKORO_ID_PREFIX = "kokoro-"
 # dials them in by ear after a listen). SPEED < 1.0 reads slower/warmer; TRAIL_MS appends silence
 # after each Kokoro clip for a beat between sentences. Per-request `speed`/`trail` on /tts override
 # these (for the future story-vs-answer modes). Kokoro only; clamped at use. Parsed defensively so a
-# typo'd env can't crash the always-on service (a crash here would take piper down too).
+# typo'd env can't crash the always-on TTS service.
 try:
     KOKORO_SPEED = float(os.environ.get("BRAIN_KOKORO_SPEED", "1.0"))
 except ValueError:
@@ -133,17 +115,14 @@ KOKORO_BLENDS: dict[str, tuple[tuple[str, float], ...]] = {
 # resolved speaker, bytes and elapsed ms. Failures ALWAYS log; this adds the success trace.
 _tts_debug = [False]
 
-# Warm model cache: model path -> loaded PiperVoice, plus a lock serialising synthesis
-# (onnxruntime is not safe to Run concurrently on one session — renders are fast, so a
-# single global lock is simplest and cheap).
-_voice_cache: dict[str, PiperVoice] = {}
+# A lock serialising synthesis (onnxruntime is not safe to Run concurrently on one session —
+# renders are fast, so a single global lock is simplest and cheap).
 _synth_lock = threading.Lock()
 
-# Resident Kokoro engine (holds 0 or 1) — the ~310 MB model loads lazily on the first Kokoro
-# render (outside _synth_lock, like piper's model load) and is reused thereafter. Its own load
-# lock (NOT _synth_lock, so a cold load never blocks piper renders) makes the lazy init
-# check-and-set atomic: without it two concurrent first-renders on a threaded server could each
-# construct a model and leave two resident (piper's path self-dedupes via a dict; this can't).
+# Resident Kokoro engine (holds 0 or 1) — the ~310 MB model loads lazily on the first render
+# (outside _synth_lock) and is reused thereafter. Its own load lock (NOT _synth_lock, so a cold
+# load never blocks a render) makes the lazy init check-and-set atomic: without it two concurrent
+# first-renders on a threaded server could each construct a model and leave two resident.
 _kokoro_holder: list[Any] = []
 _kokoro_load_lock = threading.Lock()
 
@@ -153,108 +132,11 @@ _g2p_holder: list[Any] = []
 _g2p_load_lock = threading.Lock()
 
 
-def _voice_models() -> dict[str, Path]:
-    """Map each model file stem to its `.onnx` path, mounted extras dir then baked
-    defaults. Earlier dirs win on a name clash. {} if none."""
-    models: dict[str, Path] = {}
-    for d in (PIPER_VOICES_DIR, PIPER_BAKED_VOICES_DIR):
-        try:
-            for p in sorted(d.glob("*.onnx")):
-                models.setdefault(p.stem, p)
-        except OSError:
-            continue
-    return models
-
-
-def _speaker_map(model: Path) -> dict[str, int]:
-    """`{speaker_name: index}` from a model's `.onnx.json` `speaker_id_map`, or {} for a
-    single-speaker model. Only name->int entries survive, so a junk map can't yield a bad
-    speaker id."""
-    try:
-        meta = json.loads(Path(str(model) + ".json").read_text())
-    except (OSError, ValueError):
-        return {}
-    sid = meta.get("speaker_id_map")
-    if not isinstance(sid, dict):
-        return {}
-    return {str(k): v for k, v in sid.items() if isinstance(v, int) and not isinstance(v, bool)}
-
-
-def _voices() -> list[tuple[str, Path, int | None]]:
-    """The selectable voices as `(id, model_path, speaker_index)`, stems sorted. Single-
-    speaker -> one entry (id = stem, speaker None). Multi-speaker -> one entry per CURATED
-    speaker present (id "<stem>#<name>"), else its default speaker (id = stem, index 0)."""
-    out: list[tuple[str, Path, int | None]] = []
-    for stem, model in sorted(_voice_models().items()):
-        smap = _speaker_map(model)
-        if not smap:
-            out.append((stem, model, None))
-            continue
-        names = [n for n in CURATED_SPEAKERS.get(stem, ()) if n in smap]
-        if names:
-            out.extend((f"{stem}#{n}", model, smap[n]) for n in names)
-        else:
-            out.append((stem, model, 0))  # multi-speaker but uncurated -> default speaker
-    return out
-
-
-def piper_voices() -> list[str]:
-    """Installed selectable voice ids: piper voices (incl. curated multi-speaker entries) plus
-    the curated Kokoro voices when Kokoro is baked. [] when nothing is installed. (Name kept for
-    the /tts/voices seam its callers use; it now spans both engines.)"""
-    return [vid for vid, _, _ in _voices()] + kokoro_voices()
-
-
-def piper_speakers() -> dict[str, list[str]]:
-    """For each installed MULTI-speaker model, its speaker names sorted by piper speaker index
-    (ascending) — a stable, glanceable ordering the caller shuffles across, rebuilding the id
-    "<stem>#<name>" from a name (which `_resolve_voice` maps back to the real index, so the
-    list position is only a display counter, not the synthesis id). The Settings voice explorer
-    uses this to audition all 900-odd libritts_r speakers, not just the curated few. {} when no
-    installed model is multi-speaker."""
-    out: dict[str, list[str]] = {}
-    for stem, model in sorted(_voice_models().items()):
-        smap = _speaker_map(model)
-        if len(smap) <= 1:
-            continue
-        out[stem] = [name for name, _ in sorted(smap.items(), key=lambda kv: kv[1])]
-    return out
-
-
-def _resolve_voice(voice_id: str) -> tuple[Path, int | None] | None:
-    """Map a requested voice id to `(model_path, speaker_index)`, validated against the
-    installed set (no path traversal). An unknown/blank id falls back to the first voice;
-    None only when nothing is installed."""
-    voices = _voices()
-    if not voices:
-        return None
-    for vid, model, spk in voices:
-        if vid == voice_id:
-            return model, spk
-    # Not a curated preset — accept any "<stem>#<name>" whose speaker exists in an installed
-    # multi-speaker model, so the voice explorer can render any of its speakers (not only the
-    # curated few). <name> is validated against the model's speaker_id_map (a finite set read
-    # from the model file), so this never yields an out-of-range speaker or a traversal path.
-    if "#" in voice_id:
-        stem, name = voice_id.split("#", 1)
-        model = _voice_models().get(stem)
-        if model is not None:
-            index = _speaker_map(model).get(name)
-            if index is not None:
-                return model, index
-    _, model, spk = voices[0]
-    return model, spk
-
-
-def _load_voice(model: Path) -> PiperVoice:
-    """Return the resident PiperVoice for `model`, loading (and caching) it on first use.
-    The load is the expensive step (~1-8 s); every render after reuses it."""
-    key = str(model)
-    voice = _voice_cache.get(key)
-    if voice is None:
-        voice = PiperVoice.load(key, config_path=f"{key}.json")
-        _voice_cache[key] = voice
-    return voice
+def tts_voices() -> list[str]:
+    """Installed selectable voice ids — the curated Kokoro voices when the weights are baked, []
+    otherwise (read-aloud then falls back to the device voice). Named for the /tts/voices seam its
+    callers use."""
+    return kokoro_voices()
 
 
 def _pad(wav_bytes: bytes, lead_ms: int, trail_ms: int) -> bytes:
@@ -398,10 +280,10 @@ def _kokoro_wav(
     speed: float | None = None,
     trail_ms: int | None = None,
 ) -> bytes | None:
-    """Render `text` with the warm Kokoro engine for a "kokoro-<voice>" id. Dispatched BEFORE
-    the piper resolver so a Kokoro id can never hit piper's unknown-id fallback and render in
-    the first piper voice (a silent wrong-voice). None (→ device native) when Kokoro isn't baked
-    or synth fails — every None path logs. The model LOAD runs outside _synth_lock (a
+    """Render `text` with the warm Kokoro engine for a "kokoro-<voice>" id (already normalized by
+    tts_wav to a valid id, so an unknown name never reaches the engine). None (→ device native)
+    when Kokoro isn't baked or synth fails — every None path logs. The model LOAD runs outside
+    _synth_lock (a
     multi-second one-time cost); only the synth call is serialised (onnxruntime isn't safe to
     Run concurrently on one session). `speed`/`trail_ms` default to the KOKORO_SPEED/TRAIL_MS env
     (audiobook pacing); `speed` is clamped here, `trail_ms` is bounded by the /tts handler / env."""
@@ -443,12 +325,32 @@ def _kokoro_wav(
         ms = int((time.monotonic() - started) * 1000)
         print(f"[tts] rendered {voice_id!r} (kokoro): {len(data)} bytes in {ms} ms",
               file=sys.stderr)
-    lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
+    lead = LEAD_MS if lead_ms is None else lead_ms
     trail = KOKORO_TRAIL_MS if trail_ms is None else trail_ms
     return _pad(data, lead, trail)
 
 
-# --- Speakable-text normalization (engine-agnostic; runs before piper OR Kokoro) ------------
+def tts_health() -> dict[str, Any]:
+    """A readiness snapshot the app surfaces so a SILENT espeak fallback is visible, not guessed.
+    Kokoro phonemizes through misaki when its spaCy G2P loaded, else through kokoro-onnx's built-in
+    espeak — and the KOKORO_LEXICON phoneme overrides apply ONLY on the misaki path, so an espeak
+    fallback silently un-fixes every seeded word (e.g. "Titusville"). `g2p` is "unavailable" when
+    Kokoro isn't baked at all, else "misaki"/"espeak" for what a render WOULD use right now. Loading
+    the G2P is the same lazy, cached, non-fatal step a first Kokoro render triggers, so hitting this
+    also pre-warms misaki."""
+    kokoro = _kokoro_available()
+    g2p = "unavailable"
+    if kokoro:
+        g2p = "misaki" if _load_g2p() is not None else "espeak"
+    return {
+        "kokoro_available": kokoro,
+        "g2p": g2p,
+        "lexicon_entries": len(KOKORO_LEXICON),
+        "voice_count": len(tts_voices()),
+    }
+
+
+# --- Speakable-text normalization (runs before Kokoro phonemizes) ---------------------------
 # Expands symbols/abbreviations an answer writes tersely but a voice should SPEAK in full. Distinct
 # from KOKORO_LEXICON (which fixes single-word PHONEMES on the misaki path only): these are plain
 # text rewrites, so both engines benefit. Extend the maps below to cover a new symbol/abbreviation.
@@ -501,10 +403,26 @@ _DISTANCE_RE = re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*mi\b")
 # 3-letter codes first so "SSW" matches whole, not as "S" + "SW".
 _COMPASS_RE = re.compile(r"\b(" + "|".join(sorted(_COMPASS, key=len, reverse=True)) + r")\b")
 _CARDINAL_RE = re.compile(r"\b([Ff]rom|[Tt]he)\s+([NSEW])\b")
+# Dotted initialisms ("U.S.", "U.K.", "D.C.") -> spaced letters ("U S"), so their interior periods
+# aren't read as a sentence end (the obnoxious pause) and don't split a clip. Uppercase, >=2 groups;
+# runs BEFORE the name-initial + acronym passes. The PWA's speakable.js does this too — here it
+# serves the wall (which sends "U.S." intact through its own mdToPlain).
+_DOTTED_INITIALISM_RE = re.compile(r"\b(?:[A-Z]\.){2,}")
 # A single-letter name initial ("Dennis E. Taylor") followed by a capitalized word: drop the period
-# so espeak doesn't read it as a sentence end (a long pause). Not part of a dotted abbreviation like
-# "U.S.". The PWA's speakable.js does this too; here it serves the wall (which sends "E." intact).
+# so espeak doesn't read it as a sentence end (a long pause). The dotted initialisms above are
+# already collapsed. The PWA's speakable.js does this too; here it serves the wall.
 _INITIAL_RE = re.compile(r"(?<!\.)\b([A-Z])\.(?=\s+[A-Z])")
+# Relations whose glyphs read badly or drop silently (inverting a sentence's meaning) -> words.
+# Composite forms before the bare < / >. The box doesn't verbalize numbers, so operands stay digits
+# for misaki. Mirrors speakable.js's SYMBOL_WORDS inequality block for the wall path.
+_RELATION_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\s*(?:<=|≤)\s*"), " less than or equal to "),
+    (re.compile(r"\s*(?:>=|≥)\s*"), " greater than or equal to "),
+    (re.compile(r"\s*(?:!=|≠)\s*"), " not equal to "),
+    (re.compile(r"\s*±\s*"), " plus or minus "),
+    (re.compile(r"\s*<\s*"), " less than "),
+    (re.compile(r"\s*>\s*"), " greater than "),
+)
 
 # Acronyms/initialisms read as letters ("ORFS" -> "O R F S", "AI" stays 2-letter and is left alone).
 # A standalone run of 3-5 uppercase letters, EXCEPT ones said as a word (NASA), common roman numerals
@@ -585,11 +503,26 @@ def _speakable_text(text: str) -> str:
     text = _DISTANCE_RE.sub(r"\1 miles", text)
     text = _COMPASS_RE.sub(lambda m: _COMPASS[m.group(1)], text)
     text = _CARDINAL_RE.sub(lambda m: f"{m.group(1)} {_CARDINAL[m.group(2)]}", text)
+    text = _DOTTED_INITIALISM_RE.sub(lambda m: m.group(0).replace(".", " ").strip(), text)
     text = _INITIAL_RE.sub(r"\1", text)
     text = _ACRONYM_RE.sub(
         lambda m: m.group(1) if m.group(1) in _SPOKEN_ACRONYMS else " ".join(m.group(1)), text
     )
+    for pat, word in _RELATION_SUBS:
+        text = pat.sub(word, text)
     return re.sub(r"[ \t]{2,}", " ", text)  # collapse a double space an expansion left behind
+
+
+def _resolve_kokoro_voice(voice: str) -> str:
+    """Normalize a requested voice id to a valid "kokoro-<voice>" id, so a stale/blank/unknown id
+    (e.g. an old piper id still stored on a client) renders in the default voice instead of a silent
+    engine error. A bare or unprefixed id is treated as the default; an unknown Kokoro name likewise
+    falls back — the exposed roster (kokoro_voices) is the finite valid set."""
+    default = f"{KOKORO_ID_PREFIX}{CURATED_KOKORO_VOICES[0]}"
+    if not voice.startswith(KOKORO_ID_PREFIX):
+        return default
+    name = voice[len(KOKORO_ID_PREFIX) :]
+    return voice if (name in CURATED_KOKORO_VOICES or name in KOKORO_BLENDS) else default
 
 
 def tts_wav(
@@ -599,69 +532,14 @@ def tts_wav(
     speed: float | None = None,
     trail_ms: int | None = None,
 ) -> bytes | None:
-    """Render `text` to a WAV with the warm piper model for `voice` (a voice id validated
-    against the installed set — no path traversal). For a multi-speaker voice
-    ("<stem>#<speaker>") the resolved index is passed as the synthesis speaker_id. None
-    when TTS isn't available or rendering fails; every None path is logged (a silent None
-    degrades the reply to the device's native voice, which looks like the wrong voice).
-    `speed`/`trail_ms` are the audiobook-pacing controls — Kokoro honours both; piper ignores
-    `speed` (its synthesizer isn't speed-controlled on this path) and honours only an EXPLICIT
-    `trail_ms` (its env default is 0, since the snappy piper is the fallback voice, not the
-    audiobook one)."""
-    text = _speakable_text(text)  # expand °F/mph/compass/"City, ST" for BOTH engines, pre-dispatch
-    if voice.startswith(KOKORO_ID_PREFIX):
-        return _kokoro_wav(text, voice, lead_ms, speed, trail_ms)
-    resolved = _resolve_voice(voice)
-    if resolved is None:
-        print(f"[tts] render failed for {voice!r}: no voices installed", file=sys.stderr)
-        return None
-    model, speaker = resolved
-    if not model.exists():
-        print(f"[tts] render failed for {voice!r}: model file {model} missing", file=sys.stderr)
-        return None
-    if _tts_debug[0]:
-        print(f"[tts] rendering {voice!r} -> {model.stem} speaker={speaker} ({len(text)} chars)",
-              file=sys.stderr)
-    started = time.monotonic()
-    try:
-        voice_model = _load_voice(model)
-        buf = io.BytesIO()
-        wf = wave.open(buf, "wb")  # noqa: SIM115 — manual close in finally (below)
-        try:
-            with _synth_lock:
-                voice_model.synthesize_wav(text, wf, syn_config=SynthesisConfig(speaker_id=speaker))
-        finally:
-            # If synth raised before setting the WAV format, close() would raise
-            # "# channels not specified" and MASK the real piper error — suppress it so the
-            # true cause reaches the log below.
-            with contextlib.suppress(Exception):
-                wf.close()
-        data = buf.getvalue()
-    except Exception as exc:  # noqa: BLE001 — any synth failure must surface, not crash the server
-        print(f"[tts] render failed for {voice!r} (speaker {speaker}): "
-              f"{type(exc).__name__}: {exc}", file=sys.stderr)
-        return None
-    if _tts_debug[0]:
-        ms = int((time.monotonic() - started) * 1000)
-        print(f"[tts] rendered {voice!r} (speaker {speaker}): {len(data)} bytes in {ms} ms",
-              file=sys.stderr)
-    lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
-    return _pad(data, lead, trail_ms or 0)  # piper: only an explicit trail; no audiobook default
-
-
-def _prewarm() -> None:
-    """Load the default answer voice at startup so the first clip doesn't pay the one-time
-    model load. Best-effort — a missing/failing voice just leaves it lazy."""
-    if not PREWARM_VOICE:
-        return
-    resolved = _resolve_voice(PREWARM_VOICE)
-    if resolved is None or not resolved[0].exists():
-        return
-    try:
-        _load_voice(resolved[0])
-        print(f"[tts] pre-warmed {resolved[0].stem}", file=sys.stderr)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[tts] pre-warm of {PREWARM_VOICE!r} failed: {exc}", file=sys.stderr)
+    """Render `text` to a WAV in the requested Kokoro `voice` and return the audio. `voice` is
+    normalized to a valid "kokoro-<voice>" id (a stale/unknown id falls back to the default voice)
+    so a bad id never traverses to a wrong render. None when Kokoro isn't provisioned or the render
+    fails; every None path is logged (a silent None degrades the reply to the device's native
+    voice). `speed`/`trail_ms` are the audiobook-pacing controls (both env-defaulted, per-request
+    override, clamped in _kokoro_wav / the /tts handler)."""
+    text = _speakable_text(text)  # expand °F/mph/compass/"City, ST" before phonemizing
+    return _kokoro_wav(text, _resolve_kokoro_voice(voice), lead_ms, speed, trail_ms)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -680,9 +558,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._send(200, b"ok", "text/plain")
         elif path == "/tts/voices":
-            self._send(200, json.dumps({"voices": piper_voices()}).encode(), "application/json")
-        elif path == "/tts/speakers":
-            self._send(200, json.dumps({"speakers": piper_speakers()}).encode(), "application/json")
+            self._send(200, json.dumps({"voices": tts_voices()}).encode(), "application/json")
+        elif path == "/tts/health":
+            self._send(200, json.dumps(tts_health()).encode(), "application/json")
         elif path == "/tts/silence":
             self._send(200, _silence_wav(600), "audio/wav")
         elif path == "/tts":
@@ -746,10 +624,9 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     host = os.environ.get("BRAIN_TTS_HOST", "0.0.0.0")
     port = int(os.environ.get("BRAIN_TTS_PORT", "8801"))
-    _prewarm()
     server = ThreadingHTTPServer((host, port), Handler)
-    installed = ", ".join(piper_voices()) or "none"
-    print(f"piper tts server on http://{host}:{port}/  (voices: {installed})")
+    installed = ", ".join(tts_voices()) or "none (kokoro not provisioned — device voice fallback)"
+    print(f"kokoro tts server on http://{host}:{port}/  (voices: {installed})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

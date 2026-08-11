@@ -55,13 +55,27 @@ function drive(full: string, steps: number): string[] {
 }
 
 describe("speakable", () => {
-  it("authors pauses: each line/list item/heading becomes its own sentence", () => {
+  it("authors pauses: each line/list item becomes its own sentence; a heading leads in with a colon", () => {
     // The core fix — whitespace was collapsed BEFORE newlines could become pauses, so a
-    // list ran together. Every line now ends in terminal punctuation.
+    // list ran together. Every line now ends in terminal punctuation; a HEADING ends in ":"
+    // (not "."), so it flows into the next item with lead-in intonation instead of a flat clip.
     expect(speakable("## Setup steps\n- Preheat oven\n- Add flour\n- Bake")).toBe(
-      "Setup steps. Preheat oven. Add flour. Bake.",
+      "Setup steps: Preheat oven. Add flour. Bake.",
     );
     expect(speakable("First line\nSecond line")).toBe("First line. Second line.");
+  });
+
+  it("ends a heading with a colon so it isn't an isolated flat clip", () => {
+    // A heading read alone (its own clip ending in ".") sounds flat; ":" is a pause cue that
+    // splitClips does NOT cut on, so the heading joins the following sentence in one clip.
+    expect(speakable("# Background\nThe project began in 2019.")).toBe(
+      "Background: The project began in two thousand nineteen.",
+    );
+    expect(chunkStream("# Background\nThe project began here.", true).chunks).toEqual([
+      "Background: The project began here.",
+    ]);
+    // A heading already ending in terminal punctuation is left as-is (no doubled mark).
+    expect(speakable("## Ready?\nYes.")).toBe("Ready? Yes.");
   });
 
   it("keeps an existing terminal mark rather than doubling it", () => {
@@ -175,6 +189,48 @@ describe("speakable", () => {
     expect(speakable("pick 3-5 of them")).toBe("pick three to five of them.");
   });
 
+  it("speaks inequalities and relations instead of dropping the glyph (which inverts meaning)", () => {
+    expect(speakable("5 < 10 and 10 > 5")).toBe("five less than ten and ten greater than five.");
+    expect(speakable("x <= 3, y >= 7, z != 0")).toBe(
+      "x less than or equal to three, y greater than or equal to seven, z not equal to zero.",
+    );
+    expect(speakable("a ≤ b ≥ c ≠ d ± e")).toBe(
+      "a less than or equal to b greater than or equal to c not equal to d plus or minus e.",
+    );
+  });
+
+  it("turns a snake_case underscore into a space instead of eating it", () => {
+    expect(speakable("set the user_id field")).toBe("set the user id field.");
+    expect(speakable("the read_aloud_engine value")).toBe("the read aloud engine value.");
+  });
+
+  it("reads clock times as words, not a mangled colon", () => {
+    expect(speakable("meet at 3:30pm")).toBe("meet at three thirty P M.");
+    expect(speakable("the 9:05 train")).toBe("the nine oh five train.");
+    expect(speakable("at 3:00")).toBe("at three o'clock.");
+    expect(speakable("depart 14:00 sharp")).toBe("depart fourteen hundred sharp.");
+  });
+
+  it("reads a phone number digit-by-digit, not as arithmetic ranges", () => {
+    expect(speakable("call 555-123-4567 now")).toBe(
+      "call five five five, one two three, four five six seven now.",
+    );
+  });
+
+  it("reads a multi-part version number without garbling", () => {
+    expect(speakable("upgrade to v2.3.1 today")).toBe(
+      "upgrade to version two point three point one today.",
+    );
+    // A plain decimal (one dot) is untouched by the version rule.
+    expect(speakable("it took 2.5 hours")).toBe("it took two point five hours.");
+  });
+
+  it("reads an ISO date as a spoken date, not a hyphen range", () => {
+    expect(speakable("due 2026-08-10 for review")).toBe(
+      "due August tenth, twenty twenty six for review.",
+    );
+  });
+
   it("splits a compound hyphen into a space so espeak doesn't mash the words", () => {
     // ASCII "large-scale" reads as "largescale" in espeak; a space gives two clean words. The
     // Unicode/non-breaking hyphens ("Bob‑verse", "most‑play‑again") are handled the same way.
@@ -212,8 +268,23 @@ describe("speakable", () => {
     // Chained initials all lose their periods; a real sentence end (lowercase-led next word) does not.
     expect(speakable("J. R. R. Tolkien wrote it")).toBe("J R R Tolkien wrote it.");
     expect(speakable("Grade A. then rest")).toBe("Grade A. then rest.");
-    // A dotted abbreviation like "U.S." is left intact (not treated as an initial).
-    expect(speakable("the U.S. Grant memorial")).toBe("the U.S. Grant memorial.");
+    // A dotted initialism collapses to spaced letters ("U.S." → "U S") — no interior period to
+    // read as a sentence end, so the name stays one clause.
+    expect(speakable("the U.S. Grant memorial")).toBe("the U S Grant memorial.");
+  });
+
+  it("collapses dotted initialisms so they don't pause or split mid-sentence", () => {
+    // The reported bug: "U.S." mid-sentence read with an obnoxious pause because its trailing "."
+    // looked like a sentence end (espeak pause + a clip split). Collapsed to "U S", one clause.
+    expect(speakable("The U.S. economy grew last year")).toBe("The U S economy grew last year.");
+    expect(speakable("They met in Washington, D.C. today")).toBe(
+      "They met in Washington, D C today.",
+    );
+    expect(speakable("a.m. and p.m. and a Ph.D.")).toBe("A M and P M and a P H D.");
+    // The whole sentence stays ONE clip (no split at "U.S."), streaming and flushed alike.
+    expect(chunkStream("The U.S. economy grew.", true).chunks).toEqual(["The U S economy grew."]);
+    // Mid-stream (not flushed) the committer holds the sentence rather than cutting at "U.S. ".
+    expect(chunkStream("The U.S. economy grew last year and", false).chunks).toEqual([]);
   });
 
   it("makes a line-ending ellipsis a real pause before the next paragraph", () => {
@@ -320,15 +391,10 @@ describe("chunkStream", () => {
 });
 
 describe("engineForVoice", () => {
-  it("maps a Kokoro voice id to the kokoro profile and everything else to piper", () => {
+  it("always resolves to the kokoro profile (the only on-box engine)", () => {
     expect(engineForVoice("kokoro-af_heart")).toBe("kokoro");
     expect(engineForVoice("kokoro-bm_george")).toBe("kokoro");
-    expect(engineForVoice("en_US-amy-medium")).toBe("piper");
-    expect(engineForVoice("en_US-libritts_r-medium#3922")).toBe("piper");
-  });
-
-  it("falls back to piper for an empty or missing voice", () => {
-    expect(engineForVoice("")).toBe("piper");
-    expect(engineForVoice(undefined as unknown as string)).toBe("piper");
+    expect(engineForVoice("")).toBe("kokoro");
+    expect(engineForVoice(undefined as unknown as string)).toBe("kokoro");
   });
 });

@@ -120,13 +120,13 @@ BRAIN_LLM_STREAM_KEY = "brain_llm_stream"
 BRAIN_LLM_STREAM_DEFAULT = False
 
 
-# Read the wall display's streamed turns ALOUD, rendered on the box by piper TTS
+# Read the wall display's streamed turns ALOUD, rendered on the box by Kokoro TTS
 # (deploy/tts-stt, GET /tts). The runtime companion to brain_llm_stream: it is
 # the gate the wall uses to SHOW its read-aloud voice panel — and it only speaks the
 # text that brain_llm_stream already streams, so like that switch it is meaningful
-# only when the display is the box's own monitor (localhost-bound). The wall's piper
-# voices are baked into the tts-stt image, so this toggle is the only switch —
-# there is no env var or download step to enable it. OFF by default and read live per
+# only when the display is the box's own monitor (localhost-bound). The wall's Kokoro
+# voices come from the model baked into the tts-stt image, so this toggle is the only
+# switch — there is no env var or download step to enable it. OFF by default and read live per
 # turn (jbrain.api.agent),
 # which fire-and-forget POSTs the flag to the display so it flips with no redeploy; an
 # absent or non-true value reads as OFF.
@@ -134,25 +134,58 @@ BRAIN_READ_ALOUD_KEY = "brain_read_aloud"
 BRAIN_READ_ALOUD_DEFAULT = False
 
 
-# The piper voice the read-aloud speaks answers in — a voice id from the on-box picker
-# (tts-stt GET /tts/voices), e.g. "en_US-amy-medium" or a multi-speaker
-# "en_US-libritts_r-medium#3922". The PWA reads this to render its per-turn read-aloud
-# through piper (via the api->box /api/brain/tts proxy), and its Settings picker writes
-# it. Absent / non-string / empty reads as the Amy default so read-aloud always has a
-# valid voice; the id is only lightly trusted (the client picks from the live installed
-# list, and piper itself falls back to its first voice on an unknown id).
+# The Kokoro voice the read-aloud speaks answers in — a voice id from the on-box picker
+# (tts-stt GET /tts/voices), e.g. "kokoro-af_heart" or "kokoro-am_michael". The PWA reads this
+# to render its per-turn read-aloud on the box (via the api->box /api/brain/tts proxy), and its
+# Settings picker writes it. Absent / non-string / empty reads as the af_heart default so
+# read-aloud always has a valid voice; the id is only lightly trusted (the client picks from the
+# live installed list, and the box normalizes a stale/unknown id to its default voice).
 BRAIN_ANSWER_VOICE_KEY = "brain_answer_voice"
-BRAIN_ANSWER_VOICE_DEFAULT = "en_US-amy-medium"
+BRAIN_ANSWER_VOICE_DEFAULT = "kokoro-af_heart"
 
 
-# Which engine the PWA read-aloud renders with: "piper" (on-box, the brain_answer_voice
-# above — falls back to the device's native voice when the box is unreachable) or "native"
-# (always the browser's own Web Speech voice, which works with no box at all). Default
-# "piper"; any unrecognized stored value reads as the default.
+# Which engine the PWA read-aloud renders with: "piper" (a legacy marker meaning ON-BOX — Kokoro
+# in the brain_answer_voice above; falls back to the device's native voice when the box is
+# unreachable) or "native" (always the browser's own Web Speech voice, which works with no box at
+# all). Default "piper"; any unrecognized stored value reads as the default. The literal is kept
+# as an opaque "on-box" marker to avoid a lock-step rename across the api + PWA read-aloud path;
+# piper the engine was removed, Kokoro is the only on-box voice.
 ReadAloudEngine = Literal["piper", "native"]
 READ_ALOUD_ENGINES: tuple[ReadAloudEngine, ...] = ("piper", "native")
 BRAIN_READ_ALOUD_ENGINE_KEY = "brain_read_aloud_engine"
 BRAIN_READ_ALOUD_ENGINE_DEFAULT: ReadAloudEngine = "piper"
+
+
+# The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
+# (e.g. "Titusville" -> "Tight us ville") the api applies as a whole-word, case-insensitive text
+# substitution before forwarding a clip to the box (jbrain.api.brain) — engine-agnostic (it helps
+# Kokoro on misaki OR espeak, and needs no phonemes to author), distinct from the box's misaki-only
+# KOKORO_LEXICON phoneme overrides. Bounded so the row can't bloat: at most
+# PRONUNCIATION_LEXICON_MAX entries, each a non-blank word (<= _WORD_MAX chars) to a respelling
+# (<= _SAY_MAX chars); anything else is dropped on read. Absent = empty = today's behavior.
+PRONUNCIATION_LEXICON_KEY = "pronunciation_lexicon"
+PRONUNCIATION_LEXICON_MAX = 200
+_PRON_WORD_MAX = 64
+_PRON_SAY_MAX = 128
+
+
+def _sanitize_pronunciation_lexicon(raw: object) -> dict[str, str]:
+    """The shared sanitize for the pronunciation respelling map — this feeds a substitution over
+    every read-aloud clip, so a malformed store (non-dict, non-string, blank, over-long, or too
+    many entries) is dropped rather than trusted. First-seen order preserved; entries capped."""
+    if not isinstance(raw, dict):
+        return {}
+    clean: dict[str, str] = {}
+    for word, say in raw.items():
+        if len(clean) >= PRONUNCIATION_LEXICON_MAX:
+            break
+        if not isinstance(word, str) or not isinstance(say, str):
+            continue
+        w = word.strip()
+        s = say.strip()
+        if w and s and len(w) <= _PRON_WORD_MAX and len(s) <= _PRON_SAY_MAX:
+            clean[w] = s
+    return clean
 
 
 # The served-model id code mode (jcode) runs its coding agent against — the live
@@ -494,12 +527,12 @@ class SqlSettingsStore:
 
     async def brain_read_aloud(self, ctx: SessionContext) -> bool:
         """Whether the on-box wall display reads its streamed turns aloud (shows/enables
-        its piper voice panel). Defaults OFF; only an explicit `true` enables it (any
+        its Kokoro voice panel). Defaults OFF; only an explicit `true` enables it (any
         non-true value reads as off)."""
         return await self.get(ctx, BRAIN_READ_ALOUD_KEY, BRAIN_READ_ALOUD_DEFAULT) is True
 
     async def brain_answer_voice(self, ctx: SessionContext) -> str:
-        """The piper voice id the read-aloud speaks answers in. Defaults to Amy; a
+        """The Kokoro voice id the read-aloud speaks answers in. Defaults to af_heart; a
         non-string or empty stored value reads as the default so read-aloud always has
         a valid voice."""
         raw = await self.get(ctx, BRAIN_ANSWER_VOICE_KEY, BRAIN_ANSWER_VOICE_DEFAULT)
@@ -515,6 +548,21 @@ class SqlSettingsStore:
             if raw in READ_ALOUD_ENGINES
             else BRAIN_READ_ALOUD_ENGINE_DEFAULT
         )
+
+    async def pronunciation_lexicon(self, ctx: SessionContext) -> dict[str, str]:
+        """The owner's read-aloud respelling map {word: "say it like"}, sanitized (see
+        _sanitize_pronunciation_lexicon — this feeds a substitution over every clip, so junk is
+        dropped). Empty when unset."""
+        return _sanitize_pronunciation_lexicon(await self.get(ctx, PRONUNCIATION_LEXICON_KEY, {}))
+
+    async def set_pronunciation_lexicon(
+        self, ctx: SessionContext, lexicon: dict[str, str]
+    ) -> dict[str, str]:
+        """Replace the respelling map with `lexicon` (sanitized like the reader — the store refuses
+        to persist what it wouldn't read back); returns the stored map."""
+        clean = _sanitize_pronunciation_lexicon(lexicon)
+        await self.upsert(ctx, PRONUNCIATION_LEXICON_KEY, clean)
+        return clean
 
     async def jcode_model(self, ctx: SessionContext) -> str:
         """The selected served-model id for the code-mode (jcode) agent, or "" when

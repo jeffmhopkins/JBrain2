@@ -133,7 +133,7 @@ sed -i '/^WHISPER_ENABLED=/d; /^WHISPER_URL=/d; /^WHISPER_MODEL=/d; /^VIDEO_GID=
 
 # The tts-stt container is already up (default service) serving read-aloud; force-recreate
 # it so its entrypoint re-runs and — now that llama-swap.yaml exists — launches whisper's
-# STT alongside piper. Build in case the image needs a GID/base bump.
+# STT alongside Kokoro TTS. Build in case the image needs a GID/base bump.
 say "Recreating the tts-stt service so it picks up the whisper model"
 docker compose build tts-stt
 docker compose up -d --force-recreate tts-stt

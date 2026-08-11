@@ -55,8 +55,9 @@ def test_get_settings_defaults_to_full_analysis(
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
-        "brain_answer_voice": "en_US-amy-medium",
+        "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
 
 
@@ -69,8 +70,9 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
-        "brain_answer_voice": "en_US-amy-medium",
+        "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
     assert store.values["image_analysis_mode"] == "ocr"
     assert c.get("/api/settings").json() == {
@@ -78,8 +80,9 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
-        "brain_answer_voice": "en_US-amy-medium",
+        "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
 
     assert c.put("/api/settings", json={"image_analysis_mode": "full"}).json() == {
@@ -87,8 +90,9 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
-        "brain_answer_voice": "en_US-amy-medium",
+        "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
 
 
@@ -103,8 +107,9 @@ def test_put_settings_round_trips_the_timezone(
         "owner_timezone": "America/New_York",
         "brain_llm_stream": False,
         "brain_read_aloud": False,
-        "brain_answer_voice": "en_US-amy-medium",
+        "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
     assert store.values["owner_timezone"] == "America/New_York"
 
@@ -170,12 +175,12 @@ def test_put_settings_round_trips_brain_answer_voice(
     c, store = client
     # Defaults to Amy; a chosen voice id (incl. a multi-speaker "#speaker" entry) persists
     # and round-trips — this is the voice the PWA read-aloud renders answers in.
-    assert c.get("/api/settings").json()["brain_answer_voice"] == "en_US-amy-medium"
-    resp = c.put("/api/settings", json={"brain_answer_voice": "en_US-libritts_r-medium#3922"})
+    assert c.get("/api/settings").json()["brain_answer_voice"] == "kokoro-af_heart"
+    resp = c.put("/api/settings", json={"brain_answer_voice": "kokoro-am_michael"})
     assert resp.status_code == 200
-    assert resp.json()["brain_answer_voice"] == "en_US-libritts_r-medium#3922"
-    assert store.values["brain_answer_voice"] == "en_US-libritts_r-medium#3922"
-    assert c.get("/api/settings").json()["brain_answer_voice"] == "en_US-libritts_r-medium#3922"
+    assert resp.json()["brain_answer_voice"] == "kokoro-am_michael"
+    assert store.values["brain_answer_voice"] == "kokoro-am_michael"
+    assert c.get("/api/settings").json()["brain_answer_voice"] == "kokoro-am_michael"
 
 
 def test_put_settings_rejects_blank_brain_answer_voice(
@@ -202,6 +207,26 @@ def test_put_settings_round_trips_read_aloud_engine(
     assert store.values["brain_read_aloud_engine"] == "native"
     back = c.put("/api/settings", json={"brain_read_aloud_engine": "piper"})
     assert back.json()["brain_read_aloud_engine"] == "piper"
+
+
+def test_put_settings_round_trips_pronunciation_lexicon(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # Empty by default; a respelling map round-trips, and a blank word/say is dropped on store.
+    assert c.get("/api/settings").json()["pronunciation_lexicon"] == {}
+    resp = c.put(
+        "/api/settings",
+        json={"pronunciation_lexicon": {"Titusville": "Tight us ville", "  ": "x", "y": "  "}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pronunciation_lexicon"] == {"Titusville": "Tight us ville"}
+    assert store.values["pronunciation_lexicon"] == {"Titusville": "Tight us ville"}
+    # Replace semantics: an empty map clears it.
+    assert (
+        c.put("/api/settings", json={"pronunciation_lexicon": {}}).json()["pronunciation_lexicon"]
+        == {}
+    )
 
 
 def test_put_settings_rejects_unknown_read_aloud_engine(
@@ -239,6 +264,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
-        "brain_answer_voice": "en_US-amy-medium",
+        "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }

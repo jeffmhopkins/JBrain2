@@ -96,6 +96,29 @@ function numberToWords(raw) {
   return neg ? `minus ${words}` : words;
 }
 
+/** Spell a run of digits one-by-one ("4567" → "four five six seven") — for phone numbers and
+ * other id-like sequences a listener wants heard as digits, not a magnitude. */
+function digitsToWords(digits) {
+  return digits
+    .split("")
+    .map((d) => ONES[Number(d)] ?? d)
+    .join(" ");
+}
+
+/** A clock time to words. am/pm (already normalized to "A M"/"P M" upstream, or a bare "am"/"pm"
+ * captured here) reads 12-hour; a bare 13–23 hour reads 24-hour ("fourteen hundred"). */
+function timeWords(hStr, mStr, mer) {
+  const h = Number(hStr);
+  const m = Number(mStr);
+  const min = m === 0 ? "" : m < 10 ? `oh ${ONES[m]}` : intToWords(m);
+  const meridiem = mer ? ` ${mer.replace(/[.\s]/g, "").toUpperCase().split("").join(" ")}` : "";
+  if (meridiem || (h >= 1 && h <= 12)) {
+    const hour = intToWords(h === 0 ? 12 : h);
+    return m === 0 ? `${hour} o'clock${meridiem}` : `${hour} ${min}${meridiem}`;
+  }
+  return m === 0 ? `${intToWords(h)} hundred` : `${intToWords(h)} ${min}`;
+}
+
 // Denominator words for a spoken fraction; only small, unambiguous denominators.
 const FRACTION_DENOM = {
   2: "half",
@@ -129,6 +152,7 @@ function fractionWords(numStr, denStr) {
 // deploy/tts-stt/piper_server.py for the wall path, which never verbalizes numbers.
 const MONTHS =
   "January|February|March|April|May|June|July|August|September|October|November|December";
+const MONTH_NAMES = MONTHS.split("|");
 const DATE_RE = new RegExp(
   `\\b(${MONTHS})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`,
   "g",
@@ -181,15 +205,25 @@ function yearWords(y) {
  * "July 10, 2026" → "July tenth, twenty twenty six"; "94°F" → "94 degrees Fahrenheit" (the "94"
  * is spelled by the later number pass); "40 mi" → "40 miles". */
 function measuresToWords(s) {
-  return s
-    .replace(DATE_RE, (m, month, dayStr, yearStr) => {
-      const day = Number(dayStr);
-      if (day < 1 || day > 31) return m; // not a day-of-month — leave untouched
-      const said = `${month} ${ordinalDay(day)}`;
-      return yearStr ? `${said}, ${yearWords(Number(yearStr))}` : said;
-    })
-    .replace(/°\s*([FCK])\b/g, (_m, u) => ` degrees ${DEGREE_UNITS[u]}`)
-    .replace(/\b(\d[\d,]*(?:\.\d+)?)\s*mi\b/g, "$1 miles");
+  return (
+    s
+      // ISO dates (2026-08-10) → "August tenth, twenty twenty six", BEFORE the numeric-range rule
+      // reads the hyphens as "to". A phone number is 3-3-4 digits, never 4-2-2, so it can't match.
+      .replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (m, y, mo, d) => {
+        const month = Number(mo);
+        const day = Number(d);
+        if (month < 1 || month > 12 || day < 1 || day > 31) return m;
+        return `${MONTH_NAMES[month - 1]} ${ordinalDay(day)}, ${yearWords(Number(y))}`;
+      })
+      .replace(DATE_RE, (m, month, dayStr, yearStr) => {
+        const day = Number(dayStr);
+        if (day < 1 || day > 31) return m; // not a day-of-month — leave untouched
+        const said = `${month} ${ordinalDay(day)}`;
+        return yearStr ? `${said}, ${yearWords(Number(yearStr))}` : said;
+      })
+      .replace(/°\s*([FCK])\b/g, (_m, u) => ` degrees ${DEGREE_UNITS[u]}`)
+      .replace(/\b(\d[\d,]*(?:\.\d+)?)\s*mi\b/g, "$1 miles")
+  );
 }
 
 // --- emoji + symbols -------------------------------------------------------------------
@@ -221,6 +255,15 @@ const SYMBOL_WORDS = [
   [/\s*→\s*/g, " to "],
   [/\s*⇒\s*/g, " to "],
   [/\s*←\s*/g, " from "],
+  // Inequalities/relations — dropped glyphs silently INVERT a sentence's meaning, so speak them.
+  // The composite forms (<=, >=, !=, ≤, ≥, ≠) come before the "=" and "<"/">" rules below so they
+  // aren't half-consumed. Numbers around them are already words by the time SYMBOL_WORDS runs.
+  [/\s*(?:<=|≤)\s*/g, " less than or equal to "],
+  [/\s*(?:>=|≥)\s*/g, " greater than or equal to "],
+  [/\s*(?:!=|≠)\s*/g, " not equal to "],
+  [/\s*±\s*/g, " plus or minus "],
+  [/\s*<\s*/g, " less than "],
+  [/\s*>\s*/g, " greater than "],
   [/\s*&\s*/g, " and "],
   [/\s*\/\s*/g, " slash "],
   [/\s*@\s*/g, " at "],
@@ -251,14 +294,17 @@ const ABBREVIATIONS = [
   [/\bProf\.\s*/g, "Professor "],
   [/\bvs\.?\s*/gi, "versus "],
   [/\bapprox\.\s*/gi, "approximately "],
+  // Lowercase / mixed-case dotted forms the uppercase U.S. collapse (in toUtterance) can't catch —
+  // spell them as dot-free spaced letters so their interior periods never read as a sentence end.
+  [/\ba\.m\.\s*/gi, "A M "],
+  [/\bp\.m\.\s*/gi, "P M "],
+  [/\bPh\.?\s*D\.?\s*/g, "P H D "],
 ];
 
-// Per-engine utterance profiles — the pronunciation rules that depend on the voice's PHONEMIZER.
-// piper embeds espeak-ng and our Kokoro build phonemizes through espeak-ng too, so both share one
-// ruleset today; keeping the seam here means giving Kokoro its own (misaki-aware) profile later is
-// a config change, not a re-thread of the pipeline. Engine-agnostic work lives in toProse().
+// Utterance profile — the pronunciation rules that depend on the voice's PHONEMIZER. Kokoro is the
+// only on-box engine (piper was removed); the seam is kept so a future misaki-specific ruleset is a
+// config change, not a re-thread of the pipeline. Engine-agnostic work lives in toProse().
 const UTTERANCE_PROFILES = {
-  piper: { abbreviations: ABBREVIATIONS },
   kokoro: { abbreviations: ABBREVIATIONS },
 };
 
@@ -357,13 +403,23 @@ export function toProse(md) {
     .split("\n")
     .map((line) => {
       if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) return ""; // horizontal rule
+      // A heading read aloud sounds flat as an isolated 1-word clip ending in "." — end it with
+      // ":" instead (a pause cue splitClips does NOT cut on, since it splits only on . ! ?), so the
+      // heading flows into the FOLLOWING sentence with lead-in intonation instead of a lone
+      // low-affect monotone fragment. A heading already ending in terminal punctuation is left.
+      const heading = line.match(/^\s{0,3}#{1,6}\s+(.*\S)\s*$/);
+      if (heading) return /[.!?:;…]$/.test(heading[1]) ? heading[1] : `${heading[1]}:`;
       return line
-        .replace(/^\s{0,3}#{1,6}\s+/, "") // heading
         .replace(/^\s*>\s?/, "") // blockquote
         .replace(/^\s*[-*+]\s+/, "") // bullet
         .replace(/^(\s*)(\d+)\.\s+/, (_m, indent, n) => `${indent}${numberToWords(n)}. `); // numbered → spoken
     })
     .join("\n");
+  // snake_case: an underscore BETWEEN two alphanumerics is a compound separator ("user_id"), not
+  // emphasis — turn it into a space (two clean words) BEFORE the emphasis stripper below would fold
+  // "user_id" into "userid". Gated to alnum_alnum (not `_`), so a `__dunder__` / `_italic_` boundary
+  // underscore is left for the emphasis pass.
+  s = s.replace(/(?<=[A-Za-z0-9])_(?=[A-Za-z0-9])/g, " ");
   // Emphasis markers.
   s = s.replace(/(\*\*|__|\*|_|~~)/g, "");
   return s;
@@ -377,17 +433,25 @@ export function toProse(md) {
  * @param {"piper" | "kokoro"} [engine]
  * @returns {string}
  */
-export function toUtterance(prose, engine = "piper") {
-  const profile = UTTERANCE_PROFILES[engine] ?? UTTERANCE_PROFILES.piper;
+export function toUtterance(prose, engine = "kokoro") {
+  const profile = UTTERANCE_PROFILES[engine] ?? UTTERANCE_PROFILES.kokoro;
   let s = String(prose || "");
   // Latin abbreviations → words (before pause-authoring, so their interior dots aren't read
   // as sentence ends and the spoken aside carries a real pause).
   for (const [re, word] of profile.abbreviations) s = s.replace(re, word);
+  // Dotted initialisms (U.S., U.K., U.N., E.U., D.C., U.S.A.): strip the interior + trailing
+  // periods so the phonemizer reads the LETTERS ("U S") instead of taking a sentence-ending pause
+  // on each dot — and so splitClips / intraLineSafe (below + in the chunker) don't cut "The U.S.
+  // economy" into two separate renders (the audible gap this fixes). Uppercase-only, >=2 letter
+  // groups, so a lowercase domain and a lone name initial ("Dennis E.") are untouched; the
+  // lowercase/mixed a.m./p.m./Ph.D. cases are handled in ABBREVIATIONS above. When such an
+  // initialism truly ends a sentence, pause-authoring below re-adds the "." so the stop survives.
+  s = s.replace(/\b(?:[A-Z]\.){2,}/g, (m) => m.replace(/\./g, " ").trim());
   // A single-letter name initial ("Dennis E. Taylor", "J. R. R. Tolkien") — drop the period, like
   // titles above. Its "." otherwise reads as a SENTENCE END: espeak takes a long pause AND the clip
   // splitter cuts the name in two (a separate render = an audible gap), which compound. Gated to an
-  // initial FOLLOWED by a capitalized word (a surname / next initial) and NOT part of a dotted
-  // abbreviation like "U.S.", so a real single-letter sentence end is rarely touched.
+  // initial FOLLOWED by a capitalized word (a surname / next initial); the dotted initialisms above
+  // were already collapsed, so a real single-letter sentence end is rarely touched.
   s = s.replace(/(?<!\.)\b([A-Z])\.(?=\s+[A-Z])/g, "$1");
   // Ellipsis: normalize "..."/"…" to a single ellipsis char. espeak renders it as a ~300 ms
   // trailing beat — longer than a comma, no spoken "dot dot dot" — and the chunker never cuts on
@@ -411,6 +475,26 @@ export function toUtterance(prose, engine = "piper") {
     .join("\n");
   // Dates / temperatures / distances — BEFORE any number verbalization, which needs the raw digits.
   s = measuresToWords(s);
+  // Phone numbers (NNN-NNN-NNNN, dot/space separated too, optional "(NNN)") → digit-by-digit with a
+  // beat between groups. BEFORE the numeric-range rule, which would otherwise read "555-123" as
+  // "five hundred fifty five to one hundred twenty three". The 3-3-4 shape can't match an ISO date
+  // (4-2-2) or a version (1-1-1).
+  s = s.replace(
+    /\(?(\d{3})\)?[-.\s](\d{3})[-.\s](\d{4})\b/g,
+    (_m, a, b, c) => `${digitsToWords(a)}, ${digitsToWords(b)}, ${digitsToWords(c)}`,
+  );
+  // Version numbers (v2.3.1 — three+ dot-separated groups) → "version two point three point one".
+  // Gated to 2+ dots so an ordinary decimal ("2.3") falls through to the number pass untouched.
+  s = s.replace(
+    /\b(v)?(\d+(?:\.\d+){2,})\b/gi,
+    (_m, v, nums) => `${v ? "version " : ""}${nums.split(".").map(numberToWords).join(" point ")}`,
+  );
+  // Clock times (3:30, 3:30pm, 14:00) → words, BEFORE the generic number pass leaves a stray colon.
+  // A trailing "pm"/"am" reads as spaced letters; an already-expanded "P M" (from the abbreviation
+  // pass) simply follows the spelled time. A ratio like "16:9" has a 1-digit tail and never matches.
+  s = s.replace(/\b(\d{1,2}):(\d{2})(?:\s*([ap]m)\b)?/gi, (_m, h, mm, mer) =>
+    timeWords(h, mm, mer),
+  );
   // Token normalization.
   s = s.replace(URL_RE, (_m, host) => domainWords(host));
   s = s.replace(WWW_RE, (_m, host) => domainWords(host));
@@ -481,7 +565,7 @@ export function toUtterance(prose, engine = "piper") {
  * @param {"piper" | "kokoro"} [engine]
  * @returns {string}
  */
-export function speakable(md, engine = "piper") {
+export function speakable(md, engine = "kokoro") {
   return toUtterance(toProse(md), engine);
 }
 
@@ -512,15 +596,14 @@ export function reportToSpeech(md) {
 }
 
 /**
- * The utterance profile a box voice id renders through: a Kokoro voice ("kokoro-…") phonemizes
- * via Kokoro, every other id via piper/espeak. Lets a caller thread the right engine into
- * speakable/chunkStream from the chosen voice alone — so custom text and a chat answer are
- * normalized for the SAME engine that will actually render them.
- * @param {string} voice
- * @returns {"piper" | "kokoro"}
+ * The utterance profile a box voice renders through. Kokoro is the only on-box engine now, so this
+ * always resolves to "kokoro" — the seam is kept so callers still thread an engine explicitly and a
+ * future profile split is a one-line change here.
+ * @param {string} _voice
+ * @returns {"kokoro"}
  */
-export function engineForVoice(voice) {
-  return String(voice || "").startsWith("kokoro-") ? "kokoro" : "piper";
+export function engineForVoice(_voice) {
+  return "kokoro";
 }
 
 // --- streaming chunker -----------------------------------------------------------------
@@ -543,8 +626,11 @@ function splitClips(norm) {
 // Abbreviations whose trailing "." never ends a sentence (titles before a name, e.g./i.e.) —
 // so the streaming committer doesn't cut a clip mid-name ("Dr. Smith" → "Doctor" ⏸ "Smith"). A
 // lone letter is a name initial ("Dennis E. Taylor"): held for the same reason (the utterance pass
-// drops its period, so the real sentence end follows). Kept to never-sentence-final tokens only.
-const ABBREV_NO_BREAK = /(?:^|[\s("'‘“])(?:mr|mrs|ms|dr|prof|vs|approx|e\.g|i\.e|[a-z])\.$/i;
+// drops its period, so the real sentence end follows). The `(?:[a-z]\.)*[a-z]` run also matches a
+// dotted initialism ("U.S.", "a.m.", "D.C.") so the committer holds "The U.S. economy" whole instead
+// of cutting at "U.S." (the utterance pass collapses it to "U S"). Never-sentence-final tokens only.
+const ABBREV_NO_BREAK =
+  /(?:^|[\s("'‘“])(?:mr|mrs|ms|dr|prof|vs|approx|e\.g|i\.e|(?:[a-z]\.)*[a-z])\.$/i;
 
 /** In the trailing (newline-less) line, the length up to the last COMPLETE sentence — so a
  * partial final sentence is held for the next delta. A terminator is only a boundary when
@@ -580,6 +666,7 @@ function committedLen(raw) {
   let inFence = false;
   let fenceOpenAt = -1;
   let tableStart = -1; // offset where the current trailing table run began (-1 = none)
+  let headingHold = -1; // offset of a trailing heading not yet joined by committed content (-1 = none)
   let safe = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -589,7 +676,10 @@ function committedLen(raw) {
       if (inFence) {
         inFence = false;
         fenceOpenAt = -1;
-        if (!isLast) safe = lineEnd; // closing fence -> committable
+        if (!isLast) {
+          safe = lineEnd; // closing fence -> committable
+          headingHold = -1; // the block a heading introduced is now committed
+        }
       } else {
         inFence = true;
         fenceOpenAt = starts[i];
@@ -599,7 +689,10 @@ function committedLen(raw) {
     if (inFence) continue; // inside code -> not committable
     if (isLast) {
       const s = intraLineSafe(line); // trailing partial line -> commit whole sentences only
-      if (s > 0 && tableStart < 0) safe = starts[i] + s;
+      if (s > 0 && tableStart < 0) {
+        safe = starts[i] + s;
+        headingHold = -1; // a real sentence after the heading committed -> join them
+      }
       continue;
     }
     const next = lines[i + 1];
@@ -613,15 +706,30 @@ function committedLen(raw) {
       if (nextIsRow || nextIsTrailingBlank) continue;
       safe = lineEnd; // table terminated by a real non-table line
       tableStart = -1;
+      headingHold = -1; // the block a heading introduced is now committed
+      continue;
+    }
+    // A heading commits WITH the block it introduces, never alone. toProse turns it into a
+    // ":"-terminated lead-in that merges into the following sentence (one clip); committing it
+    // early — its blank successor is a block boundary — would emit a lone "Heading:" clip in
+    // streaming that the one-shot pass never produces (splitClips doesn't cut on ":"). Record its
+    // start and clamp `safe` back to it below until a real (non-blank) line after it commits, so
+    // streaming and one-shot agree.
+    if (/^\s{0,3}#{1,6}\s/.test(line)) {
+      if (headingHold < 0) headingHold = starts[i];
       continue;
     }
     // A newline-terminated prose line commits if the next line starts a new block/blank or
     // this line ends a sentence — otherwise it's a soft-wrapped continuation, so hold.
-    if (BLOCK_START.test(next) || ENDS_LINE.test(line)) safe = lineEnd;
+    if (BLOCK_START.test(next) || ENDS_LINE.test(line)) {
+      safe = lineEnd;
+      if (line.trim() !== "") headingHold = -1; // real content joined a pending heading
+    }
   }
-  // Never commit into an open code fence or a still-streaming table at the buffer tail.
+  // Never commit into an open code fence, a still-streaming table, or a dangling heading at the tail.
   if (inFence && fenceOpenAt >= 0 && safe > fenceOpenAt) safe = fenceOpenAt;
   if (tableStart >= 0 && safe > tableStart) safe = tableStart;
+  if (headingHold >= 0 && safe > headingHold) safe = headingHold;
   return safe;
 }
 
@@ -636,7 +744,7 @@ function committedLen(raw) {
  * @param {"piper" | "kokoro"} [engine]
  * @returns {{ chunks: string[]; consumed: number }}
  */
-export function chunkStream(raw, flush, engine = "piper") {
+export function chunkStream(raw, flush, engine = "kokoro") {
   const committed = flush ? raw.length : committedLen(raw);
   if (committed <= 0) return { chunks: [], consumed: 0 };
   return { chunks: splitClips(speakable(raw.slice(0, committed), engine)), consumed: committed };

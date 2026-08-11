@@ -373,17 +373,32 @@ export interface AppSettings {
   // default — it puts owner text on the unauthenticated display, so only turn it on
   // for a display bound to the box's own monitor / localhost.
   brain_llm_stream: boolean;
-  // Read the streamed wall-display turns aloud (piper TTS on the box). OFF by
+  // Read the streamed wall-display turns aloud (Kokoro TTS on the box). OFF by
   // default — the runtime companion to brain_llm_stream, same localhost-only caveat.
   brain_read_aloud: boolean;
-  // The piper voice id the read-aloud speaks answers in — a voice id from
-  // brainVoices() (e.g. "en_US-amy-medium" or "en_US-libritts_r-medium#3922"). The
-  // in-chat read-aloud renders each turn through piper in this voice.
+  // The Kokoro voice id the read-aloud speaks answers in — a voice id from
+  // brainVoices() (e.g. "kokoro-af_heart"). The in-chat read-aloud renders each turn
+  // on the box in this voice.
   brain_answer_voice: string;
-  // Which engine the read-aloud renders with: "piper" (on-box, falls back to the
-  // device's native voice when the box is unreachable) or "native" (always the
-  // browser's own Web Speech voice).
+  // Which engine the read-aloud renders with: "piper" (a legacy marker meaning on-box
+  // Kokoro, falls back to the device's native voice when the box is unreachable) or
+  // "native" (always the browser's own Web Speech voice).
   brain_read_aloud_engine: "piper" | "native";
+  // The owner's read-aloud respelling map {word: "say it like"} — the api applies it as
+  // a whole-word substitution before a clip renders. Empty by default.
+  pronunciation_lexicon: Record<string, string>;
+}
+
+/** The on-box read-aloud engine's health (GET /api/brain/tts/health), driving the
+ * Pronunciations panel's voice-engine chip. `g2p` is the grapheme-to-phoneme backend
+ * the box resolved: "misaki" (best), "espeak" (degraded — respellings still apply,
+ * quality limited), or "unavailable". The endpoint 503s when the box is unreachable,
+ * so the client falls back to the all-off shape and the panel hides its chip. */
+export interface BrainTtsHealth {
+  kokoro_available: boolean;
+  g2p: "misaki" | "espeak" | "unavailable";
+  lexicon_entries: number;
+  voice_count: number;
 }
 
 /** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */
@@ -1994,9 +2009,9 @@ export const api = {
     return (await response.json()) as AppSettings;
   },
 
-  // The piper voice ids installed on the box (incl. curated multi-speaker entries like
-  // "en_US-libritts_r-medium#3922"), proxied through the api from the on-box display.
-  // Empty when the display is unconfigured/unreachable — read-aloud then has no voices.
+  // The Kokoro voice ids installed on the box ("kokoro-<voice>"), proxied through the api from
+  // the on-box display. Empty when the display is unconfigured/unreachable — read-aloud then has
+  // no voices and falls back to the device's own voice.
   async brainVoices(): Promise<string[]> {
     const response = await request("/api/brain/voices");
     const body = (await response.json()) as { voices?: unknown };
@@ -2005,22 +2020,7 @@ export const api = {
       : [];
   },
 
-  // Per multi-speaker model, its speaker names ordered by piper index (names[i] renders as
-  // speaker i). The Settings voice explorer shuffles across this roster to audition every
-  // libritts_r speaker. Empty when the box is unreachable or has no multi-speaker model.
-  async brainSpeakers(): Promise<Record<string, string[]>> {
-    const response = await request("/api/brain/speakers");
-    const body = (await response.json()) as { speakers?: unknown };
-    const raw = body.speakers;
-    if (!raw || typeof raw !== "object") return {};
-    const out: Record<string, string[]> = {};
-    for (const [stem, names] of Object.entries(raw as Record<string, unknown>)) {
-      if (Array.isArray(names)) out[stem] = names.filter((n): n is string => typeof n === "string");
-    }
-    return out;
-  },
-
-  // Render `text` to a WAV in `voice` on the box's piper (via the api proxy) — the audio
+  // Render `text` to a WAV in `voice` on the box's Kokoro (via the api proxy) — the audio
   // the in-chat read-aloud and the Settings "play sample" button play. `lead` (silence
   // pad, ms) is 0 on continuation chunks so a multi-clip reply plays gaplessly.
   async brainTts(
@@ -2036,6 +2036,31 @@ export const api = {
     if (trail !== undefined) params.set("trail", String(trail));
     const response = await request(`/api/brain/tts?${params.toString()}`);
     return response.blob();
+  },
+
+  // The on-box read-aloud engine's health (GET /api/brain/tts/health) — the Pronunciations
+  // panel reads it for the voice-engine chip. Defensive: the endpoint 503s when the box is
+  // unreachable and the body can be anything, so any error or malformed shape resolves to the
+  // all-off fallback and the caller never has to catch.
+  async brainTtsHealth(): Promise<BrainTtsHealth> {
+    const fallback: BrainTtsHealth = {
+      kokoro_available: false,
+      g2p: "unavailable",
+      lexicon_entries: 0,
+      voice_count: 0,
+    };
+    try {
+      const response = await request("/api/brain/tts/health");
+      const body = (await response.json()) as Partial<BrainTtsHealth>;
+      return {
+        kokoro_available: body.kokoro_available === true,
+        g2p: body.g2p === "misaki" || body.g2p === "espeak" ? body.g2p : "unavailable",
+        lexicon_entries: typeof body.lexicon_entries === "number" ? body.lexicon_entries : 0,
+        voice_count: typeof body.voice_count === "number" ? body.voice_count : 0,
+      };
+    } catch {
+      return fallback;
+    }
   },
 
   // The archivist's Gmail connection. Status is booleans only; saving a partial

@@ -434,7 +434,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The wall base URL (events URL minus /event) — kept for any wall-direct call.
         app.state.brain_base_url = settings.brain_events_url.removesuffix("/event")
         # TTS moved into the `tts-stt` service: the authenticated /api/brain/tts +
-        # /api/brain/voices proxy reaches its piper renderer here (so the PWA read-aloud +
+        # /api/brain/voices proxy reaches its Kokoro renderer here (so the PWA read-aloud +
         # voice picker never touch an unauthenticated service directly), and the tts_debug
         # flag is pushed to its /event (not the wall's).
         tts_base = settings.brain_tts_url.rstrip("/")

@@ -1,7 +1,7 @@
 """The authenticated api -> on-box tts-stt TTS proxy (jbrain.api.brain).
 
 The PWA read-aloud + voice picker reach the unauthenticated LAN display through the
-owner's api session: /api/brain/voices lists the box's piper voices and /api/brain/tts
+owner's api session: /api/brain/voices lists the box's Kokoro voices and /api/brain/tts
 renders a clip. httpx is faked (no live box), and the routes require a session.
 """
 
@@ -80,24 +80,25 @@ def test_voices_and_tts_require_auth() -> None:
     with TestClient(app) as anon:
         app.state.auth_repo = FakeAuthRepo()
         assert anon.get("/api/brain/voices").status_code == 401
-        assert anon.get("/api/brain/speakers").status_code == 401
+        assert anon.get("/api/brain/tts/health").status_code == 401
         assert anon.get("/api/brain/tts", params={"text": "hi", "voice": "v"}).status_code == 401
 
 
-def test_speakers_proxies_the_roster(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    roster = {"en_US-libritts_r-medium": ["3922", "1234", "6272"]}
-    calls = _install_fake_httpx(
-        monkeypatch, lambda url, params: _FakeResp(200, json_data={"speakers": roster})
-    )
-    resp = client.get("/api/brain/speakers")
+def test_tts_health_proxies_the_engine_status(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The diagnostic the Settings panel reads: is the box on misaki (lexicon live) or espeak?
+    status = {"kokoro_available": True, "g2p": "espeak", "lexicon_entries": 1, "voice_count": 5}
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, json_data=status))
+    resp = client.get("/api/brain/tts/health")
     assert resp.status_code == 200
-    assert resp.json() == {"speakers": roster}
-    assert calls == [("http://tts-stt:8801/tts/speakers", None)]
+    assert resp.json() == status
+    assert calls == [("http://tts-stt:8801/tts/health", None)]
 
 
-def test_speakers_503_when_display_unconfigured(client: TestClient) -> None:
+def test_tts_health_503_when_display_unconfigured(client: TestClient) -> None:
     client.app.state.brain_tts_base_url = ""  # type: ignore[attr-defined]
-    assert client.get("/api/brain/speakers").status_code == 503
+    assert client.get("/api/brain/tts/health").status_code == 503
 
 
 def test_voices_proxies_the_installed_list(
@@ -175,6 +176,44 @@ def test_tts_omits_pacing_params_when_absent(
     client.get("/api/brain/tts", params={"text": "hi", "voice": "kokoro-af_heart"})
     _url, params = calls[0]
     assert params == {"text": "hi", "voice": "kokoro-af_heart"}
+
+
+def test_tts_applies_the_owner_pronunciation_lexicon(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The owner's respelling map is applied (whole-word, case-insensitive) before the text is
+    # forwarded to the box — so a fixed word renders right regardless of the box's phonemizer.
+    from tests.unit.fakes import FakeSettingsStore
+
+    store = FakeSettingsStore()
+    store.values["pronunciation_lexicon"] = {"Titusville": "Tight us ville"}
+    client.app.state.settings_store = store  # type: ignore[attr-defined]
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
+    resp = client.get(
+        "/api/brain/tts",
+        params={"text": "visiting titusville today", "voice": "kokoro-af_heart"},
+    )
+    assert resp.status_code == 200
+    _url, params = calls[0]
+    assert params is not None
+    assert params["text"] == "visiting Tight us ville today"  # respelled, case-insensitive match
+
+
+def test_tts_survives_a_lexicon_read_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A settings-read hiccup must never fail read-aloud — it just skips the respelling.
+    class _BoomStore:
+        async def pronunciation_lexicon(self, ctx: object) -> dict[str, str]:
+            raise RuntimeError("db down")
+
+    client.app.state.settings_store = _BoomStore()  # type: ignore[attr-defined]
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
+    resp = client.get("/api/brain/tts", params={"text": "hello there", "voice": "kokoro-af_heart"})
+    assert resp.status_code == 200
+    params = calls[0][1]
+    assert params is not None
+    assert params["text"] == "hello there"  # forwarded unchanged, no crash
 
 
 def test_tts_rejects_blank_text(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

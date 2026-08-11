@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —
     # best-effort, no owner data, failures ignored. Empty disables the emit (no web tendrils).
     brain_events_url: str = ""
-    # The `tts-stt` speech service's piper TTS base URL (deploy/tts-stt). The PWA read-aloud
+    # The `tts-stt` speech service's Kokoro TTS base URL (deploy/tts-stt). The PWA read-aloud
     # proxy (/api/brain/tts, /api/brain/voices) targets it, and the tts_debug flag is pushed
     # to its /event. Separate from brain_events_url (the wall) since TTS is its own always-on
     # service now. Empty -> the read-aloud proxy 503s (no voices).

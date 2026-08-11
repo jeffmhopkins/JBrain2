@@ -152,16 +152,16 @@ async def test_brain_answer_voice_defaults_to_amy_and_round_trips(
 
     store = SqlSettingsStore(maker)
     # Absent → Amy, so read-aloud always has a valid voice.
-    assert await store.brain_answer_voice(OWNER) == "en_US-amy-medium"
+    assert await store.brain_answer_voice(OWNER) == "kokoro-af_heart"
 
-    await store.upsert(OWNER, BRAIN_ANSWER_VOICE_KEY, "en_US-libritts_r-medium#3922")
-    assert await store.brain_answer_voice(OWNER) == "en_US-libritts_r-medium#3922"
+    await store.upsert(OWNER, BRAIN_ANSWER_VOICE_KEY, "kokoro-am_michael")
+    assert await store.brain_answer_voice(OWNER) == "kokoro-am_michael"
 
     # A non-string / empty stored value reads back as the default.
     await store.upsert(OWNER, BRAIN_ANSWER_VOICE_KEY, "")
-    assert await store.brain_answer_voice(OWNER) == "en_US-amy-medium"
+    assert await store.brain_answer_voice(OWNER) == "kokoro-af_heart"
     await store.upsert(OWNER, BRAIN_ANSWER_VOICE_KEY, 5)
-    assert await store.brain_answer_voice(OWNER) == "en_US-amy-medium"
+    assert await store.brain_answer_voice(OWNER) == "kokoro-af_heart"
 
 
 async def test_brain_read_aloud_engine_defaults_piper_and_round_trips(
@@ -179,6 +179,30 @@ async def test_brain_read_aloud_engine_defaults_piper_and_round_trips(
     # An unrecognized value reads back as the default.
     await store.upsert(OWNER, BRAIN_READ_ALOUD_ENGINE_KEY, "robot")
     assert await store.brain_read_aloud_engine(OWNER) == "piper"
+
+
+async def test_pronunciation_lexicon_round_trips_and_sanitizes(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    store = SqlSettingsStore(maker)
+    # Absent → empty map (today's behavior).
+    assert await store.pronunciation_lexicon(OWNER) == {}
+
+    stored = await store.set_pronunciation_lexicon(
+        OWNER, {"Titusville": "Tight us ville", "  ": "x", "y": "  ", "ok": "okay"}
+    )
+    # Blank word / blank respelling are dropped; the good entries persist and read back.
+    assert stored == {"Titusville": "Tight us ville", "ok": "okay"}
+    assert await store.pronunciation_lexicon(OWNER) == {
+        "Titusville": "Tight us ville",
+        "ok": "okay",
+    }
+
+    # A junk stored value reads back as empty rather than crashing a render.
+    from jbrain.settings_store import PRONUNCIATION_LEXICON_KEY
+
+    await store.upsert(OWNER, PRONUNCIATION_LEXICON_KEY, "not a dict")
+    assert await store.pronunciation_lexicon(OWNER) == {}
 
 
 async def test_owner_timezone_round_trip_and_rejects_unknown_zones(

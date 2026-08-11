@@ -1665,11 +1665,11 @@ document.getElementById('btnLlmStream').onclick = () => demoLlmTurn();
 document.getElementById('btnTask').onclick = () => demoTask();
 
 /* ============================================================================
-   READ ALOUD — server-side TTS. serve.py renders speech on the box with piper and
+   READ ALOUD — server-side TTS. serve.py renders speech on the box with Kokoro and
    returns a WAV from GET /tts?voice=<model>&text=... ; the page just plays it via
    <audio>, so the browser's flaky Web Speech engine (speech-dispatcher cold start,
    silent drops) is out of the path entirely. Two independent voices (prompt / answer),
-   each an enable checkbox + a picker over the installed piper models (GET /tts/voices);
+   each an enable checkbox + a picker over the installed Kokoro voices (GET /tts/voices);
    both persist. The panel stays hidden until the server reports at least one voice.
    speakPrompt/speakAnswer are called from ServerBrain.llmInput / .llmOutput.
    ========================================================================== */
@@ -1742,7 +1742,7 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 // Split a reply into sentence-sized clips so speech starts fast (first clip renders while the
-// rest queue), the WHOLE reply is read — not a 600-char excerpt — and no single giant piper
+// rest queue), the WHOLE reply is read — not a 600-char excerpt — and no single giant TTS
 // render risks a timeout. Packs whole sentences up to ~TTS_CHUNK chars; hard-splits an overlong
 // sentence on a word boundary. mdToPlain has already stripped markdown to clean prose.
 const TTS_CHUNK = 220;
@@ -1780,10 +1780,10 @@ function enqueueTTS(kind, text) {
 }
 function speakPrompt(text) { enqueueTTS('prompt', text); }
 function speakAnswer(text) { enqueueTTS('answer', text); }
-// Default model per kind when nothing is saved yet — matched by the installed set, else the
-// first available. The picker still lists every installed model, so adding voices just works.
-const DEFAULT_VOICE = { prompt: 'en_US-joe-medium', answer: 'en_US-amy-medium' };
-// The panel shows only when BOTH piper voices are installed on the box AND the owner has
+// Default Kokoro voice per kind when nothing is saved yet — matched by the installed set, else
+// the first available. The picker still lists every installed voice, so adding voices just works.
+const DEFAULT_VOICE = { prompt: 'kokoro-am_michael', answer: 'kokoro-af_heart' };
+// The panel shows only when Kokoro voices are installed on the box AND the owner has
 // turned on the brain_read_aloud setting (surfaced as /stats.read_aloud). Either alone is
 // not enough: no voices means nothing to speak; setting off means the owner hasn't opted in.
 let voicesAvailable = false;
@@ -1793,7 +1793,7 @@ function updateVoicePanel() {
   voicePanel.hidden = !show;
   if (!show) ttsStop();                                  // hidden -> silence any in-flight clip
 }
-async function initVoices() {                            // ask the box which piper models are installed
+async function initVoices() {                            // ask the box which Kokoro voices are installed
   let voices = [];
   try { voices = ((await (await fetch('/tts/voices', { cache: 'no-store' })).json()).voices) || []; } catch { /* server offline / no tts */ }
   if (!voices.length) return;                            // no models -> leave the panel hidden
@@ -2057,7 +2057,7 @@ async function pollStats() {
     failCount = 0;
     ServerBrain.update(s);
     // Read-aloud is a held display-config flag (brain_read_aloud), not a queued event:
-    // show/hide the voice panel on it (gated too by piper voices being installed).
+    // show/hide the voice panel on it (gated too by Kokoro voices being installed).
     if (readAloudOn !== !!s.read_aloud) { readAloudOn = !!s.read_aloud; updateVoicePanel(); }
     if (s.events) for (const ev of s.events) {
       if (ev.kind === 'web_search') ServerBrain.webSearch(ev.text);
