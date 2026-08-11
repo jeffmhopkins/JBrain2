@@ -67,8 +67,8 @@ RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
 # 3.14, so `pip install misaki[en]` on system python can only ever fail to build blis and fall
 # back to espeak. Instead build the FULL Kokoro Python stack in a self-contained Python 3.12 venv
 # (uv fetches a portable build) where every wheel exists — kokoro + misaki[en] + its small spaCy
-# model (en_core_web_sm; tts_server uses trf=False to bound RAM) — and prefer it at runtime
-# (entrypoint.sh). NON-FATAL and self-cleaning: the system-python kokoro-onnx above stays the
+# model (en_core_web_sm as a pinned wheel; tts_server uses trf=False to bound RAM) — and prefer it
+# at runtime (entrypoint.sh). NON-FATAL and self-cleaning: the system-python kokoro-onnx above stays the
 # on-box fallback, so a venv hiccup (or blocked egress) only means Kokoro runs on espeak G2P on
 # 3.14 — never a broken build or a dead TTS. The final import check tears the venv down unless the
 # whole stack loads, so the entrypoint's presence test can't pick a half-built venv. Keep the
@@ -80,14 +80,22 @@ RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
 # fetching multiple GB during `docker build` is exactly what made this venv step fail (non-fatally,
 # so the image still "built" without misaki → silent espeak). Pinning torch to the CPU index drops
 # the entire CUDA stack to one self-contained `torch==*+cpu` wheel, so the build is lean + reliable.
+#
+# en_core_web_sm as a direct wheel, NOT `spacy download`: spaCy's downloader shells out to `uv pip`
+# when uv is on PATH, but that nested uv can't see this venv (we invoke /opt/tts-venv/bin/python
+# directly, so VIRTUAL_ENV is unset and there's no .venv in cwd) and aborts with "No virtual
+# environment found" — which failed the whole && chain and tore the venv down (silent espeak) even
+# after the CPU-torch fix let every package install. Installing the model as a pinned wheel in the
+# same explicit `uv pip install --python /opt/tts-venv` avoids the subprocess entirely; keep the
+# 3.8.x model in step with the resolved spaCy 3.8.x line (spacy.load resolves it by package name).
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN ( uv python install 3.12 \
    && uv venv --python 3.12 /opt/tts-venv \
    && uv pip install --python /opt/tts-venv --no-cache \
         --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match \
         kokoro-onnx==0.4.7 "misaki[en]" \
-   && /opt/tts-venv/bin/python -m spacy download en_core_web_sm \
-   && /opt/tts-venv/bin/python -c "import kokoro_onnx, misaki.en" ) \
+        "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" \
+   && /opt/tts-venv/bin/python -c "import kokoro_onnx, misaki.en, en_core_web_sm" ) \
  || { echo >&2 "!!!!! [kokoro] ============================================================"; \
       echo >&2 "!!!!! [kokoro] py3.12 misaki G2P venv build FAILED — tearing it down"; \
       echo >&2 "!!!!! [kokoro] Kokoro still runs on system python with the espeak G2P"; \
