@@ -375,6 +375,10 @@ const SETTINGS: AppSettings = {
   brain_answer_voice: "kokoro-af_heart",
   // The opaque "on-box" engine marker (Kokoro on the box, native fallback).
   brain_read_aloud_engine: "piper",
+  brain_answer_speed: 1.0,
+  brain_answer_pitch: 0,
+  brain_answer_chorus: false,
+  brain_answer_robot: false,
   pronunciation_lexicon: {},
 };
 

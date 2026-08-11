@@ -90,6 +90,12 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // Which engine the read-aloud renders with: "piper" (the opaque on-box marker — Kokoro on the
   // box, native fallback) or "native" (the device's own voice). null until the server answers.
   const [brainEngine, setBrainEngine] = useState<"piper" | "native" | null>(null);
+  // Read-aloud voice effects: speed (0.5–2.0×), pitch (semitones, ±12), and the chorus/robot
+  // toggles. null until the server answers.
+  const [brainSpeed, setBrainSpeed] = useState<number | null>(null);
+  const [brainPitch, setBrainPitch] = useState<number | null>(null);
+  const [brainChorus, setBrainChorus] = useState<boolean | null>(null);
+  const [brainRobot, setBrainRobot] = useState<boolean | null>(null);
   const [voices, setVoices] = useState<string[] | null>(null);
   const [samplePlaying, setSamplePlaying] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
@@ -124,6 +130,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         setBrainReadAloud(s.brain_read_aloud);
         setBrainAnswerVoice(s.brain_answer_voice);
         setBrainEngine(s.brain_read_aloud_engine);
+        setBrainSpeed(s.brain_answer_speed);
+        setBrainPitch(s.brain_answer_pitch);
+        setBrainChorus(s.brain_answer_chorus);
+        setBrainRobot(s.brain_answer_robot);
         setLexicon(s.pronunciation_lexicon ?? {});
         if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
@@ -384,6 +394,30 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     setSampleError(null);
     emitReadAloudSettings({ brain_read_aloud_engine: next });
     void api.updateSettings({ brain_read_aloud_engine: next }).catch(() => {});
+  }
+
+  function pickSpeed(v: number) {
+    setBrainSpeed(v); // optimistic
+    emitReadAloudSettings({ brain_answer_speed: v });
+    void api.updateSettings({ brain_answer_speed: v }).catch(() => {});
+  }
+
+  function pickPitch(v: number) {
+    setBrainPitch(v); // optimistic
+    emitReadAloudSettings({ brain_answer_pitch: v });
+    void api.updateSettings({ brain_answer_pitch: v }).catch(() => {});
+  }
+
+  function pickChorus(on: boolean) {
+    setBrainChorus(on); // optimistic
+    emitReadAloudSettings({ brain_answer_chorus: on });
+    void api.updateSettings({ brain_answer_chorus: on }).catch(() => {});
+  }
+
+  function pickRobot(on: boolean) {
+    setBrainRobot(on); // optimistic
+    emitReadAloudSettings({ brain_answer_robot: on });
+    void api.updateSettings({ brain_answer_robot: on }).catch(() => {});
   }
 
   // The read-aloud model is a view over two settings. "native" is the device's own voice;
@@ -719,6 +753,68 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
             </>
           ))}
+
+        {/* Voice effects. Speed + pitch apply to BOTH engines (native maps them onto the browser
+            utterance); chorus + robot are on-box (Kokoro) ffmpeg effects, so they're offered only
+            on the Kokoro model. Sliders commit on release (drag/keys update the label live). */}
+        <div className="settings-fx">
+          <p className="settings-meta">
+            Voice effects — applied to chat read-aloud and the wall display.
+          </p>
+          <label className="settings-field">
+            Reading speed: {(brainSpeed ?? 1).toFixed(2)}×
+            <input
+              type="range"
+              min={0.5}
+              max={2}
+              step={0.05}
+              value={brainSpeed ?? 1}
+              aria-label="Reading speed"
+              disabled={brainSpeed === null}
+              onChange={(e) => setBrainSpeed(Number(e.target.value))}
+              onPointerUp={(e) => pickSpeed(Number(e.currentTarget.value))}
+              onKeyUp={(e) => pickSpeed(Number(e.currentTarget.value))}
+            />
+          </label>
+          <label className="settings-field">
+            Pitch: {(brainPitch ?? 0) > 0 ? "+" : ""}
+            {brainPitch ?? 0} semitones
+            <input
+              type="range"
+              min={-12}
+              max={12}
+              step={1}
+              value={brainPitch ?? 0}
+              aria-label="Pitch"
+              disabled={brainPitch === null}
+              onChange={(e) => setBrainPitch(Number(e.target.value))}
+              onPointerUp={(e) => pickPitch(Number(e.currentTarget.value))}
+              onKeyUp={(e) => pickPitch(Number(e.currentTarget.value))}
+            />
+          </label>
+          {currentModel === "kokoro" && (
+            <div className="theme-picker" aria-label="Voice character effects">
+              <button
+                type="button"
+                aria-pressed={brainChorus === true}
+                className={`seg${brainChorus ? " seg-on" : ""}`}
+                disabled={brainChorus === null}
+                onClick={() => pickChorus(!brainChorus)}
+              >
+                Chorus
+              </button>
+              <button
+                type="button"
+                aria-pressed={brainRobot === true}
+                className={`seg${brainRobot ? " seg-on" : ""}`}
+                disabled={brainRobot === null}
+                onClick={() => pickRobot(!brainRobot)}
+              >
+                Robot
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Pronunciations — the owner's respelling map, on-box (Kokoro) only, gated the same
             way as the voice picker. The whole map is PUT on every edit (REPLACE semantics). */}

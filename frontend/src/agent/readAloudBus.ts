@@ -11,6 +11,12 @@ export interface ReadAloudPatch {
   brain_read_aloud?: boolean;
   brain_answer_voice?: string;
   brain_read_aloud_engine?: "piper" | "native";
+  // Voice effects — carried live so the mounted chat hook speaks the next turn with the newly
+  // chosen speed/pitch/chorus/robot without a remount.
+  brain_answer_speed?: number;
+  brain_answer_pitch?: number;
+  brain_answer_chorus?: boolean;
+  brain_answer_robot?: boolean;
 }
 
 const bus = new EventTarget();

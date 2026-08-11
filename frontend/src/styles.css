@@ -984,6 +984,26 @@ h3 {
   gap: 8px;
 }
 
+/* Read-aloud voice-effects group: speed/pitch sliders + chorus/robot toggles. */
+.settings-fx {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+.settings-fx .settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.settings-fx input[type="range"] {
+  width: 100%;
+  accent-color: var(--steel, #7fa7c9);
+  cursor: pointer;
+}
+
 /* Read-custom-text overlay (opened from the read-aloud voice picker): a mostly-textarea
    surface with a Play/Stop + Export foot. The body is a flex column so the textarea grows to
    fill and the actions pin to the bottom. */

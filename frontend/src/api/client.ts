@@ -384,6 +384,14 @@ export interface AppSettings {
   // Kokoro, falls back to the device's native voice when the box is unreachable) or
   // "native" (always the browser's own Web Speech voice).
   brain_read_aloud_engine: "piper" | "native";
+  // Read-aloud voice effects (applied to the PWA read-aloud AND the wall display). speed is
+  // Kokoro's native rate (0.5–2.0×); pitch (semitones, ±12) + chorus + robot are post-render
+  // ffmpeg effects on the box (a native-voice read maps speed/pitch onto the Web Speech utterance).
+  // Defaults are no-ops (1.0× / 0 / off).
+  brain_answer_speed: number;
+  brain_answer_pitch: number;
+  brain_answer_chorus: boolean;
+  brain_answer_robot: boolean;
   // The owner's read-aloud respelling map {word: "say it like"} — the api applies it as
   // a whole-word substitution before a clip renders. Empty by default.
   pronunciation_lexicon: Record<string, string>;
@@ -2029,11 +2037,17 @@ export const api = {
     lead?: number,
     speed?: number,
     trail?: number,
+    fx?: { pitch?: number; chorus?: boolean; robot?: boolean },
   ): Promise<Blob> {
     const params = new URLSearchParams({ voice, text });
     if (lead !== undefined) params.set("lead", String(lead));
     if (speed !== undefined) params.set("speed", String(speed));
     if (trail !== undefined) params.set("trail", String(trail));
+    // Voice effects (the box applies them post-render); only send a non-default so a plain read
+    // never spawns ffmpeg on the box.
+    if (fx?.pitch) params.set("pitch", String(fx.pitch));
+    if (fx?.chorus) params.set("chorus", "1");
+    if (fx?.robot) params.set("robot", "1");
     const response = await request(`/api/brain/tts?${params.toString()}`);
     return response.blob();
   },

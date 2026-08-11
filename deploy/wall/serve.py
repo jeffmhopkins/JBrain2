@@ -113,6 +113,15 @@ _posted_lock = threading.Lock()
 # nothing until the app re-pushes the flag (it does so on the setting change and each turn).
 _read_aloud = [False]
 
+# Read-aloud voice effects, pushed by the app ({"kind": "answer_speed"|"answer_pitch"|
+# "answer_chorus"|"answer_robot", "value": ...} to /event) from the matching settings. Held like
+# the read-aloud flag and surfaced in every /stats; the page appends them to its /tts requests so
+# the display reads at the owner's chosen speed/pitch/chorus/robot. Defaults are no-ops.
+_answer_speed = [1.0]
+_answer_pitch = [0.0]
+_answer_chorus = [False]
+_answer_robot = [False]
+
 
 
 def _drain_posted() -> list:
@@ -446,6 +455,11 @@ def _shape(util, mem, power, temp, load, uptime_h,
         # Persistent read-aloud switch (brain_read_aloud) — the page shows its voice panel
         # only when this is on AND Kokoro voices are installed.
         "read_aloud": bool(read_aloud),
+        # Read-aloud voice effects the page appends to its /tts requests (held from the app's pushes).
+        "answer_speed": round(_answer_speed[0], 3),
+        "answer_pitch": round(_answer_pitch[0], 2),
+        "answer_chorus": bool(_answer_chorus[0]),
+        "answer_robot": bool(_answer_robot[0]),
         "host": {"load_1m": round(load, 2), "uptime_h": uptime_h},
     }
 
@@ -558,6 +572,27 @@ class Handler(BaseHTTPRequestHandler):
             # A held display-config flag, not a tendril event: latch it (the app pushes it
             # from the brain_read_aloud setting) so /stats reflects it until the next push.
             _read_aloud[0] = bool(ev.get("on"))
+            self._send(204, b"", "text/plain")
+            return
+        if kind in ("answer_speed", "answer_pitch", "answer_chorus", "answer_robot"):
+            # Held read-aloud voice-effect values, pushed from the matching settings. Latch each
+            # (clamped/coerced defensively — a junk push can't reach the renderer) so /stats
+            # carries it to the page, which forwards it on /tts.
+            val = ev.get("value")
+            if kind == "answer_speed":
+                try:
+                    _answer_speed[0] = max(0.5, min(2.0, float(val)))
+                except (TypeError, ValueError):
+                    pass
+            elif kind == "answer_pitch":
+                try:
+                    _answer_pitch[0] = max(-12.0, min(12.0, float(val)))
+                except (TypeError, ValueError):
+                    pass
+            elif kind == "answer_chorus":
+                _answer_chorus[0] = bool(val)
+            else:
+                _answer_robot[0] = bool(val)
             self._send(204, b"", "text/plain")
             return
         if kind in (

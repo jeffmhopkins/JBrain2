@@ -80,10 +80,14 @@ window.ServerBrain.injectError(): void   // force an API error blip
     { kind: 'llm_thinking', text: '…', ts: 1719772800000 },  // -> ServerBrain.llmThinking(text)
     { kind: 'llm_output',   text: '…', ts: 1719772800000 }   // -> ServerBrain.llmOutput(text)
   ],
-  read_aloud: false           // held display-config flag (brain_read_aloud), not an event:
+  read_aloud: false,          // held display-config flag (brain_read_aloud), not an event:
                               // the page shows its read-aloud voice panel only when this is
                               // true AND Kokoro voices are installed. Pushed out-of-band via
                               // POST /event {kind:'read_aloud', on}; absent in the pure demo.
+  answer_speed: 1.0,          // held read-aloud voice effects (from the settings). The page
+  answer_pitch: 0.0,          // appends them to its /tts requests so the display reads at the
+  answer_chorus: false,       // owner's chosen speed/pitch/chorus/robot. Pushed out-of-band via
+  answer_robot: false         // POST /event {kind:'answer_speed'|…, value}; no-ops by default.
 }
 ```
 

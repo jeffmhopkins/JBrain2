@@ -178,6 +178,43 @@ def test_tts_omits_pacing_params_when_absent(
     assert params == {"text": "hi", "voice": "kokoro-af_heart"}
 
 
+def test_tts_forwards_clamped_voice_effects(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The PWA sends the owner's chosen effects; the proxy clamps pitch and forwards chorus/robot
+    # as the box's 1/0 flags.
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
+    resp = client.get(
+        "/api/brain/tts",
+        params={
+            "text": "A line.",
+            "voice": "kokoro-af_heart",
+            "pitch": 99.0,
+            "chorus": "true",
+            "robot": "false",
+        },
+    )
+    assert resp.status_code == 200
+    _url, params = calls[0]
+    assert params == {
+        "text": "A line.",
+        "voice": "kokoro-af_heart",
+        "pitch": "12.0",  # clamped to the ±12 semitone ceiling
+        "chorus": "1",
+        "robot": "0",
+    }
+
+
+def test_tts_omits_effect_params_when_absent(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No effects → nothing extra forwarded, so a plain read never spawns ffmpeg on the box.
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
+    client.get("/api/brain/tts", params={"text": "hi", "voice": "kokoro-af_heart"})
+    _url, params = calls[0]
+    assert "pitch" not in params and "chorus" not in params and "robot" not in params
+
+
 def test_tts_applies_the_owner_pronunciation_lexicon(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

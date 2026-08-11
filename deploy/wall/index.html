@@ -1770,11 +1770,18 @@ function enqueueTTS(kind, text) {
   if (!clean.trim()) return;
   if (kind === 'prompt') ttsQueue.length = 0;            // a new turn — drop un-played backlog
   const voice = encodeURIComponent(c.sel.value);
+  // The owner's voice effects (held from /stats); only append a non-default so a plain read keeps
+  // the box off the ffmpeg path.
+  let fx = '';
+  if (answerFx.speed !== 1) fx += '&speed=' + answerFx.speed;
+  if (answerFx.pitch) fx += '&pitch=' + answerFx.pitch;
+  if (answerFx.chorus) fx += '&chorus=1';
+  if (answerFx.robot) fx += '&robot=1';
   chunkForTTS(clean).forEach((chunk, i) => {
     // Only the FIRST clip of a turn pads for a possible sink resume; continuation clips ask for
     // no lead (&lead=0) so the sentences of one reply run together instead of gapping every clip.
     const lead = i === 0 ? '' : '&lead=0';
-    ttsQueue.push('/tts?voice=' + voice + '&text=' + encodeURIComponent(chunk) + lead);
+    ttsQueue.push('/tts?voice=' + voice + '&text=' + encodeURIComponent(chunk) + lead + fx);
   });
   ttsPlayNext();
 }
@@ -1788,6 +1795,10 @@ const DEFAULT_VOICE = { prompt: 'kokoro-am_michael', answer: 'kokoro-af_heart' }
 // not enough: no voices means nothing to speak; setting off means the owner hasn't opted in.
 let voicesAvailable = false;
 let readAloudOn = false;
+// Read-aloud voice effects, held from /stats (pushed by the app from the settings). Appended to
+// every /tts request so the display reads at the owner's chosen speed/pitch/chorus/robot. No-ops
+// by default, so an untouched box reads plainly.
+const answerFx = { speed: 1, pitch: 0, chorus: false, robot: false };
 function updateVoicePanel() {
   const show = voicesAvailable && readAloudOn;
   voicePanel.hidden = !show;
@@ -2059,6 +2070,11 @@ async function pollStats() {
     // Read-aloud is a held display-config flag (brain_read_aloud), not a queued event:
     // show/hide the voice panel on it (gated too by Kokoro voices being installed).
     if (readAloudOn !== !!s.read_aloud) { readAloudOn = !!s.read_aloud; updateVoicePanel(); }
+    // Hold the read-aloud effects for the next clip (defaults keep a plain read).
+    if (typeof s.answer_speed === 'number') answerFx.speed = s.answer_speed;
+    if (typeof s.answer_pitch === 'number') answerFx.pitch = s.answer_pitch;
+    answerFx.chorus = !!s.answer_chorus;
+    answerFx.robot = !!s.answer_robot;
     if (s.events) for (const ev of s.events) {
       if (ev.kind === 'web_search') ServerBrain.webSearch(ev.text);
       else if (ev.kind === 'web_fetch') ServerBrain.webFetch(ev.text);

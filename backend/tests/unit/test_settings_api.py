@@ -57,6 +57,10 @@ def test_get_settings_defaults_to_full_analysis(
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "brain_answer_speed": 1.0,
+        "brain_answer_pitch": 0.0,
+        "brain_answer_chorus": False,
+        "brain_answer_robot": False,
         "pronunciation_lexicon": {},
     }
 
@@ -72,6 +76,10 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "brain_answer_speed": 1.0,
+        "brain_answer_pitch": 0.0,
+        "brain_answer_chorus": False,
+        "brain_answer_robot": False,
         "pronunciation_lexicon": {},
     }
     assert store.values["image_analysis_mode"] == "ocr"
@@ -82,6 +90,10 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "brain_answer_speed": 1.0,
+        "brain_answer_pitch": 0.0,
+        "brain_answer_chorus": False,
+        "brain_answer_robot": False,
         "pronunciation_lexicon": {},
     }
 
@@ -92,6 +104,10 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "brain_answer_speed": 1.0,
+        "brain_answer_pitch": 0.0,
+        "brain_answer_chorus": False,
+        "brain_answer_robot": False,
         "pronunciation_lexicon": {},
     }
 
@@ -109,6 +125,10 @@ def test_put_settings_round_trips_the_timezone(
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "brain_answer_speed": 1.0,
+        "brain_answer_pitch": 0.0,
+        "brain_answer_chorus": False,
+        "brain_answer_robot": False,
         "pronunciation_lexicon": {},
     }
     assert store.values["owner_timezone"] == "America/New_York"
@@ -229,6 +249,58 @@ def test_put_settings_round_trips_pronunciation_lexicon(
     )
 
 
+def test_put_settings_round_trips_voice_effects_and_pushes_them_to_the_wall(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # Defaults are no-ops so an untouched box is unchanged.
+    got = c.get("/api/settings").json()
+    assert got["brain_answer_speed"] == 1.0
+    assert got["brain_answer_pitch"] == 0.0
+    assert got["brain_answer_chorus"] is False
+    assert got["brain_answer_robot"] is False
+    # The PUT also fire-and-forget pushes each effect to the wall so the display reads at the
+    # chosen speed/pitch/chorus/robot live (no redeploy); capture those value pushes.
+    pushes: list[tuple[str, float | bool]] = []
+    c.app.state.brain_value_emit = lambda kind, value: pushes.append((kind, value))  # type: ignore[attr-defined]
+
+    resp = c.put(
+        "/api/settings",
+        json={
+            "brain_answer_speed": 1.25,
+            "brain_answer_pitch": -3.0,
+            "brain_answer_chorus": True,
+            "brain_answer_robot": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["brain_answer_speed"] == 1.25
+    assert body["brain_answer_pitch"] == -3.0
+    assert body["brain_answer_chorus"] is True
+    assert body["brain_answer_robot"] is True
+    assert store.values["brain_answer_speed"] == 1.25
+    assert pushes == [
+        ("answer_speed", 1.25),
+        ("answer_pitch", -3.0),
+        ("answer_chorus", True),
+        ("answer_robot", True),
+    ]
+
+
+def test_put_settings_rejects_out_of_range_speed_and_pitch(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # Bounds are enforced at the edge (422), not silently clamped, so a junk value never lands.
+    assert c.put("/api/settings", json={"brain_answer_speed": 3.0}).status_code == 422
+    assert c.put("/api/settings", json={"brain_answer_speed": 0.1}).status_code == 422
+    assert c.put("/api/settings", json={"brain_answer_pitch": 20.0}).status_code == 422
+    assert c.put("/api/settings", json={"brain_answer_pitch": -99.0}).status_code == 422
+    assert "brain_answer_speed" not in store.values
+    assert "brain_answer_pitch" not in store.values
+
+
 def test_put_settings_rejects_unknown_read_aloud_engine(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:
@@ -266,5 +338,9 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "brain_answer_speed": 1.0,
+        "brain_answer_pitch": 0.0,
+        "brain_answer_chorus": False,
+        "brain_answer_robot": False,
         "pronunciation_lexicon": {},
     }

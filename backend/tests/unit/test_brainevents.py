@@ -9,9 +9,11 @@ import httpx
 from jbrain.agent.brainevents import (
     _post_event,
     _post_flag,
+    _post_value,
     brain_text_enabled,
     build_event_emitter,
     build_flag_emitter,
+    build_value_emitter,
 )
 
 
@@ -136,3 +138,35 @@ async def test_post_flag_swallows_transport_errors(monkeypatch) -> None:  # type
 
     monkeypatch.setattr(httpx.AsyncClient, "post", boom)
     await _post_flag("http://wall:8800/event", "read_aloud", True)  # must not raise
+
+
+def test_value_emit_noop_without_url() -> None:
+    build_value_emitter("")("answer_speed", 1.25)  # no URL → silent no-op, no loop needed
+
+
+async def test_value_emit_ships_a_numeric_config_value(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # The read-aloud effects are display config (a number/bool), shipped as {kind, value}
+    # regardless of the per-turn text gate.
+    posted: list[dict] = []
+
+    async def fake_send(self, url, json):  # type: ignore[no-untyped-def]
+        posted.append(json)
+
+        class _R:
+            pass
+
+        return _R()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_send)
+    brain_text_enabled.set(False)
+    build_value_emitter("http://wall:8800/event")("answer_pitch", -3.0)
+    await asyncio.sleep(0)
+    assert posted == [{"kind": "answer_pitch", "value": -3.0}]
+
+
+async def test_post_value_swallows_transport_errors(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async def boom(*_args, **_kwargs) -> None:
+        raise httpx.ConnectError("display unreachable")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", boom)
+    await _post_value("http://wall:8800/event", "answer_chorus", True)  # must not raise

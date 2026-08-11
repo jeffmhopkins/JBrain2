@@ -92,6 +92,15 @@ export function useReadAloud(): ReadAloud {
   const answerVoiceRef = useRef("kokoro-af_heart");
   // The current turn's pacing (from the markup-vs-prose classifier), read by fetchClip per clip.
   const paceRef = useRef<{ speed?: number; trail?: number }>({});
+  // The owner's read-aloud voice effects (Settings). `speed` is authoritative (the slider IS the
+  // rate); pitch/chorus/robot are the box's post-render ffmpeg effects (native maps speed+pitch
+  // onto the utterance, and can't do chorus/robot). Live-updated from getSettings + the bus.
+  const fxRef = useRef<{ speed: number; pitch: number; chorus: boolean; robot: boolean }>({
+    speed: 1.0,
+    pitch: 0,
+    chorus: false,
+    robot: false,
+  });
 
   const playingRef = useRef<string | null>(null);
   // The turn currently being streamed to the engine, and how far (in stripped chars)
@@ -145,6 +154,12 @@ export function useReadAloud(): ReadAloud {
         if (stale) return;
         setSettingOn(s.brain_read_aloud);
         if (s.brain_answer_voice) answerVoiceRef.current = s.brain_answer_voice;
+        fxRef.current = {
+          speed: s.brain_answer_speed ?? 1.0,
+          pitch: s.brain_answer_pitch ?? 0,
+          chorus: s.brain_answer_chorus ?? false,
+          robot: s.brain_answer_robot ?? false,
+        };
         const eng: ReadAloudEngine = s.brain_read_aloud_engine === "native" ? "native" : "piper";
         engineRef.current = eng;
         setEngine(eng);
@@ -167,6 +182,14 @@ export function useReadAloud(): ReadAloud {
           engineRef.current = patch.brain_read_aloud_engine;
           setEngine(patch.brain_read_aloud_engine);
         }
+        if (typeof patch.brain_answer_speed === "number")
+          fxRef.current.speed = patch.brain_answer_speed;
+        if (typeof patch.brain_answer_pitch === "number")
+          fxRef.current.pitch = patch.brain_answer_pitch;
+        if (typeof patch.brain_answer_chorus === "boolean")
+          fxRef.current.chorus = patch.brain_answer_chorus;
+        if (typeof patch.brain_answer_robot === "boolean")
+          fxRef.current.robot = patch.brain_answer_robot;
       }),
     [],
   );
@@ -254,6 +277,16 @@ export function useReadAloud(): ReadAloud {
     });
   }, []);
 
+  // A Web Speech utterance carrying the owner's speed + pitch (native can't do chorus/robot). Web
+  // Speech pitch is a 0–2 multiplier (1 = normal), so map the semitone setting to a frequency ratio.
+  const newUtterance = useCallback((text: string): SpeechSynthesisUtterance => {
+    const utt = new SpeechSynthesisUtterance(text);
+    const fx = fxRef.current;
+    utt.rate = Math.max(0.1, Math.min(10, fx.speed));
+    utt.pitch = Math.max(0, Math.min(2, 2 ** (fx.pitch / 12)));
+    return utt;
+  }, []);
+
   // The box failed mid-turn: re-voice everything still queued (and mark the turn degraded
   // so later chunks go native too), so a reachable device voice finishes the reply.
   const piperFallback = useCallback(() => {
@@ -261,7 +294,7 @@ export function useReadAloud(): ReadAloud {
     const items = piperFifoRef.current.splice(0);
     if (canSpeakNative()) {
       for (const it of items) {
-        const utt = new SpeechSynthesisUtterance(it.text);
+        const utt = newUtterance(it.text);
         utt.onend = () => settle(it.key);
         utt.onerror = () => settle(it.key);
         window.speechSynthesis.speak(utt);
@@ -269,7 +302,7 @@ export function useReadAloud(): ReadAloud {
     } else {
       for (const it of items) settle(it.key);
     }
-  }, [settle]);
+  }, [settle, newUtterance]);
 
   // Drain the piper FIFO one clip at a time (fetch → play → next), tied to the gen that
   // started it so a stop()/switch abandons it. Only one pump runs per gen.
@@ -278,13 +311,17 @@ export function useReadAloud(): ReadAloud {
   // ask for lead=0 so a multi-clip reply plays gaplessly).
   const fetchClip = useCallback((item: PiperClip): Promise<Blob> => {
     if (!item.blobP) {
-      const { speed, trail } = paceRef.current;
+      // Speed is the owner's setting × the prose classifier's nudge (so a story still reads a
+      // touch slower than a markup answer, relative to the chosen base). Pitch/chorus/robot ride
+      // as fx; the trail beat comes from the classifier.
+      const fx = fxRef.current;
       item.blobP = api.brainTts(
         answerVoiceRef.current,
         item.text,
         item.first ? undefined : 0,
-        speed,
-        trail,
+        fx.speed * (paceRef.current.speed ?? 1),
+        paceRef.current.trail,
+        { pitch: fx.pitch, chorus: fx.chorus, robot: fx.robot },
       );
     }
     return item.blobP;
@@ -336,7 +373,7 @@ export function useReadAloud(): ReadAloud {
         piperClipCountRef.current += 1;
         pumpPiper();
       } else if (canSpeakNative()) {
-        const utt = new SpeechSynthesisUtterance(text);
+        const utt = newUtterance(text);
         utt.onend = () => settle(key);
         utt.onerror = () => settle(key);
         window.speechSynthesis.speak(utt);
@@ -344,7 +381,7 @@ export function useReadAloud(): ReadAloud {
         settle(key); // nothing can voice — keep the accounting balanced
       }
     },
-    [pumpPiper, settle, usePiper],
+    [pumpPiper, settle, usePiper, newUtterance],
   );
 
   // Tear down whatever's playing (both engines) and reset the piper state.

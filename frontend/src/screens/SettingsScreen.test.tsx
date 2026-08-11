@@ -20,6 +20,10 @@ function stubSettingsFetch(
     brainReadAloud: false,
     brainAnswerVoice: opts.answerVoice ?? "kokoro-af_heart",
     engine: "piper" as "piper" | "native",
+    speed: 1.0,
+    pitch: 0,
+    chorus: false,
+    robot: false,
     lexicon: opts.lexicon ?? {},
   };
   const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
@@ -88,6 +92,10 @@ function stubSettingsFetch(
         brain_read_aloud?: boolean;
         brain_answer_voice?: string;
         brain_read_aloud_engine?: "piper" | "native";
+        brain_answer_speed?: number;
+        brain_answer_pitch?: number;
+        brain_answer_chorus?: boolean;
+        brain_answer_robot?: boolean;
         pronunciation_lexicon?: Record<string, string>;
       };
       puts.push(body);
@@ -97,6 +105,10 @@ function stubSettingsFetch(
       if (typeof body.brain_answer_voice === "string")
         state.brainAnswerVoice = body.brain_answer_voice;
       if (body.brain_read_aloud_engine) state.engine = body.brain_read_aloud_engine;
+      if (typeof body.brain_answer_speed === "number") state.speed = body.brain_answer_speed;
+      if (typeof body.brain_answer_pitch === "number") state.pitch = body.brain_answer_pitch;
+      if (typeof body.brain_answer_chorus === "boolean") state.chorus = body.brain_answer_chorus;
+      if (typeof body.brain_answer_robot === "boolean") state.robot = body.brain_answer_robot;
       // PUT replaces the whole map (REPLACE semantics), mirroring the backend.
       if (body.pronunciation_lexicon) state.lexicon = body.pronunciation_lexicon;
     }
@@ -107,6 +119,10 @@ function stubSettingsFetch(
         brain_read_aloud: state.brainReadAloud,
         brain_answer_voice: state.brainAnswerVoice,
         brain_read_aloud_engine: state.engine,
+        brain_answer_speed: state.speed,
+        brain_answer_pitch: state.pitch,
+        brain_answer_chorus: state.chorus,
+        brain_answer_robot: state.robot,
         pronunciation_lexicon: state.lexicon,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
@@ -241,6 +257,40 @@ describe("SettingsScreen read-aloud voice picker", () => {
     await waitFor(() => expect(puts).toContainEqual({ brain_read_aloud_engine: "native" }));
     // Native uses the device voice — the on-box voice picker drops away.
     await waitFor(() => expect(screen.queryByLabelText("Kokoro voice")).toBeNull());
+  });
+
+  it("toggles the chorus and robot voice effects, persisting + broadcasting each", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const off = onReadAloudSettings((p) => seen.push(p as Record<string, unknown>));
+    const { puts } = stubSettingsFetch();
+    setup();
+    const fx = within(await screen.findByLabelText("Voice character effects"));
+    fireEvent.click(fx.getByRole("button", { name: "Chorus" }));
+    await waitFor(() => expect(puts).toContainEqual({ brain_answer_chorus: true }));
+    fireEvent.click(fx.getByRole("button", { name: "Robot" }));
+    await waitFor(() => expect(puts).toContainEqual({ brain_answer_robot: true }));
+    expect(seen).toContainEqual({ brain_answer_chorus: true });
+    expect(seen).toContainEqual({ brain_answer_robot: true });
+    off();
+  });
+
+  it("commits the reading-speed slider on release", async () => {
+    const { puts } = stubSettingsFetch();
+    setup();
+    const slider = await screen.findByLabelText("Reading speed");
+    fireEvent.change(slider, { target: { value: "1.5" } });
+    fireEvent.pointerUp(slider);
+    await waitFor(() => expect(puts).toContainEqual({ brain_answer_speed: 1.5 }));
+  });
+
+  it("hides the chorus/robot toggles on the Native model (on-box-only effects)", async () => {
+    stubSettingsFetch();
+    setup();
+    const models = within(await screen.findByLabelText("Read-aloud model"));
+    fireEvent.click(models.getByRole("button", { name: "Native" }));
+    await waitFor(() => expect(screen.queryByLabelText("Voice character effects")).toBeNull());
+    // Speed still applies to the native voice, so its slider stays.
+    expect(screen.getByLabelText("Reading speed")).toBeInTheDocument();
   });
 
   it("opens the read-custom-text surface from the voice picker", async () => {

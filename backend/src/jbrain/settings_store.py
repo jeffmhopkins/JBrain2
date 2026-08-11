@@ -156,6 +156,24 @@ BRAIN_READ_ALOUD_ENGINE_KEY = "brain_read_aloud_engine"
 BRAIN_READ_ALOUD_ENGINE_DEFAULT: ReadAloudEngine = "piper"
 
 
+# Read-aloud voice EFFECTS the owner dials in Settings — applied to both the PWA read-aloud and
+# the on-box wall display. `speed` is Kokoro's native rate; `pitch` (semitones) and `chorus` are
+# post-render ffmpeg effects on the box (a native-voice read maps them onto the Web Speech utterance
+# instead). Stored as plain numbers/bool; clamped to the box's ranges on read so a junk value can't
+# reach the renderer. Defaults are no-ops (1.0× / 0 st / off) so an untouched box is unchanged.
+BRAIN_ANSWER_SPEED_KEY = "brain_answer_speed"
+BRAIN_ANSWER_SPEED_DEFAULT = 1.0
+BRAIN_ANSWER_SPEED_MIN = 0.5
+BRAIN_ANSWER_SPEED_MAX = 2.0
+BRAIN_ANSWER_PITCH_KEY = "brain_answer_pitch"
+BRAIN_ANSWER_PITCH_DEFAULT = 0.0
+BRAIN_ANSWER_PITCH_MAX_ST = 12.0
+BRAIN_ANSWER_CHORUS_KEY = "brain_answer_chorus"
+BRAIN_ANSWER_CHORUS_DEFAULT = False
+BRAIN_ANSWER_ROBOT_KEY = "brain_answer_robot"
+BRAIN_ANSWER_ROBOT_DEFAULT = False
+
+
 # The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
 # (e.g. "Titusville" -> "Tight us ville") the api applies as a whole-word, case-insensitive text
 # substitution before forwarding a clip to the box (jbrain.api.brain) — engine-agnostic (it helps
@@ -548,6 +566,36 @@ class SqlSettingsStore:
             if raw in READ_ALOUD_ENGINES
             else BRAIN_READ_ALOUD_ENGINE_DEFAULT
         )
+
+    async def brain_answer_speed(self, ctx: SessionContext) -> float:
+        """Read-aloud speed multiplier (Kokoro's native rate). Defaults to 1.0×; a non-numeric
+        stored value reads as the default and any value is clamped to the box's [0.5, 2.0]."""
+        raw = await self.get(ctx, BRAIN_ANSWER_SPEED_KEY, BRAIN_ANSWER_SPEED_DEFAULT)
+        try:
+            val = float(cast(float, raw))
+        except (TypeError, ValueError):
+            return BRAIN_ANSWER_SPEED_DEFAULT
+        return max(BRAIN_ANSWER_SPEED_MIN, min(BRAIN_ANSWER_SPEED_MAX, val))
+
+    async def brain_answer_pitch(self, ctx: SessionContext) -> float:
+        """Read-aloud pitch shift in semitones (post-render). Defaults to 0 (no shift); a
+        non-numeric stored value reads as the default and any value is clamped to ±12."""
+        raw = await self.get(ctx, BRAIN_ANSWER_PITCH_KEY, BRAIN_ANSWER_PITCH_DEFAULT)
+        try:
+            val = float(cast(float, raw))
+        except (TypeError, ValueError):
+            return BRAIN_ANSWER_PITCH_DEFAULT
+        return max(-BRAIN_ANSWER_PITCH_MAX_ST, min(BRAIN_ANSWER_PITCH_MAX_ST, val))
+
+    async def brain_answer_chorus(self, ctx: SessionContext) -> bool:
+        """Whether the read-aloud applies the chorus effect. Defaults OFF; only an explicit
+        `true` enables it (any non-true value reads as off)."""
+        return await self.get(ctx, BRAIN_ANSWER_CHORUS_KEY, BRAIN_ANSWER_CHORUS_DEFAULT) is True
+
+    async def brain_answer_robot(self, ctx: SessionContext) -> bool:
+        """Whether the read-aloud applies the robot voice character. Defaults OFF; only an
+        explicit `true` enables it (any non-true value reads as off)."""
+        return await self.get(ctx, BRAIN_ANSWER_ROBOT_KEY, BRAIN_ANSWER_ROBOT_DEFAULT) is True
 
     async def pronunciation_lexicon(self, ctx: SessionContext) -> dict[str, str]:
         """The owner's read-aloud respelling map {word: "say it like"}, sanitized (see

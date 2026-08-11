@@ -102,12 +102,15 @@ async def brain_tts(
     lead: int | None = None,
     speed: float | None = None,
     trail: int | None = None,
+    pitch: float | None = None,
+    chorus: bool | None = None,
+    robot: bool | None = None,
 ) -> Response:
     """Render `text` to a WAV in `voice` (a voice id from /brain/voices) via the on-box
     Kokoro and return the audio. The PWA read-aloud and the Settings "play sample" button
-    both call this. Text is bounded; `lead` (silence pad, ms) and the audiobook-pacing controls
-    `speed`/`trail` (ms) are clamped and passed through so a multi-clip reply plays gaplessly and
-    the reading style (set by the PWA's markup-vs-prose classifier) reaches the box."""
+    both call this. Text is bounded; `lead` (silence pad, ms) and the pacing/effect controls
+    `speed`/`trail` (ms)/`pitch` (semitones)/`chorus`/`robot` are clamped and passed through so a
+    multi-clip reply plays gaplessly and the owner's chosen voice effects reach the box."""
     base = _brain_base(request)
     if not base:
         raise HTTPException(status_code=503, detail="tts service not configured")
@@ -132,6 +135,12 @@ async def brain_tts(
         params["speed"] = str(max(0.5, min(2.0, speed)))
     if trail is not None:
         params["trail"] = str(max(0, min(3000, trail)))
+    if pitch is not None:
+        params["pitch"] = str(max(-12.0, min(12.0, pitch)))
+    if chorus is not None:
+        params["chorus"] = "1" if chorus else "0"
+    if robot is not None:
+        params["robot"] = "1" if robot else "0"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(f"{base}/tts", params=params)

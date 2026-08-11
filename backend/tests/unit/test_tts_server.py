@@ -503,6 +503,108 @@ def test_kokoro_trail_defaults_to_env(
     assert _wav_frames(out) == 100 + 2400  # 100 ms env trail = 2400 frames @ 24 kHz
 
 
+# --- post-render audio effects: pitch + chorus (one ffmpeg pass) ----------------------------
+
+
+class _FakeProc:
+    def __init__(self, stdout: bytes | None) -> None:
+        self.stdout = stdout
+
+
+def _capture_ffmpeg(mod: types.ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Patch the server's subprocess.run to record each ffmpeg `-af` filter string and echo the
+    input WAV back (so downstream _pad still sees a valid WAV). Returns the collecting list."""
+    filters: list[str] = []
+
+    def fake_run(cmd, input=None, capture_output=False, timeout=None, check=False):  # type: ignore[no-untyped-def]
+        assert cmd[0] == "ffmpeg"
+        filters.append(cmd[cmd.index("-af") + 1])
+        return _FakeProc(input)
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    return filters
+
+
+def test_dry_render_never_spawns_ffmpeg(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No pitch, no chorus → the finished clip is returned as-is; ffmpeg must not run.
+    called: list[int] = []
+    monkeypatch.setattr(kokoro_server.subprocess, "run", lambda *a, **k: called.append(1))
+    out = kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0)
+    assert out is not None and not called
+
+
+def test_pitch_builds_the_ffmpeg_shift_chain(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filters = _capture_ffmpeg(kokoro_server, monkeypatch)
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, pitch=5.0)
+    assert len(filters) == 1
+    af = filters[0]
+    # Pitch WITHOUT tempo change: asetrate up, resample back to 24 kHz, atempo compensates.
+    assert "asetrate=" in af and "aresample=24000" in af and "atempo=" in af
+    assert "chorus=" not in af
+
+
+def test_pitch_clamps_to_twelve_semitones(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filters = _capture_ffmpeg(kokoro_server, monkeypatch)
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, pitch=99.0)
+    assert "asetrate=48000" in filters[0]  # +12 st doubles the 24 kHz rate
+
+
+def test_chorus_adds_only_the_chorus_filter(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filters = _capture_ffmpeg(kokoro_server, monkeypatch)
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, chorus=True)
+    assert "chorus=" in filters[0] and "asetrate=" not in filters[0]
+
+
+def test_pitch_and_chorus_share_one_ffmpeg_pass(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filters = _capture_ffmpeg(kokoro_server, monkeypatch)
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, pitch=-3.0, chorus=True)
+    assert len(filters) == 1  # both effects in ONE pass
+    assert "asetrate=" in filters[0] and "chorus=" in filters[0]
+
+
+def test_robot_mode_builds_the_character_chain(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filters = _capture_ffmpeg(kokoro_server, monkeypatch)
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, robot=True)
+    af = filters[0]
+    # The robot preset: a pitch-up + echo + band-pass + formant EQ + gain, one pass.
+    assert "aecho=" in af and "highpass=f=200" in af and "lowpass=f=3500" in af
+    assert "equalizer=" in af and "volume=1.8" in af and "asetrate=" in af
+
+
+def test_effects_default_to_env(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(kokoro_server, "KOKORO_PITCH", 2.0)
+    monkeypatch.setattr(kokoro_server, "KOKORO_CHORUS", True)
+    filters = _capture_ffmpeg(kokoro_server, monkeypatch)
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0)  # no per-request → env defaults
+    assert "asetrate=" in filters[0] and "chorus=" in filters[0]
+
+
+def test_audio_fx_failure_falls_back_to_dry_audio(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*a, **k):  # type: ignore[no-untyped-def]
+        raise OSError("ffmpeg missing")
+
+    monkeypatch.setattr(kokoro_server.subprocess, "run", boom)
+    out = kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, pitch=4.0)
+    assert out is not None
+    assert _wav_frames(out) == 100  # the dry Kokoro render survives an fx failure
+
+
 # --- narrator voice blending ---------------------------------------------------------------
 
 

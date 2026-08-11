@@ -256,8 +256,9 @@ describe("useReadAloud piper engine", () => {
       "kokoro-am_michael",
       "Hello world link.",
       undefined,
-      undefined, // markup turn → no speed override
+      1, // markup turn: default speed 1.0× × no prose nudge
       undefined, // markup turn → no trail override
+      { pitch: 0, chorus: false, robot: false }, // effects all default (off)
     );
     expect(audios[0]?.played).toBe(true);
     expect(result.current.playing).toBe("a");
@@ -271,6 +272,25 @@ describe("useReadAloud piper engine", () => {
     await act(async () => result.current.toggle("a", "hi"));
     await waitFor(() => expect(brainTts).toHaveBeenCalled());
     expect(brainTts.mock.calls[0]?.[0]).toBe("kokoro-af_heart"); // not the mount-time voice
+  });
+
+  it("applies the owner's voice effects (speed/pitch/chorus/robot) to piper renders", async () => {
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    // Saved live in the Settings overlay → arrives over the bus and rides the next render.
+    act(() =>
+      emitReadAloudSettings({
+        brain_answer_speed: 1.5,
+        brain_answer_pitch: -4,
+        brain_answer_chorus: true,
+        brain_answer_robot: true,
+      }),
+    );
+    await act(async () => result.current.toggle("a", "**Bold** `code` [x](http://y)"));
+    await waitFor(() => expect(brainTts).toHaveBeenCalled());
+    const call = brainTts.mock.calls[0];
+    expect(call?.[3]).toBe(1.5); // the chosen speed (markup turn → no prose nudge)
+    expect(call?.[5]).toEqual({ pitch: -4, chorus: true, robot: true });
   });
 
   it("reads a prose turn slower with a trailing beat (automatic audiobook pacing)", async () => {

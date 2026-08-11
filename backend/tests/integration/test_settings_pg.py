@@ -181,6 +181,41 @@ async def test_brain_read_aloud_engine_defaults_piper_and_round_trips(
     assert await store.brain_read_aloud_engine(OWNER) == "piper"
 
 
+async def test_brain_voice_effects_default_to_no_ops_and_clamp_on_read(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import (
+        BRAIN_ANSWER_CHORUS_KEY,
+        BRAIN_ANSWER_PITCH_KEY,
+        BRAIN_ANSWER_ROBOT_KEY,
+        BRAIN_ANSWER_SPEED_KEY,
+    )
+
+    store = SqlSettingsStore(maker)
+    # Absent → no-ops (1.0× / 0 st / off), so an untouched box is unchanged.
+    assert await store.brain_answer_speed(OWNER) == 1.0
+    assert await store.brain_answer_pitch(OWNER) == 0.0
+    assert await store.brain_answer_chorus(OWNER) is False
+    assert await store.brain_answer_robot(OWNER) is False
+
+    await store.upsert(OWNER, BRAIN_ANSWER_SPEED_KEY, 1.25)
+    await store.upsert(OWNER, BRAIN_ANSWER_PITCH_KEY, -3.0)
+    await store.upsert(OWNER, BRAIN_ANSWER_CHORUS_KEY, True)
+    await store.upsert(OWNER, BRAIN_ANSWER_ROBOT_KEY, True)
+    assert await store.brain_answer_speed(OWNER) == 1.25
+    assert await store.brain_answer_pitch(OWNER) == -3.0
+    assert await store.brain_answer_chorus(OWNER) is True
+    assert await store.brain_answer_robot(OWNER) is True
+
+    # An out-of-range or non-numeric stored value is clamped / defaulted on read.
+    await store.upsert(OWNER, BRAIN_ANSWER_SPEED_KEY, 9.0)
+    assert await store.brain_answer_speed(OWNER) == 2.0
+    await store.upsert(OWNER, BRAIN_ANSWER_PITCH_KEY, -99.0)
+    assert await store.brain_answer_pitch(OWNER) == -12.0
+    await store.upsert(OWNER, BRAIN_ANSWER_SPEED_KEY, "fast")
+    assert await store.brain_answer_speed(OWNER) == 1.0
+
+
 async def test_pronunciation_lexicon_round_trips_and_sanitizes(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
