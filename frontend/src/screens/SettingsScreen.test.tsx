@@ -12,7 +12,12 @@ function setup() {
 // makes GET/PUT round-trip like the real /api/settings.
 function stubSettingsFetch(
   initial: "full" | "ocr" = "full",
-  opts: { answerVoice?: string; voices?: string[]; lexicon?: Record<string, string> } = {},
+  opts: {
+    answerVoice?: string;
+    voices?: string[];
+    lexicon?: Record<string, string>;
+    failPut?: boolean;
+  } = {},
 ) {
   const state = {
     mode: initial,
@@ -28,6 +33,7 @@ function stubSettingsFetch(
   };
   const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
   const puts: unknown[] = [];
+  const ttsUrls: string[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
     // The read-aloud voice picker loads the box's installed Kokoro voices on mount.
@@ -49,8 +55,10 @@ function stubSettingsFetch(
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
-    // A voice sample renders a WAV via the api proxy — an empty audio blob is enough.
+    // A voice sample renders a WAV via the api proxy — an empty audio blob is enough. Record the
+    // request URL so a test can assert the owner's voice effects rode along.
     if (path.startsWith("/api/brain/tts")) {
+      ttsUrls.push(path);
       return new Response(new Blob([], { type: "audio/wav" }), {
         status: 200,
         headers: { "Content-Type": "audio/wav" },
@@ -86,6 +94,12 @@ function stubSettingsFetch(
       throw new Error(`Unexpected fetch: ${path}`);
     }
     if ((init?.method ?? "GET").toUpperCase() === "PUT") {
+      if (opts.failPut) {
+        // A transient save failure: record the attempt but persist nothing (the client should
+        // surface the error and re-fetch, not silently keep the optimistic value).
+        puts.push(JSON.parse(String(init?.body)));
+        return new Response("boom", { status: 500 });
+      }
       const body = JSON.parse(String(init?.body)) as {
         image_analysis_mode?: "full" | "ocr";
         brain_llm_stream?: boolean;
@@ -129,7 +143,7 @@ function stubSettingsFetch(
     );
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { puts, state };
+  return { puts, state, ttsUrls };
 }
 
 beforeEach(() => {
@@ -291,6 +305,36 @@ describe("SettingsScreen read-aloud voice picker", () => {
     await waitFor(() => expect(screen.queryByLabelText("Voice character effects")).toBeNull());
     // Speed still applies to the native voice, so its slider stays.
     expect(screen.getByLabelText("Reading speed")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed save and reconciles the control to the server (no silent revert)", async () => {
+    // The reported "settings often don't take": a transient PUT failure used to be swallowed, so
+    // the toggle looked set but reverted on the next load. Now it must show an error AND snap back.
+    stubSettingsFetch("full", { failPut: true });
+    setup();
+    const fx = within(await screen.findByLabelText("Voice character effects"));
+    const chorus = fx.getByRole("button", { name: "Chorus" });
+    expect(chorus).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(chorus);
+    // Optimistic: it shows on immediately…
+    await waitFor(() => expect(chorus).toHaveAttribute("aria-pressed", "true"));
+    // …then the PUT 500s → a sync error appears and the control reconciles back to off.
+    await screen.findByText(/couldn't save/i);
+    await waitFor(() => expect(chorus).toHaveAttribute("aria-pressed", "false"));
+  });
+
+  it("plays a voice sample through the owner's effects (speed/chorus/robot ride along)", async () => {
+    const { ttsUrls } = stubSettingsFetch();
+    setup();
+    const fx = within(await screen.findByLabelText("Voice character effects"));
+    fireEvent.click(fx.getByRole("button", { name: "Chorus" }));
+    fireEvent.click(fx.getByRole("button", { name: "Robot" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Play sample" }));
+    await waitFor(() => expect(ttsUrls).toHaveLength(1));
+    const q = new URL(ttsUrls[0] ?? "", "http://x").searchParams;
+    expect(q.get("speed")).toBe("1");
+    expect(q.get("chorus")).toBe("1");
+    expect(q.get("robot")).toBe("1");
   });
 
   it("opens the read-custom-text surface from the voice picker", async () => {

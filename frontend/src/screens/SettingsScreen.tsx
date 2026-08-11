@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { emitReadAloudSettings } from "../agent/readAloudBus";
+import { type ReadAloudPatch, emitReadAloudSettings } from "../agent/readAloudBus";
 import type {
+  AppSettings,
   BrainTtsHealth,
   DebugToken,
   FeedConfig,
@@ -96,6 +97,13 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [brainPitch, setBrainPitch] = useState<number | null>(null);
   const [brainChorus, setBrainChorus] = useState<boolean | null>(null);
   const [brainRobot, setBrainRobot] = useState<boolean | null>(null);
+  // A transient "couldn't save that setting" notice — set when a read-aloud PUT fails (the
+  // fire-and-forget save used to swallow failures, so a change silently reverted on the next load).
+  const [syncError, setSyncError] = useState<string | null>(null);
+  // Debounce timers for the speed/pitch sliders: onChange saves on a trailing debounce (a drag's
+  // flood of values coalesces to one PUT, and a release the browser doesn't deliver still saves).
+  const speedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pitchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [voices, setVoices] = useState<string[] | null>(null);
   const [samplePlaying, setSamplePlaying] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
@@ -127,21 +135,23 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (stale) return;
         setImageMode(s.image_analysis_mode);
         setBrainStream(s.brain_llm_stream);
-        setBrainReadAloud(s.brain_read_aloud);
-        setBrainAnswerVoice(s.brain_answer_voice);
-        setBrainEngine(s.brain_read_aloud_engine);
-        setBrainSpeed(s.brain_answer_speed);
-        setBrainPitch(s.brain_answer_pitch);
-        setBrainChorus(s.brain_answer_chorus);
-        setBrainRobot(s.brain_answer_robot);
+        applyReadAloud(s);
         setLexicon(s.pronunciation_lexicon ?? {});
         if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
       .catch(() => {
-        // Unreachable backend: show the default; a tap still tries to save.
+        // Unreachable backend: show defaults so the controls are still interactive (leaving the
+        // read-aloud state null would keep every read-aloud control disabled); a tap still saves.
         if (!stale) {
           setImageMode("full");
           setBrainStream(false);
+          setBrainReadAloud(false);
+          setBrainAnswerVoice("kokoro-af_heart");
+          setBrainEngine("piper");
+          setBrainSpeed(1);
+          setBrainPitch(0);
+          setBrainChorus(false);
+          setBrainRobot(false);
           setLexicon({});
         }
       });
@@ -172,11 +182,14 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     };
   }, []);
 
-  // Stop any sample still playing when the screen unmounts.
+  // Stop any sample still playing when the screen unmounts, and drop any pending slider-save
+  // debounce (its optimistic value was already applied; a release/blur flushed a real change).
   useEffect(
     () => () => {
       sampleAudioRef.current?.pause();
       sampleAudioRef.current = null;
+      if (speedTimer.current) clearTimeout(speedTimer.current);
+      if (pitchTimer.current) clearTimeout(pitchTimer.current);
     },
     [],
   );
@@ -374,50 +387,91 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ brain_llm_stream: on }).catch(() => {});
   }
 
-  // Each read-aloud setter also broadcasts the change: the chat read-aloud hook lives in the
-  // always-mounted HomeScreen, so this overlay is its only way to learn of a live change.
+  // Reconcile all read-aloud state from an authoritative settings object (the mount GET, or a
+  // re-GET after a failed save). A function declaration so the mount effect above can call it.
+  function applyReadAloud(s: AppSettings) {
+    setBrainReadAloud(s.brain_read_aloud);
+    setBrainAnswerVoice(s.brain_answer_voice);
+    setBrainEngine(s.brain_read_aloud_engine);
+    setBrainSpeed(s.brain_answer_speed);
+    setBrainPitch(s.brain_answer_pitch);
+    setBrainChorus(s.brain_answer_chorus);
+    setBrainRobot(s.brain_answer_robot);
+  }
+
+  // Persist a read-aloud change: broadcast it to the always-mounted chat hook (HomeScreen), PUT
+  // it, and — the fix for "settings often don't take" — SURFACE a failure instead of swallowing
+  // it, re-fetching the server's truth so a control never keeps showing an unsaved value. The
+  // caller sets optimistic state first (instant feedback); a successful PUT makes that value real.
+  function commitReadAloud(patch: ReadAloudPatch) {
+    setSyncError(null);
+    setSampleError(null);
+    emitReadAloudSettings(patch);
+    void api.updateSettings(patch).catch(() => {
+      setSyncError("Couldn't save that — check the connection to the box, then try again.");
+      void api
+        .getSettings()
+        .then(applyReadAloud)
+        .catch(() => {});
+    });
+  }
+
   function pickBrainReadAloud(on: boolean) {
     setBrainReadAloud(on); // optimistic
-    emitReadAloudSettings({ brain_read_aloud: on });
-    void api.updateSettings({ brain_read_aloud: on }).catch(() => {});
+    commitReadAloud({ brain_read_aloud: on });
   }
 
   function pickAnswerVoice(id: string) {
     setBrainAnswerVoice(id); // optimistic
-    setSampleError(null);
-    emitReadAloudSettings({ brain_answer_voice: id });
-    void api.updateSettings({ brain_answer_voice: id }).catch(() => {});
-  }
-
-  function pickEngine(next: "piper" | "native") {
-    setBrainEngine(next); // optimistic
-    setSampleError(null);
-    emitReadAloudSettings({ brain_read_aloud_engine: next });
-    void api.updateSettings({ brain_read_aloud_engine: next }).catch(() => {});
+    commitReadAloud({ brain_answer_voice: id });
   }
 
   function pickSpeed(v: number) {
     setBrainSpeed(v); // optimistic
-    emitReadAloudSettings({ brain_answer_speed: v });
-    void api.updateSettings({ brain_answer_speed: v }).catch(() => {});
+    commitReadAloud({ brain_answer_speed: v });
   }
 
   function pickPitch(v: number) {
     setBrainPitch(v); // optimistic
-    emitReadAloudSettings({ brain_answer_pitch: v });
-    void api.updateSettings({ brain_answer_pitch: v }).catch(() => {});
+    commitReadAloud({ brain_answer_pitch: v });
   }
 
   function pickChorus(on: boolean) {
     setBrainChorus(on); // optimistic
-    emitReadAloudSettings({ brain_answer_chorus: on });
-    void api.updateSettings({ brain_answer_chorus: on }).catch(() => {});
+    commitReadAloud({ brain_answer_chorus: on });
   }
 
   function pickRobot(on: boolean) {
     setBrainRobot(on); // optimistic
-    emitReadAloudSettings({ brain_answer_robot: on });
-    void api.updateSettings({ brain_answer_robot: on }).catch(() => {});
+    commitReadAloud({ brain_answer_robot: on });
+  }
+
+  // A slider moved: update the label immediately, and SAVE on a trailing debounce — a drag's
+  // flood of values coalesces to one PUT, and (the slider bug) a release the browser doesn't
+  // deliver as pointerup/keyup still persists. A release/blur flushes the pending save at once.
+  function onSpeedInput(v: number) {
+    setBrainSpeed(v);
+    if (speedTimer.current) clearTimeout(speedTimer.current);
+    speedTimer.current = setTimeout(() => pickSpeed(v), 350);
+  }
+  function onPitchInput(v: number) {
+    setBrainPitch(v);
+    if (pitchTimer.current) clearTimeout(pitchTimer.current);
+    pitchTimer.current = setTimeout(() => pickPitch(v), 350);
+  }
+  function commitSpeed(v: number) {
+    if (speedTimer.current) {
+      clearTimeout(speedTimer.current);
+      speedTimer.current = null;
+    }
+    pickSpeed(v);
+  }
+  function commitPitch(v: number) {
+    if (pitchTimer.current) {
+      clearTimeout(pitchTimer.current);
+      pitchTimer.current = null;
+    }
+    pickPitch(v);
   }
 
   // The read-aloud model is a view over two settings. "native" is the device's own voice;
@@ -434,13 +488,31 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // opaque "piper" literal) and steers the answer voice to a Kokoro id when it isn't already one.
   function pickModel(model: ReadAloudModel) {
     if (model === "native") {
-      pickEngine("native");
+      setBrainEngine("native"); // optimistic
+      commitReadAloud({ brain_read_aloud_engine: "native" });
       return;
     }
-    if (brainEngine !== "piper") pickEngine("piper");
-    const answerIsKokoro = (brainAnswerVoice ?? "").startsWith("kokoro-");
-    if (!answerIsKokoro && kokoroVoices[0]) pickAnswerVoice(kokoroVoices[0]);
+    // Kokoro: flip the engine AND steer the voice to a Kokoro id in ONE PUT, so the two can't
+    // half-fail (they were two independent saves before).
+    const patch: ReadAloudPatch = {};
+    if (brainEngine !== "piper") {
+      setBrainEngine("piper");
+      patch.brain_read_aloud_engine = "piper";
+    }
+    if (!(brainAnswerVoice ?? "").startsWith("kokoro-") && kokoroVoices[0]) {
+      setBrainAnswerVoice(kokoroVoices[0]);
+      patch.brain_answer_voice = kokoroVoices[0];
+    }
+    if (Object.keys(patch).length) commitReadAloud(patch);
   }
+
+  // The owner's current voice effects, applied to every on-box preview (Play sample / pronunciation
+  // audition / Read-custom-text) so a preview sounds like the real read-aloud will.
+  const previewFx = () => ({
+    pitch: brainPitch ?? 0,
+    chorus: brainChorus ?? false,
+    robot: brainRobot ?? false,
+  });
 
   // Render + play a short sample of `voice` on the box, so a voice can be auditioned before
   // it's used. A new sample stops any previous one.
@@ -451,7 +523,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     sampleAudioRef.current = null;
     setSamplePlaying(true);
     void api
-      .brainTts(voice, VOICE_SAMPLE_TEXT)
+      .brainTts(voice, VOICE_SAMPLE_TEXT, undefined, brainSpeed ?? 1, undefined, previewFx())
       .then((blob) => {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
@@ -494,7 +566,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     sampleAudioRef.current = null;
     setPronPlayingKey(key);
     void api
-      .brainTts(voice, value)
+      .brainTts(voice, value, undefined, brainSpeed ?? 1, undefined, previewFx())
       .then((blob) => {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
@@ -756,11 +828,13 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
 
         {/* Voice effects. Speed + pitch apply to BOTH engines (native maps them onto the browser
             utterance); chorus + robot are on-box (Kokoro) ffmpeg effects, so they're offered only
-            on the Kokoro model. Sliders commit on release (drag/keys update the label live). */}
+            on the Kokoro model. Sliders save on a trailing debounce (drag updates the label live);
+            a release/blur flushes the save at once. */}
         <div className="settings-fx">
           <p className="settings-meta">
             Voice effects — applied to chat read-aloud and the wall display.
           </p>
+          {syncError && <p className="settings-meta settings-error">{syncError}</p>}
           <label className="settings-field">
             Reading speed: {(brainSpeed ?? 1).toFixed(2)}×
             <input
@@ -771,9 +845,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               value={brainSpeed ?? 1}
               aria-label="Reading speed"
               disabled={brainSpeed === null}
-              onChange={(e) => setBrainSpeed(Number(e.target.value))}
-              onPointerUp={(e) => pickSpeed(Number(e.currentTarget.value))}
-              onKeyUp={(e) => pickSpeed(Number(e.currentTarget.value))}
+              onChange={(e) => onSpeedInput(Number(e.target.value))}
+              onPointerUp={(e) => commitSpeed(Number(e.currentTarget.value))}
+              onKeyUp={(e) => commitSpeed(Number(e.currentTarget.value))}
+              onBlur={(e) => commitSpeed(Number(e.currentTarget.value))}
             />
           </label>
           <label className="settings-field">
@@ -787,9 +862,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               value={brainPitch ?? 0}
               aria-label="Pitch"
               disabled={brainPitch === null}
-              onChange={(e) => setBrainPitch(Number(e.target.value))}
-              onPointerUp={(e) => pickPitch(Number(e.currentTarget.value))}
-              onKeyUp={(e) => pickPitch(Number(e.currentTarget.value))}
+              onChange={(e) => onPitchInput(Number(e.target.value))}
+              onPointerUp={(e) => commitPitch(Number(e.currentTarget.value))}
+              onKeyUp={(e) => commitPitch(Number(e.currentTarget.value))}
+              onBlur={(e) => commitPitch(Number(e.currentTarget.value))}
             />
           </label>
           {currentModel === "kokoro" && (
@@ -1224,7 +1300,16 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       </section>
 
       {readTextOpen && brainAnswerVoice && (
-        <ReadTextScreen voice={brainAnswerVoice} onClose={() => setReadTextOpen(false)} />
+        <ReadTextScreen
+          voice={brainAnswerVoice}
+          fx={{
+            speed: brainSpeed ?? 1,
+            pitch: brainPitch ?? 0,
+            chorus: brainChorus ?? false,
+            robot: brainRobot ?? false,
+          }}
+          onClose={() => setReadTextOpen(false)}
+        />
       )}
     </main>
   );

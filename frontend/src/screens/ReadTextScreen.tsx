@@ -15,17 +15,31 @@ import { chunkStream, engineForVoice } from "../agent/speakable.js";
 import { api } from "../api/client";
 import { ChevronLeftIcon } from "../components/icons";
 
+/** The owner's read-aloud voice effects, so a custom-text read matches the real read-aloud. */
+export interface ReadTextFx {
+  speed: number;
+  pitch: number;
+  chorus: boolean;
+  robot: boolean;
+}
+
 interface ReadTextScreenProps {
   /** The on-box voice id (brain_answer_voice) clips render in — piper or kokoro. */
   voice: string;
+  /** The current voice effects (speed/pitch/chorus/robot) — applied to every clip. */
+  fx: ReadTextFx;
   onClose: () => void;
 }
 
 // Render one clip on the box. The first clip keeps piper's default silence lead; continuation
 // clips ask for lead=0 so a multi-clip render plays / exports gaplessly — same convention the
-// chat read-aloud uses.
-function renderClip(voice: string, text: string, first: boolean): Promise<Blob> {
-  return api.brainTts(voice, text, first ? undefined : 0);
+// chat read-aloud uses. The owner's voice effects ride on every clip so a preview sounds real.
+function renderClip(voice: string, text: string, first: boolean, fx: ReadTextFx): Promise<Blob> {
+  return api.brainTts(voice, text, first ? undefined : 0, fx.speed, undefined, {
+    pitch: fx.pitch,
+    chorus: fx.chorus,
+    robot: fx.robot,
+  });
 }
 
 function writeAscii(bytes: Uint8Array, offset: number, ascii: string): void {
@@ -128,7 +142,7 @@ async function deliverWav(blob: Blob, url: string, name: string): Promise<void> 
   anchorDownload(url, name);
 }
 
-export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
+export function ReadTextScreen({ voice, fx, onClose }: ReadTextScreenProps) {
   const [text, setText] = useState("");
   const [playing, setPlaying] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -236,7 +250,7 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
     const render = (i: number): Promise<Blob> => {
       let p = cache.get(i);
       if (!p) {
-        p = renderClip(voice, clips[i] ?? "", i === 0);
+        p = renderClip(voice, clips[i] ?? "", i === 0, fx);
         cache.set(i, p);
       }
       return p;
@@ -260,7 +274,7 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
       if (genRef.current === myGen) setPlaying(false);
     };
     void run();
-  }, [text, voice, engine, playBlob]);
+  }, [text, voice, fx, engine, playBlob]);
 
   const exportAudio = useCallback(async () => {
     const clips = chunkStream(text, true, engine).chunks;
@@ -280,7 +294,7 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
           while (true) {
             const i = next++;
             if (i >= clips.length) break;
-            blobs[i] = await renderClip(voice, clips[i] ?? "", i === 0);
+            blobs[i] = await renderClip(voice, clips[i] ?? "", i === 0, fx);
             done += 1;
             setProgress({ done, total: clips.length });
           }
@@ -300,7 +314,7 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
       setExporting(false);
       setProgress(null);
     }
-  }, [text, voice, engine]);
+  }, [text, voice, fx, engine]);
 
   const empty = text.trim().length === 0;
 
