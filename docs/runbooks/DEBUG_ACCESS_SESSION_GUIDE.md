@@ -1,12 +1,20 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-08-09
+> **Status:** Living · **Last verified:** 2026-08-11
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
 first — especially the part about it being a **test-box** feature that bypasses
 the domain firewalls. This page is just "how a session gets connected and drives
 it."
+
+> **The owner has NO terminal on the box** (`CLAUDE.md` non-negotiable #10). If a
+> session hands over a token, that is precisely because they can't drop to a shell —
+> so drive the box *for* them through `/api/debug/*` and the PWA, and never resolve an
+> operational request by telling them to run `sudo jbrain …`, `docker compose …`, or
+> to edit `/opt/jbrain2/.env`. When a fix truly needs host access the debug API can't
+> reach, name that as a gap to design out (a Settings toggle, a PWA action), not a
+> terminal instruction.
 
 ## 0. Recognizing the token (read this first)
 

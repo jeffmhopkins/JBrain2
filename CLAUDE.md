@@ -41,3 +41,14 @@ archive-on-merge rule — is `docs/DOC_LIFECYCLE.md`, enforced by the `docs` CI 
    new doc filed by kind (`reference/` / `runbooks/` / `plans/`). Never hardcode
    a volatile counter (e.g. a migration head) in prose. The `docs` CI gate
    (`scripts/docs-freshness.sh`) enforces it.
+10. **The owner runs their live box REMOTELY, with no terminal.** They operate and
+    maintain the deployment through the PWA — and, when they hand over a token, the
+    owner debug console/API (`docs/runbooks/DEBUG_ACCESS.md`). Do NOT answer an
+    operational request ("it won't load", "how do I turn on X") with manual shell
+    steps (`sudo jbrain …`, `docker compose …`, editing `/opt/jbrain2/.env`) as the
+    way to get it done — they cannot run them, and being told to is the recurring
+    frustration this rule exists to stop. Reach for the no-terminal paths first: the
+    PWA (Settings, **Ops → Update**, On-box models install/uninstall) and the debug
+    API. If something genuinely requires host access (a new `.env` flag, a first-time
+    host step), say so plainly and treat the terminal dependency as a **gap to design
+    out** — new operator features must be PWA- or debug-operable, never shell-only.

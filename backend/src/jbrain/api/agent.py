@@ -56,6 +56,7 @@ from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage, local_catalog
+from jbrain.llm.errors import LlmContextOverflowError
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
 from jbrain.models.plan import PlanRepo
@@ -91,6 +92,13 @@ _TURN_IDLE_S = 900.0
 # Min gap between reasoning flushes to the wall display — buffers fast reasoning into
 # readable, real-time bursts without overrunning the display's stream slots.
 _THINK_FLUSH_S = 0.7
+
+# Hard ceiling on the pre-turn auto-title call. It runs BEFORE the main response streams and
+# outside the turn's own wall-clock/idle watchdogs, so without a bound a degraded title model
+# (retryable 5xx/network → the adapter's 4× backoff, minutes) would stall first-token latency.
+# Best-effort: on timeout the title is skipped and the turn proceeds. Generous enough to cover
+# a cold model load + a quick title on the small models titling typically uses.
+_AUTOTITLE_TIMEOUT_S = 30.0
 
 # A ceiling on the owner's CONCURRENT detached chat turns. A turn runs detached from its
 # SSE socket, so a PWA that lost its in-memory single-in-flight guard (a full reload) could
@@ -514,16 +522,25 @@ async def _maybe_autotitle(
     sessions: AgentSessionRepo,
     session: AgentSessionInfo,
     question: str,
-    answer_parts: list[str],
+    spec_override: str | None,
 ) -> None:
-    """Name a chat the owner left untitled, from its first exchange. Owner-only
-    metadata, best-effort: a failed or empty title leaves the chat untitled (the
-    UI shows a placeholder) and never breaks the turn that produced it."""
+    """Name a chat the owner left untitled — UP FRONT, from its opening message, run as
+    a quick turn on the SAME model this chat turn will use (`spec_override`), so titling
+    never routes to a different model or forces a cold reload/swap. Owner-only metadata,
+    best-effort: a failed or empty title leaves the chat untitled (the UI shows a
+    placeholder) and never delays or breaks the turn that follows. The rename persists to
+    the DB (the session record the PWA reads); the in-memory `session` is immutable."""
     if session.title.strip():
         return
     with contextlib.suppress(Exception):
-        title = await SessionTitler(get_llm_router(request)).title_for(
-            question=question, answer="".join(answer_parts)
+        # Time-bounded so a slow/degraded title model can't hold the turn's first token
+        # (this runs before the main stream and outside the turn watchdogs). On timeout the
+        # suppress swallows the TimeoutError and the turn starts untitled.
+        title = await asyncio.wait_for(
+            SessionTitler(get_llm_router(request)).title_for(
+                question=question, spec_override=spec_override
+            ),
+            timeout=_AUTOTITLE_TIMEOUT_S,
         )
         if title:
             await sessions.rename(owner_ctx, session.id, title)
@@ -890,6 +907,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # near-real-time, not one dump at settle. Any residual flushes at done.
         think_buf = ""
         last_think = 0.0
+        # Name an untitled chat BEFORE the main response streams, on this turn's own model
+        # (model_override — already the one about to run, so no swap/reload). A quick title
+        # turn from the opening message; best-effort inside _maybe_autotitle, so a slow or
+        # failed title never blocks or breaks the turn.
+        await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, model_override)
         stream = loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,
@@ -909,6 +931,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             here=here,
             here_as_of=here_as_of,
             context_window=context_window,
+            # The prior turn's persisted fill seeds the live meter's mid-stream base, so a
+            # follow-up turn's running estimate starts at the real carried context (not a
+            # char-count guess) and the bar climbs from where it sat instead of dipping.
+            context_seed=session.context_tokens or 0,
             # The root of this turn's sub-agent tree (depth 0): a fresh shared fan
             # state owns the tree-wide caps AND the shared token budget (sized off the
             # root's own per-turn cap × the locked spawn multiplier, with the root
@@ -991,9 +1017,6 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     acc.reasoning_text,
                     omit_user_turn=body.deferred_outcome,
                 )
-                await _maybe_autotitle(
-                    request, owner_ctx, sessions, session, body.message, acc.answer
-                )
                 # Persist the turn's context fill so the meter restores on reopen
                 # (best-effort — the transcript above is the record of the turn; this
                 # is only the meter's seed, and must never fail settling the turn).
@@ -1041,6 +1064,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # nuance is preserved in stop_reason, not the status. Re-raise so the task unwinds.
             status, stop_reason = "error", "disconnected"
             raise
+        except LlmContextOverflowError as exc:
+            # The prompt outgrew the model's served context window (a local model on a
+            # small `-c`, a research turn that piled up tool results). Surface it as its
+            # own terminal reason so the UI can say "this model ran out of context" and
+            # point at the window control, instead of the generic "something went wrong".
+            log.info("agent.context_overflow", run_id=run_id, error=repr(exc))
+            status, stop_reason = "error", "context_overflow"
+            live.emit(b'data: {"type": "done", "stop_reason": "context_overflow"}\n\n')
         except Exception as exc:  # noqa: BLE001 — surface a terminal event, never a 500 mid-stream
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
             live.emit(b'data: {"type": "done", "stop_reason": "error"}\n\n')
@@ -1058,12 +1089,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # lets shutdown `gather` the turn and so guarantee the run-log close lands
             # before the engine pool is disposed (otherwise a detached write races a dead
             # pool and strands the run in 'running'). Suppress so a write failure never
-            # masks the outcome. Episodic memory and auto-titling stay on the `done` path
-            # only: a half-finished answer shouldn't seed the agent's recall or name it.
+            # masks the outcome. Episodic memory stays on the `done` path only: a
+            # half-finished answer shouldn't seed the agent's recall. (Auto-titling now runs
+            # up front, before the stream, from the question alone — so a turn that later
+            # errors is still named, which is fine: the title derives from the question.)
             try:
                 if (
                     not persisted
-                    and stop_reason in ("disconnected", "error", "turn_timeout")
+                    and stop_reason in ("disconnected", "error", "turn_timeout", "context_overflow")
                     and (acc.answer_text.strip() or acc.tool_steps())
                 ):
                     with contextlib.suppress(Exception):

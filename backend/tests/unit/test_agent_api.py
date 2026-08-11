@@ -1830,11 +1830,13 @@ def test_chat_autotitles_an_untitled_session(
         turns=[LlmTurn("hi there", (), "end_turn", LlmUsage(7, 3))],
         stream_chunks=[["hi ", "there"]],
     )
+    # session.title is configured (as it is in TASK_DEFAULTS) so the pre-turn titler can
+    # route it; with strength dropped it follows agent.turn onto the chat's own model.
     client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
-        {"xai": fake}, {"agent.turn": ("xai", "grok-4.3")}
+        {"xai": fake}, {"agent.turn": ("xai", "grok-4.3"), "session.title": ("xai", "grok-4.3")}
     )
     client.post("/api/chat", json={"session_id": "sess-1", "message": "what happened this week?"})
-    # The first turn names the chat; the question reached the titler.
+    # The chat is named UP FRONT, before the turn, from the opening question.
     assert sessions_store._by_id["sess-1"].title == "Weekly Recap"
     assert any("what happened this week?" in c["user_text"] for c in fake.calls)
 

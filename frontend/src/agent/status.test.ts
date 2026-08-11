@@ -123,6 +123,11 @@ describe("agentStatus", () => {
       turnKey: "#1",
     });
     expect(stop("error")).toEqual({ kind: "error", label: "Something went wrong", turnKey: "#1" });
+    expect(stop("context_overflow")).toEqual({
+      kind: "error",
+      label: "This model ran out of context — raise its window in Settings or start a new chat",
+      turnKey: "#1",
+    });
   });
 
   it("reads a user-initiated Stop as calm (a done register), not an error", () => {

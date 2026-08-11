@@ -735,16 +735,19 @@ async def test_title_default_unchanged_without_an_agent_override() -> None:
     assert await router.effective_spec("session.title") == ("xai", "grok-4.3")
 
 
-async def test_explicit_title_pin_wins_over_the_follow() -> None:
-    # An operator who explicitly pins the title task beats the agent.turn follow.
+async def test_a_stale_title_pin_is_ignored_and_it_follows_agent_turn() -> None:
+    # Title tasks are NOT independently routable: a stored own-task spec (a stale pin from
+    # before the picker hid these tasks, or one set via a direct PUT) is IGNORED, and the
+    # title follows agent.turn's model. Otherwise naming a chat would swap in the pinned model
+    # — the exact "titling swaps in a different model" problem the follow prevents.
     router = _title_router(
         {"xai": FakeLlmClient(), "local": FakeLlmClient(), "anthropic": FakeLlmClient()},
         {
             "agent.turn": {"spec": "local:gpt-oss-120b"},
-            "research.title": {"spec": "anthropic:claude-x"},
+            "research.title": {"spec": "anthropic:claude-x"},  # stale own-task pin — ignored
         },
     )
-    assert await router.effective_spec("research.title") == ("anthropic", "claude-x")
+    assert await router.effective_spec("research.title") == ("local", "gpt-oss-120b")
 
 
 async def test_title_keeps_its_own_low_effort_when_following() -> None:

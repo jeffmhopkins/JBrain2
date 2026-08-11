@@ -390,16 +390,23 @@ class LlmRouter:
             # prompt tier (strength) or an env pin on the title opts out; an explicit per-task pin
             # below still wins over the follow. Skipped when agent.turn isn't a configured task
             # (a minimal/test router), so the title just keeps its own route.
-            if (
+            followed = (
                 task in _FOLLOW_PRIMARY_MODEL
                 and strength is None
                 and task not in self._pinned
                 and _PRIMARY_MODEL_TASK in self._tasks
-            ):
+            )
+            if followed:
                 provider, model = self._followed_primary_model(overrides)
             entry = overrides.get(task) or {}
             spec = entry.get("spec")
-            if spec is not None:
+            # A follow task (a title) ALWAYS tracks agent.turn — a stored own-task spec (a stale
+            # pin from before the title tasks left the picker, or one set via a direct PUT) must
+            # NOT redirect it to a separate model, which would reintroduce the very "title swaps
+            # in a different model" problem this follow exists to prevent. So the own-task spec
+            # (and stored effort) are ignored while following; the per-call spec_override (the
+            # chat's own model) still wins below.
+            if spec is not None and not followed:
                 try:
                     sp, sm = _split_spec(task, spec)
                 except LlmError:
@@ -411,7 +418,7 @@ class LlmRouter:
                     else:
                         provider, model = sp, sm
             stored_effort = entry.get("reasoning_effort")
-            if stored_effort:
+            if stored_effort and not followed:
                 reasoning_effort = stored_effort
         if spec_override is not None:
             try:
@@ -517,8 +524,13 @@ class LlmRouter:
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
+        spec_override: str | None = None,
     ) -> LlmResult:
-        provider, model, reasoning_effort = await self._resolve_live(task, strength)
+        # `spec_override` is the per-call model pick (the omnibox's per-conversation
+        # agent model) — same precedence as in converse_stream, so a background
+        # completion (e.g. the session titler) can run on the exact model the chat
+        # turn will use, no separate route and no model swap.
+        provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
         client = self._clients[provider]
         await self._admit_local(provider, model)
         start = time.perf_counter()
