@@ -197,6 +197,61 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     assert restart > up, "the gateway restart must follow the stack `up -d`"
 
 
+def test_update_gateway_auto_update_is_opt_in_smoke_tested_and_rolls_back() -> None:
+    # OPT-IN: LOCAL_LLM_AUTO_UPDATE=true floats the gateway onto the newest llama.cpp
+    # (--pull on the FLOATING base tag) so a freshly-released model's architecture is
+    # supported without a manual digest bump, then SMOKE-TESTS the build. A failed
+    # smoke rolls BACK to the pinned, known-good base, so tracking master never leaves
+    # the box unable to serve. Gated on LOCAL_LLM_RUNNING (set only under
+    # LOCAL_LLM_ENABLED), so a stock cloud stack with no gateway is never touched.
+    lines = (DEPLOY / "update-inner.sh").read_text().splitlines()
+    text = "\n".join(lines)
+
+    # Match COMMANDS, not the block's descriptive comments (which name the same steps).
+    def idx(needle: str) -> int | None:
+        return next(
+            (
+                i
+                for i, ln in enumerate(lines)
+                if needle in ln and not ln.lstrip().startswith("#")
+            ),
+            None,
+        )
+
+    assert "LOCAL_LLM_AUTO_UPDATE=true" in text, (
+        "the gateway auto-update must be opt-in"
+    )
+    assert "LOCAL_LLM_RUNNING" in text, (
+        "auto-update must be gated on the gateway being enabled"
+    )
+
+    floating_build = idx("build --pull local-llm")
+    smoke = idx("jbrain.cli local-llm-smoketest")
+    # The rollback rebuild is a PLAIN build — no --pull and no LOCAL_LLM_BASE override —
+    # so it recreates the gateway on the reproducible pinned base from cached layers.
+    rollback = next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if "build local-llm" in ln
+            and "--pull" not in ln
+            and not ln.lstrip().startswith("#")
+        ),
+        None,
+    )
+    assert floating_build is not None, (
+        "must rebuild the gateway with --pull on the floating base"
+    )
+    assert 'LOCAL_LLM_BASE="$FLOATING"' in text, (
+        "the floating rebuild must override the base tag"
+    )
+    assert smoke is not None, "must smoke-test the floated build before keeping it"
+    assert rollback is not None, "must have a pinned-base rollback rebuild"
+    assert floating_build < smoke < rollback, (
+        "order must be: floating --pull build → smoke → (on failure) pinned rollback"
+    )
+
+
 def test_downloader_python_heredoc_delimiter_is_quoted() -> None:
     # download-local-weights.sh embeds a Python program as a heredoc inside a
     # single-quoted `bash -c '...'`. The heredoc delimiter MUST be quoted (<<'PY')

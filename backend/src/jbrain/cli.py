@@ -92,6 +92,27 @@ async def _clear_remove_ids() -> None:
         await engine.dispose()
 
 
+async def _local_llm_smoketest() -> int:
+    """Smoke-test the on-box gateway's current build (the opt-in LOCAL_LLM_AUTO_UPDATE
+    path calls this after floating the gateway onto the newest llama.cpp). Exit 0 =
+    the build loaded a model (and survived a gpt-oss tool turn when installed) and is
+    safe to keep; exit 1 = the update path should roll back to the pinned base. Reads
+    the installed set + gateway URL from settings (env-wired in the api container); no
+    DB needed, so it runs under `docker compose run --rm --no-deps -T api`."""
+    from jbrain.llm.local_gateway import LocalGatewayClient
+    from jbrain.llm.smoketest import run_smoketest
+
+    settings = get_settings()
+    if not settings.local_llm_enabled or not settings.local_models:
+        print("[smoketest] local hosting off or no models installed — skipping (pass)")
+        return 0
+    gateway = LocalGatewayClient(settings.local_llm_url)
+    ok, messages = await run_smoketest(settings.local_models, gateway)
+    for message in messages:
+        print(f"[smoketest] {message}")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jbrain-cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -101,6 +122,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("local-provision-clear", help="empty the local-model install queue")
     sub.add_parser("local-remove-ids", help="print the local-model uninstall queue")
     sub.add_parser("local-remove-clear", help="empty the local-model uninstall queue")
+    sub.add_parser(
+        "local-llm-smoketest",
+        help="load a model (+ gpt-oss tool probe) to verify the gateway's llama.cpp build",
+    )
     args = parser.parse_args(argv)
 
     if args.command in ("init", "reset-owner-key"):
@@ -118,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "local-remove-clear":
         asyncio.run(_clear_remove_ids())
         return 0
+    if args.command == "local-llm-smoketest":
+        return asyncio.run(_local_llm_smoketest())
     return 1
 
 

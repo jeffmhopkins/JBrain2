@@ -142,6 +142,34 @@ if [ -n "$LOCAL_LLM_RUNNING" ]; then
   docker compose --profile local-llm up -d local-llm || true
 fi
 
+# OPT-IN: track the newest llama.cpp on the gateway so a freshly-released model's
+# architecture is supported without a manual digest bump. LOCAL_LLM_AUTO_UPDATE=true
+# rebuilds the gateway on the FLOATING base tag (default kyuz0 :vulkan-radv, which tracks
+# llama.cpp master; override with LOCAL_LLM_BASE_FLOATING, e.g. a rocm-* tag) with --pull,
+# then smoke-tests it (jbrain.cli local-llm-smoketest: load a model + a gpt-oss tool probe).
+# If the new build can't load a model or breaks tool calls, roll BACK to the pinned,
+# known-good LOCAL_LLM_BASE so a bad upstream build never leaves the box unable to serve.
+# Absent/false keeps the reproducible pinned digest — see docs/runbooks/STRIX_HALO_SETUP.md
+# ("Reproducibility / trust"). Gated on LOCAL_LLM_RUNNING (so LOCAL_LLM_ENABLED=true), and
+# best-effort: every branch is guarded so a hiccup never aborts the update (set -e).
+if [ -n "$LOCAL_LLM_RUNNING" ] && grep -q '^LOCAL_LLM_AUTO_UPDATE=true' .env; then
+  FLOATING="$(sed -n 's/^LOCAL_LLM_BASE_FLOATING=//p' .env | tail -n1)"
+  [ -n "$FLOATING" ] || FLOATING="docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv"
+  echo "[update] LOCAL_LLM_AUTO_UPDATE: rebuilding gateway on newest llama.cpp ($FLOATING)"
+  if LOCAL_LLM_BASE="$FLOATING" docker compose --profile local-llm build --pull local-llm \
+      && docker compose --profile local-llm up -d local-llm \
+      && docker compose run --rm --no-deps -T api python -m jbrain.cli local-llm-smoketest; then
+    echo "[update] gateway smoke test passed on the newest llama.cpp"
+  else
+    echo "[update] WARNING: newest llama.cpp failed the smoke test — rolling back to the pinned base"
+    # No LOCAL_LLM_BASE override and no --pull: rebuild against the reproducible pinned
+    # digest (compose default or the operator's .env value) from cached layers.
+    docker compose --profile local-llm build local-llm \
+      && docker compose --profile local-llm up -d local-llm \
+      || echo "[update] WARNING: gateway rollback rebuild failed — check 'jbrain logs local-llm'"
+  fi
+fi
+
 # Reclaim space, but never let a prune hiccup fail the whole update (set -e) after
 # the real work is done — a transient daemon error here once surfaced as a bogus
 # "update failed" with a fully-updated stack.
