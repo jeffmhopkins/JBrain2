@@ -1,5 +1,5 @@
 """The warm-model Kokoro TTS server for the `tts-stt` speech service
-(deploy/tts-stt/piper_server.py).
+(deploy/tts-stt/tts_server.py).
 
 Kokoro + misaki are imported lazily inside _load_kokoro / _load_g2p (the real packages live
 only in the tts-stt image), so these tests stub them before loading the module. They cover the
@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 _DEPLOY = Path(__file__).resolve().parents[3] / "deploy"
-_SERVER_PATH = _DEPLOY / "tts-stt" / "piper_server.py"
+_SERVER_PATH = _DEPLOY / "tts-stt" / "tts_server.py"
 _DOCKERFILE = _DEPLOY / "Dockerfile.tts-stt"
 
 
@@ -104,7 +104,7 @@ def _load_server() -> types.ModuleType:
     sys.modules["misaki"] = fake_misaki
     sys.modules["misaki.en"] = fake_en
     sys.modules["misaki.espeak"] = fake_espeak
-    spec = importlib.util.spec_from_file_location("piper_server", _SERVER_PATH)
+    spec = importlib.util.spec_from_file_location("tts_server", _SERVER_PATH)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -382,11 +382,24 @@ def test_speakable_text_acronyms(server: types.ModuleType) -> None:
 
 def test_speakable_text_name_initial(server: types.ModuleType) -> None:
     # A single-letter initial before a capitalized word loses its period (so espeak doesn't pause);
-    # a dotted abbreviation like "U.S." and a lowercase-led sentence end are left alone.
+    # a lowercase-led sentence end ("Grade A. then") is left alone.
     assert server._speakable_text("by Dennis E. Taylor") == "by Dennis E Taylor"
     assert server._speakable_text("J. R. R. Tolkien") == "J R R Tolkien"
-    assert server._speakable_text("the U.S. Grant memorial") == "the U.S. Grant memorial"
     assert server._speakable_text("Grade A. then rest") == "Grade A. then rest"
+
+
+def test_speakable_text_dotted_initialism(server: types.ModuleType) -> None:
+    # A dotted initialism collapses to spaced letters (no interior period to pause/split on) — the
+    # wall path's mirror of the PWA fix.
+    assert server._speakable_text("the U.S. economy") == "the U S economy"
+    assert server._speakable_text("met in Washington, D.C. today") == "met in Washington, D C today"
+
+
+def test_speakable_text_relations(server: types.ModuleType) -> None:
+    # Inequality glyphs are spoken (dropping them inverts meaning); operands stay digits for misaki.
+    assert server._speakable_text("5 < 10 and 10 > 5") == "5 less than 10 and 10 greater than 5"
+    assert server._speakable_text("x <= 3, y != 0") == "x less than or equal to 3, y not equal to 0"
+    assert server._speakable_text("a ≥ b ± c") == "a greater than or equal to b plus or minus c"
 
 
 def test_speakable_text_distance_mi(server: types.ModuleType) -> None:

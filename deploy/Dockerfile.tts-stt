@@ -6,7 +6,7 @@
 # in the SAME base so the binary's glibc/libstdc++ match the runtime. A CPU build keeps it
 # self-contained (ggml falls back to CPU; large-v3-turbo is quick on the Strix Halo CPU).
 #
-# TTS half — Python + kokoro-onnx + the baked Kokoro weights. piper_server.py (bind-mounted
+# TTS half — Python + kokoro-onnx + the baked Kokoro weights. tts_server.py (bind-mounted
 # at /tts, like the wall's serve.py) holds the Kokoro model resident and reuses it, so a
 # read-aloud clip renders in ~0.1s instead of cold-loading the model every call. Kokoro is the
 # only on-box engine; the browser's native voice is the sole fallback when the box has no TTS.
@@ -53,7 +53,7 @@ RUN apt-get update \
 # transient pip blip can't abort the whole stack's `jbrain update` (one build recreates every
 # service); on failure the image still builds and the browser's native voice is the fallback. The
 # weight fetch below is skipped unless this import succeeds, so /opt/kokoro stays empty and
-# piper_server lists no Kokoro voices (never a dead, listed voice).
+# tts_server lists no Kokoro voices (never a dead, listed voice).
 RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
  || { echo >&2 "!!!!! [kokoro] ============================================================"; \
       echo >&2 "!!!!! [kokoro] system-python kokoro-onnx pip install FAILED"; \
@@ -67,12 +67,12 @@ RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
 # 3.14, so `pip install misaki[en]` on system python can only ever fail to build blis and fall
 # back to espeak. Instead build the FULL Kokoro Python stack in a self-contained Python 3.12 venv
 # (uv fetches a portable build) where every wheel exists — kokoro + misaki[en] + its small spaCy
-# model (en_core_web_sm; piper_server uses trf=False to bound RAM) — and prefer it at runtime
+# model (en_core_web_sm; tts_server uses trf=False to bound RAM) — and prefer it at runtime
 # (entrypoint.sh). NON-FATAL and self-cleaning: the system-python kokoro-onnx above stays the
 # on-box fallback, so a venv hiccup (or blocked egress) only means Kokoro runs on espeak G2P on
 # 3.14 — never a broken build or a dead TTS. The final import check tears the venv down unless the
 # whole stack loads, so the entrypoint's presence test can't pick a half-built venv. Keep the
-# "misaki" token here in step with piper_server.py's _load_g2p (the test guards it).
+# "misaki" token here in step with tts_server.py's _load_g2p (the test guards it).
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN ( uv python install 3.12 \
    && uv venv --python 3.12 /opt/tts-venv \
@@ -91,10 +91,10 @@ RUN ( uv python install 3.12 \
 # kokoro-onnx release artifacts. Fetched with retry (they total ~340 MB from GitHub). Like the pip
 # step, this is NON-FATAL — a transient blip or blocked egress must not abort an otherwise-fine
 # `jbrain update`. The banner below is LOUD but non-fatal; a giving-up SystemExit leaves /opt/kokoro
-# empty-or-partial, and piper_server's weights-both-present gate then lists no Kokoro voices (the
+# empty-or-partial, and tts_server's weights-both-present gate then lists no Kokoro voices (the
 # browser's native voice is the fallback) rather than a broken one. Skipped entirely unless the
 # package imported, so weights are never present without a runtime to use them. The filenames must
-# stay in step with piper_server.py's KOKORO_MODEL/KOKORO_VOICES_FILE (the test guards this).
+# stay in step with tts_server.py's KOKORO_MODEL/KOKORO_VOICES_FILE (the test guards this).
 RUN python3 - <<'PY' \
  || { echo >&2 "!!!!! [kokoro] ============================================================"; \
       echo >&2 "!!!!! [kokoro] weight fetch FAILED — /opt/kokoro is empty or partial"; \
@@ -126,6 +126,6 @@ for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
         raise SystemExit(f"[kokoro] giving up on {name}")
 PY
 
-# No app COPY: piper_server.py + entrypoint.sh are bind-mounted at /tts and launched via the
+# No app COPY: tts_server.py + entrypoint.sh are bind-mounted at /tts and launched via the
 # compose entrypoint (which starts the TTS server, then execs llama-swap). Only the baked Kokoro
 # weights + the whisper/Kokoro runtimes live in the image.

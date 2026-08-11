@@ -203,7 +203,7 @@ their own card — a quiet twin of the prompt popup.
 ### Read aloud (optional TTS — server-side Kokoro)
 
 The **Read aloud** panel (bottom-right) reads turns aloud. Speech is rendered **on the box** by
-**Kokoro-82M** (`kokoro_onnx`), held resident by the warm `piper_server.py` so a clip renders in
+**Kokoro-82M** (`kokoro_onnx`), held resident by the warm `tts_server.py` so a clip renders in
 ~0.1 s: `serve.py` forwards to it, exposing `GET /tts?voice=<id>&text=…` (returns a WAV) and
 `GET /tts/voices` (the installed Kokoro voice ids), and the page plays the clip through an
 `<audio>` element — keeping the browser's flaky Web Speech engine (speech-dispatcher cold start,
@@ -242,7 +242,7 @@ on three fronts: (1) while a voice is enabled it runs a **permanently-silent Web
 holds one live stream on the sink, so the sink never goes idle (suspend keys on stream *presence*, not
 level, so it's truly silent); (2) it **primes** the `<audio>`→sink path with one silent clip
 (`GET /tts/silence`) the moment read-aloud activates, so the very first utterance after a fresh load
-isn't clipped by the sink's cold start; (3) as a last backstop, `piper_server.py` prepends a short lead
+isn't clipped by the sink's cold start; (3) as a last backstop, `tts_server.py` prepends a short lead
 of silence to the first clip (`BRAIN_TTS_LEAD_MS`, default 400 ms).
 
 **Kokoro** and its weights (`kokoro-v1.0.onnx` + `voices-v1.0.bin`, ~340 MB) ship **baked into the
@@ -269,7 +269,7 @@ the moment you flip the toggle — no `.env` edit, no host download step.
 
 Adding a Kokoro voice needs no host provisioning: every voice already lives in the baked
 voice-styles bin, so a voice added to the curated roster (`CURATED_KOKORO_VOICES` in
-`piper_server.py`) rides the next `jbrain update` and appears in the picker. Env knobs (all
+`tts_server.py`) rides the next `jbrain update` and appears in the picker. Env knobs (all
 optional): `BRAIN_TTS_PORT` (default 8801), `BRAIN_KOKORO_DIR` (baked weights, default
 `/opt/kokoro`), `BRAIN_TTS_LEAD_MS` (first-clip silence pad), `BRAIN_KOKORO_SPEED`, and
 `BRAIN_KOKORO_TRAIL_MS`. The `voice` param is validated against the installed set, so there is no

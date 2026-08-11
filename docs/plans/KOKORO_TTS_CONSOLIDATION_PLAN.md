@@ -1,6 +1,6 @@
 # JBrain2 — Kokoro TTS Consolidation
 
-> **Status:** In progress · **Last verified:** 2026-08-10 · **Waves:** W1✅ W2✅ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** W1✅ W2✅ W3✅ W4◻️
 
 Standardize read-aloud on **Kokoro only**, collapse the three overlapping text
 normalizers into **one on the box**, make the misaki-vs-espeak phonemizer path
@@ -15,7 +15,7 @@ Owner decisions ratified up front (this is the binding spec, not the open menu):
   falls back to the device's Web Speech voice (needs no box). No internal Piper
   safety net. Kokoro provisioning is made **loud** (a failed weight/venv build is
   surfaced, never a silent degrade) so an outage is observable, not guessed.
-- **One normalizer, on the box.** `piper_server.py` becomes the single source of
+- **One normalizer, on the box.** `tts_server.py` becomes the single source of
   truth for text normalization; the PWA keeps only the streaming chunker; the wall
   drops its own `mdToPlain`.
 - **Pronunciation UI = plain respelling.** The owner types a word + how to say it
@@ -37,19 +37,19 @@ Five research passes over the read-aloud stack established:
    (a pause cue that is *not* a clip boundary) lets a heading flow into the next
    sentence with lead-in intonation.
 3. **Titusville.** A phoneme override already exists —
-   `deploy/tts-stt/piper_server.py::KOKORO_LEXICON` seeds `"titusville":
+   `deploy/tts-stt/tts_server.py::KOKORO_LEXICON` seeds `"titusville":
    "tˈItəsvɪl"` — but it applies **only on the misaki path**. If the box silently
    fell back to espeak, the override is inert and the mispronunciation returns.
    Titusville-still-wrong is itself the symptom of an espeak fallback.
 4. **Three normalizers.** `speakable.js` (PWA, full: numbers/dates/currency/
-   symbols/tables), `piper_server.py::_speakable_text` (box, partial: dates/units/
+   symbols/tables), `tts_server.py::_speakable_text` (box, partial: dates/units/
    states/acronyms, **no number verbalization**, runs for *every* render), and
    `deploy/wall/index.html::mdToPlain` (wall, strip-only). Number verbalization
    works only on the PWA path; dates are handled twice, differently; the wall gets
    neither. Coverage gaps fall out of this split (phone numbers read as arithmetic
    ranges, `3:30pm`/`2026-08-10`/`v2.3.1` mangled, `<`/`>`/`≤` dropped,
    `snake_case` underscores eaten).
-5. **Path/parity.** Every audio path already flows through `piper_server.py` (PWA
+5. **Path/parity.** Every audio path already flows through `tts_server.py` (PWA
    proxy, wall, pet), which is why the box is the right single home — it is
    colocated with the phonemizer and the lexicon, the one place pronunciation truth
    lives. The PWA's chunker must stay client-side (it drives progressive playback),
@@ -58,32 +58,35 @@ Five research passes over the read-aloud stack established:
 Full research notes: see the commit history of this branch; findings are folded
 into the wave tasks below rather than kept as a separate dossier.
 
-## Target architecture
+## Target architecture (as built)
 
 ```
-PWA answer/markdown ──chunkStream (raw-boundary split, no verbalize)──▶ /api/brain/tts
-wall answer/markdown ──(raw)──────────────────────────────────────────▶ /tts (box)
-                                                                         │
-                          api injects per-owner respelling map ─────────┤ (brain.py, has the principal)
-                                                                         ▼
-                                          piper_server.py: _speakable_text (THE normalizer)
-                                            markdown→prose + verbalize + U.S./heading/coverage fixes
-                                                                         ▼
-                                            KOKORO_LEXICON phoneme overrides (misaki path)
-                                                                         ▼
-                                              Kokoro (misaki G2P; espeak = degraded, surfaced)
+PWA answer/markdown ──speakable.js (normalize + chunk)──▶ /api/brain/tts ──┐
+wall answer/markdown ──mdToPlain──▶ /tts (box) ────────────────────────────┤
+                                                                           ▼
+                api injects per-owner respelling map (brain.py, has the principal) [W4]
+                                                                           ▼
+             box tts_server.py: _speakable_text (thin engine-agnostic mirror, for the wall)
+                                                                           ▼
+                            KOKORO_LEXICON phoneme overrides (misaki path)
+                                                                           ▼
+                    Kokoro (misaki G2P; espeak = degraded, surfaced by /tts/health)
 ```
 
-- **Engine-agnostic structural + verbalization rules** live once, in
-  `_speakable_text`. Because the box is DB-free by design, the **per-owner
-  respelling map** is injected by `brain.py` (which holds the principal) as a plain
-  whole-word text substitution *before* forwarding — so it works regardless of
-  engine and independent of the DB-free box.
+- **`speakable.js` is the single source of truth** for the text-normalization rules
+  (numbers/dates/currency/symbols/tables/abbreviations + the W3 fixes). It stays
+  client-side because the streaming chunker (`chunkStream`/`committedLen`/
+  `splitClips`) needs normalized clip boundaries to drive progressive playback — see
+  the W3 architecture note for why a literal box-side single-normalizer was rejected.
+- **The box `_speakable_text`** carries a *thin mirror* of the engine-agnostic fixes
+  (dates/states/acronyms/dotted-initialisms/relations) for the **wall** path, which
+  reaches the box as near-raw text; it is redundant-but-idempotent for the PWA path
+  (which arrives already normalized).
+- **Per-owner respelling map** [W4] is injected by `brain.py` (which holds the
+  principal) as a plain whole-word substitution *before* forwarding — engine-agnostic
+  and independent of the DB-free box.
 - **Phoneme overrides** (`KOKORO_LEXICON`) stay on the box, misaki-only, for
   power-user exactness; the owner-facing feature is the respelling map.
-- **`speakable.js`** shrinks to `chunkStream`/`committedLen`/`splitClips` +
-  `reportToSpeech` (a cheap report-structure preprocessor). It keeps the
-  abbreviation-aware boundary guard so a dotted initialism never splits a clip.
 
 ## Waves
 
@@ -92,7 +95,7 @@ wall answer/markdown ──(raw)────────────────
 - `GET /tts/health` on the box → `{kokoro_available, g2p:
   "misaki"|"espeak"|"unavailable", lexicon_entries, voice_count}`; loading the G2P
   also pre-warms misaki. `GET /api/brain/tts/health` proxy on the api.
-- Tests: box (`test_piper_server.py`) misaki/espeak/unavailable; api proxy
+- Tests: box (`test_tts_server.py`) misaki/espeak/unavailable; api proxy
   (`test_brain_proxy.py`) passthrough + auth + 503.
 - *Deferred to W4:* surface `g2p` in the Settings panel (rides the pronunciation
   UI's GUI gate).
@@ -121,25 +124,45 @@ wall answer/markdown ──(raw)────────────────
   provisioning are the mitigations; browser-native covers box-unreachable and a
   box that built without Kokoro.
 
-### W3 — Collapse to one box normalizer ◻️
+### W3 — Read-aloud fixes + wall parity ✅
 
-- Port `speakable.js`'s `toProse` + `toUtterance` semantics into `_speakable_text`
-  (single misaki-targeted profile): markdown→prose (citations, code, tables→
-  sentences, heading/quote/bullet markers, emphasis), then verbalize (numbers,
-  dates, currency, percent, fractions, ranges, symbols, emoji, URLs,
-  abbreviations, dashes/parentheticals).
-- **Fold in the symptom fixes:** dotted-initialism collapse (`U.S.`→`U S`) before
-  boundary detection; heading terminal `:` instead of `.`.
-- **Fold in coverage fixes** (highest-impact first): phone numbers (digit-by-digit,
-  not a range), times (`3:30pm`, `14:00`), ISO/slash dates, version numbers
-  (`v2.3.1`), numbers glued to units, inequalities (`<`/`>`/`≤`/`≠`), `snake_case`,
-  roman numerals, common abbreviations (`etc./St./Inc./No.`).
-- **Shrink `speakable.js`** to the chunker (+ `reportToSpeech`); PWA sends raw
-  markdown clips; the box normalizes each. Keep the abbreviation-aware boundary
-  guard client-side so `U.S. ` never splits a clip.
-- **Wall** drops `mdToPlain`; sends raw text; box normalizes.
-- Port `speakable.golden.test.ts` cases to `test_piper_server.py`; keep a thin JS
-  suite for the chunker only.
+**Architecture note (a deviation from the original "collapse to the box" target,
+ratified during build):** the literal single-normalizer-on-the-box target fights the
+streaming design. The PWA read-aloud chunker (`chunkStream`/`committedLen`/
+`splitClips`) MUST run client-side — it decides clip boundaries to drive
+progressive per-clip `/tts` calls — and it needs *normalized* boundaries, so the
+normalizer naturally lives with it in `speakable.js`. A true single-file merge would
+require either a normalize-and-split round-trip endpoint (extra latency, lost
+sentence-granularity streaming) or maintaining **two byte-identical copies** of
+`speakable.js` (PWA + a no-build-step wall adoption) behind a parity guard — *more*
+fragility, not less. So the consolidation is: **`speakable.js` is the single source
+of truth** for the rules; the box `tts_server.py::_speakable_text` carries a *thin
+mirror* of the engine-agnostic fixes for the wall path (which reaches the box as
+near-raw text). This delivers the symptom fixes + correctness on every path without
+the risky, untestable wall rewrite.
+
+- **Symptom fixes (speakable.js):** dotted-initialism collapse (`U.S.`→`U S`) before
+  pause-authoring, the clip splitter, AND the streaming committer's `ABBREV_NO_BREAK`
+  guard, so "The U.S. economy" is one clip/one render; heading terminal `:` instead
+  of `.` (a pause cue `splitClips` doesn't cut on) so a heading leads into the next
+  sentence, with `committedLen` holding a heading with its block so streaming ==
+  one-shot.
+- **Coverage fixes (speakable.js):** inequalities (`<`,`>`,`<=`,`>=`,`!=`,`±` —
+  dropping them inverts meaning), `snake_case`, clock times (`3:30pm`/`14:00`), phone
+  numbers (digit-by-digit, not arithmetic ranges), multi-part versions (`v2.3.1`),
+  ISO dates (`2026-08-10`). Full unit + golden coverage.
+- **Wall parity (box `_speakable_text`):** mirrored the two engine-agnostic headline
+  fixes — the dotted-initialism collapse and the inequality/relation map — so the
+  wall path is also correct. (Heading-colon needs the `#` marker, which the wall's
+  `mdToPlain` strips before the box sees it, so it stays PWA-only; the wall is a
+  secondary display.)
+- **Rename:** `piper_server.py` → `tts_server.py` (+ `test_tts_server.py`) now that
+  Piper is gone — entrypoint, compose, Dockerfile, and docs updated.
+- *Deferred (see Open questions):* the literal reduction to ONE normalizer (wall
+  adopts `speakable.js`; box `_speakable_text` deleted). Low user value (wall is
+  secondary), higher risk (untestable no-build-step display), and it trades one
+  normalizer for two byte-identical copies — revisit only if the wall path needs the
+  full verbalization set.
 
 ### W4 — Owner-editable respelling lexicon + Settings panel ◻️
 
@@ -170,6 +193,11 @@ wall answer/markdown ──(raw)────────────────
 - Whether to keep the `KOKORO_LEXICON` phoneme map as a documented power-user
   escape hatch alongside the owner respelling map (leaning yes — Titusville stays
   seeded there; respelling is the friendly layer on top).
-- Quick interim relief: the Titusville respelling and the U.S./heading fixes could
-  land ahead of the full W3 port if the owner wants symptom relief sooner. Sequenced
-  into W3 by default to avoid rework against code being removed.
+- **Deferred: the literal single-normalizer merge.** The original "collapse to ONE
+  normalizer on the box" was reframed in W3 (see the W3 architecture note):
+  `speakable.js` is the single source of truth, with a thin box mirror for the wall.
+  Fully deleting the box `_speakable_text` would require the wall to adopt
+  `speakable.js` verbatim (a no-build-step display, untestable here) and a byte-parity
+  guard between two copies — *more* fragility for a secondary surface. Revisit only if
+  the wall needs the full verbalization set (numbers/times/etc.), or if the wall is
+  ever rebuilt with a bundler.

@@ -403,10 +403,26 @@ _DISTANCE_RE = re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*mi\b")
 # 3-letter codes first so "SSW" matches whole, not as "S" + "SW".
 _COMPASS_RE = re.compile(r"\b(" + "|".join(sorted(_COMPASS, key=len, reverse=True)) + r")\b")
 _CARDINAL_RE = re.compile(r"\b([Ff]rom|[Tt]he)\s+([NSEW])\b")
+# Dotted initialisms ("U.S.", "U.K.", "D.C.") -> spaced letters ("U S"), so their interior periods
+# aren't read as a sentence end (the obnoxious pause) and don't split a clip. Uppercase, >=2 groups;
+# runs BEFORE the name-initial + acronym passes. The PWA's speakable.js does this too — here it
+# serves the wall (which sends "U.S." intact through its own mdToPlain).
+_DOTTED_INITIALISM_RE = re.compile(r"\b(?:[A-Z]\.){2,}")
 # A single-letter name initial ("Dennis E. Taylor") followed by a capitalized word: drop the period
-# so espeak doesn't read it as a sentence end (a long pause). Not part of a dotted abbreviation like
-# "U.S.". The PWA's speakable.js does this too; here it serves the wall (which sends "E." intact).
+# so espeak doesn't read it as a sentence end (a long pause). The dotted initialisms above are
+# already collapsed. The PWA's speakable.js does this too; here it serves the wall.
 _INITIAL_RE = re.compile(r"(?<!\.)\b([A-Z])\.(?=\s+[A-Z])")
+# Relations whose glyphs read badly or drop silently (inverting a sentence's meaning) -> words.
+# Composite forms before the bare < / >. The box doesn't verbalize numbers, so operands stay digits
+# for misaki. Mirrors speakable.js's SYMBOL_WORDS inequality block for the wall path.
+_RELATION_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\s*(?:<=|≤)\s*"), " less than or equal to "),
+    (re.compile(r"\s*(?:>=|≥)\s*"), " greater than or equal to "),
+    (re.compile(r"\s*(?:!=|≠)\s*"), " not equal to "),
+    (re.compile(r"\s*±\s*"), " plus or minus "),
+    (re.compile(r"\s*<\s*"), " less than "),
+    (re.compile(r"\s*>\s*"), " greater than "),
+)
 
 # Acronyms/initialisms read as letters ("ORFS" -> "O R F S", "AI" stays 2-letter and is left alone).
 # A standalone run of 3-5 uppercase letters, EXCEPT ones said as a word (NASA), common roman numerals
@@ -487,10 +503,13 @@ def _speakable_text(text: str) -> str:
     text = _DISTANCE_RE.sub(r"\1 miles", text)
     text = _COMPASS_RE.sub(lambda m: _COMPASS[m.group(1)], text)
     text = _CARDINAL_RE.sub(lambda m: f"{m.group(1)} {_CARDINAL[m.group(2)]}", text)
+    text = _DOTTED_INITIALISM_RE.sub(lambda m: m.group(0).replace(".", " ").strip(), text)
     text = _INITIAL_RE.sub(r"\1", text)
     text = _ACRONYM_RE.sub(
         lambda m: m.group(1) if m.group(1) in _SPOKEN_ACRONYMS else " ".join(m.group(1)), text
     )
+    for pat, word in _RELATION_SUBS:
+        text = pat.sub(word, text)
     return re.sub(r"[ \t]{2,}", " ", text)  # collapse a double space an expansion left behind
 
 

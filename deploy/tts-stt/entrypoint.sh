@@ -24,4 +24,4 @@ TTS_PY=python3
 if [ -x /opt/tts-venv/bin/python ] && /opt/tts-venv/bin/python -c "import kokoro_onnx, misaki.en" 2>/dev/null; then
   TTS_PY=/opt/tts-venv/bin/python
 fi
-exec "$TTS_PY" /tts/piper_server.py
+exec "$TTS_PY" /tts/tts_server.py

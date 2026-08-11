@@ -2,7 +2,7 @@
 
 One always-on container serving the box's **speech I/O**:
 
-- **TTS (`:8801`)** — `piper_server.py`, a stdlib HTTP server that renders read-aloud, holding
+- **TTS (`:8801`)** — `tts_server.py`, a stdlib HTTP server that renders read-aloud, holding
   the **Kokoro** model **resident** so a clip renders in ~0.1 s instead of cold-loading the model
   every call (~1.5 s — the old subprocess-per-clip cost). **Kokoro-82M** (`kokoro_onnx`, a natural
   Apache-2.0 engine — one shared onnx model + a voice-styles bin serving many voices) is the sole
@@ -21,7 +21,7 @@ One always-on container serving the box's **speech I/O**:
   for out-of-vocabulary words — better English than espeak alone (POS-based homographs like
   "lead"/"read", `num2words`). misaki is **optional and non-fatal**: if it's not baked (or fails
   to load), the Kokoro path falls back to kokoro-onnx's built-in espeak, so read-aloud never
-  breaks. To **fix a specific word**, add it to `KOKORO_LEXICON` in `piper_server.py` — key is the
+  breaks. To **fix a specific word**, add it to `KOKORO_LEXICON` in `tts_server.py` — key is the
   lowercased word, value is its **misaki phonemes** (misaki's alphabet, not raw IPA; derive them on
   the box with `python3 -c "from misaki import en, espeak; print(en.G2P(fallback=espeak.EspeakFallback())('the word')[0])"`). Entries are
   emitted as misaki inline overrides `[word](/phonemes/)` and applied only on the misaki path.
@@ -46,7 +46,7 @@ One always-on container serving the box's **speech I/O**:
   and emphasis words (`STOP`) in `_SPOKEN_ACRONYMS`; 2-letter runs (`IN`, `AI`, `US`) are left alone
   as too ambiguous to spell. This is plain-text rewriting (engine-agnostic) and is **separate** from
   `KOKORO_LEXICON`, which fixes single-word *phonemes* on the misaki path only. Add a symbol or
-  abbreviation by extending the maps at the top of the `_speakable_text` block in `piper_server.py`
+  abbreviation by extending the maps at the top of the `_speakable_text` block in `tts_server.py`
   (`_STATE_NAMES`, `_COMPASS`, `_DEGREE_UNITS`, `_SPEED_UNITS`).
   **Two normalizers, by surface.** The **PWA** read-aloud already runs the frontend
   `frontend/src/agent/speakable.js` before it ever calls the box, and that pass verbalizes every
@@ -78,9 +78,9 @@ non-fatal** — a transient blip can't abort an otherwise-fine `jbrain update` (
 unmistakable `!!!!! [kokoro] …` stderr banner, greppable in the build/`docker logs`, and the box
 then serves browser-native only). Adding a Kokoro voice needs no host step: it rides the normal
 `docker compose build` in `jbrain update`, then appears as a `kokoro-<voice>` pick in Settings.
-Keep the baked Kokoro filenames in step with `piper_server.py`'s `KOKORO_MODEL`/`KOKORO_VOICES_FILE`
+Keep the baked Kokoro filenames in step with `tts_server.py`'s `KOKORO_MODEL`/`KOKORO_VOICES_FILE`
 (a unit test guards this), and the curated Kokoro voice ids in `CURATED_KOKORO_VOICES`.
-`piper_server.py` + `entrypoint.sh` are **bind-mounted** at `/tts` (like the wall's `serve.py`), so
+`tts_server.py` + `entrypoint.sh` are **bind-mounted** at `/tts` (like the wall's `serve.py`), so
 a `jbrain update` picks up code changes with no rebuild; only a voice/base bump rebuilds.
 
 ## Env (compose)
@@ -97,7 +97,7 @@ sends a slower speed + inter-clip trail for **prose/stories** while leaving mark
 env default — no user mode. The env vars set the markup/default read; the prose preset lives in
 `useReadAloud` (`PROSE_SPEED`/`PROSE_TRAIL_MS`). Dial all of it in by ear after a listen.
 
-**Narrator blends.** `KOKORO_BLENDS` in `piper_server.py` defines custom voices as a **weighted
+**Narrator blends.** `KOKORO_BLENDS` in `tts_server.py` defines custom voices as a **weighted
 average of two or more Kokoro voice style vectors** (a timbre no single baked voice gives) — each
 appears in the Settings Kokoro list as `kokoro-<key>` ("Kokoro · Narrator"). Seeded with one warm
 `narrator` blend (`am_michael` 0.6 + `af_nicole` 0.4); retune the voices/weights or add blends by

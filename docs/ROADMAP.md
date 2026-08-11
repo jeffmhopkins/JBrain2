@@ -387,14 +387,16 @@ near-identical research-report library and external-video corpus — is out of s
 
 **In progress:** Kokoro TTS consolidation (build plan: `docs/plans/KOKORO_TTS_CONSOLIDATION_PLAN.md`) —
 standardize read-aloud on **Kokoro only** (remove Piper; the browser-native voice is the sole
-fallback), collapse the three overlapping text normalizers (`speakable.js`, the box `_speakable_text`,
-the wall `mdToPlain`) into **one on the box**, make the misaki-vs-espeak phonemizer path **visible**,
-and give the owner a **plain-respelling pronunciation list**. Fixes the reported symptoms — an unwanted
-pause after "U.S.", flat/uncharacteristic headings, and "Titusville" mispronounced (a `KOKORO_LEXICON`
-override that already exists but goes inert whenever the box silently drops to espeak) — at their root.
-W1 (phonemizer-path `/tts/health` + `/api/brain/tts/health` observability) shipped on-branch; W2 (remove
-Piper), W3 (collapse to one box normalizer, folding in the U.S./heading/coverage fixes), W4 (respelling
-lexicon + a GUI-gated Settings panel) open.
+fallback), make `speakable.js` the single source of truth for text normalization, make the
+misaki-vs-espeak phonemizer path **visible**, and give the owner a **plain-respelling pronunciation
+list**. Fixes the reported symptoms — an unwanted pause after "U.S.", flat/uncharacteristic headings,
+and "Titusville" mispronounced (a `KOKORO_LEXICON` override that already exists but goes inert whenever
+the box silently drops to espeak) — at their root. W1 (phonemizer-path `/tts/health` observability), W2
+(remove Piper, incl. the `piper_server.py`→`tts_server.py` rename), and W3 (the read-aloud fixes — U.S.
+collapse, heading colon, and the coverage gaps — in `speakable.js`, plus a thin box-side mirror for the
+wall) shipped on-branch. W3 reframed the "collapse to one box normalizer" goal (the streaming chunker
+keeps `speakable.js` client-side; the box normalizer stays as a thin wall mirror rather than being
+merged away). W4 (respelling lexicon + a GUI-gated Settings panel) open.
 
 **Shipped:** Grokipedia tool (build record: `docs/archive/GROKIPEDIA_TOOL_PLAN.md`, PR #993) — a jerv
 tool set (`grokipedia_search`/`outline`/`section`/`citations`/`related`) to search Grokipedia, traverse a page

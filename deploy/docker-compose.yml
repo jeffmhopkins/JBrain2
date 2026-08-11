@@ -403,7 +403,7 @@ services:
 
   # tts-stt — the box's speech I/O in one always-on container: whisper.cpp speech-to-text
   # (llama-swap on :8080, the api reaches it at http://tts-stt:8080) AND warm Kokoro
-  # text-to-speech (piper_server.py on :8801, reached by the api's read-aloud proxy and the
+  # text-to-speech (tts_server.py on :8801, reached by the api's read-aloud proxy and the
   # wall's /tts forward). DEFAULT-ON (no profile) — read-aloud must not depend on enabling
   # STT. Built on the official llama-swap unified image (llama-swap + ffmpeg, Vulkan) with
   # whisper.cpp's server + Python/Kokoro + the baked Kokoro weights layered on
