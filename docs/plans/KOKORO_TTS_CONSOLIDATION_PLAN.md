@@ -164,21 +164,31 @@ the risky, untestable wall rewrite.
   normalizer for two byte-identical copies — revisit only if the wall path needs the
   full verbalization set.
 
-### W4 — Owner-editable respelling lexicon + Settings panel ◻️
+### W4 — Owner-editable respelling lexicon + Settings panel ◻️ (built on-branch; marker flips on merge)
 
-- `settings_store` key `pronunciation_lexicon` (`{word: respelling}`, sanitized:
-  non-dict/blank dropped, bounded size), exposed via `SettingsOut`/`SettingsPatch`
-  in `api/settings.py` (owner-only, RLS — invariant #3, no migration: constant, not
-  a row seed).
+- `settings_store` key `pronunciation_lexicon` (`{word: respelling}`, sanitized +
+  bounded: non-dict/blank/over-long dropped, ≤ 200 entries), exposed via
+  `SettingsOut`/`SettingsPatch` in `api/settings.py` (owner-only, RLS — invariant #3,
+  no migration: constant, not a row seed). ✅ shipped on-branch.
 - `brain.py /brain/tts` reads the map and applies a whole-word, case-insensitive
-  substitution to `text` before forwarding (engine-agnostic; also makes Titusville
-  robust on the espeak path). Applies on the report/custom-text paths too.
-- **GUI gate (PROCESS.md):** the Settings "Pronunciations" surface is a new GUI
-  surface → **three interactive HTML mocks** to `docs/mocks/`, owner picks before
-  build; also surfaces the W1 `g2p` health state ("Voice engine: misaki ✓" /
-  "espeak — pronunciations limited"). A "Test" button reuses `/api/brain/tts`.
-- Tests: store sanitizer, settings round-trip, the brain.py injection, RLS
-  isolation for the new key.
+  substitution to `text` before forwarding — engine-agnostic (fixes Titusville on the
+  misaki OR espeak path), best-effort (a settings-read hiccup skips respelling, never
+  fails read-aloud). Covers every PWA read-aloud path (chat/report/custom-text) since
+  all route through this proxy. ✅ shipped on-branch.
+- **GUI gate (PROCESS.md):** three interactive mocks landed in
+  `docs/mocks/pronunciations/` (a-inline-list, b-edit-sheet, c-add-first-chips); the
+  owner chose **A — inline list**, now the binding spec. ✅
+- **Panel (mock A):** an inline word → say-it-like list in the read-aloud settings
+  card with a per-row Test ▷ / remove ✕, an "Add a pronunciation" expander, and a
+  phonemizer health chip (misaki ✓ / espeak "pronunciations still apply, quality
+  limited") fed by a new `brainTtsHealth()` over the W1 `/api/brain/tts/health`.
+  Edits PUT the full map (replace semantics); Test plays the respelling through the
+  box. Gated to the on-box (Kokoro) model. ✅ shipped on-branch.
+- Tests: store sanitize + round-trip (unit + Postgres integration), `/api/settings`
+  round-trip, the brain.py substitution + read-failure fallback, and the panel
+  (render/add/delete/health). ✅
+- *Note:* per `DOC_LIFECYCLE.md` the W4 header marker + this plan's archival happen in
+  the PR that MERGES the wave; everything above is complete on the branch.
 
 ## Non-negotiables touched
 
