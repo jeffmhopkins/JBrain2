@@ -331,7 +331,9 @@ async def test_llm_local_provision_requested_round_trip_and_dedups(
     store = SqlSettingsStore(maker)
     assert await store.llm_local_provision_requested(OWNER) == []
 
-    await store.set_llm_local_provision_requested(OWNER, ["nemotron-3-super-120b", "nemotron-3-super-120b"])
+    await store.set_llm_local_provision_requested(
+        OWNER, ["nemotron-3-super-120b", "nemotron-3-super-120b"]
+    )
     assert await store.llm_local_provision_requested(OWNER) == ["nemotron-3-super-120b"]
 
     # Non-list / non-string entries are dropped on read.

@@ -885,7 +885,9 @@ def test_install_404_unknown_and_409_already_provisioned_or_hosting_off() -> Non
     assert c.post("/api/settings/llm/local-models/gpt-oss-120b/install").status_code == 409
     # Hosting off → the GPU/gateway env is a one-time host step the PWA can't bootstrap.
     c2, _ = _authed_client(_cloud_settings())
-    assert c2.post("/api/settings/llm/local-models/nemotron-3-super-120b/install").status_code == 409
+    assert (
+        c2.post("/api/settings/llm/local-models/nemotron-3-super-120b/install").status_code == 409
+    )
 
 
 def test_install_download_progress_climbs_with_on_disk_bytes(tmp_path: Any) -> None:
@@ -934,7 +936,9 @@ def test_uninstall_404_unknown_and_409_unprovisioned_or_hosting_off() -> None:
     # Not a catalog id.
     assert c.post("/api/settings/llm/local-models/nope/uninstall").status_code == 404
     # A catalog model that isn't provisioned here → nothing to uninstall.
-    assert c.post("/api/settings/llm/local-models/nemotron-3-super-120b/uninstall").status_code == 409
+    assert (
+        c.post("/api/settings/llm/local-models/nemotron-3-super-120b/uninstall").status_code == 409
+    )
     # Hosting off → no local roster to uninstall from.
     c2, _ = _authed_client(_cloud_settings())
     assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall").status_code == 409
@@ -968,7 +972,9 @@ def test_uninstall_409_when_neither_enabled_nor_on_disk(tmp_path: Any) -> None:
         local_models_dir=str(tmp_path),
     )
     c, _ = _authed_client(settings)
-    assert c.post("/api/settings/llm/local-models/nemotron-3-super-120b/uninstall").status_code == 409
+    assert (
+        c.post("/api/settings/llm/local-models/nemotron-3-super-120b/uninstall").status_code == 409
+    )
 
 
 def test_cancel_uninstall_removes_from_the_queue_and_tolerates_absence() -> None:
