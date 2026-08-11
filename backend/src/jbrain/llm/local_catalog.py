@@ -266,6 +266,41 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=3.0,
     ),
     LocalModel(
+        id="nemotron-3.5-lightning-30b",
+        label="Nemotron 3.5 Lightning 30B · reasoning (alt)",
+        served_model="nemotron-3.5-lightning-30b",
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+        gguf_include="*Q8_0*.gguf",
+        mmproj_include=None,
+        quant="Q8_0",
+        # GiB on disk (the catalog's unit): the single Q8_0 weight, ~32.6 GiB from HF's 35
+        # decimal-GB listing. ESTIMATE until measured on-box; kept at the GiB (not the
+        # decimal-GB) figure so the install bar doesn't cap early.
+        size_gb=32.6,
+        note="30B MoE, 3B active — NVIDIA's Nemotron 3.5 Lightning at 8-bit (near-lossless), a "
+        "fast high-tier alt. Hybrid Mamba-2 + MoE + attention arch: the constant Mamba state "
+        "keeps the KV cache tiny, so it holds long context far better than a dense model and "
+        "stays fast even at Q8 (only ~3B active is read per token, so quant barely moves speed "
+        "here — Q8 for the quality). Co-resides beside gpt-oss-120b. A HYBRID reasoner: "
+        "thinking is the enable_thinking chat-template toggle, set per task in LLM Settings "
+        "('none' runs it as a snappy Instruct model). Emits <think> traces, so it needs a "
+        "recent llama.cpp build that serves the hybrid Mamba arch and supports "
+        "--reasoning-format.",
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        # Native 1M context; serves the conservative gateway default. The Mamba-2 hybrid's
+        # constant state makes the KV term small, so raising the window is cheap here — the
+        # drawer's linear KV estimate overcounts the non-growing Mamba layers (a conservative
+        # guardrail, not a true measure).
+        native_context_window=1048576,
+        kv_gb_per_128k=3.0,
+    ),
+    LocalModel(
         id="qwen3.6-27b",
         label="Qwen3.6 27B · vision + reasoning (Q8)",
         served_model="qwen3.6-27b",

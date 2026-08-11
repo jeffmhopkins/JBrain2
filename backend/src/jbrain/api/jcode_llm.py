@@ -87,6 +87,7 @@ _ALIASES: dict[str, str] = {
     "qwen3-vl-30b-a3b": "vl",
     "llama-4-scout-int4": "scout",
     "nemotron-3-super-120b": "nemotron",
+    "nemotron-3.5-lightning-30b": "nemotron-lightning",
     "qwen3.6-27b": "qwen36",
     "qwen3.6-27b-q4": "qwen36-q4",
     "glm-4.5-air": "glm",

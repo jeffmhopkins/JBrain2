@@ -232,9 +232,36 @@ def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
         "qwen3.6-27b",
         "qwen3.6-27b-q4",
         "nemotron-3-super-120b",
+        "nemotron-3.5-lightning-30b",
         "qwen3.5-0.8b",
         "qwen3.5-4b",
     }
+
+
+def test_nemotron_35_lightning_is_a_fast_hybrid_reasoner_alt_at_q8() -> None:
+    # NVIDIA's Nemotron 3.5 Lightning: a 30B MoE / 3B active hybrid Mamba-2 + MoE + attention
+    # reasoner at 8-bit, from the llama.cpp team's own (ggml-org) GGUF conversion. A hybrid
+    # thinker (enable_thinking toggle) that emits <think>, so it pins --reasoning-format
+    # deepseek like the other Nemotron/Qwen hybrids.
+    m = local_catalog.get("nemotron-3.5-lightning-30b")
+    assert m is not None
+    assert m.tiers == ("high",)
+    # Text-only — no vision tower, no projector.
+    assert not m.supports_vision and m.mmproj_include is None
+    assert m.supports_tools
+    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    # 8-bit (near-lossless) from ggml-org's GGUF (the same org as the gpt-oss GGUF).
+    assert m.quant == "Q8_0" and "Q8_0" in m.gguf_include
+    assert m.hf_repo == "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF"
+    assert m.spec == "local:nemotron-3.5-lightning-30b"
+    # Serves the conservative gateway default with its native 1M window as the ceiling; the
+    # Mamba-2 hybrid's constant state keeps the KV term small (a big -c is cheap here).
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 1048576 and m.max_context_window == 1048576
+    assert m.kv_gb_per_128k == 3.0
+    # Alternate, not part of the default resident set the install prompt offers.
+    assert m.id not in local_catalog.recommended_ids()
 
 
 def test_nemotron_3_super_is_a_hybrid_reasoner_alt_high_tier_at_q4() -> None:
