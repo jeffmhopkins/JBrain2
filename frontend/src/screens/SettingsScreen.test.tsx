@@ -12,7 +12,7 @@ function setup() {
 // makes GET/PUT round-trip like the real /api/settings.
 function stubSettingsFetch(
   initial: "full" | "ocr" = "full",
-  opts: { answerVoice?: string; voices?: string[] } = {},
+  opts: { answerVoice?: string; voices?: string[]; lexicon?: Record<string, string> } = {},
 ) {
   const state = {
     mode: initial,
@@ -20,6 +20,7 @@ function stubSettingsFetch(
     brainReadAloud: false,
     brainAnswerVoice: opts.answerVoice ?? "kokoro-af_heart",
     engine: "piper" as "piper" | "native",
+    lexicon: opts.lexicon ?? {},
   };
   const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
   const puts: unknown[] = [];
@@ -31,6 +32,18 @@ function stubSettingsFetch(
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
+    }
+    // The Pronunciations panel reads the read-aloud engine's health for its voice-engine chip.
+    if (path === "/api/brain/tts/health") {
+      return new Response(
+        JSON.stringify({
+          kokoro_available: true,
+          g2p: "misaki",
+          lexicon_entries: Object.keys(state.lexicon).length,
+          voice_count: 3,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
     }
     // A voice sample renders a WAV via the api proxy — an empty audio blob is enough.
     if (path.startsWith("/api/brain/tts")) {
@@ -75,6 +88,7 @@ function stubSettingsFetch(
         brain_read_aloud?: boolean;
         brain_answer_voice?: string;
         brain_read_aloud_engine?: "piper" | "native";
+        pronunciation_lexicon?: Record<string, string>;
       };
       puts.push(body);
       if (body.image_analysis_mode) state.mode = body.image_analysis_mode;
@@ -83,6 +97,8 @@ function stubSettingsFetch(
       if (typeof body.brain_answer_voice === "string")
         state.brainAnswerVoice = body.brain_answer_voice;
       if (body.brain_read_aloud_engine) state.engine = body.brain_read_aloud_engine;
+      // PUT replaces the whole map (REPLACE semantics), mirroring the backend.
+      if (body.pronunciation_lexicon) state.lexicon = body.pronunciation_lexicon;
     }
     return new Response(
       JSON.stringify({
@@ -91,6 +107,7 @@ function stubSettingsFetch(
         brain_read_aloud: state.brainReadAloud,
         brain_answer_voice: state.brainAnswerVoice,
         brain_read_aloud_engine: state.engine,
+        pronunciation_lexicon: state.lexicon,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
@@ -262,6 +279,59 @@ describe("SettingsScreen read-aloud voice picker", () => {
     const sample = await screen.findByRole("button", { name: "Play sample" });
     fireEvent.click(sample);
     await waitFor(() => expect(played).toHaveLength(1));
+  });
+});
+
+describe("SettingsScreen pronunciations", () => {
+  // The inline list lives in the read-aloud voice card; scope queries to it so the
+  // panel's Save/Test don't collide with the Gmail section's Save.
+  async function pronPanel() {
+    const card = (await screen.findByText("Read-aloud voice")).closest("section") as HTMLElement;
+    return within(card);
+  }
+
+  it("renders the rows from pronunciation_lexicon", async () => {
+    stubSettingsFetch("full", {
+      lexicon: { Titusville: "Tight us ville", GIF: "jiff" },
+    });
+    setup();
+    const pron = await pronPanel();
+    expect(await pron.findByText("Titusville")).toBeInTheDocument();
+    expect(pron.getByText("Tight us ville")).toBeInTheDocument();
+    expect(pron.getByText("GIF")).toBeInTheDocument();
+    expect(pron.getByText("jiff")).toBeInTheDocument();
+  });
+
+  it("adds a word, PUTting the full map including the new entry", async () => {
+    const { puts } = stubSettingsFetch("full", { lexicon: { GIF: "jiff" } });
+    setup();
+    const pron = await pronPanel();
+    // The empty state hides the form until the "Add" toggle opens it.
+    fireEvent.click(await pron.findByRole("button", { name: /Add a pronunciation/ }));
+    fireEvent.change(pron.getByLabelText("Word"), { target: { value: "Titusville" } });
+    fireEvent.change(pron.getByLabelText("Say it like"), { target: { value: "Tight us ville" } });
+    fireEvent.click(pron.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(puts).toContainEqual({
+        pronunciation_lexicon: { GIF: "jiff", Titusville: "Tight us ville" },
+      }),
+    );
+  });
+
+  it("deletes a word, PUTting the map without it", async () => {
+    const { puts } = stubSettingsFetch("full", {
+      lexicon: { GIF: "jiff", Titusville: "Tight us ville" },
+    });
+    setup();
+    const pron = await pronPanel();
+    fireEvent.click(await pron.findByRole("button", { name: "Remove Titusville" }));
+    await waitFor(() => expect(puts).toContainEqual({ pronunciation_lexicon: { GIF: "jiff" } }));
+  });
+
+  it("shows the misaki health chip", async () => {
+    stubSettingsFetch("full");
+    setup();
+    expect(await screen.findByText(/Voice engine: misaki/)).toBeInTheDocument();
   });
 });
 

@@ -1067,6 +1067,193 @@ h3 {
   flex: none;
 }
 
+/* ===== Pronunciations panel (read-aloud voice card; mock A — inline list) =====
+   The owner's respelling map as an inline word → say-it-like list, with an inline
+   add expander, per-row Test/delete, and a voice-engine health chip. */
+.pron {
+  margin-top: 14px;
+}
+
+/* Health chip: green when the box resolved the misaki g2p, amber on the espeak fallback. */
+.pron-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin-bottom: 10px;
+}
+.pron-chip-ok {
+  color: var(--green);
+  background: var(--green-tint);
+}
+.pron-chip-warn {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+.pron-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* The inline list card — a nested surface inside the read-aloud settings card. */
+.pron-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.pron-card-h {
+  padding: 14px 14px 8px;
+}
+.pron-card-t {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.pron-card-d {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+/* Word → say-it-like rows, hairline-separated. */
+.pron-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  min-height: 44px;
+}
+.pron-word {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+.pron-arrow {
+  color: var(--text-3);
+}
+.pron-say {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.pron-empty {
+  padding: 16px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+
+/* Per-row Test/delete icon buttons — bare until hovered/active. */
+.pron-icon-btn {
+  background: none;
+  border: none;
+  padding: 8px;
+  border-radius: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  line-height: 1;
+  min-width: 36px;
+  min-height: 36px;
+}
+.pron-icon-btn:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.pron-icon-play.pron-playing {
+  color: var(--steel);
+}
+
+/* The "＋ Add a pronunciation" toggle row. */
+.pron-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  min-height: 44px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--steel);
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  text-align: left;
+}
+.pron-add-row:hover {
+  background: var(--surface);
+}
+
+/* The inline add expander: Word + Say-it-like fields over a Test/Cancel/Save foot. */
+.pron-adder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+}
+.pron-two {
+  display: flex;
+  gap: 10px;
+}
+.pron-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.pron-field input {
+  border-radius: var(--r-input);
+}
+.pron-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.pron-btn {
+  border-radius: var(--r-input);
+  padding: 9px 14px;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.pron-btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+}
+.pron-btn-ghost {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+/* Test pushes to the left, away from the Cancel/Save pair. */
+.pron-btn-test {
+  margin-right: auto;
+  background: none;
+  color: var(--steel);
+  border-color: var(--steel-tint);
+}
+
+.pron-note {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 10px 2px 0;
+  line-height: 1.5;
+}
+
 /* ===== LLM Settings (Strategy C — tiered groups) ===== */
 
 /* Each tier is a card with a colored left rail keying its role. */

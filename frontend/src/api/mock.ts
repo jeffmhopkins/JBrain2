@@ -3575,6 +3575,14 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   // The on-box TTS, proxied through the api (read-aloud voice picker + samples).
   if (path === "/api/brain/voices" && method === "GET") return json({ voices: BRAIN_VOICES });
+  if (path === "/api/brain/tts/health" && method === "GET") {
+    return json({
+      kokoro_available: true,
+      g2p: "misaki",
+      lexicon_entries: Object.keys(SETTINGS.pronunciation_lexicon).length,
+      voice_count: BRAIN_VOICES.length,
+    });
+  }
   if (path.startsWith("/api/brain/tts") && method === "GET") {
     // A tiny empty WAV stand-in — enough for a same-origin <audio> load in dev; tests
     // stub the api layer directly rather than exercising this.

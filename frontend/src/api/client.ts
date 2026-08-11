@@ -389,6 +389,18 @@ export interface AppSettings {
   pronunciation_lexicon: Record<string, string>;
 }
 
+/** The on-box read-aloud engine's health (GET /api/brain/tts/health), driving the
+ * Pronunciations panel's voice-engine chip. `g2p` is the grapheme-to-phoneme backend
+ * the box resolved: "misaki" (best), "espeak" (degraded — respellings still apply,
+ * quality limited), or "unavailable". The endpoint 503s when the box is unreachable,
+ * so the client falls back to the all-off shape and the panel hides its chip. */
+export interface BrainTtsHealth {
+  kokoro_available: boolean;
+  g2p: "misaki" | "espeak" | "unavailable";
+  lexicon_entries: number;
+  voice_count: number;
+}
+
 /** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */
 export interface FeedConfig {
   enabled: boolean;
@@ -2024,6 +2036,31 @@ export const api = {
     if (trail !== undefined) params.set("trail", String(trail));
     const response = await request(`/api/brain/tts?${params.toString()}`);
     return response.blob();
+  },
+
+  // The on-box read-aloud engine's health (GET /api/brain/tts/health) — the Pronunciations
+  // panel reads it for the voice-engine chip. Defensive: the endpoint 503s when the box is
+  // unreachable and the body can be anything, so any error or malformed shape resolves to the
+  // all-off fallback and the caller never has to catch.
+  async brainTtsHealth(): Promise<BrainTtsHealth> {
+    const fallback: BrainTtsHealth = {
+      kokoro_available: false,
+      g2p: "unavailable",
+      lexicon_entries: 0,
+      voice_count: 0,
+    };
+    try {
+      const response = await request("/api/brain/tts/health");
+      const body = (await response.json()) as Partial<BrainTtsHealth>;
+      return {
+        kokoro_available: body.kokoro_available === true,
+        g2p: body.g2p === "misaki" || body.g2p === "espeak" ? body.g2p : "unavailable",
+        lexicon_entries: typeof body.lexicon_entries === "number" ? body.lexicon_entries : 0,
+        voice_count: typeof body.voice_count === "number" ? body.voice_count : 0,
+      };
+    } catch {
+      return fallback;
+    }
   },
 
   // The archivist's Gmail connection. Status is booleans only; saving a partial

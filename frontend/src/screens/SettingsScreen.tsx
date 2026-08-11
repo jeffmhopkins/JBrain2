@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { emitReadAloudSettings } from "../agent/readAloudBus";
 import type {
+  BrainTtsHealth,
   DebugToken,
   FeedConfig,
   GmailSettings,
@@ -93,6 +94,16 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [samplePlaying, setSamplePlaying] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
   const sampleAudioRef = useRef<HTMLAudioElement | null>(null);
+  // The owner's read-aloud respelling map {word: "say it like"} and its inline editor. null
+  // until the server answers so the panel shows nothing rather than a flash of "empty". The
+  // engine health drives the voice-engine chip. `pronPlayingKey` tags which row is auditioning
+  // (a lexicon word, or "" for the add-form preview) so only that Test button shows playing.
+  const [lexicon, setLexicon] = useState<Record<string, string> | null>(null);
+  const [ttsHealth, setTtsHealth] = useState<BrainTtsHealth | null>(null);
+  const [pronAdding, setPronAdding] = useState(false);
+  const [pronWord, setPronWord] = useState("");
+  const [pronSay, setPronSay] = useState("");
+  const [pronPlayingKey, setPronPlayingKey] = useState<string | null>(null);
   // The "read custom text" overlay: paste arbitrary prose, play it in the chosen on-box voice
   // or export it to a WAV file. On-box engine only (it renders on the box), so it opens from the
   // voice picker below.
@@ -113,6 +124,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         setBrainReadAloud(s.brain_read_aloud);
         setBrainAnswerVoice(s.brain_answer_voice);
         setBrainEngine(s.brain_read_aloud_engine);
+        setLexicon(s.pronunciation_lexicon ?? {});
         if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
       .catch(() => {
@@ -120,8 +132,14 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (!stale) {
           setImageMode("full");
           setBrainStream(false);
+          setLexicon({});
         }
       });
+    // The read-aloud engine's health drives the voice-engine chip. Its own defensive parse
+    // resolves to the all-off shape on a 503/bad body, so this never rejects.
+    api.brainTtsHealth().then((h) => {
+      if (!stale) setTtsHealth(h);
+    });
     return () => {
       stale = true;
     };
@@ -429,6 +447,68 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     if (brainAnswerVoice) playVoiceSample(brainAnswerVoice);
   }
 
+  // Render + play arbitrary `text` in the chosen on-box voice, so the owner can hear how a
+  // respelling will sound before saving it. Modeled on playVoiceSample; `key` tags which row is
+  // auditioning (a lexicon word, or "" for the add-form preview) so only that Test button shows
+  // playing. Reuses the shared sample-audio slot so a new play stops the previous one.
+  function playText(text: string, key: string) {
+    const value = text.trim();
+    if (!value) return;
+    const voice = brainAnswerVoice ?? kokoroVoices[0] ?? "kokoro-af_heart";
+    setSampleError(null);
+    sampleAudioRef.current?.pause();
+    sampleAudioRef.current = null;
+    setPronPlayingKey(key);
+    void api
+      .brainTts(voice, value)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        sampleAudioRef.current = audio;
+        const done = () => {
+          URL.revokeObjectURL(url);
+          setPronPlayingKey((k) => (k === key ? null : k));
+          if (sampleAudioRef.current === audio) sampleAudioRef.current = null;
+        };
+        audio.onended = done;
+        audio.onerror = () => {
+          done();
+          setSampleError("Couldn't play a sample — is the box reachable?");
+        };
+        void audio.play().catch(() => {
+          done();
+          setSampleError("Couldn't play a sample.");
+        });
+      })
+      .catch(() => {
+        setPronPlayingKey(null);
+        setSampleError("Couldn't reach the box to render a sample.");
+      });
+  }
+
+  // The respelling map is stored whole — PUT /api/settings REPLACES pronunciation_lexicon — so
+  // every mutation sends the FULL map. Optimistic: the local map updates before the write lands.
+  function saveLexicon(next: Record<string, string>) {
+    setLexicon(next);
+    void api.updateSettings({ pronunciation_lexicon: next }).catch(() => {});
+  }
+
+  function addPronunciation() {
+    const word = pronWord.trim();
+    const say = pronSay.trim();
+    if (!word || !say) return;
+    saveLexicon({ ...(lexicon ?? {}), [word]: say });
+    setPronWord("");
+    setPronSay("");
+    setPronAdding(false);
+  }
+
+  function removePronunciation(word: string) {
+    const next = { ...(lexicon ?? {}) };
+    delete next[word];
+    saveLexicon(next);
+  }
+
   return (
     <main className="screen-body settings">
       <section className="settings-card">
@@ -639,6 +719,124 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
             </>
           ))}
+
+        {/* Pronunciations — the owner's respelling map, on-box (Kokoro) only, gated the same
+            way as the voice picker. The whole map is PUT on every edit (REPLACE semantics). */}
+        {currentModel === "kokoro" && (
+          <div className="pron">
+            {ttsHealth && ttsHealth.g2p !== "unavailable" && (
+              <div
+                className={`pron-chip ${ttsHealth.g2p === "misaki" ? "pron-chip-ok" : "pron-chip-warn"}`}
+              >
+                <span className="pron-dot" />
+                {ttsHealth.g2p === "misaki"
+                  ? "Voice engine: misaki ✓"
+                  : "Voice engine: espeak — pronunciations still apply, quality limited"}
+              </div>
+            )}
+            <div className="pron-card">
+              <div className="pron-card-h">
+                <div className="pron-card-t">How to say a word</div>
+                <div className="pron-card-d">
+                  Type a word and how it should sound. Read-aloud says it your way — no phonetics
+                  needed. Applies everywhere the box reads text.
+                </div>
+              </div>
+              <div className="pron-rows" aria-label="Pronunciations">
+                {lexicon === null ? null : Object.keys(lexicon).length === 0 ? (
+                  <div className="pron-empty">No custom pronunciations yet. Add one below.</div>
+                ) : (
+                  Object.entries(lexicon).map(([word, say]) => (
+                    <div className="pron-row" key={word}>
+                      <span className="pron-word">{word}</span>
+                      <span className="pron-arrow">→</span>
+                      <span className="pron-say">{say}</span>
+                      <button
+                        type="button"
+                        className={`pron-icon-btn pron-icon-play${pronPlayingKey === word ? " pron-playing" : ""}`}
+                        title="Test"
+                        aria-label={`Test ${word}`}
+                        onClick={() => playText(say, word)}
+                      >
+                        {pronPlayingKey === word ? "❚❚" : "▷"}
+                      </button>
+                      <button
+                        type="button"
+                        className="pron-icon-btn"
+                        title="Remove"
+                        aria-label={`Remove ${word}`}
+                        onClick={() => removePronunciation(word)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              {pronAdding ? (
+                <div className="pron-adder">
+                  <div className="pron-two">
+                    <label className="pron-field">
+                      Word
+                      <input
+                        value={pronWord}
+                        placeholder="Titusville"
+                        aria-label="Word"
+                        onChange={(e) => setPronWord(e.target.value)}
+                      />
+                    </label>
+                    <label className="pron-field">
+                      Say it like
+                      <input
+                        value={pronSay}
+                        placeholder="Tight us ville"
+                        aria-label="Say it like"
+                        onChange={(e) => setPronSay(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="pron-actions">
+                    <button
+                      type="button"
+                      className="pron-btn pron-btn-test"
+                      disabled={!pronSay.trim()}
+                      onClick={() => playText(pronSay, "")}
+                    >
+                      {pronPlayingKey === "" ? "❚❚ Playing" : "▷ Test"}
+                    </button>
+                    <button
+                      type="button"
+                      className="pron-btn pron-btn-ghost"
+                      onClick={() => {
+                        setPronAdding(false);
+                        setPronWord("");
+                        setPronSay("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="pron-btn pron-btn-primary"
+                      disabled={!pronWord.trim() || !pronSay.trim()}
+                      onClick={addPronunciation}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="pron-add-row" onClick={() => setPronAdding(true)}>
+                  ＋ Add a pronunciation
+                </button>
+              )}
+            </div>
+            <p className="pron-note">
+              Tip: spell it the way it sounds, splitting into chunks with spaces — “Cholmondeley →
+              Chumley”, “GIF → jiff”.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="settings-card">
