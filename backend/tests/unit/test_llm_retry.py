@@ -10,7 +10,8 @@ from jbrain.llm import (
     LlmRateLimitError,
     LlmTransientError,
 )
-from jbrain.llm.retry import BASE_DELAY_SECONDS, MAX_TRIES, post_json
+from jbrain.llm.errors import LlmContextOverflowError
+from jbrain.llm.retry import BASE_DELAY_SECONDS, MAX_TRIES, post_json, stream_sse
 
 OK = {
     "content": [{"type": "text", "text": "ok"}],
@@ -108,3 +109,83 @@ async def test_200_with_non_json_body_is_bad_response() -> None:
             transport=httpx.MockTransport(handle),
             sleep=sleep,
         )
+
+
+# llama.cpp/llama-swap's real 400 body when the prompt outgrows the served window.
+_CTX_OVERFLOW_BODY = {
+    "error": {
+        "message": "the request exceeds the available context size. "
+        "try increasing the context size or enable context shift. n_ctx = 32768, n_tokens = 33990",
+        "type": "invalid_request_error",
+        "code": 400,
+    }
+}
+
+
+async def _post_400(body: object) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=body)
+
+    await post_json(
+        "https://example.test/x",
+        headers={},
+        payload={},
+        provider="local",
+        request_timeout=1.0,
+        transport=httpx.MockTransport(handle),
+        sleep=SleepRecorder(),
+    )
+
+
+async def test_context_overflow_400_is_a_typed_error_no_retry() -> None:
+    # A 400 whose body says the prompt exceeded n_ctx becomes the context-overflow
+    # subtype so callers can tell the owner the model ran out of context.
+    sleep = SleepRecorder()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=_CTX_OVERFLOW_BODY)
+
+    with pytest.raises(LlmContextOverflowError) as ei:
+        await post_json(
+            "https://example.test/x",
+            headers={},
+            payload={},
+            provider="local",
+            request_timeout=1.0,
+            transport=httpx.MockTransport(handle),
+            sleep=sleep,
+        )
+    # Still a bad-response (keeps existing non-retry handling); carries NO body text.
+    assert isinstance(ei.value, LlmBadResponseError)
+    assert "context window exceeded" in str(ei.value)
+    assert "n_ctx" not in str(ei.value)  # the private body never rides the message
+    assert sleep.delays == []  # a 400 is terminal — never retried
+
+
+async def test_generic_400_stays_a_plain_bad_response() -> None:
+    # A 400 unrelated to context must NOT be misclassified as an overflow.
+    with pytest.raises(LlmBadResponseError) as ei:
+        await _post_400({"error": {"message": "invalid tool arguments"}})
+    assert not isinstance(ei.value, LlmContextOverflowError)
+
+
+async def test_stream_sse_classifies_context_overflow() -> None:
+    # The streaming path (the agent turn) is the one that actually hits this — a 400
+    # before any SSE data must surface as the typed overflow, non-retryably.
+    sleep = SleepRecorder()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=_CTX_OVERFLOW_BODY)
+
+    with pytest.raises(LlmContextOverflowError):
+        async for _ in stream_sse(
+            "https://example.test/x",
+            headers={},
+            payload={},
+            provider="local",
+            request_timeout=1.0,
+            transport=httpx.MockTransport(handle),
+            sleep=sleep,
+        ):
+            pass
+    assert sleep.delays == []

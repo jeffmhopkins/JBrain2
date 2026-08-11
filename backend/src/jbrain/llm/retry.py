@@ -17,6 +17,7 @@ import structlog
 from jbrain.llm.errors import (
     LlmAuthError,
     LlmBadResponseError,
+    LlmContextOverflowError,
     LlmRateLimitError,
     LlmTransientError,
 )
@@ -25,6 +26,30 @@ log = structlog.get_logger()
 
 MAX_TRIES = 4
 BASE_DELAY_SECONDS = 0.5
+
+
+def _looks_like_context_overflow(body_text: str) -> bool:
+    """Whether a rejected request's body says the prompt outgrew the context window.
+    llama.cpp/llama-swap answers 400 with "the request exceeds the available context
+    size ... n_ctx = ..."; other OpenAI servers phrase it around n_ctx / context
+    length. Matched tolerantly (wording shifts across builds) but narrowly enough not
+    to swallow unrelated 400s. Only the CLASSIFICATION reads the body — the raised
+    error carries none of it (bodies can echo the private prompt)."""
+    t = body_text.lower()
+    if "n_ctx" in t or "context size" in t or "context window" in t or "context length" in t:
+        return True
+    return "context" in t and (
+        "exceed" in t or "too long" in t or "too large" in t or "larger than" in t
+    )
+
+
+def _terminal_4xx(provider: str, status_code: int, body_text: str) -> LlmBadResponseError:
+    """The exception for a non-retryable 4xx: a context-overflow subtype when the body
+    says so (so callers can tell the owner the model ran out of context), else a plain
+    bad-response. Neither carries the body — just the status and provider."""
+    if _looks_like_context_overflow(body_text):
+        return LlmContextOverflowError(f"{provider}: context window exceeded")
+    return LlmBadResponseError(f"{provider}: HTTP {status_code}")
 
 
 async def post_json(
@@ -63,7 +88,7 @@ async def post_json(
         elif resp.status_code >= 500:
             last_error = LlmTransientError(f"{provider}: HTTP {resp.status_code}")
         else:
-            raise LlmBadResponseError(f"{provider}: HTTP {resp.status_code}")
+            raise _terminal_4xx(provider, resp.status_code, resp.text)
         log.warning("llm.retry", provider=provider, status=resp.status_code, attempt=attempt + 1)
     raise last_error
 
@@ -124,7 +149,9 @@ async def stream_sse(
                         elif resp.status_code >= 500:
                             last_error = LlmTransientError(f"{provider}: HTTP {resp.status_code}")
                         else:
-                            raise LlmBadResponseError(f"{provider}: HTTP {resp.status_code}")
+                            # Body already pulled by aread() above; classify (context
+                            # overflow vs generic) without logging it.
+                            raise _terminal_4xx(provider, resp.status_code, resp.text)
                         log.warning(
                             "llm.retry",
                             provider=provider,

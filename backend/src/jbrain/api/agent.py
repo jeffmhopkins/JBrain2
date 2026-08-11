@@ -56,6 +56,7 @@ from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage, local_catalog
+from jbrain.llm.errors import LlmContextOverflowError
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
 from jbrain.models.plan import PlanRepo
@@ -1041,6 +1042,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # nuance is preserved in stop_reason, not the status. Re-raise so the task unwinds.
             status, stop_reason = "error", "disconnected"
             raise
+        except LlmContextOverflowError as exc:
+            # The prompt outgrew the model's served context window (a local model on a
+            # small `-c`, a research turn that piled up tool results). Surface it as its
+            # own terminal reason so the UI can say "this model ran out of context" and
+            # point at the window control, instead of the generic "something went wrong".
+            log.info("agent.context_overflow", run_id=run_id, error=repr(exc))
+            status, stop_reason = "error", "context_overflow"
+            live.emit(b'data: {"type": "done", "stop_reason": "context_overflow"}\n\n')
         except Exception as exc:  # noqa: BLE001 — surface a terminal event, never a 500 mid-stream
             log.warning("agent.chat_failed", run_id=run_id, error=repr(exc))
             live.emit(b'data: {"type": "done", "stop_reason": "error"}\n\n')
@@ -1063,7 +1072,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             try:
                 if (
                     not persisted
-                    and stop_reason in ("disconnected", "error", "turn_timeout")
+                    and stop_reason in ("disconnected", "error", "turn_timeout", "context_overflow")
                     and (acc.answer_text.strip() or acc.tool_steps())
                 ):
                     with contextlib.suppress(Exception):
