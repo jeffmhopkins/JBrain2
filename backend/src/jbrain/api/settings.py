@@ -73,9 +73,7 @@ class SettingsPatch(BaseModel):
     brain_read_aloud_engine: Literal["piper", "native"] | None = None
     # The full respelling map to store (replace semantics). The store sanitizes/bounds it; the
     # Field caps the raw payload so a client can't post an unbounded body.
-    pronunciation_lexicon: (
-        Annotated[dict[str, str], Field(max_length=200)] | None
-    ) = None
+    pronunciation_lexicon: Annotated[dict[str, str], Field(max_length=200)] | None = None
 
 
 async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:

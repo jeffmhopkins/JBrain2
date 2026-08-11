@@ -223,9 +223,10 @@ def test_put_settings_round_trips_pronunciation_lexicon(
     assert resp.json()["pronunciation_lexicon"] == {"Titusville": "Tight us ville"}
     assert store.values["pronunciation_lexicon"] == {"Titusville": "Tight us ville"}
     # Replace semantics: an empty map clears it.
-    assert c.put("/api/settings", json={"pronunciation_lexicon": {}}).json()[
-        "pronunciation_lexicon"
-    ] == {}
+    assert (
+        c.put("/api/settings", json={"pronunciation_lexicon": {}}).json()["pronunciation_lexicon"]
+        == {}
+    )
 
 
 def test_put_settings_rejects_unknown_read_aloud_engine(
