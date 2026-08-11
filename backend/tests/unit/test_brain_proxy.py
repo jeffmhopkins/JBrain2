@@ -178,6 +178,41 @@ def test_tts_omits_pacing_params_when_absent(
     assert params == {"text": "hi", "voice": "kokoro-af_heart"}
 
 
+def test_tts_applies_the_owner_pronunciation_lexicon(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The owner's respelling map is applied (whole-word, case-insensitive) before the text is
+    # forwarded to the box — so a fixed word renders right regardless of the box's phonemizer.
+    from tests.unit.fakes import FakeSettingsStore
+
+    store = FakeSettingsStore()
+    store.values["pronunciation_lexicon"] = {"Titusville": "Tight us ville"}
+    client.app.state.settings_store = store  # type: ignore[attr-defined]
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
+    resp = client.get(
+        "/api/brain/tts",
+        params={"text": "visiting titusville today", "voice": "kokoro-af_heart"},
+    )
+    assert resp.status_code == 200
+    _url, params = calls[0]
+    assert params["text"] == "visiting Tight us ville today"  # respelled, case-insensitive match
+
+
+def test_tts_survives_a_lexicon_read_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A settings-read hiccup must never fail read-aloud — it just skips the respelling.
+    class _BoomStore:
+        async def pronunciation_lexicon(self, ctx: object) -> dict[str, str]:
+            raise RuntimeError("db down")
+
+    client.app.state.settings_store = _BoomStore()  # type: ignore[attr-defined]
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
+    resp = client.get("/api/brain/tts", params={"text": "hello there", "voice": "kokoro-af_heart"})
+    assert resp.status_code == 200
+    assert calls[0][1]["text"] == "hello there"  # forwarded unchanged, no crash
+
+
 def test_tts_rejects_blank_text(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"x"))
     assert client.get("/api/brain/tts", params={"text": "   ", "voice": "v"}).status_code == 400

@@ -181,6 +181,30 @@ async def test_brain_read_aloud_engine_defaults_piper_and_round_trips(
     assert await store.brain_read_aloud_engine(OWNER) == "piper"
 
 
+async def test_pronunciation_lexicon_round_trips_and_sanitizes(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    store = SqlSettingsStore(maker)
+    # Absent → empty map (today's behavior).
+    assert await store.pronunciation_lexicon(OWNER) == {}
+
+    stored = await store.set_pronunciation_lexicon(
+        OWNER, {"Titusville": "Tight us ville", "  ": "x", "y": "  ", "ok": "okay"}
+    )
+    # Blank word / blank respelling are dropped; the good entries persist and read back.
+    assert stored == {"Titusville": "Tight us ville", "ok": "okay"}
+    assert await store.pronunciation_lexicon(OWNER) == {
+        "Titusville": "Tight us ville",
+        "ok": "okay",
+    }
+
+    # A junk stored value reads back as empty rather than crashing a render.
+    from jbrain.settings_store import PRONUNCIATION_LEXICON_KEY
+
+    await store.upsert(OWNER, PRONUNCIATION_LEXICON_KEY, "not a dict")
+    assert await store.pronunciation_lexicon(OWNER) == {}
+
+
 async def test_owner_timezone_round_trip_and_rejects_unknown_zones(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

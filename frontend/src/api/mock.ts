@@ -375,6 +375,7 @@ const SETTINGS: AppSettings = {
   brain_answer_voice: "kokoro-af_heart",
   // The opaque "on-box" engine marker (Kokoro on the box, native fallback).
   brain_read_aloud_engine: "piper",
+  pronunciation_lexicon: {},
 };
 
 // The box's installed Kokoro voices, for the read-aloud voice picker mock.
@@ -3605,6 +3606,16 @@ export const mockFetch: typeof fetch = async (input, init) => {
       } else if (key === "brain_read_aloud_engine") {
         if (value !== "piper" && value !== "native") return json({ detail: "bad engine" }, 422);
         SETTINGS.brain_read_aloud_engine = value;
+      } else if (key === "pronunciation_lexicon") {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          return json({ detail: "bad pronunciation_lexicon" }, 422);
+        }
+        // Mirror the store's sanitize: keep non-blank word→say string pairs.
+        SETTINGS.pronunciation_lexicon = Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).filter(
+            ([w, s]) => typeof s === "string" && w.trim() && s.trim(),
+          ) as [string, string][],
+        );
       } else {
         return json({ detail: `unknown key ${key}` }, 422);
       }

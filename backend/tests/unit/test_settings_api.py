@@ -57,6 +57,7 @@ def test_get_settings_defaults_to_full_analysis(
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
 
 
@@ -71,6 +72,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
     assert store.values["image_analysis_mode"] == "ocr"
     assert c.get("/api/settings").json() == {
@@ -80,6 +82,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
 
     assert c.put("/api/settings", json={"image_analysis_mode": "full"}).json() == {
@@ -89,6 +92,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
 
 
@@ -105,6 +109,7 @@ def test_put_settings_round_trips_the_timezone(
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }
     assert store.values["owner_timezone"] == "America/New_York"
 
@@ -204,6 +209,25 @@ def test_put_settings_round_trips_read_aloud_engine(
     assert back.json()["brain_read_aloud_engine"] == "piper"
 
 
+def test_put_settings_round_trips_pronunciation_lexicon(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # Empty by default; a respelling map round-trips, and a blank word/say is dropped on store.
+    assert c.get("/api/settings").json()["pronunciation_lexicon"] == {}
+    resp = c.put(
+        "/api/settings",
+        json={"pronunciation_lexicon": {"Titusville": "Tight us ville", "  ": "x", "y": "  "}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pronunciation_lexicon"] == {"Titusville": "Tight us ville"}
+    assert store.values["pronunciation_lexicon"] == {"Titusville": "Tight us ville"}
+    # Replace semantics: an empty map clears it.
+    assert c.put("/api/settings", json={"pronunciation_lexicon": {}}).json()[
+        "pronunciation_lexicon"
+    ] == {}
+
+
 def test_put_settings_rejects_unknown_read_aloud_engine(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:
@@ -241,4 +265,5 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "brain_read_aloud": False,
         "brain_answer_voice": "kokoro-af_heart",
         "brain_read_aloud_engine": "piper",
+        "pronunciation_lexicon": {},
     }

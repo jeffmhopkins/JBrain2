@@ -156,6 +156,38 @@ BRAIN_READ_ALOUD_ENGINE_KEY = "brain_read_aloud_engine"
 BRAIN_READ_ALOUD_ENGINE_DEFAULT: ReadAloudEngine = "piper"
 
 
+# The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
+# (e.g. "Titusville" -> "Tight us ville") the api applies as a whole-word, case-insensitive text
+# substitution before forwarding a clip to the box (jbrain.api.brain) — engine-agnostic (it helps
+# Kokoro on misaki OR espeak, and needs no phonemes to author), distinct from the box's misaki-only
+# KOKORO_LEXICON phoneme overrides. Bounded so the row can't bloat: at most
+# PRONUNCIATION_LEXICON_MAX entries, each a non-blank word (<= _WORD_MAX chars) to a respelling
+# (<= _SAY_MAX chars); anything else is dropped on read. Absent = empty = today's behavior.
+PRONUNCIATION_LEXICON_KEY = "pronunciation_lexicon"
+PRONUNCIATION_LEXICON_MAX = 200
+_PRON_WORD_MAX = 64
+_PRON_SAY_MAX = 128
+
+
+def _sanitize_pronunciation_lexicon(raw: object) -> dict[str, str]:
+    """The shared sanitize for the pronunciation respelling map — this feeds a substitution over
+    every read-aloud clip, so a malformed store (non-dict, non-string, blank, over-long, or too
+    many entries) is dropped rather than trusted. First-seen order preserved; entries capped."""
+    if not isinstance(raw, dict):
+        return {}
+    clean: dict[str, str] = {}
+    for word, say in raw.items():
+        if len(clean) >= PRONUNCIATION_LEXICON_MAX:
+            break
+        if not isinstance(word, str) or not isinstance(say, str):
+            continue
+        w = word.strip()
+        s = say.strip()
+        if w and s and len(w) <= _PRON_WORD_MAX and len(s) <= _PRON_SAY_MAX:
+            clean[w] = s
+    return clean
+
+
 # The served-model id code mode (jcode) runs its coding agent against — the live
 # control surface for "which model does the jcode agent use". Absent/non-string =
 # "" (unset): the api falls back to the JBRAIN_JCODE_MODEL config default. The
@@ -516,6 +548,21 @@ class SqlSettingsStore:
             if raw in READ_ALOUD_ENGINES
             else BRAIN_READ_ALOUD_ENGINE_DEFAULT
         )
+
+    async def pronunciation_lexicon(self, ctx: SessionContext) -> dict[str, str]:
+        """The owner's read-aloud respelling map {word: "say it like"}, sanitized (see
+        _sanitize_pronunciation_lexicon — this feeds a substitution over every clip, so junk is
+        dropped). Empty when unset."""
+        return _sanitize_pronunciation_lexicon(await self.get(ctx, PRONUNCIATION_LEXICON_KEY, {}))
+
+    async def set_pronunciation_lexicon(
+        self, ctx: SessionContext, lexicon: dict[str, str]
+    ) -> dict[str, str]:
+        """Replace the respelling map with `lexicon` (sanitized like the reader — the store refuses
+        to persist what it wouldn't read back); returns the stored map."""
+        clean = _sanitize_pronunciation_lexicon(lexicon)
+        await self.upsert(ctx, PRONUNCIATION_LEXICON_KEY, clean)
+        return clean
 
     async def jcode_model(self, ctx: SessionContext) -> str:
         """The selected served-model id for the code-mode (jcode) agent, or "" when

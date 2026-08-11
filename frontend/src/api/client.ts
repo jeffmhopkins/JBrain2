@@ -373,17 +373,20 @@ export interface AppSettings {
   // default — it puts owner text on the unauthenticated display, so only turn it on
   // for a display bound to the box's own monitor / localhost.
   brain_llm_stream: boolean;
-  // Read the streamed wall-display turns aloud (piper TTS on the box). OFF by
+  // Read the streamed wall-display turns aloud (Kokoro TTS on the box). OFF by
   // default — the runtime companion to brain_llm_stream, same localhost-only caveat.
   brain_read_aloud: boolean;
-  // The piper voice id the read-aloud speaks answers in — a voice id from
-  // brainVoices() (e.g. "en_US-amy-medium" or "en_US-libritts_r-medium#3922"). The
-  // in-chat read-aloud renders each turn through piper in this voice.
+  // The Kokoro voice id the read-aloud speaks answers in — a voice id from
+  // brainVoices() (e.g. "kokoro-af_heart"). The in-chat read-aloud renders each turn
+  // on the box in this voice.
   brain_answer_voice: string;
-  // Which engine the read-aloud renders with: "piper" (on-box, falls back to the
-  // device's native voice when the box is unreachable) or "native" (always the
-  // browser's own Web Speech voice).
+  // Which engine the read-aloud renders with: "piper" (a legacy marker meaning on-box
+  // Kokoro, falls back to the device's native voice when the box is unreachable) or
+  // "native" (always the browser's own Web Speech voice).
   brain_read_aloud_engine: "piper" | "native";
+  // The owner's read-aloud respelling map {word: "say it like"} — the api applies it as
+  // a whole-word substitution before a clip renders. Empty by default.
+  pronunciation_lexicon: Record<string, string>;
 }
 
 /** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */

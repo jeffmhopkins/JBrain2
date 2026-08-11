@@ -16,12 +16,15 @@ is shown on the unauthenticated display, so there is no new exposure surface.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from jbrain.api.deps import PrincipalDep
+from jbrain.api.notes import ctx_for
 
 log = structlog.get_logger()
 
@@ -30,6 +33,16 @@ router = APIRouter()
 # The longest text we forward to a single render — mirrors the tts-stt service's own
 # TTS_CHUNK_CAP; the PWA splits a reply into sentence-sized clips before calling here.
 _TTS_TEXT_CAP = 1000
+
+
+def _apply_pronunciation(text: str, lexicon: dict[str, str]) -> str:
+    """Whole-word, case-insensitive respelling from the owner's lexicon ("Titusville" -> "Tight us
+    ville"). Plain text, so it fixes a word on Kokoro's misaki OR espeak path. No-op when empty."""
+    if not lexicon:
+        return text
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in lexicon) + r")\b", re.IGNORECASE)
+    lower = {w.lower(): s for w, s in lexicon.items()}
+    return pattern.sub(lambda m: lower.get(m.group(0).lower(), m.group(0)), text)
 
 
 def _brain_base(request: Request) -> str:
@@ -101,6 +114,17 @@ async def brain_tts(
     clipped = text[:_TTS_TEXT_CAP]
     if not clipped.strip():
         raise HTTPException(status_code=400, detail="no text")
+    # Apply the owner's respelling lexicon here (the api holds the principal + DB; the box is
+    # DB-free). A plain whole-word text substitution — engine-agnostic, so a fixed word is right on
+    # the misaki OR espeak path — done before forwarding so the box renders the respelled text.
+    # Best-effort: a settings-read hiccup must never fail read-aloud, only skip the respelling.
+    store = getattr(request.app.state, "settings_store", None)
+    if store is not None:
+        try:
+            lexicon = await store.pronunciation_lexicon(ctx_for(principal))
+            clipped = _apply_pronunciation(clipped, lexicon)
+        except Exception as exc:  # noqa: BLE001 — respelling is a nicety, never a render blocker
+            log.warning("brain_tts.lexicon_unavailable", error=str(exc))
     params: dict[str, str] = {"text": clipped, "voice": voice}
     if lead is not None:
         params["lead"] = str(max(0, min(2000, lead)))

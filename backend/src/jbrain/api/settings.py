@@ -54,6 +54,9 @@ class SettingsOut(BaseModel):
     # Kokoro, with a device-native fallback) or "native" (the browser's own voice). Defaults to
     # on-box.
     brain_read_aloud_engine: Literal["piper", "native"] = "piper"
+    # The owner's read-aloud respelling map {word: "say it like"} — applied as a whole-word text
+    # substitution before a clip is rendered (jbrain.api.brain). Empty by default.
+    pronunciation_lexicon: dict[str, str] = {}
 
 
 class SettingsPatch(BaseModel):
@@ -68,6 +71,11 @@ class SettingsPatch(BaseModel):
     # row. Empty/blank is rejected below rather than stored (it would read as the default).
     brain_answer_voice: Annotated[str, Field(max_length=128)] | None = None
     brain_read_aloud_engine: Literal["piper", "native"] | None = None
+    # The full respelling map to store (replace semantics). The store sanitizes/bounds it; the
+    # Field caps the raw payload so a client can't post an unbounded body.
+    pronunciation_lexicon: (
+        Annotated[dict[str, str], Field(max_length=200)] | None
+    ) = None
 
 
 async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
@@ -78,6 +86,7 @@ async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
         brain_read_aloud=await store.brain_read_aloud(ctx),
         brain_answer_voice=await store.brain_answer_voice(ctx),
         brain_read_aloud_engine=await store.brain_read_aloud_engine(ctx),
+        pronunciation_lexicon=await store.pronunciation_lexicon(ctx),
     )
 
 
@@ -117,4 +126,8 @@ async def update_settings(
         await store.upsert(ctx, BRAIN_ANSWER_VOICE_KEY, voice)
     if body.brain_read_aloud_engine is not None:
         await store.upsert(ctx, BRAIN_READ_ALOUD_ENGINE_KEY, body.brain_read_aloud_engine)
+    if body.pronunciation_lexicon is not None:
+        # Replace semantics; the store sanitizes + bounds it, so a junk entry is dropped rather
+        # than stored (an empty map clears the lexicon).
+        await store.set_pronunciation_lexicon(ctx, body.pronunciation_lexicon)
     return await _read(ctx, store)
