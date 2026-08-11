@@ -493,10 +493,10 @@ class LlmRouter:
     @staticmethod
     def _toks_per_s(output_tokens: int, elapsed_s: float) -> float | None:
         """End-to-end output tokens/sec (prefill included) — the throughput a caller
-        actually feels, which is why a big-active-param local model like the 235B
-        reads low. None for a zero/negative interval. Logged per call so 'ask vs
-        response time and t/s' is visible in the api log without llama-server's own
-        timings (llama-swap doesn't surface those)."""
+        actually feels, which is why a bandwidth-bound local model (a dense one, or a
+        big-active-param MoE) reads low. None for a zero/negative interval. Logged per
+        call so 'ask vs response time and t/s' is visible in the api log without
+        llama-server's own timings (llama-swap doesn't surface those)."""
         return round(output_tokens / elapsed_s, 1) if elapsed_s > 0 else None
 
     async def _record(self, task: str, provider: str, model: str, usage: LlmUsage) -> None:

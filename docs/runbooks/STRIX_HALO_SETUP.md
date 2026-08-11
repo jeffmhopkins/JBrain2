@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-10
+> **Status:** Living · **Last verified:** 2026-08-11
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -237,8 +237,8 @@ one) → **Settings → LLM**:
 
 ### Adding / removing models later — from the PWA, no shell
 Once hosting is on, **Settings → LLM → On-box models** lists the whole catalog,
-not just what's provisioned. Each un-provisioned model (e.g. **Qwen3-235B-A22B**
-at 3-bit, ~104 GB) has an **Install** button. Tapping it **starts the download
+not just what's provisioned. Each un-provisioned model (e.g. **Qwen3.6 27B** at
+Q8, ~27 GB) has an **Install** button. Tapping it **starts the download
 immediately** — a dedicated weight-sync one-shot, **not** a system update: it
 pulls the queued weights, adds them to `LOCAL_MODELS`, re-stamps the gateway
 config, and restarts the gateway — the same provisioning `enable-local-models`
@@ -247,8 +247,9 @@ per-model GB bar reading the bytes on disk); the coarse phase and the verbose
 per-model download log stream into the queue banner. **Removing** is symmetric:
 an installed model's **Uninstall** button (on the Installed or Catalog tab) applies
 through the same sync one-shot, dropping it from `LOCAL_MODELS` and pruning its
-weights. A model too large to co-reside (the 235B) simply evicts
-everything else when loaded — it ends up with the box to itself. Going the other way,
+weights. A large model that can't co-reside (e.g. the ~85 GB Q8 coder, or Nemotron
+3 Super at ~78 GB) evicts down to at most a small low-tier model when loaded — it
+runs effectively standalone with the box to itself. Going the other way,
 **Qwen3-VL 30B at Q4_K_M (~18 GB)** sits in the catalog beside the recommended Q8 vision
 model as a memory-saver twin: half the weights, so it co-resides with gpt-oss-120b under the
 free-RAM floor instead of evicting it — at some OCR-fidelity cost on dense/small text (its

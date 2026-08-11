@@ -266,114 +266,103 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=3.0,
     ),
     LocalModel(
-        id="qwen3.5-122b-a10b-mtp",
-        label="Qwen3.5 122B · vision + reasoning (MTP, faster)",
-        served_model="qwen3.5-122b-a10b-mtp",
+        id="nemotron-3.5-lightning-30b",
+        label="Nemotron 3.5 Lightning 30B · reasoning (alt)",
+        served_model="nemotron-3.5-lightning-30b",
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+        gguf_include="*Q8_0*.gguf",
+        mmproj_include=None,
+        quant="Q8_0",
+        # GiB on disk (the catalog's unit): the single Q8_0 weight, ~32.6 GiB from HF's 35
+        # decimal-GB listing. ESTIMATE until measured on-box; kept at the GiB (not the
+        # decimal-GB) figure so the install bar doesn't cap early.
+        size_gb=32.6,
+        note="30B MoE, 3B active — NVIDIA's Nemotron 3.5 Lightning at 8-bit (near-lossless), a "
+        "fast high-tier alt. Hybrid Mamba-2 + MoE + attention arch: the constant Mamba state "
+        "keeps the KV cache tiny, so it holds long context far better than a dense model and "
+        "stays fast even at Q8 (only ~3B active is read per token, so quant barely moves speed "
+        "here — Q8 for the quality). Co-resides beside gpt-oss-120b. A HYBRID reasoner: "
+        "thinking is the enable_thinking chat-template toggle, set per task in LLM Settings "
+        "('none' runs it as a snappy Instruct model). Emits <think> traces, so it needs a "
+        "recent llama.cpp build that serves the hybrid Mamba arch and supports "
+        "--reasoning-format.",
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        # Native 1M context; serves the conservative gateway default. The Mamba-2 hybrid's
+        # constant state makes the KV term small, so raising the window is cheap here — the
+        # drawer's linear KV estimate overcounts the non-growing Mamba layers (a conservative
+        # guardrail, not a true measure).
+        native_context_window=1048576,
+        kv_gb_per_128k=3.0,
+    ),
+    LocalModel(
+        id="qwen3.6-27b",
+        label="Qwen3.6 27B · vision + reasoning (Q8)",
+        served_model="qwen3.6-27b",
         tiers=("vision", "high"),
         supports_vision=True,
         supports_tools=True,
         recommended=False,
-        hf_repo="unsloth/Qwen3.5-122B-A10B-MTP-GGUF",
-        gguf_include="*UD-Q4_K_XL*.gguf",
-        # The MTP repo ships the same three projector precisions as the base repo; name the
-        # F16 one exactly so the pull skips the redundant BF16/F32 beside it.
+        hf_repo="unsloth/Qwen3.6-27B-GGUF",
+        gguf_include="*Q8_0*.gguf",
+        # Keep the F16 projector (fine text degrades first under quantization,
+        # docs/reference/MODEL_PROMPTING.md). Name it EXACTLY: a `mmproj*F16.gguf` glob would
+        # also match this repo's `mmproj-BF16.gguf` (it ends in `F16.gguf` too), so the exact
+        # name is required to pull only the F16 one and skip the redundant BF16/F32 projectors.
         mmproj_include="mmproj-F16.gguf",
-        quant="UD-Q4_K_XL",
-        # ~74.0 GiB: the UD-Q4_K_XL weights (~73.2 GiB from HF's 78.6 decimal-GB listing, a
-        # touch larger than the non-MTP GGUF — the extra weight is the MTP draft head) plus
-        # the ~0.85 GiB F16 projector. ESTIMATE until measured on-box.
-        size_gb=74.0,
-        note="122B MoE, 10B active — Qwen3.5's flagship (MTP multi-token-prediction build): "
-        "the strongest VISION model in the catalog and a high-tier reasoner, with a draft "
-        "head for self-speculative decoding (~1.5–2x faster generation) via the --spec-type "
-        "flags in extra_server_args. A HYBRID reasoner — thinking is the enable_thinking "
-        "chat-template toggle, set per task in LLM Settings ('none' runs it as a snappy "
-        "Instruct model). Needs a llama.cpp build with MTP speculative-decode support (merged "
-        "upstream 2026-05-16; else the flags are rejected), plus --reasoning-format and "
-        "Qwen3.5 mmproj support. Standalone on a 128 GB box; cold-loads on switch.",
+        quant="Q8_0",
+        # GiB on disk (the catalog's unit): the single Q8_0 weight (~26.6 GiB from HF's 28.6
+        # decimal-GB listing) plus the ~0.86 GiB F16 projector. ESTIMATE until measured on-box;
+        # kept at the GiB (not decimal-GB) sum so the install bar doesn't cap early.
+        size_gb=27.5,
+        note="Dense 27B (text + vision, image & video) — a hybrid reasoner at 8-bit "
+        "(near-lossless). The compact vision + high-tier entry that fills the slot the removed "
+        "122B/235B/Next models held. A DENSE 27B is memory-bandwidth-bound on this box, so Q8 "
+        "runs ~7 t/s (quality-first / batch) — prefer the Q4 twin for interactive use. "
+        "Thinking is the enable_thinking chat-template toggle, set per task in LLM Settings "
+        "('none' runs it as a snappy Instruct model). ~27 GiB, co-resides beside gpt-oss-120b. "
+        "Needs a llama.cpp build with --reasoning-format and Qwen3.6 mmproj support.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
-        # Self-speculation off the model's own MTP head — no separate draft model needed.
-        extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "6"),
-        # Ceiling capped at 128k (below the 256k architectural max): with the ~74 GiB weights,
-        # the vision tower, and the MTP draft head all resident, 128k is the largest window
-        # that leaves a safe KV budget on a 128 GB box. The drawer's KV bar is the guardrail.
-        native_context_window=131072,
-        kv_gb_per_128k=28.0,
-    ),
-    LocalModel(
-        id="qwen3-235b-a22b",
-        label="Qwen3-235B-A22B · reasoning (alt, 3-bit)",
-        served_model="qwen3-235b-a22b",
-        tiers=("high",),
-        supports_vision=False,
-        supports_tools=True,
-        recommended=False,
-        hf_repo="unsloth/Qwen3-235B-A22B-Instruct-2507-GGUF",
-        gguf_include="*UD-Q3_K_XL*.gguf",
-        mmproj_include=None,
-        quant="UD-Q3_K_XL",
-        # Measured on-box footprint of the three UD-Q3_K_XL shards (Unsloth nests
-        # them in a UD-Q3_K_XL/ subdir); the HF web estimate of ~104 was high.
-        size_gb=97.0,
-        note="235B MoE, 22B active — the strongest open model that fits this "
-        "128 GB box, at Unsloth's 3-bit dynamic quant (~104 GB weights). "
-        "Standalone only: too large to co-reside, so expect a cold load on every "
-        "switch and a tight context budget beside the weights. Instruct-2507 "
-        "(non-thinking).",
-        # Native window is 262144, but ~104 GB of weights leaves little headroom on
-        # the box — its 94 dense-attention layers make the KV cache the binding
-        # constraint, so it serves the gateway default. The native ceiling is exposed
-        # for selection, but the drawer's KV estimate (46 GB/128k here) is the warning.
+        # Native 262k (YaRN-extensible to ~1M upstream); serves the conservative gateway
+        # default with the native window as the picker's ceiling.
         native_context_window=262144,
-        kv_gb_per_128k=46.0,
+        kv_gb_per_128k=6.0,
     ),
     LocalModel(
-        id="qwen3-next-80b-a3b",
-        label="Qwen3-Next 80B · reasoning (alt)",
-        served_model="qwen3-next-80b-a3b",
-        tiers=("high",),
-        supports_vision=False,
+        id="qwen3.6-27b-q4",
+        label="Qwen3.6 27B · vision + reasoning (Q4, interactive)",
+        served_model="qwen3.6-27b-q4",
+        tiers=("vision", "high"),
+        supports_vision=True,
         supports_tools=True,
         recommended=False,
-        hf_repo="unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF",
-        gguf_include="*UD-Q4_K_XL*.gguf",
-        mmproj_include=None,
-        quant="UD-Q4_K_XL",
-        size_gb=46.1,
-        note="80B MoE, 3B active — ~59 t/s, fits resident beside gpt-oss-120b. "
-        "Hybrid-attention arch: confirm the gateway's llama.cpp build supports it.",
-        # Native 256k; serves the gateway default — its light KV makes a big -c cheap.
-        native_context_window=262144,
-        kv_gb_per_128k=5.0,
-    ),
-    LocalModel(
-        id="qwen3-next-80b-a3b-thinking",
-        label="Qwen3-Next 80B · thinking",
-        served_model="qwen3-next-80b-a3b-thinking",
-        tiers=("high",),
-        supports_vision=False,
-        supports_tools=True,
-        recommended=False,
-        hf_repo="unsloth/Qwen3-Next-80B-A3B-Thinking-GGUF",
-        gguf_include="*UD-Q4_K_XL*.gguf",
-        mmproj_include=None,
-        quant="UD-Q4_K_XL",
-        size_gb=46.1,
-        # A separate checkpoint from the Instruct above (Qwen3-Next split thinking out of
-        # the hybrid toggle): it ALWAYS emits `<think>` reasoning. `--reasoning-format
-        # deepseek` parses that onto the OpenAI reasoning channel instead of leaking into
-        # the answer, where grok build surfaces it as the reasoning trace. Selectable for
-        # jcode; the coder stays the default. Best on reasoning-heavy sessions, not as a
-        # tool-heavy daily driver.
+        hf_repo="unsloth/Qwen3.6-27B-GGUF",
+        gguf_include="*Q4_K_M*.gguf",
+        # Same F16 projector as the Q8 twin (kept full precision even at Q4 weights). Exact
+        # name, not `mmproj*F16.gguf`, so it doesn't also pull the `mmproj-BF16.gguf` beside it.
+        mmproj_include="mmproj-F16.gguf",
+        quant="Q4_K_M",
+        # GiB on disk: the Q4_K_M weight (~15.6 GiB from HF's 16.8 decimal-GB listing) plus the
+        # ~0.86 GiB F16 projector. ESTIMATE until measured on-box.
+        size_gb=16.5,
+        note="Dense 27B (text + vision) hybrid reasoner at Q4_K_M — the INTERACTIVE twin "
+        "of the Q8 entry, same model + repo. A dense 27B is bandwidth-bound here, so Q4 roughly "
+        "doubles Q8's throughput (~12-13 t/s vs ~7): the better daily driver, at some quality "
+        "cost the Q8 twin keeps. ~16 GiB, so it co-resides beside gpt-oss-120b with wide "
+        "headroom. Projector stays F16 (fine-text OCR degrades first under weight quantization). "
+        "Thinking is the enable_thinking toggle, set per task in LLM Settings.",
         supports_reasoning=True,
         reasoning_format="deepseek",
-        note="80B MoE, 3B active — the Thinking checkpoint (emits <think> traces); "
-        "general reasoner, not coder-tuned. ~46 GB at UD-Q4_K_XL, co-resides like the "
-        "Instruct sibling. Needs a llama.cpp build with --reasoning-format support.",
+        hybrid_thinking=True,
         native_context_window=262144,
-        kv_gb_per_128k=5.0,
+        kv_gb_per_128k=6.0,
     ),
     LocalModel(
         id="qwen3-coder-next",
@@ -391,8 +380,8 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="UD-Q4_K_XL",
         size_gb=49.6,
         note="80B MoE, 3B active — agentic coder (~70% SWE-Bench Verified); the model "
-        "behind code mode (jcode). Co-resides beside another large model. Same "
-        "hybrid-attention arch as qwen3-next-80b — confirm the gateway's llama.cpp "
+        "behind code mode (jcode). Co-resides beside another large model. Uses the "
+        "Qwen3-Next hybrid-attention arch — confirm the gateway's llama.cpp "
         "build supports it (a recent build fixed a Qwen looping bug). Served at its full "
         "native 256k window: jcode's terminal `claude` wants the whole context, and the "
         "light hybrid-attention KV (~10 GB at 256k) fits beside the weights here.",

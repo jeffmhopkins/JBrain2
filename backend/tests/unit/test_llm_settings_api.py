@@ -729,7 +729,7 @@ def test_plan_load_previews_the_eviction_without_touching_the_box(
 ) -> None:
     # gpt-oss (63.5) resident, used=90; staging the coder would blow the 96 ceiling. The
     # dry-run names gpt-oss as the victim (with its footprint), projects the landing point,
-    # and evicts NOTHING. (qwen3-235b is provisioned so it's a valid plan-load target.)
+    # and evicts NOTHING. (qwen3-coder-next is provisioned so it's a valid plan-load target.)
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )
@@ -848,29 +848,29 @@ def test_load_evicts_to_fit_then_warms_the_model(monkeypatch: pytest.MonkeyPatch
 
 
 def test_install_queues_an_unprovisioned_model() -> None:
-    # qwen3-235b-a22b is in the catalog but not in this install's local_models, so
+    # nemotron-3-super-120b is in the catalog but not in this install's local_models, so
     # it can be queued for provisioning from the PWA.
     c, store = _authed_client(_local_settings())
-    resp = c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    resp = c.post("/api/settings/llm/local-models/nemotron-3-super-120b/install")
     assert resp.status_code == 200, resp.text
     by_id = {m["id"]: m for m in resp.json()["local_models"]}
-    assert by_id["qwen3-235b-a22b"]["queued"] is True
-    assert by_id["qwen3-235b-a22b"]["enabled"] is False
+    assert by_id["nemotron-3-super-120b"]["queued"] is True
+    assert by_id["nemotron-3-super-120b"]["enabled"] is False
     # An already-provisioned model is never marked queued.
     assert by_id["gpt-oss-120b"]["queued"] is False
-    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    assert store.values["llm_local_provision_requested"] == ["nemotron-3-super-120b"]
     # Queuing again is idempotent (no duplicate).
-    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
-    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    c.post("/api/settings/llm/local-models/nemotron-3-super-120b/install")
+    assert store.values["llm_local_provision_requested"] == ["nemotron-3-super-120b"]
 
 
 def test_cancel_install_removes_from_the_queue_and_tolerates_absence() -> None:
     c, store = _authed_client(_local_settings())
-    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
-    resp = c.delete("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    c.post("/api/settings/llm/local-models/nemotron-3-super-120b/install")
+    resp = c.delete("/api/settings/llm/local-models/nemotron-3-super-120b/install")
     assert resp.status_code == 200, resp.text
     by_id = {m["id"]: m for m in resp.json()["local_models"]}
-    assert by_id["qwen3-235b-a22b"]["queued"] is False
+    assert by_id["nemotron-3-super-120b"]["queued"] is False
     assert store.values["llm_local_provision_requested"] == []
     # Cancelling something not queued reconciles rather than 404 (a concurrent
     # update may have just provisioned and cleared it).
@@ -885,13 +885,15 @@ def test_install_404_unknown_and_409_already_provisioned_or_hosting_off() -> Non
     assert c.post("/api/settings/llm/local-models/gpt-oss-120b/install").status_code == 409
     # Hosting off → the GPU/gateway env is a one-time host step the PWA can't bootstrap.
     c2, _ = _authed_client(_cloud_settings())
-    assert c2.post("/api/settings/llm/local-models/qwen3-235b-a22b/install").status_code == 409
+    assert (
+        c2.post("/api/settings/llm/local-models/nemotron-3-super-120b/install").status_code == 409
+    )
 
 
 def test_install_download_progress_climbs_with_on_disk_bytes(tmp_path: Any) -> None:
     # A queued model mid-download reports download_gb from the bytes on disk (partial
     # shards included), so the drawer can render download_gb / size_gb as a live bar.
-    model_dir = tmp_path / "qwen3-235b-a22b"
+    model_dir = tmp_path / "nemotron-3-super-120b"
     model_dir.mkdir()
     # Sparse files so the GiB sizes cost no disk (st_size is all dir_size_gb reads).
     for name, size in (
@@ -906,9 +908,9 @@ def test_install_download_progress_climbs_with_on_disk_bytes(tmp_path: Any) -> N
         local_models_dir=str(tmp_path),
     )
     c, _ = _authed_client(settings)
-    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    c.post("/api/settings/llm/local-models/nemotron-3-super-120b/install")
     by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
-    assert by_id["qwen3-235b-a22b"]["download_gb"] == 1.5
+    assert by_id["nemotron-3-super-120b"]["download_gb"] == 1.5
     # A model with nothing on disk reports null, not 0 — the drawer shows "queued".
     assert by_id["glm-4.5-air"]["download_gb"] is None
 
@@ -922,7 +924,7 @@ def test_uninstall_queues_a_provisioned_model() -> None:
     assert by_id["gpt-oss-120b"]["remove_queued"] is True
     assert by_id["gpt-oss-120b"]["enabled"] is True
     # An un-provisioned catalog model is never marked remove_queued.
-    assert by_id["qwen3-235b-a22b"]["remove_queued"] is False
+    assert by_id["nemotron-3-super-120b"]["remove_queued"] is False
     assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
     # Queuing again is idempotent (no duplicate).
     c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
@@ -934,18 +936,20 @@ def test_uninstall_404_unknown_and_409_unprovisioned_or_hosting_off() -> None:
     # Not a catalog id.
     assert c.post("/api/settings/llm/local-models/nope/uninstall").status_code == 404
     # A catalog model that isn't provisioned here → nothing to uninstall.
-    assert c.post("/api/settings/llm/local-models/qwen3-235b-a22b/uninstall").status_code == 409
+    assert (
+        c.post("/api/settings/llm/local-models/nemotron-3-super-120b/uninstall").status_code == 409
+    )
     # Hosting off → no local roster to uninstall from.
     c2, _ = _authed_client(_cloud_settings())
     assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall").status_code == 409
 
 
 def test_uninstall_a_disabled_model_with_orphaned_weights_is_allowed(tmp_path: Any) -> None:
-    # qwen3-235b-a22b is NOT in the roster, but its weights are orphaned on disk (an alt
+    # nemotron-3-super-120b is NOT in the roster, but its weights are orphaned on disk (an alt
     # the sync's roster recompute dropped). The drawer must still queue their removal —
     # the sync prunes any remove-queue id regardless of the roster. Lay down a real .gguf
     # so _disk_gb sees it.
-    orphan = tmp_path / "qwen3-235b-a22b"
+    orphan = tmp_path / "nemotron-3-super-120b"
     orphan.mkdir()
     (orphan / "model.gguf").write_bytes(b"\0" * (2 * 1024**3))
     settings = _cloud_settings(
@@ -954,9 +958,9 @@ def test_uninstall_a_disabled_model_with_orphaned_weights_is_allowed(tmp_path: A
         local_models_dir=str(tmp_path),
     )
     c, store = _authed_client(settings)
-    resp = c.post("/api/settings/llm/local-models/qwen3-235b-a22b/uninstall")
+    resp = c.post("/api/settings/llm/local-models/nemotron-3-super-120b/uninstall")
     assert resp.status_code == 200, resp.text
-    assert store.values["llm_local_remove_requested"] == ["qwen3-235b-a22b"]
+    assert store.values["llm_local_remove_requested"] == ["nemotron-3-super-120b"]
 
 
 def test_uninstall_409_when_neither_enabled_nor_on_disk(tmp_path: Any) -> None:
@@ -968,7 +972,9 @@ def test_uninstall_409_when_neither_enabled_nor_on_disk(tmp_path: Any) -> None:
         local_models_dir=str(tmp_path),
     )
     c, _ = _authed_client(settings)
-    assert c.post("/api/settings/llm/local-models/qwen3-235b-a22b/uninstall").status_code == 409
+    assert (
+        c.post("/api/settings/llm/local-models/nemotron-3-super-120b/uninstall").status_code == 409
+    )
 
 
 def test_cancel_uninstall_removes_from_the_queue_and_tolerates_absence() -> None:
@@ -988,27 +994,27 @@ def test_install_and_uninstall_queues_are_disjoint() -> None:
     # An id can't sit in both queues; queueing one strips the other so the sync's
     # set algebra stays unambiguous.
     c, store = _authed_client(_local_settings())
-    # qwen3-235b-a22b is unprovisioned → installable; queue it, then uninstall a
+    # nemotron-3-super-120b is unprovisioned → installable; queue it, then uninstall a
     # provisioned model, then re-install/uninstall the SAME id to prove the swap.
-    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
-    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    c.post("/api/settings/llm/local-models/nemotron-3-super-120b/install")
+    assert store.values["llm_local_provision_requested"] == ["nemotron-3-super-120b"]
     # gpt-oss-120b is provisioned: queue uninstall, then (hypothetically) install —
     # but install requires unprovisioned, so use the unprovisioned id for the swap.
-    # First: uninstall gpt-oss-120b, then install qwen3-235b stays untouched.
+    # First: uninstall gpt-oss-120b, then install nemotron-3-super-120b stays untouched.
     c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
     assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
-    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    assert store.values["llm_local_provision_requested"] == ["nemotron-3-super-120b"]
     # Now force a collision on the SAME id by seeding the remove queue with an
     # installable id, then installing it: the install must strip it from removing.
-    store.values["llm_local_remove_requested"] = ["gpt-oss-120b", "qwen3-235b-a22b"]
-    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    store.values["llm_local_remove_requested"] = ["gpt-oss-120b", "nemotron-3-super-120b"]
+    c.post("/api/settings/llm/local-models/nemotron-3-super-120b/install")
     assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
-    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    assert store.values["llm_local_provision_requested"] == ["nemotron-3-super-120b"]
     # And the reverse: seed the install queue with a provisioned id, uninstall it →
     # the uninstall strips it from the install queue.
-    store.values["llm_local_provision_requested"] = ["qwen3-235b-a22b", "gpt-oss-120b"]
+    store.values["llm_local_provision_requested"] = ["nemotron-3-super-120b", "gpt-oss-120b"]
     c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
-    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    assert store.values["llm_local_provision_requested"] == ["nemotron-3-super-120b"]
     assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
 
 
@@ -1018,11 +1024,11 @@ def test_remove_queued_self_clears_for_a_model_no_longer_provisioned() -> None:
     # applied the uninstall but a clear was missed) reports remove_queued False — the
     # row stops claiming "uninstalling" without waiting for the queue to be cleared.
     c, store = _authed_client(_local_settings())
-    # qwen3-235b-a22b is NOT in local_models (unprovisioned), yet sits in the queue.
-    store.values["llm_local_remove_requested"] = ["qwen3-235b-a22b"]
+    # nemotron-3-super-120b is NOT in local_models (unprovisioned), yet sits in the queue.
+    store.values["llm_local_remove_requested"] = ["nemotron-3-super-120b"]
     by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
-    assert by_id["qwen3-235b-a22b"]["enabled"] is False
-    assert by_id["qwen3-235b-a22b"]["remove_queued"] is False
+    assert by_id["nemotron-3-super-120b"]["enabled"] is False
+    assert by_id["nemotron-3-super-120b"]["remove_queued"] is False
 
 
 def test_load_makes_the_model_resident(monkeypatch: pytest.MonkeyPatch) -> None:
