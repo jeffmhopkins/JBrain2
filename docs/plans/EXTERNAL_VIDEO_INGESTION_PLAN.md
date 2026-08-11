@@ -1,6 +1,6 @@
 # External Video Ingestion (YouTube corpus) — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-20 · **Waves:** A✅ B✅ C◻️
+> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** W1✅ W2✅ W3◻️
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): shaped, **hardened by a five-focus adversarial
 review**, and **re-sequenced around agent tools + the shipped Tasks feature** (owner decision) rather than

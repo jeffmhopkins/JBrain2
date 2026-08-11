@@ -1,7 +1,7 @@
 # Deepest research — in-flight surface variants (GUI gate)
 
 The R8 GUI gate for `deepest_research` (build plan:
-`../../plans/DEEPEST_RESEARCH_TOOL_PLAN.md`). `deepest_research` is a **no-holds
+`../../archive/DEEPEST_RESEARCH_TOOL_PLAN.md`). `deepest_research` is a **no-holds
 background run** — it recurses two agent tiers deep and can run for an hour — so, unlike
 `deep_research`'s live in-turn card, it must be surfaced as a **backgrounded** run that
 posts coarse per-round progress into the chat (the run's transcript ticks + a nudge, R6).

@@ -1,6 +1,6 @@
 # JBrain2 — Phase 6 (Wiki) Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** A✅ B✅ C✅ D◻️ —
+> **Status:** In progress · **Last verified:** 2026-08-11 · **Waves:** A✅ B✅ C✅ D◻️ —
 > the builder, `wiki_citations`/`wiki_links` graph coupling, and Talk all shipped
 > (migrations 0045–0053, `wiki/builder.py`). **Wave D (open):** the nightly build
 > schedules (`wiki_refresh` 03:30 + `wiki_prune` 03:45) were **re-enabled by migration

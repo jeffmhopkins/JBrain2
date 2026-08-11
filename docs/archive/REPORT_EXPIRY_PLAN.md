@@ -1,6 +1,6 @@
 # Report Expiry (TTL) & Per-Run Dedup Keys
 
-> **Status:** Shipped · **Last verified:** 2026-08-09 · **Waves:** W1✅ W2✅ W3✅ W4✅
+> **Status:** Shipped 2026-08 · migrations 0161–0162 · **Superseded-by:** —
 
 The research library (`app.research_reports`, migration 0140) keeps every persisted
 report forever. That is right for a candidate profile you'll revisit, but wrong for a

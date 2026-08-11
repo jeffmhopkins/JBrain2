@@ -1,6 +1,6 @@
 # Blocked Domains — 24h Paywall/Bot-Wall Skip
 
-> **Status:** Shipped · **Last verified:** 2026-08-09
+> **Status:** Shipped 2026-08 · migration 0163 (`app.blocked_domains`) · **Superseded-by:** —
 
 A global, self-extending skip list so `web_fetch`/`web_search` stop wasting calls
 on a site that just proved unreadable. When the fetcher hits a **persistent hard
