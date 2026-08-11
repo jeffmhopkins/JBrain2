@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -546,12 +546,22 @@ class AgentLoop:
         reasoning_effort: str | None,
         on_text: Callable[[str], None] | None,
         on_reasoning: Callable[[str], None] | None,
+        hide_tool_round_text: bool = False,
     ) -> LlmTurn:
         """One model turn for `run`. With no streaming callbacks it's a plain
         `converse` (the existing non-streaming path, unchanged). With `on_text`/
         `on_reasoning` it streams via `converse_stream` and forwards each chunk to the
         callback as it arrives — the sub-agent spawner uses this to surface a child's
-        live tokens — while still returning the closing turn so the loop is identical."""
+        live tokens — while still returning the closing turn so the loop is identical.
+
+        `hide_tool_round_text` mirrors the root turn's reclassification (`run_stream`):
+        on the local route a tool-call round's `content` is the model's leaked thinking,
+        not a preamble — so buffer this round's text and, once its stop_reason is known,
+        route it to `on_reasoning` (the thinking trace) if the round called a tool, else
+        to `on_text` (the round IS the answer). Without this a non-reasoning local model
+        like the coder — whose narration arrives on `content`, never a `reasoning_content`
+        channel — would show its inter-tool thinking as the child's answer, not as its
+        thinking (the gap that made the coder's thinking never reach the fan's trace)."""
         if on_text is None and on_reasoning is None:
             return await self._router.converse(
                 self._task,
@@ -564,6 +574,10 @@ class AgentLoop:
                 spec_override=self._model_override,
             )
         turn: LlmTurn | None = None
+        # On the local route we can't classify this round's content until its stop_reason
+        # arrives (a tool call is signalled only at the end), so buffer the round's text and
+        # commit it once we know whether the round is a tool call (thinking) or the answer.
+        round_text: list[str] = []
         async for part in self._router.converse_stream(
             self._task,
             system=system_prompt,
@@ -575,15 +589,30 @@ class AgentLoop:
             spec_override=self._model_override,
         ):
             if isinstance(part, TextChunk):
-                if part.text and on_text is not None:
-                    on_text(part.text)
+                if part.text:
+                    if hide_tool_round_text:
+                        round_text.append(part.text)
+                    elif on_text is not None:
+                        on_text(part.text)
             elif isinstance(part, ReasoningChunk):
                 if part.text and on_reasoning is not None:
                     on_reasoning(part.text)
             else:
                 turn = part
         # The adapter always closes a stream with an LlmTurn; guard the contract.
-        return turn or LlmTurn(text="", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(0, 0))
+        turn = turn or LlmTurn(text="", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(0, 0))
+        if hide_tool_round_text and round_text:
+            round_content = "".join(round_text)
+            if turn.stop_reason == "tool_use" and turn.tool_calls:
+                # A tool-call round's content is leaked thinking → surface it as the child's
+                # thinking trace, and fold it into the turn's reasoning so the persisted
+                # transcript matches (this model has no reasoning_content channel of its own).
+                if on_reasoning is not None:
+                    on_reasoning(round_content)
+                turn = replace(turn, reasoning=turn.reasoning + round_content)
+            elif on_text is not None:
+                on_text(round_content)
+        return turn
 
     async def run(
         self,
@@ -636,6 +665,10 @@ class AgentLoop:
         # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
         # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.
         system_prompt = system or SYSTEM_PROMPT
+        # The local route leaks a tool-round's thinking onto the content channel; when this
+        # streamed run has a reasoning sink, route that content to the thinking trace instead
+        # of the answer (the sub-agent twin of run_stream's reclassification). Computed once.
+        hide_tool_round_text = on_reasoning is not None and await self._hide_tool_round_text()
         cost = 0
         consecutive_errors = 0
         idx = 0
@@ -681,7 +714,13 @@ class AgentLoop:
             nonlocal cost
             final_messages = [*messages, UserMessage(text=FINAL_ANSWER_DIRECTIVE)]
             final = await self._converse_turn(
-                system_prompt, final_messages, (), FINAL_ANSWER_EFFORT, on_text, on_reasoning
+                system_prompt,
+                final_messages,
+                (),
+                FINAL_ANSWER_EFFORT,
+                on_text,
+                on_reasoning,
+                hide_tool_round_text,
             )
             spent_final = final.usage.input_tokens + final.usage.output_tokens
             cost += spent_final
@@ -701,7 +740,13 @@ class AgentLoop:
             if force_final_answer and step > 0 and step == self._g.max_steps - _BUDGET_WARNING_LEAD:
                 messages.append(UserMessage(text=BUDGET_WARNING_DIRECTIVE))
             turn = await self._converse_turn(
-                system_prompt, messages, tools, reasoning_effort, on_text, on_reasoning
+                system_prompt,
+                messages,
+                tools,
+                reasoning_effort,
+                on_text,
+                on_reasoning,
+                hide_tool_round_text,
             )
             spent_call = turn.usage.input_tokens + turn.usage.output_tokens
             cost += spent_call

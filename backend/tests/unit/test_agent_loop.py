@@ -933,6 +933,76 @@ async def test_run_stream_hides_a_leaked_tool_round_analysis_on_the_local_route(
     assert "Now call write_plan_result" in reasoning
 
 
+async def test_run_routes_a_leaked_tool_round_analysis_to_reasoning_on_the_local_route() -> None:
+    # The sub-agent path (run, streamed to the fan via on_text/on_reasoning) reclassifies a
+    # local tool-call round's content the same way run_stream does for the root turn. A
+    # non-reasoning local model like the coder narrates between tools on the CONTENT channel
+    # (it has no reasoning_content channel of its own), so without this its inter-tool thinking
+    # would show as the child's answer, not its thinking — the coder-vs-gpt-oss gap in the fan.
+    turns = [
+        LlmTurn(
+            "Great — that page confirms the launch. Now search the follow-up.",
+            (ToolCall("c1", "search", {"q": "x"}),),
+            "tool_use",
+            LlmUsage(10, 5),
+        ),
+        LlmTurn("Here are the three best URLs.", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, _ = stream_router_local(
+        turns,
+        stream_chunks=[
+            ["Great — that page confirms the launch. Now search the follow-up."],
+            ["Here are the three best URLs."],
+        ],
+    )
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    text: list[str] = []
+    reasoning: list[str] = []
+    result = await loop.run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="scout this")],
+        on_text=text.append,
+        on_reasoning=reasoning.append,
+    )
+    # The final round IS the answer — it streams to on_text and returns as the result.
+    assert "".join(text) == "Here are the three best URLs."
+    assert result.text == "Here are the three best URLs."
+    # The tool-round narration surfaces as the child's thinking, never its answer …
+    assert "Now search the follow-up" in "".join(reasoning)
+    assert "Now search the follow-up" not in "".join(text)
+    # … and it is folded into the persisted reasoning trace so the child's transcript matches.
+    assert "Now search the follow-up" in result.reasoning
+
+
+async def test_run_streams_content_to_answer_on_a_hosted_route() -> None:
+    # The reclassification is local-route only: a hosted model (Grok/Claude) that legitimately
+    # narrates before a tool call keeps that content on the answer channel, untouched.
+    turns = [
+        LlmTurn(
+            "Let me check that.",
+            (ToolCall("c1", "search", {"q": "x"}),),
+            "tool_use",
+            LlmUsage(10, 5),
+        ),
+        LlmTurn("the answer", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, _ = stream_router_with(turns, stream_chunks=[["Let me check that."], ["the answer"]])
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    text: list[str] = []
+    reasoning: list[str] = []
+    await loop.run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="q")],
+        on_text=text.append,
+        on_reasoning=reasoning.append,
+    )
+    # On a hosted route the tool-round preamble stays in the answer stream, not thinking.
+    assert "Let me check that." in "".join(text)
+    assert "".join(reasoning) == ""
+
+
 async def test_run_stream_tool_result_carries_structured_sources() -> None:
     turns = [
         LlmTurn("", (ToolCall("c1", "search", {}),), "tool_use", LlmUsage(1, 1)),
