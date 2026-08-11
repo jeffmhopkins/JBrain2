@@ -498,13 +498,28 @@ export function toUtterance(prose, engine = "kokoro") {
   // Token normalization.
   s = s.replace(URL_RE, (_m, host) => domainWords(host));
   s = s.replace(WWW_RE, (_m, host) => domainWords(host));
-  // Currency: $1,250.50 → one thousand two hundred fifty dollars (and fifty cents).
-  s = s.replace(/([$€£¥])\s?(\d[\d,]*)(?:\.(\d{2}))?/g, (_m, sym, whole, cents) => {
-    const unit = { $: "dollars", "€": "euros", "£": "pounds", "¥": "yen" }[sym];
-    const main = numberToWords(whole.replace(/,/g, ""));
-    if (cents && cents !== "00") return `${main} ${unit} and ${numberToWords(cents)} cents`;
-    return `${main} ${unit}`;
-  });
+  // Currency: $1,250.50 → "... dollars and fifty cents"; $16.8 billion → "sixteen point eight
+  // billion dollars"; $5 million → "five million dollars"; $16.8 → "sixteen point eight dollars".
+  // The unit trails the amount, so a magnitude word (million/billion/…) and a non-cents decimal read
+  // in the right order — the old two-decimal-only regex dropped both (matching "$16" out of "$16.8
+  // billion" and orphaning ".8 billion"). A bare two-decimal amount still reads as dollars-and-cents.
+  s = s.replace(
+    /([$€£¥])\s?(\d[\d,]*(?:\.\d+)?)(?:\s+(trillion|billion|million|thousand)\b)?/gi,
+    (_m, sym, amount, magnitude) => {
+      const unit = { $: "dollars", "€": "euros", "£": "pounds", "¥": "yen" }[sym];
+      const clean = amount.replace(/,/g, "");
+      const cents =
+        !magnitude && /\.\d{2}$/.test(clean) ? clean.slice(clean.indexOf(".") + 1) : null;
+      if (cents !== null) {
+        const whole = numberToWords(clean.slice(0, clean.indexOf(".")));
+        return cents === "00"
+          ? `${whole} ${unit}`
+          : `${whole} ${unit} and ${numberToWords(cents)} cents`;
+      }
+      const num = numberToWords(clean);
+      return magnitude ? `${num} ${magnitude.toLowerCase()} ${unit}` : `${num} ${unit}`;
+    },
+  );
   // Percent: 50% → fifty percent (before the generic % symbol map).
   s = s.replace(
     /(\d[\d,]*(?:\.\d+)?)\s?%/g,

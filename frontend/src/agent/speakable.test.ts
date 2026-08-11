@@ -120,6 +120,14 @@ describe("speakable", () => {
     expect(speakable("It cost $1,250.50 today.")).toBe(
       "It cost one thousand two hundred fifty dollars and fifty cents today.",
     );
+    // Magnitude words and non-cents decimals put the unit AFTER the amount (a regression: the old
+    // regex matched only "$16" out of "$16.8 billion" and orphaned ".8 billion").
+    expect(speakable("Revenue hit $16.8 billion.")).toBe(
+      "Revenue hit sixteen point eight billion dollars.",
+    );
+    expect(speakable("a $5 million round")).toBe("a five million dollars round.");
+    expect(speakable("worth $1.2 trillion")).toBe("worth one point two trillion dollars.");
+    expect(speakable("about $16.8 here")).toBe("about sixteen point eight dollars here.");
     expect(speakable("Up 50% this week.")).toBe("Up fifty percent this week.");
     expect(speakable("Pick 3-5 items.")).toBe("Pick three to five items.");
     expect(speakable("Version 3.14 shipped.")).toBe("Version three point one four shipped.");
