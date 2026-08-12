@@ -83,6 +83,8 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
         == JERV_TOOLS
         == WEB_TOOLS
         | {
+            "news_search",
+            "science_search",
             "current_time",
             "current_location",
             "weather",
@@ -229,11 +231,17 @@ def test_scout_and_fetch_personas_split_the_gather_by_role() -> None:
     from jbrain.agent.agents import FETCH_TOOLS, SCOUT_TOOLS
 
     scout, fetch = (AGENTS["research_scout"], AGENTS["research_fetch"])
-    assert scout.tools == SCOUT_TOOLS == frozenset({"web_search", "web_fetch", "current_time"})
+    assert (
+        scout.tools
+        == SCOUT_TOOLS
+        == frozenset({"web_search", "news_search", "science_search", "web_fetch", "current_time"})
+    )
     assert fetch.tools == FETCH_TOOLS == frozenset({"web_fetch", "current_time"})
-    # The scout can follow leads (fetch); the reader is fetch-only — it never searches.
+    # The scout can follow leads (fetch) and search news; the reader is fetch-only — it never
+    # searches (no web_search AND no news_search), so it can't wander off from its URL list.
     assert "web_fetch" in (scout.tools or frozenset())
     assert "web_search" not in (fetch.tools or frozenset())
+    assert "news_search" not in (fetch.tools or frozenset())
     for p in (scout, fetch):
         assert p.reads_knowledge_base is False
         assert "current_location" not in (p.tools or frozenset())
@@ -395,8 +403,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "487ddb5461ab4b7040bcc894ca13d6d0819632c624ee8c1a0518ce90fbad24df",
         ),
         "research_scout": (
-            "agent-research-scout-v7",
-            "6edbb93cd0ebf241c76019df3eddd18196134c0e7740819e7c6f34478d30659b",
+            "agent-research-scout-v8",
+            "f85150fcc655f5911da8ba39faf133db98765d7cb9b43555cd49049adfb0cfd0",
         ),
         "research_fetch": (
             "agent-research-fetch-v2",

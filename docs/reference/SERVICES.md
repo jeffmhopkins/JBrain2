@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-08-10
+> **Status:** Living · **Last verified:** 2026-08-12
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -24,7 +24,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `db` | TimescaleDB-HA (Postgres 17 + Timescale + PostGIS + pgvector) | The single stateful service — relational + vector + FTS + time-series + geo + job queue + workflow state. | internal |
 | `embed` | HF text-embeddings-inference (CPU) | Local embeddings (`bge-small-en-v1.5`, 384-dim, 1 GB cap). Model = env var; swap ⇒ re-embed job. | internal |
 | `supervisor` | minimal socket-mounted service | Holds the Docker socket; a fixed command set (status/restart/start/stop/logs/update/rebuild/provision/export/import/reset) behind an internal token. Drives the Ops screen. | internal |
-| `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search`/`web_fetch`. Only the KB-blind `jerv` reaches it. | internal |
+| `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search` (general, + infoboxes/instant answers), `news_search` (news category, dated leads), and `science_search` (science category, paper leads). Only the KB-blind `jerv` reaches it. | internal |
 | `reader` | headless-Chromium reader (r.jina.ai-compatible) | `web_fetch` fallback renderer for bot-walled / JS-only pages. | internal |
 | `rapidocr` | RapidOCR (PP-OCR / ONNX, CPU) | Deterministic OCR: cross-validates the VLM `vision.ocr` extraction (stores a `tool="rapidocr"` row) and backs the direct `ocr` tools (jerv + the jcode sandbox, which reaches it via the api bridge). Default-on; the engine lazy-loads on first call and idle-unloads. See `../plans/RAPIDOCR_PLAN.md`. | internal |
 | `jlaunch` | `jlaunch` control server | Self-serve launcher for long one-shot scientific computations (first spec: the Erdős–Straus census to 10¹²). Clones a code-defined repo read-only, runs it as a supervised job with a live terminal + start/stop/kill, collects the artifact, and mints a public `/results/{token}` share page. Three Erdős–Straus specs ship: the Python census (clones the repo) and **native Rust reruns to 10¹² and 10¹³** (`es-census`, built from `research/es-census` and baked into the image — no clone) whose windowed SPF factorization is complete to √a (fixing the Python path's non-minimal R above ~1.3×10¹¹) and which stream output in bounded memory so they scale past 10¹². Default-on; isolated `jlaunch` network, CPU/mem uncapped by design (meant to use the box for hours) — the Python run's worker pool is sized to RAM, not core count, so it doesn't OOM. See `../archive/JLAUNCH_PLAN.md`. | jlaunch |

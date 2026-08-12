@@ -38,7 +38,7 @@ async def test_search_parses_and_drops_urlless_rows() -> None:
         calls.append(request)
         return httpx.Response(200, json=_SEARX_OK)
 
-    hits = await _searx(handle).search("python", limit=5)
+    hits = (await _searx(handle).search("python", limit=5)).hits
     assert [h.url for h in hits] == ["https://a.example/1", "https://b.example/2"]
     assert hits[0].title == "Result one" and hits[0].snippet == "first snippet"
     # The query rode as ?q=, JSON format requested, against the pinned base URL.
@@ -48,7 +48,7 @@ async def test_search_parses_and_drops_urlless_rows() -> None:
 
 
 async def test_search_honors_limit() -> None:
-    hits = await _searx(lambda r: httpx.Response(200, json=_SEARX_OK)).search("q", limit=1)
+    hits = (await _searx(lambda r: httpx.Response(200, json=_SEARX_OK)).search("q", limit=1)).hits
     assert len(hits) == 1
 
 
@@ -70,6 +70,180 @@ async def test_search_forbidden_raises_web_search_error() -> None:
     # it must surface as a recoverable WebSearchError, not crash the turn.
     with pytest.raises(WebSearchError):
         await _searx(lambda r: httpx.Response(403)).search("q")
+
+
+_SEARX_NEWS_OK = {
+    "results": [
+        {
+            "title": "Fed holds rates",
+            "url": "https://apnews.com/article/fed",
+            "content": "The Federal Reserve held rates steady.",
+            "publishedDate": "2026-08-12T09:14:00",
+        },
+        {
+            "title": "Markets react",
+            "url": "https://npr.org/2026/08/12/markets",
+            "content": "Stocks moved on the decision.",
+            # No publishedDate — the tool must tolerate a dateless row.
+        },
+    ]
+}
+
+
+async def test_search_news_requests_the_news_category_and_time_range() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_NEWS_OK)
+
+    hits = await _searx(handle).search_news("federal reserve", time_range="day", limit=5)
+    assert [h.url for h in hits] == [
+        "https://apnews.com/article/fed",
+        "https://npr.org/2026/08/12/markets",
+    ]
+    # The publish date is carried through; a dateless row surfaces as "".
+    assert hits[0].published == "2026-08-12T09:14:00"
+    assert hits[1].published == ""
+    # The request asked SearXNG for the NEWS category, the recency window, and JSON.
+    assert calls[0].url.params["categories"] == "news"
+    assert calls[0].url.params["time_range"] == "day"
+    assert calls[0].url.params["format"] == "json"
+
+
+async def test_search_news_ignores_an_unknown_time_range() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_NEWS_OK)
+
+    await _searx(handle).search_news("q", time_range="fortnight")
+    # A bad window is dropped (no time_range param) rather than passed through to SearXNG.
+    assert "time_range" not in calls[0].url.params
+
+
+async def test_search_news_is_cached_separately_per_window() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_NEWS_OK)
+
+    client = _searx(handle)
+    await client.search_news("q", time_range="day")
+    await client.search_news("q", time_range="day")  # repeat → served from cache
+    assert len(calls) == 1
+    await client.search_news("q", time_range="week")  # different window → a fresh request
+    assert len(calls) == 2
+
+
+async def test_search_news_unconfigured_raises() -> None:
+    with pytest.raises(WebSearchError):
+        await SearxngClient("").search_news("q")
+
+
+_SEARX_INFOBOX_OK = {
+    "results": [
+        {
+            "title": "Ada Lovelace",
+            "url": "https://en.wikipedia.org/wiki/Ada_Lovelace",
+            "content": "mathematician",
+        }
+    ],
+    "infoboxes": [
+        {
+            "infobox": "Ada Lovelace",
+            "content": "English mathematician, the first programmer.",
+            "attributes": [
+                {"label": "Born", "value": "10 December 1815"},
+                {"label": "Died", "value": "27 November 1852"},
+            ],
+            "urls": [{"title": "Wikipedia", "url": "https://en.wikipedia.org/wiki/Ada_Lovelace"}],
+        }
+    ],
+    "answers": [{"answer": "Ada Lovelace was born on 10 December 1815."}, "42 km = 26.1 miles"],
+}
+
+
+async def test_search_returns_infobox_and_answers() -> None:
+    result = await _searx(lambda r: httpx.Response(200, json=_SEARX_INFOBOX_OK)).search(
+        "ada lovelace"
+    )
+    assert result.infobox is not None
+    assert result.infobox.title == "Ada Lovelace" and "first programmer" in result.infobox.content
+    assert result.infobox.attributes[0] == ("Born", "10 December 1815")
+    assert result.infobox.url == "https://en.wikipedia.org/wiki/Ada_Lovelace"
+    # Instant answers come through, both the {answer} and the bare-string shapes.
+    assert result.answers == ("Ada Lovelace was born on 10 December 1815.", "42 km = 26.1 miles")
+    assert result.hits[0].url == "https://en.wikipedia.org/wiki/Ada_Lovelace"
+
+
+async def test_search_result_is_cached_even_with_no_hits_when_an_extra_is_present() -> None:
+    # A response with only an infobox (no result rows) still carries an answer, so it IS cached
+    # (a repeat serves it without re-hitting the upstreams).
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            200, json={"results": [], "infoboxes": _SEARX_INFOBOX_OK["infoboxes"]}
+        )
+
+    client = _searx(handle)
+    first = await client.search("ada")
+    assert first.hits == [] and first.infobox is not None
+    await client.search("ada")
+    assert len(calls) == 1  # served from cache the second time
+
+
+async def test_search_passes_a_time_range_window() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_OK)
+
+    await _searx(handle).search("gpu prices", time_range="week")
+    assert calls[0].url.params["time_range"] == "week"
+    # A bad window is dropped, not sent.
+    await _searx(handle).search("gpu prices", time_range="decade")
+    assert "time_range" not in calls[1].url.params
+
+
+_SEARX_SCIENCE_OK = {
+    "results": [
+        {
+            "title": "Attention Is All You Need",
+            "url": "https://arxiv.org/abs/1706.03762",
+            "content": "We propose the Transformer...",
+            "publishedDate": "2017-06-12T00:00:00",
+            "authors": ["Vaswani", "Shazeer", "Parmar"],
+        },
+        {"title": "No authors", "url": "https://arxiv.org/abs/0000", "content": "x"},
+    ]
+}
+
+
+async def test_search_science_requests_the_science_category_and_keeps_authors() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_SCIENCE_OK)
+
+    hits = await _searx(handle).search_science("transformer architecture", limit=5)
+    assert calls[0].url.params["categories"] == "science"
+    assert hits[0].url == "https://arxiv.org/abs/1706.03762"
+    assert (
+        hits[0].authors == "Vaswani, Shazeer, Parmar" and hits[0].published == "2017-06-12T00:00:00"
+    )
+    assert hits[1].authors == ""  # a row with no authors surfaces as ""
+
+
+async def test_search_science_unconfigured_raises() -> None:
+    with pytest.raises(WebSearchError):
+        await SearxngClient("").search_science("q")
 
 
 async def test_repeat_search_is_served_from_cache_without_a_second_request() -> None:
@@ -125,8 +299,8 @@ async def test_empty_result_is_not_cached_so_a_throttle_retries() -> None:
         return httpx.Response(200, json={"results": []})
 
     client = _searx(handle)
-    assert await client.search("nothing") == []
-    assert await client.search("nothing") == []
+    assert (await client.search("nothing")).hits == []
+    assert (await client.search("nothing")).hits == []
     assert len(calls) == 2  # not cached — each call reached the network
 
 
@@ -579,6 +753,114 @@ async def test_web_search_error_carries_no_web_sources() -> None:
     handlers = build_web_handlers(_searx(lambda r: httpx.Response(502)), WebFetcher())
     out = await handlers["web_search"]({"query": "q"}, CTX)
     assert not isinstance(out, ToolOutput) or not out.web_sources
+
+
+# --- news_search handler (dated leads from the news category) -----------------
+
+
+async def test_news_search_requests_news_category_and_surfaces_dated_leads() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_NEWS_OK)
+
+    handlers = build_web_handlers(_searx(handle), WebFetcher())
+    out = await handlers["news_search"]({"query": "federal reserve", "since": "day"}, CTX)
+    assert isinstance(out, ToolOutput)
+    # The request went to the news category with the recency window.
+    assert (
+        calls[0].url.params["categories"] == "news" and calls[0].url.params["time_range"] == "day"
+    )
+    # The publish date and outlet are surfaced in the text; each hit is a citable source.
+    assert "2026-08-12T09:14:00" in str(out) and "apnews.com" in str(out)
+    assert [s.url for s in out.web_sources] == [
+        "https://apnews.com/article/fed",
+        "https://npr.org/2026/08/12/markets",
+    ]
+
+
+async def test_news_search_rejects_an_empty_query() -> None:
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_NEWS_OK)), WebFetcher()
+    )
+    out = await handlers["news_search"]({"query": "  "}, CTX)
+    assert "needs a non-empty query" in str(out)
+
+
+async def test_news_search_shares_the_scout_search_budget() -> None:
+    # news_search draws on the SAME ToolCallBudget as web_search, so a scout can't dodge its
+    # ceiling by switching tools: one news_search plus the cap's worth of web_search exhausts it.
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_NEWS_OK)), WebFetcher()
+    )
+    ctx = _budget_ctx(1)
+    first = await handlers["news_search"]({"query": "fed"}, ctx)
+    assert isinstance(first, ToolOutput)  # the one allowed call succeeds
+    # The budget is now spent — a following web_search is refused by the shared counter.
+    second = await handlers["web_search"]({"query": "fed"}, ctx)
+    assert "SEARCH BUDGET SPENT" in str(second)
+
+
+# --- web_search extras (infobox + instant answers) and the recency window ------
+
+
+async def test_web_search_leads_with_the_infobox_and_answers() -> None:
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_INFOBOX_OK)), WebFetcher()
+    )
+    out = await handlers["web_search"]({"query": "ada lovelace"}, CTX)
+    text = str(out)
+    # The direct-answer block leads, above the "Web results" leads header.
+    assert "Direct answer" in text and "first programmer" in text
+    assert "Born: 10 December 1815" in text
+    assert text.index("Direct answer") < text.index("Web results")
+
+
+async def test_web_search_returns_extras_even_with_no_hits() -> None:
+    body = {"results": [], "answers": ["4 + 4 = 8"]}
+    handlers = build_web_handlers(_searx(lambda r: httpx.Response(200, json=body)), WebFetcher())
+    out = await handlers["web_search"]({"query": "4+4"}, CTX)
+    assert isinstance(out, ToolOutput) and "4 + 4 = 8" in str(out)
+
+
+async def test_web_search_forwards_the_since_window() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_OK)
+
+    handlers = build_web_handlers(_searx(handle), WebFetcher())
+    await handlers["web_search"]({"query": "gpu prices", "since": "week"}, CTX)
+    assert calls[0].url.params["time_range"] == "week"
+
+
+# --- science_search handler (scholarly leads) ---------------------------------
+
+
+async def test_science_search_requests_science_and_surfaces_authors() -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=_SEARX_SCIENCE_OK)
+
+    handlers = build_web_handlers(_searx(handle), WebFetcher())
+    out = await handlers["science_search"]({"query": "transformer"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert calls[0].url.params["categories"] == "science"
+    assert "Vaswani, Shazeer, Parmar" in str(out) and "arxiv.org/abs/1706.03762" in str(out)
+    assert out.web_sources[0].url == "https://arxiv.org/abs/1706.03762"
+
+
+async def test_science_search_shares_the_scout_budget() -> None:
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_SCIENCE_OK)), WebFetcher()
+    )
+    ctx = _budget_ctx(1)
+    assert isinstance(await handlers["science_search"]({"query": "x"}, ctx), ToolOutput)
+    assert "SEARCH BUDGET SPENT" in str(await handlers["web_search"]({"query": "y"}, ctx))
 
 
 # --- scout search budget (the engine-enforced ceiling the prompt alone can't hold) ---

@@ -34,7 +34,7 @@ from jbrain.web.fetch import (
     is_youtube_url,
     window_text,
 )
-from jbrain.web.search import SearxngClient, WebSearchError
+from jbrain.web.search import NEWS_TIME_RANGES, SearchResult, SearxngClient, WebSearchError
 
 log = structlog.get_logger()
 
@@ -294,6 +294,34 @@ def _present_result(
     return _present_fetch(result, url, offset, find, find_regex)
 
 
+def _present_search_extras(result: "SearchResult") -> str:
+    """Render SearXNG's zero-click extras (a knowledge-panel infobox + instant answers) as a
+    compact block that leads a web_search reply, or "" when there are none. Unlike the hit list,
+    these ARE a direct answer — but SearXNG assembles them from third-party data, so the frame
+    still says verify anything load-bearing. A trailing rule separates them from the leads."""
+    parts: list[str] = []
+    ib = result.infobox
+    if ib is not None:
+        head = f"**{ib.title}**" if ib.title else "**Knowledge panel**"
+        if ib.content:
+            head += f" — {ib.content}"
+        lines = [head]
+        lines += [f"  · {label}: {value}" for label, value in ib.attributes]
+        if ib.url:
+            lines.append(f"  {ib.url}")
+        parts.append("\n".join(lines))
+    if result.answers:
+        parts.append("Instant answers:\n" + "\n".join(f"- {a}" for a in result.answers))
+    if not parts:
+        return ""
+    header = (
+        "Direct answer from SearXNG (a knowledge panel / instant answer assembled from"
+        " third-party data — no fetch needed, but verify anything load-bearing before you rely"
+        " on it):\n"
+    )
+    return header + "\n\n".join(parts) + "\n\n———\n\n"
+
+
 def _with_budget_note(out: str, note: str) -> str:
     """Append a tool-budget note to a handler result while preserving a ToolOutput's
     `web_sources` (a fetched page stays citable). Plain-str results just get the text
@@ -404,13 +432,23 @@ def build_web_handlers(
                 + "]"
             )
         limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
+        # Optional recency window (SearXNG time_range) — "prices this week", a recent release.
+        # A bad value is ignored (widest results) rather than erroring; blank = no window.
+        since = str(arguments.get("since", "")).strip().lower()
         if emit:
             emit("web_search", query)
         try:
-            hits = await search.search(query, limit)
+            result = await search.search(query, limit, time_range=since)
         except WebSearchError as exc:
             return str(exc) + budget_note
+        # The zero-click extras SearXNG returned alongside the hits — a knowledge panel and/or
+        # instant answers. These ARE a direct answer (not an unverified lead), so they lead the
+        # reply; still shown even when the hit list is thin or fully pruned.
+        extras = _present_search_extras(result)
+        hits = result.hits
         if not hits:
+            if extras:
+                return ToolOutput(extras + budget_note)
             return f"No web results for '{query}'." + budget_note
         # Drop hits on a host recently found paywalled/bot-walled/unreadable (the 24h skip
         # list) — reading one would only waste a fetch on a wall — and tell the model how many
@@ -422,6 +460,8 @@ def build_web_handlers(
             f"\n\n({hidden} result(s) hidden as known-paywalled or inaccessible.)" if hidden else ""
         )
         if not kept:
+            if extras:
+                return ToolOutput(extras + note + budget_note)
             return (
                 f"No usable web results for '{query}': all {hidden} were on sites recently found"
                 " paywalled or inaccessible (skipped for the next day). Try a different query."
@@ -438,6 +478,151 @@ def build_web_handlers(
         header = (
             "Web results — UNVERIFIED LEADS (a title/snippet is NOT a fact; web_fetch a result and"
             " read the page before reporting or citing anything from it):"
+        )
+        return ToolOutput(
+            extras + header + "\n" + "\n".join(lines) + note + budget_note, web_sources=web_sources
+        )
+
+    async def news_search_tool(arguments: dict, ctx: ToolContext) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            return "news_search needs a non-empty query."
+        # Coarse recency window (SearXNG time_range). Default to the day for a news brief; a bad
+        # value degrades to the widest supported window rather than erroring.
+        since = str(arguments.get("since", "day")).strip().lower() or "day"
+        if since not in NEWS_TIME_RANGES:
+            since = "day"
+        # News search hits the same upstreams as web_search, so it draws on the SAME scout
+        # budget — else a scout could sidestep its ceiling by switching tools (agents.py).
+        budget = ctx.search_budget
+        if budget is not None and budget.exhausted:
+            return (
+                f"SEARCH BUDGET SPENT — you have used all {budget.limit} of your search "
+                "calls and cannot search again. Open the leads you already found with "
+                "web_fetch, then END your reply with the RECOMMENDED SOURCES: block."
+            )
+        if budget is not None:
+            budget.used += 1
+        budget_note = ""
+        if budget is not None:
+            left = budget.remaining
+            budget_note = (
+                f"\n\n[SEARCH BUDGET: {left} search call(s) left of {budget.limit}"
+                + (
+                    " — that was your LAST one; stop searching, web_fetch your leads, and return"
+                    " your RECOMMENDED SOURCES."
+                    if left == 0
+                    else ". web_fetch is unlimited."
+                )
+                + "]"
+            )
+        limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
+        if emit:
+            emit("web_search", f"news: {query}")
+        try:
+            hits = await search.search_news(query, time_range=since, limit=limit)
+        except WebSearchError as exc:
+            return str(exc) + budget_note
+        if not hits:
+            return (
+                f"No recent news for '{query}' in the last {since}. Try a broader `since` "
+                "(week/month) or a different topic." + budget_note
+            )
+        # Drop hosts on the 24h paywall/bot-wall skip list, same as web_search — a listed outlet
+        # (a Reuters/WSJ that already blocked us) is a dead lead the reader can't open.
+        blocked = await domain_skips.active_hosts() if domain_skips is not None else frozenset()
+        kept = [h for h in hits if normalize_host(h.url) not in blocked]
+        hidden = len(hits) - len(kept)
+        note = (
+            f"\n\n({hidden} result(s) hidden as known-paywalled or inaccessible.)" if hidden else ""
+        )
+        if not kept:
+            return (
+                f"No usable news for '{query}': all {hidden} were on sites recently found "
+                "paywalled or inaccessible (skipped for the next day). Try a different topic."
+                + budget_note
+            )
+        # Each line leads with the article's own date (freshness at a glance) and its outlet, then
+        # the URL and snippet — a dated lead the reader opens, ordered by SearXNG's blended rank.
+        lines = []
+        for h in kept:
+            when = h.published or "no date"
+            outlet = normalize_host(h.url) or ""
+            head = f"- {h.title}  [{when}{f' · {outlet}' if outlet else ''}]"
+            lines.append(f"{head}\n  {h.url}\n  {h.snippet}")
+        web_sources = tuple(WebSource(url=h.url, title=h.title) for h in kept)
+        header = (
+            "Recent news — UNVERIFIED LEADS (a headline/snippet is NOT a fact; web_fetch a story"
+            " and read it before reporting or citing anything, and check the page's own date"
+            " against today). Prefer freely-fetchable outlets (AP, NPR, BBC, PBS, Guardian,"
+            " primary sources) over walled ones:"
+        )
+        return ToolOutput(
+            header + "\n" + "\n".join(lines) + note + budget_note, web_sources=web_sources
+        )
+
+    async def science_search_tool(arguments: dict, ctx: ToolContext) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            return "science_search needs a non-empty query."
+        # Shares the scout's search budget like web_search/news_search (same anti-bypass reason).
+        budget = ctx.search_budget
+        if budget is not None and budget.exhausted:
+            return (
+                f"SEARCH BUDGET SPENT — you have used all {budget.limit} of your search "
+                "calls and cannot search again. Open the leads you already found with "
+                "web_fetch, then END your reply with the RECOMMENDED SOURCES: block."
+            )
+        if budget is not None:
+            budget.used += 1
+        budget_note = ""
+        if budget is not None:
+            left = budget.remaining
+            budget_note = (
+                f"\n\n[SEARCH BUDGET: {left} search call(s) left of {budget.limit}"
+                + (
+                    " — that was your LAST one; stop searching, web_fetch your leads, and return"
+                    " your RECOMMENDED SOURCES."
+                    if left == 0
+                    else ". web_fetch is unlimited."
+                )
+                + "]"
+            )
+        limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
+        if emit:
+            emit("web_search", f"science: {query}")
+        try:
+            hits = await search.search_science(query, limit)
+        except WebSearchError as exc:
+            return str(exc) + budget_note
+        if not hits:
+            return (
+                f"No scholarly results for '{query}'. Try different terms, or web_search for a "
+                "review/secondary source." + budget_note
+            )
+        blocked = await domain_skips.active_hosts() if domain_skips is not None else frozenset()
+        kept = [h for h in hits if normalize_host(h.url) not in blocked]
+        hidden = len(hits) - len(kept)
+        note = (
+            f"\n\n({hidden} result(s) hidden as known-paywalled or inaccessible.)" if hidden else ""
+        )
+        if not kept:
+            return (
+                f"No usable scholarly results for '{query}': all {hidden} were on sites recently "
+                "found paywalled or inaccessible. Try different terms." + budget_note
+            )
+        # Each line carries the paper's authors + date (the citation signal) then URL + abstract
+        # snippet — a scholarly lead the reader opens (an arXiv/PMC page, often with a free PDF).
+        lines = []
+        for h in kept:
+            meta = " · ".join(p for p in (h.authors, h.published) if p) or "no author/date"
+            lines.append(f"- {h.title}  [{meta}]\n  {h.url}\n  {h.snippet}")
+        web_sources = tuple(WebSource(url=h.url, title=h.title) for h in kept)
+        header = (
+            "Scholarly results — UNVERIFIED LEADS (an abstract/snippet is NOT the finding;"
+            " web_fetch the paper — arXiv/PubMed pages are open, often with a free PDF — and read"
+            " it before reporting or citing. Prefer a peer-reviewed/primary source over a preprint"
+            " when both exist):"
         )
         return ToolOutput(
             header + "\n" + "\n".join(lines) + note + budget_note, web_sources=web_sources
@@ -671,7 +856,12 @@ def build_web_handlers(
         source = WebSource(url=art.source_url, title=art.title or art.source_url, read=True)
         return ToolOutput(out, web_sources=(source,))
 
-    handlers: dict[str, ToolHandler] = {"web_search": web_search_tool, "web_fetch": web_fetch_tool}
+    handlers: dict[str, ToolHandler] = {
+        "web_search": web_search_tool,
+        "news_search": news_search_tool,
+        "science_search": science_search_tool,
+        "web_fetch": web_fetch_tool,
+    }
     # Only offer read_artifact when there's a store behind it — otherwise its sidecar has no
     # handler and the strict registry pairing would fail (load_registry marks it optional).
     if artifacts is not None and blobs is not None:

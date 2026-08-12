@@ -231,7 +231,7 @@ async def web_search(request: Request) -> Response:
         limit = _SEARCH_DEFAULT
     limit = max(1, min(limit, _SEARCH_MAX))
     try:
-        hits = await client.search(query, limit)
+        hits = (await client.search(query, limit)).hits
     except WebSearchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not hits:
