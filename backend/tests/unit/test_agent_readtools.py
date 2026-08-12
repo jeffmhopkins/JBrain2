@@ -823,6 +823,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "web_search",
         "news_search",
         "science_search",
+        "news_feed",
         "web_fetch",
         "current_location",
         "weather",
@@ -1204,6 +1205,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "science_search",
             1,
             "f14a716caf625961f96daf93fcf920b1f19c4fb05048bd0d3a11cb74df058824",
+        ),
+        "news_feed.tool": (
+            "news_feed",
+            1,
+            "97509b710035ac8af6ea5ac2f011767943a0a1af4c941c0a4fd10438a3f1234f",
         ),
         "web_fetch.tool": (
             "web_fetch",

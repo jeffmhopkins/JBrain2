@@ -179,6 +179,40 @@ class Settings(BaseSettings):
     # normally). Superseded the prompt-level "avoid these outlets" steering — routing beats
     # asking the model to remember a blocklist.
     solver_first_domains: tuple[str, ...] = ("reuters.com", "wsj.com", "bloomberg.com")
+    # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool (the daily brief's
+    # discovery source, docs/plans/NEWS_FEED_PLAN.md). Keyed by a lowercase topic category; the
+    # feed URLs are pinned here and never model-supplied — only the category name is chosen (and
+    # validated against these keys). Feeds that carry `content:encoded` (NASA, Spaceflight Now,
+    # Space.com, Space Coast Daily) return the FULL article body inline, so a full-text item is an
+    # already-opened article rather than a lead. Local-first: a feed pull leaves the box only to
+    # the pinned outlet, through the SSRF-guarded WebFetcher. Empty disables the tool (it reports
+    # "not configured") while the sidecar still loads. Owner-editable feeds from PWA Settings are
+    # NEWS_FEED_PLAN.md Wave C; this shipped map works with no operator action.
+    news_feeds: dict[str, tuple[str, ...]] = {
+        "space": (
+            "https://www.nasa.gov/feed/",
+            "https://spaceflightnow.com/feed/",
+            "http://www.space.com/feeds.xml",
+        ),
+        "ai_tech": (
+            "https://techcrunch.com/feed/",
+            "https://www.theverge.com/rss/index.xml",
+            "https://electrek.co/feed/",
+        ),
+        "national": (
+            "https://feeds.npr.org/1001/rss.xml",
+            "https://www.pbs.org/newshour/feeds/rss/headlines",
+        ),
+        "economy": (
+            "https://feeds.bbci.co.uk/news/business/rss.xml",
+            "https://feeds.npr.org/1006/rss.xml",
+        ),
+        "world": (
+            "https://feeds.bbci.co.uk/news/world/rss.xml",
+            "https://feeds.npr.org/1004/rss.xml",
+        ),
+        "local": ("https://spacecoastdaily.com/feed/",),
+    }
     # The on-box RapidOCR sidecar — deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md). It
     # cross-validates the VLM text extraction (both an `ocr` VLM row and a `tool="rapidocr"`
     # row are stored) and backs the direct `ocr` tools for jerv and the jcode sandbox. Part

@@ -165,6 +165,9 @@ sections:
 angles:
   - title: "Space industry & launch outlook"
     brief: >-
+      FIRST call news_feed with category space — its curated feeds (NASA, Spaceflight Now,
+      Space.com) carry the FULL article text for many items, so you get real space news without
+      the search-engine throttling; recommend the URLs it surfaces.
       SPACE INDUSTRY news of the last day or two, worldwide and national — NASA, SpaceX, Blue
       Origin, United Launch Alliance, Rocket Lab and other operators: launches, mission milestones,
       contracts and awards, anomalies or scrubs, and space policy; always include notable SpaceX
@@ -179,6 +182,9 @@ angles:
       sonic-boom notice. Prefer specific articles over aggregators; skip paywalled pages.
   - title: "AI, technology, Tesla & Elon Musk"
     brief: >-
+      FIRST call news_feed with category ai_tech (curated tech feeds — TechCrunch, The Verge,
+      Electrek) for fast, dated leads without search-engine throttling; recommend the URLs it
+      surfaces, then open them.
       ARTIFICIAL INTELLIGENCE and TECHNOLOGY news of the last day or two — major model or product
       releases, big-lab and chip/cloud company moves, notable research, regulation, and significant
       cybersecurity or big-tech news. Good sources (a menu — sample two or three): TechCrunch
@@ -189,6 +195,8 @@ angles:
       digest" aggregator or roundup; skip paywalled pages.
   - title: "National politics & government"
     brief: >-
+      FIRST call news_feed with category national (curated feeds — NPR, PBS NewsHour) for fast,
+      dated leads without search-engine throttling; recommend the URLs it surfaces, then open them.
       Top U.S. NATIONAL news of the last day — the single biggest story plus key politics and
       government (the White House, Congress, the courts, major federal agencies, elections). Good
       fetchable sources (a menu — work two): the Associated Press (apnews.com/hub/ap-top-news and
@@ -198,6 +206,9 @@ angles:
       Prefer wire services and primary documents over a single outlet's take; skip paywalled pages.
   - title: "Economy, markets & the world"
     brief: >-
+      FIRST call news_feed twice — category economy and category world (curated feeds — BBC and
+      NPR business/world) — for fast, dated leads without search-engine throttling; recommend the
+      URLs they surface, then open them.
       Two areas from the last day. (1) BUSINESS & THE ECONOMY — markets, jobs, inflation,
       interest-rate and Federal Reserve news, and major company moves. (2) THE WORLD — the major
       international and geopolitical developments only (conflicts, elections, diplomacy, significant
@@ -209,6 +220,8 @@ angles:
       text.npr.org instead. Prefer primary / wire stories over roundups; skip paywalled pages.
   - title: "Local Space Coast — Port St. John & Titusville"
     brief: >-
+      FIRST call news_feed with category local — Space Coast Daily's feed carries the FULL article
+      text (write from that body, no re-fetch) for local items; recommend what it surfaces.
       Today's LOCAL Space Coast news for PORT ST. JOHN and TITUSVILLE, Florida — admit ONLY: (1)
       SEVERE WEATHER affecting the Titusville / Port St. John / north-Brevard area; primary source
       the National Weather Service Melbourne active-alerts feed (api.weather.gov/alerts/active?area=FL,

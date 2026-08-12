@@ -111,6 +111,10 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # A scholarly search over SearXNG's science category (arXiv/PubMed/Scholar/Crossref) —
         # the primary-literature twin of web_search, returning paper leads with authors + dates.
         "science_search",
+        # Curated per-category RSS/Atom feeds (docs/plans/NEWS_FEED_PLAN.md) — the daily brief's
+        # discovery source that sidesteps the search-engine throttling, with full article text
+        # inline for the feeds that carry it. Pinned feed list, never model-supplied.
+        "news_feed",
         "current_time",
         "current_location",
         "weather",
@@ -289,7 +293,7 @@ SUBAGENT_PERSONAS = frozenset(
 # via RESEARCH_DEEP_TOOLS), and `review` — so EVERY deep-research fan can reach them, not only
 # the preset scout path (research_scout already holds them). All ⊆ jerv, so the clamp keeps them.
 RESEARCH_TOOLS = WEB_TOOLS | frozenset(
-    {"news_search", "science_search", "current_time", "portal_search"}
+    {"news_search", "science_search", "news_feed", "current_time", "portal_search"}
 )
 REVIEW_TOOLS = RESEARCH_TOOLS
 # The two-phase (scout → read) gather personas (REPORT_PRESET_PLAN.md), split by ROLE (not by a
@@ -305,9 +309,13 @@ REVIEW_TOOLS = RESEARCH_TOOLS
 # Both are leaves (no spawn), KB-less, and ⊆ jerv's tools (the parent⊆child clamp keeps them).
 # `news_search` and `science_search` ride the scout too — for a current-events or scholarly
 # angle it finds dated article / paper leads from the news / science engines (all three share the
-# one `web_search` budget, so switching tools can't sidestep the cap).
+# one `web_search` budget, so switching tools can't sidestep the cap). `news_feed` also rides the
+# scout — curated per-category feeds are the daily brief's un-throttled discovery source
+# (NEWS_FEED_PLAN.md); it hits pinned feeds, not the upstreams the search budget guards, so it is
+# deliberately UNbudgeted. The reader (research_fetch/FETCH_TOOLS) does NOT get it — it stays
+# search-less by design so it can't wander off its handed URL list.
 SCOUT_TOOLS = frozenset(
-    {"web_search", "news_search", "science_search", "web_fetch", "current_time"}
+    {"web_search", "news_search", "science_search", "news_feed", "web_fetch", "current_time"}
 )
 FETCH_TOOLS = frozenset({"web_fetch", "current_time"})
 # The scout's HARD `web_search` ceiling, enforced by the engine (the web_search handler counts

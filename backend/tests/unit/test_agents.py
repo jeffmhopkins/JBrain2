@@ -85,6 +85,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
         | {
             "news_search",
             "science_search",
+            "news_feed",
             "current_time",
             "current_location",
             "weather",
@@ -220,14 +221,15 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
         | {
             "news_search",
             "science_search",
+            "news_feed",
             "current_time",
             "portal_search",
         }
     )
     assert review.tools == REVIEW_TOOLS == RESEARCH_TOOLS
-    # The categorized search tools ride the gather personas, so a deep-research fan can use
-    # them regardless of the preset path (research_scout already held them).
-    assert {"news_search", "science_search"} <= RESEARCH_TOOLS
+    # The categorized search tools + the curated feed source ride the gather personas, so a
+    # deep-research fan can use them regardless of the preset path (research_scout held them too).
+    assert {"news_search", "science_search", "news_feed"} <= RESEARCH_TOOLS
     assert summarize.tools == SUMMARIZE_TOOLS == frozenset()
     for p in (research, review, summarize):
         assert p.reads_knowledge_base is False
@@ -247,14 +249,26 @@ def test_scout_and_fetch_personas_split_the_gather_by_role() -> None:
     assert (
         scout.tools
         == SCOUT_TOOLS
-        == frozenset({"web_search", "news_search", "science_search", "web_fetch", "current_time"})
+        == frozenset(
+            {
+                "web_search",
+                "news_search",
+                "science_search",
+                "news_feed",
+                "web_fetch",
+                "current_time",
+            }
+        )
     )
     assert fetch.tools == FETCH_TOOLS == frozenset({"web_fetch", "current_time"})
-    # The scout can follow leads (fetch) and search news; the reader is fetch-only — it never
-    # searches (no web_search AND no news_search), so it can't wander off from its URL list.
+    # The scout can follow leads (fetch), search news, and pull curated feeds (news_feed); the
+    # reader is fetch-only — it never searches (no web_search AND no news_search) and holds no
+    # discovery tool (no news_feed), so it can't wander off from its handed URL list.
     assert "web_fetch" in (scout.tools or frozenset())
+    assert "news_feed" in (scout.tools or frozenset())
     assert "web_search" not in (fetch.tools or frozenset())
     assert "news_search" not in (fetch.tools or frozenset())
+    assert "news_feed" not in (fetch.tools or frozenset())
     for p in (scout, fetch):
         assert p.reads_knowledge_base is False
         assert "current_location" not in (p.tools or frozenset())

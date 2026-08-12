@@ -171,6 +171,7 @@ from jbrain.web import (
     DomainSkipRepo,
     FaviconFetcher,
     FederalRegisterClient,
+    FeedClient,
     GrokipediaClient,
     HurricaneClient,
     NhcGisClient,
@@ -453,6 +454,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             solver_first_domains=settings.solver_first_domains,
         )
         searxng = SearxngClient(settings.searxng_url)
+        # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool
+        # (docs/plans/NEWS_FEED_PLAN.md). Fetches feed bytes through the shared SSRF-guarded
+        # web_fetcher (all egress in one place) and parses them offline; the pinned feed map
+        # comes from config, never the model.
+        news_feeds = FeedClient(web_fetcher, settings.news_feeds)
         # Shared on app.state so the jcode search bridge (api.jcode_llm web_search /
         # web_fetch) reaches the SAME cached instances jerv uses. The sandbox can't touch
         # searxng directly (it's on `internal`, the sandbox on `jcode`), so this api — the
@@ -495,6 +501,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             artifacts=app.state.tool_artifacts,
             blobs=app.state.blob_store,
             domain_skips=app.state.domain_skips,
+            feeds=news_feeds,
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).
