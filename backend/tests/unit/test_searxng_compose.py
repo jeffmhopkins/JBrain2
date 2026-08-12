@@ -101,7 +101,25 @@ def test_engine_merge_relies_on_default_settings() -> None:
 # other assertion). This closes that gap without booting a container; widen the set when
 # adding a genuinely new engine (verify the id against searx/settings.yml first).
 _KNOWN_SEARXNG_ENGINES = frozenset(
-    {"duckduckgo", "brave", "bing", "mojeek", "qwant", "startpage", "google", "wikipedia"}
+    {
+        "duckduckgo",
+        "brave",
+        "bing",
+        "mojeek",
+        "qwant",
+        "startpage",
+        "google",
+        "wikipedia",
+        # News-category engines (news_search) — SearXNG built-ins.
+        "google news",
+        "bing news",
+        # Science-category engines (science_search) — SearXNG built-ins.
+        "arxiv",
+        "pubmed",
+        "semantic scholar",
+        "crossref",
+        "google scholar",
+    }
 )
 
 
