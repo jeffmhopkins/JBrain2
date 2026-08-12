@@ -58,6 +58,17 @@ engines:
     disabled: false
   - name: startpage
     disabled: false
+  # Knowledge-panel / infobox producers for web_search's zero-click "direct answer" block
+  # (SearchResult.infobox). `wikidata` is the STRUCTURED source — it answers an entity query
+  # (a birth date, a population) from query.wikidata.org, a different endpoint than the
+  # Wikipedia REST API the box's IP gets rate-limited on, so it stays a reliable panel source.
+  # `wikipedia` supplies the article summary + thumbnail. Enabled explicitly so the infobox is
+  # produced regardless of upstream default toggles (observed: wikidata was absent from the
+  # engine rotation, so no panel appeared even for a clean entity).
+  - name: wikidata
+    disabled: false
+  - name: wikipedia
+    disabled: false
   # News-category engines for the `news_search` tool (SearxngClient.search_news queries
   # ?categories=news). These serve the `news` category, so they DON'T dilute a general
   # web_search — they only answer when the news category is requested. Enabled explicitly so
@@ -74,6 +85,11 @@ engines:
   # never dilute a general web_search; the spread is redundancy against any one index throttling.
   - name: arxiv
     disabled: false
+    # arXiv's export.arxiv.org API is chronically slow — it routinely edges past the global 6s
+    # request_timeout and gets dropped (observed at ~6.2s). Give it its own timeout at the
+    # max_request_timeout ceiling (10s) so it actually contributes; science searches aren't
+    # latency-critical, and only arxiv waits longer, not the whole query.
+    timeout: 10.0
   - name: pubmed
     disabled: false
   - name: semantic scholar
