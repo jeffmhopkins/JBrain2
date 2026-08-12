@@ -15,6 +15,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
+from jbrain.agent.agents import AGENTS
 from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
@@ -1039,10 +1040,15 @@ async def gateway_load(
     model_id: str, settings: Settings, gateway: LocalGatewayClient
 ) -> LoadedModelsOut:
     """Warm one provisioned model into the gateway. Shared by the owner screen and
-    the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects."""
+    the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects.
+
+    The warm-up primes the interactive chat persona's system prompt (jerv) into the
+    gateway KV cache so the operator's first conversation turn reuses that prefix
+    instead of paying the cold persona-prompt prefill — the 60-90s first-response
+    latency owners hit right after Load (docs/archive/LLM_PROMPT_CACHE_PLAN.md)."""
     model = _require_provisioned(settings, model_id)
     try:
-        await gateway.load(model.served_model)
+        await gateway.load(model.served_model, warm_system=AGENTS["jerv"].prompt)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway load failed: {exc}") from exc
     return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)

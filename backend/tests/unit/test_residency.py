@@ -589,9 +589,9 @@ class _RecordingGateway(FakeLocalGateway):
         self._events.append(f"unload:{served_model}")
         await super().unload(served_model)
 
-    async def load(self, served_model: str) -> None:
+    async def load(self, served_model: str, *, warm_system: str | None = None) -> None:
         self._events.append(f"load:{served_model}")
-        await super().load(served_model)
+        await super().load(served_model, warm_system=warm_system)
 
 
 def _recording_lock(events: list[str]):
