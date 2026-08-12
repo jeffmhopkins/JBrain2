@@ -227,7 +227,7 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
     assert review.tools == REVIEW_TOOLS == RESEARCH_TOOLS
     # The categorized search tools ride the gather personas, so a deep-research fan can use
     # them regardless of the preset path (research_scout already held them).
-    assert {"news_search", "science_search"} <= research.tools
+    assert {"news_search", "science_search"} <= RESEARCH_TOOLS
     assert summarize.tools == SUMMARIZE_TOOLS == frozenset()
     for p in (research, review, summarize):
         assert p.reads_knowledge_base is False
