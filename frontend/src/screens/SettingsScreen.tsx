@@ -260,7 +260,6 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // a live "Test key" probe. See docs/plans/TAVILY_FETCH_TIER_PLAN.md.
   const [tavily, setTavily] = useState<TavilySettings | null>(null);
   const [tavilyKey, setTavilyKey] = useState("");
-  const [tavilySaving, setTavilySaving] = useState(false);
   const [tavilyTesting, setTavilyTesting] = useState(false);
   const [tavilyTest, setTavilyTest] = useState<TavilyTestResult | null>(null);
   useEffect(() => {
@@ -276,37 +275,33 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     };
   }, []);
 
-  function toggleTavily(enabled: boolean) {
+  function toggleTavily() {
+    if (tavily === null || !tavily.wired) return;
     setTavilyTest(null);
-    void api.updateTavilySettings({ enabled }).then(setTavily);
+    void api.updateTavilySettings({ enabled: !tavily.enabled }).then(setTavily);
   }
 
-  function saveTavilyKey() {
+  // The primary action: save a freshly-pasted key (if any) then run the live probe, so the owner
+  // confirms the key works in one tap. With no new key it just re-tests the stored one.
+  function saveAndTestTavily() {
     const key = tavilyKey.trim();
-    if (!key) return;
-    setTavilySaving(true);
     setTavilyTest(null);
-    void api
-      .updateTavilySettings({ api_key: key })
-      .then((s) => {
-        setTavily(s);
-        setTavilyKey("");
-      })
-      .finally(() => setTavilySaving(false));
+    setTavilyTesting(true);
+    const saved = key
+      ? api.updateTavilySettings({ api_key: key }).then((s) => {
+          setTavily(s);
+          setTavilyKey("");
+        })
+      : Promise.resolve();
+    void saved
+      .then(() => api.testTavilySettings())
+      .then(setTavilyTest)
+      .finally(() => setTavilyTesting(false));
   }
 
   function clearTavilyKey() {
     setTavilyTest(null);
     void api.updateTavilySettings({ clear_key: true }).then(setTavily);
-  }
-
-  function testTavily() {
-    setTavilyTest(null);
-    setTavilyTesting(true);
-    void api
-      .testTavilySettings()
-      .then(setTavilyTest)
-      .finally(() => setTavilyTesting(false));
   }
 
   // The read-only appointments ICS feed — a revocable subscribe URL the owner
@@ -1160,37 +1155,44 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       </section>
 
       <section className="settings-card">
-        <h2 className="settings-label">Tavily web fetch</h2>
-        <p className="settings-meta">
-          a hosted helper that reads pages the box can't — bot walls, paywalls, JavaScript-only
-          sites. It only runs when the on-box readers can't get a page, so it's a fallback, not the
-          default. Paste your Tavily API key, then Test it. The key is stored on the server and
-          never shown again.
-        </p>
-        <div className="settings-value" aria-label="Tavily status">
-          {tavily === null
-            ? "…"
-            : !tavily.wired
-              ? "Not available on this box"
-              : tavily.effective
-                ? "On — key set"
-                : tavily.enabled
-                  ? "On — no key yet"
-                  : "Off"}
+        <div className="settings-cardhead">
+          <h2 className="settings-label">Tavily web fetch</h2>
+          <span
+            className={`settings-pill${tavily?.effective ? " on" : ""}`}
+            aria-label="Tavily status"
+          >
+            <span className="dot" />
+            {tavily === null
+              ? "…"
+              : !tavily.wired
+                ? "Unavailable"
+                : tavily.effective
+                  ? "Active"
+                  : tavily.enabled
+                    ? "No key"
+                    : "Off"}
+          </span>
         </div>
-        <div className="theme-picker" aria-label="Enable Tavily">
-          {[true, false].map((on) => (
-            <button
-              key={on ? "on" : "off"}
-              type="button"
-              aria-pressed={tavily?.enabled === on}
-              className={`seg${tavily?.enabled === on ? " seg-on" : ""}`}
-              disabled={tavily === null || !tavily.wired}
-              onClick={() => toggleTavily(on)}
-            >
-              {on ? "On" : "Off"}
-            </button>
-          ))}
+        <p className="settings-meta">
+          a hosted fallback that reads pages the box can't — bot walls, paywalls, JavaScript-only
+          sites — only when the on-box readers fail. Paste your Tavily API key and Save &amp; test.
+          The key is stored on the server and never shown again.
+        </p>
+        <div className="settings-switch-row">
+          <span className="settings-meta" style={{ margin: 0 }}>
+            Enable the tier
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-label="Enable Tavily"
+            aria-checked={tavily?.enabled ?? false}
+            className={`settings-switch${tavily?.enabled ? " on" : ""}`}
+            disabled={tavily === null || !tavily.wired}
+            onClick={toggleTavily}
+          >
+            <span className="knob" />
+          </button>
         </div>
         <label className="settings-field">
           API key
@@ -1205,19 +1207,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         <div className="settings-actions">
           <button
             type="button"
-            className="seg"
-            disabled={tavilySaving || !tavilyKey.trim() || !tavily?.wired}
-            onClick={saveTavilyKey}
+            className="seg seg-primary"
+            disabled={tavilyTesting || !tavily?.enabled || (!tavilyKey.trim() && !tavily?.key_set)}
+            onClick={saveAndTestTavily}
           >
-            {tavilySaving ? "Saving…" : "Save key"}
-          </button>
-          <button
-            type="button"
-            className="seg"
-            disabled={tavilyTesting || !tavily?.effective}
-            onClick={testTavily}
-          >
-            {tavilyTesting ? "Testing…" : "Test key"}
+            {tavilyTesting ? "Testing…" : "Save & test"}
           </button>
           <button
             type="button"

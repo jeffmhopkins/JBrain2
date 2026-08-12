@@ -984,6 +984,84 @@ h3 {
   gap: 8px;
 }
 
+/* Tavily tier panel: a status pill in the card header + an iOS-style enable switch. */
+.settings-cardhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-cardhead .settings-label {
+  margin: 0;
+}
+.settings-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+.settings-pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.settings-pill.on {
+  background: var(--green-tint);
+  color: var(--green);
+}
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+}
+.settings-switch {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  flex: none;
+  padding: 0;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.settings-switch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.settings-switch .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: left 0.15s, background 0.15s;
+}
+.settings-switch.on {
+  background: var(--steel-tint);
+  border-color: var(--steel);
+}
+.settings-switch.on .knob {
+  left: 22px;
+  background: var(--steel);
+}
+.seg.seg-primary {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: transparent;
+}
+
 /* Read-aloud voice-effects group: speed/pitch sliders + chorus/robot toggles. */
 .settings-fx {
   display: flex;

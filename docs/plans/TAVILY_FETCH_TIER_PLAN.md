@@ -187,8 +187,8 @@ owner pastes the key and it works. A stock box with no key is byte-unchanged.
   the tier to route to).
 - **T3 ✅** — the Settings GUI (the owner control surface). **GUI gate:** three
   interactive mocks in `docs/mocks/tavily-settings/` (A inline / B status-pill+switch /
-  C progressive) — **owner sign-off pending**; the panel currently implements **A**
-  (the Gmail-panel precedent), switchable if the owner picks B/C. Ships a **dedicated**
+  C progressive); the owner chose **B** — the panel ships a status pill + iOS-style enable
+  switch + a combined "Save & test" (the binding spec). Ships a **dedicated**
   `api/tavily_settings.py` (`GET`/`PUT /settings/tavily` + `POST /settings/tavily/test`)
   rather than the generic `/settings`, so the secret is **never echoed** (status returns
   only `enabled`/`key_set`/`wired`/`effective`) and the "Test key" probe runs the live

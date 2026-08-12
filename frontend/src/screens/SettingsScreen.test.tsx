@@ -228,29 +228,27 @@ describe("SettingsScreen stream-LLM-to-wall-display toggle", () => {
 });
 
 describe("SettingsScreen Tavily web-fetch panel", () => {
-  it("saves a key (never echoing it), runs a Test, and toggles the tier off", async () => {
+  it("saves+tests a key (never echoing it) and toggles the tier off", async () => {
     const { tavilyPuts } = stubSettingsFetch();
     setup();
 
-    // Loads enabled-but-keyless (the single-owner default). The key field starts empty.
+    // Loads enabled-but-keyless (the single-owner default): the status pill reads "No key".
     const status = await screen.findByLabelText("Tavily status");
-    await waitFor(() => expect(status).toHaveTextContent("On — no key yet"));
+    await waitFor(() => expect(status).toHaveTextContent("No key"));
 
-    // Paste + Save the key → PUTs api_key, the field clears, status flips to key-set.
+    // Paste + "Save & test" → PUTs api_key then runs the probe; the field clears, pill goes Active.
     const keyField = screen.getByLabelText("API key") as HTMLInputElement;
     fireEvent.change(keyField, { target: { value: "tvly-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save & test" }));
     await waitFor(() => expect(tavilyPuts).toContainEqual({ api_key: "tvly-secret" }));
-    await waitFor(() => expect(status).toHaveTextContent("On — key set"));
+    await waitFor(() => expect(status).toHaveTextContent("Active"));
     expect(keyField.value).toBe(""); // the key is never held/echoed in the field after save
-
-    // Test key → the live probe result is surfaced.
-    fireEvent.click(screen.getByRole("button", { name: "Test key" }));
     expect(await screen.findByText(/key works/)).toBeInTheDocument();
 
-    // Toggling Off PUTs enabled:false (the instant, no-terminal kill switch).
-    const toggle = within(screen.getByLabelText("Enable Tavily"));
-    fireEvent.click(toggle.getByRole("button", { name: "Off" }));
+    // The switch is on; flipping it PUTs enabled:false (the instant, no-terminal kill switch).
+    const toggle = screen.getByRole("switch", { name: "Enable Tavily" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
     await waitFor(() => expect(tavilyPuts).toContainEqual({ enabled: false }));
   });
 });

@@ -390,7 +390,7 @@ stays the sole search backend (Tavily Search scoped out — per-credit deep-rese
 infoboxes/instant-answers). T1 ✅ (tier + settings key/toggle + live provider + `tier="tavily"` debug
 selector, headless), T2 ✅ (learned Tavily-first routing: the `solver_failed` reason + record trigger +
 route), T3 ✅ (the Settings GUI — dedicated `/settings/tavily` never-echoed endpoint + panel + three
-mocks, owner mock sign-off pending), T4 ◻️ (live on-box validation + `extract_depth`/timeout tuning +
+mocks, owner chose mock B (status pill + switch)), T4 ◻️ (live on-box validation + `extract_depth`/timeout tuning +
 24h re-probe confirmation).
 
 **Shipped:** Blocked-domain skip list (build record: `docs/archive/DOMAIN_HEALTH_PLAN.md`) — a global
