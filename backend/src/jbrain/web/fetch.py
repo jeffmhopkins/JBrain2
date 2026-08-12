@@ -1374,7 +1374,8 @@ class WebFetcher:
         renders + un-walls the page on Tavily's cloud and returns clean content, extracted and
         windowed exactly like the reader path (so pagination / find / outline all work). Like the
         reader/solver the endpoint is owner-pinned and NOT SSRF-guarded — only the public TARGET
-        url is (it must be public), and only that url (plus the owner's key, in the body) travels.
+        url is (it must be public), and only that url (plus the owner's key, in the Authorization
+        header) travels.
 
         The tier fires only when it is WIRED (a base URL + a settings provider) AND the live
         provider reports ENABLED with a KEY present — the PWA toggle + key, read fresh here so a
@@ -1388,14 +1389,14 @@ class WebFetcher:
         if not enabled or not api_key:
             return None
         guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
-        payload = {
-            "api_key": api_key,
-            "urls": url,
-            "extract_depth": self._tavily_extract_depth,
-        }
+        # Tavily authenticates via the Authorization: Bearer header — a body `api_key` is rejected
+        # 401 by the current API. `urls` is a list per the docs; extract_depth chooses the render
+        # aggressiveness (advanced un-walls harder at ~2x credits).
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {"urls": [url], "extract_depth": self._tavily_extract_depth}
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as c:
-                resp = await c.post(f"{self._tavily_url}/extract", json=payload)
+                resp = await c.post(f"{self._tavily_url}/extract", json=payload, headers=headers)
                 resp.raise_for_status()
                 body = resp.json()
         except (httpx.HTTPError, ValueError, WebFetchError) as exc:

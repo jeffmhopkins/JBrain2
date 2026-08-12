@@ -2,6 +2,7 @@
 selection"). HTTP is faked via MockTransport — no live network, like the
 connector and LLM adapters."""
 
+import json
 from collections.abc import AsyncIterator, Mapping
 from email.utils import formatdate
 
@@ -3186,3 +3187,28 @@ async def test_tavily_target_is_ssrf_guarded() -> None:
     )
     with pytest.raises(WebFetchError):
         await fetcher.tavily("http://169.254.169.254/latest/meta-data")
+
+
+async def test_tavily_authenticates_with_a_bearer_header_not_a_body_key() -> None:
+    # Tavily's API rejects a body `api_key` with 401 — the key rides the Authorization: Bearer
+    # header, and `urls` is a list. This test locks that request shape in (it caused the live 401).
+    captured: dict[str, object] = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.tavily.com":
+            captured["auth"] = request.headers.get("authorization")
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(200, json=_tavily_body("https://x.example/walled"))
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tavily_provider(True, "tvly-key"),
+    )
+    result = await fetcher.tavily("https://x.example/walled")
+    assert result is not None and "Tavily's hosted extractor recovered" in result.text
+    assert captured["auth"] == "Bearer tvly-key"  # header auth, never a body api_key
+    body = cast(dict, captured["body"])
+    assert "api_key" not in body  # the key must NOT be in the body (the 401 cause)
+    assert body["urls"] == ["https://x.example/walled"]  # a list, per the Tavily docs
