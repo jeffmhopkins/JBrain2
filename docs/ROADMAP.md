@@ -376,12 +376,16 @@ hosted `web_fetch` recovery tier (Tavily Extract) after direct → reader → by
 / paywall / JS-shell pages the on-box browser sidecars miss **without adding a sidecar** the no-terminal
 owner (non-negotiable #10) can't debug. `_fetch_via_tavily` mirrors the reader seam — owner-pinned base
 URL, SSRF-guarded public target, `_is_challenge_page`/`_is_paywall_page` guards on the output, windowed
-by `_window_and_find` — and is **opt-in / off by default**: an empty `tavily_api_key` makes the tier a
-no-op, so a stock deploy is byte-unchanged and cost + third-party exposure stay bounded to
-already-blocked URLs. Extract-only: SearXNG stays the sole search backend (Tavily Search scoped out —
-per-credit deep-research cost + loss of infoboxes/instant-answers). T1 (tier + config + a `tier="tavily"`
-`POST /api/debug/fetch` selector, full offline coverage) then T2 (live validation, the last-vs-before-byparr
-tier-order decision, and whether a `tavily_first_domains` shortcut earns its keep).
+by `_window_and_find`. Single-owner box, so it **ships enabled** and is operated **entirely from the
+PWA**: the API key + a manual on/off toggle live in **Settings** (the Gmail-credentials precedent —
+secret stored via GUI, never echoed, `JBRAIN_TAVILY_API_KEY` env fallback), read live per fetch via a
+settings-provider seam into the fetcher, with a no-terminal "Test key" button on the `tier="tavily"`
+debug route. Inert until a key is entered (keyless box byte-unchanged); third-party exposure bounded to
+already-blocked URLs, the toggle its instant off switch. Extract-only: SearXNG stays the sole search
+backend (Tavily Search scoped out — per-credit deep-research cost + loss of infoboxes/instant-answers).
+T1 (tier + settings key/toggle + live provider + `tier="tavily"` debug selector, headless, full offline
+coverage), T2 (the Settings GUI behind the three-mock GUI gate), T3 (live validation, the
+last-vs-before-byparr tier-order decision, and whether a `tavily_first_domains` shortcut earns its keep).
 
 **Shipped:** Blocked-domain skip list (build record: `docs/archive/DOMAIN_HEALTH_PLAN.md`) — a global
 24h paywall/bot-wall skip list (`app.blocked_domains`, migration 0163) so `web_fetch`/`web_search`
