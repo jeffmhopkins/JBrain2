@@ -85,6 +85,11 @@ engines:
   # never dilute a general web_search; the spread is redundancy against any one index throttling.
   - name: arxiv
     disabled: false
+    # arXiv's export.arxiv.org API is chronically slow — it routinely edges past the global 6s
+    # request_timeout and gets dropped (observed at ~6.2s). Give it its own timeout at the
+    # max_request_timeout ceiling (10s) so it actually contributes; science searches aren't
+    # latency-critical, and only arxiv waits longer, not the whole query.
+    timeout: 10.0
   - name: pubmed
     disabled: false
   - name: semantic scholar
