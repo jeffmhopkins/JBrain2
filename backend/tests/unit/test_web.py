@@ -2,7 +2,8 @@
 selection"). HTTP is faked via MockTransport — no live network, like the
 connector and LLM adapters."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
+from email.utils import formatdate
 
 import httpx
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from jbrain.agent.loop import ToolCallBudget, ToolContext, ToolOutput
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.db.session import SessionContext
+from jbrain.web.feeds import FeedClient
 from jbrain.web.fetch import SearchFormError, WebFetcher, WebFetchError
 from jbrain.web.search import SearxngClient, WebSearchError
 
@@ -800,6 +802,96 @@ async def test_news_search_shares_the_scout_search_budget() -> None:
     # The budget is now spent — a following web_search is refused by the shared counter.
     second = await handlers["web_search"]({"query": "fed"}, ctx)
     assert "SEARCH BUDGET SPENT" in str(second)
+
+
+# --- news_feed handler (curated per-category RSS/Atom) ------------------------
+
+_FEED_NOW = 1_786_000_000  # a fixed wall clock for deterministic recency windows
+_FEED_LONG = "This is a full feed article body sentence with substance. " * 20
+
+
+def _feed_rss(items: str) -> bytes:
+    return (
+        "<?xml version='1.0'?>"
+        "<rss version='2.0' xmlns:content='http://purl.org/rss/1.0/modules/content/'>"
+        f"<channel><title>Space Wire</title>{items}</channel></rss>"
+    ).encode()
+
+
+def _feed_full(url: str) -> str:
+    return (
+        f"<item><title>Full launch story</title><link>{url}</link>"
+        f"<pubDate>{formatdate(_FEED_NOW - 600, usegmt=True)}</pubDate>"
+        f"<content:encoded><![CDATA[<p>{_FEED_LONG}</p>]]></content:encoded></item>"
+    )
+
+
+def _feed_summary(url: str) -> str:
+    return (
+        f"<item><title>Lead only story</title><link>{url}</link>"
+        f"<pubDate>{formatdate(_FEED_NOW - 600, usegmt=True)}</pubDate>"
+        "<description>A short summary lead, no full body.</description></item>"
+    )
+
+
+def _feed_client(routes: Mapping[str, bytes | int], feeds: dict[str, list[str]]) -> FeedClient:
+    def handle(request: httpx.Request) -> httpx.Response:
+        val = routes.get(str(request.url))
+        if val is None:
+            return httpx.Response(404)
+        if isinstance(val, int):
+            return httpx.Response(val)
+        return httpx.Response(200, content=val, headers={"content-type": "application/rss+xml"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle))
+    return FeedClient(fetcher, feeds, clock=lambda: float(_FEED_NOW))
+
+
+async def test_news_feed_surfaces_full_text_as_read_and_leads_as_unread() -> None:
+    feed = _feed_full("https://space.example/full") + _feed_summary("https://space.example/lead")
+    feeds = _feed_client(
+        {"https://feed.example/rss": _feed_rss(feed)}, {"space": ["https://feed.example/rss"]}
+    )
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), feeds=feeds)
+    out = await handlers["news_feed"]({"category": "space"}, CTX)
+    assert isinstance(out, ToolOutput)
+    body = str(out)
+    assert "✓ full text" in body and "lead only" in body
+    assert "full feed article body" in body  # the full item's body is inline
+    # The full-text item is a read source; the lead-only item is an unopened one.
+    read = {s.url: s.read for s in out.web_sources}
+    assert read == {"https://space.example/full": True, "https://space.example/lead": False}
+
+
+async def test_news_feed_reports_not_configured_when_disabled() -> None:
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher())  # no feeds wired
+    assert "not configured" in str(await handlers["news_feed"]({"category": "space"}, CTX))
+
+
+async def test_news_feed_lists_known_categories_for_an_unknown_one() -> None:
+    feeds = _feed_client(
+        {"https://feed.example/rss": _feed_rss(_feed_summary("https://space.example/a"))},
+        {"space": ["https://feed.example/rss"]},
+    )
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), feeds=feeds)
+    out = str(await handlers["news_feed"]({"category": "sports"}, CTX))
+    assert "No feed items" in out and "space" in out
+
+
+async def test_news_feed_shares_the_scout_search_budget() -> None:
+    # news_feed is a discovery call, so it draws on the SAME ToolCallBudget as web_search/
+    # news_search: a scout can't dodge the ceiling (or fan out unbounded feed fetches) by
+    # switching to feeds — one news_feed plus the cap's worth of search exhausts it.
+    feeds = _feed_client(
+        {"https://feed.example/rss": _feed_rss(_feed_summary("https://space.example/a"))},
+        {"space": ["https://feed.example/rss"]},
+    )
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), feeds=feeds)
+    ctx = _budget_ctx(1)
+    first = await handlers["news_feed"]({"category": "space"}, ctx)
+    assert isinstance(first, ToolOutput)  # the one allowed call succeeds
+    second = await handlers["web_search"]({"query": "x"}, ctx)
+    assert "SEARCH BUDGET SPENT" in str(second)  # the shared counter is now spent
 
 
 # --- web_search extras (infobox + instant answers) and the recency window ------

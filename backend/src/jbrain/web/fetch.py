@@ -967,6 +967,39 @@ class WebFetcher:
             body_truncated=body_truncated,
         )
 
+    async def fetch_feed(self, url: str) -> bytes:
+        """GET an RSS/Atom feed URL through the shared SSRF guard + byte cap and return its RAW
+        BYTES for offline parsing (jbrain.web.feeds.parse_feed → feedparser). Direct-only: no
+        reader/solver escalation (those render a GET to markdown, useless for XML) and no
+        youtube/paywall/challenge handling (a feed is data, not an article page). Presents as a
+        browser (BROWSER_HEADERS) so a feed behind light bot management still answers; a hard
+        block (403) or transport error raises WebFetchError and the FeedClient drops that feed."""
+        headers = {
+            **BROWSER_HEADERS,
+            # Ask for a feed first, but accept anything — some hosts serve feeds as text/xml or
+            # even text/html, so this is a hint, not a filter (parse_feed sniffs the body).
+            "Accept": (
+                "application/rss+xml, application/atom+xml, application/xml;q=0.9,"
+                " application/json;q=0.8, */*;q=0.7"
+            ),
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+            ) as client:
+                resp = await self._send_following_safe_redirects(
+                    client, "GET", url, headers=headers
+                )
+                body, _truncated = await _read_capped(resp)
+        except httpx.HTTPError as exc:
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            transient = status is None or status >= 500
+            log.warning("web.feed_fetch_failed", url=url, status=status, error=repr(exc))
+            raise WebFetchError(
+                _fetch_error_message(status), status=status, transient=transient
+            ) from exc
+        return body
+
     async def fetch_html(
         self,
         url: str,
