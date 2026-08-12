@@ -123,8 +123,6 @@ _KNOWN_SEARXNG_ENGINES = frozenset(
         "startpage",
         "google",
         "wikipedia",
-        # Structured infobox source for web_search's knowledge panel — SearXNG built-in.
-        "wikidata",
         # News-category engines (news_search) — SearXNG built-ins.
         "google news",
         "bing news",
