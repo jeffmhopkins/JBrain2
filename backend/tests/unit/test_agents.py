@@ -213,8 +213,21 @@ def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
     child-initiated nesting was removed — NONE holds `spawn_subagent`: children are
     always leaves."""
     research, review, summarize = (AGENTS["research"], AGENTS["review"], AGENTS["summarize"])
-    assert research.tools == RESEARCH_TOOLS == WEB_TOOLS | {"current_time", "portal_search"}
+    assert (
+        research.tools
+        == RESEARCH_TOOLS
+        == WEB_TOOLS
+        | {
+            "news_search",
+            "science_search",
+            "current_time",
+            "portal_search",
+        }
+    )
     assert review.tools == REVIEW_TOOLS == RESEARCH_TOOLS
+    # The categorized search tools ride the gather personas, so a deep-research fan can use
+    # them regardless of the preset path (research_scout already held them).
+    assert {"news_search", "science_search"} <= RESEARCH_TOOLS
     assert summarize.tools == SUMMARIZE_TOOLS == frozenset()
     for p in (research, review, summarize):
         assert p.reads_knowledge_base is False
@@ -367,8 +380,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
         ),
         "research": (
-            "agent-research-v16",
-            "495de77a56f5bdd5bec9387ad64febb688363d53724d36ad0427f5b4a9c33bac",
+            "agent-research-v17",
+            "fe7214009384173ccfe5d0fbedfe2ea21613feb651ded4bc792c20a140680795",
         ),
         "review": (
             "agent-review-v8",

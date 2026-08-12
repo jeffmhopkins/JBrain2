@@ -283,7 +283,14 @@ SUBAGENT_PERSONAS = frozenset(
 # NO `current_location` (M2) either: the location read is never in a child persona.
 # This allowlist is a ceiling — a child's effective tools are still clamped to the
 # parent's at dispatch.
-RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time", "portal_search"})
+# `news_search`/`science_search` ride the research gather personas too — a deep-research
+# gather on a current-events or scholarly angle wants the categorized search, not just the
+# general web. Flows to `research` (single-phase gather), `research_deep` (deepest task agent,
+# via RESEARCH_DEEP_TOOLS), and `review` — so EVERY deep-research fan can reach them, not only
+# the preset scout path (research_scout already holds them). All ⊆ jerv, so the clamp keeps them.
+RESEARCH_TOOLS = WEB_TOOLS | frozenset(
+    {"news_search", "science_search", "current_time", "portal_search"}
+)
 REVIEW_TOOLS = RESEARCH_TOOLS
 # The two-phase (scout → read) gather personas (REPORT_PRESET_PLAN.md), split by ROLE (not by a
 # hard tool line): the scout finds sources, the reader writes findings from them.
