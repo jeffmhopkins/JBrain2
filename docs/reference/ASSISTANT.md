@@ -372,7 +372,7 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   the learner to their own answer by questioning and never reads owner data; its
   prompt forbids handing over graded answers.
 - **`jerv`** — a sandboxed general-purpose web chatbot: the internet tools
-  (`web_search`, `web_fetch`), the dataless `current_time`, and the owner-approved
+  (`web_search`, `news_search`, `web_fetch`), the dataless `current_time`, and the owner-approved
   `current_location`, and **no knowledge-base tools** — it runs with empty read
   scopes and writes no episodic memory, so it calls no knowledge
   tool and reads no note, entity, list, or appointment. Every turn is also given the
@@ -591,6 +591,18 @@ accepted this narrow location-into-jerv flow when enabling it. The ambient date/
 is non-personal. Search still goes through a **self-hosted SearXNG**
 instance (pinned base URL from config, query text only) — local-first like the
 on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams.
+
+**`news_search` — the current-events twin of `web_search`.** It hits the SAME on-box
+SearXNG but with `categories=news` + a `time_range` recency window (day/week/month/year),
+so it returns dated article leads from the news engines (Google/Bing News, …) — each with
+the article's publish date the general category lacks — instead of the almanac/calendar
+pages a date-stuffed general query pulls. It's the right tool for a news brief: recency is a
+first-class arg (search by topic, `since` handles the date), and it drops onto the
+freely-fetchable outlets a walled major (Reuters/WSJ/Bloomberg — which block even the solver)
+can't serve. It shares the scout's `web_search` budget (so it can't sidestep that ceiling)
+and the 24h domain-skip filter. jerv and `research_scout` hold it; the leads it returns are
+still `web_fetch`-then-verify like any search hit. The news engines are enabled in
+`deploy/searxng/settings.yml`.
 The same SearXNG also backs the **jcode sandbox's `web-search` / `web-fetch`
 helpers**, bridged through the api (the sandbox is on the `jcode` network and can't
 reach searxng directly) and gated per session by the owner's opt-in — the identical

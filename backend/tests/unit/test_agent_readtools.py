@@ -821,6 +821,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
     # sit with the web tools here.
     web = {
         "web_search",
+        "news_search",
         "web_fetch",
         "current_location",
         "weather",
@@ -1192,6 +1193,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "web_search",
             2,
             "08fa323fcb29214df8b9a1d3ad87d122d267dec2abe9b5cb861bd0df056d5fe2",
+        ),
+        "news_search.tool": (
+            "news_search",
+            1,
+            "3d67951c5d5cc7da93cb42e57a182f0dcb1b507de44613ecc75a4c68807de952",
         ),
         "web_fetch.tool": (
             "web_fetch",

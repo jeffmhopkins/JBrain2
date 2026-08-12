@@ -51,6 +51,23 @@ class SearchHit:
     snippet: str
 
 
+@dataclass(frozen=True)
+class NewsHit:
+    """One news result row: a search hit plus the article's publish date as the news
+    engine reported it (`published`, "" when the engine gave none) — the freshness
+    signal a general web result lacks, so a dated lead can be judged recent-or-stale."""
+
+    title: str
+    url: str
+    snippet: str
+    published: str
+
+
+# SearXNG's recency filter values (`time_range`). A news tool takes one of these instead
+# of a raw date, mapping "today"/"this week" to the coarse window the engines support.
+NEWS_TIME_RANGES = ("day", "week", "month", "year")
+
+
 class SearxngClient:
     """Query a pinned SearXNG instance. `transport` is injectable so tests run
     against a mock with no network (DEVELOPMENT.md "no network in tests")."""
@@ -70,6 +87,13 @@ class SearxngClient:
         # `timer` threads our injectable clock for deterministic expiry tests. None when
         # disabled (`cache_ttl_s <= 0`). Only non-empty results are stored (see `search`).
         self._cache: TTLCache[tuple[str, int], list[SearchHit]] | None = (
+            TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
+            if cache_ttl_s > 0
+            else None
+        )
+        # A twin cache for the news category, keyed on (query, time_range, limit) so a
+        # deep-research fan's repeated news queries collapse the same way general searches do.
+        self._news_cache: TTLCache[tuple[str, str, int], list[NewsHit]] | None = (
             TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
             if cache_ttl_s > 0
             else None
@@ -119,4 +143,55 @@ class SearxngClient:
         # whole TTL.
         if self._cache is not None and hits:
             self._cache[key] = hits
+        return hits
+
+    async def search_news(
+        self, query: str, *, time_range: str = "day", limit: int = _DEFAULT_LIMIT
+    ) -> list[NewsHit]:
+        """Search SearXNG's NEWS category — the same on-box metasearch, but dispatched to the
+        news engines (Google/Bing/… News) and filtered to a recency window (`time_range`, one of
+        NEWS_TIME_RANGES; anything else means no window). News rows carry a `publishedDate` the
+        general category lacks, so each hit keeps that date as a freshness signal. Order is
+        SearXNG's blended ranking (not re-sorted), so a strong recent story stays on top rather
+        than a bare date sort burying the relevant lead. Raises WebSearchError like `search`."""
+        if not self._base_url:
+            raise WebSearchError("web search is not configured on this instance")
+        tr = time_range if time_range in NEWS_TIME_RANGES else ""
+        key = (query.strip(), tr, limit)
+        if self._news_cache is not None and (cached := self._news_cache.get(key)) is not None:
+            return cached
+        params = {"q": query, "format": "json", "categories": "news"}
+        if tr:
+            params["time_range"] = tr
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
+                resp = await client.get(f"{self._base_url}/search", params=params)
+                resp.raise_for_status()
+                body = resp.json()
+        except httpx.HTTPStatusError as exc:
+            log.warning("web.news_failed", status=exc.response.status_code, error=repr(exc))
+            raise WebSearchError("the web search service is unavailable right now") from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("web.news_failed", error=repr(exc))
+            raise WebSearchError("the web search service is unavailable right now") from exc
+        rows = body.get("results") if isinstance(body, dict) else None
+        if not isinstance(rows, list):
+            return []
+        hits: list[NewsHit] = []
+        for row in rows[: max(limit, 0)]:
+            if not isinstance(row, dict):
+                continue
+            url = str(row.get("url") or "").strip()
+            if not url:
+                continue
+            hits.append(
+                NewsHit(
+                    title=str(row.get("title") or "").strip() or url,
+                    url=url,
+                    snippet=str(row.get("content") or "").strip(),
+                    published=str(row.get("publishedDate") or "").strip(),
+                )
+            )
+        if self._news_cache is not None and hits:
+            self._news_cache[key] = hits
         return hits

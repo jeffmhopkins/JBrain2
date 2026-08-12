@@ -34,7 +34,7 @@ from jbrain.web.fetch import (
     is_youtube_url,
     window_text,
 )
-from jbrain.web.search import SearxngClient, WebSearchError
+from jbrain.web.search import NEWS_TIME_RANGES, SearxngClient, WebSearchError
 
 log = structlog.get_logger()
 
@@ -443,6 +443,84 @@ def build_web_handlers(
             header + "\n" + "\n".join(lines) + note + budget_note, web_sources=web_sources
         )
 
+    async def news_search_tool(arguments: dict, ctx: ToolContext) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            return "news_search needs a non-empty query."
+        # Coarse recency window (SearXNG time_range). Default to the day for a news brief; a bad
+        # value degrades to the widest supported window rather than erroring.
+        since = str(arguments.get("since", "day")).strip().lower() or "day"
+        if since not in NEWS_TIME_RANGES:
+            since = "day"
+        # News search hits the same upstreams as web_search, so it draws on the SAME scout
+        # budget — else a scout could sidestep its ceiling by switching tools (agents.py).
+        budget = ctx.search_budget
+        if budget is not None and budget.exhausted:
+            return (
+                f"SEARCH BUDGET SPENT — you have used all {budget.limit} of your search "
+                "calls and cannot search again. Open the leads you already found with "
+                "web_fetch, then END your reply with the RECOMMENDED SOURCES: block."
+            )
+        if budget is not None:
+            budget.used += 1
+        budget_note = ""
+        if budget is not None:
+            left = budget.remaining
+            budget_note = (
+                f"\n\n[SEARCH BUDGET: {left} search call(s) left of {budget.limit}"
+                + (
+                    " — that was your LAST one; stop searching, web_fetch your leads, and return"
+                    " your RECOMMENDED SOURCES."
+                    if left == 0
+                    else ". web_fetch is unlimited."
+                )
+                + "]"
+            )
+        limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
+        if emit:
+            emit("web_search", f"news: {query}")
+        try:
+            hits = await search.search_news(query, time_range=since, limit=limit)
+        except WebSearchError as exc:
+            return str(exc) + budget_note
+        if not hits:
+            return (
+                f"No recent news for '{query}' in the last {since}. Try a broader `since` "
+                "(week/month) or a different topic." + budget_note
+            )
+        # Drop hosts on the 24h paywall/bot-wall skip list, same as web_search — a listed outlet
+        # (a Reuters/WSJ that already blocked us) is a dead lead the reader can't open.
+        blocked = await domain_skips.active_hosts() if domain_skips is not None else frozenset()
+        kept = [h for h in hits if normalize_host(h.url) not in blocked]
+        hidden = len(hits) - len(kept)
+        note = (
+            f"\n\n({hidden} result(s) hidden as known-paywalled or inaccessible.)" if hidden else ""
+        )
+        if not kept:
+            return (
+                f"No usable news for '{query}': all {hidden} were on sites recently found "
+                "paywalled or inaccessible (skipped for the next day). Try a different topic."
+                + budget_note
+            )
+        # Each line leads with the article's own date (freshness at a glance) and its outlet, then
+        # the URL and snippet — a dated lead the reader opens, ordered by SearXNG's blended rank.
+        lines = []
+        for h in kept:
+            when = h.published or "no date"
+            outlet = normalize_host(h.url) or ""
+            head = f"- {h.title}  [{when}{f' · {outlet}' if outlet else ''}]"
+            lines.append(f"{head}\n  {h.url}\n  {h.snippet}")
+        web_sources = tuple(WebSource(url=h.url, title=h.title) for h in kept)
+        header = (
+            "Recent news — UNVERIFIED LEADS (a headline/snippet is NOT a fact; web_fetch a story"
+            " and read it before reporting or citing anything, and check the page's own date"
+            " against today). Prefer freely-fetchable outlets (AP, NPR, BBC, PBS, Guardian,"
+            " primary sources) over walled ones:"
+        )
+        return ToolOutput(
+            header + "\n" + "\n".join(lines) + note + budget_note, web_sources=web_sources
+        )
+
     async def web_fetch_tool(arguments: dict, ctx: ToolContext) -> str:
         url = str(arguments.get("url", "")).strip()
         if not url:
@@ -671,7 +749,11 @@ def build_web_handlers(
         source = WebSource(url=art.source_url, title=art.title or art.source_url, read=True)
         return ToolOutput(out, web_sources=(source,))
 
-    handlers: dict[str, ToolHandler] = {"web_search": web_search_tool, "web_fetch": web_fetch_tool}
+    handlers: dict[str, ToolHandler] = {
+        "web_search": web_search_tool,
+        "news_search": news_search_tool,
+        "web_fetch": web_fetch_tool,
+    }
     # Only offer read_artifact when there's a store behind it — otherwise its sidecar has no
     # handler and the strict registry pairing would fail (load_registry marks it optional).
     if artifacts is not None and blobs is not None:

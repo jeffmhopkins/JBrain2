@@ -58,3 +58,15 @@ engines:
     disabled: false
   - name: startpage
     disabled: false
+  # News-category engines for the `news_search` tool (SearxngClient.search_news queries
+  # ?categories=news). These serve the `news` category, so they DON'T dilute a general
+  # web_search — they only answer when the news category is requested. Enabled explicitly so
+  # the news category is populated regardless of upstream default toggles; like the general
+  # engines, the spread is redundancy against any one upstream's rate-limit. Google/Bing News
+  # carry a publish date per result, which is the freshness signal the news tool surfaces.
+  - name: google news
+    disabled: false
+  - name: bing news
+    disabled: false
+  - name: duckduckgo news
+    disabled: false
