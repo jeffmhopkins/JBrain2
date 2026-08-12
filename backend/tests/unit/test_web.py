@@ -965,6 +965,53 @@ def test_is_challenge_page_precision() -> None:
     assert not _is_challenge_page("Hi There", "Heading. First para. Second para.")
 
 
+def test_google_unusual_traffic_page_is_a_challenge() -> None:
+    # Google's reCAPTCHA "sorry" page — what the defunct webcache fallback returns. Its ~130-word
+    # body clears the weak-marker length gate, so before this fix it slipped through and got cited
+    # as a source in deep-research news runs. Its canonical strings must flag it at any length.
+    from jbrain.web.fetch import _is_challenge_page
+
+    google_sorry = (
+        "About this page\n\n"
+        "Our systems have detected unusual traffic from your computer network. This page "
+        "checks to see if it's really you sending the requests, and not a robot. "
+        "This page appears when Google automatically detects requests coming from your "
+        "computer network which appear to be in violation of the Terms of Service. "
+        "The block will expire shortly after those requests stop. In the meantime, solving "
+        "the above CAPTCHA will let you continue to use our services. This traffic may have "
+        "been sent by malicious software, a browser plug-in, or a script that sends automated "
+        "requests. If you share your network connection, ask your administrator for help."
+    )
+    assert _is_challenge_page("", google_sorry)
+    # A genuine article that happens to discuss network traffic is NOT flagged (precision).
+    assert not _is_challenge_page(
+        "Carriers report unusual traffic surge",
+        "Mobile carriers said data traffic from home networks rose sharply this quarter. " * 12,
+    )
+
+
+async def test_reader_returning_the_google_captcha_is_a_blocked_fetch() -> None:
+    # The reader renders the Google "unusual traffic" CAPTCHA (its webcache fallback) as markdown.
+    # It must count as a reader miss so the block surfaces honestly instead of being cited — the
+    # exact page that appeared as a "source" in the news deep-research screenshots.
+    google_md = (
+        b"# About this page\n\nOur systems have detected unusual traffic from your computer "
+        b"network. This page checks to see if it's really you sending the requests, and not a "
+        b"robot. Solving the above CAPTCHA will let you continue to use our services."
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            return httpx.Response(200, content=google_md, headers={"content-type": "text/markdown"})
+        return httpx.Response(401, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle), reader_url="http://reader:3000")
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 401  # the real block, not Google's CAPTCHA text
+    assert "unusual traffic" not in str(excinfo.value).lower()
+
+
 # A dynamic gov portal served as its empty search form (the Sunbiz ByName / DFS pb_*.asp shape):
 # a short page whose main content is a query field + submit, with no results.
 _SEARCH_FORM_HTML = (
@@ -1105,6 +1152,166 @@ async def test_solver_failure_surfaces_the_block() -> None:
     with pytest.raises(WebFetchError) as excinfo:
         await fetcher.fetch("https://x.example/walled")
     assert excinfo.value.status == 403
+
+
+# The reader "succeeds" (200) but renders only the blocked origin's bare title — a thin shell,
+# not the article (a real deep-research news miss: Reuters 401 → reader 429 → "reuters.com\n===").
+_THIN_READER_MD = b"reuters.com\n==============="
+
+
+async def test_a_thin_reader_shell_still_escalates_to_the_solver() -> None:
+    # Direct 401 (Reuters's bot wall) → the reader renders a near-empty shell that is NOT a
+    # challenge page, so it used to be accepted and the solver never ran. Now a sub-threshold
+    # result no longer short-circuits escalation: the stealth browser is tried and recovers the
+    # real article. This is the byparr-never-invoked bug the fix targets.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(401, headers={"content-type": "text/html"}),
+                reader=_THIN_READER_MD,
+                solver_response={"url": "https://x.example/walled", "response": _SOLVED_HTML},
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Real article content" in result.text  # the solver's page, not the reader's shell
+
+
+async def test_a_thin_reader_shell_is_returned_when_no_tier_beats_it() -> None:
+    # When the solver also fails to recover more, the thin reader result is still returned rather
+    # than lost — escalation only PREFERS a richer tier, it never discards what it already has.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(401, headers={"content-type": "text/html"}),
+                reader=_THIN_READER_MD,
+                solver_response=None,  # solver 500s → a miss
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "reuters.com" in result.text
+
+
+# --- solver-first domains (a known hard-wall origin skips the doomed direct+reader legs) ---
+
+
+_ORIGIN_HTML = (
+    b"<html><head><title>Origin</title></head><body><p>Direct origin content.</p></body></html>"
+)
+
+
+def _tracking_handler(*, reader: bytes | None, solver_response, hits: list[str], direct=None):  # type: ignore[no-untyped-def]
+    """Like `_tiered_handler` but records the host of every leg, so a test can assert which
+    tiers ran. The origin host answers with `direct` (default: a 200 article)."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        hits.append(request.url.host)
+        if request.url.host == "byparr":
+            if solver_response is None:
+                return httpx.Response(500)
+            return httpx.Response(
+                200, json={"solution": {"url": str(request.url), **solver_response}}
+            )
+        if request.url.host == "reader":
+            if reader is None:
+                return httpx.Response(500)
+            return httpx.Response(200, content=reader, headers={"content-type": "text/markdown"})
+        if direct is not None:
+            return direct
+        return httpx.Response(200, content=_ORIGIN_HTML, headers={"content-type": "text/html"})
+
+    return handle
+
+
+async def test_solver_first_domain_skips_the_direct_and_reader_legs() -> None:
+    # A listed domain (reuters.com) goes straight to the solver — no direct fetch, no reader —
+    # so it never pays the 401 + 429 that always fail on it. The solver's page is returned.
+    hits: list[str] = []
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tracking_handler(
+                reader=_THIN_READER_MD,
+                solver_response={"response": _SOLVED_HTML},
+                hits=hits,
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+        solver_first_domains=("reuters.com",),
+    )
+    result = await fetcher.fetch("https://www.reuters.com/world/us/some-story-2026-08-12/")
+    assert "Real article content" in result.text  # the solver served it
+    assert hits == ["byparr"]  # neither the origin nor the reader was touched
+
+
+async def test_solver_first_falls_back_to_the_normal_path_on_a_solver_miss() -> None:
+    # byparr is down (500): the solver-first shortcut misses, so the fetch falls through to the
+    # ordinary path. Here the origin also 401s and the reader recovers it — and crucially the
+    # solver is NOT retried on the fall-through (skip_solver), so byparr is hit exactly once.
+    hits: list[str] = []
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tracking_handler(
+                reader=_READER_MD,  # the reader recovers the page
+                solver_response=None,  # byparr 500s
+                hits=hits,
+                direct=httpx.Response(401, headers={"content-type": "text/html"}),
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+        solver_first_domains=("reuters.com",),
+    )
+    result = await fetcher.fetch("https://www.reuters.com/world/us/some-story/")
+    assert "Rendered by the reader" in result.text  # the reader safety-net recovered it
+    assert hits.count("byparr") == 1  # tried once up front, NOT again on the fall-through
+    assert "www.reuters.com" in hits and "reader" in hits  # both fall-through legs ran
+
+
+async def test_a_non_listed_domain_takes_the_normal_direct_path() -> None:
+    # An unlisted domain is unaffected: it fetches directly first and never front-loads the solver.
+    hits: list[str] = []
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tracking_handler(
+                reader=_READER_MD, solver_response={"response": _SOLVED_HTML}, hits=hits
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+        solver_first_domains=("reuters.com",),
+    )
+    result = await fetcher.fetch("https://apnews.com/article/some-story")
+    assert "Direct origin content" in result.text  # served by the direct leg
+    assert hits == ["apnews.com"]  # solver never front-loaded
+
+
+def test_prefers_solver_matches_domain_and_subdomains_only() -> None:
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200)),
+        solver_url="http://byparr:8191",
+        solver_first_domains=("reuters.com", "wsj.com"),
+    )
+    assert fetcher._prefers_solver("https://reuters.com/x")
+    assert fetcher._prefers_solver("https://www.reuters.com/x")
+    assert fetcher._prefers_solver("https://feeds.wsj.com/y")
+    assert not fetcher._prefers_solver("https://apnews.com/x")
+    assert not fetcher._prefers_solver("https://notreuters.com/x")  # suffix guard, not substring
+    assert not fetcher._prefers_solver("https://reuters.com.evil.test/x")
+
+
+def test_solver_first_is_off_when_the_solver_is_unconfigured() -> None:
+    # No solver endpoint → nothing to prefer, so a listed domain still takes the normal path.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200)),
+        solver_first_domains=("reuters.com",),
+    )
+    assert not fetcher._prefers_solver("https://www.reuters.com/x")
 
 
 # --- truncation + pagination (a long page's tail is fetchable, not just flagged) ----

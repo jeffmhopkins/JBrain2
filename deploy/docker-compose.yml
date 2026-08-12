@@ -111,6 +111,11 @@ services:
       # (env_ignore_empty), so the tier is active out of the box; set SOLVER_URL to override, or
       # point it at a non-serving endpoint to disable. Worker inherits via *api_env.
       JBRAIN_SOLVER_URL: ${SOLVER_URL:-}
+      # Domains routed STRAIGHT to the solver, skipping the direct+reader legs that only fail on
+      # a hard bot-wall (Reuters/WSJ/Bloomberg 401 the fetch and 429 the reader). JSON array;
+      # empty falls back to the built-in default list (env_ignore_empty). A solver miss still
+      # falls back to the normal path, so a byparr outage degrades rather than hard-fails.
+      JBRAIN_SOLVER_FIRST_DOMAINS: ${SOLVER_FIRST_DOMAINS:-}
       # On-box speech-to-text — served by the always-on `tts-stt` service (below), but the
       # STT MODEL is a heavy opt-in download, so transcribe stays OFF (empty URL) until
       # `jbrain enable-whisper` provisions the model and sets WHISPER_URL in .env

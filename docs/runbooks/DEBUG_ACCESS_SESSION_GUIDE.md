@@ -141,6 +141,12 @@ scripts/debug-connect.sh sql "select code, name from app.domains order by code"
 scripts/debug-connect.sh fetch https://example.com/walled-page
 scripts/debug-connect.sh fetch https://example.com/long-page --find "the section keyword"
 
+# Solve — force ONLY the byparr challenge-solver tier (skip direct+reader), to test the
+# stealth browser in isolation against a hard-wall URL (Reuters/WSJ/…). A 400 tells apart
+# "solver unconfigured" from "byparr ran but is still challenged/empty" (a real miss); pair
+# with `logs byparr` for the browser-side detail.
+scripts/debug-connect.sh solve https://www.reuters.com/world/us/some-story/
+
 # Container logs (proxied to the supervisor).
 scripts/debug-connect.sh logs api --tail 200
 

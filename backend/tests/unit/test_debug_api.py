@@ -609,6 +609,59 @@ def test_fetch_route_requires_a_valid_bearer(debug_client: tuple[TestClient, str
     assert resp.status_code == 401
 
 
+_SOLVED = (
+    "<html><head><title>Solved</title></head>"
+    "<body><p>Content the stealth browser got.</p></body></html>"
+)
+
+
+def test_solve_route_forces_the_byparr_tier(debug_client: tuple[TestClient, str]) -> None:
+    # The /solve route drives ONLY the solver: byparr answers the FlareSolverr-shape /v1, and the
+    # origin would 401 — but the solve route never touches it, proving the direct leg is skipped.
+    client, key = debug_client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "byparr":
+            return httpx.Response(
+                200, json={"solution": {"url": "https://x.example/w", "response": _SOLVED}}
+            )
+        return httpx.Response(401, headers={"content-type": "text/html"})
+
+    _state(client).web_fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle), solver_url="http://byparr:8191"
+    )
+    resp = client.post("/api/debug/solve", headers=_auth(key), json={"url": "https://x.example/w"})
+    assert resp.status_code == 200
+    assert "stealth browser" in resp.json()["text"]
+
+
+def test_solve_route_400s_when_the_solver_is_unconfigured(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    client, key = debug_client
+    _state(client).web_fetcher = WebFetcher(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200))
+    )
+    resp = client.post("/api/debug/solve", headers=_auth(key), json={"url": "https://x.example/w"})
+    assert resp.status_code == 400
+    assert "not configured" in resp.json()["detail"]
+
+
+def test_solve_route_400s_on_a_solver_miss(debug_client: tuple[TestClient, str]) -> None:
+    # byparr is reachable but 500s: a solve miss → 400 pointing at the byparr logs, not a 500.
+    client, key = debug_client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500) if request.url.host == "byparr" else httpx.Response(200)
+
+    _state(client).web_fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle), solver_url="http://byparr:8191"
+    )
+    resp = client.post("/api/debug/solve", headers=_auth(key), json={"url": "https://x.example/w"})
+    assert resp.status_code == 400
+    assert "no usable page" in resp.json()["detail"]
+
+
 def test_jcode_logs_aggregates_the_system(debug_client: tuple[TestClient, str]) -> None:
     # One pull returns the whole code-mode system — control server + gateway — labeled,
     # so debugging a turn doesn't need separate round-trips.

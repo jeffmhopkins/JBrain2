@@ -447,7 +447,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tts_base = settings.brain_tts_url.rstrip("/")
         app.state.brain_tts_base_url = tts_base
         app.state.brain_tts_flag_emit = build_flag_emitter(f"{tts_base}/event" if tts_base else "")
-        web_fetcher = WebFetcher(reader_url=settings.reader_url, solver_url=settings.solver_url)
+        web_fetcher = WebFetcher(
+            reader_url=settings.reader_url,
+            solver_url=settings.solver_url,
+            solver_first_domains=settings.solver_first_domains,
+        )
         searxng = SearxngClient(settings.searxng_url)
         # Shared on app.state so the jcode search bridge (api.jcode_llm web_search /
         # web_fetch) reaches the SAME cached instances jerv uses. The sandbox can't touch
