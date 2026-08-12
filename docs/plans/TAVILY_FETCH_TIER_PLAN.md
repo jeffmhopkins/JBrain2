@@ -201,6 +201,11 @@ owner pastes the key and it works. A stock box with no key is byte-unchanged.
   Tavily-first list and short-cuts on the next fetch. Tune `extract_depth` + the request
   timeout against real extracts, and confirm the 24h re-probe. Fold the outcome into the
   config/settings comments + this plan, then archive.
+  - **Post-deploy fix (2026-08-12):** the first live "Test key" 401'd — the Extract API
+    rejects a body `api_key`; the key must ride the `Authorization: Bearer` header (and
+    `urls` is a list). Fixed in `_fetch_via_tavily` with a request-shape regression test.
+    Also dropped the panel's `.seg-primary` tint on "Save & test" so the action buttons
+    match every other Settings row (plain `.seg`), not a selected-toggle segment.
 
 ## Non-goals (scoped out)
 

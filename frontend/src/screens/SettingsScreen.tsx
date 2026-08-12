@@ -1207,7 +1207,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         <div className="settings-actions">
           <button
             type="button"
-            className="seg seg-primary"
+            className="seg"
             disabled={tavilyTesting || !tavily?.enabled || (!tavilyKey.trim() && !tavily?.key_set)}
             onClick={saveAndTestTavily}
           >
