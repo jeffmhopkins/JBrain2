@@ -371,7 +371,7 @@ a precision `_is_search_form_page` detector so an un-adaptered portal degrades h
 shipped. *Open follow-ons:* per-resolver caching/throttle tuning, a per-adapter post-deploy smoke
 route, a scripted-browser tier for a genuinely JS-only portal, and more jurisdictions.
 
-**Scheduled:** Tavily fetch tier (build plan: `docs/plans/TAVILY_FETCH_TIER_PLAN.md`) — a fourth,
+**In progress:** Tavily fetch tier (build plan: `docs/plans/TAVILY_FETCH_TIER_PLAN.md`) — a fourth,
 hosted `web_fetch` recovery tier (Tavily Extract) after direct → reader → byparr, catching managed-wall
 / paywall / JS-shell pages the on-box browser sidecars miss **without adding a sidecar** the no-terminal
 owner (non-negotiable #10) can't debug. `_fetch_via_tavily` mirrors the reader seam — owner-pinned base
@@ -387,10 +387,11 @@ on-box stack (direct→reader→byparr) fails but Tavily recovers the page, the 
 re-probe) so future fetches route **straight to Tavily**, skipping the doomed on-box legs — the learned
 form of the static `solver_first_domains` shortcut, inert while Tavily is off. Extract-only: SearXNG
 stays the sole search backend (Tavily Search scoped out — per-credit deep-research cost + loss of
-infoboxes/instant-answers). T1 (tier + settings key/toggle + live provider + `tier="tavily"` debug
-selector, headless), T2 (learned Tavily-first routing: the `solver_failed` reason + record trigger +
-route), T3 (the Settings GUI behind the three-mock GUI gate), T4 (live validation + `extract_depth`/timeout
-tuning + 24h re-probe confirmation).
+infoboxes/instant-answers). T1 ✅ (tier + settings key/toggle + live provider + `tier="tavily"` debug
+selector, headless), T2 ✅ (learned Tavily-first routing: the `solver_failed` reason + record trigger +
+route), T3 ✅ (the Settings GUI — dedicated `/settings/tavily` never-echoed endpoint + panel + three
+mocks, owner mock sign-off pending), T4 ◻️ (live on-box validation + `extract_depth`/timeout tuning +
+24h re-probe confirmation).
 
 **Shipped:** Blocked-domain skip list (build record: `docs/archive/DOMAIN_HEALTH_PLAN.md`) — a global
 24h paywall/bot-wall skip list (`app.blocked_domains`, migration 0163) so `web_fetch`/`web_search`

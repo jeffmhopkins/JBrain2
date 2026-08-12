@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tavily settings · B · status pill + switch</title>
+    <style>
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --slate: #9aa0a8; --slate-tint: rgba(154, 160, 168, 0.13);
+        --rose: #cf8a8f; --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --fs-micro: 12px; --fs-secondary: 14px; --fs-body: 16px; --fs-title: 18px;
+      }
+      [data-theme="dark"] { color-scheme: dark; --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--page); color: var(--text); padding: 28px 16px 60px; font: 400 var(--fs-body)/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+      .caption { width: 100%; max-width: 460px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .caption b { color: var(--text); }
+      .settings-card { width: 100%; max-width: 460px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+      .cardhead { display: flex; align-items: center; gap: 12px; }
+      .settings-label { margin: 0; font-size: var(--fs-title); font-weight: 600; }
+      .pill { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-micro); font-weight: 600; padding: 5px 12px; border-radius: var(--r-pill); }
+      .pill.on { background: var(--green-tint); color: var(--green); }
+      .pill.off { background: var(--slate-tint); color: var(--slate); }
+      .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+      .settings-meta { margin: 0; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .settings-field { display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-secondary); color: var(--text-2); }
+      .settings-field input { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); color: var(--text); font: inherit; padding: 10px 12px; }
+      .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .switch { position: relative; width: 46px; height: 26px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; transition: background .15s; }
+      .switch.on { background: var(--steel-tint); border-color: var(--steel); }
+      .knob { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--text-2); transition: left .15s, background .15s; }
+      .switch.on .knob { left: 22px; background: var(--steel); }
+      .settings-actions { display: flex; gap: 8px; }
+      .btn { appearance: none; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--fs-secondary); padding: 9px 14px; border-radius: var(--r-input); cursor: pointer; flex: 1; }
+      .btn.primary { background: var(--steel-tint); color: var(--steel); border-color: transparent; }
+      .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+      .ok { color: var(--green); font-size: var(--fs-secondary); }
+    </style>
+  </head>
+  <body>
+    <p class="caption"><b>Variant B — Status pill + switch.</b> A prominent connection pill and an iOS-style switch make the on/off state glanceable; one primary "Save & test" does both in a tap. More visual weight than the rest of Settings, but the state reads instantly.</p>
+    <section class="settings-card">
+      <div class="cardhead">
+        <h2 class="settings-label">Tavily web fetch</h2>
+        <span class="pill on" id="pill"><span class="dot"></span><span id="pilltext">Active</span></span>
+      </div>
+      <p class="settings-meta">a hosted helper that reads pages the box can't — bot walls, paywalls, JavaScript-only sites. It runs only as a fallback when the on-box readers fail. The key is stored on the server and never shown again.</p>
+      <div class="row">
+        <span class="settings-meta">Enable the tier</span>
+        <div class="switch on" id="switch" onclick="toggle()"><span class="knob"></span></div>
+      </div>
+      <label class="settings-field">API key
+        <input type="password" placeholder="•••••• (saved)" id="key" />
+      </label>
+      <div class="settings-actions">
+        <button class="btn primary" onclick="saveTest()">Save &amp; test</button>
+        <button class="btn" onclick="clearKey()">Clear key</button>
+      </div>
+      <p class="ok" id="result" hidden>✓ Tavily read 512 chars — key works.</p>
+    </section>
+    <script>
+      let enabled = true, keySet = true;
+      function render(){
+        document.getElementById('switch').classList.toggle('on', enabled);
+        const pill = document.getElementById('pill');
+        const active = enabled && keySet;
+        pill.className = 'pill ' + (active ? 'on' : 'off');
+        document.getElementById('pilltext').textContent = !enabled ? 'Off' : keySet ? 'Active' : 'No key';
+      }
+      function toggle(){ enabled = !enabled; document.getElementById('result').hidden = true; render(); }
+      function saveTest(){ const k=document.getElementById('key'); if(k.value.trim()){keySet=true;k.value='';} if(enabled&&keySet) document.getElementById('result').hidden=false; render(); }
+      function clearKey(){ keySet=false; document.getElementById('result').hidden=true; render(); }
+      render();
+    </script>
+  </body>
+</html>

@@ -437,6 +437,30 @@ export interface GmailTestResult {
   detail: string;
 }
 
+/** The hosted Tavily Extract tier (GET /api/settings/tavily). The API key is stored
+ * server-side and NEVER returned — only whether one is present. `wired` = the tier
+ * exists on this box; `effective` = it would actually run (wired AND enabled AND keyed). */
+export interface TavilySettings {
+  enabled: boolean;
+  key_set: boolean;
+  wired: boolean;
+  effective: boolean;
+}
+
+/** Partial Tavily write — omit a field to leave it unchanged. Send a non-empty `api_key`
+ * to set the key; `clear_key` removes the stored key (reverting to the env fallback). */
+export interface TavilyPatch {
+  enabled?: boolean;
+  api_key?: string;
+  clear_key?: boolean;
+}
+
+/** Result of POST /api/settings/tavily/test — did the live Tavily tier read a page. */
+export interface TavilyTestResult {
+  ok: boolean;
+  detail: string;
+}
+
 // ----- Debug-console capability tokens (owner mints; an assistant uses) -----
 
 export interface DebugToken {
@@ -2092,6 +2116,26 @@ export const api = {
   async testGmailSettings(): Promise<GmailTestResult> {
     const response = await request("/api/settings/gmail/test", { method: "POST" });
     return (await response.json()) as GmailTestResult;
+  },
+
+  // The hosted Tavily Extract recovery tier. Status hides the key (booleans only);
+  // saving a patch leaves omitted fields intact; test runs the live tier against a URL.
+  async getTavilySettings(): Promise<TavilySettings> {
+    const response = await request("/api/settings/tavily");
+    return (await response.json()) as TavilySettings;
+  },
+
+  async updateTavilySettings(patch: TavilyPatch): Promise<TavilySettings> {
+    const response = await request("/api/settings/tavily", jsonInit("PUT", patch));
+    return (await response.json()) as TavilySettings;
+  },
+
+  async testTavilySettings(url?: string): Promise<TavilyTestResult> {
+    const response = await request(
+      "/api/settings/tavily/test",
+      jsonInit("POST", url ? { url } : {}),
+    );
+    return (await response.json()) as TavilyTestResult;
   },
 
   // Per-task LLM routing: the provider each task runs on, plus grok's reasoning

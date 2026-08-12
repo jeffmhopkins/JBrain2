@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tavily settings · A · inline (like Gmail)</title>
+    <style>
+      :root {
+        --steel: #7fa7c9; --steel-tint: rgba(127, 167, 201, 0.13);
+        --green: #8fbc9a; --green-tint: rgba(143, 188, 154, 0.13);
+        --rose: #cf8a8f; --r-input: 12px; --r-card: 16px; --r-pill: 999px;
+        --fs-micro: 12px; --fs-secondary: 14px; --fs-body: 16px; --fs-title: 18px;
+      }
+      [data-theme="dark"] { color-scheme: dark; --page: #060708; --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c; --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--page); color: var(--text); padding: 28px 16px 60px; font: 400 var(--fs-body)/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+      .caption { width: 100%; max-width: 460px; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .caption b { color: var(--text); }
+      .settings-card { width: 100%; max-width: 460px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 10px; }
+      .settings-label { margin: 0; font-size: var(--fs-title); font-weight: 600; }
+      .settings-meta { margin: 0; font-size: var(--fs-secondary); color: var(--text-2); line-height: 1.5; }
+      .settings-error { color: var(--rose); }
+      .settings-value { font-size: var(--fs-secondary); color: var(--text); }
+      .settings-field { display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-secondary); color: var(--text-2); }
+      .settings-field input { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); color: var(--text); font: inherit; padding: 10px 12px; }
+      .theme-picker { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-pill); overflow: hidden; width: max-content; }
+      .theme-picker .seg { appearance: none; border: none; background: var(--surface); color: var(--text-2); font: inherit; font-size: var(--fs-micro); padding: 7px 16px; cursor: pointer; }
+      .theme-picker .seg.seg-on { background: var(--steel-tint); color: var(--steel); }
+      .settings-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .settings-actions .seg { appearance: none; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--fs-secondary); padding: 8px 14px; border-radius: var(--r-input); cursor: pointer; }
+      .settings-actions .seg:disabled { opacity: 0.4; cursor: not-allowed; }
+      .ok { color: var(--green); }
+    </style>
+  </head>
+  <body>
+    <p class="caption"><b>Variant A — Inline.</b> Mirrors the existing Gmail panel exactly: status line, On/Off segmented control, one key field, an actions row. Most consistent with the rest of Settings; nothing new to learn.</p>
+    <section class="settings-card">
+      <h2 class="settings-label">Tavily web fetch</h2>
+      <p class="settings-meta">a hosted helper that reads pages the box can't — bot walls, paywalls, JavaScript-only sites. It only runs when the on-box readers can't get a page, so it's a fallback, not the default. Paste your Tavily API key, then Test it. The key is stored on the server and never shown again.</p>
+      <div class="settings-value" id="status">On — key set</div>
+      <div class="theme-picker" aria-label="Enable Tavily">
+        <button class="seg seg-on" data-on="1" onclick="setEnabled(true)">On</button>
+        <button class="seg" data-on="0" onclick="setEnabled(false)">Off</button>
+      </div>
+      <label class="settings-field">API key
+        <input type="password" placeholder="•••••• (saved)" id="key" />
+      </label>
+      <div class="settings-actions">
+        <button class="seg" onclick="save()">Save key</button>
+        <button class="seg" id="test" onclick="test()">Test key</button>
+        <button class="seg" onclick="clearKey()">Clear key</button>
+      </div>
+      <p class="settings-meta ok" id="result" hidden>Tavily read 512 chars from https://example.com — key works.</p>
+    </section>
+    <script>
+      let enabled = true, keySet = true;
+      function render() {
+        document.querySelectorAll('[aria-label="Enable Tavily"] .seg').forEach(b => b.classList.toggle('seg-on', (b.dataset.on === '1') === enabled));
+        document.getElementById('status').textContent = !enabled ? 'Off' : keySet ? 'On — key set' : 'On — no key yet';
+        document.getElementById('test').disabled = !(enabled && keySet);
+      }
+      function setEnabled(v){ enabled = v; document.getElementById('result').hidden = true; render(); }
+      function save(){ const k = document.getElementById('key'); if(!k.value.trim()) return; keySet = true; k.value=''; render(); }
+      function clearKey(){ keySet = false; document.getElementById('result').hidden = true; render(); }
+      function test(){ document.getElementById('result').hidden = false; }
+      render();
+    </script>
+  </body>
+</html>

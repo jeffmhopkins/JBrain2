@@ -1,6 +1,6 @@
 # Tavily Fetch Tier — a hosted recovery tier for walled web_fetch
 
-> **Status:** Scheduled · **Last verified:** 2026-08-12 · **Waves:** T1◻️ T2◻️ T3◻️ T4◻️
+> **Status:** In progress · **Last verified:** 2026-08-12 · **Waves:** T1✅ T2✅ T3✅ T4◻️
 
 `web_fetch`'s hardest misses are pages behind a managed bot wall (Cloudflare
 Turnstile, DataDome), a metered paywall, or a JS shell our static extractor can't
@@ -161,7 +161,7 @@ owner pastes the key and it works. A stock box with no key is byte-unchanged.
 
 ## Waves
 
-- **T1 ◻️** — the tier + live runtime control, headless, fully covered offline. Adds
+- **T1 ✅** — the tier + live runtime control, headless, fully covered offline. Adds
   `_fetch_via_tavily` wired **last** into `_recover`; the `tavily_enabled` /
   `tavily_api_key` settings-store keys + getters (Gmail precedent, env fallback for the
   key, default enabled); the settings-provider seam threading them live into
@@ -173,7 +173,7 @@ owner pastes the key and it works. A stock box with no key is byte-unchanged.
   four-tier order; `test_debug_api.py` — the selector; `test_settings_api.py` /
   store tests — the new keys). No new runtime dependency (reuses `httpx`). Docs → **In
   progress** (T1✅). Zero GUI in this wave — the tier is functional from env/DB alone.
-- **T2 ◻️** — learned Tavily-first routing (byparr fails → prefer Tavily), headless.
+- **T2 ✅** — learned Tavily-first routing (byparr fails → prefer Tavily), headless.
   Migration extends `app.blocked_domains`'s `reason` CHECK + `VALID_REASONS` with
   `solver_failed`; `domain_health.py` gains the reason-aware record + a
   `tavily_first_hosts()` reader and **excludes `solver_failed` from `active_hosts()`**;
@@ -185,14 +185,16 @@ owner pastes the key and it works. A stock box with no key is byte-unchanged.
   exclusion); the `reason`-CHECK change gets its own test, and the existing
   `app.blocked_domains` RLS isolation test covers the reused table. Depends on T1 (needs
   the tier to route to).
-- **T3 ◻️** — the Settings GUI (the owner control surface). **GUI gate first**: three
-  mocks of the Tavily panel → owner picks → binding spec in `docs/mocks/`. Then: the
-  key-write endpoint (secret stored, **never echoed** — Gmail precedent) + the
-  `tavily_enabled` toggle in the `/settings` GET/PUT (`SettingsOut`/`SettingsPatch`) +
-  store setters; the `SettingsScreen.tsx` panel (masked key field, on/off toggle,
-  "Test key" button hitting the `tier="tavily"` debug route). Frontend + backend unit
-  coverage (`SettingsScreen.test.tsx`, `test_settings_api.py`). Depends only on T1's
-  settings keys (parallelizable with T2).
+- **T3 ✅** — the Settings GUI (the owner control surface). **GUI gate:** three
+  interactive mocks in `docs/mocks/tavily-settings/` (A inline / B status-pill+switch /
+  C progressive) — **owner sign-off pending**; the panel currently implements **A**
+  (the Gmail-panel precedent), switchable if the owner picks B/C. Ships a **dedicated**
+  `api/tavily_settings.py` (`GET`/`PUT /settings/tavily` + `POST /settings/tavily/test`)
+  rather than the generic `/settings`, so the secret is **never echoed** (status returns
+  only `enabled`/`key_set`/`wired`/`effective`) and the "Test key" probe runs the live
+  tier under the owner session (no debug token); the `SettingsScreen.tsx` panel (masked
+  key field, On/Off toggle, Save/Test/Clear); the `TavilySettings` api-client types. Full
+  frontend + backend coverage (`test_tavily_settings_api.py`, `SettingsScreen.test.tsx`).
 - **T4 ◻️** — live validation + tuning, then archive. Against a known byparr-miss URL,
   confirm Tavily recovers real content (`web.tavily_used`), that a Tavily-laundered
   challenge is still an honest block, and that the domain lands on the learned
