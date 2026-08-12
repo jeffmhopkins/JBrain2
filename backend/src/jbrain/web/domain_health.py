@@ -104,10 +104,13 @@ class DomainSkipRepo:
         `solver_failed` reroute rows (the skip set), `only_reroutes` keeps just them (the
         Tavily-first set). FAIL-OPEN — any DB error yields an empty set."""
         clause = ""
+        params: dict[str, str] = {}
         if exclude_reroutes:
-            clause = f" AND reason != '{SOLVER_FAILED_REASON}'"
+            clause = " AND reason != :reason"
+            params["reason"] = SOLVER_FAILED_REASON
         elif only_reroutes:
-            clause = f" AND reason = '{SOLVER_FAILED_REASON}'"
+            clause = " AND reason = :reason"
+            params["reason"] = SOLVER_FAILED_REASON
         try:
             async with scoped_session(self._maker, SYSTEM_CTX) as session:
                 rows = (
@@ -116,7 +119,8 @@ class DomainSkipRepo:
                             text(
                                 "SELECT host FROM app.blocked_domains "
                                 f"WHERE expires_at > now(){clause}"
-                            )
+                            ),
+                            params,
                         )
                     )
                     .scalars()

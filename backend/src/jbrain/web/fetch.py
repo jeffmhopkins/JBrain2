@@ -782,17 +782,22 @@ class WebFetcher:
                 find_regex=find_regex,
             )
         # A LEARNED hard-for-on-box domain (byparr missed it, Tavily recovered it — recorded as
-        # `solver_failed`): skip the doomed direct→reader→byparr legs and go straight to Tavily.
-        # A Tavily miss falls through to the ordinary path (so it degrades, never hard-fails);
-        # `skip_tavily` there avoids re-running the tier we just tried. Precedes the solver-first
-        # shortcut: if we LEARNED byparr fails here, don't pay a byparr-first solve either.
+        # `solver_failed`): try Tavily FIRST to skip the doomed direct→reader→byparr legs. It wins
+        # outright only on a RICH result (>= _MIN_RECOVERED_CHARS, the same bar every other tier
+        # clears) — a thin shell escalates instead of short-circuiting the on-box legs, and is
+        # carried as `seed_thin` so it still competes as the last-resort fallback (never lost, never
+        # re-fetched). A miss/thin falls through to the ordinary path; `skip_tavily` there avoids
+        # re-running the tier we just tried. Precedes the solver-first shortcut so a rich hit never
+        # pays a byparr-first solve; a thin/miss still falls through to it.
         tavily_first_tried = await self._prefers_tavily(url)
+        tavily_first_thin: FetchResult | None = None
         if tavily_first_tried:
             extracted = await self._fetch_via_tavily(
                 url, offset=offset, find=find, find_regex=find_regex
             )
-            if extracted is not None and extracted.text.strip():
+            if extracted is not None and extracted.total_chars >= _MIN_RECOVERED_CHARS:
                 return extracted
+            tavily_first_thin = extracted  # None, or a sub-threshold shell held as a fallback
             log.info("web.tavily_first_missed", url=url)
         # A known hard-wall domain (Reuters/WSJ/…): go straight to the stealth-browser solver
         # instead of paying a direct 401 + reader 429 that always fail. A solver miss falls
@@ -832,6 +837,7 @@ class WebFetcher:
                     skip_solver=solver_first_tried,
                     skip_tavily=tavily_first_tried,
                     solver_already_missed=solver_first_missed,
+                    seed_thin=tavily_first_thin,
                 )
                 if recovered is not None:
                     return recovered
@@ -852,6 +858,7 @@ class WebFetcher:
                 skip_solver=solver_first_tried,
                 skip_tavily=tavily_first_tried,
                 solver_already_missed=solver_first_missed,
+                seed_thin=tavily_first_thin,
             )
             if recovered is not None:
                 return recovered
@@ -868,6 +875,7 @@ class WebFetcher:
         skip_solver: bool = False,
         skip_tavily: bool = False,
         solver_already_missed: bool = False,
+        seed_thin: FetchResult | None = None,
     ) -> FetchResult | None:
         """Try the recovery tiers in order — the reader, the heavier on-box challenge solver, then
         the hosted Tavily Extract tier — returning the first that yields a usable (non-challenge)
@@ -876,13 +884,17 @@ class WebFetcher:
         additionally rejects an empty result (the JS-shell case, where a tier that renders nothing
         hasn't recovered). `skip_solver` drops the on-box solver tier and `skip_tavily` the Tavily
         tier — set when that tier already ran upstream (solver-first / tavily-first) and missed, so
-        it isn't re-run.
+        it isn't re-run. `seed_thin` pre-loads the held fallback with a sub-threshold result an
+        upstream tavily-first attempt already produced, so a thin hosted extraction still competes
+        as the last resort without being re-fetched.
 
         Tavily is LAST so the free on-box tiers run first and the paid hosted tier is reached only
-        when everything on-box fails (docs/plans/TAVILY_FETCH_TIER_PLAN.md). When Tavily recovers a
-        page the on-box solver GENUINELY missed (this call, or upstream via `solver_already_missed`
-        — a real miss, never a byparr outage/unconfigured), the domain is recorded so future
-        fetches route it Tavily-first (`_record_solver_failed`), skipping the doomed on-box legs.
+        when everything on-box fails (docs/plans/TAVILY_FETCH_TIER_PLAN.md). The domain is recorded
+        for Tavily-first routing (`_record_solver_failed`) ONLY when Tavily WINS the fetch outright
+        (clears `_MIN_RECOVERED_CHARS`) on a page the on-box solver GENUINELY missed (this call, or
+        upstream via `solver_already_missed` — a real miss, never an outage/unconfigured). Gating on
+        a genuine WIN, not merely non-empty text, is deliberate: a thin Tavily shell that loses to a
+        richer reader result must not teach the router to skip the on-box legs next time.
 
         A tier that returns only a THIN shell (fewer than `_MIN_RECOVERED_CHARS` of extracted
         text — a blocked origin the reader rendered as bare title) does not win outright: it is
@@ -891,7 +903,7 @@ class WebFetcher:
         which is why the byparr tier was never exercised on a bot-walled news source. If no tier
         clears the bar, the RICHEST thin result is returned — never discarded — so nothing is
         lost and the fuller of two partial recoveries wins."""
-        thin: FetchResult | None = None
+        thin: FetchResult | None = seed_thin
 
         def consider(recovered: FetchResult | None) -> FetchResult | None:
             """A tier result: return it when it clears the recovered-chars bar (the caller returns
@@ -919,21 +931,18 @@ class WebFetcher:
             solver_missed = solver_missed or outcome is _SolverOutcome.MISS
             won = consider(result)
             if won is not None:
-                # A rich enough on-box solve — but still hold a thin Tavily fallback? No: the
-                # solver won, so Tavily is never reached and nothing is recorded.
-                return won
+                return won  # the solver won, so Tavily is never reached and nothing is recorded
 
         if not skip_tavily:
-            tavily_result = await self._fetch_via_tavily(
-                url, offset=offset, find=find, find_regex=find_regex
+            won = consider(
+                await self._fetch_via_tavily(url, offset=offset, find=find, find_regex=find_regex)
             )
-            # Tavily recovered a page the on-box solver genuinely missed → learn the domain so the
-            # next fetch skips straight here. `tavily_result` is non-None only with real text (the
-            # tier returns None for empty/challenge/paywall), so this never records off a miss.
+            # Learn the domain only when Tavily WON (cleared the bar) a page the on-box solver
+            # genuinely missed — so the next fetch routes straight here. A thin Tavily shell that
+            # `consider` merely held (won is None) is NOT a recovery worth rerouting for.
             record = self._record_solver_failed
-            if tavily_result is not None and solver_missed and record is not None:
+            if won is not None and solver_missed and record is not None:
                 await record(url)
-            won = consider(tavily_result)
             if won is not None:
                 return won
 

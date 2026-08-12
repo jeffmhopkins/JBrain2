@@ -2945,6 +2945,71 @@ async def test_tavily_first_is_a_noop_when_the_tier_is_disabled() -> None:
     assert "api.tavily.com" not in hits  # disabled ⇒ never called, even for a learned host
 
 
+async def test_a_thin_tavily_result_is_returned_but_not_learned() -> None:
+    # byparr genuinely misses and Tavily extracts only a THIN sub-threshold shell (a banner, not
+    # the article): it is returned as the last-resort fallback, but the domain is NOT learned —
+    # a thin shell isn't a strong enough signal to permanently reroute past the on-box legs.
+    recorder = _RecordedMisses()
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,  # reader miss
+            solver_response=_SOLVER_CHALLENGE,  # byparr genuine miss
+            tavily_response=_tavily_body("https://x.example/walled", content="A short cookie banner."),
+        ),
+        record_solver_failed=recorder,
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "short cookie banner" in result.text  # returned as the richest thin fallback
+    assert recorder.urls == []  # but NOT recorded — Tavily didn't clear the bar
+
+
+async def test_a_thin_tavily_first_result_escalates_instead_of_short_circuiting() -> None:
+    # A learned host, but this time Tavily's tavily-first attempt returns only a THIN shell: it must
+    # NOT short-circuit the on-box legs — escalation runs and the richer origin content wins, while
+    # the thin Tavily shell is carried as a fallback (never lost, never re-fetched).
+    hits: list[str] = []
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(200, content=_ORIGIN_HTML, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=_SOLVER_CHALLENGE,
+            tavily_response=_tavily_body("https://x.example/p", content="A thin banner."),
+            hits=hits,
+        ),
+        tavily_first_hosts=_first_hosts("x.example"),
+    )
+    result = await fetcher.fetch("https://x.example/p")
+    assert "Direct origin content" in result.text  # escalated past the thin Tavily-first shell
+    assert hits.count("api.tavily.com") == 1  # tried once up front, never re-fetched
+
+
+async def test_solver_first_genuine_miss_then_tavily_win_is_learned() -> None:
+    # A solver-FIRST domain (byparr runs up front) that genuinely misses, then Tavily recovers on
+    # the fall-through: the genuine-miss signal propagates via solver_already_missed so the domain
+    # is still learned. Exercises the solver-first → record path (no tavily-first here).
+    recorder = _RecordedMisses()
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _four_tier_handler(
+                direct=httpx.Response(403, headers={"content-type": "text/html"}),
+                reader=_CHALLENGE_MD,  # reader miss on the fall-through
+                solver_response=_SOLVER_CHALLENGE,  # byparr runs first, genuinely misses
+                tavily_response=_tavily_body("https://x.example/walled"),  # Tavily wins
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+        solver_first_domains=("x.example",),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tavily_provider(True, "tvly-key"),
+        record_solver_failed=recorder,
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Tavily's hosted extractor recovered" in result.text
+    assert recorder.urls == ["https://x.example/walled"]  # solver-first miss + Tavily win → learned
+
+
 async def test_tavily_recovers_when_reader_and_solver_both_miss() -> None:
     # Direct 403 → reader renders the challenge (miss) → byparr 500s (miss) → Tavily's hosted
     # extractor clears the wall and returns the article. The escalation this tier is for.

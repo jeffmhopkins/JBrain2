@@ -20,7 +20,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
 from jbrain.settings_store import SqlSettingsStore
-from jbrain.web.fetch import WebFetcher
+from jbrain.web.fetch import WebFetcher, WebFetchError
 
 log = structlog.get_logger()
 
@@ -116,8 +116,6 @@ async def test_tavily_settings(
     """Run the LIVE Tavily tier against `url` (the "Test key" button) so the owner verifies a
     freshly-saved key with no terminal. Reports the failure modes distinctly: the tier unwired,
     disabled/keyless, a bad target (SSRF/scheme), or a genuine miss (bad key / Tavily error)."""
-    from jbrain.web.fetch import WebFetchError
-
     fetcher = _fetcher(request)
     if not fetcher.tavily_wired:
         return TavilyTestOut(ok=False, detail="The Tavily tier is not configured on this box.")
