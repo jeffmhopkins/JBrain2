@@ -454,6 +454,22 @@ async def test_full_run_orchestrates_every_stage() -> None:
     assert "cross-checked" in out and "revised after critique" in out
 
 
+async def test_brief_output_skips_the_critique_and_revise_polish() -> None:
+    """A `brief` (daily_news) ships the analyst-cross-checked draft — the critique→revise polish
+    is skipped: it's short, already rests on the analyst cross-check, and repeatedly regressed on a
+    local run. So NO critique review fan runs and there's NO second (revise) synthesis."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    spawn = _FakeSpawn()
+    out = await _svc(router, spawn).produce(
+        _ctx(), {"question": "how does X work?", "output_kind": "brief"}
+    )
+    review = _review_fans(spawn)
+    assert len(review) == 1  # ONLY the analyst cross-check — the critique fan is skipped
+    assert review[0]["briefs"][0][0] == "cross-check"
+    assert len(router.synth_calls) == 1  # ONE synthesis (the draft) — no revise pass
+    assert "cross-checked" in out and "revised after critique" not in out
+
+
 # --- degraded orchestration JSON: a flaky judge call must not kill the run ---
 
 

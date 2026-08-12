@@ -7,6 +7,10 @@ gather breadth):
 
     plan → gather → analyze → reflect → (refill) → synthesize → critique → revise
 
+    (A `brief` output — the spoken daily_news format — stops after `synthesize`: the
+    critique→revise polish is skipped, since a short brief already rests on the analyst
+    cross-check and the polish repeatedly regressed on the local model for little gain.)
+
 `gather` is a parallel `research` fan over the planned sub-questions. `analyze` is a
 genuine cross-agent handoff — a `review` sub-agent is *fed the researchers' summaries*
 (via the feeding-waves envelope) plus the real pages those findings reached, and
@@ -1673,45 +1677,51 @@ class DeepResearchService:
             ctx.tree.time_reserve = 0.0
 
             # --- (7) CRITIQUE — a review sub-agent fed the draft; (8) one REVISE pass -
-            self._phase(ctx, 7, "Reviewing the draft")
-            critic = await self._critique(
-                ctx, report, sources, review_persona, source_mode, record=source_plan.seed or ""
-            )
-            if critic is not None:
-                scratch.add_child(critic, stage="critique", scope=CRITIQUE)
-            critique = critic.summary if critic and critic.ok else ""
+            # A spoken `brief` (daily_news) is short and already rests on the analyst cross-check
+            # from the analyze phase; the critique→revise polish adds little and repeatedly
+            # REGRESSED (a live daily-news run spent ~5 min on a critique child + a revise the gate
+            # then discarded). Skip the whole polish tail for `brief` — ship the draft — and keep it
+            # for report-shaped output where the extra fidelity earns its serial-time cost.
             revised = False
-            if critique.strip():
-                self._phase(ctx, _REVISE_STEP, _REVISE_LABEL)
-                pre_revise = report
-                # Revise reads back the whole ledger it is allowed to see — the full RESEARCH
-                # set, the analyst's cross-check, and the critique of its own draft.
-                report = await self._synthesize(
-                    ctx,
-                    question,
-                    sections,
-                    scratch.read({RESEARCH}),
-                    analysis,
-                    sources,
-                    complexity=complexity,
-                    critique=critique,
-                    directive=directive,
+            if directive.output_kind != "brief":
+                self._phase(ctx, 7, "Reviewing the draft")
+                critic = await self._critique(
+                    ctx, report, sources, review_persona, source_mode, record=source_plan.seed or ""
                 )
-                revised = True
-                # The gates guard the DRAFT; the revise is a second write that could itself
-                # regress one — drop every citation, invent a dangling marker, drop a required
-                # heading. The revise is driven by the FUZZY critique (semantic gains the gates
-                # can't see), so this is REGRESSION-ONLY: keep the revision unless it scores
-                # strictly WORSE on the gates than the pre-revise draft, in which case keep the
-                # pre-revise text. (Generalizes the old "revise dropped all citations" guard to
-                # every gate while never overruling a legitimate same-or-better semantic revise.)
-                if (
-                    _gate_score(report, sources, enforce).score
-                    < _gate_score(pre_revise, sources, enforce).score
-                ):
-                    log.warning("deep_research.revise_regressed_gate", reached=len(sources))
-                    report = pre_revise
-                    revised = False
+                if critic is not None:
+                    scratch.add_child(critic, stage="critique", scope=CRITIQUE)
+                critique = critic.summary if critic and critic.ok else ""
+                if critique.strip():
+                    self._phase(ctx, _REVISE_STEP, _REVISE_LABEL)
+                    pre_revise = report
+                    # Revise reads back the whole ledger it is allowed to see — the full RESEARCH
+                    # set, the analyst's cross-check, and the critique of its own draft.
+                    report = await self._synthesize(
+                        ctx,
+                        question,
+                        sections,
+                        scratch.read({RESEARCH}),
+                        analysis,
+                        sources,
+                        complexity=complexity,
+                        critique=critique,
+                        directive=directive,
+                    )
+                    revised = True
+                    # The gates guard the DRAFT; the revise is a second write that could itself
+                    # regress one — drop every citation, invent a dangling marker, drop a required
+                    # heading. The revise is driven by the FUZZY critique (semantic gains the gates
+                    # can't see), so this is REGRESSION-ONLY: keep the revision unless it scores
+                    # strictly WORSE on the gates than the pre-revise draft, in which case keep the
+                    # pre-revise text. (Generalizes the old "revise dropped all citations" guard to
+                    # every gate, never overruling a same-or-better semantic revise.)
+                    if (
+                        _gate_score(report, sources, enforce).score
+                        < _gate_score(pre_revise, sources, enforce).score
+                    ):
+                        log.warning("deep_research.revise_regressed_gate", reached=len(sources))
+                        report = pre_revise
+                        revised = False
         finally:
             ctx.tree.stage_reserve = prior_reserve
             ctx.tree.time_reserve = prior_time_reserve

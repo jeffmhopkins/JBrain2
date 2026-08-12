@@ -22,7 +22,7 @@ retention_days: 7
 # never opened (the "(search result)" briefing). With min_reads set, scouts find/curate article
 # URLs and fetch-only readers open this many, so the briefing rests on real article text — never a
 # snippet (REPORT_PRESET_PLAN.md).
-min_reads: 12
+min_reads: 8
 
 # `{{today}}` is auto-supplied by the engine (the run date) — no caller variable needed, so this
 # stays a one-call preset. Dating the question makes each day a DISTINCT dedup row, so the week's
