@@ -145,6 +145,48 @@ async def test_brain_read_aloud_defaults_off_and_round_trips(
     assert await store.brain_read_aloud(OWNER) is False
 
 
+async def test_tavily_settings_default_on_keyless_and_round_trip(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import TAVILY_ENABLED_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → enabled ON (single-owner box ships it on) but keyless (inert until a key is set).
+    assert await store.tavily_enabled(OWNER) is True
+    assert await store.tavily_api_key(OWNER) == ""
+
+    # The toggle round-trips; any non-true stored value reads as off (fail-closed).
+    await store.set_tavily_enabled(OWNER, False)
+    assert await store.tavily_enabled(OWNER) is False
+    await store.set_tavily_enabled(OWNER, True)
+    assert await store.tavily_enabled(OWNER) is True
+    await store.upsert(OWNER, TAVILY_ENABLED_KEY, "on")
+    assert await store.tavily_enabled(OWNER) is False
+
+    # The key round-trips; clearing reverts to "" (the caller then uses the env fallback); a
+    # non-string store reads as unset rather than as a key.
+    await store.set_tavily_api_key(OWNER, "tvly-secret")
+    assert await store.tavily_api_key(OWNER) == "tvly-secret"
+    await store.set_tavily_api_key(OWNER, "")
+    assert await store.tavily_api_key(OWNER) == ""
+    from jbrain.settings_store import TAVILY_API_KEY_KEY
+
+    await store.upsert(OWNER, TAVILY_API_KEY_KEY, 123)
+    assert await store.tavily_api_key(OWNER) == ""
+
+
+async def test_tavily_settings_are_owner_only(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # The Tavily key/toggle ride the owner-RLS app.settings table: a write by the owner is
+    # invisible to a non-owner session, and the reads fall back to their defaults there.
+    store = SqlSettingsStore(maker)
+    await store.set_tavily_api_key(OWNER, "tvly-secret")
+    await store.set_tavily_enabled(OWNER, False)
+    assert await store.tavily_api_key(UNSCOPED) == ""
+    assert await store.tavily_enabled(UNSCOPED) is True  # non-owner sees the default, not the row
+
+
 async def test_brain_answer_voice_defaults_to_amy_and_round_trips(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

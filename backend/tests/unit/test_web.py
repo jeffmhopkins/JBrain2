@@ -2727,3 +2727,249 @@ async def test_domain_skip_repo_ignores_an_invalid_reason() -> None:
     # An out-of-CHECK reason returns before touching the DB — a broken maker is never reached.
     repo = DomainSkipRepo(cast(Any, object()))
     await repo.record("x.example", "not_a_reason", "https://x.example/a")  # no exception
+
+
+# --- Tavily Extract tier (a hosted fourth recovery leg after direct→reader→solver) ----------
+# docs/plans/TAVILY_FETCH_TIER_PLAN.md. Faked via MockTransport (host api.tavily.com), like the
+# reader/solver legs. The tier reads its (enabled, key) live from an injected async provider.
+
+# Padded past _MIN_RECOVERED_CHARS (200) so a Tavily recovery is a clean win, not just the
+# "richest thin result" fallback — the test asserts the content, unambiguously.
+_TAVILY_CONTENT = (
+    "Real article content Tavily's hosted extractor recovered past the managed wall. "
+    "It rendered the page on Tavily's cloud and returned clean readable text, the same "
+    "shape the reader tier hands back, so pagination and find all work over it exactly "
+    "as they do for any other recovered page. This body is deliberately long enough to "
+    "clear the thin-shell threshold so the tier wins outright."
+)
+
+
+def _tavily_provider(enabled: bool = True, key: str = "tvly-key"):  # type: ignore[no-untyped-def]
+    """An async (enabled, api_key) provider, the live-settings seam WebFetcher reads per fetch."""
+
+    async def provider() -> tuple[bool, str]:
+        return enabled, key
+
+    return provider
+
+
+def _tavily_body(url: str, content: str = _TAVILY_CONTENT) -> dict:
+    """A Tavily Extract `/extract` response shape: results[0].{url, raw_content}."""
+    return {"results": [{"url": url, "raw_content": content}]}
+
+
+def _four_tier_handler(  # type: ignore[no-untyped-def]
+    *, direct: httpx.Response, reader, solver_response, tavily_response, hits=None
+):
+    """One MockTransport serving all four legs by host: byparr (solver), reader, api.tavily.com
+    (Tavily; None ⇒ 500, else a JSON body), and every other host with `direct`. `hits`, if given,
+    records each leg's host so a test can assert which tiers ran (and which were skipped)."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if hits is not None:
+            hits.append(request.url.host)
+        host = request.url.host
+        if host == "byparr":
+            if solver_response is None:
+                return httpx.Response(500)
+            return httpx.Response(
+                200, json={"solution": {"url": str(request.url), **solver_response}}
+            )
+        if host == "reader":
+            if reader is None:
+                return httpx.Response(500)
+            return httpx.Response(200, content=reader, headers={"content-type": "text/markdown"})
+        if host == "api.tavily.com":
+            if tavily_response is None:
+                return httpx.Response(500)
+            return httpx.Response(200, json=tavily_response)
+        return direct
+
+    return handle
+
+
+def _tavily_fetcher(handler, *, enabled: bool = True, key: str = "tvly-key") -> WebFetcher:  # type: ignore[no-untyped-def]
+    return WebFetcher(
+        transport=httpx.MockTransport(handler),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+        tavily_url="https://api.tavily.com",
+        tavily_extract_depth="advanced",
+        tavily_settings=_tavily_provider(enabled, key),
+    )
+
+
+async def test_tavily_recovers_when_reader_and_solver_both_miss() -> None:
+    # Direct 403 → reader renders the challenge (miss) → byparr 500s (miss) → Tavily's hosted
+    # extractor clears the wall and returns the article. The escalation this tier is for.
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=None,
+            tavily_response=_tavily_body("https://x.example/walled"),
+        )
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Tavily's hosted extractor recovered" in result.text
+    assert result.url == "https://x.example/walled"  # the public/final url, not Tavily's endpoint
+
+
+# A solver page rich enough (>_MIN_RECOVERED_CHARS) to WIN outright, so escalation stops at the
+# solver and the Tavily tier after it is never reached — proving Tavily runs strictly last.
+_RICH_SOLVED_HTML = (
+    "<html><head><title>CFO Race</title></head><body><h1>Blaise Ingoglia</h1><p>"
+    + "The stealth browser recovered the full article body past the managed wall. " * 5
+    + "</p></body></html>"
+)
+
+
+async def test_tavily_runs_last_after_reader_and_solver() -> None:
+    # When byparr recovers richly, Tavily is never reached — the free on-box tiers run first.
+    hits: list[str] = []
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_THIN_READER_MD,  # thin: held, not a win, so escalation continues to the solver
+            solver_response={"response": _RICH_SOLVED_HTML},  # solver wins before Tavily is tried
+            tavily_response=_tavily_body("https://x.example/walled"),
+            hits=hits,
+        )
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "recovered the full article body" in result.text  # the solver's page, not Tavily's
+    assert "api.tavily.com" not in hits  # the paid tier was never reached
+
+
+async def test_tavily_disabled_is_skipped() -> None:
+    # The toggle is OFF: the tier is a no-op (never hits Tavily), so the original block surfaces.
+    hits: list[str] = []
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=None,
+            tavily_response=_tavily_body("https://x.example/walled"),
+            hits=hits,
+        ),
+        enabled=False,
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+    assert "api.tavily.com" not in hits  # disabled ⇒ the endpoint is never called
+
+
+async def test_tavily_without_a_key_is_skipped() -> None:
+    # Enabled but keyless (no stored key, no env fallback): inert, never calls Tavily.
+    hits: list[str] = []
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=None,
+            tavily_response=_tavily_body("https://x.example/walled"),
+            hits=hits,
+        ),
+        key="",
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+    assert "api.tavily.com" not in hits
+
+
+async def test_tavily_error_surfaces_the_block() -> None:
+    # Tavily itself errors (500): it returns None like any tier miss, so the block surfaces.
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=None,
+            tavily_response=None,  # Tavily 500s
+        )
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+
+
+async def test_tavily_that_returns_a_challenge_is_a_miss() -> None:
+    # Tavily can extract the origin's challenge wall as clean text (the wall, not the article):
+    # the challenge guard treats that as a miss so it never becomes a cited source.
+    challenge = "Please enable JavaScript and cookies to continue to the site you requested."
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=None,
+            tavily_response=_tavily_body("https://x.example/walled", content=challenge),
+        )
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+
+
+async def test_tavily_that_returns_a_paywall_is_a_miss() -> None:
+    # A short subscribe-wall Tavily handed back is a block too, not readable content.
+    wall = "Subscribe to continue reading. Already a subscriber? Sign in."
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=None,
+            tavily_response=_tavily_body("https://x.example/walled", content=wall),
+        )
+    )
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+
+
+async def test_tavily_tier_is_off_when_unwired() -> None:
+    # No tavily_url / no provider ⇒ the tier is a no-op and the three-tier behaviour is unchanged:
+    # tavily_wired is False and _fetch_via_tavily returns None even with a walled page available.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _four_tier_handler(
+                direct=httpx.Response(403, headers={"content-type": "text/html"}),
+                reader=_CHALLENGE_MD,
+                solver_response=None,
+                tavily_response=_tavily_body("https://x.example/walled"),
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )  # tavily_url unset
+    assert fetcher.tavily_wired is False
+    with pytest.raises(WebFetchError) as excinfo:
+        await fetcher.fetch("https://x.example/walled")
+    assert excinfo.value.status == 403
+
+
+async def test_tavily_isolation_method_forces_only_the_tavily_tier() -> None:
+    # The debug/`Test key` entry point: `tavily()` skips direct/reader/solver and hits only Tavily.
+    hits: list[str] = []
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(200, content=_ORIGIN_HTML, headers={"content-type": "text/html"}),
+            reader=_READER_MD,
+            solver_response={"response": _SOLVED_HTML},
+            tavily_response=_tavily_body("https://x.example/walled"),
+            hits=hits,
+        )
+    )
+    result = await fetcher.tavily("https://x.example/walled")
+    assert result is not None and "Tavily's hosted extractor recovered" in result.text
+    assert hits == ["api.tavily.com"]  # neither the origin, the reader, nor byparr was touched
+
+
+async def test_tavily_target_is_ssrf_guarded() -> None:
+    # A private/link-local target is refused by the shared SSRF guard BEFORE any Tavily call —
+    # so the tier can't be pointed at the box's own services (no transport ⇒ the real guard runs).
+    fetcher = WebFetcher(
+        tavily_url="https://api.tavily.com", tavily_settings=_tavily_provider(True, "tvly-key")
+    )
+    with pytest.raises(WebFetchError):
+        await fetcher.tavily("http://169.254.169.254/latest/meta-data")

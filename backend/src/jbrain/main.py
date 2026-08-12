@@ -448,10 +448,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tts_base = settings.brain_tts_url.rstrip("/")
         app.state.brain_tts_base_url = tts_base
         app.state.brain_tts_flag_emit = build_flag_emitter(f"{tts_base}/event" if tts_base else "")
+        # The hosted Tavily Extract tier reads its toggle + key LIVE from app.settings on each
+        # fetch (SYSTEM_CTX owner session), the stored key taking precedence over the env
+        # fallback — so the PWA Settings panel is the live control surface with no restart,
+        # exactly like the LLM router's live overrides (docs/plans/TAVILY_FETCH_TIER_PLAN.md).
+        async def _tavily_settings() -> tuple[bool, str]:
+            enabled = await settings_store.tavily_enabled(SYSTEM_CTX)
+            key = await settings_store.tavily_api_key(SYSTEM_CTX) or settings.tavily_api_key
+            return enabled, key
+
         web_fetcher = WebFetcher(
             reader_url=settings.reader_url,
             solver_url=settings.solver_url,
             solver_first_domains=settings.solver_first_domains,
+            tavily_url=settings.tavily_url,
+            tavily_extract_depth=settings.tavily_extract_depth,
+            tavily_settings=_tavily_settings,
         )
         searxng = SearxngClient(settings.searxng_url)
         # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool

@@ -47,7 +47,7 @@ import ipaddress
 import json
 import re
 import socket
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urldefrag, urljoin, urlparse
@@ -58,6 +58,12 @@ import structlog
 from jbrain.htmltext import extract_page
 
 log = structlog.get_logger()
+
+# A live provider of the Tavily tier's runtime state: `() -> (enabled, api_key)`, read fresh
+# per fetch so the PWA Settings toggle + key take effect with no restart (the same "read
+# app.settings live per call" seam the LLM router uses). Injected into `WebFetcher`; None
+# disables the tier. Kept as a callable, not a session, so the fetcher stays DB-free.
+TavilySettingsProvider = Callable[[], Awaitable[tuple[bool, str]]]
 
 _TIMEOUT = 20.0
 # The challenge solver drives a stealth browser that WAITS OUT a JS/managed challenge, so it
@@ -635,6 +641,9 @@ class WebFetcher:
         reader_url: str = "",
         solver_url: str = "",
         solver_first_domains: Sequence[str] = (),
+        tavily_url: str = "",
+        tavily_extract_depth: str = "advanced",
+        tavily_settings: TavilySettingsProvider | None = None,
     ):
         self._transport = transport
         self._reader_url = reader_url.rstrip("/")
@@ -647,6 +656,15 @@ class WebFetcher:
         self._solver_first_domains = tuple(
             d.strip().lower().lstrip(".") for d in solver_first_domains if d.strip()
         )
+        # The HOSTED Tavily Extract tier — a fourth recovery leg (after direct → reader → solver)
+        # that renders + un-walls the page on Tavily's cloud (docs/plans/TAVILY_FETCH_TIER_PLAN.md).
+        # `tavily_url` is the pinned base URL (empty ⇒ tier off entirely); `tavily_settings`, when
+        # given, is a live async provider returning (enabled, api_key) read fresh per fetch — the
+        # PWA toggle + key, so the tier flips with no restart. The tier fires only when the URL is
+        # set AND the provider reports enabled AND a key is present; None provider = tier off.
+        self._tavily_url = tavily_url.rstrip("/")
+        self._tavily_extract_depth = tavily_extract_depth
+        self._tavily_settings = tavily_settings
 
     def _prefers_solver(self, url: str) -> bool:
         """Whether `url`'s host is (or is a subdomain of) a configured solver-first domain — so a
@@ -672,6 +690,24 @@ class WebFetcher:
         just exposes the tier `fetch` already reaches internally so a walled URL can be probed
         against the stealth browser alone, without a doomed direct fetch first."""
         return await self._fetch_via_solver(url, offset=offset, find=find, find_regex=find_regex)
+
+    @property
+    def tavily_wired(self) -> bool:
+        """Whether the hosted Tavily tier is WIRED (a base URL + a settings provider are set).
+        This does NOT reflect the live toggle/key — those are read async in `_fetch_via_tavily`;
+        the debug route uses this only to tell "not configured at all" from "configured but a
+        miss / disabled / no key"."""
+        return bool(self._tavily_url and self._tavily_settings is not None)
+
+    async def tavily(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> FetchResult | None:
+        """Force ONLY the hosted Tavily Extract tier for `url`, skipping the direct/reader/solver
+        legs — the debug-console entry point that exercises Tavily in isolation (and the Settings
+        "Test key" button). Returns the extracted page, or None when the tier is disabled/keyless,
+        Tavily errors, or the extracted content is itself a challenge/paywall (a miss). Mirrors
+        `solve()` for byparr; the normal `fetch()` path is unchanged."""
+        return await self._fetch_via_tavily(url, offset=offset, find=find, find_regex=find_regex)
 
     async def fetch(
         self,
@@ -770,13 +806,17 @@ class WebFetcher:
         require_text: bool,
         skip_solver: bool = False,
     ) -> FetchResult | None:
-        """Try the recovery tiers in order — the reader, then the heavier challenge solver —
-        returning the first that yields a usable (non-challenge) page, else None. Each tier
-        returns None when it is unconfigured, fails, or hands back a challenge interstitial,
-        so escalation is simply "try the next one". `require_text` additionally rejects an
-        empty result (the JS-shell case, where a tier that renders nothing hasn't recovered).
-        `skip_solver` drops the solver tier — set on the solver-first fall-through, where the
-        solver already ran and missed, so this leg is just the reader as a safety net.
+        """Try the recovery tiers in order — the reader, the heavier challenge solver, then the
+        hosted Tavily Extract tier — returning the first that yields a usable (non-challenge)
+        page, else None. Each tier returns None when it is unconfigured, fails, or hands back a
+        challenge interstitial, so escalation is simply "try the next one". `require_text`
+        additionally rejects an empty result (the JS-shell case, where a tier that renders
+        nothing hasn't recovered). `skip_solver` drops the on-box solver tier — set on the
+        solver-first fall-through, where the solver already ran and missed — but Tavily still
+        runs (it is a different, hosted un-waller that may clear what byparr couldn't).
+
+        Tavily is LAST so the free on-box tiers run first and the paid hosted tier is reached
+        only when everything on-box fails (docs/plans/TAVILY_FETCH_TIER_PLAN.md).
 
         A tier that returns only a THIN shell (fewer than `_MIN_RECOVERED_CHARS` of extracted
         text — a blocked origin the reader rendered as bare title) does not win outright: it is
@@ -786,9 +826,9 @@ class WebFetcher:
         clears the bar, the RICHEST thin result is returned — never discarded — so nothing is
         lost and the fuller of two partial recoveries wins."""
         tiers = (
-            (self._fetch_via_reader,)
+            (self._fetch_via_reader, self._fetch_via_tavily)
             if skip_solver
-            else (self._fetch_via_reader, self._fetch_via_solver)
+            else (self._fetch_via_reader, self._fetch_via_solver, self._fetch_via_tavily)
         )
         thin: FetchResult | None = None
         for tier in tiers:
@@ -1203,6 +1243,64 @@ class WebFetcher:
             body_truncated=False,
         )
 
+    async def _fetch_via_tavily(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> FetchResult | None:
+        """Re-fetch `url` through the HOSTED Tavily Extract API — the fourth recovery tier, which
+        renders + un-walls the page on Tavily's cloud and returns clean content, extracted and
+        windowed exactly like the reader path (so pagination / find / outline all work). Like the
+        reader/solver the endpoint is owner-pinned and NOT SSRF-guarded — only the public TARGET
+        url is (it must be public), and only that url (plus the owner's key, in the body) travels.
+
+        The tier fires only when it is WIRED (a base URL + a settings provider) AND the live
+        provider reports ENABLED with a KEY present — the PWA toggle + key, read fresh here so a
+        flip/paste takes effect on the next fetch. Returns None when disabled/keyless, on any
+        Tavily error, or when the extracted content is itself a challenge/paywall page (the same
+        guards as every other tier) — so a walled page laundered through Tavily never becomes a
+        cited source."""
+        if not self._tavily_url or self._tavily_settings is None:
+            return None
+        enabled, api_key = await self._tavily_settings()
+        if not enabled or not api_key:
+            return None
+        guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
+        payload = {
+            "api_key": api_key,
+            "urls": url,
+            "extract_depth": self._tavily_extract_depth,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as c:
+                resp = await c.post(f"{self._tavily_url}/extract", json=payload)
+                resp.raise_for_status()
+                body = resp.json()
+        except (httpx.HTTPError, ValueError, WebFetchError) as exc:
+            log.warning("web.tavily_failed", error=repr(exc))
+            return None
+        text, final_url = _parse_tavily_extract(body, url)
+        if not text.strip():
+            return None
+        # Tavily can hand back the origin's challenge/paywall wall rendered as clean text (it
+        # extracted the wall, not the article). Treat that as a miss — the same seam the reader
+        # path uses — so the block is never laundered into a cited source.
+        if _is_challenge_page("", text):
+            log.warning("web.challenge_blocked", url=url, via="tavily")
+            return None
+        if _is_paywall_page("", text):
+            log.warning("web.paywall_blocked", url=url, via="tavily")
+            return None
+        log.info("web.tavily_used", url=final_url)
+        return _window_and_find(
+            text,
+            url=final_url,
+            title="",
+            links=(),
+            offset=offset,
+            find=find,
+            find_regex=find_regex,
+            body_truncated=False,
+        )
+
     async def _get_following_safe_redirects(
         self, client: httpx.AsyncClient, url: str
     ) -> httpx.Response:
@@ -1309,6 +1407,20 @@ async def _read_capped(resp: httpx.Response, *, max_bytes: int = _MAX_BYTES) -> 
 def _is_textual(content_type: str) -> bool:
     ct = content_type.lower()
     return not ct or ct.startswith("text/") or "html" in ct or "json" in ct or "xml" in ct
+
+
+def _parse_tavily_extract(body: object, fallback_url: str) -> tuple[str, str]:
+    """The (text, final_url) from a Tavily Extract response, or ("", fallback_url) when the body
+    isn't the expected shape. Tavily returns `{"results": [{"url", "raw_content"}], ...}`; we take
+    the first result's cleaned content and its (possibly redirect-resolved) URL. Defensive on every
+    field so a malformed body degrades to a miss (empty text) rather than crashing the tier."""
+    results = body.get("results") if isinstance(body, dict) else None
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        return "", fallback_url
+    first = results[0]
+    text = str(first.get("raw_content") or "").strip()
+    final_url = str(first.get("url") or "").strip() or fallback_url
+    return text, final_url
 
 
 def _pretty_json(raw: str) -> str:
