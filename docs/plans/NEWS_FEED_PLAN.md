@@ -71,9 +71,12 @@ test). That separation is why the integration is phased:
   a `research_fetch`-persona `_ChildResult` carrying the article body + a `read=True`
   `WebSource`), and keeps that article's URL OUT of the reader's candidate pool so it is
   never re-fetched. The pre-pull hits the SAME `FeedClient` cache a scout's `news_feed`
-  uses, so it costs one fetch per feed. Result: the space + local angles are covered from
-  the feed body with no reader fetch, and the reader's `min_reads` spends on the
-  summary-feed angles (national / economy / world / AI).
+  uses, so it costs one fetch per feed. Result: full-text space + local articles reach the
+  writer **without a reader fetch** (additive coverage); the reader still works every angle
+  for whatever the feeds didn't carry, just never re-fetching a pre-pulled URL. The
+  pre-pull is **additive, not a fallback** — if the open-web (scout→read) gather comes back
+  empty (e.g. a SearXNG outage; feeds fetch direct and are unaffected), the run still
+  refuses rather than shipping a feed-only briefing with its other sections empty.
 
 - **Wave C (deferred — not scheduled): owner-editable feeds + on-box tuning.** Wave A ships working
   curated defaults in `config.py` (no operator action needed to use it). Wave C exposes

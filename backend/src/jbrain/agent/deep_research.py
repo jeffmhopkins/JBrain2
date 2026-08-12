@@ -169,10 +169,12 @@ _SINK_EPHEMERAL = "ephemeral"
 _EMR_SEED_LIMIT = 200
 
 # Wave-B curated-feed pre-pull (NEWS_FEED_PLAN.md): how many full-text articles to inject per
-# declared category, and the per-article body cap in the injected finding (about one page-window,
-# like the reader's own fetch). Bounded so the pre-pull is a couple of feed fetches, never a fan.
+# declared category, and the per-article body cap in the injected finding. Sized under the
+# downstream feed cap (briefs.MAX_FEED_CHARS) so a full article rides in whole where it fits,
+# with only a genuinely long piece clipped (and marked). Per-category count is bounded so the
+# pre-pull is a couple of feed fetches, never a fan.
 _FEED_INJECT_PER_CATEGORY = 4
-_FEED_INJECT_BODY_CHARS = 3500
+_FEED_INJECT_BODY_CHARS = 8000
 
 
 @dataclass(frozen=True)
@@ -196,9 +198,11 @@ class Directive:
     min_reads: int | None = None
     # Optional curated-feed categories to PRE-PULL as full-text findings before the two-phase
     # gather (NEWS_FEED_PLAN.md Wave B): each full-text article the `news_feed` feeds carry is
-    # injected straight in as a gather finding and its URL kept OUT of the reader's candidate
-    # pool, so the walled/slow space+local angles skip the reader fetch. () = off (the default).
-    # Set by a preset's `news_feeds` field, e.g. daily_news → (space, local).
+    # injected straight in as a gather finding — so it reaches the writer WITHOUT a reader fetch —
+    # and its URL is kept OUT of the reader's candidate pool so the reader never re-fetches it.
+    # Additive full-text coverage for the walled/slow space+local angles (the reader still works
+    # every angle for anything the feeds didn't carry); () = off (the default). Set by a preset's
+    # `news_feeds` field, e.g. daily_news → (space, local).
     news_feed_categories: tuple[str, ...] = ()
 
 
@@ -1030,7 +1034,10 @@ def _feed_body_child(item: FeedItem) -> _ChildResult:
     already delivered the body — so the writer may cite it and `_collect_sources` keeps it open."""
     when = item.published or "no date"
     outlet = item.source or _host(item.url)
-    text = f"{item.title}\n[{when} · {outlet}]\n\n{item.body[:_FEED_INJECT_BODY_CHARS]}"
+    body = item.body[:_FEED_INJECT_BODY_CHARS]
+    if len(item.body) > _FEED_INJECT_BODY_CHARS:
+        body += "\n…[article continues]"
+    text = f"{item.title}\n[{when} · {outlet}]\n\n{body}"
     return _ChildResult(
         label=(item.title or item.url)[:60],
         persona="research_fetch",
@@ -1473,6 +1480,9 @@ class DeepResearchService:
         scratch = Scratchpad()
         try:
             # --- (2) GATHER — a sequential single-source pipeline, or a parallel fan -------
+            # Set only on the fetch_first path: True when the scout→read open-web gather itself
+            # came back empty, so an additive feed pre-pull can't mask a dead gather (see below).
+            web_gather_empty = False
             if staged:
                 # Ordered stages, fed forward: extract from the source, then answer/fact-check
                 # what it found — no independent sibling re-derives the extraction.
@@ -1492,6 +1502,12 @@ class DeepResearchService:
                 gathered = await self._gather_scout_then_read(
                     ctx, question, sub_questions, directive.min_reads, exclude_urls=feed_urls
                 )
+                # The OPEN-WEB gather must stand on its own: feed children are additive full-text
+                # coverage for a working gather, NOT a fallback for a dead one. If the scout→read
+                # came back empty (e.g. SearXNG down — the feeds fetch direct and are unaffected),
+                # this run must refuse exactly as a feed-less one would, rather than ship a hollow
+                # briefing whose non-fed sections are all empty (NEWS_FEED_PLAN.md Wave B).
+                web_gather_empty = not any(c.ok for c in gathered)
                 gathered = [*feed_children, *gathered]
             else:
                 # Idea 3 — clamp gather to what the tree can seat AROUND the review reserve, so
@@ -1530,6 +1546,11 @@ class DeepResearchService:
             # makes each stage's visibility explicit.
             scratch.add_children(gathered, stage="gather", scope=RESEARCH)
             gather_ok = any(e.ok for e in scratch.read({RESEARCH}))
+            # A feed pre-pull (Wave B) must not rescue an empty open-web gather: if scout→read
+            # produced nothing, treat the gather as empty despite any injected feed findings, so
+            # the run refuses honestly instead of shipping a feed-only briefing (NEWS_FEED_PLAN.md).
+            if web_gather_empty:
+                gather_ok = False
             # An empty gather is fatal for `web`/`library` (there is nothing to synthesize
             # from, and a dry library must not silently reach the web). `library_first`
             # instead falls through: the reflect step treats the whole outline as a gap and
@@ -2049,6 +2070,11 @@ class DeepResearchService:
                 log.warning("deep_research.feed_prefetch_failed", category=category, exc_info=True)
                 continue
             full = [it for it in items if it.has_full_body][:_FEED_INJECT_PER_CATEGORY]
+            if not full:
+                # No full-text items — a quiet feed, or (a foot-gun) a typo'd/unconfigured
+                # category that `fetch_category` resolved to nothing. Log so a persistent 0 is
+                # diagnosable rather than a silent no-op.
+                log.info("deep_research.feed_prefetch_empty", category=category)
             for it in full:
                 key = _canonical_url(it.url)
                 if not key or key in urls:

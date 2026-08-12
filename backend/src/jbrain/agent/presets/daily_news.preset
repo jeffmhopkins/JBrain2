@@ -27,9 +27,9 @@ min_reads: 8
 # Curated-feed pre-pull (NEWS_FEED_PLAN.md Wave B): before the two-phase gather, pull these
 # `news_feed` categories and inject each FULL-TEXT article (the feeds that carry the whole body —
 # NASA / Spaceflight Now / Space.com for space, Space Coast Daily for local) straight in as a
-# gather finding, keeping its URL out of the reader's fetch list. So the two heaviest, most
-# fetch-wall-prone angles are covered from the feed body with no reader fetch; the reader's
-# min_reads then spends on the summary-feed angles (national / economy / world / AI).
+# gather finding, so those articles reach the writer WITHOUT a reader fetch. Their URLs are kept
+# out of the reader's candidate list so it never re-fetches them; the reader still works every
+# angle for anything the feeds didn't carry.
 news_feeds:
   - space
   - local

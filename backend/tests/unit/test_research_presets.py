@@ -126,6 +126,7 @@ def test_news_feeds_parses_a_list_and_defaults_empty() -> None:
             "question": "News {{x}}",
             "sections": ["One"],
             "angles": [{"brief": "gather {{x}}"}],
+            "min_reads": 8,  # the pre-pull only runs on the two-phase gather
             "news_feeds": ["space", " local "],  # trimmed
         },
     )
@@ -133,6 +134,22 @@ def test_news_feeds_parses_a_list_and_defaults_empty() -> None:
     # Absent → empty (feature off), carried through render unchanged.
     bare = rp._coerce_preset("p", {"question": "q", "sections": ["S"], "angles": [{"brief": "b"}]})
     assert bare.news_feeds == ()
+
+
+def test_news_feeds_requires_min_reads() -> None:
+    # The feed pre-pull only runs on the two-phase (min_reads) gather, so news_feeds without
+    # min_reads would be a silent no-op — a load-time refusal, not a rotting field.
+    with pytest.raises(rp.PresetError) as exc:
+        rp._coerce_preset(
+            "p",
+            {
+                "question": "q",
+                "sections": ["S"],
+                "angles": [{"brief": "b"}],
+                "news_feeds": ["space"],  # no min_reads
+            },
+        )
+    assert "news_feeds" in str(exc.value) and "min_reads" in str(exc.value)
 
 
 @pytest.mark.parametrize("bad", ["space", [""], ["ok", 3], [None]])

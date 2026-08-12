@@ -1811,6 +1811,23 @@ async def test_prefetch_feed_bodies_is_a_noop_without_a_client_or_categories() -
     assert await with_client._prefetch_feed_bodies(()) == ([], set())
 
 
+async def test_feed_prepull_does_not_rescue_an_empty_open_web_gather() -> None:
+    """SearXNG-down analogue: the scout→read open-web gather returns nothing (every reader comes
+    back empty), but the direct RSS feeds fetch fine and inject full-text findings. The run must
+    still REFUSE — feed children are additive coverage, not a fallback that would ship a hollow
+    briefing whose non-fed sections are all empty (NEWS_FEED_PLAN.md Wave B, review finding 1)."""
+    router = _FakeRouter(complexity="deep", covered=True, gaps=())
+    spawn = _FakeSpawn(reader_ok=False)  # scouts surface URLs, but every reader opens nothing
+    feeds = _FakeFeeds([_feed_item("https://nasa.gov/a", body="B" * 600)])
+    svc = DeepResearchService(
+        router=router,  # type: ignore[arg-type]
+        spawn=spawn,  # type: ignore[arg-type]
+        feeds=feeds,  # type: ignore[arg-type]
+    )
+    out = await svc.research(_ctx(), {"preset": "daily_news"})
+    assert "refused" in str(out).lower()  # honest refusal, not a feed-only briefing
+
+
 async def test_angle_candidates_excludes_prefetched_urls_from_the_reader() -> None:
     svc = _svc(_FakeRouter(), _FakeSpawn())
     scout = _ChildResult(

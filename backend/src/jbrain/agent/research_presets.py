@@ -194,6 +194,13 @@ def _coerce_preset(name: str, raw: object) -> Preset:
     min_reads = _pos_int_field(name, "min_reads", raw.get("min_reads"))
     #   news_feeds — curated `news_feed` categories to pre-pull as full-text findings (Wave B).
     news_feeds = _str_list_field(name, "news_feeds", raw.get("news_feeds"))
+    # The feed pre-pull only runs on the two-phase (min_reads) gather, so `news_feeds` without
+    # `min_reads` would be a silent no-op — refuse it at load rather than let it rot unnoticed.
+    if news_feeds and min_reads is None:
+        raise PresetError(
+            f"preset {name!r}: `news_feeds` requires `min_reads` (the feed pre-pull runs only on "
+            "the two-phase scout→read gather, so it is inert without a read target)"
+        )
     # The variables the caller must supply = every slot used anywhere in the template.
     used: set[str] = set()
     for text in (question, objective, *sections, *(b for _, b in angles), *(t for t, _ in angles)):
