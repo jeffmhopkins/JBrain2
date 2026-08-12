@@ -600,7 +600,9 @@ pages a date-stuffed general query pulls. It's the right tool for a news brief: 
 first-class arg (search by topic, `since` handles the date), and it drops onto the
 freely-fetchable outlets a walled major (Reuters/WSJ/Bloomberg — which block even the solver)
 can't serve. It shares the scout's `web_search` budget (so it can't sidestep that ceiling)
-and the 24h domain-skip filter. jerv and `research_scout` hold it; the leads it returns are
+and the 24h domain-skip filter. jerv and the deep-research gather personas hold it (`research`,
+`research_deep`, `research_scout`, `review`), so any fan can use it, not only the preset scout
+path; the leads it returns are
 still `web_fetch`-then-verify like any search hit. The news engines are enabled in
 `deploy/searxng/settings.yml`.
 
@@ -609,7 +611,8 @@ it returns paper leads (title, **authors**, publish date, URL, abstract snippet)
 scholarly indexes (arXiv, PubMed, Semantic/Google Scholar, Crossref) — the primary-literature
 lane a deep-research run lacked. Same discipline as the others: shares the search budget, rides
 the domain-skip filter, leads are `web_fetch`-then-verify (arXiv/PubMed pages are open, often a
-free PDF), and it's `web`-gated on jerv + `research_scout`. Its engines are enabled in the same
+free PDF), and it's `web`-gated on jerv + the deep-research gather personas (same set as
+news_search). Its engines are enabled in the same
 SearXNG settings file.
 
 **`web_search` also surfaces SearXNG's zero-click extras.** The general search now reads two
