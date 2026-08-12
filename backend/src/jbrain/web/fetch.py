@@ -85,6 +85,7 @@ class _SolverOutcome(enum.Enum):
     MISS = "miss"  # byparr ran and returned a page, but it was still challenged / empty / a form
     OK = "ok"  # byparr recovered the page
 
+
 _TIMEOUT = 20.0
 # The challenge solver drives a stealth browser that WAITS OUT a JS/managed challenge, so it
 # is far slower than a plain fetch: `maxTimeout` is what the solver spends clearing the wall,

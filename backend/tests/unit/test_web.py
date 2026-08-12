@@ -2955,7 +2955,9 @@ async def test_a_thin_tavily_result_is_returned_but_not_learned() -> None:
             direct=httpx.Response(403, headers={"content-type": "text/html"}),
             reader=_CHALLENGE_MD,  # reader miss
             solver_response=_SOLVER_CHALLENGE,  # byparr genuine miss
-            tavily_response=_tavily_body("https://x.example/walled", content="A short cookie banner."),
+            tavily_response=_tavily_body(
+                "https://x.example/walled", content="A short cookie banner."
+            ),
         ),
         record_solver_failed=recorder,
     )

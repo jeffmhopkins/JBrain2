@@ -105,10 +105,10 @@ from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import pet as pet_api
 from jbrain.api import settings as settings_api
-from jbrain.api import tavily_settings as tavily_settings_api
 from jbrain.api import (
     tasks as tasks_api,
 )
+from jbrain.api import tavily_settings as tavily_settings_api
 from jbrain.api.debug_activity import DebugActivity
 from jbrain.api.research_service import ResearchLibrary
 from jbrain.appointments.repo import SqlAppointmentsRepo
@@ -449,6 +449,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tts_base = settings.brain_tts_url.rstrip("/")
         app.state.brain_tts_base_url = tts_base
         app.state.brain_tts_flag_emit = build_flag_emitter(f"{tts_base}/event" if tts_base else "")
+
         # The hosted Tavily Extract tier reads its toggle + key LIVE from app.settings on each
         # fetch (SYSTEM_CTX owner session), the stored key taking precedence over the env
         # fallback — so the PWA Settings panel is the live control surface with no restart,
