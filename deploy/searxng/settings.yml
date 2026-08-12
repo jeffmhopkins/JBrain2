@@ -58,15 +58,15 @@ engines:
     disabled: false
   - name: startpage
     disabled: false
-  # Knowledge-panel / infobox producers for web_search's zero-click "direct answer" block
-  # (SearchResult.infobox). `wikidata` is the STRUCTURED source — it answers an entity query
-  # (a birth date, a population) from query.wikidata.org, a different endpoint than the
-  # Wikipedia REST API the box's IP gets rate-limited on, so it stays a reliable panel source.
-  # `wikipedia` supplies the article summary + thumbnail. Enabled explicitly so the infobox is
-  # produced regardless of upstream default toggles (observed: wikidata was absent from the
-  # engine rotation, so no panel appeared even for a clean entity).
-  - name: wikidata
-    disabled: false
+  # Best-effort infobox source for web_search's zero-click "direct answer" block
+  # (SearchResult.infobox) — `wikipedia` supplies an article summary + thumbnail when it
+  # answers. The STRUCTURED `wikidata` source is deliberately NOT enabled: its engine runs a
+  # heavy property-label SPARQL query against query.wikidata.org at STARTUP, and this box's
+  # rate-limited residential IP can't complete it within the request timeout, so the engine
+  # fails to register and stalls every searxng boot (a ~6s init timeout, on repeat). The
+  # panel is therefore best-effort from wikipedia; the parsing/rendering surface whatever
+  # infobox SearXNG returns, so re-adding wikidata is a pure config flip if WDQS ever
+  # becomes reachable from here (a residential-proxy egress would do it).
   - name: wikipedia
     disabled: false
   # News-category engines for the `news_search` tool (SearxngClient.search_news queries
