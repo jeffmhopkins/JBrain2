@@ -10,7 +10,8 @@ models are resident in memory:
                                          load endpoint; loading is request-driven)
   - POST /upstream/{model}/v1/chat/completions (1 token, discarded) → warm the
                                          inference path after load so the first real
-                                         turn isn't the slow one (see `load`)
+                                         turn isn't the slow one, optionally priming a
+                                         persona system prompt into the KV cache (see `load`)
   - GET  /logs                         → recent gateway + upstream stdout, which the
                                          loading bar mines for the llama.cpp model-load
                                          percentage (a real "weights read in" signal,
@@ -94,7 +95,7 @@ class LocalGatewayClient:
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
 
-    async def load(self, served_model: str) -> None:
+    async def load(self, served_model: str, *, warm_system: str | None = None) -> None:
         """Load `served_model` into memory AND warm it for inference. The health probe
         makes llama-swap load the model (request-driven; with --no-mmap the weights are
         read into RAM before it returns). But "weights resident" isn't "inference-ready":
@@ -103,10 +104,19 @@ class LocalGatewayClient:
         user's first real turn (it feels like the model reloads: slow first token, fast
         after). So after the probe we force a single-token generation whose output is
         discarded — a readiness probe, the inference-path analog of the health GET, not a
-        functional LLM call. Raises LocalGatewayError if the model can't load; the warm-up
-        itself is best-effort (the model is resident regardless — a failed warm-up just
-        leaves that cost on first use, the prior behaviour). Generous timeout: a cold 80B
-        reads tens of GB of weights."""
+        functional LLM call.
+
+        `warm_system`, when given, is sent as that warm-up's system message so the model
+        prefills that exact prefix into its KV cache during load — the manual Load passes
+        the interactive persona (jerv) prompt this way. With the gateway's `--cache-reuse`,
+        the first real turn carrying the same leading system prompt then reuses that prefix
+        instead of prefilling the large static persona prompt cold (the tens-of-seconds
+        first-token cost on a big model), moving that cost into the load the operator is
+        already waiting on (docs/archive/LLM_PROMPT_CACHE_PLAN.md).
+
+        Raises LocalGatewayError if the model can't load; the warm-up itself is best-effort
+        (the model is resident regardless — a failed warm-up just leaves that cost on first
+        use, the prior behaviour). Generous timeout: a cold 80B reads tens of GB of weights."""
         load_timeout = max(self._timeout, 120.0)
         try:
             async with httpx.AsyncClient(timeout=load_timeout, transport=self._transport) as client:
@@ -114,21 +124,30 @@ class LocalGatewayClient:
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
-        await self._warm(served_model)
+        await self._warm(served_model, system=warm_system)
 
-    async def _warm(self, served_model: str) -> None:
+    async def _warm(self, served_model: str, *, system: str | None = None) -> None:
         """Exercise the inference path with one discarded token. Best-effort: the model is
         already loaded, so a warm-up failure is logged, not raised — it only means the
-        first real turn pays the warm-up cost (no worse than before this warm-up existed)."""
+        first real turn pays the warm-up cost (no worse than before this warm-up existed).
+
+        A `system` prompt makes this a priming warm-up: it becomes the leading message so
+        its KV prefix is prefilled and left in the cache for the first real turn to reuse
+        (see `load`). The timeout is generous because that prefill is the real work — the
+        same persona-prompt prefill that otherwise stalls the user's first turn."""
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": "warmup"})
         body = {
             "model": served_model,
-            "messages": [{"role": "user", "content": "warmup"}],
+            "messages": messages,
             "max_tokens": 1,
             "stream": False,
         }
         try:
             async with httpx.AsyncClient(
-                timeout=max(self._timeout, 120.0), transport=self._transport
+                timeout=max(self._timeout, 180.0), transport=self._transport
             ) as client:
                 resp = await client.post(
                     f"{self._root}/upstream/{served_model}/v1/chat/completions", json=body

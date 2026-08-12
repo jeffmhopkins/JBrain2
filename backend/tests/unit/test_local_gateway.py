@@ -80,6 +80,28 @@ async def test_load_probes_health_then_warms_with_one_token() -> None:
     ]
     assert body["model"] == "qwen3-vl-30b-a3b"
     assert body["max_tokens"] == 1
+    # No persona prompt passed → a bare readiness probe, no system message.
+    assert body["messages"] == [{"role": "user", "content": "warmup"}]
+
+
+async def test_load_primes_the_warm_up_with_the_given_system_prompt() -> None:
+    # When a persona prompt is passed, the warm-up leads with it as the system message so
+    # its KV prefix is prefilled during load — the first real turn carrying the same
+    # leading prompt then reuses that prefix (gateway --cache-reuse) instead of a cold
+    # prefill (the 60-90s first-response latency this targets).
+    body: dict[str, object] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            body.update(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    await _client(handle).load("gpt-oss-120b", warm_system="PERSONA SYSTEM PROMPT")
+    assert body["messages"] == [
+        {"role": "system", "content": "PERSONA SYSTEM PROMPT"},
+        {"role": "user", "content": "warmup"},
+    ]
+    assert body["max_tokens"] == 1
 
 
 async def test_load_raises_when_the_model_cannot_load() -> None:

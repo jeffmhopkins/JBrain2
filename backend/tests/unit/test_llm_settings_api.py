@@ -1031,6 +1031,11 @@ def test_load_makes_the_model_resident(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resp.status_code == 200, resp.text
     assert gw.loaded == ["qwen3-vl-30b-a3b"]  # called with the served_model
     assert resp.json()["loaded"] == ["qwen3-vl-30b"]
+    # The warm-up is primed with the interactive persona (jerv) prompt so the first
+    # conversation turn reuses that cached prefix instead of a cold prefill.
+    from jbrain.agent.agents import AGENTS
+
+    assert gw.warmed_system == [AGENTS["jerv"].prompt]
 
 
 def test_load_surfaces_a_gateway_failure_as_502(monkeypatch: pytest.MonkeyPatch) -> None:
