@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from jbrain.api import jcode_llm
 from jbrain.web.fetch import FetchResult, WebFetchError
-from jbrain.web.search import SearchHit, WebSearchError
+from jbrain.web.search import SearchHit, SearchResult, WebSearchError
 
 _AUTH = {"Authorization": "Bearer sk-test"}
 
@@ -24,11 +24,11 @@ class _FakeSearxng:
         self._hits = hits
         self.calls: list[tuple[str, int]] = []
 
-    async def search(self, query: str, limit: int) -> list[SearchHit]:
+    async def search(self, query: str, limit: int) -> SearchResult:
         self.calls.append((query, limit))
         if isinstance(self._hits, Exception):
             raise self._hits
-        return self._hits
+        return SearchResult(hits=self._hits)
 
 
 class _FakeFetcher:

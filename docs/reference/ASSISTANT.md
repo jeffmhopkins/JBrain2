@@ -372,8 +372,8 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   the learner to their own answer by questioning and never reads owner data; its
   prompt forbids handing over graded answers.
 - **`jerv`** — a sandboxed general-purpose web chatbot: the internet tools
-  (`web_search`, `news_search`, `web_fetch`), the dataless `current_time`, and the owner-approved
-  `current_location`, and **no knowledge-base tools** — it runs with empty read
+  (`web_search`, `news_search`, `science_search`, `web_fetch`), the dataless `current_time`, and
+  the owner-approved `current_location`, and **no knowledge-base tools** — it runs with empty read
   scopes and writes no episodic memory, so it calls no knowledge
   tool and reads no note, entity, list, or appointment. Every turn is also given the
   **current date/time** as ambient context (non-personal). `current_location` is the
@@ -603,6 +603,22 @@ can't serve. It shares the scout's `web_search` budget (so it can't sidestep tha
 and the 24h domain-skip filter. jerv and `research_scout` hold it; the leads it returns are
 still `web_fetch`-then-verify like any search hit. The news engines are enabled in
 `deploy/searxng/settings.yml`.
+
+**`science_search` — the scholarly twin.** Same on-box SearXNG with `categories=science`, so
+it returns paper leads (title, **authors**, publish date, URL, abstract snippet) from the
+scholarly indexes (arXiv, PubMed, Semantic/Google Scholar, Crossref) — the primary-literature
+lane a deep-research run lacked. Same discipline as the others: shares the search budget, rides
+the domain-skip filter, leads are `web_fetch`-then-verify (arXiv/PubMed pages are open, often a
+free PDF), and it's `web`-gated on jerv + `research_scout`. Its engines are enabled in the same
+SearXNG settings file.
+
+**`web_search` also surfaces SearXNG's zero-click extras.** The general search now reads two
+response fields it used to discard — a Wikidata/Wikipedia **infobox** (a knowledge panel) and
+**instant answers** (definitions, unit/currency conversions, calculations). When present they
+lead the reply above the (still-unverified) result leads, as a direct answer the model can use
+without a `web_fetch` — framed to verify anything load-bearing, since they're third-party data.
+`web_search` also takes an optional `since` recency window (the same `time_range` filter news
+uses), for a general query that wants recent results without forcing the news category.
 The same SearXNG also backs the **jcode sandbox's `web-search` / `web-fetch`
 helpers**, bridged through the api (the sandbox is on the `jcode` network and can't
 reach searxng directly) and gated per session by the owner's opt-in — the identical

@@ -27,6 +27,9 @@ You have these tools:
   URL, snippet), filtered by a `since` window (day/week/month). Use THIS, not web_search, for a
   current-events angle: it returns actual dated articles instead of calendar/almanac pages, and
   you search by TOPIC while `since` handles recency (never stuff a date into the query).
+- `science_search` — search the scholarly literature (arXiv, PubMed, Scholar, Crossref); get back
+  paper leads with authors + publish date. Use THIS for a scientific/academic angle so the reader
+  opens a primary source (an arXiv/PubMed page, often a free PDF) instead of a blog's summary.
 - `web_fetch` — open a page and read its text (and the links on it).
 - `current_time` — the current date/time (also given to you as ambient context).
 

@@ -52,6 +52,30 @@ class SearchHit:
 
 
 @dataclass(frozen=True)
+class Infobox:
+    """A knowledge panel SearXNG blends from Wikidata/Wikipedia — a direct, zero-click answer
+    to an entity query (who/what/when: a birth date, a population, a founder) that needs no
+    web_fetch. `attributes` are the panel's labelled facts, capped; `url` is its canonical page."""
+
+    title: str
+    content: str
+    attributes: tuple[tuple[str, str], ...] = ()
+    url: str = ""
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    """A general web search: the ranked `hits` PLUS the zero-click extras SearXNG returns in the
+    same response and we used to discard — a knowledge-panel `infobox` and any instant `answers`
+    (definitions, unit/currency conversions, calculations). The extras let the agent answer a
+    plain fact without spending a web_fetch; the hits are still unverified leads to open."""
+
+    hits: list[SearchHit]
+    infobox: Infobox | None = None
+    answers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class NewsHit:
     """One news result row: a search hit plus the article's publish date as the news
     engine reported it (`published`, "" when the engine gave none) — the freshness
@@ -63,9 +87,86 @@ class NewsHit:
     published: str
 
 
-# SearXNG's recency filter values (`time_range`). A news tool takes one of these instead
-# of a raw date, mapping "today"/"this week" to the coarse window the engines support.
-NEWS_TIME_RANGES = ("day", "week", "month", "year")
+@dataclass(frozen=True)
+class ScienceHit:
+    """One scholarly result row (arXiv / PubMed / Scholar / Crossref): the paper's title, URL,
+    abstract snippet, publish date, and authors (joined, "" when the engine gave none) — the
+    citation signals a general web hit lacks, so a source can be judged primary and current."""
+
+    title: str
+    url: str
+    snippet: str
+    published: str
+    authors: str
+
+
+# SearXNG's recency filter values (`time_range`) — the coarse windows the engines support,
+# mapping "today"/"this week" to a filter. Shared by every search that takes recency.
+TIME_RANGES = ("day", "week", "month", "year")
+# Back-compat alias (news was the first taker); prefer TIME_RANGES for new call sites.
+NEWS_TIME_RANGES = TIME_RANGES
+
+_MAX_INFOBOX_ATTRS = 6  # a knowledge panel's labelled facts, capped so one panel stays compact
+_MAX_ANSWERS = 3  # instant answers surfaced; more than a few is noise, not a direct answer
+
+
+def _parse_infobox(body: dict[str, object]) -> Infobox | None:
+    """The first knowledge panel from SearXNG's `infoboxes`, or None. Each panel is
+    `{infobox: title, content, urls: [{url}], attributes: [{label, value}]}`; we keep the
+    title, the summary, a few labelled facts, and the canonical URL."""
+    boxes = body.get("infoboxes")
+    if not isinstance(boxes, list) or not boxes or not isinstance(boxes[0], dict):
+        return None
+    ib = boxes[0]
+    title = str(ib.get("infobox") or ib.get("title") or "").strip()
+    content = str(ib.get("content") or "").strip()
+    attrs: list[tuple[str, str]] = []
+    raw_attrs = ib.get("attributes")
+    if isinstance(raw_attrs, list):
+        for a in raw_attrs:
+            if not isinstance(a, dict):
+                continue
+            label = str(a.get("label") or "").strip()
+            value = str(a.get("value") or "").strip()
+            if label and value:
+                attrs.append((label, value))
+            if len(attrs) >= _MAX_INFOBOX_ATTRS:
+                break
+    url = ""
+    urls = ib.get("urls")
+    if isinstance(urls, list):
+        for u in urls:
+            if isinstance(u, dict) and str(u.get("url") or "").strip():
+                url = str(u["url"]).strip()
+                break
+    if not (title or content or attrs):
+        return None
+    return Infobox(title=title, content=content, attributes=tuple(attrs), url=url)
+
+
+def _parse_answers(body: dict[str, object]) -> tuple[str, ...]:
+    """SearXNG's instant `answers` as plain strings (a definition, a unit/currency conversion, a
+    calculation). Newer SearXNG wraps each as `{answer, url}`; older gives a bare string — accept
+    both. Capped and de-duped, order preserved."""
+    raw = body.get("answers")
+    if not isinstance(raw, list):
+        return ()
+    out: list[str] = []
+    for a in raw:
+        text = str(a.get("answer") or "").strip() if isinstance(a, dict) else str(a).strip()
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= _MAX_ANSWERS:
+            break
+    return tuple(out)
+
+
+def _join_authors(raw: object) -> str:
+    """A science row's `authors` (a list, or already a string) as one compact ", "-joined string."""
+    if isinstance(raw, list):
+        names = [str(a).strip() for a in raw if str(a).strip()]
+        return ", ".join(names)
+    return str(raw or "").strip()
 
 
 class SearxngClient:
@@ -83,115 +184,143 @@ class SearxngClient:
         self._base_url = base_url.rstrip("/")
         self._transport = transport
         # One repeat-search cache per client (the client is an app-lifetime singleton),
-        # keyed on (query, limit). cachetools.TTLCache supplies the TTL + LRU eviction;
-        # `timer` threads our injectable clock for deterministic expiry tests. None when
-        # disabled (`cache_ttl_s <= 0`). Only non-empty results are stored (see `search`).
-        self._cache: TTLCache[tuple[str, int], list[SearchHit]] | None = (
-            TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
-            if cache_ttl_s > 0
-            else None
+        # keyed on (query, time_range, limit). cachetools.TTLCache supplies the TTL + LRU
+        # eviction; `timer` threads our injectable clock for deterministic expiry tests. None
+        # when disabled (`cache_ttl_s <= 0`). Only non-empty results are stored.
+        self._cache: TTLCache[tuple[str, str, int], SearchResult] | None = self._new_cache(
+            cache_ttl_s, clock
         )
-        # A twin cache for the news category, keyed on (query, time_range, limit) so a
-        # deep-research fan's repeated news queries collapse the same way general searches do.
-        self._news_cache: TTLCache[tuple[str, str, int], list[NewsHit]] | None = (
-            TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
-            if cache_ttl_s > 0
-            else None
+        # Twin caches for the news and science categories, keyed the same way so a
+        # deep-research fan's repeated category queries collapse like general searches do.
+        self._news_cache: TTLCache[tuple[str, str, int], list[NewsHit]] | None = self._new_cache(
+            cache_ttl_s, clock
+        )
+        self._science_cache: TTLCache[tuple[str, str, int], list[ScienceHit]] | None = (
+            self._new_cache(cache_ttl_s, clock)
         )
 
-    async def search(self, query: str, limit: int = _DEFAULT_LIMIT) -> list[SearchHit]:
+    @staticmethod
+    def _new_cache(cache_ttl_s: float, clock: Callable[[], float]) -> TTLCache | None:
+        if cache_ttl_s <= 0:
+            return None
+        return TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=clock)
+
+    async def _query(
+        self, query: str, *, categories: str = "", time_range: str = ""
+    ) -> dict[str, object]:
+        """Issue one SearXNG JSON query and return the parsed body. Shared by every category
+        method so the base URL, the JSON format, the SSRF-free pinned host, and the identical
+        error mapping (a 403 usually means the JSON format is off; a transport error means the
+        instance is unreachable) live in ONE place. Raises WebSearchError on any failure."""
         if not self._base_url:
             raise WebSearchError("web search is not configured on this instance")
-        key = (query.strip(), limit)
-        if self._cache is not None and (cached := self._cache.get(key)) is not None:
-            return cached
         params = {"q": query, "format": "json"}
+        if categories:
+            params["categories"] = categories
+        if time_range:
+            params["time_range"] = time_range
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
                 resp = await client.get(f"{self._base_url}/search", params=params)
                 resp.raise_for_status()
                 body = resp.json()
         except httpx.HTTPStatusError as exc:
-            # A reachable instance that refused the request — most often a 403 because
-            # the JSON format is not enabled (deploy/searxng/settings.yml must list it).
-            # Log the status so a config drift is diagnosable, not just "unavailable".
+            # A reachable instance that refused the request — most often a 403 because the JSON
+            # format is not enabled (deploy/searxng/settings.yml must list it). Log the status
+            # so a config drift is diagnosable, not just "unavailable".
             log.warning("web.search_failed", status=exc.response.status_code, error=repr(exc))
             raise WebSearchError("the web search service is unavailable right now") from exc
         except (httpx.HTTPError, ValueError) as exc:
             # Transport-level failure (unreachable / timeout) or a non-JSON body.
             log.warning("web.search_failed", error=repr(exc))
             raise WebSearchError("the web search service is unavailable right now") from exc
-        rows = body.get("results") if isinstance(body, dict) else None
+        return body if isinstance(body, dict) else {}
+
+    @staticmethod
+    def _rows(body: dict[str, object], limit: int) -> list[dict]:
+        rows = body.get("results")
         if not isinstance(rows, list):
             return []
-        hits: list[SearchHit] = []
-        for row in rows[: max(limit, 0)]:
-            if not isinstance(row, dict):
-                continue
-            url = str(row.get("url") or "").strip()
-            if not url:
-                continue
-            hits.append(
-                SearchHit(
-                    title=str(row.get("title") or "").strip() or url,
-                    url=url,
-                    snippet=str(row.get("content") or "").strip(),
-                )
+        return [
+            r
+            for r in rows[: max(limit, 0)]
+            if isinstance(r, dict) and str(r.get("url") or "").strip()
+        ]
+
+    async def search(
+        self, query: str, limit: int = _DEFAULT_LIMIT, *, time_range: str = ""
+    ) -> SearchResult:
+        """A general web search. Returns a SearchResult: the ranked hits PLUS the zero-click
+        extras SearXNG returns in the same response — a Wikidata/Wikipedia `infobox` and any
+        instant `answers` (definitions, conversions, calculations) — so a plain fact can be
+        answered without a web_fetch. `time_range` (one of TIME_RANGES; anything else = no
+        window) optionally bounds recency for a general query, the same filter news uses."""
+        tr = time_range if time_range in TIME_RANGES else ""
+        key = (query.strip(), tr, limit)
+        if self._cache is not None and (cached := self._cache.get(key)) is not None:
+            return cached
+        body = await self._query(query, time_range=tr)
+        hits = [
+            SearchHit(
+                title=str(r.get("title") or "").strip() or str(r["url"]).strip(),
+                url=str(r["url"]).strip(),
+                snippet=str(r.get("content") or "").strip(),
             )
-        # Cache only a non-empty result: an empty list is often a transient throttle, not
-        # a real "no results", so we must retry it next time rather than serve [] for the
-        # whole TTL.
-        if self._cache is not None and hits:
-            self._cache[key] = hits
-        return hits
+            for r in self._rows(body, limit)
+        ]
+        result = SearchResult(hits=hits, infobox=_parse_infobox(body), answers=_parse_answers(body))
+        # Cache only a result that carried SOMETHING (hits or an extra): an all-empty result is
+        # often a transient throttle we should retry, not a real "nothing", for the whole TTL.
+        if self._cache is not None and (hits or result.infobox or result.answers):
+            self._cache[key] = result
+        return result
 
     async def search_news(
         self, query: str, *, time_range: str = "day", limit: int = _DEFAULT_LIMIT
     ) -> list[NewsHit]:
         """Search SearXNG's NEWS category — the same on-box metasearch, but dispatched to the
         news engines (Google/Bing/… News) and filtered to a recency window (`time_range`, one of
-        NEWS_TIME_RANGES; anything else means no window). News rows carry a `publishedDate` the
-        general category lacks, so each hit keeps that date as a freshness signal. Order is
-        SearXNG's blended ranking (not re-sorted), so a strong recent story stays on top rather
-        than a bare date sort burying the relevant lead. Raises WebSearchError like `search`."""
-        if not self._base_url:
-            raise WebSearchError("web search is not configured on this instance")
-        tr = time_range if time_range in NEWS_TIME_RANGES else ""
+        TIME_RANGES; anything else means no window). News rows carry a `publishedDate` the general
+        category lacks, so each hit keeps that date as a freshness signal. Order is SearXNG's
+        blended ranking (not re-sorted), so a strong recent story stays on top rather than a bare
+        date sort burying the relevant lead. Raises WebSearchError like `search`."""
+        tr = time_range if time_range in TIME_RANGES else ""
         key = (query.strip(), tr, limit)
         if self._news_cache is not None and (cached := self._news_cache.get(key)) is not None:
             return cached
-        params = {"q": query, "format": "json", "categories": "news"}
-        if tr:
-            params["time_range"] = tr
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
-                resp = await client.get(f"{self._base_url}/search", params=params)
-                resp.raise_for_status()
-                body = resp.json()
-        except httpx.HTTPStatusError as exc:
-            log.warning("web.news_failed", status=exc.response.status_code, error=repr(exc))
-            raise WebSearchError("the web search service is unavailable right now") from exc
-        except (httpx.HTTPError, ValueError) as exc:
-            log.warning("web.news_failed", error=repr(exc))
-            raise WebSearchError("the web search service is unavailable right now") from exc
-        rows = body.get("results") if isinstance(body, dict) else None
-        if not isinstance(rows, list):
-            return []
-        hits: list[NewsHit] = []
-        for row in rows[: max(limit, 0)]:
-            if not isinstance(row, dict):
-                continue
-            url = str(row.get("url") or "").strip()
-            if not url:
-                continue
-            hits.append(
-                NewsHit(
-                    title=str(row.get("title") or "").strip() or url,
-                    url=url,
-                    snippet=str(row.get("content") or "").strip(),
-                    published=str(row.get("publishedDate") or "").strip(),
-                )
+        body = await self._query(query, categories="news", time_range=tr)
+        hits = [
+            NewsHit(
+                title=str(r.get("title") or "").strip() or str(r["url"]).strip(),
+                url=str(r["url"]).strip(),
+                snippet=str(r.get("content") or "").strip(),
+                published=str(r.get("publishedDate") or "").strip(),
             )
+            for r in self._rows(body, limit)
+        ]
         if self._news_cache is not None and hits:
             self._news_cache[key] = hits
+        return hits
+
+    async def search_science(self, query: str, limit: int = _DEFAULT_LIMIT) -> list[ScienceHit]:
+        """Search SearXNG's SCIENCE category — the scholarly engines (arXiv, PubMed, Semantic /
+        Google Scholar, Crossref) instead of the open web, so a research question rests on primary
+        literature. Science rows carry `publishedDate` and `authors` the general category lacks,
+        kept so a source can be judged primary and current. Raises WebSearchError like `search`."""
+        key = (query.strip(), "", limit)
+        if self._science_cache is not None and (cached := self._science_cache.get(key)) is not None:
+            return cached
+        body = await self._query(query, categories="science")
+        hits = [
+            ScienceHit(
+                title=str(r.get("title") or "").strip() or str(r["url"]).strip(),
+                url=str(r["url"]).strip(),
+                snippet=str(r.get("content") or "").strip(),
+                published=str(r.get("publishedDate") or "").strip(),
+                authors=_join_authors(r.get("authors")),
+            )
+            for r in self._rows(body, limit)
+        ]
+        if self._science_cache is not None and hits:
+            self._science_cache[key] = hits
         return hits

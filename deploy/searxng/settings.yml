@@ -70,3 +70,17 @@ engines:
     disabled: false
   - name: duckduckgo news
     disabled: false
+  # Science-category engines for the `science_search` tool (SearxngClient.search_science queries
+  # ?categories=science). Scholarly indexes — arXiv, PubMed, Semantic/Google Scholar, Crossref —
+  # that carry authors + publish date per result. They serve the `science` category only, so they
+  # never dilute a general web_search; the spread is redundancy against any one index throttling.
+  - name: arxiv
+    disabled: false
+  - name: pubmed
+    disabled: false
+  - name: semantic scholar
+    disabled: false
+  - name: crossref
+    disabled: false
+  - name: google scholar
+    disabled: false

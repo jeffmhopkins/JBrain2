@@ -108,6 +108,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # A dated news search over SearXNG's news category — the current-events twin of
         # web_search (returns article leads with publish dates; recency filter, not date-stuffing).
         "news_search",
+        # A scholarly search over SearXNG's science category (arXiv/PubMed/Scholar/Crossref) —
+        # the primary-literature twin of web_search, returning paper leads with authors + dates.
+        "science_search",
         "current_time",
         "current_location",
         "weather",
@@ -293,9 +296,12 @@ REVIEW_TOOLS = RESEARCH_TOOLS
 #   it is handed and reports only what those pages say. The missing search tool is the point: it
 #   can't wander off searching, so its whole job is the deep read the writer's findings rest on.
 # Both are leaves (no spawn), KB-less, and ⊆ jerv's tools (the parent⊆child clamp keeps them).
-# `news_search` rides the scout too — for a current-events angle it finds dated article leads
-# from the news engines (and shares the same `web_search` budget, so it can't sidestep the cap).
-SCOUT_TOOLS = frozenset({"web_search", "news_search", "web_fetch", "current_time"})
+# `news_search` and `science_search` ride the scout too — for a current-events or scholarly
+# angle it finds dated article / paper leads from the news / science engines (all three share the
+# one `web_search` budget, so switching tools can't sidestep the cap).
+SCOUT_TOOLS = frozenset(
+    {"web_search", "news_search", "science_search", "web_fetch", "current_time"}
+)
 FETCH_TOOLS = frozenset({"web_fetch", "current_time"})
 # The scout's HARD `web_search` ceiling, enforced by the engine (the web_search handler counts
 # against it and refuses past it) — not by the prompt, which states the same number but which

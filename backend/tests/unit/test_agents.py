@@ -84,6 +84,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
         == WEB_TOOLS
         | {
             "news_search",
+            "science_search",
             "current_time",
             "current_location",
             "weather",
@@ -233,7 +234,7 @@ def test_scout_and_fetch_personas_split_the_gather_by_role() -> None:
     assert (
         scout.tools
         == SCOUT_TOOLS
-        == frozenset({"web_search", "news_search", "web_fetch", "current_time"})
+        == frozenset({"web_search", "news_search", "science_search", "web_fetch", "current_time"})
     )
     assert fetch.tools == FETCH_TOOLS == frozenset({"web_fetch", "current_time"})
     # The scout can follow leads (fetch) and search news; the reader is fetch-only — it never
@@ -403,7 +404,7 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         ),
         "research_scout": (
             "agent-research-scout-v8",
-            "027af389837187df1577d32b7e7e78d4444d42c3c6c78ffbf30f9ff555001921",
+            "f85150fcc655f5911da8ba39faf133db98765d7cb9b43555cd49049adfb0cfd0",
         ),
         "research_fetch": (
             "agent-research-fetch-v2",
