@@ -1,6 +1,6 @@
 # JBrain2 — News Feed Tool Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-12 · **Waves:** A✅ B◻️ C◻️
+> **Status:** In progress · **Last verified:** 2026-08-12 · **Waves:** A✅ B✅ C◻️
 
 A curated RSS/Atom feed source (`news_feed`) for jerv's gather, so the daily-news
 brief's discovery step stops depending on the search engines that throttle a
@@ -63,15 +63,19 @@ test). That separation is why the integration is phased:
   survives), the full-body items are used immediately — findings are written straight
   from the inline body with no fetch.
 
-- **Wave B (deferred): full-body injection into the two-phase reader path.** In the
-  two-phase path the scout's prose is discarded, so a full-body item's text does not yet
-  reach the writer — the reader re-fetches the URL. Wave B injects full-body feed items
-  as synthetic gather findings (the mechanism `_emr_seed_child` already uses), driven by
-  a preset-declared category list, so the space/local angles skip the reader fetch
-  entirely. Isolated to `deep_research.py` + `research_presets.py`, landed and measured
-  separately.
+- **Wave B (shipped): full-body injection into the two-phase reader path.** In the
+  two-phase path the scout's prose is discarded, so a full-body item's text would not
+  reach the writer — the reader would re-fetch the URL. Wave B pre-pulls a
+  preset-declared category list (`daily_news` → `space`, `local`) and injects each
+  full-text article as a synthetic gather finding (the mechanism `_emr_seed_child` uses:
+  a `research_fetch`-persona `_ChildResult` carrying the article body + a `read=True`
+  `WebSource`), and keeps that article's URL OUT of the reader's candidate pool so it is
+  never re-fetched. The pre-pull hits the SAME `FeedClient` cache a scout's `news_feed`
+  uses, so it costs one fetch per feed. Result: the space + local angles are covered from
+  the feed body with no reader fetch, and the reader's `min_reads` spends on the
+  summary-feed angles (national / economy / world / AI).
 
-- **Wave C (deferred): owner-editable feeds + on-box tuning.** Wave A ships working
+- **Wave C (deferred — not scheduled): owner-editable feeds + on-box tuning.** Wave A ships working
   curated defaults in `config.py` (no operator action needed to use it). Wave C exposes
   the per-category feed list in **PWA Settings** (a `news_feeds` key on the generic
   `app.settings` store — no migration) so the owner curates feeds with no terminal
@@ -114,6 +118,23 @@ the fallback there). Reuters/WSJ/Bloomberg hard paywalls remain unfetchable by a
 - Tests: `test_feeds.py` (parse/client/window/dedupe/best-effort), handler tests in
   `test_web.py`, persona pins in `test_agents.py`, sidecar digest pin in
   `test_agent_readtools.py`.
+
+## Wave B surface (shipped)
+
+- `agent/research_presets.py` — a `news_feeds` preset field (a list of category names,
+  validated at load; `()` = off), on `Preset`/`RenderedPreset`.
+- `agent/deep_research.py` — `Directive.news_feed_categories`; `DeepResearchService` takes
+  a `FeedClient`; `_feed_body_child` (article → synthetic `research_fetch` finding with a
+  `read=True` source); `_prefetch_feed_bodies` (pull declared categories, inject full-text
+  articles, return their canonical URLs); the `fetch_first` branch splices the findings in
+  and passes the URL set to `_gather_scout_then_read` → `_angle_candidates`, which seeds its
+  `seen` set so the reader never re-fetches a pre-pulled article.
+- `agent/readtools.py` + `main.py` — `build_registry`/`DeepResearchService` receive the
+  same `FeedClient` the `news_feed` tool uses (shared cache).
+- `agent/presets/daily_news.preset` — `news_feeds: [space, local]`.
+- Tests: pre-pull injects full-text and excludes its URLs (and is a no-op without a client
+  / categories), `_angle_candidates` excludes pre-pulled URLs, preset `news_feeds` parse +
+  rejection.
 
 ## Tradeoffs
 

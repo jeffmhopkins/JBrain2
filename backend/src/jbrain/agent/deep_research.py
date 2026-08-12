@@ -88,6 +88,7 @@ from jbrain.external.research_corpus import persist_report
 from jbrain.llm import LlmBadResponseError, LlmRouter
 from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.types import LlmResult, LlmTurn, TextChunk, UserMessage
+from jbrain.web.feeds import FeedClient, FeedItem
 
 log = structlog.get_logger()
 
@@ -167,6 +168,12 @@ _SINK_EPHEMERAL = "ephemeral"
 # How many EMR labs / encounters to pull into a health seed (a bounded, recent-first window).
 _EMR_SEED_LIMIT = 200
 
+# Wave-B curated-feed pre-pull (NEWS_FEED_PLAN.md): how many full-text articles to inject per
+# declared category, and the per-article body cap in the injected finding (about one page-window,
+# like the reader's own fetch). Bounded so the pre-pull is a couple of feed fetches, never a fan.
+_FEED_INJECT_PER_CATEGORY = 4
+_FEED_INJECT_BODY_CHARS = 3500
+
 
 @dataclass(frozen=True)
 class Directive:
@@ -187,6 +194,12 @@ class Directive:
     # (REPORT_PRESET_PLAN.md). None/0 = the ordinary single-pass gather (the default for every
     # run that doesn't opt in). Set by a preset's `min_reads` field, e.g. daily_news.
     min_reads: int | None = None
+    # Optional curated-feed categories to PRE-PULL as full-text findings before the two-phase
+    # gather (NEWS_FEED_PLAN.md Wave B): each full-text article the `news_feed` feeds carry is
+    # injected straight in as a gather finding and its URL kept OUT of the reader's candidate
+    # pool, so the walled/slow space+local angles skip the reader fetch. () = off (the default).
+    # Set by a preset's `news_feeds` field, e.g. daily_news → (space, local).
+    news_feed_categories: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1009,6 +1022,25 @@ def _emr_seed_child(seed: str) -> _ChildResult:
     )
 
 
+def _feed_body_child(item: FeedItem) -> _ChildResult:
+    """One curated-feed FULL-TEXT article wrapped as a synthetic gather finding (NEWS_FEED_PLAN.md
+    Wave B), so the two-phase pipeline weaves it into the analyst cross-check + synthesis WITHOUT a
+    reader fetch. persona `research_fetch` (a web research producer, so it counts as a read
+    finding); not a spawned agent (blank session_id). Its one WebSource is `read=True` — the feed
+    already delivered the body — so the writer may cite it and `_collect_sources` keeps it open."""
+    when = item.published or "no date"
+    outlet = item.source or _host(item.url)
+    text = f"{item.title}\n[{when} · {outlet}]\n\n{item.body[:_FEED_INJECT_BODY_CHARS]}"
+    return _ChildResult(
+        label=(item.title or item.url)[:60],
+        persona="research_fetch",
+        summary=text,
+        ok=True,
+        session_id="",
+        web_sources=(WebSource(url=item.url, title=item.title, read=True),),
+    )
+
+
 class DeepResearchService:
     """Drives one deep-research run in-request, reusing the spawn fan for every stage."""
 
@@ -1019,9 +1051,15 @@ class DeepResearchService:
         spawn: SpawnService,
         maker: async_sessionmaker[AsyncSession] | None = None,
         embed: EmbedClient | None = None,
+        feeds: FeedClient | None = None,
     ) -> None:
         self._router = router
         self._spawn = spawn
+        # The curated-feed client backing the Wave-B full-text pre-pull (NEWS_FEED_PLAN.md).
+        # Optional: with no client wired (or a preset that declares no `news_feeds`), the pre-pull
+        # is a no-op and the two-phase gather runs exactly as before. The SAME instance the
+        # `news_feed` tool uses, so the engine's pre-pull and a scout's news_feed share one cache.
+        self._feeds = feeds
         # The report library writer's session maker. Optional: a headless/test build without a
         # DB skips persistence (the report still renders), so persist is always best-effort.
         self._maker = maker
@@ -1182,6 +1220,7 @@ class DeepResearchService:
             output_kind=rp.output_kind,
             retention_days=rp.retention_days,
             min_reads=rp.min_reads,
+            news_feed_categories=rp.news_feeds,
         )
         source_plan = SourcePlan(source_mode=rp.source_mode, seed=None, sink=_SINK_EXTERNAL)
         return await self._run(
@@ -1442,9 +1481,18 @@ class DeepResearchService:
                 # Scout the angles for URLs, then OPEN the top ones — the writer sees only
                 # fetched text. `min_reads` is truthy here (fetch_first guards it).
                 assert directive.min_reads is not None
-                gathered = await self._gather_scout_then_read(
-                    ctx, question, sub_questions, directive.min_reads
+                # Wave-B: pre-pull the preset's declared feed categories and inject each full-text
+                # article as a finding, keeping its URL OUT of the reader's candidate pool so the
+                # space/local bodies are covered without a reader fetch (NEWS_FEED_PLAN.md).
+                feed_children, feed_urls = await self._prefetch_feed_bodies(
+                    directive.news_feed_categories
                 )
+                if feed_children:
+                    self._phase(ctx, 2, f"Pulled {len(feed_children)} full-text feed article(s)")
+                gathered = await self._gather_scout_then_read(
+                    ctx, question, sub_questions, directive.min_reads, exclude_urls=feed_urls
+                )
+                gathered = [*feed_children, *gathered]
             else:
                 # Idea 3 — clamp gather to what the tree can seat AROUND the review reserve, so
                 # a run low on budget/time drops the angles it can't afford (and says so)
@@ -1977,12 +2025,50 @@ class DeepResearchService:
                 break
         return produced
 
+    async def _prefetch_feed_bodies(
+        self, categories: tuple[str, ...]
+    ) -> tuple[list[_ChildResult], set[str]]:
+        """Pull the preset's declared `news_feed` categories and turn each FULL-TEXT article into a
+        synthetic gather finding (NEWS_FEED_PLAN.md Wave B). Returns (children, canonical_urls): the
+        findings to splice into the gather, and the set of canonical URLs to keep OUT of the
+        reader's candidate pool (so a scout surfacing the same article doesn't make the reader
+        re-fetch a page whose body is already in hand). Best-effort: no client, no categories, or
+        any error → ([], set()), and the two-phase gather runs exactly as before."""
+        if self._feeds is None or not categories:
+            return [], set()
+        children: list[_ChildResult] = []
+        urls: set[str] = set()
+        for category in categories:
+            try:
+                # `day` matches the min_reads news window; the SAME cache the scout's news_feed
+                # hits, so this pre-pull and a later scout call share one fetch per feed.
+                items = await self._feeds.fetch_category(
+                    category, since="day", limit=_FEED_INJECT_PER_CATEGORY * 2
+                )
+            except Exception:  # noqa: BLE001 - a feed hiccup must never sink the run
+                log.warning("deep_research.feed_prefetch_failed", category=category, exc_info=True)
+                continue
+            full = [it for it in items if it.has_full_body][:_FEED_INJECT_PER_CATEGORY]
+            for it in full:
+                key = _canonical_url(it.url)
+                if not key or key in urls:
+                    continue
+                urls.add(key)
+                children.append(_feed_body_child(it))
+        if children:
+            log.info(
+                "deep_research.feed_prefetch", categories=list(categories), articles=len(children)
+            )
+        return children, urls
+
     async def _gather_scout_then_read(
         self,
         ctx: ToolContext,
         question: str,
         sub_questions: list[tuple[str, str]],
         read_target: int,
+        *,
+        exclude_urls: set[str] | None = None,
     ) -> list[_ChildResult]:
         """Two-phase open-web gather (REPORT_PRESET_PLAN.md) — the structural cure for the
         fetch-light local model that reported (and hallucinated) from search PREVIEWS:
@@ -2020,7 +2106,7 @@ class DeepResearchService:
         scouts = await self._spawn.run_research_fan(
             ctx, briefs=scout_briefs, persona="research_scout", effort="low"
         )
-        groups = await self._angle_candidates(question, scouts, read_target)
+        groups = await self._angle_candidates(question, scouts, read_target, exclude_urls)
         if not groups:
             return []  # no URL to open — strictly nothing (never the scouts' snippet prose)
         # --- READ: one fetch-only child per angle group, named after the angle. ---
@@ -2052,7 +2138,11 @@ class DeepResearchService:
         return [r for r in readers if r.ok]
 
     async def _angle_candidates(
-        self, question: str, scouts: list[_ChildResult], read_target: int
+        self,
+        question: str,
+        scouts: list[_ChildResult],
+        read_target: int,
+        exclude_urls: set[str] | None = None,
     ) -> list[tuple[str, list[WebSource]]]:
         """Per-angle reader groups: each scout's touched URLs (the pages it searched up AND the
         ones it opened to follow a lead — in Option B a scout fetches, so 'touched' is its
@@ -2068,7 +2158,9 @@ class DeepResearchService:
         # Spread `read_target` reads across the angles: ceil, so a target of 12 over 5 angles reads
         # up to 3 each. It's a target, not a hard cap — the tree ceiling still bounds the fan.
         per_angle_cap = max(1, -(-read_target // max(1, len(scouts))))
-        seen: set[str] = set()
+        # Seed `seen` with URLs already covered as full-text feed findings (Wave B), so the reader
+        # never re-fetches a page whose body the pre-pull already injected (NEWS_FEED_PLAN.md).
+        seen: set[str] = set(exclude_urls or ())
         groups: list[tuple[str, list[WebSource]]] = []
         for c in scouts:
             touched = [ws for ws in c.web_sources if ws.url]

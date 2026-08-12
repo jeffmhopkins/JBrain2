@@ -24,6 +24,16 @@ retention_days: 7
 # snippet (REPORT_PRESET_PLAN.md).
 min_reads: 8
 
+# Curated-feed pre-pull (NEWS_FEED_PLAN.md Wave B): before the two-phase gather, pull these
+# `news_feed` categories and inject each FULL-TEXT article (the feeds that carry the whole body —
+# NASA / Spaceflight Now / Space.com for space, Space Coast Daily for local) straight in as a
+# gather finding, keeping its URL out of the reader's fetch list. So the two heaviest, most
+# fetch-wall-prone angles are covered from the feed body with no reader fetch; the reader's
+# min_reads then spends on the summary-feed angles (national / economy / world / AI).
+news_feeds:
+  - space
+  - local
+
 # `{{today}}` is auto-supplied by the engine (the run date) — no caller variable needed, so this
 # stays a one-call preset. Dating the question makes each day a DISTINCT dedup row, so the week's
 # briefings coexist instead of clobbering one another (the fixed-question runs would upsert in place).

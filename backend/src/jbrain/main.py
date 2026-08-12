@@ -823,6 +823,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             router=app.state.llm_router,
             settings=settings_store,
             embed=app.state.embed_client,
+            # The SAME FeedClient the news_feed tool uses, so the deep-research engine's Wave-B
+            # feed pre-pull and a scout's news_feed call share one cache (NEWS_FEED_PLAN.md).
+            feeds=news_feeds,
             image_handlers=image_handlers,
             transcribe_handlers=transcribe_handlers,
             video_handlers=video_handlers,

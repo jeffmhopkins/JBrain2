@@ -39,6 +39,7 @@ from jbrain.agent.tree import MAX_DEPTH, TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmBadResponseError
 from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
+from jbrain.web.feeds import FeedItem
 
 
 @dataclass
@@ -1745,6 +1746,90 @@ def test_collect_sources_upgrades_read_flag_when_a_later_child_opened_the_page()
     assert a.read is True  # upgraded by the second child's real read
     assert b.read is False  # only ever search-listed
     assert a.url == "https://ex.com/a"  # first-seen original url kept
+
+
+# --- Wave-B curated-feed pre-pull (NEWS_FEED_PLAN.md) -------------------------
+
+
+class _FakeFeeds:
+    """A stand-in FeedClient: returns canned FeedItems for any category, no network."""
+
+    def __init__(self, items: list[FeedItem]) -> None:
+        self._items = items
+
+    async def fetch_category(
+        self, category: str, *, since: str = "day", limit: int = 8
+    ) -> list[FeedItem]:
+        return self._items
+
+
+def _feed_item(url: str, *, body: str) -> FeedItem:
+    return FeedItem(
+        title=f"Story {url}",
+        url=url,
+        published="Tue, 12 Aug 2026",
+        summary="a short lead",
+        body=body,
+        source="Outlet",
+        epoch=1.0,
+    )
+
+
+async def test_prefetch_feed_bodies_injects_full_text_and_excludes_its_urls() -> None:
+    # One full-text article (body present) and one summary-only lead (no body).
+    items = [
+        _feed_item("https://nasa.gov/a", body="B" * 600),
+        _feed_item("https://npr.org/b", body=""),
+    ]
+    svc = DeepResearchService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        spawn=_FakeSpawn(),  # type: ignore[arg-type]
+        feeds=_FakeFeeds(items),  # type: ignore[arg-type]
+    )
+    children, urls = await svc._prefetch_feed_bodies(("space",))
+    # Only the full-text article is injected — a summary-only item is left for the reader.
+    assert [c.web_sources[0].url for c in children] == ["https://nasa.gov/a"]
+    child = children[0]
+    assert child.persona == "research_fetch" and child.ok and child.session_id == ""
+    assert child.web_sources[0].read is True  # the feed delivered the body → an opened source
+    assert "B" in child.summary  # the article body rides in the finding
+    # Its URL is excluded (reader must not re-fetch it); the summary-only one is not.
+    assert _canonical_url("https://nasa.gov/a") in urls
+    assert _canonical_url("https://npr.org/b") not in urls
+
+
+async def test_prefetch_feed_bodies_is_a_noop_without_a_client_or_categories() -> None:
+    # No FeedClient wired → nothing to pre-pull, the two-phase gather runs unchanged.
+    bare = DeepResearchService(router=_FakeRouter(), spawn=_FakeSpawn())  # type: ignore[arg-type]
+    assert await bare._prefetch_feed_bodies(("space",)) == ([], set())
+    # A client but no declared categories → also a no-op.
+    with_client = DeepResearchService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        spawn=_FakeSpawn(),  # type: ignore[arg-type]
+        feeds=_FakeFeeds([_feed_item("https://x/a", body="B" * 600)]),  # type: ignore[arg-type]
+    )
+    assert await with_client._prefetch_feed_bodies(()) == ([], set())
+
+
+async def test_angle_candidates_excludes_prefetched_urls_from_the_reader() -> None:
+    svc = _svc(_FakeRouter(), _FakeSpawn())
+    scout = _ChildResult(
+        label="Space industry",
+        persona="research_scout",
+        summary="",  # no RECOMMENDED block → every touched URL is a candidate
+        ok=True,
+        session_id="s",
+        web_sources=(
+            WebSource(url="https://nasa.gov/a", title="A"),  # already a full-text finding
+            WebSource(url="https://other.example/b", title="B"),
+        ),
+    )
+    groups = await svc._angle_candidates(
+        "q", [scout], read_target=4, exclude_urls={_canonical_url("https://nasa.gov/a")}
+    )
+    picked = [ws.url for _label, urls in groups for ws in urls]
+    assert "https://nasa.gov/a" not in picked  # the pre-pulled article is not re-fetched
+    assert "https://other.example/b" in picked  # a genuinely new lead still reaches the reader
 
 
 async def test_preset_run_skips_the_planner_and_uses_the_presets_fixed_shape() -> None:

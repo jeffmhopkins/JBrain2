@@ -69,6 +69,13 @@ class Preset:
     # real page text, not snippets (the daily_news fetch-light failure). None = no floor (the
     # default; every existing preset omits it). A scalar policy, not a `{{var}}` slot.
     min_reads: int | None
+    # Optional curated-feed categories to PRE-PULL as full-text findings (NEWS_FEED_PLAN.md
+    # Wave B): before the two-phase gather runs, the engine pulls these `news_feed` categories
+    # and injects each full-text article (the feeds that carry `content:encoded`) straight in as
+    # a gather finding, so the walled/slow space+local angles skip the reader fetch entirely.
+    # Empty = off (the default; only a min_reads news brief opts in). A scalar policy, not a
+    # `{{var}}` slot.
+    news_feeds: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,8 @@ class RenderedPreset:
     retention_days: int | None
     # The preset's gather read floor, passed straight through render. None = no floor.
     min_reads: int | None
+    # The preset's curated-feed pre-pull categories, passed straight through render. () = off.
+    news_feeds: tuple[str, ...]
 
 
 def _slots(text: str) -> set[str]:
@@ -124,6 +133,22 @@ def _pos_int_field(preset: str, field: str, value: object) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value
     raise PresetError(f"preset {preset!r}: `{field}` must be a positive integer")
+
+
+def _str_list_field(preset: str, field: str, value: object) -> tuple[str, ...]:
+    """A scalar preset policy that is either absent (empty tuple) or a list of non-empty
+    strings — e.g. `news_feeds: [space, local]`. Anything else (a bare string, a list with a
+    non-string / blank item) is a load-time refusal (fail fast at startup)."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise PresetError(f"preset {preset!r}: `{field}` must be a list of strings")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise PresetError(f"preset {preset!r}: `{field}` items must be non-empty strings")
+        out.append(item.strip())
+    return tuple(out)
 
 
 def _coerce_preset(name: str, raw: object) -> Preset:
@@ -167,6 +192,8 @@ def _coerce_preset(name: str, raw: object) -> Preset:
     #                    writes (the engine force-fetches to reach it — REPORT_PRESET_PLAN.md).
     retention_days = _pos_int_field(name, "retention_days", raw.get("retention_days"))
     min_reads = _pos_int_field(name, "min_reads", raw.get("min_reads"))
+    #   news_feeds — curated `news_feed` categories to pre-pull as full-text findings (Wave B).
+    news_feeds = _str_list_field(name, "news_feeds", raw.get("news_feeds"))
     # The variables the caller must supply = every slot used anywhere in the template.
     used: set[str] = set()
     for text in (question, objective, *sections, *(b for _, b in angles), *(t for t, _ in angles)):
@@ -183,6 +210,7 @@ def _coerce_preset(name: str, raw: object) -> Preset:
         variables=tuple(sorted(used)),
         retention_days=retention_days,
         min_reads=min_reads,
+        news_feeds=news_feeds,
     )
 
 
@@ -239,4 +267,5 @@ def render_preset(name: str, variables: dict[str, str]) -> RenderedPreset:
         ),
         retention_days=preset.retention_days,
         min_reads=preset.min_reads,
+        news_feeds=preset.news_feeds,
     )
