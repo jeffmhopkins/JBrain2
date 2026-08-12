@@ -168,6 +168,17 @@ class Settings(BaseSettings):
     # as absent and falls back to this default, so it does NOT disable it. To turn it off, point
     # JBRAIN_SOLVER_URL at a non-serving endpoint or remove the byparr service.
     solver_url: str = "http://byparr:8191"
+    # Domains that go STRAIGHT to the challenge solver, skipping the direct+reader tiers that
+    # only waste a round trip on them. A handful of majors (Reuters, WSJ, Bloomberg) run bot
+    # management that rejects the plain fetch (401/403) AND rate-limits the headless reader
+    # (429), so the direct→reader escalation always burns two failing legs before reaching the
+    # stealth browser that has the only real chance. Listing a domain here routes its fetches
+    # to the solver first; a solver miss still falls back to the normal path (so a byparr outage
+    # degrades, never hard-fails). Suffix match, so `reuters.com` also covers `www.reuters.com`.
+    # Empty disables the shortcut. Requires `solver_url` set (else the domain just fetches
+    # normally). Superseded the prompt-level "avoid these outlets" steering — routing beats
+    # asking the model to remember a blocklist.
+    solver_first_domains: tuple[str, ...] = ("reuters.com", "wsj.com", "bloomberg.com")
     # The on-box RapidOCR sidecar — deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md). It
     # cross-validates the VLM text extraction (both an `ocr` VLM row and a `tool="rapidocr"`
     # row are stored) and backs the direct `ocr` tools for jerv and the jcode sandbox. Part

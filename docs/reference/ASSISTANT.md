@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-08
+> **Status:** Living · **Last verified:** 2026-08-12
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -634,14 +634,21 @@ recoverable tool error the model sees, never ingested as page text or cited as a
 rather than laundered into a fake citation. For the residual hard case there is a third tier,
 a **challenge solver** (`JBRAIN_SOLVER_URL`, the stock `byparr` service —
 docs/plans/CHALLENGE_SOLVER_PLAN.md): a stealth browser (Byparr) behind a FlareSolverr-shape
-`/v1` API that `fetch` escalates to ONLY when the reader itself returns a challenge, clearing
-the JS/managed wall and returning the solved HTML. It is part of the stock stack and
+`/v1` API that `fetch` escalates to when the reader can't recover the page itself — it renders
+a **challenge interstitial**, or only a **thin shell** (fewer than `_MIN_RECOVERED_CHARS` of
+text, e.g. a bot-walled origin the reader got a 429 from and rendered as bare title) — clearing
+the JS/managed wall and returning the solved HTML. A thin reader result no longer short-circuits
+this tier; the richest recovery across the tiers wins. It is part of the stock stack and
 DEFAULT-ON (like the reader) — a stealth browser is heavier, but a solve only runs when a
 fetch actually hits a wall the reader couldn't clear, so an idle box pays nothing. Like the
 reader it is owner-pinned with only the public target URL leaving the box; a solve that is
-still challenged stays a blocked fetch, so it never launders junk either. The egress-Proposal
-connectors (below) remain the rule for every *other* agent and every off-box call that
-could carry owner data.
+still challenged stays a blocked fetch, so it never launders junk either. A short **solver-first
+domain list** (`JBRAIN_SOLVER_FIRST_DOMAINS`, default `reuters.com`/`wsj.com`/`bloomberg.com`)
+routes a known hard-wall origin STRAIGHT to the solver, skipping the direct+reader legs that
+only 401/429 on it; a solver miss still falls back to the normal path, so a byparr outage
+degrades rather than hard-fails. This is deliberately a routing default, not prompt steering —
+the model needn't remember which outlets block us. The egress-Proposal connectors (below)
+remain the rule for every *other* agent and every off-box call that could carry owner data.
 
 **`analyze_stream` is the second direct outbound leg, bounded the same way.** Like
 `web_fetch` it runs directly (not a staged egress Proposal), and it is jerv-only — no

@@ -47,7 +47,7 @@ import ipaddress
 import json
 import re
 import socket
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urldefrag, urljoin, urlparse
@@ -204,9 +204,24 @@ _CHALLENGE_BODY_MARKERS = (  # canonical phrases — never in real prose, so len
     "please enable js and disable any ad blocker",
     "press & hold to confirm you are a human",
     "verify you are human by completing the action below",
+    # Google's reCAPTCHA "sorry" / unusual-traffic interstitial — what the (now-defunct)
+    # `webcache.googleusercontent.com` fallback and a rate-limited Google property return in
+    # place of content. Its ~150-word body cleared the weak-marker length gate below, so it
+    # was slipping through and getting cited as a source (deep-research news runs). These are
+    # Google's exact strings, never in an article.
+    "our systems have detected unusual traffic from your computer network",
+    "this page appears when google automatically detects requests coming from your computer",
 )
 _CHALLENGE_SHORT_WORDS = 200  # a challenge page is tiny; a real article clears this easily
 _CHALLENGE_TINY_WORDS = 60
+
+# A recovery tier (reader/solver) that renders fewer than this many chars of extracted text
+# has not really recovered the page — it handed back a near-empty shell (a blocked origin the
+# reader rendered as just its title, e.g. "reuters.com\n=====", ~27 chars). Such a result must
+# NOT short-circuit escalation: the heavier solver still deserves a try. A real article clears
+# this by orders of magnitude, so the bar is deliberately low (measured on the FULL extracted
+# text, so a big page with a non-matching `find` window is never mistaken for a shell).
+_MIN_RECOVERED_CHARS = 200
 _CHALLENGE_SHORT_MARKERS = (  # specific, but gated to a short page for false-positive safety
     "update browser required",
     "sorry, you have been blocked",
@@ -619,12 +634,28 @@ class WebFetcher:
         *,
         reader_url: str = "",
         solver_url: str = "",
+        solver_first_domains: Sequence[str] = (),
     ):
         self._transport = transport
         self._reader_url = reader_url.rstrip("/")
         # A pinned bot-challenge solver (Byparr / FlareSolverr-compatible) the fetch escalates
         # to when the reader itself returns a challenge interstitial. Empty = tier disabled.
         self._solver_url = solver_url.rstrip("/")
+        # Domains whose fetches go straight to the solver, skipping the direct+reader legs that
+        # only fail on them (a hard bot-wall that 401s the fetch and 429s the reader). Lowercased
+        # for a case-insensitive host suffix match.
+        self._solver_first_domains = tuple(
+            d.strip().lower().lstrip(".") for d in solver_first_domains if d.strip()
+        )
+
+    def _prefers_solver(self, url: str) -> bool:
+        """Whether `url`'s host is (or is a subdomain of) a configured solver-first domain — so a
+        known hard-wall origin skips the direct+reader tiers. Off entirely when the solver tier is
+        unconfigured (nothing to prefer) or the list is empty."""
+        if not self._solver_url or not self._solver_first_domains:
+            return False
+        host = (urlparse(url).hostname or "").lower()
+        return any(host == d or host.endswith(f".{d}") for d in self._solver_first_domains)
 
     async def fetch(
         self,
@@ -657,6 +688,18 @@ class WebFetcher:
                 find=find,
                 find_regex=find_regex,
             )
+        # A known hard-wall domain (Reuters/WSJ/…): go straight to the stealth-browser solver
+        # instead of paying a direct 401 + reader 429 that always fail. A solver miss falls
+        # through to the ordinary path (so a byparr outage degrades to the old behaviour, never
+        # a hard failure); `skip_solver` there avoids re-running the solver we just tried.
+        solver_first_tried = self._prefers_solver(url)
+        if solver_first_tried:
+            solved = await self._fetch_via_solver(
+                url, offset=offset, find=find, find_regex=find_regex
+            )
+            if solved is not None and solved.text.strip():
+                return solved
+            log.info("web.solver_first_missed", url=url)
         try:
             result = await self._fetch_direct(url, offset=offset, find=find, find_regex=find_regex)
         except SearchFormError:
@@ -672,7 +715,12 @@ class WebFetcher:
             # model SEES the 404 and corrects the URL instead of quietly reading an empty stub.
             if exc.status not in _GONE_STATUSES:
                 recovered = await self._recover(
-                    url, offset=offset, find=find, find_regex=find_regex, require_text=False
+                    url,
+                    offset=offset,
+                    find=find,
+                    find_regex=find_regex,
+                    require_text=False,
+                    skip_solver=solver_first_tried,
                 )
                 if recovered is not None:
                     return recovered
@@ -685,7 +733,12 @@ class WebFetcher:
             # A JS-rendered shell our static extractor can't see — a renderer runs the page's
             # scripts and returns the content that wasn't in the served HTML.
             recovered = await self._recover(
-                url, offset=offset, find=find, find_regex=find_regex, require_text=True
+                url,
+                offset=offset,
+                find=find,
+                find_regex=find_regex,
+                require_text=True,
+                skip_solver=solver_first_tried,
             )
             if recovered is not None:
                 return recovered
@@ -699,17 +752,38 @@ class WebFetcher:
         find: str,
         find_regex: bool,
         require_text: bool,
+        skip_solver: bool = False,
     ) -> FetchResult | None:
         """Try the recovery tiers in order — the reader, then the heavier challenge solver —
         returning the first that yields a usable (non-challenge) page, else None. Each tier
         returns None when it is unconfigured, fails, or hands back a challenge interstitial,
         so escalation is simply "try the next one". `require_text` additionally rejects an
-        empty result (the JS-shell case, where a tier that renders nothing hasn't recovered)."""
-        for tier in (self._fetch_via_reader, self._fetch_via_solver):
+        empty result (the JS-shell case, where a tier that renders nothing hasn't recovered).
+        `skip_solver` drops the solver tier — set on the solver-first fall-through, where the
+        solver already ran and missed, so this leg is just the reader as a safety net.
+
+        A tier that returns only a THIN shell (fewer than `_MIN_RECOVERED_CHARS` of extracted
+        text — a blocked origin the reader rendered as bare title) does not win outright: it is
+        held as a fallback while escalation continues, so the heavier solver still gets a shot
+        at the real content. Without this a near-empty reader result short-circuited the solver,
+        which is why the byparr tier was never exercised on a bot-walled news source. If no tier
+        clears the bar, the RICHEST thin result is returned — never discarded — so nothing is
+        lost and the fuller of two partial recoveries wins."""
+        tiers = (
+            (self._fetch_via_reader,)
+            if skip_solver
+            else (self._fetch_via_reader, self._fetch_via_solver)
+        )
+        thin: FetchResult | None = None
+        for tier in tiers:
             recovered = await tier(url, offset=offset, find=find, find_regex=find_regex)
-            if recovered is not None and (not require_text or recovered.text.strip()):
+            if recovered is None or (require_text and not recovered.text.strip()):
+                continue
+            if recovered.total_chars >= _MIN_RECOVERED_CHARS:
                 return recovered
-        return None
+            if thin is None or recovered.total_chars > thin.total_chars:
+                thin = recovered
+        return thin
 
     async def fetch_bytes(
         self, url: str, *, max_bytes: int = _MAX_IMAGE_BYTES
