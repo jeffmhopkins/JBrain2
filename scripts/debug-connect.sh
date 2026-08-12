@@ -18,6 +18,7 @@
 #   scripts/debug-connect.sh sql "select code, name from app.domains"
 #   scripts/debug-connect.sh fetch https://example.com/walled --find "keyword"
 #   scripts/debug-connect.sh solve https://www.reuters.com/... # force ONLY the byparr solver tier
+#   scripts/debug-connect.sh tavily https://example.com/walled # force ONLY the hosted Tavily tier
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
@@ -224,6 +225,22 @@ PY
     done
     body="$(URL="$URL" OFF="$OFF" FIND="$FIND" python3 -c 'import json,os; print(json.dumps({"url": os.environ["URL"], "offset": int(os.environ["OFF"]), "find": os.environ["FIND"]}))')"
     _call POST /api/debug/solve "$body" | _pp
+    ;;
+
+  tavily) # <url> [--offset N] [--find TERM] — force ONLY the hosted Tavily Extract tier
+    URL="${1:-}"; [ -n "$URL" ] || { echo "usage: debug-connect.sh tavily <url> [--offset N] [--find TERM]" >&2; exit 2; }
+    shift
+    OFF=0 FIND=""
+    while [ "${1:-}" != "" ]; do
+      case "$1" in
+        --offset) OFF="$2"; shift 2 ;;
+        --find) FIND="$2"; shift 2 ;;
+        -*) echo "unknown flag: $1" >&2; exit 2 ;;
+        *) break ;;
+      esac
+    done
+    body="$(URL="$URL" OFF="$OFF" FIND="$FIND" python3 -c 'import json,os; print(json.dumps({"url": os.environ["URL"], "offset": int(os.environ["OFF"]), "find": os.environ["FIND"], "tier": "tavily"}))')"
+    _call POST /api/debug/fetch "$body" | _pp
     ;;
 
   logs)

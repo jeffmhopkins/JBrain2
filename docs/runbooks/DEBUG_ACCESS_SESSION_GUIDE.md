@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-08-11
+> **Status:** Living · **Last verified:** 2026-08-12
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -146,6 +146,11 @@ scripts/debug-connect.sh fetch https://example.com/long-page --find "the section
 # "solver unconfigured" from "byparr ran but is still challenged/empty" (a real miss); pair
 # with `logs byparr` for the browser-side detail.
 scripts/debug-connect.sh solve https://www.reuters.com/world/us/some-story/
+
+# Tavily — force ONLY the hosted Tavily Extract tier, to confirm a freshly-entered API key works
+# after a deploy (the same probe the Settings "Test key" button runs). A 400 tells apart "tier
+# unwired" from "disabled / keyless / a genuine miss" (bad key or Tavily error); pair with `logs api`.
+scripts/debug-connect.sh tavily https://example.com/walled-page
 
 # Container logs (proxied to the supervisor).
 scripts/debug-connect.sh logs api --tail 200

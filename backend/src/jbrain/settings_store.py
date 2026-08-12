@@ -106,6 +106,17 @@ GMAIL_CLIENT_ID_KEY = "gmail_client_id"
 GMAIL_CLIENT_SECRET_KEY = "gmail_client_secret"
 GMAIL_REFRESH_TOKEN_KEY = "gmail_refresh_token"
 
+# Tavily Extract — the HOSTED fourth web_fetch recovery tier (docs/plans/TAVILY_FETCH_TIER_PLAN.md).
+# The API key + an on/off toggle are set from the PWA Settings panel, mirroring the Gmail
+# credentials above: the stored key takes precedence over the JBRAIN_TAVILY_API_KEY env fallback,
+# so the GUI is the live control surface (WebFetcher reads both live per fetch, no restart). The
+# toggle DEFAULTS ON ("enable right off the bat" on a single-owner box), so the moment a key is
+# entered the tier is live with no second step; flipping it off disables the tier instantly while
+# keeping the key. The stored key is never echoed back on read (only whether one is set).
+TAVILY_ENABLED_KEY = "tavily_enabled"
+TAVILY_ENABLED_DEFAULT = True
+TAVILY_API_KEY_KEY = "tavily_api_key"
+
 
 # Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
 # the neural-brain page on :8800) as reach-out "tendrils" with the text streaming along
@@ -425,6 +436,29 @@ class SqlSettingsStore:
             await self.upsert(ctx, GMAIL_CLIENT_SECRET_KEY, client_secret)
         if refresh_token is not None:
             await self.upsert(ctx, GMAIL_REFRESH_TOKEN_KEY, refresh_token)
+
+    async def tavily_enabled(self, ctx: SessionContext) -> bool:
+        """Whether the hosted Tavily Extract recovery tier is enabled. DEFAULTS ON (the
+        single-owner box ships it enabled); only an explicit `false` (or any non-true value)
+        disables it. Inert regardless until a key is set (see tavily_api_key)."""
+        return await self.get(ctx, TAVILY_ENABLED_KEY, TAVILY_ENABLED_DEFAULT) is True
+
+    async def tavily_api_key(self, ctx: SessionContext) -> str:
+        """The stored Tavily API key, or "" when unset — the caller falls back to the
+        JBRAIN_TAVILY_API_KEY env value when this is blank (the Gmail-credentials precedent).
+        A non-string store reads as unset — junk never reads as a key."""
+        raw = await self.get(ctx, TAVILY_API_KEY_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_tavily_enabled(self, ctx: SessionContext, enabled: bool) -> None:
+        """Flip the Tavily tier on/off (the manual service toggle). Stored as a plain bool."""
+        await self.upsert(ctx, TAVILY_ENABLED_KEY, bool(enabled))
+
+    async def set_tavily_api_key(self, ctx: SessionContext, api_key: str) -> None:
+        """Store the Tavily API key from the Settings panel; "" clears it back to the env
+        fallback. The value is never echoed back on read (the API reports only whether one
+        is set), like the Gmail client secret."""
+        await self.upsert(ctx, TAVILY_API_KEY_KEY, api_key)
 
     async def entity_promotion(self, ctx: SessionContext) -> bool:
         """Whether provisional->confirmed entity promotion is on (docs/reference/entity.md).

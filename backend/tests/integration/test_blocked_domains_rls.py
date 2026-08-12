@@ -122,6 +122,48 @@ async def test_system_repo_upserts_and_reads_active_hosts(maker: async_sessionma
     assert row.reason == "paywalled" and row.hit_count == 2
 
 
+async def test_solver_failed_reroute_partitions_from_the_skip_set(
+    maker: async_sessionmaker,
+) -> None:
+    """The learned Tavily-first routing (migration 0165) rides the same table with a new reason:
+    `solver_failed` is a REROUTE, not a skip. record_solver_failed upserts it; tavily_first_hosts
+    returns ONLY those rows; and active_hosts (the skip set) EXCLUDES them — so a learned host is
+    routed to Tavily, never short-circuited as unreadable."""
+    repo = DomainSkipRepo(maker)
+    await repo.record("paywall.example", "paywalled", "https://paywall.example/x")
+    await repo.record_solver_failed("https://learned.example/story")
+
+    # The skip set has the paywall but NOT the reroute; the Tavily-first set is the mirror image.
+    active = await repo.active_hosts()
+    tavily_first = await repo.tavily_first_hosts()
+    assert "paywall.example" in active and "learned.example" not in active
+    assert "learned.example" in tavily_first and "paywall.example" not in tavily_first
+
+    # The new reason is accepted by the 0165 CHECK and normalized to a bare host, like any block.
+    async with scoped_session(maker, OWNER) as s:
+        reason = (
+            await s.execute(
+                text("SELECT reason FROM app.blocked_domains WHERE host = 'learned.example'")
+            )
+        ).scalar_one()
+    assert reason == "solver_failed"
+
+
+async def test_expired_solver_failed_rows_drop_out_of_tavily_first(
+    maker: async_sessionmaker,
+) -> None:
+    """Lazy 24h expiry re-probes the free path: a past-TTL solver_failed row stops being returned,
+    so a domain that later dropped its wall silently returns to the on-box tiers."""
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.blocked_domains (host, reason, expires_at)"
+                " VALUES ('stale-learned.example', 'solver_failed', now() - interval '1 hour')"
+            )
+        )
+    assert "stale-learned.example" not in await DomainSkipRepo(maker).tavily_first_hosts()
+
+
 async def test_expired_rows_are_not_active(maker: async_sessionmaker) -> None:
     """Lazy expiry is the source of truth: a row whose expires_at is in the past drops out of
     active_hosts without any sweep, so a stale block simply stops matching after 24h."""

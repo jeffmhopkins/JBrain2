@@ -401,6 +401,19 @@ class FakeSettingsStore:
         mode = self.values.get("image_analysis_mode", "full")
         return mode if mode in ("full", "ocr") else "full"
 
+    async def tavily_enabled(self, ctx: object) -> bool:
+        return self.values.get("tavily_enabled", True) is True
+
+    async def tavily_api_key(self, ctx: object) -> str:
+        raw = self.values.get("tavily_api_key", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_tavily_enabled(self, ctx: object, enabled: bool) -> None:
+        self.values["tavily_enabled"] = bool(enabled)
+
+    async def set_tavily_api_key(self, ctx: object, api_key: str) -> None:
+        self.values["tavily_api_key"] = api_key
+
     async def jcode_model(self, ctx: object) -> str:
         raw = self.values.get("jcode_model", "")
         return raw if isinstance(raw, str) else ""

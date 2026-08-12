@@ -43,11 +43,12 @@ bounded stream, so an oversized response cannot be buffered whole into memory.
 
 from __future__ import annotations
 
+import enum
 import ipaddress
 import json
 import re
 import socket
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urldefrag, urljoin, urlparse
@@ -58,6 +59,32 @@ import structlog
 from jbrain.htmltext import extract_page
 
 log = structlog.get_logger()
+
+# A live provider of the Tavily tier's runtime state: `() -> (enabled, api_key)`, read fresh
+# per fetch so the PWA Settings toggle + key take effect with no restart (the same "read
+# app.settings live per call" seam the LLM router uses). Injected into `WebFetcher`; None
+# disables the tier. Kept as a callable, not a session, so the fetcher stays DB-free.
+TavilySettingsProvider = Callable[[], Awaitable[tuple[bool, str]]]
+# The learned Tavily-first routing seam (docs/plans/TAVILY_FETCH_TIER_PLAN.md), kept as thin
+# injected callbacks so the fetcher stays DB-free: `TavilyFirstHosts` reads the learned host set
+# (domains byparr missed but Tavily recovered) so a listed host skips straight to Tavily;
+# `RecordSolverFailed` marks such a domain when Tavily saves a fetch the on-box solver missed.
+# Both best-effort (the backing repo fails open); None on either disables that half.
+TavilyFirstHosts = Callable[[], Awaitable[frozenset[str]]]
+RecordSolverFailed = Callable[[str], Awaitable[None]]
+
+
+class _SolverOutcome(enum.Enum):
+    """Why the on-box solver (byparr) tier returned what it did — so the learned Tavily-first
+    routing can tell a GENUINE miss (byparr ran but couldn't clear the wall — worth recording so
+    the domain routes Tavily-first) from an outage or an unconfigured solver (never the domain's
+    fault, never recorded)."""
+
+    UNCONFIGURED = "unconfigured"  # no solver_url — there is no byparr to have failed
+    OUTAGE = "outage"  # byparr transport/HTTP error or a malformed body — transient, not the site
+    MISS = "miss"  # byparr ran and returned a page, but it was still challenged / empty / a form
+    OK = "ok"  # byparr recovered the page
+
 
 _TIMEOUT = 20.0
 # The challenge solver drives a stealth browser that WAITS OUT a JS/managed challenge, so it
@@ -635,6 +662,11 @@ class WebFetcher:
         reader_url: str = "",
         solver_url: str = "",
         solver_first_domains: Sequence[str] = (),
+        tavily_url: str = "",
+        tavily_extract_depth: str = "advanced",
+        tavily_settings: TavilySettingsProvider | None = None,
+        tavily_first_hosts: TavilyFirstHosts | None = None,
+        record_solver_failed: RecordSolverFailed | None = None,
     ):
         self._transport = transport
         self._reader_url = reader_url.rstrip("/")
@@ -647,6 +679,20 @@ class WebFetcher:
         self._solver_first_domains = tuple(
             d.strip().lower().lstrip(".") for d in solver_first_domains if d.strip()
         )
+        # The HOSTED Tavily Extract tier — a fourth recovery leg (after direct → reader → solver)
+        # that renders + un-walls the page on Tavily's cloud (docs/plans/TAVILY_FETCH_TIER_PLAN.md).
+        # `tavily_url` is the pinned base URL (empty ⇒ tier off entirely); `tavily_settings`, when
+        # given, is a live async provider returning (enabled, api_key) read fresh per fetch — the
+        # PWA toggle + key, so the tier flips with no restart. The tier fires only when the URL is
+        # set AND the provider reports enabled AND a key is present; None provider = tier off.
+        self._tavily_url = tavily_url.rstrip("/")
+        self._tavily_extract_depth = tavily_extract_depth
+        self._tavily_settings = tavily_settings
+        # Learned Tavily-first routing: a lookup of the domains byparr missed-but-Tavily-recovered
+        # (so they skip the doomed on-box legs) and a recorder that adds a domain when Tavily saves
+        # a fetch the on-box solver genuinely missed. Both None ⇒ that half is off.
+        self._tavily_first_hosts = tavily_first_hosts
+        self._record_solver_failed = record_solver_failed
 
     def _prefers_solver(self, url: str) -> bool:
         """Whether `url`'s host is (or is a subdomain of) a configured solver-first domain — so a
@@ -656,6 +702,20 @@ class WebFetcher:
             return False
         host = (urlparse(url).hostname or "").lower()
         return any(host == d or host.endswith(f".{d}") for d in self._solver_first_domains)
+
+    async def _prefers_tavily(self, url: str) -> bool:
+        """Whether `url`'s host is on the LEARNED Tavily-first set — a domain byparr genuinely
+        missed but Tavily recovered (recorded as `solver_failed`), so it skips the doomed
+        direct→reader→byparr legs and goes straight to Tavily. Off when the tier is unwired or no
+        lookup is injected; the actual enabled/key gate lives in `_fetch_via_tavily`, so a listed
+        host with the toggle off simply falls through to the normal path. Exact-host match, the
+        same key the recorder normalizes to (a bare lowercase host)."""
+        if not self.tavily_wired or self._tavily_first_hosts is None:
+            return False
+        host = (urlparse(url).hostname or "").lower()
+        if not host:
+            return False
+        return host in await self._tavily_first_hosts()
 
     @property
     def solver_enabled(self) -> bool:
@@ -672,6 +732,24 @@ class WebFetcher:
         just exposes the tier `fetch` already reaches internally so a walled URL can be probed
         against the stealth browser alone, without a doomed direct fetch first."""
         return await self._fetch_via_solver(url, offset=offset, find=find, find_regex=find_regex)
+
+    @property
+    def tavily_wired(self) -> bool:
+        """Whether the hosted Tavily tier is WIRED (a base URL + a settings provider are set).
+        This does NOT reflect the live toggle/key — those are read async in `_fetch_via_tavily`;
+        the debug route uses this only to tell "not configured at all" from "configured but a
+        miss / disabled / no key"."""
+        return bool(self._tavily_url and self._tavily_settings is not None)
+
+    async def tavily(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> FetchResult | None:
+        """Force ONLY the hosted Tavily Extract tier for `url`, skipping the direct/reader/solver
+        legs — the debug-console entry point that exercises Tavily in isolation (and the Settings
+        "Test key" button). Returns the extracted page, or None when the tier is disabled/keyless,
+        Tavily errors, or the extracted content is itself a challenge/paywall (a miss). Mirrors
+        `solve()` for byparr; the normal `fetch()` path is unchanged."""
+        return await self._fetch_via_tavily(url, offset=offset, find=find, find_regex=find_regex)
 
     async def fetch(
         self,
@@ -704,17 +782,38 @@ class WebFetcher:
                 find=find,
                 find_regex=find_regex,
             )
+        # A LEARNED hard-for-on-box domain (byparr missed it, Tavily recovered it — recorded as
+        # `solver_failed`): try Tavily FIRST to skip the doomed direct→reader→byparr legs. It wins
+        # outright only on a RICH result (>= _MIN_RECOVERED_CHARS, the same bar every other tier
+        # clears) — a thin shell escalates instead of short-circuiting the on-box legs, and is
+        # carried as `seed_thin` so it still competes as the last-resort fallback (never lost, never
+        # re-fetched). A miss/thin falls through to the ordinary path; `skip_tavily` there avoids
+        # re-running the tier we just tried. Precedes the solver-first shortcut so a rich hit never
+        # pays a byparr-first solve; a thin/miss still falls through to it.
+        tavily_first_tried = await self._prefers_tavily(url)
+        tavily_first_thin: FetchResult | None = None
+        if tavily_first_tried:
+            extracted = await self._fetch_via_tavily(
+                url, offset=offset, find=find, find_regex=find_regex
+            )
+            if extracted is not None and extracted.total_chars >= _MIN_RECOVERED_CHARS:
+                return extracted
+            tavily_first_thin = extracted  # None, or a sub-threshold shell held as a fallback
+            log.info("web.tavily_first_missed", url=url)
         # A known hard-wall domain (Reuters/WSJ/…): go straight to the stealth-browser solver
         # instead of paying a direct 401 + reader 429 that always fail. A solver miss falls
         # through to the ordinary path (so a byparr outage degrades to the old behaviour, never
-        # a hard failure); `skip_solver` there avoids re-running the solver we just tried.
+        # a hard failure); `skip_solver` there avoids re-running the solver we just tried, and a
+        # GENUINE miss here (not an outage) still lets a later Tavily success record the domain.
         solver_first_tried = self._prefers_solver(url)
+        solver_first_missed = False
         if solver_first_tried:
-            solved = await self._fetch_via_solver(
+            solved, outcome = await self._run_solver(
                 url, offset=offset, find=find, find_regex=find_regex
             )
             if solved is not None and solved.text.strip():
                 return solved
+            solver_first_missed = outcome is _SolverOutcome.MISS
             log.info("web.solver_first_missed", url=url)
         try:
             result = await self._fetch_direct(url, offset=offset, find=find, find_regex=find_regex)
@@ -737,6 +836,9 @@ class WebFetcher:
                     find_regex=find_regex,
                     require_text=False,
                     skip_solver=solver_first_tried,
+                    skip_tavily=tavily_first_tried,
+                    solver_already_missed=solver_first_missed,
+                    seed_thin=tavily_first_thin,
                 )
                 if recovered is not None:
                     return recovered
@@ -755,6 +857,9 @@ class WebFetcher:
                 find_regex=find_regex,
                 require_text=True,
                 skip_solver=solver_first_tried,
+                skip_tavily=tavily_first_tried,
+                solver_already_missed=solver_first_missed,
+                seed_thin=tavily_first_thin,
             )
             if recovered is not None:
                 return recovered
@@ -769,14 +874,28 @@ class WebFetcher:
         find_regex: bool,
         require_text: bool,
         skip_solver: bool = False,
+        skip_tavily: bool = False,
+        solver_already_missed: bool = False,
+        seed_thin: FetchResult | None = None,
     ) -> FetchResult | None:
-        """Try the recovery tiers in order — the reader, then the heavier challenge solver —
-        returning the first that yields a usable (non-challenge) page, else None. Each tier
-        returns None when it is unconfigured, fails, or hands back a challenge interstitial,
-        so escalation is simply "try the next one". `require_text` additionally rejects an
-        empty result (the JS-shell case, where a tier that renders nothing hasn't recovered).
-        `skip_solver` drops the solver tier — set on the solver-first fall-through, where the
-        solver already ran and missed, so this leg is just the reader as a safety net.
+        """Try the recovery tiers in order — the reader, the heavier on-box challenge solver, then
+        the hosted Tavily Extract tier — returning the first that yields a usable (non-challenge)
+        page, else None. Each tier returns None when it is unconfigured, fails, or hands back a
+        challenge interstitial, so escalation is simply "try the next one". `require_text`
+        additionally rejects an empty result (the JS-shell case, where a tier that renders nothing
+        hasn't recovered). `skip_solver` drops the on-box solver tier and `skip_tavily` the Tavily
+        tier — set when that tier already ran upstream (solver-first / tavily-first) and missed, so
+        it isn't re-run. `seed_thin` pre-loads the held fallback with a sub-threshold result an
+        upstream tavily-first attempt already produced, so a thin hosted extraction still competes
+        as the last resort without being re-fetched.
+
+        Tavily is LAST so the free on-box tiers run first and the paid hosted tier is reached only
+        when everything on-box fails (docs/plans/TAVILY_FETCH_TIER_PLAN.md). The domain is recorded
+        for Tavily-first routing (`_record_solver_failed`) ONLY when Tavily WINS the fetch outright
+        (clears `_MIN_RECOVERED_CHARS`) on a page the on-box solver GENUINELY missed (this call, or
+        upstream via `solver_already_missed` — a real miss, never an outage/unconfigured). Gating on
+        a genuine WIN, not merely non-empty text, is deliberate: a thin Tavily shell that loses to a
+        richer reader result must not teach the router to skip the on-box legs next time.
 
         A tier that returns only a THIN shell (fewer than `_MIN_RECOVERED_CHARS` of extracted
         text — a blocked origin the reader rendered as bare title) does not win outright: it is
@@ -785,20 +904,49 @@ class WebFetcher:
         which is why the byparr tier was never exercised on a bot-walled news source. If no tier
         clears the bar, the RICHEST thin result is returned — never discarded — so nothing is
         lost and the fuller of two partial recoveries wins."""
-        tiers = (
-            (self._fetch_via_reader,)
-            if skip_solver
-            else (self._fetch_via_reader, self._fetch_via_solver)
-        )
-        thin: FetchResult | None = None
-        for tier in tiers:
-            recovered = await tier(url, offset=offset, find=find, find_regex=find_regex)
+        thin: FetchResult | None = seed_thin
+
+        def consider(recovered: FetchResult | None) -> FetchResult | None:
+            """A tier result: return it when it clears the recovered-chars bar (the caller returns
+            it), else hold the richest sub-threshold shell as the fallback and return None."""
+            nonlocal thin
             if recovered is None or (require_text and not recovered.text.strip()):
-                continue
+                return None
             if recovered.total_chars >= _MIN_RECOVERED_CHARS:
                 return recovered
             if thin is None or recovered.total_chars > thin.total_chars:
                 thin = recovered
+            return None
+
+        won = consider(
+            await self._fetch_via_reader(url, offset=offset, find=find, find_regex=find_regex)
+        )
+        if won is not None:
+            return won
+
+        solver_missed = solver_already_missed
+        if not skip_solver:
+            result, outcome = await self._run_solver(
+                url, offset=offset, find=find, find_regex=find_regex
+            )
+            solver_missed = solver_missed or outcome is _SolverOutcome.MISS
+            won = consider(result)
+            if won is not None:
+                return won  # the solver won, so Tavily is never reached and nothing is recorded
+
+        if not skip_tavily:
+            won = consider(
+                await self._fetch_via_tavily(url, offset=offset, find=find, find_regex=find_regex)
+            )
+            # Learn the domain only when Tavily WON (cleared the bar) a page the on-box solver
+            # genuinely missed — so the next fetch routes straight here. A thin Tavily shell that
+            # `consider` merely held (won is None) is NOT a recovery worth rerouting for.
+            record = self._record_solver_failed
+            if won is not None and solver_missed and record is not None:
+                await record(url)
+            if won is not None:
+                return won
+
         return thin
 
     async def fetch_bytes(
@@ -1153,18 +1301,31 @@ class WebFetcher:
     async def _fetch_via_solver(
         self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
     ) -> FetchResult | None:
+        """The solver tier as a plain None-or-result (used by `solve()` and the recovery loop).
+        Delegates to `_run_solver`, discarding the outcome classification that only the learned
+        Tavily-first routing needs."""
+        result, _ = await self._run_solver(url, offset=offset, find=find, find_regex=find_regex)
+        return result
+
+    async def _run_solver(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> tuple[FetchResult | None, _SolverOutcome]:
         """Re-fetch `url` through the pinned challenge-solver sidecar — Byparr or any
-        FlareSolverr-compatible `POST /v1` API. It drives a stealth browser that clears the
-        JS / managed bot-challenge the plain reader can't, and returns the SOLVED page HTML,
-        which we extract exactly like a direct fetch (so tables, links, and pagination all
-        work). Like the reader the endpoint is owner-pinned and trusted, so it is NOT
-        SSRF-guarded — only the public TARGET url is (it must be public), and only that url
-        travels in the request body. Returns None when unconfigured, on any solver failure,
-        or when the solved page is ITSELF a challenge (an interactive Turnstile/CAPTCHA the
-        stealth browser couldn't clear) — so the caller surfaces an honest block rather than
-        laundering the challenge text into a cited source."""
+        FlareSolverr-compatible `POST /v1` API — returning BOTH the result and a classified
+        `_SolverOutcome`. It drives a stealth browser that clears the JS / managed bot-challenge
+        the plain reader can't, and returns the SOLVED page HTML, which we extract exactly like a
+        direct fetch (so tables, links, and pagination all work). Like the reader the endpoint is
+        owner-pinned and trusted, so it is NOT SSRF-guarded — only the public TARGET url is (it
+        must be public), and only that url travels in the request body.
+
+        Returns `(None, ...)` when unconfigured (UNCONFIGURED — no byparr to have failed), on any
+        solver transport/HTTP error or malformed body (OUTAGE — byparr's fault, not the site's, so
+        the learned routing never blames the domain), or when the solved page is ITSELF a
+        challenge / search-form / empty (MISS — byparr ran but couldn't clear the wall, the signal
+        that the domain is worth routing Tavily-first). The MISS/OUTAGE split is why this exists;
+        both still surface an honest block to the caller."""
         if not self._solver_url:
-            return None
+            return None, _SolverOutcome.UNCONFIGURED
         guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
         payload = {"cmd": "request.get", "url": url, "maxTimeout": _SOLVER_MAX_TIMEOUT_MS}
         try:
@@ -1174,29 +1335,90 @@ class WebFetcher:
                 body = resp.json()
             solution = body.get("solution") if isinstance(body, dict) else None
             if not isinstance(solution, dict):
-                return None
+                return None, _SolverOutcome.OUTAGE  # byparr answered but malformed — its fault
             html = str(solution.get("response") or "")
             final_url = str(solution.get("url") or url)
         except (httpx.HTTPError, ValueError, WebFetchError) as exc:
             log.warning("web.solver_failed", error=repr(exc))
-            return None
+            return None, _SolverOutcome.OUTAGE
         if not html.strip():
-            return None
+            return None, _SolverOutcome.MISS  # byparr ran and returned an empty page — a real miss
         title, text, hrefs = _extract_html(html, base=final_url)
         if _is_challenge_page(title, text):
             log.warning("web.challenge_blocked", url=url, via="solver", title=title[:80])
-            return None
+            return None, _SolverOutcome.MISS
         # A solved page that is itself just a search form is not recovered content — return None
         # so a form never becomes a cited source (mirrors the challenge seam).
         if _is_search_form_page(title, text, html):
             log.info("web.search_form_detected", url=final_url, via="solver")
-            return None
+            return None, _SolverOutcome.MISS
         log.info("web.solver_used", url=final_url)
+        return (
+            _window_and_find(
+                text,
+                url=final_url,
+                title=title,
+                links=_collect_links(hrefs, base=final_url),
+                offset=offset,
+                find=find,
+                find_regex=find_regex,
+                body_truncated=False,
+            ),
+            _SolverOutcome.OK,
+        )
+
+    async def _fetch_via_tavily(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> FetchResult | None:
+        """Re-fetch `url` through the HOSTED Tavily Extract API — the fourth recovery tier, which
+        renders + un-walls the page on Tavily's cloud and returns clean content, extracted and
+        windowed exactly like the reader path (so pagination / find / outline all work). Like the
+        reader/solver the endpoint is owner-pinned and NOT SSRF-guarded — only the public TARGET
+        url is (it must be public), and only that url (plus the owner's key, in the body) travels.
+
+        The tier fires only when it is WIRED (a base URL + a settings provider) AND the live
+        provider reports ENABLED with a KEY present — the PWA toggle + key, read fresh here so a
+        flip/paste takes effect on the next fetch. Returns None when disabled/keyless, on any
+        Tavily error, or when the extracted content is itself a challenge/paywall page (the same
+        guards as every other tier) — so a walled page laundered through Tavily never becomes a
+        cited source."""
+        if not self._tavily_url or self._tavily_settings is None:
+            return None
+        enabled, api_key = await self._tavily_settings()
+        if not enabled or not api_key:
+            return None
+        guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
+        payload = {
+            "api_key": api_key,
+            "urls": url,
+            "extract_depth": self._tavily_extract_depth,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as c:
+                resp = await c.post(f"{self._tavily_url}/extract", json=payload)
+                resp.raise_for_status()
+                body = resp.json()
+        except (httpx.HTTPError, ValueError, WebFetchError) as exc:
+            log.warning("web.tavily_failed", error=repr(exc))
+            return None
+        text, final_url = _parse_tavily_extract(body, url)
+        if not text.strip():
+            return None
+        # Tavily can hand back the origin's challenge/paywall wall rendered as clean text (it
+        # extracted the wall, not the article). Treat that as a miss — the same seam the reader
+        # path uses — so the block is never laundered into a cited source.
+        if _is_challenge_page("", text):
+            log.warning("web.challenge_blocked", url=url, via="tavily")
+            return None
+        if _is_paywall_page("", text):
+            log.warning("web.paywall_blocked", url=url, via="tavily")
+            return None
+        log.info("web.tavily_used", url=final_url)
         return _window_and_find(
             text,
             url=final_url,
-            title=title,
-            links=_collect_links(hrefs, base=final_url),
+            title="",
+            links=(),
             offset=offset,
             find=find,
             find_regex=find_regex,
@@ -1309,6 +1531,20 @@ async def _read_capped(resp: httpx.Response, *, max_bytes: int = _MAX_BYTES) -> 
 def _is_textual(content_type: str) -> bool:
     ct = content_type.lower()
     return not ct or ct.startswith("text/") or "html" in ct or "json" in ct or "xml" in ct
+
+
+def _parse_tavily_extract(body: object, fallback_url: str) -> tuple[str, str]:
+    """The (text, final_url) from a Tavily Extract response, or ("", fallback_url) when the body
+    isn't the expected shape. Tavily returns `{"results": [{"url", "raw_content"}], ...}`; we take
+    the first result's cleaned content and its (possibly redirect-resolved) URL. Defensive on every
+    field so a malformed body degrades to a miss (empty text) rather than crashing the tier."""
+    results = body.get("results") if isinstance(body, dict) else None
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        return "", fallback_url
+    first = results[0]
+    text = str(first.get("raw_content") or "").strip()
+    final_url = str(first.get("url") or "").strip() or fallback_url
+    return text, final_url
 
 
 def _pretty_json(raw: str) -> str:

@@ -108,6 +108,7 @@ from jbrain.api import settings as settings_api
 from jbrain.api import (
     tasks as tasks_api,
 )
+from jbrain.api import tavily_settings as tavily_settings_api
 from jbrain.api.debug_activity import DebugActivity
 from jbrain.api.research_service import ResearchLibrary
 from jbrain.appointments.repo import SqlAppointmentsRepo
@@ -448,10 +449,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tts_base = settings.brain_tts_url.rstrip("/")
         app.state.brain_tts_base_url = tts_base
         app.state.brain_tts_flag_emit = build_flag_emitter(f"{tts_base}/event" if tts_base else "")
+
+        # The hosted Tavily Extract tier reads its toggle + key LIVE from app.settings on each
+        # fetch (SYSTEM_CTX owner session), the stored key taking precedence over the env
+        # fallback — so the PWA Settings panel is the live control surface with no restart,
+        # exactly like the LLM router's live overrides (docs/plans/TAVILY_FETCH_TIER_PLAN.md).
+        async def _tavily_settings() -> tuple[bool, str]:
+            enabled = await settings_store.tavily_enabled(SYSTEM_CTX)
+            key = await settings_store.tavily_api_key(SYSTEM_CTX) or settings.tavily_api_key
+            return enabled, key
+
+        # The per-domain fetch-health store (app.blocked_domains) also backs the LEARNED
+        # Tavily-first routing: when byparr genuinely misses but Tavily recovers a page, the
+        # fetcher records the domain (`record_solver_failed`) so a future fetch routes it straight
+        # to Tavily (`tavily_first_hosts`), skipping the doomed on-box legs. Created here (before
+        # the fetcher) so those two thin callbacks can be injected; also shared on app.state below
+        # for the 24h paywall/bot-wall skip list the web handlers consult.
+        domain_skips = DomainSkipRepo(maker)
         web_fetcher = WebFetcher(
             reader_url=settings.reader_url,
             solver_url=settings.solver_url,
             solver_first_domains=settings.solver_first_domains,
+            tavily_url=settings.tavily_url,
+            tavily_extract_depth=settings.tavily_extract_depth,
+            tavily_settings=_tavily_settings,
+            tavily_first_hosts=domain_skips.tavily_first_hosts,
+            record_solver_failed=domain_skips.record_solver_failed,
         )
         searxng = SearxngClient(settings.searxng_url)
         # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool
@@ -492,7 +515,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # reference data (app.blocked_domains), so it needs only the sessionmaker — it reads and
         # records under SYSTEM_CTX. web_fetch short-circuits a listed host and records a fresh
         # persistent block; web_search drops listed hosts from its results.
-        app.state.domain_skips = DomainSkipRepo(maker)
+        app.state.domain_skips = domain_skips
         web_handlers = build_web_handlers(
             searxng,
             web_fetcher,
@@ -1133,6 +1156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
     app.include_router(gmail_settings_api.router, prefix="/api")
+    app.include_router(tavily_settings_api.router, prefix="/api")
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")

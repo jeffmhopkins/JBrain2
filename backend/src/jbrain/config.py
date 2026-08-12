@@ -179,6 +179,18 @@ class Settings(BaseSettings):
     # normally). Superseded the prompt-level "avoid these outlets" steering — routing beats
     # asking the model to remember a blocklist.
     solver_first_domains: tuple[str, ...] = ("reuters.com", "wsj.com", "bloomberg.com")
+    # Tavily Extract — a HOSTED fourth `web_fetch` recovery tier (after direct → reader →
+    # byparr) that renders + un-walls a URL on Tavily's cloud, catching managed-wall / paywall
+    # / JS-shell pages the on-box browser sidecars miss WITHOUT adding a sidecar the no-terminal
+    # owner can't debug (docs/plans/TAVILY_FETCH_TIER_PLAN.md). The base URL + extract depth are
+    # pinned here (never model-supplied); the API KEY and an on/off toggle are owner-set from the
+    # PWA Settings panel (app.settings, the Gmail-credentials precedent), read live per fetch —
+    # the stored key takes precedence over this env fallback, so the GUI is the live control
+    # surface (no restart). Empty `tavily_url` disables the tier entirely; an empty key (stored
+    # AND env) leaves it inert. Advanced depth un-walls harder at ~2× credits.
+    tavily_url: str = "https://api.tavily.com"
+    tavily_extract_depth: str = "advanced"
+    tavily_api_key: str = ""
     # Curated per-category RSS/Atom feeds backing jerv's `news_feed` tool (the daily brief's
     # discovery source, docs/plans/NEWS_FEED_PLAN.md). Keyed by a lowercase topic category; the
     # feed URLs are pinned here and never model-supplied — only the category name is chosen (and

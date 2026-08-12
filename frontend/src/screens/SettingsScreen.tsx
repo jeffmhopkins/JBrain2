@@ -8,6 +8,8 @@ import type {
   GmailSettings,
   GmailTestResult,
   ImageAnalysisMode,
+  TavilySettings,
+  TavilyTestResult,
 } from "../api/client";
 import { ApiError, api } from "../api/client";
 import { BUILD_SHA, BUILD_TIME } from "../buildInfo";
@@ -251,6 +253,55 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   function testGmail() {
     setGmailTest(null);
     void api.testGmailSettings().then(setGmailTest);
+  }
+
+  // The hosted Tavily Extract recovery tier. Status is booleans only (the key is stored
+  // server-side and never returned); the panel toggles it, pastes/clears the key, and runs
+  // a live "Test key" probe. See docs/plans/TAVILY_FETCH_TIER_PLAN.md.
+  const [tavily, setTavily] = useState<TavilySettings | null>(null);
+  const [tavilyKey, setTavilyKey] = useState("");
+  const [tavilyTesting, setTavilyTesting] = useState(false);
+  const [tavilyTest, setTavilyTest] = useState<TavilyTestResult | null>(null);
+  useEffect(() => {
+    let stale = false;
+    api
+      .getTavilySettings()
+      .then((s) => {
+        if (!stale) setTavily(s);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  function toggleTavily() {
+    if (tavily === null || !tavily.wired) return;
+    setTavilyTest(null);
+    void api.updateTavilySettings({ enabled: !tavily.enabled }).then(setTavily);
+  }
+
+  // The primary action: save a freshly-pasted key (if any) then run the live probe, so the owner
+  // confirms the key works in one tap. With no new key it just re-tests the stored one.
+  function saveAndTestTavily() {
+    const key = tavilyKey.trim();
+    setTavilyTest(null);
+    setTavilyTesting(true);
+    const saved = key
+      ? api.updateTavilySettings({ api_key: key }).then((s) => {
+          setTavily(s);
+          setTavilyKey("");
+        })
+      : Promise.resolve();
+    void saved
+      .then(() => api.testTavilySettings())
+      .then(setTavilyTest)
+      .finally(() => setTavilyTesting(false));
+  }
+
+  function clearTavilyKey() {
+    setTavilyTest(null);
+    void api.updateTavilySettings({ clear_key: true }).then(setTavily);
   }
 
   // The read-only appointments ICS feed — a revocable subscribe URL the owner
@@ -1099,6 +1150,81 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         {gmailTest && (
           <p className={`settings-meta${gmailTest.ok ? "" : " settings-error"}`}>
             {gmailTest.detail}
+          </p>
+        )}
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-cardhead">
+          <h2 className="settings-label">Tavily web fetch</h2>
+          <span
+            className={`settings-pill${tavily?.effective ? " on" : ""}`}
+            aria-label="Tavily status"
+          >
+            <span className="dot" />
+            {tavily === null
+              ? "…"
+              : !tavily.wired
+                ? "Unavailable"
+                : tavily.effective
+                  ? "Active"
+                  : tavily.enabled
+                    ? "No key"
+                    : "Off"}
+          </span>
+        </div>
+        <p className="settings-meta">
+          a hosted fallback that reads pages the box can't — bot walls, paywalls, JavaScript-only
+          sites — only when the on-box readers fail. Paste your Tavily API key and Save &amp; test.
+          The key is stored on the server and never shown again.
+        </p>
+        <div className="settings-switch-row">
+          <span className="settings-meta" style={{ margin: 0 }}>
+            Enable the tier
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-label="Enable Tavily"
+            aria-checked={tavily?.enabled ?? false}
+            className={`settings-switch${tavily?.enabled ? " on" : ""}`}
+            disabled={tavily === null || !tavily.wired}
+            onClick={toggleTavily}
+          >
+            <span className="knob" />
+          </button>
+        </div>
+        <label className="settings-field">
+          API key
+          <input
+            type="password"
+            autoComplete="off"
+            placeholder={tavily?.key_set ? "•••••• (saved)" : "tvly-…"}
+            value={tavilyKey}
+            onChange={(e) => setTavilyKey(e.target.value)}
+          />
+        </label>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="seg seg-primary"
+            disabled={tavilyTesting || !tavily?.enabled || (!tavilyKey.trim() && !tavily?.key_set)}
+            onClick={saveAndTestTavily}
+          >
+            {tavilyTesting ? "Testing…" : "Save & test"}
+          </button>
+          <button
+            type="button"
+            className="seg"
+            disabled={!tavily?.key_set}
+            onClick={clearTavilyKey}
+          >
+            Clear key
+          </button>
+        </div>
+        {tavilyTest && (
+          <p className={`settings-meta${tavilyTest.ok ? "" : " settings-error"}`}>
+            {tavilyTest.detail}
           </p>
         )}
       </section>

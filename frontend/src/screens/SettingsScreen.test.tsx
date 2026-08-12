@@ -30,9 +30,12 @@ function stubSettingsFetch(
     chorus: false,
     robot: false,
     lexicon: opts.lexicon ?? {},
+    tavilyEnabled: true,
+    tavilyKeySet: false,
   };
   const boxVoices = opts.voices ?? ["kokoro-af_heart", "kokoro-am_michael", "kokoro-bf_emma"];
   const puts: unknown[] = [];
+  const tavilyPuts: unknown[] = [];
   const ttsUrls: string[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
@@ -90,6 +93,35 @@ function stubSettingsFetch(
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
+    // The Tavily section loads/saves its status; a stateful stub round-trips the toggle + key.
+    if (path === "/api/settings/tavily/test") {
+      return new Response(
+        JSON.stringify({ ok: true, detail: "Tavily read 512 chars — key works." }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (path === "/api/settings/tavily") {
+      if ((init?.method ?? "GET").toUpperCase() === "PUT") {
+        const patch = JSON.parse(String(init?.body)) as {
+          enabled?: boolean;
+          api_key?: string;
+          clear_key?: boolean;
+        };
+        tavilyPuts.push(patch);
+        if (patch.enabled != null) state.tavilyEnabled = patch.enabled;
+        if (patch.clear_key) state.tavilyKeySet = false;
+        else if (patch.api_key) state.tavilyKeySet = true;
+      }
+      return new Response(
+        JSON.stringify({
+          enabled: state.tavilyEnabled,
+          key_set: state.tavilyKeySet,
+          wired: true,
+          effective: state.tavilyEnabled && state.tavilyKeySet,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
     if (path !== "/api/settings") {
       throw new Error(`Unexpected fetch: ${path}`);
     }
@@ -143,7 +175,7 @@ function stubSettingsFetch(
     );
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { puts, state, ttsUrls };
+  return { puts, tavilyPuts, state, ttsUrls };
 }
 
 beforeEach(() => {
@@ -192,6 +224,32 @@ describe("SettingsScreen stream-LLM-to-wall-display toggle", () => {
     );
     fireEvent.click(group.getByRole("button", { name: "On" }));
     await waitFor(() => expect(puts).toContainEqual({ brain_llm_stream: true }));
+  });
+});
+
+describe("SettingsScreen Tavily web-fetch panel", () => {
+  it("saves+tests a key (never echoing it) and toggles the tier off", async () => {
+    const { tavilyPuts } = stubSettingsFetch();
+    setup();
+
+    // Loads enabled-but-keyless (the single-owner default): the status pill reads "No key".
+    const status = await screen.findByLabelText("Tavily status");
+    await waitFor(() => expect(status).toHaveTextContent("No key"));
+
+    // Paste + "Save & test" → PUTs api_key then runs the probe; the field clears, pill goes Active.
+    const keyField = screen.getByLabelText("API key") as HTMLInputElement;
+    fireEvent.change(keyField, { target: { value: "tvly-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & test" }));
+    await waitFor(() => expect(tavilyPuts).toContainEqual({ api_key: "tvly-secret" }));
+    await waitFor(() => expect(status).toHaveTextContent("Active"));
+    expect(keyField.value).toBe(""); // the key is never held/echoed in the field after save
+    expect(await screen.findByText(/key works/)).toBeInTheDocument();
+
+    // The switch is on; flipping it PUTs enabled:false (the instant, no-terminal kill switch).
+    const toggle = screen.getByRole("switch", { name: "Enable Tavily" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(tavilyPuts).toContainEqual({ enabled: false }));
   });
 });
 

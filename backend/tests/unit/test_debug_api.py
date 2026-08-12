@@ -662,6 +662,89 @@ def test_solve_route_400s_on_a_solver_miss(debug_client: tuple[TestClient, str])
     assert "no usable page" in resp.json()["detail"]
 
 
+def _tv_provider(enabled: bool = True, key: str = "tvly-key"):  # type: ignore[no-untyped-def]
+    async def provider() -> tuple[bool, str]:
+        return enabled, key
+
+    return provider
+
+
+def test_fetch_route_tier_tavily_forces_the_tavily_tier(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # tier="tavily" drives ONLY Tavily: it answers /extract, and the origin would 401 — but the
+    # selector never touches it, proving direct/reader/solver are skipped (the Settings Test key).
+    client, key = debug_client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.tavily.com":
+            return httpx.Response(
+                200,
+                json={"results": [{"url": "https://x.example/w", "raw_content": "Tavily got it."}]},
+            )
+        return httpx.Response(401, headers={"content-type": "text/html"})
+
+    _state(client).web_fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tv_provider(),
+    )
+    resp = client.post(
+        "/api/debug/fetch",
+        headers=_auth(key),
+        json={"url": "https://x.example/w", "tier": "tavily"},
+    )
+    assert resp.status_code == 200
+    assert "Tavily got it." in resp.json()["text"]
+
+
+def test_fetch_route_tier_tavily_400s_when_unwired(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    _state(client).web_fetcher = WebFetcher(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200))
+    )  # no tavily_url / provider
+    resp = client.post(
+        "/api/debug/fetch",
+        headers=_auth(key),
+        json={"url": "https://x.example/w", "tier": "tavily"},
+    )
+    assert resp.status_code == 400
+    assert "not configured" in resp.json()["detail"]
+
+
+def test_fetch_route_tier_tavily_400s_on_a_miss(debug_client: tuple[TestClient, str]) -> None:
+    # Wired + enabled + keyed, but Tavily 500s: a miss → 400 pointing at the Settings/logs, not 500.
+    client, key = debug_client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500) if request.url.host == "api.tavily.com" else httpx.Response(200)
+
+    _state(client).web_fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tv_provider(),
+    )
+    resp = client.post(
+        "/api/debug/fetch",
+        headers=_auth(key),
+        json={"url": "https://x.example/w", "tier": "tavily"},
+    )
+    assert resp.status_code == 400
+    assert "no usable page" in resp.json()["detail"]
+
+
+def test_fetch_route_rejects_an_unknown_tier(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    _state(client).web_fetcher = WebFetcher(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200))
+    )
+    resp = client.post(
+        "/api/debug/fetch", headers=_auth(key), json={"url": "https://x.example/w", "tier": "bogus"}
+    )
+    assert resp.status_code == 400
+    assert "unknown tier" in resp.json()["detail"]
+
+
 def test_jcode_logs_aggregates_the_system(debug_client: tuple[TestClient, str]) -> None:
     # One pull returns the whole code-mode system — control server + gateway — labeled,
     # so debugging a turn doesn't need separate round-trips.

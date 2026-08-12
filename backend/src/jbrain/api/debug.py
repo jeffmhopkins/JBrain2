@@ -631,6 +631,11 @@ class FetchRequest(BaseModel):
     url: str
     offset: int = 0
     find: str = ""
+    # Force a single recovery tier instead of the full escalation. "" = the normal
+    # direct→reader→solver→tavily path; "tavily" = ONLY the hosted Tavily Extract tier
+    # (the Settings "Test key" button uses this to verify a freshly pasted key against a
+    # real walled URL with no terminal). The byparr solver has its own /solve route.
+    tier: str = ""
 
 
 class FetchOut(BaseModel):
@@ -642,6 +647,29 @@ class FetchOut(BaseModel):
     truncated: bool
 
 
+async def _run_tavily_tier(fetcher: WebFetcher, body: FetchRequest) -> Any:
+    """Run a URL through ONLY the hosted Tavily Extract tier (the Settings "Test key" probe),
+    raising a 400 that distinguishes the failure modes so the console reads clearly: the tier
+    unwired (no base URL / provider), versus Tavily disabled / keyless / a genuine miss (a
+    challenge-or-empty page). A bad scheme / private host raises via the SSRF guard."""
+    if not fetcher.tavily_wired:
+        raise HTTPException(
+            status_code=400,
+            detail="the Tavily tier is not configured (JBRAIN_TAVILY_URL is empty)",
+        )
+    try:
+        result = await fetcher.tavily(body.url, offset=max(0, body.offset), find=body.find)
+    except WebFetchError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Tavily returned no usable page — it is disabled or keyless (check the "
+            "Settings toggle/key), or it hit a challenge/empty page. See `logs api` for detail.",
+        )
+    return result
+
+
 @router.post("/fetch")
 async def fetch_url(body: FetchRequest, request: Request, _p: DebugDep) -> FetchOut:
     """Run a URL through jerv's WebFetcher — the SAME direct→reader→solver escalation the
@@ -649,13 +677,20 @@ async def fetch_url(body: FetchRequest, request: Request, _p: DebugDep) -> Fetch
     error. The one debug route that drives the live web-fetch path end to end, so the
     bot-challenge detection and the solver fallback can be verified against a real walled URL
     after a deploy (pair it with `logs api` to see which tier served / blocked)."""
-    request.state.debug_detail = body.url
+    request.state.debug_detail = f"{body.tier} {body.url}".strip() if body.tier else body.url
     fetcher = cast(WebFetcher, request.app.state.web_fetcher)
-    try:
-        result = await fetcher.fetch(body.url, offset=max(0, body.offset), find=body.find)
-    except WebFetchError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    log.info("debug.fetch", url=result.url, chars=result.total_chars)
+    if body.tier == "tavily":
+        result = await _run_tavily_tier(fetcher, body)
+    elif body.tier:
+        raise HTTPException(
+            status_code=400, detail=f"unknown tier '{body.tier}' (use '' or 'tavily')"
+        )
+    else:
+        try:
+            result = await fetcher.fetch(body.url, offset=max(0, body.offset), find=body.find)
+        except WebFetchError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log.info("debug.fetch", url=result.url, chars=result.total_chars, tier=body.tier or "auto")
     return FetchOut(
         url=result.url,
         title=result.title,
