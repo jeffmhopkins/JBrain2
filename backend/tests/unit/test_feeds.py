@@ -5,6 +5,7 @@ every other web-client test (docs/plans/NEWS_FEED_PLAN.md)."""
 from __future__ import annotations
 
 import calendar
+from collections.abc import Mapping
 from email.utils import formatdate
 
 import httpx
@@ -81,7 +82,7 @@ def test_parse_feed_skips_entries_with_no_link() -> None:
 _NOW = calendar.timegm((2026, 8, 12, 12, 0, 0, 0, 0, 0))
 
 
-def _fetcher(routes: dict[str, bytes | int]) -> WebFetcher:
+def _fetcher(routes: Mapping[str, bytes | int]) -> WebFetcher:
     """A WebFetcher whose transport serves canned feed bytes (or a status code to fail) per URL.
     An injected transport skips the SSRF DNS check, so the https feed URLs need no real host."""
 

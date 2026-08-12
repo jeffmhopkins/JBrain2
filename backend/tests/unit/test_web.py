@@ -2,7 +2,7 @@
 selection"). HTTP is faked via MockTransport — no live network, like the
 connector and LLM adapters."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from email.utils import formatdate
 
 import httpx
@@ -834,7 +834,7 @@ def _feed_summary(url: str) -> str:
     )
 
 
-def _feed_client(routes: dict[str, bytes | int], feeds: dict[str, list[str]]) -> FeedClient:
+def _feed_client(routes: Mapping[str, bytes | int], feeds: dict[str, list[str]]) -> FeedClient:
     def handle(request: httpx.Request) -> httpx.Response:
         val = routes.get(str(request.url))
         if val is None:
