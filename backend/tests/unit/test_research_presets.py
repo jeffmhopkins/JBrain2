@@ -27,7 +27,8 @@ def test_shipped_daily_news_is_dated_and_retained() -> None:
     assert preset is not None
     assert preset.variables == ("now", "today")
     assert preset.retention_days == 7
-    assert preset.min_reads == 12  # opts into the two-phase scout→read gather
+    assert preset.min_reads == 8  # opts into the two-phase scout→read gather (trimmed from 12
+    # to cut the serial read-phase time on the local model — a live run spent ~19 min reading)
     assert preset.output_kind == "brief"  # `report` would balloon past a 10-minute read
     assert preset.source_mode == "web"
     assert preset.sections[0] == "Good Morning"

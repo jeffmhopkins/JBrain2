@@ -69,15 +69,15 @@ engines:
   # becomes reachable from here (a residential-proxy egress would do it).
   - name: wikipedia
     disabled: false
-  # News-category engines for the `news_search` tool (SearxngClient.search_news queries
-  # ?categories=news). These serve the `news` category, so they DON'T dilute a general
-  # web_search — they only answer when the news category is requested. Enabled explicitly so
-  # the news category is populated regardless of upstream default toggles; like the general
-  # engines, the spread is redundancy against any one upstream's rate-limit. Google/Bing News
-  # carry a publish date per result, which is the freshness signal the news tool surfaces.
+  # News-category engine for the `news_search` tool (SearxngClient.search_news queries
+  # ?categories=news). It serves the `news` category only, so it DOESN'T dilute a general
+  # web_search — it only answers when the news category is requested. Google News carries a
+  # publish date per result, which is the freshness signal the news tool surfaces.
+  # `bing news` was dropped: it returned an empty body ("Document is empty" / lxml ParserError)
+  # on every query from this box, contributing nothing while adding latency — google news
+  # carries the category. Broader news breadth is better served by a news API than by piling on
+  # more rate-limited scraper engines (see the deep-research news notes).
   - name: google news
-    disabled: false
-  - name: bing news
     disabled: false
   # Science-category engines for the `science_search` tool (SearxngClient.search_science queries
   # ?categories=science). Scholarly indexes — arXiv, PubMed, Semantic/Google Scholar, Crossref —

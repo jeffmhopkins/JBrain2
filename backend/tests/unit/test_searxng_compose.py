@@ -125,7 +125,6 @@ _KNOWN_SEARXNG_ENGINES = frozenset(
         "wikipedia",
         # News-category engines (news_search) — SearXNG built-ins.
         "google news",
-        "bing news",
         # Science-category engines (science_search) — SearXNG built-ins.
         "arxiv",
         "pubmed",
