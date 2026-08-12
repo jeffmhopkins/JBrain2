@@ -371,6 +371,18 @@ a precision `_is_search_form_page` detector so an un-adaptered portal degrades h
 shipped. *Open follow-ons:* per-resolver caching/throttle tuning, a per-adapter post-deploy smoke
 route, a scripted-browser tier for a genuinely JS-only portal, and more jurisdictions.
 
+**Scheduled:** Tavily fetch tier (build plan: `docs/plans/TAVILY_FETCH_TIER_PLAN.md`) — a fourth,
+hosted `web_fetch` recovery tier (Tavily Extract) after direct → reader → byparr, catching managed-wall
+/ paywall / JS-shell pages the on-box browser sidecars miss **without adding a sidecar** the no-terminal
+owner (non-negotiable #10) can't debug. `_fetch_via_tavily` mirrors the reader seam — owner-pinned base
+URL, SSRF-guarded public target, `_is_challenge_page`/`_is_paywall_page` guards on the output, windowed
+by `_window_and_find` — and is **opt-in / off by default**: an empty `tavily_api_key` makes the tier a
+no-op, so a stock deploy is byte-unchanged and cost + third-party exposure stay bounded to
+already-blocked URLs. Extract-only: SearXNG stays the sole search backend (Tavily Search scoped out —
+per-credit deep-research cost + loss of infoboxes/instant-answers). T1 (tier + config + a `tier="tavily"`
+`POST /api/debug/fetch` selector, full offline coverage) then T2 (live validation, the last-vs-before-byparr
+tier-order decision, and whether a `tavily_first_domains` shortcut earns its keep).
+
 **Shipped:** Blocked-domain skip list (build record: `docs/archive/DOMAIN_HEALTH_PLAN.md`) — a global
 24h paywall/bot-wall skip list (`app.blocked_domains`, migration 0163) so `web_fetch`/`web_search`
 stop wasting calls on a domain that just proved unreadable; precision `_is_paywall_page` + the
