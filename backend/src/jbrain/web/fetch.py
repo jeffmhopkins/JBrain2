@@ -657,6 +657,22 @@ class WebFetcher:
         host = (urlparse(url).hostname or "").lower()
         return any(host == d or host.endswith(f".{d}") for d in self._solver_first_domains)
 
+    @property
+    def solver_enabled(self) -> bool:
+        """Whether the challenge-solver tier is configured (a `solver_url` is set)."""
+        return bool(self._solver_url)
+
+    async def solve(
+        self, url: str, *, offset: int = 0, find: str = "", find_regex: bool = False
+    ) -> FetchResult | None:
+        """Force ONLY the challenge-solver tier for `url`, skipping the direct + reader legs — the
+        explicit entry point the debug console uses to exercise byparr in isolation. Returns the
+        solved page, or None when the solver is unconfigured, errors, or hands back a page that is
+        itself still a challenge/search-form (a miss). The normal `fetch()` path is unchanged; this
+        just exposes the tier `fetch` already reaches internally so a walled URL can be probed
+        against the stealth browser alone, without a doomed direct fetch first."""
+        return await self._fetch_via_solver(url, offset=offset, find=find, find_regex=find_regex)
+
     async def fetch(
         self,
         url: str,

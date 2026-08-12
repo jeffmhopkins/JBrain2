@@ -666,6 +666,43 @@ async def fetch_url(body: FetchRequest, request: Request, _p: DebugDep) -> Fetch
     )
 
 
+@router.post("/solve")
+async def solve_url(body: FetchRequest, request: Request, _p: DebugDep) -> FetchOut:
+    """Run a URL through ONLY the challenge-solver tier (byparr), skipping the direct+reader
+    legs — so the stealth browser can be exercised in isolation against a walled URL, without a
+    doomed direct fetch first. A 400 distinguishes the failure modes so a probe reads clearly:
+    the solver being unconfigured, versus byparr running but still getting a challenge / empty
+    page (a genuine solve miss — pair with `logs byparr` for the browser-side detail). Shares
+    the `web.fetch` scope (it is a narrower web fetch)."""
+    request.state.debug_detail = f"solve {body.url}"
+    fetcher = cast(WebFetcher, request.app.state.web_fetcher)
+    if not fetcher.solver_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="the challenge solver is not configured (JBRAIN_SOLVER_URL is empty)",
+        )
+    try:
+        result = await fetcher.solve(body.url, offset=max(0, body.offset), find=body.find)
+    except WebFetchError as exc:
+        # A bad scheme/private host — the SSRF guard refusing the target, not a solve miss.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=400,
+            detail="the solver returned no usable page — byparr is down, still challenged, "
+            "or the page was empty. Check `logs byparr` for the browser-side detail.",
+        )
+    log.info("debug.solve", url=result.url, chars=result.total_chars)
+    return FetchOut(
+        url=result.url,
+        title=result.title,
+        text=result.text,
+        total_chars=result.total_chars,
+        links=len(result.links),
+        truncated=result.truncated,
+    )
+
+
 # --- Container logs (proxied to the supervisor) -----------------------------
 
 
