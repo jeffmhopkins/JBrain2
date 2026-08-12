@@ -37,6 +37,17 @@ log = structlog.get_logger()
 _SUMMARY_LEN = 240
 
 
+def _allows_deep_research(task: TaskInfo) -> bool:
+    """Whether a headless run of `task` may seed a sub-agent fan (root_tree) — the gate that
+    lets its turn call deep_research / deepest_research instead of refusing them.
+
+    A headless task normally leaves `root_tree` False (no fan-out), because an unattended
+    deep run is minutes-to-hours of spawn work the owner never asked to pay for on every
+    tick. The owner opts a task in by putting `news` in its TITLE: a "Daily News" task is
+    explicitly a deep-research job, so it — and only it — runs as a fan root."""
+    return "news" in task.name.casefold()
+
+
 @dataclass(frozen=True)
 class ExecutedTurn:
     """One headless task turn's result: the loop outcome (text/stop_reason/steps/cost)
@@ -250,6 +261,10 @@ class TaskRunner:
                 timezone=task.timezone,
                 recorder=recorder,
                 agent_session_id=session.id,
+                # A `news` task is opted in as a fan root so its turn may run deep_research /
+                # deepest_research (else those refuse "only available in an interactive owner
+                # turn"); every other headless task stays fan-less.
+                root_tree=_allows_deep_research(task),
             )
             result = executed.result
             status, summary, steps, cost = "done", result.text, result.steps, result.cost_tokens

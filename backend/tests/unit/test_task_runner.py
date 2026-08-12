@@ -119,8 +119,10 @@ class FakeExecutor:
         self._boom = boom
         self.calls: list[dict] = []
 
-    async def run_turn(self, *, read_scopes, agent_session_id, **_):  # type: ignore[no-untyped-def]
-        self.calls.append({"scopes": tuple(read_scopes), "session": agent_session_id})
+    async def run_turn(self, *, read_scopes, agent_session_id, root_tree=False, **_):  # type: ignore[no-untyped-def]
+        self.calls.append(
+            {"scopes": tuple(read_scopes), "session": agent_session_id, "root_tree": root_tree}
+        )
         if self._boom:
             raise RuntimeError("model exploded")
         return self._executed
@@ -195,6 +197,34 @@ async def test_curator_keeps_its_selected_scope() -> None:
     await runner.run(OWNER, _task(agent="curator", domain_scopes=("health",)), trigger="schedule")
     assert executor.calls[0]["scopes"] == ("health",)
     assert sessions.created[0]["scopes"] == ("health",)
+
+
+@pytest.mark.asyncio
+async def test_a_news_task_runs_as_a_fan_root_so_deep_research_is_available() -> None:
+    # A task titled with "news" opts into `root_tree`, seeding the turn as a sub-agent fan
+    # root so its steps may call deep_research / deepest_research (else those refuse).
+    executor = FakeExecutor()
+    runner = _runner(executor=executor)
+    await runner.run(OWNER, _task(name="The Daily News"), trigger="schedule")
+    assert executor.calls[0]["root_tree"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_news_gate_is_case_insensitive() -> None:
+    executor = FakeExecutor()
+    runner = _runner(executor=executor)
+    await runner.run(OWNER, _task(name="NEWS digest"), trigger="schedule")
+    assert executor.calls[0]["root_tree"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_non_news_task_stays_fan_less() -> None:
+    # Every other headless task leaves `root_tree` False — an unattended deep run is minutes
+    # of spawn work the owner never opted into on a plain scheduled tick.
+    executor = FakeExecutor()
+    runner = _runner(executor=executor)
+    await runner.run(OWNER, _task(name="Morning brief"), trigger="schedule")
+    assert executor.calls[0]["root_tree"] is False
 
 
 @pytest.mark.asyncio
