@@ -640,15 +640,39 @@ def build_web_handlers(
 
     async def news_feed_tool(arguments: dict, ctx: ToolContext) -> str:
         # Curated per-category RSS/Atom pull (docs/plans/NEWS_FEED_PLAN.md): dated article leads,
-        # newest-first, with the FULL body inline for feeds that carry it. Unlike news_search it
-        # hits pinned feeds (not the throttled Google/Bing upstreams), so it does NOT draw on the
-        # scout's search budget — a scout can pull a category without spending a search.
+        # newest-first, with the FULL body inline for feeds that carry it.
         if feeds is None or not feeds.enabled:
             return "news_feed is not configured on this instance."
         category = str(arguments.get("category", "")).strip()
         known = ", ".join(feeds.categories())
         if not category:
             return f"news_feed needs a category — one of: {known}."
+        # news_feed is a DISCOVERY call like news_search, so it draws on the SAME scout search
+        # budget: a scout can't turn one tool into an unbounded fan of outbound feed fetches (the
+        # model runs to its step cap regardless of the prompt), and can't dodge the search ceiling
+        # by pulling feeds instead of searching. Uncapped outside the scout (budget is None).
+        budget = ctx.search_budget
+        if budget is not None and budget.exhausted:
+            return (
+                f"SEARCH BUDGET SPENT — you have used all {budget.limit} of your search "
+                "calls and cannot search again. Open the leads you already found with "
+                "web_fetch, then END your reply with the RECOMMENDED SOURCES: block."
+            )
+        if budget is not None:
+            budget.used += 1
+        budget_note = ""
+        if budget is not None:
+            left = budget.remaining
+            budget_note = (
+                f"\n\n[SEARCH BUDGET: {left} search call(s) left of {budget.limit}"
+                + (
+                    " — that was your LAST one; stop searching, web_fetch your leads, and return"
+                    " your RECOMMENDED SOURCES."
+                    if left == 0
+                    else ". web_fetch is unlimited."
+                )
+                + "]"
+            )
         since = str(arguments.get("since", "day")).strip().lower() or "day"
         limit = max(1, min(int(arguments.get("limit", 8) or 8), _MAX_LIMIT))
         if emit:
@@ -657,11 +681,12 @@ def build_web_handlers(
             items = await feeds.fetch_category(category, since=since, limit=limit)
         except WebFetchError as exc:
             # The client swallows per-feed errors; this only fires on an unexpected failure.
-            return str(exc)
+            return str(exc) + budget_note
         if not items:
             return (
                 f"No feed items for category '{category}' in the last {since} (known categories: "
                 f"{known}). Try a broader `since`, a different category, or news_search."
+                + budget_note
             )
         # Drop hosts on the 24h paywall/bot-wall skip list, same as news_search — a listed outlet
         # is a dead lead the reader can't open (and a stale full-body item isn't worth citing).
@@ -674,7 +699,9 @@ def build_web_handlers(
         if not kept:
             return (
                 f"No usable feed items for '{category}': all {hidden} were on sites recently found"
-                " paywalled or inaccessible. Try a different category or news_search." + note
+                " paywalled or inaccessible. Try a different category or news_search."
+                + note
+                + budget_note
             )
         blocks: list[str] = []
         for it in kept:
@@ -701,7 +728,7 @@ def build_web_handlers(
             " web_fetch them again). Items marked 'lead only' are UNVERIFIED leads — web_fetch the"
             " URL and read the page before citing. Check each item's date against today:"
         )
-        rendered = header + "\n\n" + "\n\n---\n\n".join(blocks) + note
+        rendered = header + "\n\n" + "\n\n---\n\n".join(blocks) + note + budget_note
         return ToolOutput(rendered, web_sources=web_sources)
 
     async def web_fetch_tool(arguments: dict, ctx: ToolContext) -> str:

@@ -103,8 +103,10 @@ the fallback there). Reuters/WSJ/Bloomberg hard paywalls remain unfetchable by a
 - `agent/webtools.py` — `news_feed_tool` in `build_web_handlers` (new `feeds` param).
 - `agent/tools/news_feed.tool` — the sidecar (v1, no `enum` — gpt-oss grammar).
 - `agent/agents.py` — `news_feed` added to `JERV_TOOLS`, `RESEARCH_TOOLS`, `SCOUT_TOOLS`
-  (NOT `FETCH_TOOLS`). Unbudgeted (curated feeds, not the throttled upstreams the scout
-  search budget guards).
+  (NOT `FETCH_TOOLS`). It shares the scout's search budget (a discovery call is a discovery
+  call), so a scout can't turn one call into an unbounded fan of outbound feed fetches; and
+  the per-`(category, since)` cache (limit sliced post-lookup) collapses repeats to one fetch
+  per feed per window.
 - `config.py` — `news_feeds` curated default map.
 - `main.py` — construct `FeedClient`, pass to `build_web_handlers`.
 - `agent/presets/daily_news.preset` — angle briefs call `news_feed` first.

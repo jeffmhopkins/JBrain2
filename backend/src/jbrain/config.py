@@ -192,7 +192,7 @@ class Settings(BaseSettings):
         "space": (
             "https://www.nasa.gov/feed/",
             "https://spaceflightnow.com/feed/",
-            "http://www.space.com/feeds.xml",
+            "https://www.space.com/feeds.xml",
         ),
         "ai_tech": (
             "https://techcrunch.com/feed/",

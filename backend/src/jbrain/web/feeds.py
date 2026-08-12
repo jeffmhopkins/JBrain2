@@ -159,7 +159,7 @@ class FeedClient:
         }
         self._feeds = {cat: urls for cat, urls in self._feeds.items() if urls}
         self._clock = clock
-        self._cache: TTLCache[tuple[str, str, int], list[FeedItem]] | None = (
+        self._cache: TTLCache[tuple[str, str], list[FeedItem]] | None = (
             TTLCache(maxsize=_CACHE_MAX_ENTRIES, ttl=cache_ttl_s, timer=time.monotonic)
             if cache_ttl_s > 0
             else None
@@ -176,15 +176,27 @@ class FeedClient:
         return tuple(sorted(self._feeds))
 
     def _resolve(self, category: str) -> tuple[str, tuple[str, ...]]:
-        """Map a requested category to (canonical_key, urls): an exact match, else a substring
-        match (so 'space industry' → 'space'), else ("", ()) — the model picks the category from
-        an angle title, so it won't always be an exact key."""
+        """Map a requested category to (canonical_key, urls): an exact match, else the configured
+        key sharing the most WHOLE WORDS with the request (so 'space industry' → 'space', 'ai' →
+        'ai_tech', but 'fintech' → no match rather than mis-routing to ai_tech), else ("", ()) —
+        the model picks the category from an angle title, so it won't always be an exact key. Whole
+        -word overlap, not substring: substring matching silently routed the wrong feed set (e.g.
+        'world economy' fuzzily hitting whichever key iterated first). Ties break to the most
+        specific (longest) key, then alphabetically, so resolution is deterministic."""
         cat = category.strip().lower()
         if cat in self._feeds:
             return cat, self._feeds[cat]
-        for key, urls in self._feeds.items():
-            if key in cat or cat in key:
-                return key, urls
+        req = {t for t in re.split(r"[^a-z0-9]+", cat) if t}
+        best: tuple[int, int, str] | None = None  # (shared_words, key_len, key) — max wins
+        for key in self._feeds:
+            key_tokens = {t for t in re.split(r"[^a-z0-9]+", key) if t}
+            shared = len(req & key_tokens)
+            if shared:
+                cand = (shared, len(key), key)
+                if best is None or cand > best:
+                    best = cand
+        if best is not None:
+            return best[2], self._feeds[best[2]]
         return "", ()
 
     async def fetch_category(
@@ -200,28 +212,34 @@ class FeedClient:
         key, urls = self._resolve(category)
         if not urls:
             return []
-        cache_key = (key, since_key, limit)
+        # Cache the FULL windowed list per (category, since) — NOT per limit. `limit` is a
+        # post-slice, so a scout iterating limit=1,2,3,… hits the cache instead of re-fetching
+        # every feed each time (the amplification the search budget guards against otherwise).
+        cache_key = (key, since_key)
         if self._cache is not None and (cached := self._cache.get(cache_key)) is not None:
-            return cached
+            return cached[:limit]
         collected: list[FeedItem] = []
-        seen: set[str] = set()
+        index: dict[str, int] = {}
         for url in urls:
             raw = await self._safe_fetch(url)
             if raw is None:
                 continue
             for item in parse_feed(raw, source_hint=url):
-                if item.url in seen:
-                    continue
-                seen.add(item.url)
-                collected.append(item)
+                prior = index.get(item.url)
+                if prior is None:
+                    index[item.url] = len(collected)
+                    collected.append(item)
+                elif item.has_full_body and not collected[prior].has_full_body:
+                    # The same URL syndicated across two feeds — keep the FULL-TEXT copy over a
+                    # summary-only one (feed order shouldn't downgrade an already-opened article).
+                    collected[prior] = item
         now = self._clock()
         fresh = [it for it in collected if it.epoch is None or (now - it.epoch) <= window]
         # Newest first; undated (epoch None) sink to the bottom rather than jumping the queue.
         fresh.sort(key=lambda it: it.epoch if it.epoch is not None else 0.0, reverse=True)
-        result = fresh[:limit]
-        if self._cache is not None and result:
-            self._cache[cache_key] = result
-        return result
+        if self._cache is not None and fresh:
+            self._cache[cache_key] = fresh
+        return fresh[:limit]
 
     async def _safe_fetch(self, url: str) -> bytes | None:
         """Fetch one feed's raw bytes, or None on any fetch error — best-effort so one dead

@@ -878,6 +878,22 @@ async def test_news_feed_lists_known_categories_for_an_unknown_one() -> None:
     assert "No feed items" in out and "space" in out
 
 
+async def test_news_feed_shares_the_scout_search_budget() -> None:
+    # news_feed is a discovery call, so it draws on the SAME ToolCallBudget as web_search/
+    # news_search: a scout can't dodge the ceiling (or fan out unbounded feed fetches) by
+    # switching to feeds — one news_feed plus the cap's worth of search exhausts it.
+    feeds = _feed_client(
+        {"https://feed.example/rss": _feed_rss(_feed_summary("https://space.example/a"))},
+        {"space": ["https://feed.example/rss"]},
+    )
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), feeds=feeds)
+    ctx = _budget_ctx(1)
+    first = await handlers["news_feed"]({"category": "space"}, ctx)
+    assert isinstance(first, ToolOutput)  # the one allowed call succeeds
+    second = await handlers["web_search"]({"query": "x"}, ctx)
+    assert "SEARCH BUDGET SPENT" in str(second)  # the shared counter is now spent
+
+
 # --- web_search extras (infobox + instant answers) and the recency window ------
 
 

@@ -311,9 +311,10 @@ REVIEW_TOOLS = RESEARCH_TOOLS
 # angle it finds dated article / paper leads from the news / science engines (all three share the
 # one `web_search` budget, so switching tools can't sidestep the cap). `news_feed` also rides the
 # scout — curated per-category feeds are the daily brief's un-throttled discovery source
-# (NEWS_FEED_PLAN.md); it hits pinned feeds, not the upstreams the search budget guards, so it is
-# deliberately UNbudgeted. The reader (research_fetch/FETCH_TOOLS) does NOT get it — it stays
-# search-less by design so it can't wander off its handed URL list.
+# (NEWS_FEED_PLAN.md) — and shares that SAME search budget: a discovery call is a discovery call,
+# so a scout can't turn one news_feed into an unbounded fan of outbound feed fetches (the model
+# runs to its step cap regardless of the prompt). The reader (research_fetch/FETCH_TOOLS) does NOT
+# get it — it stays search-less by design so it can't wander off its handed URL list.
 SCOUT_TOOLS = frozenset(
     {"web_search", "news_search", "science_search", "news_feed", "web_fetch", "current_time"}
 )

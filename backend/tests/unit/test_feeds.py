@@ -142,6 +142,65 @@ async def test_fetch_category_skips_a_failing_feed_best_effort() -> None:
     assert [it.url for it in out] == ["https://s.example/ok"]  # the 403 feed is dropped, not fatal
 
 
+async def test_dedupe_prefers_the_full_text_copy_regardless_of_feed_order() -> None:
+    url = "https://s.example/story"
+    routes = {
+        "https://sum.example/rss": _rss(_summary_item(url, _NOW - 100)),  # summary-only, first
+        "https://full.example/rss": _rss(_full_item(url, _NOW - 100)),  # carries the body, second
+    }
+    client = FeedClient(
+        _fetcher(routes),
+        {"space": ["https://sum.example/rss", "https://full.example/rss"]},
+        clock=lambda: float(_NOW),
+    )
+    out = await client.fetch_category("space", since="week")
+    assert [it.url for it in out] == [url]
+    assert out[0].has_full_body  # feed order didn't downgrade the already-opened article
+
+
+async def test_resolve_uses_whole_word_overlap_not_substring() -> None:
+    routes = {
+        "https://space.example/rss": _rss(_summary_item("https://x.example/space", _NOW - 100)),
+        "https://ai.example/rss": _rss(_summary_item("https://x.example/ai", _NOW - 100)),
+    }
+    client = FeedClient(
+        _fetcher(routes),
+        {"space": ["https://space.example/rss"], "ai_tech": ["https://ai.example/rss"]},
+        clock=lambda: float(_NOW),
+    )
+    # A whole-word token resolves: "ai" → ai_tech, "space industry outlook" → space.
+    assert (await client.fetch_category("ai", since="week"))[0].url == "https://x.example/ai"
+    assert (await client.fetch_category("space industry outlook", since="week"))[
+        0
+    ].url == "https://x.example/space"
+    # "fintech" shares no whole word with any key — it must NOT mis-route to ai_tech by substring.
+    assert await client.fetch_category("fintech", since="week") == []
+
+
+async def test_cache_is_keyed_per_category_and_since_not_limit() -> None:
+    calls: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        feed = _rss(
+            _summary_item("https://x.example/a", _NOW - 100)
+            + _summary_item("https://x.example/b", _NOW - 200)
+        )
+        return httpx.Response(200, content=feed, headers={"content-type": "application/rss+xml"})
+
+    client = FeedClient(
+        WebFetcher(transport=httpx.MockTransport(handle)),
+        {"space": ["https://feed.example/rss"]},
+        clock=lambda: float(_NOW),
+    )
+    first = await client.fetch_category("space", since="week", limit=1)
+    assert len(first) == 1 and len(calls) == 1
+    # A different limit is a post-slice of the cached list — no second outbound fetch (the scout
+    # can't amplify one category into a fan of re-fetches by varying limit).
+    second = await client.fetch_category("space", since="week", limit=2)
+    assert len(second) == 2 and len(calls) == 1
+
+
 def test_empty_feed_map_is_disabled() -> None:
     client = FeedClient(WebFetcher(), {"space": [], "": ["https://x"]})
     assert not client.enabled and client.categories() == ()
