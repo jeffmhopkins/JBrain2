@@ -38,6 +38,11 @@ dependencies = [
     # in-memory cache primitive, so a deep-research fan's identical re-queries don't
     # re-hit the upstream engines that rate-limit the box.
     "cachetools>=5.3",
+    # RSS/Atom/JSON-feed parsing for jerv's news_feed tool (jbrain.web.feeds,
+    # docs/plans/NEWS_FEED_PLAN.md): normalizes every feed dialect into one entry shape
+    # (dates, content:encoded, guid). Used for PARSING ONLY — feed bytes are fetched
+    # through the SSRF-guarded WebFetcher, so feedparser never does its own network I/O.
+    "feedparser>=6.0",
 ]
 
 [project.optional-dependencies]

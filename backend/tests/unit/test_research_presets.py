@@ -30,6 +30,9 @@ def test_shipped_daily_news_is_dated_and_retained() -> None:
     assert preset.min_reads == 8  # opts into the two-phase scout→read gather (trimmed from 12
     # to cut the serial read-phase time on the local model — a live run spent ~19 min reading)
     assert preset.output_kind == "brief"  # `report` would balloon past a 10-minute read
+    # The two full-text feed categories are pre-pulled as findings (NEWS_FEED_PLAN.md Wave B),
+    # so the walled space + local angles are covered from the feed body with no reader fetch.
+    assert preset.news_feeds == ("space", "local")
     assert preset.source_mode == "web"
     assert preset.sections[0] == "Good Morning"
     assert preset.sections[-1] == "That's Your Briefing"
@@ -93,6 +96,7 @@ def test_coerce_defaults_and_angle_title_fallback() -> None:
     assert preset.variables == ("x",)
     assert preset.angles[0][0] == "research {{x}}"  # title falls back to the brief
     assert preset.retention_days is None  # absent → keep forever
+    assert preset.news_feeds == ()  # absent → no feed pre-pull
 
 
 def test_retention_days_parsed_and_carried_through_render(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,6 +117,54 @@ def test_retention_days_parsed_and_carried_through_render(monkeypatch: pytest.Mo
     # A preset without the field renders as keep-forever (None), the default path unchanged.
     keep = rp.render_preset("candidate_profile", {"candidate": "A", "office": "B"})
     assert keep.retention_days is None
+
+
+def test_news_feeds_parses_a_list_and_defaults_empty() -> None:
+    preset = rp._coerce_preset(
+        "p",
+        {
+            "question": "News {{x}}",
+            "sections": ["One"],
+            "angles": [{"brief": "gather {{x}}"}],
+            "min_reads": 8,  # the pre-pull only runs on the two-phase gather
+            "news_feeds": ["space", " local "],  # trimmed
+        },
+    )
+    assert preset.news_feeds == ("space", "local")
+    # Absent → empty (feature off), carried through render unchanged.
+    bare = rp._coerce_preset("p", {"question": "q", "sections": ["S"], "angles": [{"brief": "b"}]})
+    assert bare.news_feeds == ()
+
+
+def test_news_feeds_requires_min_reads() -> None:
+    # The feed pre-pull only runs on the two-phase (min_reads) gather, so news_feeds without
+    # min_reads would be a silent no-op — a load-time refusal, not a rotting field.
+    with pytest.raises(rp.PresetError) as exc:
+        rp._coerce_preset(
+            "p",
+            {
+                "question": "q",
+                "sections": ["S"],
+                "angles": [{"brief": "b"}],
+                "news_feeds": ["space"],  # no min_reads
+            },
+        )
+    assert "news_feeds" in str(exc.value) and "min_reads" in str(exc.value)
+
+
+@pytest.mark.parametrize("bad", ["space", [""], ["ok", 3], [None]])
+def test_news_feeds_rejects_a_non_string_list(bad: object) -> None:
+    with pytest.raises(rp.PresetError) as exc:
+        rp._coerce_preset(
+            "p",
+            {
+                "question": "q",
+                "sections": ["S"],
+                "angles": [{"brief": "b"}],
+                "news_feeds": bad,
+            },
+        )
+    assert "news_feeds" in str(exc.value)
 
 
 @pytest.mark.parametrize("bad", [0, -1, 3.5, True, "7", "seven"])

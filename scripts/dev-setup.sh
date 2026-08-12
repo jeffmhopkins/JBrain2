@@ -55,8 +55,10 @@ ensure_uv() {
 # the EMR importer's `pyzipper` (AES-encrypted ZIP extraction, docs/plans/EMR_IMPORT_PLAN.md
 # §6.1), guarded by tests/unit/test_emr_deps.py; and `yt-dlp` (the analyze_stream tool's
 # stream-URL → media-URL resolver, docs/archive/STREAM_ANALYSIS_PLAN.md), guarded by
-# tests/unit/test_stream_deps.py. Both are pure pip deps synced here (yt-dlp reuses the
-# ffmpeg installed above); the smoke tests enforce CLAUDE.md rule #8.
+# tests/unit/test_stream_deps.py; and `feedparser` (RSS/Atom parsing for the news_feed
+# tool, docs/plans/NEWS_FEED_PLAN.md), guarded by tests/unit/test_feed_deps.py. All are
+# pure pip deps synced here (yt-dlp reuses the ffmpeg installed above); the smoke tests
+# enforce CLAUDE.md rule #8.
 sync_python() { # sync_python <dir>
   local dir="$1" stamp="py-${1//\//-}"
   if [ ! -f "$dir/pyproject.toml" ]; then

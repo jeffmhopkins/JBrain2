@@ -7,6 +7,7 @@ jerv agent may call.
 from jbrain.web.domain_health import DomainSkipRepo
 from jbrain.web.favicon import FaviconFetcher, FaviconResult
 from jbrain.web.federal_register import FederalRegisterClient, Notice
+from jbrain.web.feeds import FeedClient, FeedItem
 from jbrain.web.fetch import FetchResult, WebFetcher, WebFetchError
 from jbrain.web.grokipedia import GrokipediaClient, GrokipediaError
 from jbrain.web.hurricane import HurricaneClient, HurricaneError
@@ -26,6 +27,8 @@ __all__ = [
     "FaviconFetcher",
     "FaviconResult",
     "FederalRegisterClient",
+    "FeedClient",
+    "FeedItem",
     "FetchResult",
     "GrokipediaClient",
     "GrokipediaError",
