@@ -28,8 +28,13 @@ from jbrain.web.favicon import normalize_host
 
 log = structlog.get_logger()
 
-# The reasons a domain lands on the skip list — the CHECK constraint on the table.
-VALID_REASONS = frozenset({"paywalled", "bot_blocked", "unreadable"})
+# The reasons a domain lands in the fetch-health store — the CHECK constraint on the table.
+# The first three are SKIP reasons (short-circuit a fetch for 24h); `solver_failed` is a REROUTE
+# reason (the on-box solver missed but Tavily recovered — route the domain Tavily-first), NOT a
+# skip, so it is kept out of `active_hosts()` and surfaced only via `tavily_first_hosts()`.
+VALID_REASONS = frozenset({"paywalled", "bot_blocked", "unreadable", "solver_failed"})
+# The reason marking a domain for learned Tavily-first routing (TAVILY_FETCH_TIER_PLAN.md).
+SOLVER_FAILED_REASON = "solver_failed"
 
 
 class DomainSkipRepo:
@@ -69,16 +74,49 @@ class DomainSkipRepo:
         except Exception:  # noqa: BLE001 - recording a block must never break the fetch
             log.warning("domain_skip.record_failed", host=key, reason=reason, exc_info=True)
 
+    async def record_solver_failed(self, url: str) -> None:
+        """Mark `url`'s domain as one the on-box solver (byparr) genuinely missed but the hosted
+        Tavily tier recovered — so future fetches route it Tavily-first
+        (docs/plans/TAVILY_FETCH_TIER_PLAN.md). Same 24h upsert as a block (`record`), but a
+        REROUTE reason (`solver_failed`), so the 24h lazy-TTL re-probes the free on-box path
+        later. Best-effort like `record`; the host is normalized from the URL."""
+        await self.record(url, SOLVER_FAILED_REASON, url)
+
     async def active_hosts(self) -> frozenset[str]:
-        """The bare lowercase hosts whose block is still live (`expires_at > now()`), read under
-        SYSTEM_CTX. Lazy expiry is the source of truth, so a past-TTL row is simply not returned.
-        FAIL-OPEN: any DB error yields an empty set, so a hiccup never blocks a search or fetch."""
+        """The bare lowercase hosts whose SKIP block is still live (`expires_at > now()`), read
+        under SYSTEM_CTX — EXCLUDING `solver_failed`, which is a Tavily-first reroute (see
+        `tavily_first_hosts`), not a fetch-skipping block. Lazy expiry is the source of truth, so a
+        past-TTL row is simply not returned. FAIL-OPEN: any DB error yields an empty set, so a
+        hiccup never blocks a search or fetch."""
+        return await self._live_hosts(exclude_reroutes=True)
+
+    async def tavily_first_hosts(self) -> frozenset[str]:
+        """The bare lowercase hosts with a LIVE `solver_failed` mark — the learned Tavily-first
+        set (byparr missed, Tavily recovered), so a fetch to one skips the doomed
+        direct→reader→byparr legs and goes straight to Tavily. A REROUTE, not a skip, so it is
+        kept OUT of `active_hosts`. FAIL-OPEN like `active_hosts` — a DB error yields empty."""
+        return await self._live_hosts(only_reroutes=True)
+
+    async def _live_hosts(
+        self, *, exclude_reroutes: bool = False, only_reroutes: bool = False
+    ) -> frozenset[str]:
+        """Shared live-host read (lazy expiry) with a reason filter: `exclude_reroutes` drops the
+        `solver_failed` reroute rows (the skip set), `only_reroutes` keeps just them (the
+        Tavily-first set). FAIL-OPEN — any DB error yields an empty set."""
+        clause = ""
+        if exclude_reroutes:
+            clause = f" AND reason != '{SOLVER_FAILED_REASON}'"
+        elif only_reroutes:
+            clause = f" AND reason = '{SOLVER_FAILED_REASON}'"
         try:
             async with scoped_session(self._maker, SYSTEM_CTX) as session:
                 rows = (
                     (
                         await session.execute(
-                            text("SELECT host FROM app.blocked_domains WHERE expires_at > now()")
+                            text(
+                                "SELECT host FROM app.blocked_domains "
+                                f"WHERE expires_at > now(){clause}"
+                            )
                         )
                     )
                     .scalars()

@@ -2788,7 +2788,14 @@ def _four_tier_handler(  # type: ignore[no-untyped-def]
     return handle
 
 
-def _tavily_fetcher(handler, *, enabled: bool = True, key: str = "tvly-key") -> WebFetcher:  # type: ignore[no-untyped-def]
+def _tavily_fetcher(  # type: ignore[no-untyped-def]
+    handler,
+    *,
+    enabled: bool = True,
+    key: str = "tvly-key",
+    tavily_first_hosts=None,
+    record_solver_failed=None,
+) -> WebFetcher:
     return WebFetcher(
         transport=httpx.MockTransport(handler),
         reader_url="http://reader:3000",
@@ -2796,7 +2803,146 @@ def _tavily_fetcher(handler, *, enabled: bool = True, key: str = "tvly-key") -> 
         tavily_url="https://api.tavily.com",
         tavily_extract_depth="advanced",
         tavily_settings=_tavily_provider(enabled, key),
+        tavily_first_hosts=tavily_first_hosts,
+        record_solver_failed=record_solver_failed,
     )
+
+
+class _RecordedMisses:
+    """A fake `record_solver_failed` callback that captures the URLs it was asked to learn."""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    async def __call__(self, url: str) -> None:
+        self.urls.append(url)
+
+
+def _first_hosts(*hosts: str):  # type: ignore[no-untyped-def]
+    """A fake `tavily_first_hosts` lookup returning a fixed learned set."""
+
+    async def provider() -> frozenset[str]:
+        return frozenset(hosts)
+
+    return provider
+
+
+# A byparr solved page that is ITSELF a challenge — the stealth browser ran but couldn't clear the
+# wall (a genuine MISS, the signal the domain is worth routing Tavily-first).
+_SOLVER_CHALLENGE = {"response": "<html><head><title>Just a moment...</title></head></html>"}
+
+
+async def test_records_solver_failed_when_byparr_misses_and_tavily_recovers() -> None:
+    # Direct 403 → reader challenge (miss) → byparr ran but is still challenged (a GENUINE miss) →
+    # Tavily recovers. The domain is learned so the next fetch routes it Tavily-first.
+    recorder = _RecordedMisses()
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=_SOLVER_CHALLENGE,
+            tavily_response=_tavily_body("https://x.example/walled"),
+        ),
+        record_solver_failed=recorder,
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Tavily's hosted extractor recovered" in result.text
+    assert recorder.urls == ["https://x.example/walled"]  # learned for next time
+
+
+async def test_no_record_on_a_byparr_outage_even_if_tavily_recovers() -> None:
+    # byparr 500s (an OUTAGE, not the domain's fault): even though Tavily saves the fetch, the
+    # domain is NOT learned — a transient byparr blip must never route a site Tavily-first.
+    recorder = _RecordedMisses()
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=None,  # byparr 500 → OUTAGE
+            tavily_response=_tavily_body("https://x.example/walled"),
+        ),
+        record_solver_failed=recorder,
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Tavily's hosted extractor recovered" in result.text
+    assert recorder.urls == []  # an outage is never learned
+
+
+async def test_no_record_when_tavily_also_misses() -> None:
+    # byparr genuinely misses AND Tavily also can't read it: nothing to route Tavily-first, so the
+    # domain is not learned — it surfaces as an honest block (the existing skip path handles it).
+    recorder = _RecordedMisses()
+    challenge = "Please enable JavaScript and cookies to continue."
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=_SOLVER_CHALLENGE,
+            tavily_response=_tavily_body("https://x.example/walled", content=challenge),
+        ),
+        record_solver_failed=recorder,
+    )
+    with pytest.raises(WebFetchError):
+        await fetcher.fetch("https://x.example/walled")
+    assert recorder.urls == []
+
+
+async def test_tavily_first_routes_a_learned_host_straight_to_tavily() -> None:
+    # A learned host skips the doomed direct→reader→byparr legs and goes straight to Tavily —
+    # the payoff of the recording above. Neither the origin, reader, nor byparr is touched.
+    hits: list[str] = []
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(403, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=_SOLVER_CHALLENGE,
+            tavily_response=_tavily_body("https://x.example/walled"),
+            hits=hits,
+        ),
+        tavily_first_hosts=_first_hosts("x.example"),
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Tavily's hosted extractor recovered" in result.text
+    assert hits == ["api.tavily.com"]  # went straight to Tavily
+
+
+async def test_tavily_first_miss_falls_through_to_the_normal_path() -> None:
+    # A learned host, but Tavily misses this time: it falls through to the ordinary path (here the
+    # origin serves a normal 200), so a stale learned entry degrades gracefully, never hard-fails.
+    hits: list[str] = []
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(200, content=_ORIGIN_HTML, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=_SOLVER_CHALLENGE,
+            tavily_response=None,  # Tavily 500s on the tavily-first attempt
+            hits=hits,
+        ),
+        tavily_first_hosts=_first_hosts("x.example"),
+    )
+    result = await fetcher.fetch("https://x.example/p")
+    assert "Direct origin content" in result.text
+    assert hits[0] == "api.tavily.com" and "x.example" in hits  # tried Tavily first, then fell back
+
+
+async def test_tavily_first_is_a_noop_when_the_tier_is_disabled() -> None:
+    # A learned host but the toggle is OFF: routing is inert (Tavily is never called), and the
+    # normal path runs unchanged — so disabling the tier fully removes it, learned list and all.
+    hits: list[str] = []
+    fetcher = _tavily_fetcher(
+        _four_tier_handler(
+            direct=httpx.Response(200, content=_ORIGIN_HTML, headers={"content-type": "text/html"}),
+            reader=_CHALLENGE_MD,
+            solver_response=_SOLVER_CHALLENGE,
+            tavily_response=_tavily_body("https://x.example/walled"),
+            hits=hits,
+        ),
+        enabled=False,
+        tavily_first_hosts=_first_hosts("x.example"),
+    )
+    result = await fetcher.fetch("https://x.example/p")
+    assert "Direct origin content" in result.text
+    assert "api.tavily.com" not in hits  # disabled ⇒ never called, even for a learned host
 
 
 async def test_tavily_recovers_when_reader_and_solver_both_miss() -> None:
