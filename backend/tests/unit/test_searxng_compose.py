@@ -90,12 +90,13 @@ def test_duckduckgo_is_de_weighted_so_it_is_not_the_sole_primary() -> None:
 def test_arxiv_has_a_raised_per_engine_timeout() -> None:
     # arXiv's export API routinely edges past the global 6s request_timeout and gets dropped,
     # so it carries its own higher timeout (up to max_request_timeout) to actually contribute.
-    engines = {e["name"]: e for e in _settings().get("engines", [])}
     settings = _settings()
+    engines = {e["name"]: e for e in settings.get("engines", [])}
+    default_timeout = settings["outgoing"]["request_timeout"]
     max_timeout = settings["outgoing"]["max_request_timeout"]
     arxiv_timeout = engines["arxiv"].get("timeout")
     assert arxiv_timeout is not None, "arxiv needs its own timeout — its API is slower than 6s"
-    assert arxiv_timeout > settings["outgoing"]["request_timeout"], "arxiv timeout must beat the default"
+    assert arxiv_timeout > default_timeout, "arxiv timeout must beat the default"
     assert arxiv_timeout <= max_timeout, "a per-engine timeout cannot exceed max_request_timeout"
 
 
