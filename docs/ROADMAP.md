@@ -381,11 +381,16 @@ PWA**: the API key + a manual on/off toggle live in **Settings** (the Gmail-cred
 secret stored via GUI, never echoed, `JBRAIN_TAVILY_API_KEY` env fallback), read live per fetch via a
 settings-provider seam into the fetcher, with a no-terminal "Test key" button on the `tier="tavily"`
 debug route. Inert until a key is entered (keyless box byte-unchanged); third-party exposure bounded to
-already-blocked URLs, the toggle its instant off switch. Extract-only: SearXNG stays the sole search
-backend (Tavily Search scoped out — per-credit deep-research cost + loss of infoboxes/instant-answers).
-T1 (tier + settings key/toggle + live provider + `tier="tavily"` debug selector, headless, full offline
-coverage), T2 (the Settings GUI behind the three-mock GUI gate), T3 (live validation, the
-last-vs-before-byparr tier-order decision, and whether a `tavily_first_domains` shortcut earns its keep).
+already-blocked URLs, the toggle its instant off switch. **Learns byparr-failed domains**: when the
+on-box stack (direct→reader→byparr) fails but Tavily recovers the page, the domain is recorded
+(`solver_failed`, a new reason on `app.blocked_domains` migration 0163, with the same 24h lazy-TTL
+re-probe) so future fetches route **straight to Tavily**, skipping the doomed on-box legs — the learned
+form of the static `solver_first_domains` shortcut, inert while Tavily is off. Extract-only: SearXNG
+stays the sole search backend (Tavily Search scoped out — per-credit deep-research cost + loss of
+infoboxes/instant-answers). T1 (tier + settings key/toggle + live provider + `tier="tavily"` debug
+selector, headless), T2 (learned Tavily-first routing: the `solver_failed` reason + record trigger +
+route), T3 (the Settings GUI behind the three-mock GUI gate), T4 (live validation + `extract_depth`/timeout
+tuning + 24h re-probe confirmation).
 
 **Shipped:** Blocked-domain skip list (build record: `docs/archive/DOMAIN_HEALTH_PLAN.md`) — a global
 24h paywall/bot-wall skip list (`app.blocked_domains`, migration 0163) so `web_fetch`/`web_search`

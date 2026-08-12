@@ -1,6 +1,6 @@
 # Tavily Fetch Tier — a hosted recovery tier for walled web_fetch
 
-> **Status:** Scheduled · **Last verified:** 2026-08-12 · **Waves:** T1◻️ T2◻️ T3◻️
+> **Status:** Scheduled · **Last verified:** 2026-08-12 · **Waves:** T1◻️ T2◻️ T3◻️ T4◻️
 
 `web_fetch`'s hardest misses are pages behind a managed bot wall (Cloudflare
 Turnstile, DataDome), a metered paywall, or a JS shell our static extractor can't
@@ -17,6 +17,12 @@ un-walls a URL on *their* infrastructure and returns clean content. Wired as a
 **fourth recovery tier**, it catches pages the on-box tiers miss without adding a
 sidecar to maintain — a hosted safety net that fires only when the free on-box path
 is exhausted, so cost + off-box exposure stay **bounded to already-blocked URLs**.
+
+And the box **learns**: when byparr genuinely fails on a domain but Tavily then
+recovers it, that domain is recorded, so future fetches to it **skip straight to
+Tavily** instead of burning the doomed direct→reader→byparr legs on every visit. The
+learned list rides the existing per-domain fetch-health store, with the same 24h TTL
+so a site that later drops its wall silently returns to the free path.
 
 This is a **single-owner box**, so the tier **ships enabled** and is operated
 **entirely from the PWA** — the owner pastes their Tavily API key into **Settings**
@@ -53,13 +59,49 @@ output just as on the reader's), so a laundered "Just a moment…" never becomes
 `WebSource`. A `web.tavily_used` log (the `web.solver_used` analog) makes the tier
 diagnosable.
 
-**Tier order — decided in T3 against live data.** The default this plan ships is
-**tavily LAST** (direct → reader → solver → tavily): the on-box free tiers run first,
-so Tavily is billed only when *everything on-box* fails. The alternative — tavily
-*before* byparr — exercises the fragile sidecar less (an operational win for the
-no-terminal owner) at the cost of paying Tavily before a solve that might have
-succeeded free. A `tavily_first_domains` shortcut (the `solver_first_domains` analog,
-`config.py:181`) is **deferred to T3**, gated on live hit-rates.
+**Base tier order — tavily LAST** (direct → reader → solver → tavily): the on-box free
+tiers run first, so on a *first* visit to a walled domain Tavily is reached only when
+everything on-box fails. The learned routing below is what makes *repeat* visits cheap.
+
+### Learned Tavily-first routing (byparr fails → prefer Tavily next time)
+
+A domain byparr can't clear is almost always *persistently* hard (the wall is a
+fingerprint/JS-management the stealth browser structurally can't defeat, not a fluke),
+so paying the full direct→reader→byparr escalation on *every* future fetch to it is
+pure waste. When the on-box stack fails but Tavily saves the fetch, the box records the
+domain and routes it **Tavily-first** thereafter — the *learned* form of the static
+`solver_first_domains` shortcut (`config.py:181`), which it supersedes for this purpose.
+
+This rides the existing **per-domain fetch-health store** — `app.blocked_domains`
+(migration 0163) via `DomainSkipRepo` (`web/domain_health.py`), which already records a
+domain with a `reason` + a 24h lazy-TTL and is read to route fetches:
+
+- **Record (the precise trigger):** in `_recover`, when the **solver tier genuinely
+  ran and missed** (byparr returned a still-challenged / empty page — *not* a byparr
+  transport outage, which is transient and never recorded, mirroring the existing
+  `transient` discipline) **and a later tier (Tavily) then recovered the page**, record
+  the host with a new reason **`solver_failed`**. Recording only on *byparr-miss-then-
+  Tavily-success* is deliberate: it means "the on-box stack can't do this domain but
+  Tavily can" — exactly the domains worth routing to Tavily. A domain where *both* fail
+  is a hard block the existing `_record_block` path skips (24h), not a Tavily-first lead.
+- **Route:** the fetcher consults the live `solver_failed` host set (a new
+  `tavily_first_hosts()` reader, the `_prefers_solver` analog) and, **when Tavily is
+  enabled + keyed**, sends a listed host **straight to Tavily**, skipping
+  direct→reader→byparr. A Tavily miss still falls through to the normal path (so a
+  learned entry degrades, never hard-fails), exactly as `solver_first` does today.
+- **TTL re-probe:** the 24h expiry means a listed domain periodically re-tries the free
+  on-box path; if byparr still fails it re-records, if the site dropped its wall it
+  silently returns to free fetching — no permanent Tavily dependence, no sweep needed.
+- **Inert without Tavily:** with Tavily off/keyless there is nowhere better to route, so
+  a `solver_failed` host just runs the normal path (byparr fails again, harmlessly). The
+  learned list only *does* anything when Tavily is live.
+- **Store seam:** `solver_failed` is a **reroute**, not a skip, so it is **excluded from
+  `active_hosts()`** (the short-circuit skip set) and surfaced only via the new
+  `tavily_first_hosts()` reader. `VALID_REASONS` + the table's `reason` CHECK gain
+  `solver_failed` (a migration). The fetcher stays DB-free: it holds two thin injected
+  best-effort async callbacks (a `tavily_first` host lookup + a solver-miss recorder),
+  both backed by `DomainSkipRepo` from `main.py` — the same shape as the settings
+  provider below, never a session in the egress object.
 
 ### Runtime control — key + toggle in Settings, read live (the Gmail precedent)
 
@@ -131,19 +173,32 @@ owner pastes the key and it works. A stock box with no key is byte-unchanged.
   four-tier order; `test_debug_api.py` — the selector; `test_settings_api.py` /
   store tests — the new keys). No new runtime dependency (reuses `httpx`). Docs → **In
   progress** (T1✅). Zero GUI in this wave — the tier is functional from env/DB alone.
-- **T2 ◻️** — the Settings GUI (the owner control surface). **GUI gate first**: three
+- **T2 ◻️** — learned Tavily-first routing (byparr fails → prefer Tavily), headless.
+  Migration extends `app.blocked_domains`'s `reason` CHECK + `VALID_REASONS` with
+  `solver_failed`; `domain_health.py` gains the reason-aware record + a
+  `tavily_first_hosts()` reader and **excludes `solver_failed` from `active_hosts()`**;
+  `fetch.py` records the host on a genuine byparr-miss-then-Tavily-success in `_recover`
+  (never on a transient byparr outage) and routes a listed host Tavily-first (gated on
+  Tavily enabled + keyed), via the two thin injected callbacks; `main.py` wires them
+  from `DomainSkipRepo`. Full unit coverage (the record trigger incl. the
+  transient-outage exclusion, the Tavily-first route + fall-through, the `active_hosts`
+  exclusion); the `reason`-CHECK change gets its own test, and the existing
+  `app.blocked_domains` RLS isolation test covers the reused table. Depends on T1 (needs
+  the tier to route to).
+- **T3 ◻️** — the Settings GUI (the owner control surface). **GUI gate first**: three
   mocks of the Tavily panel → owner picks → binding spec in `docs/mocks/`. Then: the
   key-write endpoint (secret stored, **never echoed** — Gmail precedent) + the
   `tavily_enabled` toggle in the `/settings` GET/PUT (`SettingsOut`/`SettingsPatch`) +
   store setters; the `SettingsScreen.tsx` panel (masked key field, on/off toggle,
   "Test key" button hitting the `tier="tavily"` debug route). Frontend + backend unit
-  coverage (`SettingsScreen.test.tsx`, `test_settings_api.py`).
-- **T3 ◻️** — live validation + tuning, then archive. Against a known byparr-miss URL,
-  confirm Tavily recovers real content (`web.tavily_used`) and that a Tavily-laundered
-  challenge is still an honest block. Decide tier order (last vs. before-byparr) from
-  observed on-box solve-vs-Tavily hit-rate + latency, and whether `tavily_first_domains`
-  earns its keep. Tune `extract_depth` + the request timeout against real extracts. Fold
-  the outcome into the config/settings comments + this plan, then archive.
+  coverage (`SettingsScreen.test.tsx`, `test_settings_api.py`). Depends only on T1's
+  settings keys (parallelizable with T2).
+- **T4 ◻️** — live validation + tuning, then archive. Against a known byparr-miss URL,
+  confirm Tavily recovers real content (`web.tavily_used`), that a Tavily-laundered
+  challenge is still an honest block, and that the domain lands on the learned
+  Tavily-first list and short-cuts on the next fetch. Tune `extract_depth` + the request
+  timeout against real extracts, and confirm the 24h re-probe. Fold the outcome into the
+  config/settings comments + this plan, then archive.
 
 ## Non-goals (scoped out)
 
