@@ -206,6 +206,12 @@ owner pastes the key and it works. A stock box with no key is byte-unchanged.
     `urls` is a list). Fixed in `_fetch_via_tavily` with a request-shape regression test.
     Also dropped the panel's `.seg-primary` tint on "Save & test" so the action buttons
     match every other Settings row (plain `.seg`), not a selected-toggle segment.
+  - **Verbose "Test key" (2026-08-13):** a rejected key read as a vague "no page came back"
+    (which made a bad key look like a code bug). `WebFetcher.tavily_probe` now names each
+    failure mode — a 401/403 **key rejection** (with the fix hint), a 429 rate-limit, an
+    unreachable Tavily, an empty/walled page, or the tier off/keyless — and the owner-gated
+    `/settings/tavily/test` route delegates to it. The fetch tier is unchanged (both share a
+    new `_tavily_extract` so the request shape lives in one place).
 
 ## Non-goals (scoped out)
 

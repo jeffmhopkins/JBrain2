@@ -20,7 +20,7 @@ from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
 from jbrain.settings_store import SqlSettingsStore
-from jbrain.web.fetch import WebFetcher, WebFetchError
+from jbrain.web.fetch import WebFetcher
 
 log = structlog.get_logger()
 
@@ -114,21 +114,9 @@ async def test_tavily_settings(
     body: TavilyTestIn, request: Request, principal: PrincipalDep
 ) -> TavilyTestOut:
     """Run the LIVE Tavily tier against `url` (the "Test key" button) so the owner verifies a
-    freshly-saved key with no terminal. Reports the failure modes distinctly: the tier unwired,
-    disabled/keyless, a bad target (SSRF/scheme), or a genuine miss (bad key / Tavily error)."""
-    fetcher = _fetcher(request)
-    if not fetcher.tavily_wired:
-        return TavilyTestOut(ok=False, detail="The Tavily tier is not configured on this box.")
-    try:
-        result = await fetcher.tavily(body.url.strip() or _DEFAULT_TEST_URL)
-    except WebFetchError as exc:
-        return TavilyTestOut(ok=False, detail=str(exc))
-    if result is None:
-        return TavilyTestOut(
-            ok=False,
-            detail="No page came back — Tavily is disabled or the key is missing/invalid, "
-            "or it couldn't read that URL. Check the toggle and key above.",
-        )
-    return TavilyTestOut(
-        ok=True, detail=f"Tavily read {result.total_chars} chars from {result.url} — key works."
-    )
+    freshly-saved key with no terminal. Delegates to `tavily_probe`, which reports EACH failure
+    mode distinctly (tier unwired / off / keyless, a refused target, a 401/403 key rejection, a
+    429 rate-limit, another Tavily error, an empty result, a still-walled page, or success) — so a
+    rejected key reads as exactly that, not a vague "no page came back"."""
+    ok, detail = await _fetcher(request).tavily_probe(body.url.strip() or _DEFAULT_TEST_URL)
+    return TavilyTestOut(ok=ok, detail=detail)

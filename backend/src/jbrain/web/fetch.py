@@ -1389,20 +1389,11 @@ class WebFetcher:
         if not enabled or not api_key:
             return None
         guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
-        # Tavily authenticates via the Authorization: Bearer header — a body `api_key` is rejected
-        # 401 by the current API. `urls` is a list per the docs; extract_depth chooses the render
-        # aggressiveness (advanced un-walls harder at ~2x credits).
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {"urls": [url], "extract_depth": self._tavily_extract_depth}
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as c:
-                resp = await c.post(f"{self._tavily_url}/extract", json=payload, headers=headers)
-                resp.raise_for_status()
-                body = resp.json()
+            text, final_url = await self._tavily_extract(url, api_key)
         except (httpx.HTTPError, ValueError, WebFetchError) as exc:
             log.warning("web.tavily_failed", error=repr(exc))
             return None
-        text, final_url = _parse_tavily_extract(body, url)
         if not text.strip():
             return None
         # Tavily can hand back the origin's challenge/paywall wall rendered as clean text (it
@@ -1425,6 +1416,62 @@ class WebFetcher:
             find_regex=find_regex,
             body_truncated=False,
         )
+
+    async def _tavily_extract(self, url: str, api_key: str) -> tuple[str, str]:
+        """The bare Tavily Extract call: POST the URL and return (extracted text, final url).
+        Shared by the fetch tier (which swallows failures to None) and the diagnostic probe (which
+        surfaces them) so the request shape lives in ONE place. RAISES httpx errors — the caller
+        decides what to do with them. Tavily authenticates via the Authorization: Bearer header (a
+        body `api_key` is rejected 401 by the current API); `urls` is a list per the docs;
+        extract_depth chooses render aggressiveness (advanced un-walls harder at ~2x credits)."""
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {"urls": [url], "extract_depth": self._tavily_extract_depth}
+        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as c:
+            resp = await c.post(f"{self._tavily_url}/extract", json=payload, headers=headers)
+            resp.raise_for_status()
+            body = resp.json()
+        return _parse_tavily_extract(body, url)
+
+    async def tavily_probe(self, url: str) -> tuple[bool, str]:
+        """A VERBOSE diagnostic for the Settings "Test key" button — distinguishes every failure
+        mode with a plain-English, actionable message instead of the fetch tier's silent None (the
+        no-terminal owner has no logs to consult). Never raises. Returns (ok, detail): the tier
+        unwired / disabled / keyless, a refused target (SSRF), a KEY REJECTION (401/403), a
+        rate-limit (429), another Tavily/HTTP error, an empty result, a still-walled page, or a
+        genuine success. Used ONLY by the owner-gated test route; the fetch tier is unchanged."""
+        if not self._tavily_url or self._tavily_settings is None:
+            return False, "Tavily isn't set up on this box."
+        enabled, api_key = await self._tavily_settings()
+        if not enabled:
+            return False, "The tier is off — turn on 'Enable the tier' above, then test again."
+        if not api_key:
+            return False, "No API key is set — paste your tvly-… key above and Save & test."
+        try:
+            guard_public_host(url, skip_dns=self._transport is not None)
+        except WebFetchError as exc:
+            return False, str(exc)
+        try:
+            text, final_url = await self._tavily_extract(url, api_key)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status in (401, 403):
+                return False, (
+                    f"Tavily rejected the key (HTTP {status}) — check it's the full tvly-… key "
+                    "copied from app.tavily.com (API Keys)."
+                )
+            if status == 429:
+                return False, (
+                    "Tavily is rate-limiting this key (HTTP 429) — wait a moment, or check your "
+                    "plan's quota at app.tavily.com."
+                )
+            return False, f"Tavily returned an error (HTTP {status})."
+        except (httpx.HTTPError, ValueError):
+            return False, "Couldn't reach Tavily — the box has no outbound access to it."
+        if not text.strip():
+            return False, f"Tavily reached the API but returned no content for {url}."
+        if _is_challenge_page("", text) or _is_paywall_page("", text):
+            return False, f"Tavily read {url}, but it's a challenge/paywall even for Tavily."
+        return True, f"Tavily read {len(text)} chars from {final_url} — key works."
 
     async def _get_following_safe_redirects(
         self, client: httpx.AsyncClient, url: str
