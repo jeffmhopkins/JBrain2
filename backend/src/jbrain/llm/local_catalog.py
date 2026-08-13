@@ -595,16 +595,20 @@ def get_by_served(served_model: str) -> LocalModel | None:
 _KV_REFERENCE_TOKENS = 131072
 
 
-def footprint_gb(model: LocalModel, window: int, *, disk_gb: float | None = None) -> float:
+def footprint_gb(
+    model: LocalModel, window: int, *, disk_gb: float | None = None, slots: int = 1
+) -> float:
     """Total unified-memory footprint (GiB) of `model` held resident at `window`
     tokens: weights + KV cache. Weights = the measured on-disk size when known
     (`disk_gb`), else the catalog's nominal `size_gb`; KV scales linearly off the 128k
     reference (`kv_gb_per_128k * window / 131072`) — the same figures the settings
-    memory meter shows. On a Strix Halo box the iGPU draws from unified system RAM, so
-    this one number is the whole cost of keeping the model loaded. The residency
-    budget compares it against live free RAM."""
+    memory meter shows. `slots` (llama-server `-np`) multiplies the KV: each parallel
+    slot holds its own `window`-sized cache, so a second slot (the interactive
+    keep-warm slot) doubles the KV cost while the weights are shared. On a Strix Halo
+    box the iGPU draws from unified system RAM, so this one number is the whole cost of
+    keeping the model loaded. The residency budget compares it against live free RAM."""
     weights = disk_gb if disk_gb is not None else model.size_gb
-    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS
+    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * max(1, slots)
     return round(weights + kv, 2)
 
 

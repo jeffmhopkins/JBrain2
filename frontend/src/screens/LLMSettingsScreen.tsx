@@ -345,6 +345,20 @@ export function LLMSettingsScreen() {
       .finally(() => unmark(id));
   }
 
+  // Set the model's llama-server slot count (1 or 2). A second slot dedicates an interactive
+  // keep-warm slot so a primed chat prefix survives background/title traffic.
+  function setParallelSlots(id: string, slots: number | null) {
+    mark(id);
+    const seq = ++putSeq.current;
+    api
+      .setLocalParallelSlots(id, slots)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
+
   // Set (or clear, with null) the box-wide residency free-RAM floor. Keyed on a fixed busy
   // id (not a model id) since it's a global knob, not a per-row action.
   function setFreeRam(fraction: number | null) {
@@ -632,6 +646,7 @@ export function LLMSettingsScreen() {
         onStage={previewStage}
         onCancelStage={clearPreview}
         onSetWindow={setContextWindow}
+        onSetSlots={setParallelSlots}
         onSetAvailable={setAvailable}
         onInstall={queueInstall}
         onUninstall={queueUninstall}
@@ -1147,6 +1162,7 @@ function OnBoxModelsCard({
   onStage,
   onCancelStage,
   onSetWindow,
+  onSetSlots,
   onSetAvailable,
   onInstall,
   onUninstall,
@@ -1180,6 +1196,7 @@ function OnBoxModelsCard({
   onStage: (id: string) => void;
   onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
+  onSetSlots: (id: string, slots: number | null) => void;
   onSetAvailable: (id: string, on: boolean) => void;
   onInstall: (id: string, on: boolean) => void;
   onUninstall: (id: string, on: boolean) => void;
@@ -1479,6 +1496,7 @@ function OnBoxModelsCard({
                     onLoad={onLoad}
                     onCancelStage={onCancelStage}
                     onSetWindow={onSetWindow}
+                    onSetSlots={onSetSlots}
                   />
                 ),
               )}
@@ -1584,6 +1602,7 @@ function LlmModelRow({
   onLoad,
   onCancelStage,
   onSetWindow,
+  onSetSlots,
 }: {
   model: LocalModelInfo;
   busy: boolean;
@@ -1600,6 +1619,7 @@ function LlmModelRow({
   onLoad: (id: string) => void;
   onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
+  onSetSlots: (id: string, slots: number | null) => void;
 }) {
   const footprint = m.disk_gb ?? m.size_gb;
   const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
@@ -1725,6 +1745,27 @@ function LlmModelRow({
         ) : (
           <span className="llm-local-ctx-meta">KV ~{m.kv_gb} GB</span>
         )}
+      </div>
+      <div className="llm-local-ctx">
+        <label className="llm-local-ctx-label" htmlFor={`slots-${m.id}`}>
+          interactive slot
+        </label>
+        <select
+          id={`slots-${m.id}`}
+          className="llm-local-ctx-select"
+          value={String(m.parallel_slots)}
+          disabled={!editable || isBusy}
+          title="A second slot keeps this model's chat prefix warm in its own KV cache, so background jobs and chat-titling can't evict it — the first message after a restart stays instant. Doubles the model's KV cost."
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            // 1 is the default (single slot) — store null so no redundant override row persists.
+            onSetSlots(m.id, v <= 1 ? null : v);
+          }}
+        >
+          <option value="1">off (shared slot)</option>
+          <option value="2">on (dedicated · 2× KV)</option>
+        </select>
+        {!m.loaded && <span className="llm-local-ctx-meta">keeps chat instant after restart</span>}
       </div>
     </div>
   );

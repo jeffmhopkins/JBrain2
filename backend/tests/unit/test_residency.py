@@ -26,6 +26,7 @@ def _coord(
     enabled: bool = True,
     fraction_loader: object = None,
     hold_loader: object = None,
+    slots_loader: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -37,6 +38,7 @@ def _coord(
         free_ram_fraction=0.25,
         fraction_loader=fraction_loader,  # type: ignore[arg-type]
         hold_loader=hold_loader,  # type: ignore[arg-type]
+        slots_loader=slots_loader,  # type: ignore[arg-type]
     )
 
 
@@ -315,6 +317,28 @@ async def test_plan_load_reports_the_eviction_without_touching_the_box(
     assert round(plan.projected_gb, 1) == round(90.0 - 63.5 + 59.6, 1)  # 86.1
     assert plan.ceiling_gb == 96.0
     assert gw.unloaded == []  # dry-run — nothing evicted
+
+
+@pytest.mark.asyncio
+async def test_a_second_slot_doubles_the_kv_in_the_eviction_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A dedicated interactive slot doubles gpt-oss's KV (its footprint jumps from 63.5 to 68.0).
+    # Sized so the single-slot load fits under the 96 ceiling but the two-slot load does NOT —
+    # proving the doubled KV reaches the eviction budget (else the operator's opt-in would
+    # silently overcommit the box).
+    async def two_slots() -> dict[str, int]:
+        return {"gpt-oss-120b": 2}
+
+    gw = FakeLocalGateway(running={"qwen3.5-4b"})  # a tiny model resident, evictable
+    # Single slot (default loader): fits, no eviction.
+    fits = await _coord(gw, monkeypatch, total=128.0, used=30.0).plan_load("gpt-oss-120b")
+    assert fits is not None and fits.victims == () and fits.fits is True
+    # Two slots: the extra 4.5 GB KV tips it over the ceiling → must evict the tiny model.
+    over = await _coord(gw, monkeypatch, total=128.0, used=30.0, slots_loader=two_slots).plan_load(
+        "gpt-oss-120b"
+    )
+    assert over is not None and over.victims == ("qwen3.5-4b",)
 
 
 @pytest.mark.asyncio

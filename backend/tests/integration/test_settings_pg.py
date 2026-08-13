@@ -349,6 +349,29 @@ async def test_llm_local_context_windows_round_trip_and_sanitizes(
     assert await store.llm_local_context_windows(OWNER) == {"ok": 16384}
 
 
+async def test_llm_local_parallel_slots_round_trip_and_sanitizes(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_PARALLEL_SLOTS_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.llm_local_parallel_slots(OWNER) == {}
+
+    # set 2 / clear round-trips; 1 (the single-slot default) is stored as an absence.
+    await store.set_llm_local_parallel_slots(OWNER, model_id="gpt-oss-120b", slots=2)
+    assert await store.llm_local_parallel_slots(OWNER) == {"gpt-oss-120b": 2}
+    await store.set_llm_local_parallel_slots(OWNER, model_id="gpt-oss-120b", slots=1)
+    assert await store.llm_local_parallel_slots(OWNER) == {}
+
+    # Only ints > 1 survive: 1, bools, non-ints, and a non-dict store all read as no override.
+    await store.upsert(
+        OWNER,
+        LLM_LOCAL_PARALLEL_SLOTS_KEY,
+        {"a": 1, "b": True, "c": "two", "gpt-oss-120b": 2},
+    )
+    assert await store.llm_local_parallel_slots(OWNER) == {"gpt-oss-120b": 2}
+
+
 async def test_llm_local_unavailable_round_trip_and_dedups(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

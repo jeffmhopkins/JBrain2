@@ -563,6 +563,27 @@ class FakeSettingsStore:
         self.values["llm_local_context_windows"] = current
         return current
 
+    async def llm_local_parallel_slots(self, ctx: object) -> dict[str, int]:
+        raw = self.values.get("llm_local_parallel_slots", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            mid: n
+            for mid, n in raw.items()
+            if isinstance(mid, str) and isinstance(n, int) and not isinstance(n, bool) and n > 1
+        }
+
+    async def set_llm_local_parallel_slots(
+        self, ctx: object, *, model_id: str, slots: int | None
+    ) -> dict[str, int]:
+        current = await self.llm_local_parallel_slots(ctx)
+        if slots is None or slots <= 1:
+            current.pop(model_id, None)
+        else:
+            current[model_id] = slots
+        self.values["llm_local_parallel_slots"] = current
+        return current
+
     async def llm_local_free_ram_fraction(self, ctx: object) -> float | None:
         raw = self.values.get("llm_local_free_ram_fraction")
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):

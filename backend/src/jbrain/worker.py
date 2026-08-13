@@ -506,6 +506,7 @@ async def run() -> None:
     residency = ResidencyCoordinator(
         llm_gateway,
         windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
+        slots_loader=lambda: worker_settings_store.llm_local_parallel_slots(queue.SYSTEM_CTX),
         models_dir=settings.local_models_dir,
         enabled=settings.local_llm_enabled,
         free_ram_fraction=settings.local_llm_free_ram_fraction,

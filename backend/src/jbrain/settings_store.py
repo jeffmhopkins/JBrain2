@@ -64,6 +64,10 @@ _VALID_REASONING_EFFORTS = ("none", "low", "medium", "high")
 # a non-int / non-positive / bool value is dropped — a junk value must never read
 # as a window.
 LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
+# Per-model llama-server `-np` slot counts (catalog id → int > 1), the operator's opt-in to a
+# dedicated interactive KV slot. Only values > 1 are stored; 1 (single slot) is the default
+# absence. Feeds the regenerated gateway `-np` and the residency KV budget.
+LLM_LOCAL_PARALLEL_SLOTS_KEY = "llm_local_parallel_slots"
 # The residency free-RAM floor as a FRACTION of physical RAM kept free (0.15 = 15%),
 # a per-owner runtime override of the JBRAIN_LOCAL_LLM_FREE_RAM_FRACTION config default.
 # The evictor reads it live before every load (jbrain.llm.residency), so a change takes
@@ -722,6 +726,35 @@ class SqlSettingsStore:
         else:
             current[model_id] = window
         await self.upsert(ctx, LLM_LOCAL_CONTEXT_WINDOWS_KEY, current)
+        return current
+
+    async def llm_local_parallel_slots(self, ctx: SessionContext) -> dict[str, int]:
+        """Per-model llama-server `-np` slot-count overrides, keyed by catalog id, sanitized.
+
+        Feeds both the regenerated gateway `-np` and the residency KV budget (a second slot
+        doubles the KV), so a non-dict store, or any entry whose value isn't an int > 1 (bool
+        excluded; 1 is the default and stored as an absence), is dropped rather than trusted."""
+        raw = await self.get(ctx, LLM_LOCAL_PARALLEL_SLOTS_KEY, {})
+        if not isinstance(raw, dict):
+            return {}
+        clean: dict[str, int] = {}
+        for mid, n in raw.items():
+            if isinstance(mid, str) and isinstance(n, int) and not isinstance(n, bool) and n > 1:
+                clean[mid] = n
+        return clean
+
+    async def set_llm_local_parallel_slots(
+        self, ctx: SessionContext, *, model_id: str, slots: int | None
+    ) -> dict[str, int]:
+        """Set (slots is an int > 1) or clear (slots is None or 1 — the single-slot default)
+        one model's override; returns the sanitized map. Read-modify-write on the single row.
+        Bounds/validity are the API's job — the store stays a dumb sanitizer."""
+        current = await self.llm_local_parallel_slots(ctx)
+        if slots is None or slots <= 1:
+            current.pop(model_id, None)
+        else:
+            current[model_id] = slots
+        await self.upsert(ctx, LLM_LOCAL_PARALLEL_SLOTS_KEY, current)
         return current
 
     async def llm_local_free_ram_fraction(self, ctx: SessionContext) -> float | None:

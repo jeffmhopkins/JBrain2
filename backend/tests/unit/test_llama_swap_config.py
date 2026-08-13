@@ -56,6 +56,27 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
     assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
 
 
+def test_render_emits_np_and_scaled_c_for_a_two_slot_model(tmp_path: Path) -> None:
+    # A model with a dedicated interactive slot gets `-np 2`, and `-c` is scaled to
+    # window*slots so each of the two slots still serves the full window (llama-server
+    # divides -c evenly across -np). The single-slot model is untouched: no -np, plain -c.
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path), slots={"gpt-oss-120b": 2})
+    assert "-np 2" in text
+    assert text.count("-np") == 1  # only the opted-in model
+    assert "-c 262144" in text  # 131072 * 2 for the two-slot model
+    assert "-c 32768" in text  # the single-slot model keeps its plain window
+
+
+def test_render_scales_c_off_the_overridden_window_not_the_default(tmp_path: Path) -> None:
+    # Slots multiply whatever window is in effect — an override, when present.
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(
+        _manifest(), str(tmp_path), windows={"gpt-oss-120b": 65536}, slots={"gpt-oss-120b": 2}
+    )
+    assert "-c 131072" in text and "-np 2" in text  # 65536 * 2
+
+
 def test_render_enables_prompt_prefix_cache_reuse_for_every_model(tmp_path: Path) -> None:
     # docs/plans/LLM_PROMPT_CACHE_PLAN.md W2: every model's llama-server command carries
     # --cache-reuse so a stable system-prompt + history prefix is reused, not re-prefilled.

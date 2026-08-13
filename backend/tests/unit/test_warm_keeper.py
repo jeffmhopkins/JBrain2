@@ -1,67 +1,71 @@
 """WarmKeeper.reconcile_once: keep the interactive (agent.turn) local model resident AND
-primed with jerv's persona + tools, so the first message after a restart is instant. The
-reconciler only ever ADDS the one model, under the residency floor and the code-mode hold,
-and no-ops once it's resident.
+primed with jerv's persona + tools, by issuing a throwaway turn down the SAME path a real
+turn takes (router.converse) so the primed prefix matches. It no-ops once primed with the
+current tool set, and re-primes when the hidden-tool set flips (ComfyUI liveness settling)
+or the model is evicted.
 """
 
 import asyncio
 import contextlib
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import cast
 
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
+from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import LlmTool
 from jbrain.llm.warm_keeper import WarmKeeper
 
 
 class _FakeGateway:
-    def __init__(self, *, running: Collection[str] = (), load_error: bool = False):
+    def __init__(self, *, running: Collection[str] = ()):
         self._running = set(running)
-        self._load_error = load_error
-        self.loads: list[tuple[str, str | None, object]] = []
 
     async def running(self) -> set[str]:
         return set(self._running)
-
-    async def load(self, served_model: str, *, warm_system=None, warm_tools=None) -> None:
-        if self._load_error:
-            raise LocalGatewayError("boom")
-        self.loads.append((served_model, warm_system, warm_tools))
-        self._running.add(served_model)
-
-
-class _FakeResidency:
-    def __init__(self, *, refuse: bool = False):
-        self._refuse = refuse
-        self.freed: list[str] = []
-
-    async def free_room(self, served_model: str) -> None:
-        if self._refuse:
-            raise ResidencyError("won't fit even after evicting everything")
-        self.freed.append(served_model)
 
 
 class _FakeRouter:
     def __init__(self, served: str | None):
         self._served = served
+        self.converses: list[dict[str, object]] = []
+        self.fail = False
 
     async def primary_local_served_model(self) -> str | None:
         return self._served
 
+    async def converse(self, task: str, *, system: str, messages, tools=(), max_tokens=4096):
+        if self.fail:
+            raise RuntimeError("gateway cold")
+        self.converses.append({"task": task, "system": system, "tools": list(tools)})
+        return None  # the keeper discards the turn — it wants the prefill in cache
+
 
 class _Registry:
     def schemas_for(self, scopes, allow=None, extra=(), hidden=()) -> list[LlmTool]:
-        return [LlmTool(name="web_search", description="d", input_schema={})]
+        # Fewer tools when something is hidden, so a flip is observable via schemas_for.
+        base = [LlmTool(name="web_search", description="d", input_schema={})]
+        if "generate_image" not in hidden:
+            base.append(LlmTool(name="generate_image", description="d", input_schema={}))
+        return base
+
+
+class _Liveness:
+    def __init__(self, hidden: Collection[str] = (), *, boom: bool = False):
+        self.hidden = set(hidden)
+        self._boom = boom
+
+    async def hidden_tools(self) -> Collection[str]:
+        if self._boom:
+            raise RuntimeError("comfyui probe failed")
+        return set(self.hidden)
 
 
 def _keeper(
     *,
     router: object,
     gateway: object,
-    residency: object = None,
+    liveness: object = None,
     hold: Collection[str] = (),
 ) -> WarmKeeper:
     async def hold_loader() -> Collection[str]:
@@ -69,9 +73,8 @@ def _keeper(
 
     return WarmKeeper(
         gateway=cast(LocalGatewayClient, gateway),
-        residency=cast("ResidencyCoordinator | None", residency),
         registry=cast(ToolRegistry, _Registry()),
-        liveness=None,
+        liveness=cast("_Liveness | None", liveness),
         router=cast(LlmRouter, router),
         hold_loader=hold_loader,
         interval_ready=0.01,
@@ -79,80 +82,102 @@ def _keeper(
     )
 
 
-async def test_settles_without_loading_when_agent_turn_is_a_cloud_route() -> None:
-    gw = _FakeGateway()
-    keeper = _keeper(router=_FakeRouter(None), gateway=gw)
+async def test_settles_without_priming_when_agent_turn_is_a_cloud_route() -> None:
+    r = _FakeRouter(None)
+    keeper = _keeper(router=r, gateway=_FakeGateway())
     assert await keeper.reconcile_once() is True
-    assert gw.loads == []
-
-
-async def test_settles_without_loading_when_already_resident() -> None:
-    gw = _FakeGateway(running={"gpt-oss-120b"})
-    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw)
-    assert await keeper.reconcile_once() is True
-    assert gw.loads == []  # a real turn / prior tick warmed it; nothing to do
+    assert r.converses == []
 
 
 async def test_leaves_the_box_alone_while_code_mode_holds_it() -> None:
-    gw = _FakeGateway()
-    # The hold names a DIFFERENT (code) model — the keeper must never load outside it.
-    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw, hold={"qwen3-coder-next"})
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=_FakeGateway(), hold={"qwen3-coder-next"})
     assert await keeper.reconcile_once() is True
-    assert gw.loads == []
+    assert r.converses == []
 
 
-async def test_loads_and_primes_the_model_when_it_is_not_resident() -> None:
-    gw, res = _FakeGateway(), _FakeResidency()
-    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw, residency=res)
+async def test_primes_via_the_real_turn_path_when_not_resident() -> None:
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=_FakeGateway())
     assert await keeper.reconcile_once() is True
-    assert res.freed == ["gpt-oss-120b"]  # made room under the floor first
-    assert len(gw.loads) == 1
-    served, warm_system, warm_tools = gw.loads[0]
-    assert served == "gpt-oss-120b"
-    assert warm_system and warm_tools  # primed with BOTH persona and tools, not persona-only
+    assert len(r.converses) == 1
+    c = r.converses[0]
+    assert c["task"] == "agent.turn"  # primes as the real task so effort+tools match a turn
+    assert c["system"] and c["tools"]  # persona AND tools, not persona-only
 
 
-async def test_retries_soon_when_the_box_has_no_room() -> None:
-    gw, res = _FakeGateway(), _FakeResidency(refuse=True)
-    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw, residency=res)
-    assert await keeper.reconcile_once() is False  # unsettled → run loop retries fast
-    assert gw.loads == []  # refused before any load
+async def test_no_reprime_once_primed_with_the_same_tool_set() -> None:
+    # Resident + already primed this (model, hidden) → leave any live conversation be.
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=_FakeGateway(running={"gpt-oss-120b"}))
+    assert await keeper.reconcile_once() is True  # primes once
+    assert await keeper.reconcile_once() is True  # no-op
+    assert len(r.converses) == 1
 
 
-async def test_retries_soon_when_the_gateway_load_fails() -> None:
-    gw = _FakeGateway(load_error=True)
-    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw, residency=_FakeResidency())
+async def test_reprimes_when_the_hidden_tool_set_flips() -> None:
+    # ComfyUI comes up between primes → the hidden set changes → the earlier prime no longer
+    # matches a live turn, so re-prime with the new tool set.
+    r = _FakeRouter("gpt-oss-120b")
+    live = _Liveness({"generate_image"})  # ComfyUI down: image tools hidden
+    keeper = _keeper(router=r, gateway=_FakeGateway(running={"gpt-oss-120b"}), liveness=live)
+    assert await keeper.reconcile_once() is True
+    assert len(r.converses) == 1 and len(cast(Sequence, r.converses[0]["tools"])) == 1
+    live.hidden = set()  # ComfyUI up now
+    assert await keeper.reconcile_once() is True
+    assert len(r.converses) == 2 and len(cast(Sequence, r.converses[1]["tools"])) == 2
+
+
+async def test_reprimes_after_the_model_is_evicted() -> None:
+    gw = _FakeGateway(running={"gpt-oss-120b"})
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=gw)
+    assert await keeper.reconcile_once() is True  # primes
+    gw._running.clear()  # evicted (a coder swap, an image render)
+    assert await keeper.reconcile_once() is True  # re-primes (also reloads via converse)
+    assert len(r.converses) == 2
+
+
+async def test_retries_soon_when_the_prime_fails() -> None:
+    r = _FakeRouter("gpt-oss-120b")
+    r.fail = True
+    keeper = _keeper(router=r, gateway=_FakeGateway())
     assert await keeper.reconcile_once() is False  # gateway down/cold → retry, never raise
 
 
 async def test_a_hold_loader_error_does_not_wedge_the_keeper() -> None:
-    # A settings-read hiccup on the hold check must degrade to "no hold" (proceed), never raise.
-    gw, res = _FakeGateway(), _FakeResidency()
+    r = _FakeRouter("gpt-oss-120b")
 
     async def boom_hold() -> Collection[str]:
         raise RuntimeError("settings read failed")
 
     keeper = WarmKeeper(
-        gateway=cast(LocalGatewayClient, gw),
-        residency=cast("ResidencyCoordinator | None", res),
+        gateway=cast(LocalGatewayClient, _FakeGateway()),
         registry=cast(ToolRegistry, _Registry()),
         liveness=None,
-        router=cast(LlmRouter, _FakeRouter("gpt-oss-120b")),
+        router=cast(LlmRouter, r),
         hold_loader=boom_hold,
     )
     assert await keeper.reconcile_once() is True
-    assert len(gw.loads) == 1
+    assert len(r.converses) == 1  # degraded to "no hold" and primed
 
 
 async def test_a_running_probe_error_is_treated_as_not_resident() -> None:
-    class _BoomRunning(_FakeGateway):
+    class _BoomGateway(_FakeGateway):
         async def running(self) -> set[str]:
             raise RuntimeError("gateway unreachable")
 
-    gw = _BoomRunning()
-    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw, residency=_FakeResidency())
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=_BoomGateway())
     assert await keeper.reconcile_once() is True
-    assert len(gw.loads) == 1  # proceeded to load rather than raising
+    assert len(r.converses) == 1  # proceeded to prime rather than raising
+
+
+async def test_a_liveness_probe_error_hides_nothing() -> None:
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=_FakeGateway(), liveness=_Liveness(boom=True))
+    assert await keeper.reconcile_once() is True
+    assert len(cast(Sequence, r.converses[0]["tools"])) == 2  # nothing hidden → full tool set
 
 
 async def test_run_survives_a_reconcile_error_and_keeps_looping() -> None:
@@ -163,21 +188,21 @@ async def test_run_survives_a_reconcile_error_and_keeps_looping() -> None:
     keeper = _keeper(router=_BoomRouter(), gateway=_FakeGateway())
     task = asyncio.create_task(keeper.run())
     await asyncio.sleep(0.03)  # several ticks, each raising and being swallowed
-    assert not task.done()  # the loop absorbed the errors instead of dying
+    assert not task.done()
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
 
 async def test_run_primes_then_keeps_looping_until_cancelled() -> None:
-    gw, res = _FakeGateway(), _FakeResidency()
-    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw, residency=res)
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=_FakeGateway())
     task = asyncio.create_task(keeper.run())
     for _ in range(50):
         await asyncio.sleep(0.005)
-        if gw.loads:
+        if r.converses:
             break
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
-    assert gw.loads  # the boot reconcile primed the model
+    assert r.converses  # the boot reconcile primed the model
