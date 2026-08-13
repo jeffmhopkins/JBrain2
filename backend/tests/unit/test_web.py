@@ -3212,3 +3212,71 @@ async def test_tavily_authenticates_with_a_bearer_header_not_a_body_key() -> Non
     body = cast(dict, captured["body"])
     assert "api_key" not in body  # the key must NOT be in the body (the 401 cause)
     assert body["urls"] == ["https://x.example/walled"]  # a list, per the Tavily docs
+
+
+def _tavily_only_handler(status: int, *, content: str = _TAVILY_CONTENT):  # type: ignore[no-untyped-def]
+    """A transport that answers ONLY api.tavily.com — with `status`, and (on 200) a result whose
+    raw_content is `content`. For exercising `tavily_probe`'s per-failure-mode messages."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.tavily.com":
+            if status == 200:
+                return httpx.Response(
+                    200, json=_tavily_body("https://x.example/p", content=content)
+                )
+            return httpx.Response(status, json={"detail": {"error": "nope"}})
+        return httpx.Response(200)
+
+    return handle
+
+
+def _probe_fetcher(handler, *, enabled: bool = True, key: str = "tvly-key") -> WebFetcher:  # type: ignore[no-untyped-def]
+    return WebFetcher(
+        transport=httpx.MockTransport(handler),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tavily_provider(enabled, key),
+    )
+
+
+async def test_tavily_probe_reports_success() -> None:
+    ok, detail = await _probe_fetcher(_tavily_only_handler(200)).tavily_probe("https://x.example/p")
+    assert ok is True and "key works" in detail
+
+
+async def test_tavily_probe_reports_a_key_rejection_distinctly() -> None:
+    # The whole point: a 401/403 reads as a KEY REJECTION, not a vague "no page came back".
+    for status in (401, 403):
+        ok, detail = await _probe_fetcher(_tavily_only_handler(status)).tavily_probe(
+            "https://x.example/p"
+        )
+        assert ok is False
+        assert f"rejected the key (HTTP {status})" in detail and "tvly-" in detail
+
+
+async def test_tavily_probe_reports_a_rate_limit() -> None:
+    ok, detail = await _probe_fetcher(_tavily_only_handler(429)).tavily_probe("https://x.example/p")
+    assert ok is False and "429" in detail and "rate-limit" in detail
+
+
+async def test_tavily_probe_reports_disabled_and_keyless_distinctly() -> None:
+    off, off_detail = await _probe_fetcher(_tavily_only_handler(200), enabled=False).tavily_probe(
+        "https://x.example/p"
+    )
+    assert off is False and "off" in off_detail
+
+    nokey, nokey_detail = await _probe_fetcher(_tavily_only_handler(200), key="").tavily_probe(
+        "https://x.example/p"
+    )
+    assert nokey is False and "No API key" in nokey_detail
+
+
+async def test_tavily_probe_reports_an_empty_result() -> None:
+    ok, detail = await _probe_fetcher(_tavily_only_handler(200, content="   ")).tavily_probe(
+        "https://x.example/p"
+    )
+    assert ok is False and "no content" in detail
+
+
+async def test_tavily_probe_reports_unwired() -> None:
+    ok, detail = await WebFetcher().tavily_probe("https://x.example/p")  # no tavily_url/provider
+    assert ok is False and "isn't set up" in detail

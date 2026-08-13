@@ -135,20 +135,23 @@ def test_test_key_probe_reports_success(
     assert body["ok"] is True and "key works" in body["detail"]
 
 
-def test_test_key_probe_reports_a_miss(
+def test_test_key_probe_reports_a_key_rejection_distinctly(
     client: tuple[TestClient, FastAPI, FakeSettingsStore],
 ) -> None:
+    # A 401 reads as a KEY REJECTION with the fix hint — not a vague "no page came back" (the
+    # ambiguity that made a bad key look like a code bug).
     test_client, app, store = client
     _wire_fetcher(app, store, tavily_status=401)  # Tavily rejects the key
     test_client.put("/api/settings/tavily", json={"api_key": "bad-key"})
     body = test_client.post("/api/settings/tavily/test", json={}).json()
     assert body["ok"] is False
+    assert "rejected the key (HTTP 401)" in body["detail"] and "tvly-" in body["detail"]
 
 
-def test_test_key_probe_when_disabled_reports_a_miss(
+def test_test_key_probe_when_disabled_says_so(
     client: tuple[TestClient, FastAPI, FakeSettingsStore],
 ) -> None:
     test_client, _, _ = client
     test_client.put("/api/settings/tavily", json={"api_key": "tvly-secret", "enabled": False})
     body = test_client.post("/api/settings/tavily/test", json={}).json()
-    assert body["ok"] is False  # disabled ⇒ the tier returns nothing
+    assert body["ok"] is False and "off" in body["detail"]  # names the disabled tier, not a miss
