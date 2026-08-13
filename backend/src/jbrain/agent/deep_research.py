@@ -2836,8 +2836,9 @@ def _frame(
     source_mode: str = _DEFAULT_SOURCE_MODE,
 ) -> str:
     """Prefix the report with a short machine provenance line jerv can relay — how many
-    findings backed it, whether it was cross-checked and revised — then the report itself.
-    Data only; the model authors none of the provenance."""
+    findings backed it, whether it was cross-checked and revised — then the report itself,
+    and CLOSE with a do-not-restate reminder. Data only; the model authors none of the
+    provenance."""
     notes = [f"complexity: {complexity}", f"{_findings_count(roster)} sub-agent finding(s)"]
     if _source_label(source_mode):
         notes.append(f"sources: {_source_label(source_mode)}")
@@ -2848,7 +2849,18 @@ def _frame(
     if coverage_limited:
         notes.append("gap round skipped (budget) — coverage may be partial")
     header = f"DEEP RESEARCH REPORT — {question}\n({'; '.join(notes)})"
-    return f"{header}\n\n{report}"
+    # The report ALSO renders as a card the owner already sees, so the reply must not re-narrate it
+    # (the recurring failure: jerv restating the whole briefing back in its turn). The tool
+    # description says as much, but a small local model obeys an instruction it reads RIGHT BEFORE
+    # writing far better than a distant schema line — so repeat it as a TRAILING note adjacent to
+    # the generation point. Model-facing only: this is the observation text (a `ToolOutput` str),
+    # never the user-visible `view`, so it never reaches the transcript.
+    reminder = (
+        "\n\n[NOTE TO ASSISTANT — not part of the report: the full cited report above is ALREADY "
+        "shown to the owner as a card. Reply with only a one-line lead-in (or one genuinely new "
+        "point). Do NOT restate, re-summarize, or re-list the report's contents.]"
+    )
+    return f"{header}\n\n{report}{reminder}"
 
 
 def _report_view(

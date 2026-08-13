@@ -30,6 +30,7 @@ from jbrain.agent.deep_research import (
     _collect_sources,
     _dangling_markers,
     _finalize_sources,
+    _frame,
     _gate_score,
     _missing_headings,
     _sources_block,
@@ -1556,6 +1557,26 @@ async def test_view_and_frame_carry_the_source_mode() -> None:
     )
     assert web.view is not None and web.view.data["source_mode"] == "web"  # type: ignore[attr-defined]
     assert "sources:" not in web
+
+
+def test_frame_closes_with_a_do_not_restate_reminder() -> None:
+    # The framed observation the model reads must END with a do-not-restate reminder, right where
+    # the model starts writing — the fix for jerv re-narrating the whole briefing back in its turn
+    # (the report ALSO renders as a card the owner already sees). The report body sits between the
+    # provenance header and the trailing reminder.
+    out = _frame(
+        "## Summary\nBody [^1].",
+        "q",
+        "deep",
+        [],
+        analyzed=False,
+        coverage_limited=False,
+        revised=False,
+    )
+    assert out.startswith("DEEP RESEARCH REPORT — q")
+    assert "## Summary\nBody [^1]." in out
+    assert out.rstrip().endswith("re-list the report's contents.]")
+    assert "ALREADY shown to the owner as a card" in out
 
 
 async def test_library_first_frame_names_the_mixed_sources() -> None:
