@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-10
+> **Status:** Living · **Last verified:** 2026-08-13
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1126,15 +1126,22 @@ Owner-facing chat artifact; never a note, never RAG-indexed.
 The in-chat card jerv shows after a `weather` tool call — the glanceable replacement
 for the old web-search-and-scrape-into-a-markdown-table weather flow. A registered,
 data-only view like every other: the model fills
-`{place, as_of, tz, range:('today'|'week'), now:{temp_f, feels_f, cond, is_day, label,
-humidity, wind_mph, wind_dir}, hi_f, lo_f, hours:[{label, temp_f, feels_f, cond, is_day,
-pop, wind_mph, wind_dir}], days:[{label, cond, hi_f, lo_f, pop, wind_mph, wind_dir}]}`
-and **authors no markup, no URL, and no color** — `cond` is a closed enum
-(`clear|partly|cloudy|rain|storm|snow|fog`) and `is_day` a flag the component maps to an
-**inline SVG glyph + token** (the night variants for clear/partly skies live in the
-component, not the payload). Tokens-only `.tv-wx-*` classes; weather is non-personal
-jerv info, so the card rides the **steel** info accent and a high heat index reads
-**amber** (the warn tone). The card frame matches the live `.tool-view`.
+`{place, as_of, tz, range:('today'|'week'), now:{temp_f, feels_f, feels_hi_f, feels_lo_f,
+cond, is_day, label, humidity, wind_mph, wind_dir}, hi_f, lo_f, hours:[{label, temp_f,
+feels_f, cond, is_day, pop, wind_mph, wind_dir}], days:[{label, cond, hi_f, lo_f,
+feels_hi_f, feels_lo_f, pop, wind_mph, wind_dir}]}` and **authors no markup, no URL, and
+no color** — `cond` is a closed enum (`clear|partly|cloudy|rain|storm|snow|fog`) and
+`is_day` a flag the component maps to an **inline SVG glyph + token** (the night variants
+for clear/partly skies live in the component, not the payload). Tokens-only `.tv-wx-*`
+classes; weather is non-personal jerv info, so the card rides the **steel** info accent
+and a high heat index reads **amber** (the warn tone). `feels_f` is the current apparent
+temperature; `feels_hi_f`/`feels_lo_f` are the day's **peak/coldest feels-like** — the
+heat-advisory number a raw high/low hides (at dawn "feels 88°" reads mild on a day the
+afternoon heat index tops 110°). The component owns the heat-tone decision, not the model:
+a current feels-like ≥ 100° reads amber, and when the day's peak feels-like clears that
+warn line **above** where it feels now the hero surfaces a **"Feels like up to N° today"**
+callout (the week list flags each heat day's peak instead). The card frame matches the
+live `.tool-view`.
 
 Chosen **A — hero + hourly strip** (`docs/mocks/weather-view/weather-a-hero-strip.html`)
 over **B** temperature curve (`lab_plot`-style SVG — most distinctive, heaviest new

@@ -10985,8 +10985,47 @@ button.small {
   padding: 1px 7px;
   border-radius: var(--r-pill);
   font-weight: 500;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+/* Only a genuinely high feels-like (heat index ≥ the warn line) reads amber — a mild
+   "feels 62°" stays neutral rather than always warning. */
+.fb-shell .tv-wx-feels.hot {
   background: var(--amber-tint);
   color: var(--amber);
+}
+/* The heat-index callout under the hero: the day's PEAK feels-like when it clears the
+   warn line — the heat-advisory number the current temp/feels reading hides. Amber warn
+   tone, matching the mock's dropped `wx-summary` line but component-authored from data. */
+.fb-shell .tv-wx-heat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 15px 12px;
+  padding: 6px 10px;
+  border-radius: var(--r-input, 12px);
+  font-size: 12.5px;
+  font-weight: 500;
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.fb-shell .tv-wx-heat-svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* The per-day peak-feels marker in the week list — the amber heat readout for a day whose
+   heat index outruns its air high. */
+.fb-shell .tv-wx-dfeels {
+  color: var(--amber);
+  font-weight: 500;
+  font-size: 11.5px;
+  white-space: nowrap;
 }
 .fb-shell .tv-wx-hilo {
   flex: 0 0 auto;

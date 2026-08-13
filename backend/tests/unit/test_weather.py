@@ -52,7 +52,13 @@ _FORECAST_OK = {
         "wind_direction_10m": [135, 135, 140, 180, 185],
         "is_day": [1, 1, 1, 0, 0],
     },
-    "daily": {"temperature_2m_max": [92], "temperature_2m_min": [80]},
+    "daily": {
+        "temperature_2m_max": [92],
+        "temperature_2m_min": [80],
+        # The afternoon heat index runs well above the air high — the heat-advisory number.
+        "apparent_temperature_max": [104],
+        "apparent_temperature_min": [82],
+    },
 }
 
 _WEEK_OK = {
@@ -71,6 +77,8 @@ _WEEK_OK = {
         "time": ["2026-06-26", "2026-06-27", "2026-06-28"],
         "temperature_2m_max": [78, 80, 71],
         "temperature_2m_min": [55, 56, 52],
+        "apparent_temperature_max": [76, 79, 68],
+        "apparent_temperature_min": [52, 53, 49],
         "weather_code": [3, 0, 61],
         "precipitation_probability_max": [10, 0, 60],
         "wind_speed_10m_max": [8, 7, 12],
@@ -189,6 +197,9 @@ async def test_forecast_shapes_current_hourly_and_hilo() -> None:
     assert w.is_day is True
     assert (w.wind_mph, w.wind_dir) == (8, "SE")
     assert (w.hi_f, w.lo_f) == (92, 80)
+    # The day's peak feels-like (heat index) and coldest feels-like ride alongside the air
+    # high/low, so the card can surface how hot the afternoon actually feels.
+    assert (w.feels_hi_f, w.feels_lo_f) == (104, 82)
     assert w.as_of == "1:14 PM" and w.tz_abbr == "EDT"
     # The strip starts at the current hour (13:00), not before it.
     assert w.hours[0].label == "1p" and w.hours[0].temp_f == 90
@@ -216,6 +227,8 @@ async def test_weekly_forecast_shapes_the_daily_list() -> None:
     # First day reads "Today"; the rest are weekday abbreviations from the date.
     assert [d.label for d in w.days] == ["Today", "Sat", "Sun"]
     assert (w.days[0].hi_f, w.days[0].lo_f, w.days[0].cond) == (78, 55, "cloudy")
+    # Each day carries its own peak/coldest feels-like alongside the air high/low.
+    assert (w.days[0].feels_hi_f, w.days[0].feels_lo_f) == (76, 52)
     assert (w.days[2].cond, w.days[2].pop, w.days[2].wind_dir) == ("rain", 60, "SW")
     assert w.hours == ()  # the hourly strip is empty for a weekly forecast
 
@@ -322,9 +335,12 @@ async def test_named_place_returns_summary_and_view() -> None:
     assert isinstance(out, ToolOutput)
     assert "Cocoa, Florida, United States" in out
     assert "feels 102" in out and "high 92" in out
+    # The peak heat index is spelled out so the model can answer "how hot will it feel".
+    assert "up to 104" in out
     assert out.view is not None and out.view.view == "weather_card"
     data = out.view.data
     assert data["now"]["cond"] == "storm"
+    assert data["now"]["feels_hi_f"] == 104 and data["now"]["feels_lo_f"] == 82
     assert data["hi_f"] == 92 and data["lo_f"] == 80
     assert data["hours"][0]["label"] == "1p"
     # No coordinate rides the data-only payload (#9) — names + numbers only.

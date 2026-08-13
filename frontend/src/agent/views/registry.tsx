@@ -997,6 +997,10 @@ function wxNum(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n) : 0;
 }
+// The heat-index warn line: a feels-like at or above this reads amber (the warn tone),
+// and the day's peak feels-like surfaces its own callout — the heat-advisory threshold the
+// raw air temperature hides (docs/reference/DESIGN.md "a high heat index reads amber").
+const WX_HEAT_F = 100;
 
 /** A condition glyph drawn inline (no fetched icons, #9). `day` picks the night
  * variant for clear/partly skies; the other conditions read the same day or night. */
@@ -1085,7 +1089,18 @@ interface WxDay {
   cond: WxCond;
   hi_f: number;
   lo_f: number;
+  feels_hi_f: number;
   pop: number;
+}
+
+/** A small warn triangle for the heat-index callout — inline SVG, no fetched icon (#9). */
+function HeatGlyph(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" className="tv-wx-heat-svg" aria-hidden="true">
+      <path d="M12 4l9 16H3z" />
+      <path d="M12 10v4M12 17h.01" />
+    </svg>
+  );
 }
 
 /** The week card's daily list: one row per day with a temp-range bar scaled to the
@@ -1101,6 +1116,9 @@ function DailyList({ days }: { days: WxDay[] }): ReactNode {
         // out to that day's high, so a longer bar means a hotter day — daily
         // differences read at a glance instead of floating at varied offsets.
         const width = ((d.hi_f - min) / span) * 100;
+        // A heat day: the peak feels-like clears the warn line and runs above the air
+        // high, so the row flags how hot it will actually feel — not just the air temp.
+        const hot = d.feels_hi_f >= WX_HEAT_F && d.feels_hi_f > d.hi_f;
         return (
           // Positional daily rows have no stable id; the day label + index key it.
           <div className="tv-wx-day" key={`${d.label}-${i}`}>
@@ -1116,6 +1134,11 @@ function DailyList({ days }: { days: WxDay[] }): ReactNode {
                 <span className="tv-wx-dfill" style={{ left: 0, width: `${width}%` }} />
               </span>
               <span className="tv-wx-dhi">{d.hi_f}°</span>
+              {hot && (
+                <span className="tv-wx-dfeels" title="peak heat index">
+                  feels {d.feels_hi_f}°
+                </span>
+              )}
             </div>
           </div>
         );
@@ -1153,11 +1176,19 @@ function WeatherCard({ data }: ViewProps): ReactNode {
       cond: wxCond(row.cond),
       hi_f: wxNum(row.hi_f),
       lo_f: wxNum(row.lo_f),
+      feels_hi_f: wxNum(row.feels_hi_f),
       pop: wxNum(row.pop),
     };
   });
   const week = data.range === "week" && days.length > 0;
   const when = [asOf, tz].filter(Boolean).join(" ");
+  const feels = wxNum(now.feels_f);
+  const feelsHi = wxNum(now.feels_hi_f);
+  // The day's peak feels-like earns its own callout when it clears the warn line AND
+  // runs meaningfully above where it feels now — the heat the raw high hides (at dawn
+  // "feels 88°" reads mild on a day the afternoon heat index tops 110°). The card owns
+  // this tone decision, not the model (DESIGN.md: components express tone, never colors).
+  const heatPeak = feelsHi >= WX_HEAT_F && feelsHi - feels >= 3 ? feelsHi : 0;
 
   return (
     <div className="tv-wx">
@@ -1178,7 +1209,7 @@ function WeatherCard({ data }: ViewProps): ReactNode {
           <div className="tv-wx-sub">
             {label}
             {label && " · "}
-            <span className="tv-wx-feels">feels {wxNum(now.feels_f)}°</span>
+            <span className={`tv-wx-feels${feels >= WX_HEAT_F ? " hot" : ""}`}>feels {feels}°</span>
           </div>
         </div>
         <div className="tv-wx-hilo">
@@ -1194,6 +1225,12 @@ function WeatherCard({ data }: ViewProps): ReactNode {
           )}
         </div>
       </div>
+      {heatPeak > 0 && (
+        <div className="tv-wx-heat">
+          <HeatGlyph />
+          Feels like up to {heatPeak}° today
+        </div>
+      )}
       {week ? (
         <DailyList days={days} />
       ) : (

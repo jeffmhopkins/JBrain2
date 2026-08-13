@@ -232,6 +232,8 @@ class DayPoint:
     cond: str
     hi_f: int
     lo_f: int
+    feels_hi_f: int  # the day's peak feels-like (heat index) — the heat-advisory number
+    feels_lo_f: int  # the day's coldest feels-like (wind chill)
     pop: int  # max precipitation probability for the day, %
     wind_mph: int
     wind_dir: str
@@ -248,7 +250,7 @@ class Weather:
     tz_abbr: str  # the place's timezone abbreviation, e.g. "EDT"
     kind: str  # "today" | "week"
     temp_f: int
-    feels_f: int
+    feels_f: int  # the CURRENT apparent temperature (feels-like right now)
     cond: str
     label: str
     is_day: bool
@@ -257,6 +259,8 @@ class Weather:
     wind_dir: str
     hi_f: int
     lo_f: int
+    feels_hi_f: int  # today's PEAK feels-like (heat index) — the heat-advisory number
+    feels_lo_f: int  # today's coldest feels-like (wind chill)
     hours: tuple[HourPoint, ...] = ()
     days: tuple[DayPoint, ...] = ()
 
@@ -364,7 +368,14 @@ class WeatherClient:
         a 7-day daily list (today keeps the next-24h hourly detail)."""
         if not self._forecast_url:
             raise WeatherError("weather is not configured on this instance")
-        daily = "temperature_2m_max,temperature_2m_min"
+        # apparent_temperature_max/min carry the day's PEAK feels-like (heat index) and
+        # coldest feels-like (wind chill) — the numbers a heat/cold advisory turns on.
+        # Without them the card can only show the current apparent temp, which at dawn
+        # reads mild even on a day the afternoon heat index tops 110°.
+        daily = (
+            "temperature_2m_max,temperature_2m_min,"
+            "apparent_temperature_max,apparent_temperature_min"
+        )
         params = {
             "latitude": f"{hit.latitude:.4f}",
             "longitude": f"{hit.longitude:.4f}",
@@ -456,22 +467,31 @@ def _shape(place: str, body: dict, *, weekly: bool = False) -> Weather:
         start = next((i for i, t in enumerate(times) if str(t) >= now_hour), 0)
         hours = _hours(hourly, times, start)
 
-    hi, lo = _today_hilo(daily)
+    temp_now = _i(cur.get("temperature_2m"))
+    feels_now = _i(cur.get("apparent_temperature"))
+    hi = _daily_first(daily, "temperature_2m_max")
+    lo = _daily_first(daily, "temperature_2m_min")
+    feels_hi = _daily_first(daily, "apparent_temperature_max")
+    feels_lo = _daily_first(daily, "apparent_temperature_min")
     return Weather(
         place=place,
         as_of=_clock(now),
         tz_abbr=tz_abbr,
         kind="week" if weekly else "today",
-        temp_f=_i(cur.get("temperature_2m")),
-        feels_f=_i(cur.get("apparent_temperature")),
+        temp_f=temp_now,
+        feels_f=feels_now,
         cond=cond,
         label=label,
         is_day=bool(cur.get("is_day", 1)),
         humidity=_i(cur.get("relative_humidity_2m")),
         wind_mph=_i(cur.get("wind_speed_10m")),
         wind_dir=_compass(float(cur.get("wind_direction_10m") or 0)),
-        hi_f=hi if hi is not None else _i(cur.get("temperature_2m")),
-        lo_f=lo if lo is not None else _i(cur.get("temperature_2m")),
+        hi_f=hi if hi is not None else temp_now,
+        lo_f=lo if lo is not None else temp_now,
+        # Fall back to the current apparent temp if the daily peak is absent — never
+        # under-report the heat by dropping to the air temperature.
+        feels_hi_f=feels_hi if feels_hi is not None else feels_now,
+        feels_lo_f=feels_lo if feels_lo is not None else feels_now,
         hours=hours,
         days=days,
     )
@@ -487,6 +507,8 @@ def _days(daily: object) -> tuple[DayPoint, ...]:
         raise WeatherError("the weather service returned no daily forecast")
     highs = daily.get("temperature_2m_max") or []
     lows = daily.get("temperature_2m_min") or []
+    feels_highs = daily.get("apparent_temperature_max") or []
+    feels_lows = daily.get("apparent_temperature_min") or []
     code = daily.get("weather_code") or []
     pop = daily.get("precipitation_probability_max") or []
     wspd = daily.get("wind_speed_10m_max") or []
@@ -498,12 +520,18 @@ def _days(daily: object) -> tuple[DayPoint, ...]:
         except (TypeError, ValueError):
             continue
         cond, _ = describe_code(code[i] if i < len(code) else 0)
+        hi_f = _i(highs[i]) if i < len(highs) else 0
+        lo_f = _i(lows[i]) if i < len(lows) else 0
         out.append(
             DayPoint(
                 label="Today" if i == 0 else _WEEKDAYS[dt.weekday()],
                 cond=cond,
-                hi_f=_i(highs[i]) if i < len(highs) else 0,
-                lo_f=_i(lows[i]) if i < len(lows) else 0,
+                hi_f=hi_f,
+                lo_f=lo_f,
+                # Fall back to the air temp when the daily apparent series is absent, so
+                # the peak-feels never reads cooler than the plain high.
+                feels_hi_f=_i(feels_highs[i]) if i < len(feels_highs) else hi_f,
+                feels_lo_f=_i(feels_lows[i]) if i < len(feels_lows) else lo_f,
                 pop=_i(pop[i]) if i < len(pop) else 0,
                 wind_mph=_i(wspd[i]) if i < len(wspd) else 0,
                 wind_dir=_compass(float(wdir[i]) if i < len(wdir) else 0.0),
@@ -546,14 +574,13 @@ def _hours(hourly: dict, times: list, start: int) -> tuple[HourPoint, ...]:
     return tuple(out)
 
 
-def _today_hilo(daily: object) -> tuple[int | None, int | None]:
+def _daily_first(daily: object, key: str) -> int | None:
+    """The first (today's) value of a daily column, or None if the block/column is
+    missing or empty — lets a caller fall back rather than surface a wrong 0."""
     if not isinstance(daily, dict):
-        return None, None
-    highs = daily.get("temperature_2m_max")
-    lows = daily.get("temperature_2m_min")
-    hi = _i(highs[0]) if isinstance(highs, list) and highs else None
-    lo = _i(lows[0]) if isinstance(lows, list) and lows else None
-    return hi, lo
+        return None
+    arr = daily.get(key)
+    return _i(arr[0]) if isinstance(arr, list) and arr else None
 
 
 def _clock(dt: datetime) -> str:

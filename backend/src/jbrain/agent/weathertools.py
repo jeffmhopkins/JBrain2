@@ -22,6 +22,10 @@ _NO_LOCATION = (
 )
 _SUMMARY_HOURS = 6  # how many hours the today text spells out inline
 _SUMMARY_DAYS = 7  # how many days the week text spells out inline
+# When the day's peak feels-like runs this far above the air high (or the coldest
+# feels-like this far below the low), the divergence is worth a line so the model can
+# answer "how hot/cold will it feel" — the gap a raw high/low hides.
+_FEELS_GAP_F = 4
 # What `range` values mean "the week ahead"; anything else is the default single day.
 _WEEK_WORDS = frozenset({"week", "weekly", "7day", "7-day", "this week", "next week"})
 
@@ -85,6 +89,8 @@ def weather_view(w: Weather) -> ViewPayload:
             "now": {
                 "temp_f": w.temp_f,
                 "feels_f": w.feels_f,
+                "feels_hi_f": w.feels_hi_f,
+                "feels_lo_f": w.feels_lo_f,
                 "cond": w.cond,
                 "is_day": w.is_day,
                 "label": w.label,
@@ -113,6 +119,8 @@ def weather_view(w: Weather) -> ViewPayload:
                     "cond": d.cond,
                     "hi_f": d.hi_f,
                     "lo_f": d.lo_f,
+                    "feels_hi_f": d.feels_hi_f,
+                    "feels_lo_f": d.feels_lo_f,
                     "pop": d.pop,
                     "wind_mph": d.wind_mph,
                     "wind_dir": d.wind_dir,
@@ -123,6 +131,18 @@ def weather_view(w: Weather) -> ViewPayload:
     )
 
 
+def _heat_note(w: Weather) -> str:
+    """A feels-like divergence line for the summary: the day's peak heat index when it
+    runs well above the air high, or the coldest wind chill when it dips well below the
+    low. This is the context a heat/cold advisory turns on — the raw high/low alone reads
+    mild on a day the afternoon heat index tops 110°. Empty when feels tracks the air temp."""
+    if w.feels_hi_f - w.hi_f >= _FEELS_GAP_F:
+        return f" Feels like up to {w.feels_hi_f}° at the afternoon peak."
+    if w.lo_f - w.feels_lo_f >= _FEELS_GAP_F:
+        return f" Feels as cold as {w.feels_lo_f}° with the wind."
+    return ""
+
+
 def _summarize(w: Weather) -> str:
     """A concise text observation so the model can answer in prose even though the card
     carries the detail; spells out the next few hours (today) or days (week), then notes
@@ -130,7 +150,7 @@ def _summarize(w: Weather) -> str:
     head = (
         f"{w.place} — now {w.temp_f}°F (feels {w.feels_f}°), {w.label.lower()}, "
         f"{w.wind_dir} {w.wind_mph} mph, humidity {w.humidity}%. "
-        f"Today: high {w.hi_f}°, low {w.lo_f}°."
+        f"Today: high {w.hi_f}°, low {w.lo_f}°.{_heat_note(w)}"
     )
     if w.kind == "week":
         parts = []
