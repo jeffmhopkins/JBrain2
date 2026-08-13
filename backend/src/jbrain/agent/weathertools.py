@@ -66,9 +66,7 @@ def build_weather_handlers(
         if isinstance(forecast_r, BaseException):
             raise forecast_r
         alert = _alert_slot(alerts if isinstance(alerts, tuple) else ())
-        return ToolOutput(
-            _summarize(forecast_r, alert), view=weather_view(forecast_r, alert)
-        )
+        return ToolOutput(_summarize(forecast_r, alert), view=weather_view(forecast_r, alert))
 
     return {"weather": weather_tool}
 
