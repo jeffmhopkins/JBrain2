@@ -75,6 +75,29 @@ describe("DeepResearchProgress", () => {
     expect(container.querySelectorAll(".fb-drp-panel")).toHaveLength(1);
   });
 
+  it("draws the run's own phase list when it sends one (the briefing engine's three stages)", () => {
+    const { container } = render(
+      <DeepResearchProgress
+        tool={tool({
+          step: 3,
+          total: 0,
+          label: "Writing the briefing",
+          phases: ["Gather", "Read", "Write"],
+        })}
+      />,
+    );
+    // Only the engine's three stages render — the pipeline's eight never appear.
+    for (const name of ["Gather", "Read", "Write"]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
+    expect(screen.queryByText("Cross-check")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".fb-drp-step")).toHaveLength(3);
+    // Step 3 (Write) is active; Gather + Read done; nothing left to do.
+    expect(container.querySelectorAll(".fb-drp-step.done")).toHaveLength(2);
+    expect(container.querySelectorAll(".fb-drp-step.active")).toHaveLength(1);
+    expect(container.querySelectorAll(".fb-drp-step.todo")).toHaveLength(0);
+  });
+
   it("keeps a home for a fan that spawned before the first phase event (step 0)", () => {
     const { container } = render(
       <DeepResearchProgress

@@ -17,49 +17,37 @@ def test_shipped_candidate_profile_loads_and_declares_its_variables() -> None:
     assert len(preset.angles) == 5
 
 
-def test_shipped_daily_news_is_dated_and_retained() -> None:
-    # The daily briefing's variables — `today` and `now` — are both auto-supplied by the engine at
-    # run time (owner-local), so it stays a one-call preset for the caller. `today` dates the
-    # question (keeping each day a distinct dedup row); `now` carries the time of day for the
-    # "last 24 hours up to now" window. It opts into a 7-day TTL (REPORT_EXPIRY_PLAN.md).
+def test_shipped_daily_news_runs_on_the_briefing_engine() -> None:
+    # daily_news now runs the lean deterministic-gather → single-writer `briefing` engine
+    # (DAILY_NEWS_V2_PLAN.md, V3 — the v2 twin was promoted to the default and the fan pipeline
+    # retired for this preset). It does NOT set news_feeds/min_reads: the builder gathers by fixed
+    # beats itself, so those are pipeline-only knobs and are intentionally absent.
+    #
+    # Its variables — `today` and `now` — are both auto-supplied by the engine at run time
+    # (owner-local), so it stays a one-call preset for the caller. `today` dates the question
+    # (keeping each day a distinct dedup row); `now` carries the time of day for the "last 24 hours
+    # up to now" window. It opts into a 7-day TTL (REPORT_EXPIRY_PLAN.md).
     assert "daily_news" in rp.available()
     preset = rp.get("daily_news")
     assert preset is not None
+    assert preset.engine == "briefing"
     assert preset.variables == ("now", "today")
     assert preset.retention_days == 7
-    assert preset.min_reads == 8  # opts into the two-phase scout→read gather (trimmed from 12
-    # to cut the serial read-phase time on the local model — a live run spent ~19 min reading)
+    assert preset.news_feeds == () and preset.min_reads is None  # builder gathers itself
     assert preset.output_kind == "brief"  # `report` would balloon past a 10-minute read
-    # The two full-text feed categories are pre-pulled as findings (NEWS_FEED_PLAN.md Wave B),
-    # so the walled space + local angles are covered from the feed body with no reader fetch.
-    assert preset.news_feeds == ("space", "local")
     assert preset.source_mode == "web"
     assert preset.sections[0] == "Good Morning"
     assert preset.sections[-1] == "That's Your Briefing"
-    assert len(preset.angles) == 5  # runs under DR_MAX_BREADTH (=5) with no clamping
     vars0 = {"today": "Friday, August 09, 2026", "now": "Friday, August 09, 2026 at 6:15 AM EDT"}
     r = rp.render_preset("daily_news", vars0)
     assert "Friday, August 09, 2026" in r.question
+    assert r.engine == "briefing"  # the engine field survives render
     for text in (r.question, r.objective, *r.sections, *(b for _, b in r.angles)):
         assert "{{" not in text and "}}" not in text
     # Two different run dates yield different questions → distinct (question_hash) rows, so a
     # week of briefings coexists instead of upserting in place.
     other = rp.render_preset("daily_news", {**vars0, "today": "Saturday, August 10, 2026"})
     assert other.question != r.question
-
-
-def test_shipped_daily_news_v2_runs_on_the_briefing_engine() -> None:
-    # The experimental twin selects the lean deterministic-gather builder via `engine: briefing`,
-    # and does NOT set news_feeds/min_reads (the builder gathers itself; those are pipeline knobs).
-    preset = rp.get("daily_news_v2")
-    assert preset is not None
-    assert preset.engine == "briefing"
-    assert preset.output_kind == "brief" and preset.retention_days == 7
-    assert preset.news_feeds == () and preset.min_reads is None
-    assert preset.sections[0] == "Good Morning" and preset.sections[-1] == "That's Your Briefing"
-    # The shipped daily_news stays on the default pipeline — the v2 twin is additive.
-    v1 = rp.get("daily_news")
-    assert v1 is not None and v1.engine == "pipeline"
 
 
 def test_render_substitutes_every_slot_across_all_fields() -> None:

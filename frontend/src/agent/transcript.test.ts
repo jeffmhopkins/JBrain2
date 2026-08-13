@@ -293,6 +293,27 @@ describe("applyEvent reducer", () => {
     });
   });
 
+  it("carries a run's own phase list into progress (the briefing engine's stages)", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "d1", name: "deep_research", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "tool_progress",
+      tool_call_id: "d1",
+      step: 2,
+      total: 0,
+      label: "Reading 8 articles",
+      phases: ["Gather", "Read", "Write"],
+    });
+    // The engine's own stage list rides along so the rail draws Gather/Read/Write, not the
+    // pipeline's fixed eight.
+    expect(ms[0]?.tools[0]?.progress).toEqual({
+      step: 2,
+      total: 0,
+      label: "Reading 8 articles",
+      phases: ["Gather", "Read", "Write"],
+    });
+  });
+
   it("ignores progress for an unknown tool call", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_progress", tool_call_id: "ghost", step: 1, total: 4 });

@@ -64,7 +64,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.briefs import compose_feed_block, prepend_feed
 from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
-from jbrain.agent.daily_briefing import BriefingResult, DailyBriefingBuilder
+from jbrain.agent.daily_briefing import BRIEFING_PHASES, BriefingResult, DailyBriefingBuilder
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.reflexion import (
     VerificationResult,
@@ -1181,15 +1181,16 @@ class DeepResearchService:
         force-fetch + one tool-less writer, in place of the fan pipeline. Persists, finalizes the
         `## Sources` block, and frames the report exactly like `_run` so the library card and the
         `deep_research_report` tool-view render identically to a pipeline run."""
-        self._phase(ctx, 2, "Gathering the day's news")
-        # Move the progress phase to "Writing" exactly when gather is done and the writer begins,
-        # so the owner doesn't watch "Writing the report" appear after it already finished.
+        # The briefing engine carries its OWN progress timeline (Gather / Read / Write) instead of
+        # the pipeline's eight fixed stages: the builder fires the callback at each phase — the two
+        # deterministic, zero-token steps get a status line, the streamed writer gets live preview
+        # text — and each call becomes a ToolProgressEvent that tells the PWA to draw THESE stages.
         result: BriefingResult = await self._briefing.build(
             ctx,
             question=rp.question,
             objective=rp.objective,
             sections=list(rp.sections),
-            on_write=lambda: self._phase(ctx, _WRITE_STEP, _WRITE_LABEL),
+            progress=lambda step, label, preview: self._briefing_phase(ctx, step, label, preview),
         )
         # A totally-empty gather refuses rather than shipping a hollow "nothing happened anywhere"
         # briefing — the empty-gather parity with the pipeline (`_run`'s empty-gather refusal).
@@ -2034,6 +2035,25 @@ class DeepResearchService:
         rides along as the ordinal for logs. Ephemeral (never persisted) and best-effort."""
         if ctx.emit_event is not None:
             ctx.emit_event(ToolProgressEvent(tool_call_id="", step=step, total=0, label=label))
+
+    def _briefing_phase(
+        self, ctx: ToolContext, step: int, label: str, preview: str | None
+    ) -> None:
+        """Emit one `briefing`-engine phase, carrying the builder's OWN stage list (Gather / Read /
+        Write) so the PWA draws those three instead of the pipeline's fixed eight. `step` is the
+        1-based index into that list; `preview` streams the writer's text on the Write phase (None
+        for the deterministic gather/read steps). Ephemeral and best-effort, like `_phase`."""
+        if ctx.emit_event is not None:
+            ctx.emit_event(
+                ToolProgressEvent(
+                    tool_call_id="",
+                    step=step,
+                    total=0,
+                    label=label,
+                    preview=preview,
+                    phases=list(BRIEFING_PHASES),
+                )
+            )
 
     # --- the orchestration LLM calls (each charged to the shared tree budget) ------
 

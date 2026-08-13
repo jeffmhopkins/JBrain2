@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from jbrain.agent import research_presets as _rp
 from jbrain.agent.briefs import FEED_OPEN
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.deep_research import (
@@ -40,6 +41,24 @@ from jbrain.db.session import SessionContext
 from jbrain.llm import LlmBadResponseError
 from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
 from jbrain.web.feeds import FeedItem
+
+
+@pytest.fixture
+def news_pipeline(monkeypatch: pytest.MonkeyPatch) -> str:
+    """A synthetic PIPELINE news preset (min_reads + news_feeds set) for the fetch-first tests.
+    daily_news itself now runs the lean `briefing` engine (DAILY_NEWS_V2_PLAN.md, V3), so the
+    pipeline's two-phase scout→read gather + feed pre-pull — machinery that still serves any
+    min_reads preset — is exercised here via a twin of the shipped preset rather than daily_news
+    (which no longer routes through the pipeline). Returns the registered preset name."""
+    import dataclasses
+
+    base = _rp.get("daily_news")
+    assert base is not None
+    preset = dataclasses.replace(
+        base, name="news_pipeline", engine="pipeline", min_reads=8, news_feeds=("space", "local")
+    )
+    monkeypatch.setitem(_rp._PRESETS, "news_pipeline", preset)
+    return "news_pipeline"
 
 
 @dataclass
@@ -1811,7 +1830,7 @@ async def test_prefetch_feed_bodies_is_a_noop_without_a_client_or_categories() -
     assert await with_client._prefetch_feed_bodies(()) == ([], set())
 
 
-async def test_feed_prepull_does_not_rescue_an_empty_open_web_gather() -> None:
+async def test_feed_prepull_does_not_rescue_an_empty_open_web_gather(news_pipeline: str) -> None:
     """SearXNG-down analogue: the scout→read open-web gather returns nothing (every reader comes
     back empty), but the direct RSS feeds fetch fine and inject full-text findings. The run must
     still REFUSE — feed children are additive coverage, not a fallback that would ship a hollow
@@ -1824,7 +1843,7 @@ async def test_feed_prepull_does_not_rescue_an_empty_open_web_gather() -> None:
         spawn=spawn,  # type: ignore[arg-type]
         feeds=feeds,  # type: ignore[arg-type]
     )
-    out = await svc.research(_ctx(), {"preset": "daily_news"})
+    out = await svc.research(_ctx(), {"preset": news_pipeline})
     assert "refused" in str(out).lower()  # honest refusal, not a feed-only briefing
 
 
@@ -1965,12 +1984,12 @@ async def test_reports_mode_empty_gather_refuses_with_run_profiles_message() -> 
     assert "run the per-candidate profiles first" in out
 
 
-async def test_fetch_first_preset_scouts_then_reads() -> None:
-    """The daily_news preset (min_reads set, web) runs the two-phase gather: a search-only
+async def test_fetch_first_preset_scouts_then_reads(news_pipeline: str) -> None:
+    """A min_reads pipeline news preset (web) runs the two-phase gather: a search-only
     SCOUT fan over its angles, then a fetch-only READER fan — and NO ordinary web gather fan.
     The search-based reflect→refill loop is skipped (re-searching would smuggle snippets back)."""
     router, spawn = _FakeRouter(), _FakeSpawn()
-    out = await _svc(router, spawn).research(_ctx(), {"preset": "daily_news"})
+    out = await _svc(router, spawn).research(_ctx(), {"preset": news_pipeline})
     assert isinstance(out, ToolOutput)
     assert not any("PLANNER" in c["system"] for c in router.calls)  # preset skips the planner
     personas = [f["persona"] for f in spawn.fans]
@@ -1994,22 +2013,24 @@ async def test_fetch_first_preset_scouts_then_reads() -> None:
     assert any(f["persona"] == "review" for f in spawn.fans)
 
 
-async def test_fetch_first_writer_sees_only_fetched_findings_never_scout_snippets() -> None:
+async def test_fetch_first_writer_sees_only_fetched_findings_never_scout_snippets(
+    news_pipeline: str,
+) -> None:
     """The load-bearing guarantee: the synthesizer is fed ONLY the reader (fetched) findings —
     a scout's search-snippet prose never reaches the writer, so it cannot be reported or
     'cited' as a fact (the root cause of the '(search result)' briefing)."""
     router, spawn = _FakeRouter(), _FakeSpawn()
-    await _svc(router, spawn).research(_ctx(), {"preset": "daily_news"})
+    await _svc(router, spawn).research(_ctx(), {"preset": news_pipeline})
     synth = router.synth_calls[0]
     assert "research_fetch finding" in synth  # fetched findings ARE handed to the writer
     assert "research_scout finding" not in synth  # scout prose is discarded, never fed
 
 
-async def test_fetch_first_refuses_when_every_reader_is_blocked() -> None:
+async def test_fetch_first_refuses_when_every_reader_is_blocked(news_pipeline: str) -> None:
     """Strict fetched-only: if every reader comes back empty (all pages blocked), the gather is
     empty and the run REFUSES — it never falls back to the scouts' unfetched snippet prose."""
     router, spawn = _FakeRouter(), _FakeSpawn(reader_ok=False)
-    out = await _svc(router, spawn).research(_ctx(), {"preset": "daily_news"})
+    out = await _svc(router, spawn).research(_ctx(), {"preset": news_pipeline})
     # A reader fan WAS attempted; then the empty-gather refusal fired (no snippet fallback).
     assert any(f["persona"] == "research_fetch" for f in spawn.fans)
     assert isinstance(out, str) and out.startswith("Refused:")

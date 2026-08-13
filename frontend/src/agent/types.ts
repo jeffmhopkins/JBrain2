@@ -108,6 +108,10 @@ export interface ToolProgressEvent {
   preview?: string | null;
   /** A human phase for a multi-step tool ("Analyzing frame 12/30"); image gen omits it. */
   label?: string | null;
+  /** The run's own ordered stage names, so the progress UI draws the engine's real phases
+   * instead of a hardcoded list (deep_research's `briefing` engine sends Gather/Read/Write);
+   * absent keeps the frontend's canonical fallback list. */
+  phases?: string[] | null;
 }
 export interface JobEnqueuedEvent {
   type: "job_enqueued";
