@@ -8,6 +8,7 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.citygeocode import CityHit
 from jbrain.db.session import SessionContext
+from jbrain.web.heatindex import heat_index_f
 from jbrain.web.nws import NwsClient
 from jbrain.web.weather import WeatherClient, WeatherError, _compass, _hour_label, describe_code
 
@@ -25,12 +26,14 @@ _GEO_OK = {
     ]
 }
 
+# The "feels like" is the NWS heat index computed on-box from temperature + humidity, so
+# the fixtures carry humidity (not Open-Meteo's apparent_temperature) and the expected
+# feels values are derived through `heat_index_f` — the same NWS formula the tool uses.
 _FORECAST_OK = {
     "timezone_abbreviation": "EDT",
     "current": {
         "time": "2026-06-26T13:14",
         "temperature_2m": 90.4,
-        "apparent_temperature": 101.8,
         "relative_humidity_2m": 71,
         "weather_code": 95,
         "wind_speed_10m": 8.1,
@@ -46,40 +49,53 @@ _FORECAST_OK = {
             "2026-06-27T00:00",
         ],
         "temperature_2m": [90, 91, 91, 81, 80],
-        "apparent_temperature": [102, 103, 103, 87, 86],
+        "relative_humidity_2m": [70, 72, 74, 85, 88],
         "weather_code": [95, 95, 80, 1, 1],
         "precipitation_probability": [20, 25, 35, 0, 0],
         "wind_speed_10m": [8, 9, 10, 3, 3],
         "wind_direction_10m": [135, 135, 140, 180, 185],
         "is_day": [1, 1, 1, 0, 0],
     },
-    "daily": {
-        "temperature_2m_max": [92],
-        "temperature_2m_min": [80],
-        # The afternoon heat index runs well above the air high — the heat-advisory number.
-        "apparent_temperature_max": [104],
-        "apparent_temperature_min": [82],
-    },
+    "daily": {"temperature_2m_max": [92], "temperature_2m_min": [80]},
 }
+
+# Today's hours (2026-06-26): the peak/coldest heat index the card surfaces are the max/min
+# over these, computed through `heat_index_f` (the 2026-06-27 hour belongs to tomorrow).
+_TODAY_HOURS = ((90, 70), (91, 72), (91, 74), (81, 85))
+
+
+def _hi(temp: float, rh: float) -> int:
+    return round(heat_index_f(temp, rh))
+
 
 _WEEK_OK = {
     "timezone_abbreviation": "PDT",
     "current": {
         "time": "2026-06-26T09:30",
         "temperature_2m": 64.2,
-        "apparent_temperature": 62.0,
         "relative_humidity_2m": 80,
         "weather_code": 3,
         "wind_speed_10m": 5.0,
         "wind_direction_10m": 200,
         "is_day": 1,
     },
+    # The daily card computes each day's PEAK heat index from this hourly temp+humidity.
+    "hourly": {
+        "time": [
+            "2026-06-26T12:00",
+            "2026-06-26T15:00",
+            "2026-06-27T12:00",
+            "2026-06-27T15:00",
+            "2026-06-28T12:00",
+            "2026-06-28T15:00",
+        ],
+        "temperature_2m": [76, 78, 92, 95, 69, 71],
+        "relative_humidity_2m": [60, 62, 55, 58, 70, 68],
+    },
     "daily": {
         "time": ["2026-06-26", "2026-06-27", "2026-06-28"],
         "temperature_2m_max": [78, 80, 71],
         "temperature_2m_min": [55, 56, 52],
-        "apparent_temperature_max": [76, 79, 68],
-        "apparent_temperature_min": [52, 53, 49],
         "weather_code": [3, 0, 61],
         "precipitation_probability_max": [10, 0, 60],
         "wind_speed_10m_max": [8, 7, 12],
@@ -193,17 +209,22 @@ async def test_forecast_shapes_current_hourly_and_hilo() -> None:
     hit = await client.geocode("Cocoa")
     assert hit is not None
     w = await client.forecast(hit)
-    assert (w.temp_f, w.feels_f, w.humidity) == (90, 102, 71)
+    # feels-like is the NWS heat index of the current temp + humidity, not a raw upstream
+    # apparent temp: heat_index_f(90.4, 71) ≈ 108°.
+    assert (w.temp_f, w.feels_f, w.humidity) == (90, _hi(90.4, 71), 71)
     assert (w.cond, w.label) == ("storm", "Thunderstorms")
     assert w.is_day is True
     assert (w.wind_mph, w.wind_dir) == (8, "SE")
     assert (w.hi_f, w.lo_f) == (92, 80)
-    # The day's peak feels-like (heat index) and coldest feels-like ride alongside the air
-    # high/low, so the card can surface how hot the afternoon actually feels.
-    assert (w.feels_hi_f, w.feels_lo_f) == (104, 82)
+    # The peak/coldest feels-like are the heat-index extremes over TODAY's hours (the
+    # 2026-06-27 hour is tomorrow's), so the card surfaces how hot the afternoon feels.
+    today_his = [_hi(t, rh) for t, rh in _TODAY_HOURS]
+    assert (w.feels_hi_f, w.feels_lo_f) == (max(today_his), min(today_his))
     assert w.as_of == "1:14 PM" and w.tz_abbr == "EDT"
-    # The strip starts at the current hour (13:00), not before it.
+    # The strip starts at the current hour (13:00), not before it; its per-hour feels is
+    # the same on-box heat index.
     assert w.hours[0].label == "1p" and w.hours[0].temp_f == 90
+    assert w.hours[0].feels_f == _hi(90, 70)
     # Night hours carry is_day False so the component can pick a night glyph.
     assert w.hours[-1].label == "12a" and w.hours[-1].is_day is False
 
@@ -223,13 +244,17 @@ async def test_weekly_forecast_shapes_the_daily_list() -> None:
     w = await client.forecast(hit, weekly=True)
     assert w.kind == "week"
     assert requested["forecast_days"] == "7"  # the week window was requested
-    assert "hourly" not in requested  # a week of hourly is never fetched
+    # The week fetches a LEAN hourly block (temp + humidity only) — just enough to derive
+    # each day's peak heat index on-box; the full strip variables are today-only.
+    assert requested["hourly"] == "temperature_2m,relative_humidity_2m"
     assert w.tz_abbr == "PDT" and w.temp_f == 64
     # First day reads "Today"; the rest are weekday abbreviations from the date.
     assert [d.label for d in w.days] == ["Today", "Sat", "Sun"]
     assert (w.days[0].hi_f, w.days[0].lo_f, w.days[0].cond) == (78, 55, "cloudy")
-    # Each day carries its own peak/coldest feels-like alongside the air high/low.
-    assert (w.days[0].feels_hi_f, w.days[0].feels_lo_f) == (76, 52)
+    # Each day's peak/coldest feels-like is the heat index over that day's hours (never
+    # below the air high). Sat (2026-06-27) is the hot day: 95°/58% → heat index ~111°.
+    assert w.days[0].feels_hi_f == max(_hi(76, 60), _hi(78, 62))
+    assert w.days[1].feels_hi_f == max(_hi(92, 55), _hi(95, 58))
     assert (w.days[2].cond, w.days[2].pop, w.days[2].wind_dir) == ("rain", 60, "SW")
     assert w.hours == ()  # the hourly strip is empty for a weekly forecast
 
@@ -344,13 +369,16 @@ async def test_named_place_returns_summary_and_view() -> None:
     out = await _tool(_both_ok)({"location": "Cocoa, FL"}, CTX)
     assert isinstance(out, ToolOutput)
     assert "Cocoa, Florida, United States" in out
-    assert "feels 102" in out and "high 92" in out
+    assert f"feels {_hi(90.4, 71)}" in out and "high 92" in out
     # The peak heat index is spelled out so the model can answer "how hot will it feel".
-    assert "up to 104" in out
+    today_peak = max(_hi(t, rh) for t, rh in _TODAY_HOURS)
+    assert f"peaks near {today_peak}" in out
     assert out.view is not None and out.view.view == "weather_card"
     data = out.view.data
     assert data["now"]["cond"] == "storm"
-    assert data["now"]["feels_hi_f"] == 104 and data["now"]["feels_lo_f"] == 82
+    today_his = [_hi(t, rh) for t, rh in _TODAY_HOURS]
+    assert data["now"]["feels_hi_f"] == max(today_his)
+    assert data["now"]["feels_lo_f"] == min(today_his)
     assert data["hi_f"] == 92 and data["lo_f"] == 80
     assert data["hours"][0]["label"] == "1p"
     # No coordinate rides the data-only payload (#9) — names + numbers only.

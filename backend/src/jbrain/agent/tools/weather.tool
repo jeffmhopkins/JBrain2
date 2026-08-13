@@ -22,10 +22,11 @@ the owner is now (it names the nearest city — it never sends their exact posit
 
 The app shows the owner a weather card that ALREADY displays the full detail — every
 temperature, feels-like, rain chance, wind, and the whole per-hour or per-day
-breakdown. It also surfaces the day's PEAK feels-like (the heat index / wind chill,
-which the plain high/low hides) and, where the National Weather Service covers the
-place, the official active alert as a banner (a Heat Advisory, an Excessive Heat or
-Wind Chill Warning, etc.). So do NOT restate the forecast in your reply: don't list the
+breakdown. The feels-like is the NWS heat index (computed on-box from temperature and
+humidity), and the card also surfaces the day's PEAK heat index — the number the plain
+high/low hides — plus, where the National Weather Service covers the place, the official
+active alert as a banner (a Heat Advisory, an Excessive Heat Warning, etc.). So do NOT
+restate the forecast in your reply: don't list the
 hours or days, don't repeat the numbers, and don't narrate what the card shows ("the
 card above has each day…"). The owner can already see all of it. Answer with at most a
 one-line takeaway about what they actually asked (e.g. "Warm all week — rain most likely

@@ -1289,7 +1289,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "weather.tool": (
             "weather",
             4,
-            "5896c97df0fbfa07f611c23b253593254c3d050e99eb93e4c4286e73319571f4",
+            "9cb9ca4b5a348300d763d9b2244141d3bdf4c99bdaaea6613b75fdd31c210d1e",
         ),
         "weather_history.tool": (
             "weather_history",

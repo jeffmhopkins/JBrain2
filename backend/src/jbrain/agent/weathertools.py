@@ -188,13 +188,13 @@ def weather_view(w: Weather, alert: dict | None = None) -> ViewPayload:
 
 def _heat_note(w: Weather) -> str:
     """A feels-like divergence line for the summary: the day's peak heat index when it
-    runs well above the air high, or the coldest wind chill when it dips well below the
-    low. This is the context a heat/cold advisory turns on — the raw high/low alone reads
-    mild on a day the afternoon heat index tops 110°. Empty when feels tracks the air temp."""
+    runs well above the air high (the NWS "feels like" a Heat Advisory turns on), or the
+    lowest apparent temp when it dips well below the low. The raw high/low alone reads mild
+    on a day the afternoon heat index tops 110°. Empty when feels tracks the air temp."""
     if w.feels_hi_f - w.hi_f >= _FEELS_GAP_F:
-        return f" Feels like up to {w.feels_hi_f}° at the afternoon peak."
+        return f" Heat index peaks near {w.feels_hi_f}° this afternoon."
     if w.lo_f - w.feels_lo_f >= _FEELS_GAP_F:
-        return f" Feels as cold as {w.feels_lo_f}° with the wind."
+        return f" Feels as cool as {w.feels_lo_f}° at its coolest."
     return ""
 
 

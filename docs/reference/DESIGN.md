@@ -1135,10 +1135,13 @@ no color** — `cond` is a closed enum (`clear|partly|cloudy|rain|storm|snow|fog
 `is_day` a flag the component maps to an **inline SVG glyph + token** (the night variants
 for clear/partly skies live in the component, not the payload). Tokens-only `.tv-wx-*`
 classes; weather is non-personal jerv info, so the card rides the **steel** info accent
-and a high heat index reads **amber** (the warn tone). `feels_f` is the current apparent
-temperature; `feels_hi_f`/`feels_lo_f` are the day's **peak/coldest feels-like** — the
-heat-advisory number a raw high/low hides (at dawn "feels 88°" reads mild on a day the
-afternoon heat index tops 110°). The component owns the heat-tone decision, not the model:
+and a high heat index reads **amber** (the warn tone). Every `feels_*` value is the **NWS
+heat index** computed on-box from temperature + humidity (the figure a Heat Advisory turns
+on — the same Rothfusz math `weather_history` uses, shared via `jbrain.web.heatindex`),
+never Open-Meteo's own apparent temperature, which read a few degrees under. `feels_f` is
+the current heat index; `feels_hi_f`/`feels_lo_f` are the day's **peak/coldest** heat index
+(reduced from the hourly series) — the heat-advisory number a raw high/low hides (at dawn
+"feels 88°" reads mild on a day the afternoon heat index tops 110°). The component owns the heat-tone decision, not the model:
 a current feels-like ≥ 100° reads amber, and when the day's peak feels-like clears that
 warn line **above** where it feels now the hero surfaces a **"Feels like up to N° today"**
 callout (the week list flags each heat day's peak instead). The optional **`alert`** slot
