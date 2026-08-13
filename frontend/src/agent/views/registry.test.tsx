@@ -356,9 +356,17 @@ describe("ToolView registry", () => {
             place: "Cocoa, Florida, United States",
             as_of: "1:14 PM",
             tz: "EDT",
+            alert: {
+              event: "Heat Advisory",
+              tone: "advisory",
+              headline: "Heat Advisory in effect until 8 PM EDT",
+              more: 1,
+            },
             now: {
               temp_f: 90,
               feels_f: 102,
+              feels_hi_f: 110,
+              feels_lo_f: 84,
               cond: "storm",
               is_day: true,
               label: "Thunderstorms",
@@ -379,8 +387,17 @@ describe("ToolView registry", () => {
     expect(container.querySelector(".tv-wx-cap")?.textContent).toContain(
       "Cocoa, Florida, United States",
     );
+    // The official NWS alert banners at the top — advisory tone, event + "+N more".
+    const banner = container.querySelector(".tv-wx-alert");
+    expect(banner?.className).toContain("advisory");
+    expect(banner?.textContent).toContain("Heat Advisory");
+    expect(banner?.textContent).toContain("+1 more");
     expect(container.querySelector(".tv-wx-temp")?.textContent).toBe("90°F");
     expect(screen.getByText("feels 102°")).toBeInTheDocument();
+    // A hot current feels-like (≥ the warn line) reads amber; the day's peak heat index
+    // surfaces its own callout — the heat-advisory number the air high hides.
+    expect(container.querySelector(".tv-wx-feels")?.className).toContain("hot");
+    expect(container.querySelector(".tv-wx-heat")?.textContent).toContain("up to 110°");
     expect(screen.getByText("H 92°")).toBeInTheDocument();
     // The first hour is relabeled "Now"; later hours keep their clock label.
     expect(screen.getByText("Now")).toBeInTheDocument();
@@ -574,14 +591,47 @@ describe("ToolView registry", () => {
             as_of: "9:30 AM",
             tz: "PDT",
             range: "week",
-            now: { temp_f: 64, feels_f: 62, cond: "cloudy", is_day: true, label: "Overcast" },
+            now: {
+              temp_f: 64,
+              feels_f: 62,
+              feels_hi_f: 79,
+              feels_lo_f: 55,
+              cond: "cloudy",
+              is_day: true,
+              label: "Overcast",
+            },
             hi_f: 78,
             lo_f: 55,
             hours: [],
             days: [
-              { label: "Today", cond: "cloudy", hi_f: 78, lo_f: 55, pop: 10, wind_mph: 8 },
-              { label: "Sat", cond: "clear", hi_f: 80, lo_f: 56, pop: 0, wind_mph: 7 },
-              { label: "Sun", cond: "rain", hi_f: 71, lo_f: 52, pop: 60, wind_mph: 12 },
+              // Sun's heat index (105°) outruns its air high — a heat day; the others don't.
+              {
+                label: "Today",
+                cond: "cloudy",
+                hi_f: 78,
+                lo_f: 55,
+                feels_hi_f: 79,
+                pop: 10,
+                wind_mph: 8,
+              },
+              {
+                label: "Sat",
+                cond: "clear",
+                hi_f: 80,
+                lo_f: 56,
+                feels_hi_f: 81,
+                pop: 0,
+                wind_mph: 7,
+              },
+              {
+                label: "Sun",
+                cond: "rain",
+                hi_f: 71,
+                lo_f: 52,
+                feels_hi_f: 105,
+                pop: 60,
+                wind_mph: 12,
+              },
             ],
           },
         })}
@@ -589,11 +639,19 @@ describe("ToolView registry", () => {
     );
     expect(container.querySelector(".tv-wx-days")).not.toBeNull();
     expect(container.querySelector(".tv-wx-strip")).toBeNull(); // no hourly strip for a week
+    expect(container.querySelector(".tv-wx-alert")).toBeNull(); // no alert → no banner
     const rows = container.querySelectorAll(".tv-wx-day");
     expect(rows).toHaveLength(3);
     expect(screen.getByText("Today")).toBeInTheDocument();
     expect(screen.getByText("Sun")).toBeInTheDocument();
     expect(screen.getByText("80°")).toBeInTheDocument(); // Saturday's high
+    // A mild current feels-like stays neutral (not amber), and no heat callout shows.
+    expect(container.querySelector(".tv-wx-feels")?.className).not.toContain("hot");
+    expect(container.querySelector(".tv-wx-heat")).toBeNull();
+    // Only the heat day carries a peak-feels marker; the mild days don't.
+    const feelsMarks = container.querySelectorAll(".tv-wx-dfeels");
+    expect(feelsMarks).toHaveLength(1);
+    expect(feelsMarks[0]?.textContent).toContain("105°");
     // The dry day hides its precip cell; the wet day shows it.
     const pops = container.querySelectorAll(".tv-wx-dpop");
     expect(String(pops[1]?.className)).toContain("none");

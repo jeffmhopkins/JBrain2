@@ -24,6 +24,8 @@ from datetime import datetime
 import httpx
 import structlog
 
+from jbrain.web.heatindex import heat_index_f
+
 log = structlog.get_logger()
 
 _TIMEOUT = 15.0
@@ -232,6 +234,8 @@ class DayPoint:
     cond: str
     hi_f: int
     lo_f: int
+    feels_hi_f: int  # the day's peak heat index — the heat-advisory number
+    feels_lo_f: int  # the day's lowest heat index (feels-like at its coolest)
     pop: int  # max precipitation probability for the day, %
     wind_mph: int
     wind_dir: str
@@ -248,7 +252,7 @@ class Weather:
     tz_abbr: str  # the place's timezone abbreviation, e.g. "EDT"
     kind: str  # "today" | "week"
     temp_f: int
-    feels_f: int
+    feels_f: int  # the current NWS heat index (feels-like from heat + humidity, now)
     cond: str
     label: str
     is_day: bool
@@ -257,6 +261,8 @@ class Weather:
     wind_dir: str
     hi_f: int
     lo_f: int
+    feels_hi_f: int  # today's PEAK heat index — the heat-advisory number
+    feels_lo_f: int  # today's lowest heat index (feels-like at its coolest)
     hours: tuple[HourPoint, ...] = ()
     days: tuple[DayPoint, ...] = ()
 
@@ -300,6 +306,50 @@ def _i(value: object) -> int:
         return round(float(value))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0
+
+
+def _num(value: object) -> float | None:
+    """A JSON number → float, or None for null/non-numeric. Unlike `_i`, the absent case
+    is distinct from a measured 0 — the heat-index math must skip a gap, not read it as
+    an hour of 0°F/0% humidity."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _feels(temp: object, rh: object) -> int | None:
+    """The NWS heat index (°F, rounded) for one paired temperature + humidity reading, or
+    None if either is absent. The card's single "feels like" basis — the NWS figure a Heat
+    Advisory turns on, computed on-box (never Open-Meteo's own apparent temperature)."""
+    t = _num(temp)
+    r = _num(rh)
+    if t is None or r is None:
+        return None
+    return round(heat_index_f(t, r))
+
+
+def _feels_by_day(hourly: object) -> dict[str, tuple[int, int]]:
+    """Map each calendar date ("YYYY-MM-DD") → (peak, coldest) NWS heat index over that
+    day's hours, computed from the hourly temperature + humidity series. This is how the
+    per-day PEAK feels-like is derived (the daily block publishes no heat index). Empty
+    when the series is absent or unpaired."""
+    if not isinstance(hourly, dict):
+        return {}
+    times = hourly.get("time")
+    temps = hourly.get("temperature_2m")
+    rhs = hourly.get("relative_humidity_2m")
+    if not (isinstance(times, list) and isinstance(temps, list) and isinstance(rhs, list)):
+        return {}
+    buckets: dict[str, list[int]] = {}
+    for i, raw in enumerate(times):
+        if i >= len(temps) or i >= len(rhs):
+            break
+        feels = _feels(temps[i], rhs[i])
+        if feels is None:
+            continue
+        buckets.setdefault(str(raw)[:10], []).append(feels)
+    return {day: (max(vals), min(vals)) for day, vals in buckets.items() if vals}
 
 
 class WeatherClient:
@@ -368,7 +418,11 @@ class WeatherClient:
         params = {
             "latitude": f"{hit.latitude:.4f}",
             "longitude": f"{hit.longitude:.4f}",
-            "current": "temperature_2m,apparent_temperature,relative_humidity_2m,"
+            # relative_humidity_2m rides every block: the "feels like" is the NWS heat
+            # index computed on-box from temperature + humidity (the figure a Heat
+            # Advisory turns on), not Open-Meteo's own apparent_temperature — so the card
+            # matches the National Weather Service rather than reading a few degrees under.
+            "current": "temperature_2m,relative_humidity_2m,"
             "weather_code,wind_speed_10m,wind_direction_10m,is_day",
             "temperature_unit": "fahrenheit",
             "wind_speed_unit": "mph",
@@ -376,16 +430,18 @@ class WeatherClient:
             "forecast_days": _WEEK_DAYS if weekly else 2,
         }
         if weekly:
-            # The daily list needs each day's sky, rain chance, and wind; skip the hourly
-            # block entirely (a week of hourly is a large payload the daily card never uses).
             params["daily"] = (
                 f"{daily},weather_code,precipitation_probability_max,"
                 "wind_speed_10m_max,wind_direction_10m_dominant"
             )
+            # The daily card shows air high/low, but the PEAK feels-like it flags on hot
+            # days is the NWS heat index — published nowhere per-day, so it's derived from
+            # the hourly temperature + humidity here (temp+humidity only, a lean block).
+            params["hourly"] = "temperature_2m,relative_humidity_2m"
         else:
             params["daily"] = daily
             params["hourly"] = (
-                "temperature_2m,apparent_temperature,weather_code,"
+                "temperature_2m,relative_humidity_2m,weather_code,"
                 "precipitation_probability,wind_speed_10m,wind_direction_10m,is_day"
             )
         body = await self._get(f"{self._forecast_url}/v1/forecast", params)
@@ -440,10 +496,14 @@ def _shape(place: str, body: dict, *, weekly: bool = False) -> Weather:
     cond, label = describe_code(cur.get("weather_code", 0))
     tz_abbr = str(body.get("timezone_abbreviation") or "").strip()
 
+    # The per-day heat-index roll-up is computed from the hourly temp+humidity (both
+    # ranges fetch it now — today for its strip, the week for this reduction alone).
+    feels_by_day = _feels_by_day(body.get("hourly"))
+
     hours: tuple[HourPoint, ...] = ()
     days: tuple[DayPoint, ...] = ()
     if weekly:
-        days = _days(daily)
+        days = _days(daily, feels_by_day)
     else:
         hourly = body.get("hourly")
         if not isinstance(hourly, dict):
@@ -456,30 +516,41 @@ def _shape(place: str, body: dict, *, weekly: bool = False) -> Weather:
         start = next((i for i, t in enumerate(times) if str(t) >= now_hour), 0)
         hours = _hours(hourly, times, start)
 
-    hi, lo = _today_hilo(daily)
+    temp_now = _i(cur.get("temperature_2m"))
+    feels_now = _feels(cur.get("temperature_2m"), cur.get("relative_humidity_2m"))
+    feels_now = feels_now if feels_now is not None else temp_now
+    hi = _daily_first(daily, "temperature_2m_max")
+    lo = _daily_first(daily, "temperature_2m_min")
+    # Today's peak/coldest feels-like is the heat-index extreme over the whole calendar
+    # day (past hours included, so a dawn check still sees the afternoon peak); fall back
+    # to the current feels when the hourly series didn't cover today.
+    feels_hi, feels_lo = feels_by_day.get(now.date().isoformat(), (feels_now, feels_now))
     return Weather(
         place=place,
         as_of=_clock(now),
         tz_abbr=tz_abbr,
         kind="week" if weekly else "today",
-        temp_f=_i(cur.get("temperature_2m")),
-        feels_f=_i(cur.get("apparent_temperature")),
+        temp_f=temp_now,
+        feels_f=feels_now,
         cond=cond,
         label=label,
         is_day=bool(cur.get("is_day", 1)),
         humidity=_i(cur.get("relative_humidity_2m")),
         wind_mph=_i(cur.get("wind_speed_10m")),
         wind_dir=_compass(float(cur.get("wind_direction_10m") or 0)),
-        hi_f=hi if hi is not None else _i(cur.get("temperature_2m")),
-        lo_f=lo if lo is not None else _i(cur.get("temperature_2m")),
+        hi_f=hi if hi is not None else temp_now,
+        lo_f=lo if lo is not None else temp_now,
+        feels_hi_f=max(feels_hi, feels_now),  # peak never reads below where it feels now
+        feels_lo_f=feels_lo,
         hours=hours,
         days=days,
     )
 
 
-def _days(daily: object) -> tuple[DayPoint, ...]:
+def _days(daily: object, feels_by_day: dict[str, tuple[int, int]]) -> tuple[DayPoint, ...]:
     """Parse the daily arrays into the weekly list. The first day reads "Today"; the
-    rest are weekday abbreviations from the date."""
+    rest are weekday abbreviations from the date. `feels_by_day` maps each date to its
+    (peak, coldest) NWS heat index, computed from the hourly series in `_shape`."""
     if not isinstance(daily, dict):
         raise WeatherError("the weather service returned no daily forecast")
     times = daily.get("time")
@@ -498,12 +569,20 @@ def _days(daily: object) -> tuple[DayPoint, ...]:
         except (TypeError, ValueError):
             continue
         cond, _ = describe_code(code[i] if i < len(code) else 0)
+        hi_f = _i(highs[i]) if i < len(highs) else 0
+        lo_f = _i(lows[i]) if i < len(lows) else 0
+        # The day's peak/coldest feels-like is the heat index over its hours (computed in
+        # `_feels_by_day`); fall back to the air temp when the hourly series didn't reach
+        # this day, so the peak-feels never reads cooler than the plain high.
+        feels_hi, feels_lo = feels_by_day.get(str(raw)[:10], (hi_f, lo_f))
         out.append(
             DayPoint(
                 label="Today" if i == 0 else _WEEKDAYS[dt.weekday()],
                 cond=cond,
-                hi_f=_i(highs[i]) if i < len(highs) else 0,
-                lo_f=_i(lows[i]) if i < len(lows) else 0,
+                hi_f=hi_f,
+                lo_f=lo_f,
+                feels_hi_f=max(feels_hi, hi_f),
+                feels_lo_f=feels_lo,
                 pop=_i(pop[i]) if i < len(pop) else 0,
                 wind_mph=_i(wspd[i]) if i < len(wspd) else 0,
                 wind_dir=_compass(float(wdir[i]) if i < len(wdir) else 0.0),
@@ -516,7 +595,7 @@ def _days(daily: object) -> tuple[DayPoint, ...]:
 
 def _hours(hourly: dict, times: list, start: int) -> tuple[HourPoint, ...]:
     temp = hourly.get("temperature_2m") or []
-    feels = hourly.get("apparent_temperature") or []
+    rh = hourly.get("relative_humidity_2m") or []
     code = hourly.get("weather_code") or []
     pop = hourly.get("precipitation_probability") or []
     wspd = hourly.get("wind_speed_10m") or []
@@ -529,11 +608,15 @@ def _hours(hourly: dict, times: list, start: int) -> tuple[HourPoint, ...]:
         except (TypeError, ValueError):
             continue
         cond, _ = describe_code(code[i] if i < len(code) else 0)
+        temp_f = _i(temp[i]) if i < len(temp) else 0
+        # Per-hour feels-like is the NWS heat index from that hour's temp + humidity, the
+        # same basis as the hero — falling back to the air temp when humidity is absent.
+        feels = _feels(temp[i], rh[i]) if i < len(temp) and i < len(rh) else None
         out.append(
             HourPoint(
                 label=_hour_label(dt),
-                temp_f=_i(temp[i]) if i < len(temp) else 0,
-                feels_f=_i(feels[i]) if i < len(feels) else 0,
+                temp_f=temp_f,
+                feels_f=feels if feels is not None else temp_f,
                 cond=cond,
                 is_day=bool(isday[i]) if i < len(isday) else True,
                 pop=_i(pop[i]) if i < len(pop) else 0,
@@ -546,14 +629,13 @@ def _hours(hourly: dict, times: list, start: int) -> tuple[HourPoint, ...]:
     return tuple(out)
 
 
-def _today_hilo(daily: object) -> tuple[int | None, int | None]:
+def _daily_first(daily: object, key: str) -> int | None:
+    """The first (today's) value of a daily column, or None if the block/column is
+    missing or empty — lets a caller fall back rather than surface a wrong 0."""
     if not isinstance(daily, dict):
-        return None, None
-    highs = daily.get("temperature_2m_max")
-    lows = daily.get("temperature_2m_min")
-    hi = _i(highs[0]) if isinstance(highs, list) and highs else None
-    lo = _i(lows[0]) if isinstance(lows, list) and lows else None
-    return hi, lo
+        return None
+    arr = daily.get(key)
+    return _i(arr[0]) if isinstance(arr, list) and arr else None
 
 
 def _clock(dt: datetime) -> str:

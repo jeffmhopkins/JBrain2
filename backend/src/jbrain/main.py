@@ -616,7 +616,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         web_handlers.update(
             build_portal_handlers(web_fetcher, app.state.portal_resolvers, emit=brain_emit)
         )
-        web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
+        web_handlers.update(
+            build_weather_handlers(weather_client, app.state.city_geocoder, nws_client)
+        )
         web_handlers.update(
             build_weather_history_handlers(
                 weather_history_client, weather_client, app.state.city_geocoder

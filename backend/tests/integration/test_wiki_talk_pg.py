@@ -401,7 +401,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
                 FederalRegisterClient(""),
             ),
             **build_portal_handlers(WebFetcher(), (FlSunbizResolver(""),)),  # portal_search handler
-            **build_weather_handlers(WeatherClient("", ""), stub),
+            **build_weather_handlers(WeatherClient("", ""), stub, NwsClient("")),
             **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(
                 HurricaneClient(""),

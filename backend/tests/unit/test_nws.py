@@ -181,6 +181,44 @@ async def test_alerts_empty_feed_returns_nothing() -> None:
     assert await client.alerts(_LAT, _LON) == ()
 
 
+async def test_weather_alerts_keep_every_event_and_map_tone_by_suffix() -> None:
+    # The general weather-card feed keeps ALL active alerts (not just tropical) and reads
+    # the tone off the event-name suffix; a "…Statement" folds in as an advisory.
+    feed = {
+        "features": [
+            {"properties": {"event": "Heat Advisory", "severity": "Moderate", "headline": "hot"}},
+            {"properties": {"event": "Excessive Heat Warning", "severity": "Severe"}},
+            {"properties": {"event": "Flood Watch"}},
+            {"properties": {"event": "Special Weather Statement"}},
+        ]
+    }
+    out = await _client(_route(alerts=feed)).weather_alerts(_LAT, _LON)
+    assert [(a.event, a.tone) for a in out] == [
+        ("Heat Advisory", "advisory"),
+        ("Excessive Heat Warning", "warning"),
+        ("Flood Watch", "watch"),
+        ("Special Weather Statement", "advisory"),
+    ]
+    assert (out[0].severity, out[1].severity) == ("moderate", "severe")
+    assert out[2].severity == "unknown"  # absent severity reads as "unknown"
+    assert out[0].headline == "hot" and out[1].headline == ""
+
+
+async def test_weather_alerts_404_is_out_of_coverage() -> None:
+    transport = _route(alerts=(404, {"detail": "not found"}))
+    try:
+        await _client(transport).weather_alerts(_LAT, _LON)
+    except NwsOutOfCoverage as exc:
+        _assert_no_coordinate(exc)
+    else:  # pragma: no cover
+        raise AssertionError("expected NwsOutOfCoverage")
+
+
+async def test_weather_alerts_event_less_entry_is_skipped() -> None:
+    feed = {"features": [{"properties": {"headline": "no event here"}}, {"not": "a dict"}]}
+    assert await _client(_route(alerts=feed)).weather_alerts(_LAT, _LON) == ()
+
+
 # --- timeline --------------------------------------------------------------
 
 
