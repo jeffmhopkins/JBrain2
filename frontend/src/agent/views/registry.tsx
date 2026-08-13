@@ -1147,6 +1147,30 @@ function DailyList({ days }: { days: WxDay[] }): ReactNode {
   );
 }
 
+/** The official NWS alert banner atop the weather card — the card's ONE watch/warning
+ * surface (NWS-sourced). A `warning` reads rose (danger); a `watch` or `advisory` reads
+ * amber (caution). The event + headline are NWS strings rendered as escaped text content
+ * (never markup, #9); `+N more` notes other active alerts folded behind the top one. */
+function WxAlertBanner({ alert }: { alert: Record<string, unknown> }): ReactNode {
+  const tone = alert.tone === "warning" ? "warning" : alert.tone === "watch" ? "watch" : "advisory";
+  const event = String(alert.event ?? "");
+  const headline = String(alert.headline ?? "");
+  const more = wxNum(alert.more);
+  return (
+    <div className={`tv-wx-alert ${tone}`}>
+      <svg viewBox="0 0 24 24" className="tv-wx-alert-svg" aria-hidden="true">
+        <path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z" />
+        <path d="M12 9v4M12 17h.01" />
+      </svg>
+      <div>
+        <b>{event}</b>
+        {more > 0 && <span className="tv-wx-alert-more"> · +{more} more</span>}
+        {headline && <span className="tv-wx-alert-head"> — {headline}</span>}
+      </div>
+    </div>
+  );
+}
+
 function WeatherCard({ data }: ViewProps): ReactNode {
   const place = String(data.place ?? "");
   const asOf = typeof data.as_of === "string" ? data.as_of : "";
@@ -1189,6 +1213,8 @@ function WeatherCard({ data }: ViewProps): ReactNode {
   // "feels 88°" reads mild on a day the afternoon heat index tops 110°). The card owns
   // this tone decision, not the model (DESIGN.md: components express tone, never colors).
   const heatPeak = feelsHi >= WX_HEAT_F && feelsHi - feels >= 3 ? feelsHi : 0;
+  const alert =
+    data.alert && typeof data.alert === "object" ? (data.alert as Record<string, unknown>) : null;
 
   return (
     <div className="tv-wx">
@@ -1196,6 +1222,7 @@ function WeatherCard({ data }: ViewProps): ReactNode {
         weather{place ? ` · ${place}` : ""}
         {week ? " · 7-day" : ""}
       </div>
+      {alert && <WxAlertBanner alert={alert} />}
       <div className="tv-wx-hero">
         <div className="tv-wx-glyph">
           <WeatherGlyph cond={cond} day={day} />

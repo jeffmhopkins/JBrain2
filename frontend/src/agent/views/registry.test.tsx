@@ -356,6 +356,12 @@ describe("ToolView registry", () => {
             place: "Cocoa, Florida, United States",
             as_of: "1:14 PM",
             tz: "EDT",
+            alert: {
+              event: "Heat Advisory",
+              tone: "advisory",
+              headline: "Heat Advisory in effect until 8 PM EDT",
+              more: 1,
+            },
             now: {
               temp_f: 90,
               feels_f: 102,
@@ -381,6 +387,11 @@ describe("ToolView registry", () => {
     expect(container.querySelector(".tv-wx-cap")?.textContent).toContain(
       "Cocoa, Florida, United States",
     );
+    // The official NWS alert banners at the top — advisory tone, event + "+N more".
+    const banner = container.querySelector(".tv-wx-alert");
+    expect(banner?.className).toContain("advisory");
+    expect(banner?.textContent).toContain("Heat Advisory");
+    expect(banner?.textContent).toContain("+1 more");
     expect(container.querySelector(".tv-wx-temp")?.textContent).toBe("90°F");
     expect(screen.getByText("feels 102°")).toBeInTheDocument();
     // A hot current feels-like (≥ the warn line) reads amber; the day's peak heat index
@@ -628,6 +639,7 @@ describe("ToolView registry", () => {
     );
     expect(container.querySelector(".tv-wx-days")).not.toBeNull();
     expect(container.querySelector(".tv-wx-strip")).toBeNull(); // no hourly strip for a week
+    expect(container.querySelector(".tv-wx-alert")).toBeNull(); // no alert → no banner
     const rows = container.querySelectorAll(".tv-wx-day");
     expect(rows).toHaveLength(3);
     expect(screen.getByText("Today")).toBeInTheDocument();

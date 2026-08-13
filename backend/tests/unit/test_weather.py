@@ -8,6 +8,7 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.citygeocode import CityHit
 from jbrain.db.session import SessionContext
+from jbrain.web.nws import NwsClient
 from jbrain.web.weather import WeatherClient, WeatherError, _compass, _hour_label, describe_code
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
@@ -324,10 +325,19 @@ class FakeGeocoder:
         return self._hit
 
 
-def _tool(handler, geocoder=None):  # type: ignore[no-untyped-def]
+def _nws(handler=None):  # type: ignore[no-untyped-def]
+    # Default: an UNCONFIGURED NWS client (empty base) so no alert banner is fetched —
+    # the forecast path is exercised in isolation. Pass a handler to serve /alerts/active.
+    if handler is None:
+        return NwsClient("")
+    return NwsClient("https://nws.test", transport=httpx.MockTransport(handler))
+
+
+def _tool(handler, geocoder=None, nws=None):  # type: ignore[no-untyped-def]
     geocoder = geocoder or FakeGeocoder(None)
+    nws = nws if nws is not None else _nws()
     # FakeGeocoder is structural (it has nearest()); the handler never type-checks it.
-    return build_weather_handlers(_client(handler), geocoder)["weather"]  # type: ignore[arg-type]
+    return build_weather_handlers(_client(handler), geocoder, nws)["weather"]  # type: ignore[arg-type]
 
 
 async def test_named_place_returns_summary_and_view() -> None:
@@ -398,3 +408,47 @@ async def test_here_with_no_nearby_city_is_recoverable() -> None:
     ctx = ToolContext(session=SessionContext(principal_kind="owner"), scopes=(), here=(0.0, -150.0))
     out = await _tool(_both_ok, FakeGeocoder(None))({}, ctx)
     assert isinstance(out, str) and "nearby city" in out
+
+
+# --- official NWS alert banner ---------------------------------------------
+
+
+def _heat_advisory_feed(request: httpx.Request) -> httpx.Response:
+    # Two active alerts; the Heat Advisory outranks the air-quality alert on severity.
+    return httpx.Response(
+        200,
+        json={
+            "features": [
+                {
+                    "properties": {
+                        "event": "Heat Advisory",
+                        "severity": "Moderate",
+                        "headline": "Heat Advisory in effect until 8 PM EDT",
+                    }
+                },
+                {"properties": {"event": "Air Quality Alert"}},
+            ]
+        },
+    )
+
+
+async def test_named_place_surfaces_governing_nws_alert() -> None:
+    out = await _tool(_both_ok, nws=_nws(_heat_advisory_feed))({"location": "Cocoa, FL"}, CTX)
+    assert isinstance(out, ToolOutput)
+    # The card banners the governing alert, and the summary leads with it so the model can
+    # answer even when the raw high (92°) reads mild next to the 108°+ heat index.
+    assert "Official NWS alert: Heat Advisory (+1 more active)" in out
+    alert = out.view.data["alert"]  # type: ignore[union-attr]
+    assert alert["event"] == "Heat Advisory" and alert["tone"] == "advisory"
+    assert alert["more"] == 1  # the air-quality alert folded behind the top one
+
+
+async def test_no_alert_when_out_of_coverage_or_unavailable() -> None:
+    # A non-US point (404 → out of coverage) and a transient blip (503) must both leave the
+    # forecast intact with no banner — the alert feed is strictly best-effort.
+    for status in (404, 503):
+        nws = _nws(lambda r, s=status: httpx.Response(s, json={}))
+        out = await _tool(_both_ok, nws=nws)({"location": "Cocoa, FL"}, CTX)
+        assert isinstance(out, ToolOutput)
+        assert out.view.data["alert"] is None  # type: ignore[union-attr]
+        assert "Official NWS alert" not in out

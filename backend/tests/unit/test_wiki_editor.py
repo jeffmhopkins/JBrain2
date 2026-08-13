@@ -166,7 +166,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
                 FederalRegisterClient(""),
             ),
             **build_portal_handlers(WebFetcher(), (FlSunbizResolver(""),)),  # portal_search sidecar
-            **build_weather_handlers(WeatherClient("", ""), stub),
+            **build_weather_handlers(WeatherClient("", ""), stub, NwsClient("")),
             **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(
                 HurricaneClient(""),

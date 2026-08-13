@@ -10933,6 +10933,45 @@ button.small {
   letter-spacing: 0.06em;
   color: var(--text-3);
 }
+/* Official NWS alert banner (the card's one watch/warning surface) — rose for a warning,
+   amber for a watch or advisory. Mirrors the hurricane card's `tv-hu-alert`. */
+.fb-shell .tv-wx-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 9px 13px 0;
+  padding: 7px 10px;
+  border-radius: var(--r-input);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.fb-shell .tv-wx-alert.warning {
+  background: var(--rose-tint);
+  color: var(--rose);
+  border: 1px solid color-mix(in srgb, var(--rose) 28%, transparent);
+}
+.fb-shell .tv-wx-alert.watch,
+.fb-shell .tv-wx-alert.advisory {
+  background: var(--amber-tint);
+  color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 28%, transparent);
+}
+.fb-shell .tv-wx-alert-svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fb-shell .tv-wx-alert-more {
+  font-weight: 500;
+}
+.fb-shell .tv-wx-alert-head {
+  color: var(--text-2);
+}
 .fb-shell .tv-wx-hero {
   display: flex;
   align-items: center;

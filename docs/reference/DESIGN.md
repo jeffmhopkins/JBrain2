@@ -1126,7 +1126,8 @@ Owner-facing chat artifact; never a note, never RAG-indexed.
 The in-chat card jerv shows after a `weather` tool call — the glanceable replacement
 for the old web-search-and-scrape-into-a-markdown-table weather flow. A registered,
 data-only view like every other: the model fills
-`{place, as_of, tz, range:('today'|'week'), now:{temp_f, feels_f, feels_hi_f, feels_lo_f,
+`{place, as_of, tz, range:('today'|'week'), alert:({event, tone:('warning'|'watch'|
+'advisory'), headline, more}|null), now:{temp_f, feels_f, feels_hi_f, feels_lo_f,
 cond, is_day, label, humidity, wind_mph, wind_dir}, hi_f, lo_f, hours:[{label, temp_f,
 feels_f, cond, is_day, pop, wind_mph, wind_dir}], days:[{label, cond, hi_f, lo_f,
 feels_hi_f, feels_lo_f, pop, wind_mph, wind_dir}]}` and **authors no markup, no URL, and
@@ -1140,8 +1141,14 @@ heat-advisory number a raw high/low hides (at dawn "feels 88°" reads mild on a 
 afternoon heat index tops 110°). The component owns the heat-tone decision, not the model:
 a current feels-like ≥ 100° reads amber, and when the day's peak feels-like clears that
 warn line **above** where it feels now the hero surfaces a **"Feels like up to N° today"**
-callout (the week list flags each heat day's peak instead). The card frame matches the
-live `.tool-view`.
+callout (the week list flags each heat day's peak instead). The optional **`alert`** slot
+is the card's one official watch/warning surface — the governing active **NWS** alert for
+the place (the same feed the hurricane card reads, but kept for **every** event kind, not
+just tropical, so a Heat Advisory shows on the ordinary forecast). It banners atop the
+card: a `warning` reads **rose** (danger), a `watch`/`advisory` **amber** (caution), with
+`more` folding any other active alerts behind it. `null`/absent off-box or where NWS
+doesn't cover the point (non-US), so the forecast always renders. The card frame matches
+the live `.tool-view`.
 
 Chosen **A — hero + hourly strip** (`docs/mocks/weather-view/weather-a-hero-strip.html`)
 over **B** temperature curve (`lab_plot`-style SVG — most distinctive, heaviest new

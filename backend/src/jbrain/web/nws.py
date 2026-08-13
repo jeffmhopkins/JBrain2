@@ -86,6 +86,32 @@ class Alert:
 
 
 @dataclass(frozen=True)
+class WeatherAlert:
+    """One official NWS alert of ANY kind active at a point — the general-purpose twin of
+    `Alert`, for the plain weather card rather than the hurricane card. Where `Alert`
+    keeps only tropical events, this keeps every active alert (heat, cold, wind, flood,
+    winter, fire) so a Heat Advisory surfaces on the ordinary forecast. `tone` is the
+    urgency the banner colours by; `severity` is NWS's own tier, used to break ties."""
+
+    event: str  # the raw NWS event string, e.g. "Heat Advisory"
+    tone: str  # "warning" | "watch" | "advisory"
+    severity: str  # NWS severity: "extreme" | "severe" | "moderate" | "minor" | "unknown"
+    headline: str  # NWS-sourced free text; rendered as text content only, never markup
+
+
+# The urgency an NWS event name carries, most-urgent first. The suffix is the signal
+# (a "…Warning" outranks a "…Watch" outranks a "…Advisory"); a handful of no-suffix
+# events fold in by keyword — an "…Emergency" is a warning, a "…Statement" an advisory.
+_ALERT_TONES: tuple[tuple[str, str], ...] = (
+    ("emergency", "warning"),
+    ("warning", "warning"),
+    ("watch", "watch"),
+    ("advisory", "advisory"),
+    ("statement", "advisory"),
+)
+
+
+@dataclass(frozen=True)
 class TimelineCell:
     """One 3-hourly bucket of the local impact strip: a place-local hour label plus the
     bucket's sustained wind, gust, and (summed) rain. Wind is mph, rain inches."""
@@ -250,6 +276,24 @@ class NwsClient:
                 out.append(alert)
         return tuple(out)
 
+    async def weather_alerts(self, lat: float, lon: float) -> tuple[WeatherAlert, ...]:
+        """Every official NWS alert active at a point — heat, cold, wind, flood, winter,
+        fire — reduced to a tone + severity + headline the weather card's banner renders.
+        Unlike `alerts()` (tropical-only, for the hurricane card) nothing is filtered out,
+        so an ordinary forecast surfaces a Heat Advisory. Same error contract as `alerts`:
+        a 404 means the point is outside coverage (NwsOutOfCoverage); a 5xx/timeout is
+        transient (NwsUnavailable)."""
+        body = await self._get(f"{self._base}/alerts/active?point={lat},{lon}")
+        features = body.get("features") if isinstance(body, dict) else None
+        if not isinstance(features, list):
+            return ()
+        out: list[WeatherAlert] = []
+        for feature in features:
+            alert = _parse_weather_alert(feature)
+            if alert is not None:
+                out.append(alert)
+        return tuple(out)
+
     async def timeline(self, lat: float, lon: float) -> Timeline:
         """The local 3-hourly wind/gust/rain strip + sustained-wind arrival labels for a
         point. Resolves /points → forecastGridData + place tz, expands the gridpoint
@@ -309,6 +353,37 @@ def _parse_alert(feature: object) -> Alert | None:
     level, kind = mapped
     headline = str(props.get("headline") or "")
     return Alert(event=event, level=level, kind=kind, headline=headline)
+
+
+def _alert_tone(event: str) -> str:
+    """An NWS event name → the banner tone. Matched by keyword (see `_ALERT_TONES`);
+    an event with no recognized suffix defaults to "advisory" (the calmest tone)."""
+    low = event.casefold()
+    for needle, tone in _ALERT_TONES:
+        if needle in low:
+            return tone
+    return "advisory"
+
+
+def _parse_weather_alert(feature: object) -> WeatherAlert | None:
+    """One `features[]` entry → a WeatherAlert, or None for a malformed / event-less
+    entry. Unlike `_parse_alert` nothing is filtered by kind — every active alert is
+    kept. `event`/`headline` ride as text content only (rendered escaped, never markup)."""
+    if not isinstance(feature, dict):
+        return None
+    props = feature.get("properties")
+    if not isinstance(props, dict):
+        return None
+    event = str(props.get("event") or "").strip()
+    if not event:
+        return None
+    severity = str(props.get("severity") or "").strip().casefold() or "unknown"
+    return WeatherAlert(
+        event=event,
+        tone=_alert_tone(event),
+        severity=severity,
+        headline=str(props.get("headline") or ""),
+    )
 
 
 def _zone(tz_name: str) -> ZoneInfo:

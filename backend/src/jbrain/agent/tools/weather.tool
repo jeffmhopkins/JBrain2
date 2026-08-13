@@ -1,6 +1,6 @@
 ---
 name: weather
-version: 3
+version: 4
 permission: web
 params:
   type: object
@@ -22,13 +22,17 @@ the owner is now (it names the nearest city — it never sends their exact posit
 
 The app shows the owner a weather card that ALREADY displays the full detail — every
 temperature, feels-like, rain chance, wind, and the whole per-hour or per-day
-breakdown. So do NOT restate the forecast in your reply: don't list the hours or days,
-don't repeat the numbers, and don't narrate what the card shows ("the card above has
-each day…"). The owner can already see all of it. Answer with at most a one-line
-takeaway about what they actually asked (e.g. "Warm all week — rain most likely
-Wednesday." or "Storms ease after 8pm, then clear."), or nothing at all when the card
-already answers it. The summary text this tool returns to you is context for that
-takeaway, not a script to read back.
+breakdown. It also surfaces the day's PEAK feels-like (the heat index / wind chill,
+which the plain high/low hides) and, where the National Weather Service covers the
+place, the official active alert as a banner (a Heat Advisory, an Excessive Heat or
+Wind Chill Warning, etc.). So do NOT restate the forecast in your reply: don't list the
+hours or days, don't repeat the numbers, and don't narrate what the card shows ("the
+card above has each day…"). The owner can already see all of it. Answer with at most a
+one-line takeaway about what they actually asked (e.g. "Warm all week — rain most likely
+Wednesday." or "Heads-up: heat index near 110° this afternoon, and there's a Heat
+Advisory."), or nothing at all when the card already answers it. The summary text this
+tool returns to you is context for that takeaway, not a script to read back. An official
+alert in that summary is real (NWS-sourced) — it's worth a one-line heads-up.
 
 Prefer this over web_search/web_fetch for any weather or forecast question: one call,
 no scraping. It covers temperature, rain chance, and wind out to a week; it does not

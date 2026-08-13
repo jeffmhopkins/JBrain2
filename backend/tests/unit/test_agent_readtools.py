@@ -794,7 +794,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
                 FederalRegisterClient(""),
             ),
             **build_portal_handlers(WebFetcher(), (FlSunbizResolver(""),)),
-            **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
+            **build_weather_handlers(WeatherClient("", ""), object(), NwsClient("")),  # type: ignore[arg-type]
             **build_weather_history_handlers(
                 WeatherHistoryClient(""),
                 WeatherClient("", ""),
@@ -1288,8 +1288,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "weather.tool": (
             "weather",
-            3,
-            "82727cb75c53aa71beb7fda415a918f18417cdc1192786d715f36290f8f99056",
+            4,
+            "5896c97df0fbfa07f611c23b253593254c3d050e99eb93e4c4286e73319571f4",
         ),
         "weather_history.tool": (
             "weather_history",
