@@ -143,6 +143,7 @@ class ResidencyCoordinator:
         gateway: LocalGateway,
         *,
         windows_loader: WindowsLoader | None = None,
+        slots_loader: WindowsLoader | None = None,
         models_dir: str = "",
         enabled: bool = False,
         free_ram_fraction: float = 0.25,
@@ -155,6 +156,9 @@ class ResidencyCoordinator:
         # is ever recorded. Mirrors settings.local_llm_enabled.
         self._enabled = enabled
         self._windows_loader = windows_loader
+        # Per-model llama-server slot counts (catalog id → -np). A second slot doubles the
+        # model's KV, so the eviction budget must see it — sized like windows, read live.
+        self._slots_loader = slots_loader
         self._models_dir = models_dir
         # The config-default floor. The live operator override (fraction_loader) wins over it
         # per load when wired and valid; this is the fallback when there's no override, no
@@ -212,6 +216,15 @@ class ResidencyCoordinator:
             return await self._windows_loader()
         return {}
 
+    async def _slots(self) -> Mapping[str, int]:
+        """Live per-model slot counts (catalog id → -np); empty when no loader is wired or the
+        read fails, so the budget falls back to a single slot (no KV multiplier)."""
+        if self._slots_loader is None:
+            return {}
+        with contextlib.suppress(Exception):
+            return await self._slots_loader()
+        return {}
+
     async def _fraction(self) -> float:
         """The live free-RAM floor (fraction kept free): the operator's stored override when
         wired and valid, else the construction-time config default. Read per-plan so a
@@ -239,16 +252,19 @@ class ResidencyCoordinator:
                 return frozenset(names)
         return frozenset()
 
-    async def _footprint(self, served_model: str, windows: Mapping[str, int]) -> float:
-        """A resident model's unified-memory footprint (GiB) at its served window — measured
-        weights + KV. 0.0 for a served name outside the catalog: we can't size it, so it never
-        drives (or blocks) an eviction."""
+    async def _footprint(
+        self, served_model: str, windows: Mapping[str, int], slots: Mapping[str, int]
+    ) -> float:
+        """A resident model's unified-memory footprint (GiB) at its served window and slot
+        count — measured weights + KV (a second slot doubles the KV). 0.0 for a served name
+        outside the catalog: we can't size it, so it never drives (or blocks) an eviction."""
         model = local_catalog.get_by_served(served_model)
         if model is None:
             return 0.0
         window = windows.get(model.id, model.context_window)
+        n_slots = slots.get(model.id, 1)
         disk = weights_size_gb(self._models_dir, model.id) if self._models_dir else None
-        return local_catalog.footprint_gb(model, window, disk_gb=disk)
+        return local_catalog.footprint_gb(model, window, disk_gb=disk, slots=n_slots)
 
     async def _plan(self, served_model: str) -> EvictionPlan | None:
         """Compute what loading `served_model` would cost right now — the eviction plan —
@@ -266,6 +282,7 @@ class ResidencyCoordinator:
         total, used = mem
         ceiling = total * (1.0 - await self._fraction())  # keep used at/under this
         windows = await self._windows()
+        slots = await self._slots()
         if served_model in running:
             return EvictionPlan(
                 target=served_model,
@@ -279,7 +296,7 @@ class ResidencyCoordinator:
                 over_box=False,
                 already_resident=True,
             )
-        predicted = used + await self._footprint(served_model, windows)
+        predicted = used + await self._footprint(served_model, windows, slots)
         if predicted <= ceiling:  # fits alongside what's resident — evict nothing
             return EvictionPlan(
                 target=served_model,
@@ -299,7 +316,7 @@ class ResidencyCoordinator:
         for served in running:
             if served == served_model:
                 continue
-            ranked.append((-await self._footprint(served, windows), served))
+            ranked.append((-await self._footprint(served, windows, slots), served))
         ranked.sort()
         victims: list[str] = []
         freed = 0.0
@@ -482,12 +499,13 @@ class ResidencyCoordinator:
         total, used = mem
         ceiling = total * (1.0 - await self._fraction())
         windows = await self._windows()
+        slots = await self._slots()
         # Deterministic order when not everything fits: biggest footprint first, so we bring
         # back the model the turn was actually using before a smaller one. A bare set would
         # restore an arbitrary subset.
         scored: list[tuple[float, str]] = []
         for served in targets:
-            scored.append((-await self._footprint(served, windows), served))
+            scored.append((-await self._footprint(served, windows, slots), served))
         scored.sort()
         for neg_fp, served in scored:
             fp = -neg_fp

@@ -219,10 +219,15 @@ class LocalModelInfo(BaseModel):
     # The operator's per-model override (tokens), or null to use the default. Drives
     # the size picker's current value; editable only while the model isn't resident.
     context_window_override: int | None
-    # Estimated KV-cache size (GB) at the EFFECTIVE window (override or default) —
-    # the context portion of the model's memory-bar segment. An estimate, not a
-    # measurement (see local_catalog.kv_gb_per_128k).
+    # Estimated KV-cache size (GB) at the EFFECTIVE window (override or default) AND slot
+    # count — the context portion of the model's memory-bar segment. An estimate, not a
+    # measurement (see local_catalog.kv_gb_per_128k); a second slot doubles it.
     kv_gb: float
+    # llama-server `-np` slot count: 1 (single slot, the default) or 2 (a dedicated
+    # interactive keep-warm slot beside the background one, so the jerv prefix isn't evicted
+    # by title/background traffic — docs/runbooks/STRIX_HALO_SETUP.md). Editable only while
+    # the model isn't resident; a change doubles the model's KV footprint.
+    parallel_slots: int
 
 
 class LoadedModelsOut(BaseModel):
@@ -403,6 +408,7 @@ async def _snapshot(
 ) -> LlmSettingsOut:
     overrides = await store.llm_task_overrides(ctx)
     windows = await store.llm_local_context_windows(ctx)
+    slots = await store.llm_local_parallel_slots(ctx)
     free_ram_override = await store.llm_local_free_ram_fraction(ctx)
     unavailable = set(await store.llm_local_unavailable(ctx))
     requested = set(await store.llm_local_provision_requested(ctx))
@@ -432,6 +438,7 @@ async def _snapshot(
                 m,
                 m.id in loaded,
                 windows,
+                slots,
                 m.id in unavailable,
                 m.id in requested,
                 m.id in removing,
@@ -519,6 +526,7 @@ def _local_model_info(
     m: local_catalog.LocalModel,
     loaded: bool,
     windows: dict[str, int],
+    slots: dict[str, int],
     unavailable: bool,
     requested: bool,
     removing: bool,
@@ -528,7 +536,8 @@ def _local_model_info(
     available = enabled and not unavailable
     override = windows.get(m.id)
     effective_window = override if override is not None else m.context_window
-    kv_gb = round(m.kv_gb_per_128k * effective_window / 131072, 2)
+    n_slots = slots.get(m.id, 1)
+    kv_gb = round(m.kv_gb_per_128k * effective_window / 131072 * n_slots, 2)
     return LocalModelInfo(
         id=m.id,
         label=m.label,
@@ -554,6 +563,7 @@ def _local_model_info(
         max_context_window=m.max_context_window,
         context_window_override=override,
         kv_gb=kv_gb,
+        parallel_slots=n_slots,
     )
 
 
@@ -605,16 +615,16 @@ def _require_uninstallable(settings: Settings, model_id: str) -> local_catalog.L
     return model
 
 
-def _try_regenerate(settings: Settings, windows: dict[str, int]) -> None:
-    """Re-stamp llama-swap.yaml with the current per-model windows so the gateway (run
-    with --watch-config) reloads at the configured `-c`. Every model is a non-swapping
-    group member regardless of staging (the app is the sole evictor), so this is driven
-    only by window edits. Best-effort: the settings are already persisted (so the meter
-    is correct), and the weights dir may not be writable/complete in every deploy — a
+def _try_regenerate(settings: Settings, windows: dict[str, int], slots: dict[str, int]) -> None:
+    """Re-stamp llama-swap.yaml with the current per-model windows AND slot counts so the
+    gateway (run with --watch-config) reloads at the configured `-c`/`-np`. Every model is a
+    non-swapping group member regardless of staging (the app is the sole evictor), so this is
+    driven only by window/slot edits. Best-effort: the settings are already persisted (so the
+    meter is correct), and the weights dir may not be writable/complete in every deploy — a
     regen failure only delays the gateway catching up, it must never fail the edit."""
     try:
         manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
-        llama_swap_config.write(settings.local_models_dir, manifest, windows=windows)
+        llama_swap_config.write(settings.local_models_dir, manifest, windows=windows, slots=slots)
     except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
         log.warning("llm_settings.gateway_config_regen_failed", error=str(exc))
 
@@ -775,7 +785,45 @@ async def set_local_context_window(
     windows = await store.set_llm_local_context_window(
         ctx, model_id=model_id, window=body.context_window
     )
-    _try_regenerate(settings, windows)
+    _try_regenerate(settings, windows, await store.llm_local_parallel_slots(ctx))
+    await _unload_if_loaded(settings, gateway, model)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+class ParallelSlotsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # 1 (or null) clears the override → a single slot; 2 opts into the dedicated interactive
+    # keep-warm slot. Bounded 1..2 by the API — a third slot buys nothing here and only burns KV.
+    slots: int | None = None
+
+
+# One extra slot is the whole feature: a dedicated interactive slot beside the background one.
+# More than two just multiplies KV with no benefit on a single-GPU box, so the API caps it.
+PARALLEL_SLOTS_MAX = 2
+
+
+@router.put("/settings/llm/local-models/{model_id}/parallel-slots")
+async def set_local_parallel_slots(
+    model_id: str,
+    body: ParallelSlotsIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Set (2) or clear (1/null) one model's llama-server `-np` slot count — the operator's
+    opt-in to a dedicated interactive keep-warm slot, so a primed jerv prefix isn't evicted by
+    title/background traffic (docs/runbooks/STRIX_HALO_SETUP.md). 409 when hosting is off; 404
+    for an unprovisioned id; 422 outside 1..2. A second slot roughly doubles the model's KV
+    cost — persists the override (the meter reflects it at once), re-stamps the gateway config,
+    and unloads the model if resident so its next request reloads with the new `-np`/`-c`."""
+    model = _require_provisioned(settings, model_id)
+    if body.slots is not None and not (1 <= body.slots <= PARALLEL_SLOTS_MAX):
+        raise HTTPException(status_code=422, detail=f"slots must be 1..{PARALLEL_SLOTS_MAX}")
+    ctx = ctx_for(principal)
+    slots = await store.set_llm_local_parallel_slots(ctx, model_id=model_id, slots=body.slots)
+    _try_regenerate(settings, await store.llm_local_context_windows(ctx), slots)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 

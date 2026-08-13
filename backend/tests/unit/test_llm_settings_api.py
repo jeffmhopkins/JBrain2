@@ -634,6 +634,39 @@ def test_set_context_window_round_trips_override() -> None:
     assert store.values["llm_local_context_windows"] == {}
 
 
+def test_drawer_reports_parallel_slots_default_of_one() -> None:
+    c, _ = _authed_client(_local_settings())
+    by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    assert all(m["parallel_slots"] == 1 for m in by_id.values())
+
+
+def test_set_parallel_slots_round_trips_and_doubles_the_kv_estimate() -> None:
+    c, store = _authed_client(_local_settings())
+    base = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}["gpt-oss-120b"]
+    resp = c.put("/api/settings/llm/local-models/gpt-oss-120b/parallel-slots", json={"slots": 2})
+    assert resp.status_code == 200, resp.text
+    m = {x["id"]: x for x in resp.json()["local_models"]}["gpt-oss-120b"]
+    assert m["parallel_slots"] == 2
+    assert m["kv_gb"] == round(base["kv_gb"] * 2, 2)  # the meter reflects the doubled KV
+    assert store.values["llm_local_parallel_slots"] == {"gpt-oss-120b": 2}
+    # Clearing (1 or null) reverts to a single slot and drops the override row.
+    resp = c.put("/api/settings/llm/local-models/gpt-oss-120b/parallel-slots", json={"slots": 1})
+    m = {x["id"]: x for x in resp.json()["local_models"]}["gpt-oss-120b"]
+    assert m["parallel_slots"] == 1
+    assert store.values["llm_local_parallel_slots"] == {}
+
+
+def test_set_parallel_slots_rejects_out_of_range() -> None:
+    c, store = _authed_client(_local_settings())
+    assert (
+        c.put(
+            "/api/settings/llm/local-models/gpt-oss-120b/parallel-slots", json={"slots": 3}
+        ).status_code
+        == 422
+    )
+    assert "llm_local_parallel_slots" not in store.values  # nothing leaked
+
+
 def test_set_context_window_rejects_a_window_over_the_models_max() -> None:
     c, store = _authed_client(_local_settings())
     # gpt-oss native max is 131072 — 256k exceeds it.

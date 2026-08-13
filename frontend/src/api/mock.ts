@@ -449,6 +449,7 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 32768,
       max_context_window: 262144,
       context_window_override: null,
+      parallel_slots: 1,
       kv_gb: 1.5,
     },
     {
@@ -470,6 +471,7 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 131072,
       max_context_window: 131072,
       context_window_override: null,
+      parallel_slots: 1,
       kv_gb: 4.5,
     },
     {
@@ -491,6 +493,7 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 32768,
       max_context_window: 1048576,
       context_window_override: null,
+      parallel_slots: 1,
       kv_gb: 0.8,
     },
     {
@@ -512,6 +515,7 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 32768,
       max_context_window: 262144,
       context_window_override: null,
+      parallel_slots: 1,
       kv_gb: 1.5,
     },
     {
@@ -533,6 +537,7 @@ const LLM_SETTINGS: LlmSettings = {
       context_window: 32768,
       max_context_window: 262144,
       context_window_override: null,
+      parallel_slots: 1,
       kv_gb: 1.5,
     },
   ],

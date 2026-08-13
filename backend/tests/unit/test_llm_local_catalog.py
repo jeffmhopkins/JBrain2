@@ -353,6 +353,10 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
     assert local_catalog.footprint_gb(vl, 16384) == 32.75
     # A measured on-disk size overrides the nominal weights estimate.
     assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 33.4
+    # A second slot doubles ONLY the KV term (weights are shared): gpt-oss at 128k with 2
+    # slots = 59 + 2*4.5 = 68.0. slots<=1 leaves it unchanged.
+    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 68.0
+    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 63.5
 
 
 def test_get_by_served_maps_served_name_to_catalog_entry() -> None:

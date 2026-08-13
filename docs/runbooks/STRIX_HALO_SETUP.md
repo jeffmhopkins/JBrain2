@@ -179,15 +179,38 @@ instead of re-prefilling it — but only if that prefix was primed first, and no
 after a restart (residency's restore only undoes *same-process* evictions; its keep-hot set is
 empty on a fresh boot, and an on-demand load is bare). The **WarmKeeper** fills the gap: a
 detached boot + interval reconciler that keeps the model `agent.turn` routes to (when it's
-local) resident **and primed** with a jerv-shaped warm-up (persona **+** the same tool schemas
-a real turn sends). It only ever *adds* that one model, under the same free-RAM floor and
-code-mode hold as everything else, and no-ops once it's resident — so a real turn makes the
-next tick idle. It reconciles on an interval too, so it self-heals after an app restart, an
-update (fresh container), or a standalone gateway (llama-swap) restart. **Priming with the
-tools is load-bearing:** under the gateway's `--jinja` the chat template renders the tool
-definitions into the prompt's *leading* tokens, so a persona-only warm (the earlier behaviour)
-diverges from a real tool-carrying turn before the reusable prefix ends and `--cache-reuse`
-salvages almost nothing — the manual **Load** button primes the same persona+tools shape now.
+local) resident **and primed**. It primes by issuing a throwaway turn down the **same path a
+real turn takes** — `router.converse("agent.turn", …)` with jerv's persona + tools + the
+resolved effort — so the primed KV prefix is byte-identical to what a real turn sends and the
+reuse actually lands. That call also loads the model on demand through residency, so one prime
+both resides and warms it. It only ever *adds* that one model, under the same free-RAM floor
+and code-mode hold as everything else, and reconciles on an interval so it self-heals after an
+app restart, an update (fresh container), or a standalone gateway (llama-swap) restart.
+
+Two subtleties the prime must respect, both learned the hard way:
+- **Match the tools exactly.** Under the gateway's `--jinja` the chat template renders the tool
+  definitions into the prompt's *leading* tokens, so a persona-only warm diverges from a real
+  tool-carrying turn before the reusable prefix ends and `--cache-reuse` salvages almost
+  nothing. The prime sends the same tool schemas a real turn does.
+- **Re-prime on a liveness flip.** The primed tool set depends on ComfyUI liveness (the
+  image-gen tools are hidden when it's down). A prime taken at boot while ComfyUI was still
+  unreachable hides those tools, but a real turn once ComfyUI is up shows them — a mismatch that
+  silently defeats the reuse. So the keeper keys its "already primed" state on
+  `(model, hidden-tool-set)` and re-primes when the hidden set changes, self-correcting once
+  liveness settles. The manual **Load** button primes the same persona+tools shape too.
+
+**Optional: a dedicated interactive slot (Settings → LLM → On-box models).** A single llama-server
+KV slot holds the primed jerv prefix well enough for ordinary traffic (small background/title
+completions don't evict a large prefix), but a genuinely large, different prompt — a 90k-token
+`note.extract`, a long non-jerv turn — *can* push it out. Each on-box model has an **interactive
+slot** toggle beside its context-window picker: turning it on gives that model llama-server
+`-np 2` (two KV slots). llama-server routes each request to the slot with the longest matching
+prefix, so jerv turns keep their primed KV in one slot while title/background traffic uses the
+other — neither can evict the other's cache. The cost is KV RAM: a second slot **doubles** the
+model's KV (the meter and the residency eviction budget both account for it), so `-c` is set to
+`window × slots` to keep each slot at the full window. Editable only while the model isn't
+resident (a running process can't add a slot live); the change unloads it so the next request
+reloads with the new `-np`.
 
 **Code mode reserves the box (exclusive while ON).** Two ~60 GB models — gpt-oss-120b and the
 Qwen3-Coder-Next coder — can't safely co-reside on 128 GB, and the swap between them has a

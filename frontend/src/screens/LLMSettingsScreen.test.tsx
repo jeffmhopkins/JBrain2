@@ -23,6 +23,7 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
     max_context_window: 32768,
     context_window_override: null,
     kv_gb: 0,
+    parallel_slots: 1,
     ...over,
   };
   // Default effective-available to provisioned unless a test sets it explicitly.
@@ -933,6 +934,51 @@ describe("LLMSettingsScreen", () => {
     const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
     expect(select.disabled).toBe(true);
     expect(screen.getByText(/unload to change/)).toBeInTheDocument();
+  });
+
+  it("toggles the dedicated interactive slot and PUTs the slot count", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: true,
+        tiers: ["high"],
+        quant: "MXFP4",
+        size_gb: 59,
+        disk_gb: 59,
+        context_window: 131072,
+        max_context_window: 131072,
+        kv_gb: 4.5,
+        parallel_slots: 1,
+      }),
+    ];
+    let putBody: { slots: number | null } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/parallel-slots") && method === "PUT") {
+          putBody = JSON.parse(String(init?.body));
+          const m0 = s.local_models[0];
+          if (m0) m0.parallel_slots = putBody?.slots ?? 1;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+
+    const select = (await screen.findByLabelText("interactive slot")) as HTMLSelectElement;
+    expect(select.value).toBe("1");
+    fireEvent.change(select, { target: { value: "2" } });
+    await waitFor(() => expect(putBody).toEqual({ slots: 2 }));
   });
 
   it("queues an un-provisioned model for install and starts its download (no system update)", async () => {

@@ -3,16 +3,29 @@ jerv message after a restart/update is instant instead of paying a cold weight-l
 cold persona+tools prefill (the "slow first token" on a big local model).
 
 Nothing else brings the agent.turn model back after a boot: residency's `schedule_restore`
-only undoes same-process transient displacements (its keep-hot set is empty on a fresh
-boot), and an on-demand turn's `ensure_room` load is bare — it warms the inference path but
-does NOT prime the persona/tools prefix. This reconciler fills that gap. It runs on boot and
-on an interval, so it self-heals after an app restart, an update (a fresh container), OR a
-standalone gateway (llama-swap) restart the app's process never saw.
+only undoes same-process transient displacements (its keep-hot set is empty on a fresh boot),
+and an on-demand turn's load is bare — it warms the inference path but does NOT prime the
+persona/tools prefix. This reconciler fills that gap. It runs on boot and on an interval, so
+it self-heals after an app restart, an update (a fresh container), OR a standalone gateway
+(llama-swap) restart the app's process never saw.
 
-It only ever ADDS the single interactive model, under the existing residency rules (the
-free-RAM floor via `free_room`, and the code-mode hold), never evicts for anything else, and
-no-ops once the model is resident — so a real jerv turn (which loads and uses it) makes the
-next tick a no-op. Best-effort throughout: a down gateway, a full box, or a load failure is
+It primes by issuing a throwaway turn down the SAME path a real turn takes — `router.converse`
+with jerv's persona + tools + the agent.turn effort — so the primed KV prefix is byte-identical
+to what a real turn sends (a hand-built warm on a side path drifts and the reuse silently
+misses). That call also loads the model on demand through residency, so a single prime both
+resides and warms it. Two subtleties it handles:
+
+  - **Liveness flips.** The primed tool set depends on ComfyUI liveness (the image-gen tools
+    are hidden when it's down). A prime taken at boot while ComfyUI was still unreachable hides
+    those tools, but a real turn once ComfyUI is up shows them — a mismatch that defeats the
+    reuse. So the keeper keys its "already primed" state on (model, hidden-set) and RE-PRIMES
+    when the hidden set changes, self-correcting once liveness settles.
+  - **Resident ≠ primed.** If something else loaded the model cold first, "resident" doesn't
+    mean the jerv prefix is in the cache. The keeper still primes a resident-but-unprimed model
+    once; it no-ops only after it has primed the current (model, hidden) — so a real jerv turn's
+    growing conversation KV is never clobbered by a redundant re-prime.
+
+Best-effort throughout: a down gateway, a full box, the code-mode hold, or a failed prime is
 logged and retried on the next tick, never raised into boot or a turn.
 """
 
@@ -23,13 +36,17 @@ from collections.abc import Awaitable, Callable, Collection
 
 import structlog
 
-from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_spec
+from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_inputs
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
-from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
+from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
+from jbrain.llm.types import UserMessage
 
 log = structlog.get_logger()
+
+# The task the prime routes as — the interactive chat turn (jerv). Priming as this exact task
+# is what makes the primed prefix (model, effort, tools) match a real turn's, so the reuse lands.
+AGENT_TURN_TASK = "agent.turn"
 
 
 class WarmKeeper:
@@ -37,7 +54,6 @@ class WarmKeeper:
         self,
         *,
         gateway: LocalGatewayClient,
-        residency: ResidencyCoordinator | None,
         registry: ToolRegistry,
         liveness: HiddenToolsProbe | None,
         router: LlmRouter,
@@ -46,27 +62,29 @@ class WarmKeeper:
         interval_wait: float = 5.0,
     ):
         self._gateway = gateway
-        self._residency = residency
         self._registry = registry
         self._liveness = liveness
-        # The router owns routing precedence (env pin, DB override, local gate), so the keeper
-        # asks it which model agent.turn resolves to rather than re-deriving it — a re-route
-        # then moves the kept-hot model automatically.
+        # The router owns routing precedence (env pin, DB override, local gate) AND residency
+        # admission, so the keeper asks it which model agent.turn resolves to and primes THROUGH
+        # it — a re-route moves the kept-hot model automatically and the prime path matches a turn.
         self._router = router
         self._hold_loader = hold_loader
-        # Two cadences: retry EAGERLY (interval_wait) while a target is wanted but not yet
-        # resident — the boot window where the gateway is still coming up, so the prime lands
-        # seconds after it's reachable, not a full steady-interval later. Once resident (or
-        # nothing to do), fall back to the slow steady poll (interval_ready) that only exists
-        # to catch a later gateway-only restart.
+        # What we last successfully primed: (served_model, hidden-tool-set). None until primed
+        # (or after the model is found evicted). Re-prime when this no longer matches the desired.
+        self._primed: tuple[str, frozenset[str]] | None = None
+        # Two cadences: retry EAGERLY (interval_wait) while a target is wanted but not yet primed
+        # — the boot window where the gateway/ComfyUI are still coming up, so the prime lands
+        # seconds after they're reachable, not a full steady-interval later. Once primed (or
+        # nothing to do), fall back to the slow steady poll (interval_ready) that only exists to
+        # catch a later gateway-only restart or a liveness flip.
         self._interval_ready = interval_ready
         self._interval_wait = interval_wait
 
     async def reconcile_once(self) -> bool:
         """Bring the target model to resident+primed if it isn't already. Returns True when
-        SETTLED (nothing to keep warm, or the target is resident), False when a target is
-        wanted but not yet resident (gateway down / no room / load failed) — the run loop
-        reads that as 'retry soon'."""
+        SETTLED (nothing to keep warm, or resident and primed with the current tool set), False
+        when a target is wanted but not yet primed (gateway down / no room / prime failed) — the
+        run loop reads that as 'retry soon'."""
         served = await self._router.primary_local_served_model()
         if served is None:
             return True  # cloud route or local hosting off — nothing to keep warm
@@ -80,28 +98,33 @@ class WarmKeeper:
             running = await self._gateway.running()
         except Exception:  # noqa: BLE001 — running() already swallows, but be defensive
             running = set()
-        if served in running:
-            return True  # a prior tick or a real turn already warmed it
-        # Make room the deliberate way (hold the free-RAM floor); a refusal (won't fit) leaves
-        # it for a later tick rather than crashing.
-        if self._residency is not None:
-            try:
-                await self._residency.free_room(served)
-            except ResidencyError as exc:
-                log.info("warm_keeper.no_room", model=served, error=str(exc))
-                return False
-        system, tools = await jerv_prime_spec(self._registry, self._liveness)
+        if served not in running:
+            self._primed = None  # evicted (or never loaded) → the cache no longer holds our prime
+        system, tools, hidden = await jerv_prime_inputs(self._registry, self._liveness)
+        want = (served, hidden)
+        if served in running and self._primed == want:
+            return True  # already primed with the current tool set — leave any live conversation be
+        # Prime down the real turn path: resolves agent.turn's model+effort, admits through
+        # residency (loading the model if needed), and prefills the exact persona+tools prefix a
+        # real turn reuses. max_tokens=1 — we want the prefill in cache, not the output.
         try:
-            await self._gateway.load(served, warm_system=system, warm_tools=tools)
-        except LocalGatewayError as exc:
-            log.info("warm_keeper.load_failed", model=served, error=str(exc))
+            await self._router.converse(
+                AGENT_TURN_TASK,
+                system=system,
+                messages=[UserMessage(text="warmup")],
+                tools=tools,
+                max_tokens=1,
+            )
+        except Exception as exc:  # noqa: BLE001 — gateway down/cold/no-room: retry, never raise
+            log.info("warm_keeper.prime_failed", model=served, error=str(exc))
             return False
-        log.info("warm_keeper.primed", model=served, tool_count=len(tools))
+        self._primed = want
+        log.info("warm_keeper.primed", model=served, tool_count=len(tools), hidden=sorted(hidden))
         return True
 
     async def run(self) -> None:
-        """The reconcile loop: settle, then sleep — short while still trying to reach a
-        wanted model (boot / gateway restart), long once resident. Runs until cancelled."""
+        """The reconcile loop: settle, then sleep — short while still trying to reach a wanted
+        model (boot / gateway restart / liveness flip), long once primed. Runs until cancelled."""
         while True:
             settled = True
             try:

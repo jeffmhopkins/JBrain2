@@ -549,8 +549,12 @@ export interface LocalModelInfo {
   max_context_window: number;
   /** The operator's per-model override (tokens), or null to use the default. */
   context_window_override: number | null;
-  /** Estimated KV-cache GB at the effective window — the context portion of the bar. */
+  /** Estimated KV-cache GB at the effective window AND slot count — a second slot doubles it. */
   kv_gb: number;
+  /** llama-server `-np` slot count: 1 (single slot, default) or 2 (a dedicated interactive
+   * keep-warm slot beside the background one, so a primed chat prefix isn't evicted by
+   * title/background traffic). Editable only while the model isn't resident. */
+  parallel_slots: number;
 }
 
 /** One model a staged load would evict — catalog id, label, and resident footprint (GB),
@@ -2173,6 +2177,18 @@ export const api = {
     const response = await request(
       `/api/settings/llm/local-models/${encodeURIComponent(id)}/context-window`,
       jsonInit("PUT", { context_window: window }),
+    );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Set the model's llama-server `-np` slot count: 2 opts into a dedicated interactive
+   * keep-warm slot (so a primed chat prefix survives background/title traffic); 1 (or null)
+   * reverts to a single slot. A second slot roughly doubles the model's KV. Returns the
+   * full snapshot; the model unloads so its next request reloads with the new `-np`. */
+  async setLocalParallelSlots(id: string, slots: number | null): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/parallel-slots`,
+      jsonInit("PUT", { slots }),
     );
     return (await response.json()) as LlmSettings;
   },

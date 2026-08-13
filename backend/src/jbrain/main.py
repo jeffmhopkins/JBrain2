@@ -378,6 +378,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.residency = ResidencyCoordinator(
             app.state.local_gateway,
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
+            slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
             models_dir=settings.local_models_dir,
             enabled=settings.local_llm_enabled,
             free_ram_fraction=settings.local_llm_free_ram_fraction,
@@ -1001,7 +1002,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # reconciles on boot and on an interval, so it also self-heals a gateway-only restart.
         app.state.warm_keeper = WarmKeeper(
             gateway=app.state.local_gateway,
-            residency=app.state.residency,
             registry=app.state.agent_registry,
             liveness=getattr(app.state, "image_liveness", None),
             router=app.state.llm_router,
