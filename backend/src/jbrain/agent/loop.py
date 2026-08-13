@@ -28,6 +28,7 @@ from jbrain.agent.contracts import (
     NoteSource,
     ProposalRef,
     ReasoningDelta,
+    ReasoningReclassify,
     TextDelta,
     ToolCallEvent,
     ToolProgressEvent,
@@ -529,8 +530,11 @@ class AgentLoop:
         interleaved final text: a tool-call message carries analysis + the call, never a
         user-facing preamble. So for the local route a tool-round's content is ALWAYS reasoning
         and is routed to the thinking trace, never the answer; a hosted model (Claude, Grok) that
-        legitimately narrates before a tool call is left untouched. Never raises — a routing
-        hiccup degrades to keeping the text (the prior behaviour)."""
+        legitimately narrates before a tool call is left untouched. In the streaming path this
+        content still streams live as the answer and is reclassified to thinking at round end
+        (a `ReasoningReclassify` event) once the tool call is known, so the answer no longer
+        stalls into one lump; the non-streaming path buffers and routes it directly. Never
+        raises — a routing hiccup degrades to keeping the text (the prior behaviour)."""
         try:
             provider, _model = await self._router.effective_spec(self._task, SYSTEM_STRENGTH)
         except Exception:  # noqa: BLE001 - a routing hiccup must never break a turn
@@ -961,16 +965,17 @@ class AgentLoop:
         # this floor, and the exact per-step UsageEvent corrects it. context only grows, so
         # flooring at the last real input never lets the bar shrink mid-turn.
         last_real_input = context_seed
-        # The local gpt-oss route leaks a tool-round's analysis onto the content channel; buffer
-        # that round's text and route it to the thinking trace instead of the answer (see
-        # `_hide_tool_round_text`). A hosted model keeps its live per-chunk stream byte-for-byte.
+        # The local gpt-oss route leaks a tool-round's analysis onto the content channel; on that
+        # route each round's content streams live but is reclassified into the thinking trace at
+        # round end if the round called a tool (see `_hide_tool_round_text`). A hosted model keeps
+        # its live per-chunk stream byte-for-byte with no reclassification.
         hide_tool_round_text = await self._hide_tool_round_text()
 
         for _step in range(self._g.max_steps):
             turn: LlmTurn | None = None
             # On the local route we can't classify this round's content until its stop_reason
-            # arrives (a tool call is signalled only at the end), so buffer the round's text and
-            # commit it once we know whether the round is a tool call (hide) or the answer (show).
+            # arrives (a tool call is signalled only at the end). Its chunks still stream live as
+            # answer; `round_text` tracks them so a tool-call round can reclassify them to thinking.
             round_text: list[str] = []
             # Live meter: while this step streams, emit a throttled running estimate — the last
             # KNOWN prompt size (last_real_input, a real figure) plus the tokens generated so far
@@ -992,11 +997,21 @@ class AgentLoop:
             ):
                 if isinstance(part, TextChunk):
                     if part.text:
+                        # Stream every content chunk live as a TextDelta on BOTH routes, so the
+                        # answer renders token-by-token. On the local (harmony) route we can't yet
+                        # tell whether this round's content is the answer or a tool-call round's
+                        # leaked analysis (see `_hide_tool_round_text`) — that's only known at the
+                        # round's stop_reason — so we DEFER the classification instead of holding
+                        # the whole round: the text streams into the answer now, and a tool-call
+                        # round reclassifies it into the thinking trace at round end (below). This
+                        # is what makes the final answer stream on the local route; before, the
+                        # whole answer was buffered and flushed as one lump. Track the round's text
+                        # so the reclassify can name exactly what to move.
                         if hide_tool_round_text:
                             round_text.append(part.text)
                         else:
                             answer_parts.append(part.text)
-                            yield TextDelta(text=part.text)
+                        yield TextDelta(text=part.text)
                 elif isinstance(part, ReasoningChunk):
                     # The model's thinking trace — streamed to the PWA's "thinking"
                     # disclosure, never added to the answer or the grounding corpus.
@@ -1018,15 +1033,18 @@ class AgentLoop:
                             context_window=context_window,
                         )
             if turn is not None and hide_tool_round_text and round_text:
-                # Commit the buffered round now that its stop_reason is known: a tool-call round's
-                # content is leaked harmony analysis → show it as thinking, never the answer; the
-                # final (non-tool) round's content IS the answer.
+                # Classify this round now that its stop_reason is known. Its content already
+                # streamed live as TextDelta(s) into the answer bubble. A tool-call round's
+                # content is leaked harmony analysis → reclassify it into the thinking trace
+                # (the PWA moves the just-streamed answer tail into the "thinking" disclosure),
+                # keeping it out of the reflexion corpus and the persisted answer. The final
+                # (non-tool) round's content IS the answer — leave it streamed, and record it
+                # for the grounding verifiers.
                 round_content = "".join(round_text)
                 if turn.stop_reason == "tool_use" and turn.tool_calls:
-                    yield ReasoningDelta(text=round_content)
+                    yield ReasoningReclassify(text=round_content)
                 else:
                     answer_parts.append(round_content)
-                    yield TextDelta(text=round_content)
             if turn is None:
                 # The adapter always closes a stream with an LlmTurn; guard the
                 # contract anyway rather than dereference None.

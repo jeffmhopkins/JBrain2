@@ -57,6 +57,16 @@ export interface ReasoningDelta {
   type: "reasoning_delta";
   text: string;
 }
+/** Move the answer's most-recently-streamed tail into the thinking trace. The local
+ * gpt-oss harmony route streams a tool-call round's leaked analysis live into the answer
+ * before the tool call is known; once it's known, the loop emits this so the tail hops
+ * from the answer bubble into the "thinking" disclosure (`text` is the exact run to move).
+ * Keeps the answer streaming live on the local route while leaked analysis still ends up
+ * as thinking. The final, non-tool round's content is the real answer and is never moved. */
+export interface ReasoningReclassify {
+  type: "reasoning_reclassify";
+  text: string;
+}
 export interface ToolCallEvent {
   type: "tool_call";
   id: string;
@@ -238,6 +248,7 @@ export interface SubagentDoneEvent {
 export type ChatEvent =
   | TextDelta
   | ReasoningDelta
+  | ReasoningReclassify
   | ToolCallEvent
   | ToolResultEvent
   | ToolViewEvent

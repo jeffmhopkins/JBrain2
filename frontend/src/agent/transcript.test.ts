@@ -56,6 +56,24 @@ describe("applyEvent reducer", () => {
     expect(ms[0]?.text).toBe("the answer");
   });
 
+  it("reclassifies a leaked tool-round tail from the answer into the thinking trace", () => {
+    // The local (harmony) route streams a tool-call round's leaked analysis into the answer
+    // live; a reasoning_reclassify then relocates it to the thinking disclosure. The answer
+    // tail is removed and the text appended to the reasoning, leaving the bubble "thinking".
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "text_delta", text: "analysis: " });
+    ms = applyEvent(ms, { type: "text_delta", text: "now call search." });
+    expect(ms[0]?.text).toBe("analysis: now call search.");
+    ms = applyEvent(ms, { type: "reasoning_reclassify", text: "analysis: now call search." });
+    expect(ms[0]?.text).toBe("");
+    expect(ms[0]?.reasoning).toBe("analysis: now call search.");
+    expect(ms[0]?.thinking).toBe(true);
+    // The genuine final answer then streams into the (now clean) answer bubble.
+    ms = applyEvent(ms, { type: "text_delta", text: "the real answer" });
+    expect(ms[0]?.text).toBe("the real answer");
+    expect(ms[0]?.reasoning).toBe("analysis: now call search.");
+  });
+
   it("records each tool's reasoning offset so it interleaves into the thinking trace", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "reasoning_delta", text: "first" });

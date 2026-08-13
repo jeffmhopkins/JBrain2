@@ -6,6 +6,7 @@ session replays the same prose split and the same in-thinking tool interleave.""
 from jbrain.agent.contracts import (
     DoneEvent,
     ReasoningDelta,
+    ReasoningReclassify,
     TextDelta,
     ToolCallEvent,
     ToolResultEvent,
@@ -28,6 +29,38 @@ def test_records_text_and_reasoning_offsets_at_the_tool_call() -> None:
     step = acc.tool_steps()[0]
     assert step["text_offset"] == len("working")
     assert step["reasoning_offset"] == len("let me think")
+
+
+def test_reclassify_moves_the_leaked_answer_tail_into_reasoning() -> None:
+    # On the local (harmony) route a tool-call round's leaked analysis streams live into the
+    # answer, then a ReasoningReclassify names it for relocation. The accumulator must move it
+    # out of the answer and into the reasoning trace so the persisted transcript matches the
+    # pre-streaming buffered classification — and the subsequent tool's text_offset is 0
+    # (the answer is empty again), while its reasoning_offset covers the reclassified analysis.
+    acc = TranscriptAccumulator()
+    acc.feed(TextDelta(text="analysis: now call search."))
+    acc.feed(ReasoningReclassify(text="analysis: now call search."))
+    acc.feed(ToolCallEvent(id="c1", name="search", arguments={"q": "x"}))
+    acc.feed(ToolResultEvent(tool_call_id="c1", ok=True, summary="found"))
+    acc.feed(TextDelta(text="the real answer"))
+    acc.feed(DoneEvent(stop_reason="end_turn"))
+
+    assert acc.answer_text == "the real answer"
+    assert acc.reasoning_text == "analysis: now call search."
+    step = acc.tool_steps()[0]
+    assert step["text_offset"] == 0
+    assert step["reasoning_offset"] == len("analysis: now call search.")
+
+
+def test_reclassify_only_strips_a_matching_tail() -> None:
+    # Defensive: if the reclassify text isn't the answer's tail (an out-of-order replay), the
+    # answer is left intact and the text is still recorded as reasoning — never a bad slice.
+    acc = TranscriptAccumulator()
+    acc.feed(TextDelta(text="kept answer"))
+    acc.feed(ReasoningReclassify(text="unrelated"))
+
+    assert acc.answer_text == "kept answer"
+    assert acc.reasoning_text == "unrelated"
 
 
 def test_unsettled_tool_persists_as_interrupted_not_null() -> None:
