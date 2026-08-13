@@ -1084,9 +1084,7 @@ async def gateway_load(
     if registry is not None:
         warm_system, warm_tools = await jerv_prime_spec(registry, liveness)
     try:
-        await gateway.load(
-            model.served_model, warm_system=warm_system, warm_tools=warm_tools
-        )
+        await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway load failed: {exc}") from exc
     return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)
