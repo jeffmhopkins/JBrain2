@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-11
+> **Status:** Living · **Last verified:** 2026-08-13
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -170,6 +170,24 @@ is **refused, not attempted**, on every path (the manual Load 409s, an auto-load
 completion), and nothing is evicted for it: loading it would only OOM-crash the box, so the
 app declines rather than trying. That guard is the app's; earlyoom below is the OS-level
 backstop for the rest.
+
+**The interactive model is kept resident AND primed across restarts (`jbrain.llm.warm_keeper`).**
+The slow bit of a first chat turn isn't the weight-load — it's the **prompt prefill**: the
+model reading the whole persona + tool schemas before it emits token one (tens of seconds on
+a 120B). The gateway runs `--cache-reuse`, so a turn can reuse a matching leading prefix
+instead of re-prefilling it — but only if that prefix was primed first, and nothing did that
+after a restart (residency's restore only undoes *same-process* evictions; its keep-hot set is
+empty on a fresh boot, and an on-demand load is bare). The **WarmKeeper** fills the gap: a
+detached boot + interval reconciler that keeps the model `agent.turn` routes to (when it's
+local) resident **and primed** with a jerv-shaped warm-up (persona **+** the same tool schemas
+a real turn sends). It only ever *adds* that one model, under the same free-RAM floor and
+code-mode hold as everything else, and no-ops once it's resident — so a real turn makes the
+next tick idle. It reconciles on an interval too, so it self-heals after an app restart, an
+update (fresh container), or a standalone gateway (llama-swap) restart. **Priming with the
+tools is load-bearing:** under the gateway's `--jinja` the chat template renders the tool
+definitions into the prompt's *leading* tokens, so a persona-only warm (the earlier behaviour)
+diverges from a real tool-carrying turn before the reusable prefix ends and `--cache-reuse`
+salvages almost nothing — the manual **Load** button primes the same persona+tools shape now.
 
 **Code mode reserves the box (exclusive while ON).** Two ~60 GB models — gpt-oss-120b and the
 Qwen3-Coder-Next coder — can't safely co-reside on 128 GB, and the swap between them has a

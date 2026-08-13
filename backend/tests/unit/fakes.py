@@ -667,6 +667,9 @@ class FakeLocalGateway:
         # The persona system prompt each load() was asked to prime the warm-up with
         # (None when unset), so a test can assert the manual Load primes the cache.
         self.warmed_system: list[str | None] = []
+        # The tool schemas each load() was asked to prime alongside the persona (None when
+        # unset), so a test can assert the prime carries tools, not just the persona.
+        self.warmed_tools: list[list[dict[str, object]] | None] = []
 
     async def running(self) -> set[str]:
         return set(self._running)
@@ -679,13 +682,20 @@ class FakeLocalGateway:
         self.unloaded.append(served_model)
         self._running.discard(served_model)
 
-    async def load(self, served_model: str, *, warm_system: str | None = None) -> None:
+    async def load(
+        self,
+        served_model: str,
+        *,
+        warm_system: str | None = None,
+        warm_tools: list[dict[str, object]] | None = None,
+    ) -> None:
         from jbrain.llm.local_gateway import LocalGatewayError
 
         if self.fail_load:
             raise LocalGatewayError("simulated gateway failure")
         self.loaded.append(served_model)
         self.warmed_system.append(warm_system)
+        self.warmed_tools.append(warm_tools)
         self._running.add(served_model)
 
     async def tail_logs(self) -> str:

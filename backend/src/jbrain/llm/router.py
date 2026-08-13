@@ -338,6 +338,21 @@ class LlmRouter:
         except KeyError:
             raise LlmError(f"unknown LLM task: {task!r}") from None
 
+    async def primary_local_served_model(self) -> str | None:
+        """The served-model name `agent.turn` resolves to WHEN it routes local — folding in
+        the live DB override, the env pin/default, and the local-hosting gate — else None
+        (a cloud route or local hosting off). The WarmKeeper reads this to decide which model
+        to keep resident+primed, so it tracks a re-route the same way a real turn does. Never
+        raises: a bad override degrades to the static route, exactly as a real call would."""
+        overrides: Mapping[str, Mapping[str, str]] = {}
+        if self._overrides_loader is not None:
+            try:
+                overrides = await self._overrides_loader()
+            except Exception:  # noqa: BLE001 — a settings read hiccup must not wedge the keeper
+                overrides = {}
+        provider, model = self._followed_primary_model(overrides)
+        return model if provider == local_catalog.LOCAL_PROVIDER else None
+
     def _followed_primary_model(
         self, overrides: Mapping[str, Mapping[str, str]]
     ) -> tuple[str, str]:

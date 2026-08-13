@@ -334,6 +334,42 @@ async def test_stale_local_override_ignored_when_hosting_disabled() -> None:
     assert local2.calls and not xai2.calls
 
 
+async def test_primary_local_served_model_returns_the_model_when_agent_turn_is_local() -> None:
+    # The WarmKeeper reads this to decide which model to keep hot: a live local override on
+    # agent.turn yields its served-model name.
+    async def load() -> dict[str, dict[str, str]]:
+        return {"agent.turn": {"spec": "local:gpt-oss-120b"}}
+
+    router = LlmRouter(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": ("xai", "grok-4.3")},
+        overrides_loader=load,
+        local_enabled=True,
+    )
+    assert await router.primary_local_served_model() == "gpt-oss-120b"
+
+
+async def test_primary_local_served_model_is_none_for_a_cloud_route() -> None:
+    # agent.turn on its cloud default — nothing to keep resident on the box.
+    router = LlmRouter({"xai": FakeLlmClient()}, {"agent.turn": ("xai", "grok-4.3")})
+    assert await router.primary_local_served_model() is None
+
+
+async def test_primary_local_served_model_is_none_when_hosting_disabled() -> None:
+    # A stale local override with hosting off degrades to the cloud default → None, so the
+    # keeper never loads at a dead gateway.
+    async def load() -> dict[str, dict[str, str]]:
+        return {"agent.turn": {"spec": "local:gpt-oss-120b"}}
+
+    router = LlmRouter(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": ("xai", "grok-4.3")},
+        overrides_loader=load,
+        local_enabled=False,
+    )
+    assert await router.primary_local_served_model() is None
+
+
 async def test_context_window_for_a_cloud_model_reads_the_table() -> None:
     # A task resolving to a known cloud model reports that model's window (the
     # meter's denominator); grok-4.3 is in the table.

@@ -95,7 +95,13 @@ class LocalGatewayClient:
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
 
-    async def load(self, served_model: str, *, warm_system: str | None = None) -> None:
+    async def load(
+        self,
+        served_model: str,
+        *,
+        warm_system: str | None = None,
+        warm_tools: list[dict[str, object]] | None = None,
+    ) -> None:
         """Load `served_model` into memory AND warm it for inference. The health probe
         makes llama-swap load the model (request-driven; with --no-mmap the weights are
         read into RAM before it returns). But "weights resident" isn't "inference-ready":
@@ -114,6 +120,14 @@ class LocalGatewayClient:
         first-token cost on a big model), moving that cost into the load the operator is
         already waiting on (docs/archive/LLM_PROMPT_CACHE_PLAN.md).
 
+        `warm_tools` MUST carry the same tool schemas the real turn sends. Under the
+        gateway's `--jinja`, the model's chat template renders the tool definitions into
+        the prompt's LEADING tokens (harmony puts the tool-channel declaration in the system
+        header and a `# Tools` block right after the persona) — so a persona-only warm-up
+        (no tools) diverges from a real jerv turn (persona + tools) before the reusable
+        prefix even ends, and `--cache-reuse` salvages little. Priming with the tools makes
+        the warmed prefix an actual prefix of the real turn, so the reuse lands.
+
         Raises LocalGatewayError if the model can't load; the warm-up itself is best-effort
         (the model is resident regardless — a failed warm-up just leaves that cost on first
         use, the prior behaviour). Generous timeout: a cold 80B reads tens of GB of weights."""
@@ -124,27 +138,37 @@ class LocalGatewayClient:
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
-        await self._warm(served_model, system=warm_system)
+        await self._warm(served_model, system=warm_system, tools=warm_tools)
 
-    async def _warm(self, served_model: str, *, system: str | None = None) -> None:
+    async def _warm(
+        self,
+        served_model: str,
+        *,
+        system: str | None = None,
+        tools: list[dict[str, object]] | None = None,
+    ) -> None:
         """Exercise the inference path with one discarded token. Best-effort: the model is
         already loaded, so a warm-up failure is logged, not raised — it only means the
         first real turn pays the warm-up cost (no worse than before this warm-up existed).
 
         A `system` prompt makes this a priming warm-up: it becomes the leading message so
         its KV prefix is prefilled and left in the cache for the first real turn to reuse
-        (see `load`). The timeout is generous because that prefill is the real work — the
-        same persona-prompt prefill that otherwise stalls the user's first turn."""
+        (see `load`). `tools`, when given, are sent alongside so the rendered prefix matches
+        a real tool-carrying turn (the reuse otherwise misses — see `load`). The timeout is
+        generous because that prefill is the real work — the same persona+tools prefill that
+        otherwise stalls the user's first turn."""
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": "warmup"})
-        body = {
+        body: dict[str, object] = {
             "model": served_model,
             "messages": messages,
             "max_tokens": 1,
             "stream": False,
         }
+        if tools:
+            body["tools"] = tools
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 180.0), transport=self._transport

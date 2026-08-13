@@ -975,7 +975,13 @@ async def load_model(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
 ) -> LoadedModelsOut:
     request.state.debug_detail = model_id
-    return await llm_settings.gateway_load(model_id, settings, _gateway(request))
+    return await llm_settings.gateway_load(
+        model_id,
+        settings,
+        _gateway(request),
+        registry=getattr(request.app.state, "agent_registry", None),
+        liveness=getattr(request.app.state, "image_liveness", None),
+    )
 
 
 @router.post("/llm/local-models/{model_id}/unload")

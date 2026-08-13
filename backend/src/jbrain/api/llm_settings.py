@@ -16,6 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from jbrain.agent.agents import AGENTS
+from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_spec
+from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
@@ -116,6 +118,24 @@ def get_residency(request: Request) -> ResidencyCoordinator | None:
 
 
 ResidencyDep = Annotated[ResidencyCoordinator | None, Depends(get_residency)]
+
+
+def get_agent_registry(request: Request) -> ToolRegistry | None:
+    """The tool registry, or None on a build without the agent wired — the source of
+    jerv's tool schemas for a load's persona+tools prime (a persona-only warm otherwise)."""
+    return cast("ToolRegistry | None", getattr(request.app.state, "agent_registry", None))
+
+
+AgentRegistryDep = Annotated["ToolRegistry | None", Depends(get_agent_registry)]
+
+
+def get_image_liveness(request: Request) -> HiddenToolsProbe | None:
+    """ComfyUI liveness, or None. Hides the image-gen tools from the prime when the
+    backend is down so the primed prefix matches a real turn's (which hides them too)."""
+    return cast("HiddenToolsProbe | None", getattr(request.app.state, "image_liveness", None))
+
+
+ImageLivenessDep = Annotated["HiddenToolsProbe | None", Depends(get_image_liveness)]
 
 # served_model (what the gateway reports/loads) ↔ catalog id (what the screen uses).
 _SERVED_TO_ID = {m.served_model: m.id for m in local_catalog.CATALOG}
@@ -705,6 +725,8 @@ async def load_local_model(
     settings: SettingsDep,
     gateway: LocalGatewayDep,
     residency: ResidencyDep,
+    registry: AgentRegistryDep,
+    liveness: ImageLivenessDep,
 ) -> LoadedModelsOut:
     """Make the gateway load one model into memory (the settings screen's stage → Load).
     First frees room the deliberate way — evict the fewest, biggest resident models to hold
@@ -720,7 +742,7 @@ async def load_local_model(
             await residency.free_room(model.served_model)  # evict-to-fit, or refuse if impossible
         except ResidencyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return await gateway_load(model_id, settings, gateway)
+    return await gateway_load(model_id, settings, gateway, registry=registry, liveness=liveness)
 
 
 class ContextWindowIn(BaseModel):
@@ -1037,18 +1059,32 @@ async def apply_overrides(
 
 
 async def gateway_load(
-    model_id: str, settings: Settings, gateway: LocalGatewayClient
+    model_id: str,
+    settings: Settings,
+    gateway: LocalGatewayClient,
+    *,
+    registry: ToolRegistry | None = None,
+    liveness: HiddenToolsProbe | None = None,
 ) -> LoadedModelsOut:
     """Warm one provisioned model into the gateway. Shared by the owner screen and
     the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects.
 
-    The warm-up primes the interactive chat persona's system prompt (jerv) into the
-    gateway KV cache so the operator's first conversation turn reuses that prefix
-    instead of paying the cold persona-prompt prefill — the 60-90s first-response
-    latency owners hit right after Load (docs/archive/LLM_PROMPT_CACHE_PLAN.md)."""
+    The warm-up primes the interactive chat persona (jerv) — its system prompt AND its
+    tool schemas — into the gateway KV cache so the operator's first conversation turn
+    reuses that prefix instead of paying the cold persona+tools prefill (the 60-90s
+    first-response latency owners hit right after Load,
+    docs/archive/LLM_PROMPT_CACHE_PLAN.md). The tools MUST be primed too: under the
+    gateway's `--jinja` the template renders them into the prompt's leading tokens, so a
+    persona-only warm diverges from a real (tool-carrying) turn before the reusable prefix
+    ends and the reuse misses. `registry` supplies those schemas (via `jerv_prime_spec`);
+    without it — a build with no agent wired — the warm falls back to persona-only."""
     model = _require_provisioned(settings, model_id)
+    warm_system: str | None = AGENTS["jerv"].prompt
+    warm_tools: list[dict[str, object]] | None = None
+    if registry is not None:
+        warm_system, warm_tools = await jerv_prime_spec(registry, liveness)
     try:
-        await gateway.load(model.served_model, warm_system=AGENTS["jerv"].prompt)
+        await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway load failed: {exc}") from exc
     return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)

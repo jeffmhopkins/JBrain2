@@ -104,6 +104,42 @@ async def test_load_primes_the_warm_up_with_the_given_system_prompt() -> None:
     assert body["max_tokens"] == 1
 
 
+async def test_load_primes_with_tools_matching_a_real_turn() -> None:
+    # Under the gateway's --jinja the template renders tool defs into the prompt's leading
+    # tokens, so a persona-only warm diverges from a real (tool-carrying) turn before the
+    # reusable prefix ends. Priming the SAME tools makes the warmed prefix an actual prefix
+    # of the real turn, so --cache-reuse lands.
+    body: dict[str, object] = {}
+    fn = {"name": "web_search", "description": "", "parameters": {}}
+    tools = [{"type": "function", "function": fn}]
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            body.update(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    await _client(handle).load("gpt-oss-120b", warm_system="PERSONA", warm_tools=tools)
+    assert body["messages"] == [
+        {"role": "system", "content": "PERSONA"},
+        {"role": "user", "content": "warmup"},
+    ]
+    assert body["tools"] == tools
+
+
+async def test_load_without_tools_sends_no_tools_key() -> None:
+    # No tools passed → the warm body carries no `tools` key at all (not an empty list), so a
+    # bare readiness probe stays byte-identical to before this priming existed.
+    body: dict[str, object] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            body.update(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    await _client(handle).load("gpt-oss-120b", warm_system="PERSONA")
+    assert "tools" not in body
+
+
 async def test_load_raises_when_the_model_cannot_load() -> None:
     # The health probe is the hard gate: a model that won't load surfaces an error.
     with pytest.raises(LocalGatewayError):

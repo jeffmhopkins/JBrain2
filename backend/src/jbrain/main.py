@@ -143,6 +143,7 @@ from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import ResidencyCoordinator, pg_box_lock
+from jbrain.llm.warm_keeper import WarmKeeper
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
 from jbrain.locations.pairing import SqlPairingRepo
@@ -993,6 +994,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 broadcaster=app.state.pet_broadcaster,
             )
         )
+        # Keep the interactive model (agent.turn, when it routes local) resident AND primed
+        # so the first jerv message after a restart/update is instant, not a cold weight-load
+        # + persona+tools prefill. Nothing else does this on boot: schedule_restore only undoes
+        # same-process displacements, and an on-demand load is bare. Detached + best-effort;
+        # reconciles on boot and on an interval, so it also self-heals a gateway-only restart.
+        app.state.warm_keeper = WarmKeeper(
+            gateway=app.state.local_gateway,
+            residency=app.state.residency,
+            registry=app.state.agent_registry,
+            liveness=getattr(app.state, "image_liveness", None),
+            router=app.state.llm_router,
+            hold_loader=lambda: settings_store.code_mode_hold_names(SYSTEM_CTX),
+        )
+        warm_keeper_task = asyncio.create_task(app.state.warm_keeper.run())
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to
         # the container's SIGTERM grace (ComfyUI's ~10 s) before it returns — so the
         # default 5 s httpx timeout would spuriously fail a stop that actually succeeds.
@@ -1000,6 +1015,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             base_url=settings.supervisor_url, timeout=30.0
         )
         yield
+        warm_keeper_task.cancel()
         if live_task is not None:
             live_task.cancel()
         tasks_loop_task.cancel()
