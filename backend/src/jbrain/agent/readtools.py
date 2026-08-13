@@ -22,6 +22,8 @@ if TYPE_CHECKING:
     from jbrain.push.sender import PushNotifier
     from jbrain.settings_store import SqlSettingsStore
     from jbrain.web.feeds import FeedClient
+    from jbrain.web.fetch import WebFetcher
+    from jbrain.web.search import SearxngClient
 
 from jbrain.agent.appointmenttools import (
     build_appointment_handlers,
@@ -690,6 +692,8 @@ def build_registry(
     settings: "SqlSettingsStore | None" = None,
     embed: "EmbedClient | None" = None,
     feeds: "FeedClient | None" = None,
+    searxng: "SearxngClient | None" = None,
+    fetcher: "WebFetcher | None" = None,
     image_handlers: dict[str, ToolHandler] | None = None,
     transcribe_handlers: dict[str, ToolHandler] | None = None,
     video_handlers: dict[str, ToolHandler] | None = None,
@@ -862,7 +866,13 @@ def build_registry(
         # so it is wired once that exists. Same guard: no router → the ref stays unbound
         # and a deep_research call refuses cleanly.
         deep_research_ref.service = DeepResearchService(
-            router=router, spawn=spawn_ref.service, maker=maker, embed=embed, feeds=feeds
+            router=router,
+            spawn=spawn_ref.service,
+            maker=maker,
+            embed=embed,
+            feeds=feeds,
+            searxng=searxng,
+            fetcher=fetcher,
         )
         # deep_produce is the same engine, a different verb: share the one service instance.
         deep_produce_ref.service = deep_research_ref.service

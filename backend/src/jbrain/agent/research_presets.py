@@ -76,6 +76,11 @@ class Preset:
     # Empty = off (the default; only a min_reads news brief opts in). A scalar policy, not a
     # `{{var}}` slot.
     news_feeds: tuple[str, ...]
+    # Which engine renders this preset: `pipeline` (the default multi-stage plan→gather-fan→
+    # analyst→synthesize→critique run) or `briefing` (the lean deterministic-gather → single-writer
+    # builder, docs/plans/DAILY_NEWS_V2_PLAN.md). A scalar, not a `{{var}}` slot; the engine
+    # validates the value when it consumes the rendered preset (no import cycle here).
+    engine: str
 
 
 @dataclass(frozen=True)
@@ -99,6 +104,8 @@ class RenderedPreset:
     min_reads: int | None
     # The preset's curated-feed pre-pull categories, passed straight through render. () = off.
     news_feeds: tuple[str, ...]
+    # The engine that renders this preset (`pipeline` default, or `briefing`), passed through.
+    engine: str
 
 
 def _slots(text: str) -> set[str]:
@@ -184,6 +191,7 @@ def _coerce_preset(name: str, raw: object) -> Preset:
         raise PresetError(f"preset {name!r}: `objective` must be a string")
     output_kind = str(raw.get("output_kind") or "report")
     source_mode = str(raw.get("sources") or "web")
+    engine = str(raw.get("engine") or "pipeline")
     # Optional scalar policies. Absent → None (the feature is off). Present → a positive int; a
     # bool, non-int, or non-positive value is a load-time refusal (fail fast at startup, like
     # every other malformed field) rather than a silently ignored policy.
@@ -218,6 +226,7 @@ def _coerce_preset(name: str, raw: object) -> Preset:
         retention_days=retention_days,
         min_reads=min_reads,
         news_feeds=news_feeds,
+        engine=engine,
     )
 
 
@@ -275,4 +284,5 @@ def render_preset(name: str, variables: dict[str, str]) -> RenderedPreset:
         retention_days=preset.retention_days,
         min_reads=preset.min_reads,
         news_feeds=preset.news_feeds,
+        engine=preset.engine,
     )
