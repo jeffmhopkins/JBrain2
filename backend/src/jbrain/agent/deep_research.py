@@ -2036,9 +2036,7 @@ class DeepResearchService:
         if ctx.emit_event is not None:
             ctx.emit_event(ToolProgressEvent(tool_call_id="", step=step, total=0, label=label))
 
-    def _briefing_phase(
-        self, ctx: ToolContext, step: int, label: str, preview: str | None
-    ) -> None:
+    def _briefing_phase(self, ctx: ToolContext, step: int, label: str, preview: str | None) -> None:
         """Emit one `briefing`-engine phase, carrying the builder's OWN stage list (Gather / Read /
         Write) so the PWA draws those three instead of the pipeline's fixed eight. `step` is the
         1-based index into that list; `preview` streams the writer's text on the Write phase (None

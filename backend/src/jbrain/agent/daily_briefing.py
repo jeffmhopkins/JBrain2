@@ -218,8 +218,7 @@ class DailyBriefingBuilder:
         # per-beat), since each fetch can escalate to the slow solver tier — 6 beats × a per-beat
         # limit would be a 6× stampede on the box. `to_read` counts the picks we'll actually try.
         to_read = sum(
-            min(len(c), b.quota * 3)
-            for b, c in zip(_BRIEFING_BEATS, candidate_lists, strict=True)
+            min(len(c), b.quota * 3) for b, c in zip(_BRIEFING_BEATS, candidate_lists, strict=True)
         )
         _emit(2, f"Reading {to_read} article{'' if to_read == 1 else 's'}")
         sem = asyncio.Semaphore(_FETCH_CONCURRENCY)
