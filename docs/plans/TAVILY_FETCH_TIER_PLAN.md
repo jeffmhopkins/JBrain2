@@ -212,6 +212,12 @@ owner pastes the key and it works. A stock box with no key is byte-unchanged.
     unreachable Tavily, an empty/walled page, or the tier off/keyless — and the owner-gated
     `/settings/tavily/test` route delegates to it. The fetch tier is unchanged (both share a
     new `_tavily_extract` so the request shape lives in one place).
+  - **Timeout + repeat-extract cache (2026-08-13):** a live run showed
+    `web.tavily_failed: ReadTimeout` — the shared 20s cap aborted an advanced extract mid-render.
+    Gave Tavily its own `_TAVILY_TIMEOUT = 45s` (below the solver's 70s). Also added a 60-min
+    in-process TTL cache keyed by URL (the SearXNG-cache pattern) so a research fan's repeat opens
+    of the same walled URL collapse to ONE paid call; a block result is never cached (a transient
+    wall must stay retryable), and the diagnostic probe always calls live.
 
 ## Non-goals (scoped out)
 

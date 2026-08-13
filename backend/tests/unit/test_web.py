@@ -3280,3 +3280,80 @@ async def test_tavily_probe_reports_an_empty_result() -> None:
 async def test_tavily_probe_reports_unwired() -> None:
     ok, detail = await WebFetcher().tavily_probe("https://x.example/p")  # no tavily_url/provider
     assert ok is False and "isn't set up" in detail
+
+
+def _counting_tavily_handler(counter: dict, *, content: str = _TAVILY_CONTENT):  # type: ignore[no-untyped-def]
+    """A Tavily transport that counts every /extract call, so a test can prove the cache collapses
+    repeat fetches of the same URL to ONE paid call."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.tavily.com":
+            counter["n"] += 1
+            return httpx.Response(200, json=_tavily_body("https://x.example/p", content=content))
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    return handle
+
+
+async def test_tavily_caches_a_successful_extraction_within_the_ttl() -> None:
+    # A research fan re-opens the same walled URL across rounds; the cache makes that ONE paid call.
+    calls = {"n": 0}
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_counting_tavily_handler(calls)),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tavily_provider(True, "tvly-key"),
+    )
+    r1 = await fetcher.tavily("https://x.example/p")
+    r2 = await fetcher.tavily("https://x.example/p")
+    assert r1 is not None and r2 is not None
+    assert "Tavily's hosted extractor recovered" in r2.text  # the cached text, re-windowed
+    assert calls["n"] == 1  # second fetch served from cache — one paid call, not two
+
+
+async def test_tavily_cache_can_be_disabled() -> None:
+    calls = {"n": 0}
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_counting_tavily_handler(calls)),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tavily_provider(True, "tvly-key"),
+        tavily_cache_ttl_s=0,  # disabled
+    )
+    await fetcher.tavily("https://x.example/p")
+    await fetcher.tavily("https://x.example/p")
+    assert calls["n"] == 2  # no cache → both fetches call Tavily
+
+
+async def test_tavily_does_not_cache_a_blocked_result() -> None:
+    # A challenge/paywall Tavily result is a miss, and must NOT be cached — the block may be
+    # transient, so a later fetch retries rather than serving a cached "None" for the whole window.
+    calls = {"n": 0}
+    challenge = "Just a moment... enable javascript and cookies to continue."
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_counting_tavily_handler(calls, content=challenge)),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tavily_provider(True, "tvly-key"),
+    )
+    assert await fetcher.tavily("https://x.example/p") is None
+    assert await fetcher.tavily("https://x.example/p") is None
+    assert calls["n"] == 2  # a block is never cached — the second fetch retries
+
+
+async def test_tavily_cache_expires_after_the_ttl() -> None:
+    # Deterministic expiry via an injected clock (the SearXNG-cache pattern): a hit within the TTL,
+    # a re-fetch past it.
+    calls = {"n": 0}
+    now = {"t": 0.0}
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_counting_tavily_handler(calls)),
+        tavily_url="https://api.tavily.com",
+        tavily_settings=_tavily_provider(True, "tvly-key"),
+        tavily_cache_ttl_s=100.0,
+        clock=lambda: now["t"],
+    )
+    await fetcher.tavily("https://x.example/p")  # call 1 → cached
+    now["t"] = 50.0
+    await fetcher.tavily("https://x.example/p")  # within TTL → cache hit
+    assert calls["n"] == 1
+    now["t"] = 150.0
+    await fetcher.tavily("https://x.example/p")  # past TTL → re-fetched
+    assert calls["n"] == 2

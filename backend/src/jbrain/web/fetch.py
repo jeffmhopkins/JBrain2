@@ -48,6 +48,7 @@ import ipaddress
 import json
 import re
 import socket
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -55,6 +56,7 @@ from urllib.parse import urldefrag, urljoin, urlparse
 
 import httpx
 import structlog
+from cachetools import TTLCache
 
 from jbrain.htmltext import extract_page
 
@@ -87,6 +89,18 @@ class _SolverOutcome(enum.Enum):
 
 
 _TIMEOUT = 20.0
+# Tavily's Extract renders the page on THEIR cloud (advanced depth un-walls harder), so it is
+# routinely slower than a plain GET — the shared 20s cap was aborting real extractions mid-render
+# (observed live as `web.tavily_failed: ReadTimeout` on a page byparr had already failed). Give it
+# its own headroom (below the solver's 70s, above the plain fetch).
+_TAVILY_TIMEOUT = 45.0
+# Repeat-extract cache. A deep-research fan re-opens the same walled URL across its gather/read/
+# critique rounds; each repeat is another PAID Tavily call. A short in-process TTL cache collapses
+# those repeats so one URL costs one credit per window — the exact pattern (and 60-min window) the
+# SearXNG client already uses for repeat searches (jbrain.web.search). In-process + per-URL, which
+# is adequate at personal scale (one API process).
+_TAVILY_CACHE_TTL_S = 3600.0  # 60 min
+_TAVILY_CACHE_MAX = 256  # LRU bound so the cache can't grow without limit
 # The challenge solver drives a stealth browser that WAITS OUT a JS/managed challenge, so it
 # is far slower than a plain fetch: `maxTimeout` is what the solver spends clearing the wall,
 # and the HTTP timeout sits above it so we don't abort a solve that's about to succeed.
@@ -667,6 +681,8 @@ class WebFetcher:
         tavily_settings: TavilySettingsProvider | None = None,
         tavily_first_hosts: TavilyFirstHosts | None = None,
         record_solver_failed: RecordSolverFailed | None = None,
+        tavily_cache_ttl_s: float = _TAVILY_CACHE_TTL_S,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self._transport = transport
         self._reader_url = reader_url.rstrip("/")
@@ -693,6 +709,16 @@ class WebFetcher:
         # a fetch the on-box solver genuinely missed. Both None ⇒ that half is off.
         self._tavily_first_hosts = tavily_first_hosts
         self._record_solver_failed = record_solver_failed
+        # Repeat-extract cache, keyed by URL, holding the (text, final_url) of a SUCCESSFUL Tavily
+        # extraction so a re-fetch of the same URL within the TTL costs no second paid call. Only
+        # the fetch tier reads/writes it; the diagnostic `tavily_probe` always calls live (a test
+        # must hit the real key). `timer` threads an injectable clock for deterministic expiry
+        # tests; None when disabled (`tavily_cache_ttl_s <= 0`).
+        self._tavily_cache: TTLCache[str, tuple[str, str]] | None = (
+            TTLCache(maxsize=_TAVILY_CACHE_MAX, ttl=tavily_cache_ttl_s, timer=clock)
+            if tavily_cache_ttl_s > 0
+            else None
+        )
 
     def _prefers_solver(self, url: str) -> bool:
         """Whether `url`'s host is (or is a subdomain of) a configured solver-first domain — so a
@@ -1382,30 +1408,42 @@ class WebFetcher:
         flip/paste takes effect on the next fetch. Returns None when disabled/keyless, on any
         Tavily error, or when the extracted content is itself a challenge/paywall page (the same
         guards as every other tier) — so a walled page laundered through Tavily never becomes a
-        cited source."""
+        cited source.
+
+        A SUCCESSFUL extraction is cached by URL for the TTL, so a research fan's repeat opens of
+        the same walled URL collapse to one paid call (a cache hit re-windows the stored text and
+        skips the HTTP — the guards already passed when it was cached)."""
         if not self._tavily_url or self._tavily_settings is None:
             return None
         enabled, api_key = await self._tavily_settings()
         if not enabled or not api_key:
             return None
         guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
-        try:
-            text, final_url = await self._tavily_extract(url, api_key)
-        except (httpx.HTTPError, ValueError, WebFetchError) as exc:
-            log.warning("web.tavily_failed", error=repr(exc))
-            return None
-        if not text.strip():
-            return None
-        # Tavily can hand back the origin's challenge/paywall wall rendered as clean text (it
-        # extracted the wall, not the article). Treat that as a miss — the same seam the reader
-        # path uses — so the block is never laundered into a cited source.
-        if _is_challenge_page("", text):
-            log.warning("web.challenge_blocked", url=url, via="tavily")
-            return None
-        if _is_paywall_page("", text):
-            log.warning("web.paywall_blocked", url=url, via="tavily")
-            return None
-        log.info("web.tavily_used", url=final_url)
+        cached = self._tavily_cache.get(url) if self._tavily_cache is not None else None
+        if cached is not None:
+            text, final_url = cached
+            log.info("web.tavily_used", url=final_url, cached=True)
+        else:
+            try:
+                text, final_url = await self._tavily_extract(url, api_key)
+            except (httpx.HTTPError, ValueError, WebFetchError) as exc:
+                log.warning("web.tavily_failed", error=repr(exc))
+                return None
+            if not text.strip():
+                return None
+            # Tavily can hand back the origin's challenge/paywall wall rendered as clean text (it
+            # extracted the wall, not the article). Treat that as a miss — the same seam the reader
+            # path uses — so the block is never laundered into a cited source. NOT cached: a block
+            # may be transient, and caching it would suppress a retry for the whole window.
+            if _is_challenge_page("", text):
+                log.warning("web.challenge_blocked", url=url, via="tavily")
+                return None
+            if _is_paywall_page("", text):
+                log.warning("web.paywall_blocked", url=url, via="tavily")
+                return None
+            if self._tavily_cache is not None:
+                self._tavily_cache[url] = (text, final_url)
+            log.info("web.tavily_used", url=final_url)
         return _window_and_find(
             text,
             url=final_url,
@@ -1426,7 +1464,7 @@ class WebFetcher:
         extract_depth chooses render aggressiveness (advanced un-walls harder at ~2x credits)."""
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {"urls": [url], "extract_depth": self._tavily_extract_depth}
-        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as c:
+        async with httpx.AsyncClient(timeout=_TAVILY_TIMEOUT, transport=self._transport) as c:
             resp = await c.post(f"{self._tavily_url}/extract", json=payload, headers=headers)
             resp.raise_for_status()
             body = resp.json()
