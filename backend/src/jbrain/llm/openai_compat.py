@@ -44,6 +44,24 @@ _OPENAI_STOP: dict[str, StopReason] = {
 }
 
 
+def openai_tools(tools: Sequence[LlmTool]) -> list[dict[str, Any]]:
+    """Serialize adapter tools into the OpenAI `tools` array. The single source of
+    this shape so a gateway warm-up (jbrain.agent.priming) primes the SAME tool JSON a
+    real turn sends — under `--jinja` the template renders these into the prompt's
+    leading tokens, so any drift breaks the `--cache-reuse` prefix match."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.input_schema,
+            },
+        }
+        for t in tools
+    ]
+
+
 def _user_content(text: str, images: Sequence[LlmImage]) -> str | list[dict[str, Any]]:
     if not images:
         return text
@@ -207,17 +225,7 @@ class OpenAiCompatClient:
             "messages": _openai_messages(system, messages),
         }
         if tools:
-            payload["tools"] = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.input_schema,
-                    },
-                }
-                for t in tools
-            ]
+            payload["tools"] = openai_tools(tools)
         self._apply_reasoning(payload, reasoning_effort)
         return payload
 
