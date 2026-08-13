@@ -99,7 +99,16 @@ export interface ToolActivity {
   /** Live progress for an in-flight tool — image gen's sampler step/total + sharpening
    * preview, or a multi-phase tool's text `label` ("Analyzing frame 12/30"). Set by
    * `tool_progress`, cleared when the result lands (the final view then renders). */
-  progress?: { step: number; total: number; preview?: string; label?: string };
+  progress?: {
+    step: number;
+    total: number;
+    preview?: string;
+    label?: string;
+    /** The run's own ordered stage names (the `briefing` engine's Gather/Read/Write), so the
+     * progress rail draws the engine's real phases instead of a hardcoded list; absent for the
+     * pipeline (the rail falls back to its canonical stage list). */
+    phases?: string[];
+  };
   /** The last live preview frame, kept after the result settles so the final image
    * view can show it as a placeholder until the full-res image loads — no blank gap
    * between "finalizing" and the rendered image. Live-only (absent on reopen). */
@@ -273,6 +282,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
                 total: event.total,
                 ...(event.preview ? { preview: event.preview } : {}),
                 ...(event.label ? { label: event.label } : {}),
+                ...(event.phases ? { phases: event.phases } : {}),
               },
             }
           : t,

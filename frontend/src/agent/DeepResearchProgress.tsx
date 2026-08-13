@@ -3,10 +3,12 @@
 // view (DeepestRunCard) without a FullBrainSurface ↔ registry import cycle; FullBrainSurface
 // re-exports both for its inline use (and the existing tests).
 //
-// The timeline is a vertical rail: the eight canonical stages stack down a steel spine, the
-// active one opens a slot that hosts its live detail line, the sub-agent fan it spawned, and
-// (Write / Revise) the report streaming into a pane — so the owner watches the orchestration
-// in one scannable column that never wraps.
+// The timeline is a vertical rail: the run's stages stack down a steel spine, the active one
+// opens a slot that hosts its live detail line, the sub-agent fan it spawned, and (Write / Revise)
+// the report streaming into a pane — so the owner watches the orchestration in one scannable
+// column that never wraps. The stage list is the run's OWN when it sends one (the `briefing`
+// engine's Gather/Read/Write), else the canonical pipeline eight — so the rail always matches the
+// engine actually running instead of showing pipeline stages a lean briefing never enters.
 import { type ReactNode, useEffect, useRef } from "react";
 import { Markdown } from "./markdown";
 import type { ToolActivity } from "./transcript";
@@ -33,6 +35,10 @@ export function DeepResearchProgress({
   fan?: ReactNode;
 }): ReactNode {
   const p = tool.progress;
+  // The run's own stage list (the `briefing` engine sends Gather/Read/Write) or the canonical
+  // pipeline eight — so a lean briefing's rail shows the three phases it actually runs, not the
+  // pipeline stages it never enters. Old runs (no `phases`) fall back, byte-unchanged.
+  const phases = p?.phases ?? DR_PHASES;
   const step = p?.step ?? 0; // 1-based; 0 before the first phase event lands
   const preview = p?.preview ?? "";
   // The stage whose slot the detail/fan/report hang under: the live ordinal, or Plan while
@@ -53,7 +59,7 @@ export function DeepResearchProgress({
   return (
     <output className="fb-drp" aria-live="polite">
       <ol className="fb-drp-steps">
-        {DR_PHASES.map((name, i) => {
+        {phases.map((name, i) => {
           const ord = i + 1;
           // A vertical timeline: everything before the live step reads done, the live step
           // opens its slot, the rest wait — one scannable column that never wraps.

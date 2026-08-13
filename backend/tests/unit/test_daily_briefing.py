@@ -6,7 +6,7 @@ from __future__ import annotations
 from jbrain.agent.daily_briefing import _BRIEFING_BEATS, DailyBriefingBuilder
 from jbrain.agent.loop import ToolContext
 from jbrain.db.session import SessionContext
-from jbrain.llm.types import LlmTurn, LlmUsage
+from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
 from jbrain.web.feeds import FeedItem
 from jbrain.web.fetch import FetchResult
 from jbrain.web.search import NewsHit
@@ -37,16 +37,19 @@ def _full_report(missing: str | None = None) -> str:
 
 
 class _FakeRouter:
-    """Records each writer prompt and returns canned report text per call, in order."""
+    """Records each writer prompt and STREAMS canned report text per call, in order (the writer
+    now goes through `converse_stream`): one text chunk, then the closing turn carrying the
+    authoritative text — the two shapes `_write` reads from."""
 
     def __init__(self, responses: list[str]) -> None:
         self._responses = responses
         self.prompts: list[str] = []
 
-    async def converse(self, task, *, system, messages, max_tokens):  # noqa: ANN001
+    async def converse_stream(self, task, *, system, messages, max_tokens, **_kw):  # noqa: ANN001
         self.prompts.append(messages[0].text)
         text = self._responses[min(len(self.prompts) - 1, len(self._responses) - 1)]
-        return LlmTurn(text=text, tool_calls=(), stop_reason="end_turn", usage=LlmUsage(10, 20))
+        yield TextChunk(text=text)
+        yield LlmTurn(text=text, tool_calls=(), stop_reason="end_turn", usage=LlmUsage(10, 20))
 
 
 class _FakeFeeds:
@@ -127,6 +130,31 @@ async def test_build_gathers_writes_and_marks_full_text_feeds_as_read_without_re
     )
 
 
+async def test_build_fires_the_three_phases_and_streams_the_writer() -> None:
+    # The builder drives its OWN progress timeline: Gather (feeds+search) → Read (force-fetch) →
+    # Write (streamed). The two deterministic steps carry a status line and no preview; the writer
+    # phase streams the accumulating draft into the preview so the PWA renders it live.
+    feeds = _FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]})
+    searx = _FakeSearx([NewsHit(title="N", url="https://npr.org/n", snippet="s", published="Thu")])
+    router = _FakeRouter([_full_report()])
+    calls: list[tuple[int, str, str | None]] = []
+    result = await _builder(router, feeds=feeds, searxng=searx, fetcher=_FakeFetcher()).build(
+        CTX,
+        question="q",
+        objective="",
+        sections=_SECTIONS,
+        progress=lambda step, label, preview: calls.append((step, label, preview)),
+    )
+    steps = [c[0] for c in calls]
+    assert steps[0] == 1 and 2 in steps and steps[-1] == 3  # Gather → Read → Write, in order
+    # The deterministic gather/read steps carry a label and no streamed preview.
+    assert calls[0][1] and calls[0][2] is None
+    assert any(s == 2 and "Reading" in lbl and pv is None for s, lbl, pv in calls)
+    # The write phase streams the draft: a step-3 call carries the report text as preview.
+    assert any(s == 3 and pv and "## Space Industry" in pv for s, _, pv in calls)
+    assert not result.empty
+
+
 async def test_missing_section_triggers_exactly_one_repair() -> None:
     feeds = _FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]})
     # First draft drops "Around the World"; the repair draft is complete.
@@ -165,7 +193,7 @@ async def test_run_briefing_refuses_a_totally_empty_gather() -> None:
     from jbrain.agent.deep_research import DeepResearchService
     from jbrain.agent.research_presets import render_preset
 
-    rp = render_preset("daily_news_v2", {"today": "Thu", "now": "Thu 6am"})
+    rp = render_preset("daily_news", {"today": "Thu", "now": "Thu 6am"})
     svc = DeepResearchService(router=_FakeRouter([_full_report()]), spawn=object())  # type: ignore[arg-type]
     out = str(await svc._run_briefing(CTX, rp))
     assert "refused" in out.lower()  # a hollow briefing is refused, not shipped
@@ -215,13 +243,13 @@ def test_beats_cover_the_six_content_sections() -> None:
 
 
 async def test_engine_briefing_routes_through_the_builder_and_frames_like_the_pipeline() -> None:
-    # An `engine: briefing` preset (daily_news_v2) routes DeepResearchService to the builder, which
+    # An `engine: briefing` preset (daily_news) routes DeepResearchService to the builder, which
     # frames + finalizes the report exactly like a pipeline run (library card / view parity).
     from jbrain.agent.deep_research import DeepResearchService
     from jbrain.agent.research_presets import render_preset
 
     rp = render_preset(
-        "daily_news_v2",
+        "daily_news",
         {"today": "Thursday, August 13, 2026", "now": "Thursday, August 13, 2026 at 6:15 AM EDT"},
     )
     assert rp.engine == "briefing"

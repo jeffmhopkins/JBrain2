@@ -31,7 +31,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.agent.spawn import _ChildResult
 from jbrain.llm import LlmRouter
 from jbrain.llm.promptfile import load_prompt
-from jbrain.llm.types import UserMessage
+from jbrain.llm.types import LlmTurn, TextChunk, UserMessage
 from jbrain.web.feeds import FeedClient
 from jbrain.web.fetch import WebFetcher, WebFetchError
 from jbrain.web.search import SearxngClient, WebSearchError
@@ -45,6 +45,21 @@ _PROMPTS = Path(__file__).parent / "prompts"
 _SYNTH = load_prompt(_PROMPTS / "deep_research_synthesize.prompt")
 _TASK = "agent.turn"
 _WRITER_MAX_TOKENS = 12000
+
+# The builder's OWN progress timeline (deep_research's `pipeline` engine has its own, fixed one).
+# It rides in the ToolProgressEvent so the PWA draws THESE stages instead of the pipeline's eight:
+# the two deterministic, model-free steps (feeds+search, then force-fetch) are shown as their own
+# phases so the owner sees the zero-token gather happening, then the streamed writer.
+BRIEFING_PHASES: tuple[str, ...] = ("Gather", "Read", "Write")
+# The writer is streamed; flush the accumulated draft into the progress preview every ~this many
+# chars so the PWA renders the briefing being written without an event per token (mirrors the
+# pipeline synthesizer's _SYNTH_PREVIEW_STRIDE).
+_WRITE_PREVIEW_STRIDE = 240
+
+# The builder's progress callback: `(step, label, preview)`, where `step` is the 1-based index into
+# BRIEFING_PHASES, `label` is the human status line, and `preview` is the streamed writer text (None
+# for the deterministic phases). The caller turns each call into a ToolProgressEvent.
+ProgressFn = Callable[[int, str, "str | None"], None]
 
 # Per-article text handed to the writer. News is inverted-pyramid — the who/what/when is up top —
 # so a few thousand chars carries the facts without ballooning the writer's context (the one
@@ -180,23 +195,43 @@ class DailyBriefingBuilder:
         question: str,
         objective: str,
         sections: list[str],
-        on_write: Callable[[], None] | None = None,
+        progress: ProgressFn | None = None,
     ) -> BriefingResult:
         """Gather each content beat deterministically, force-fetch the picks to real text, write
         the briefing in one call, and repair once if a section heading is missing. `sections` is the
         full preset outline (incl. Good Morning / sign-off); `objective` carries the spoken rules.
-        `on_write`, if given, fires when gather is done and the (slow) writer call is about to run —
-        the caller uses it to move the phase from Gathering to Writing at the right moment."""
-        # 1+2. GATHER (concurrent, model-free) + FETCH (concurrent, model-free): each beat yields a
-        # bundle of opened articles. Beats run together, sharing ONE fetch semaphore so total
-        # concurrent fetches are bounded globally (not per-beat), since each fetch can escalate to
-        # the slow solver tier — 6 beats × a per-beat limit would be a 6× stampede on the box.
+        `progress`, if given, is fired at each of the three phases (Gather / Read / Write) — the two
+        model-free deterministic steps get a status line, and the streamed writer gets live preview
+        text — so the PWA shows the zero-token gather happening and then the briefing written."""
+
+        def _emit(step: int, label: str, preview: str | None = None) -> None:
+            if progress is not None:
+                progress(step, label, preview)
+
+        # 1. GATHER (concurrent, model-free): pull each beat's curated feed + news search, deduped.
+        # This spends zero model tokens — feeds and news search are plain network I/O — so it is a
+        # phase in its own right, shown to the owner rather than hidden inside "researching".
+        _emit(1, "Pulling curated feeds and searching the day's news")
+        candidate_lists = await asyncio.gather(*(self._candidates(b) for b in _BRIEFING_BEATS))
+        # 2. READ (concurrent, model-free, globally bounded): force-fetch the picks to real text.
+        # Beats share ONE fetch semaphore so total concurrent fetches are bounded globally (not
+        # per-beat), since each fetch can escalate to the slow solver tier — 6 beats × a per-beat
+        # limit would be a 6× stampede on the box. `to_read` counts the picks we'll actually try.
+        to_read = sum(
+            min(len(c), b.quota * 3) for b, c in zip(_BRIEFING_BEATS, candidate_lists, strict=True)
+        )
+        _emit(2, f"Reading {to_read} article{'' if to_read == 1 else 's'}")
         sem = asyncio.Semaphore(_FETCH_CONCURRENCY)
-        bundles = await asyncio.gather(*(self._gather_and_open(b, sem) for b in _BRIEFING_BEATS))
+        bundles = await asyncio.gather(
+            *(
+                self._open_beat(b, cands, sem)
+                for b, cands in zip(_BRIEFING_BEATS, candidate_lists, strict=True)
+            )
+        )
         by_section: dict[str, list[_Article]] = {
             beat.section: arts for beat, arts in zip(_BRIEFING_BEATS, bundles, strict=True)
         }
-        # 3. Build the citation registry + the writer's findings block from the opened articles.
+        # Build the citation registry + the writer's findings block from the opened articles.
         articles = [a for arts in bundles for a in arts]
         sources = [WebSource(url=a.url, title=a.title, read=True) for a in articles]
         index = {id(a): i + 1 for i, a in enumerate(articles)}  # [^n] is positional over sources
@@ -225,13 +260,14 @@ class DailyBriefingBuilder:
                 empty=True,
                 coverage_limited=True,
             )
-        # 4+5. WRITE — one tool-less call over the real text. The writer cannot search or fetch, so
-        # it can only spend the provided article bodies (the structural anti-snippet guarantee).
+        # 3. WRITE — one tool-less call over the real text, STREAMED. The writer cannot search or
+        # fetch, so it can only spend the provided article bodies (the structural anti-snippet
+        # guarantee); its output is streamed into the progress preview so the PWA renders it live.
         prompt = _writer_prompt(question, objective, sections, by_section, index)
-        if on_write is not None:
-            on_write()
-        report = await self._write(prompt)
-        # 6. Deterministic completeness check over HEADING LINES (not the whole body — a section's
+        write_label = "Writing the briefing"
+        _emit(3, write_label)
+        report = await self._write(prompt, on_preview=lambda text: _emit(3, write_label, text))
+        # 4. Deterministic completeness check over HEADING LINES (not the whole body — a section's
         # words appear in prose too, which would blind a substring test), normalized so `&`≡"and"
         # (the TTS objective spells symbols out, so the writer renders `Business and the Economy`).
         content_sections = [b.section for b in _BRIEFING_BEATS]
@@ -239,7 +275,10 @@ class DailyBriefingBuilder:
         repaired = False
         if missing:
             log.info("daily_briefing.repairing", missing=missing)
-            report = await self._write(prompt + _repair_note(missing))
+            report = await self._write(
+                prompt + _repair_note(missing),
+                on_preview=lambda text: _emit(3, write_label, text),
+            )
             repaired = True
             still = _missing_sections(report, content_sections)
             if still:  # one bounded repair only — don't loop; log the residual for diagnosis
@@ -260,11 +299,13 @@ class DailyBriefingBuilder:
             coverage_limited=bool(empty_beats),
         )
 
-    async def _gather_and_open(self, beat: _Beat, sem: asyncio.Semaphore) -> list[_Article]:
-        """One beat's opened articles: gather candidates (feed + news search, deduped), then
-        force-fetch the picks (concurrently, under the SHARED `sem`) to real text — skipping a
-        full-text feed item, whose body is already in hand. Returns up to `beat.quota` with text."""
-        candidates = await self._candidates(beat)
+    async def _open_beat(
+        self, beat: _Beat, candidates: list[_Article], sem: asyncio.Semaphore
+    ) -> list[_Article]:
+        """One beat's opened articles: force-fetch the pre-gathered candidate picks (concurrently,
+        under the SHARED `sem`) to real text — skipping a full-text feed item, whose body is already
+        in hand. Returns up to `beat.quota` with text. Candidate gather is now a distinct earlier
+        phase (`_candidates`), so this is purely the READ step."""
 
         async def _open(cand: _Article) -> _Article | None:
             if cand.read and cand.text.strip():
@@ -349,17 +390,39 @@ class DailyBriefingBuilder:
                 )
         return out
 
-    async def _write(self, user_text: str) -> str:
+    async def _write(
+        self, user_text: str, *, on_preview: Callable[[str], None] | None = None
+    ) -> str:
         """One writer turn through the LLM adapter (never a provider SDK directly, invariant #1),
-        using the pipeline's synthesizer system prompt. Non-streaming: the briefing is one bounded
-        artifact, so the extra streaming plumbing isn't needed here."""
-        turn = await self._router.converse(
+        using the pipeline's synthesizer system prompt. STREAMED so the caller can surface the
+        briefing being written live: `on_preview`, if given, receives the accumulated draft every
+        ~stride chars (and once more at the end). Usage is recorded once at the router from the
+        closing turn — the streamed text chunks carry none — so accounting is unchanged from the
+        old non-streaming call."""
+        parts: list[str] = []
+        since = 0
+        final: LlmTurn | None = None
+        async for part in self._router.converse_stream(
             _TASK,
             system=_SYNTH.render(),
             messages=[UserMessage(text=user_text)],
             max_tokens=_WRITER_MAX_TOKENS,
-        )
-        return (turn.text or "").strip()
+        ):
+            if isinstance(part, TextChunk):
+                if part.text:
+                    parts.append(part.text)
+                    since += len(part.text)
+                    if on_preview is not None and since >= _WRITE_PREVIEW_STRIDE:
+                        since = 0
+                        on_preview("".join(parts))
+            elif isinstance(part, LlmTurn):
+                final = part
+        # The closing turn carries the authoritative text; fall back to the streamed accumulation
+        # if it's empty. Flush the full draft as the final preview so the PWA shows the whole thing.
+        report = (final.text if final and final.text.strip() else "".join(parts)).strip()
+        if on_preview is not None:
+            on_preview(report)
+        return report
 
 
 def _writer_prompt(

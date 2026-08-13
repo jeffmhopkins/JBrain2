@@ -251,6 +251,11 @@ class ToolProgressEvent(BaseModel):
     preview: str | None = None
     # A human-readable phase for a multi-step tool (None for image gen's step bar).
     label: str | None = None
+    # The ORDERED stage names for THIS run, so the progress UI renders the engine's actual
+    # phases instead of a hardcoded list — `step` is the 1-based index into it. deep_research's
+    # `briefing` engine sends its own (Gather/Read/Write); None keeps the pipeline's fixed
+    # timeline (the frontend falls back to its canonical stage list), so old runs are unchanged.
+    phases: list[str] | None = None
 
 
 class JobEnqueuedEvent(BaseModel):

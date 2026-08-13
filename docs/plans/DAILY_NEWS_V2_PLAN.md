@@ -1,9 +1,12 @@
 # JBrain2 — Daily News v2 (Briefing Engine) Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-13 · **Waves:** V1✅ V2◻️ V3◻️
+> **Status:** In progress · **Last verified:** 2026-08-13 · **Waves:** V1✅ V2◻️ V3✅
 
-A lean, deterministic-gather → single-writer engine for the daily-news briefing, offered
-side-by-side with the existing fan pipeline so the two can be A/B'd without risk.
+A lean, deterministic-gather → single-writer engine for the daily-news briefing. It was built
+side-by-side with the fan pipeline for a risk-free A/B (V1); the briefing engine won decisively
+on a live run (2.3× the length, 100% of sources read, the pipeline's chronically-empty World
+section filled), so V3 **promoted it to be `daily_news`** and retired the pipeline path for this
+preset. What remains open is V2 — the one measured **selection** call — deferred below.
 
 Peer to `NEWS_FEED_PLAN.md` (the curated feeds this reuses) and the deep-research pipeline
 it forks from. Grounded in three independent clean-sheet design memos (simplicity, quality,
@@ -45,17 +48,23 @@ machinery is solving a problem that no longer exists.
 Cost: ~1–2 model calls over pre-fetched text (vs. the pipeline's ~13 sub-agents), so the run
 is bounded by one writer pass, not a fan.
 
-## How it's offered side-by-side (no risk to daily_news)
+## How the engine is selected (and the V3 promotion)
 
-- A new preset field **`engine`** (`pipeline` default, or `briefing`), on `Preset`/`RenderedPreset`.
-  Every existing preset is `pipeline` and byte-unchanged.
+- A preset field **`engine`** (`pipeline` default, or `briefing`), on `Preset`/`RenderedPreset`.
+  Every non-briefing preset is `pipeline` and byte-unchanged.
 - `deep_research._run_preset` branches on `rp.engine`: `briefing` → `_run_briefing` (the new
-  builder), else the pipeline. Persist + frame + tool-view are shared, so a v2 report renders
+  builder), else the pipeline. Persist + frame + tool-view are shared, so a briefing report renders
   in the library and the PWA identically to a pipeline report.
-- The new **`daily_news_v2`** preset carries the same 8 sections + spoken objective as
-  `daily_news`, sets `engine: briefing`, and omits `news_feeds`/`min_reads` (pipeline-only
-  knobs — the builder gathers itself). The shipped `daily_news` is untouched, so both run and
-  can be triggered independently for A/B.
+- **V1 (A/B):** a `daily_news_v2` preset carried the same 8 sections + spoken objective as
+  `daily_news` with `engine: briefing`, running side-by-side while the shipped `daily_news` stayed
+  on the pipeline — both triggerable independently.
+- **V3 (promotion):** the briefing engine won the A/B, so `daily_news` itself was rewritten to
+  `engine: briefing` (dropping the pipeline-only `news_feeds`/`min_reads` knobs — the builder
+  gathers itself) and the `daily_news_v2` twin was deleted. The scheduled daily task points at the
+  `daily_news` preset name, so it picked up the briefing engine with no scheduler change. The
+  pipeline's two-phase scout→read gather + feed pre-pull is now unused by any shipped preset
+  (still present for any future `min_reads` preset; the fetch-first tests exercise it via a
+  synthetic pipeline twin).
 
 ## V1 surface (shipped this plan)
 
@@ -66,9 +75,27 @@ is bounded by one writer pass, not a fan.
 - `agent/deep_research.py` — `_PRESET_ENGINES`, the `_run_preset` branch, `_run_briefing`
   (frames + persists like `_run`); `DeepResearchService` gains `searxng`/`fetcher` handles.
 - `agent/readtools.py` + `main.py` — thread the same `SearxngClient`/`WebFetcher` in.
-- `agent/presets/daily_news_v2.preset` (new).
+- `agent/presets/daily_news_v2.preset` (new in V1; deleted in V3 — see below).
 - Tests: `test_daily_briefing.py` (gather/fetch/write/repair/degrade/routing), preset
   engine-field tests in `test_research_presets.py`.
+
+## V3 surface (shipped this plan)
+
+- `agent/daily_briefing.py` — the builder now drives its OWN progress timeline (`BRIEFING_PHASES`
+  = Gather / Read / Write): the gather and the force-fetch are split into two distinct
+  deterministic, zero-token phases (each fired with a status line via a `progress` callback), and
+  the writer is **streamed** (`converse_stream`, previewed every `_WRITE_PREVIEW_STRIDE` chars)
+  so the PWA renders the briefing being written live.
+- `agent/contracts.py` — `ToolProgressEvent.phases` carries the run's own ordered stage names, so
+  the progress UI draws the engine's real phases instead of a hardcoded list (None = the pipeline's
+  fixed timeline, unchanged).
+- `agent/deep_research.py` — `_run_briefing` passes the `progress` callback and emits each phase as
+  a `ToolProgressEvent` carrying `phases=BRIEFING_PHASES` (via `_briefing_phase`).
+- `frontend/src/agent/{DeepResearchProgress.tsx,transcript.ts,types.ts}` — the progress rail draws
+  `p?.phases ?? DR_PHASES`, so a briefing shows its three real stages and the pipeline falls back
+  to its canonical eight.
+- `agent/presets/daily_news.preset` — rewritten to `engine: briefing`; `daily_news_v2.preset`
+  deleted.
 
 ## Deferred
 
@@ -76,9 +103,11 @@ is bounded by one writer pass, not a fan.
   call** the synthesis flagged (deterministic outlet-count salience mis-ranks the day's
   biggest story — the "missed the eclipse / empty World" failures were selection failures),
   tune per-beat quotas / body caps, and decide ledes-vs-full-body.
-- **V3 — streaming + promotion.** Stream the writer call so the PWA shows the briefing being
-  written (the builder is currently non-streaming); if v2 wins the A/B, point the scheduled
-  daily task at it and retire the pipeline path for this preset.
+- ~~**V3 — streaming + promotion.**~~ **Shipped.** The writer is streamed so the PWA shows the
+  briefing being written; the engine sends its own dynamic phase list (Gather / Read / Write) so
+  the two deterministic, zero-token steps are visible; and, the A/B won, `daily_news` was rewritten
+  to the briefing engine (the scheduled task follows the preset name) with the pipeline twin
+  deleted.
 
 ## Hardened after adversarial review
 
@@ -101,6 +130,6 @@ is rebuilt; and the progress phase moves to "Writing" at the right moment.
 - **Writer calls aren't tree-budget/deadline governed (V2).** The builder makes 1–2 direct
   adapter calls (usage is still recorded at the router for cost); a per-run wall-clock/token
   ceiling is a V2 item, low-risk for a 1–2 call engine.
-- **Non-streaming writer (V1).** The PWA shows a "Writing" phase but not live text until V3.
+- ~~**Non-streaming writer (V1).**~~ Resolved in V3 — the writer streams into the progress preview.
 - **Leans entirely on reliable fetch/extract.** If Tavily/the fetch chain degrades, the
   summary beats thin out (the builder skips failed fetches; a total failure now refuses).
