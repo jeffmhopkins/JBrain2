@@ -18,6 +18,7 @@ from jbrain.agent.contracts import (
     NoteSource,
     ProposalRef,
     ReasoningDelta,
+    ReasoningReclassify,
     SubagentSpawnedEvent,
     TextDelta,
     ToolCallEvent,
@@ -45,6 +46,7 @@ from jbrain.agent.loop import (
 )
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
+from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
@@ -944,10 +946,11 @@ async def test_run_stream_emits_tool_call_and_result_around_dispatch() -> None:
     ]
 
 
-async def test_run_stream_hides_a_leaked_tool_round_analysis_on_the_local_route() -> None:
+async def test_run_stream_reclassifies_a_leaked_tool_round_analysis_on_the_local_route() -> None:
     # The local gpt-oss harmony route can emit a tool-call round's ANALYSIS on the content
     # channel (seen after a tool result in a multi-tool turn). That content is leaked thinking,
-    # not the answer — it must surface as reasoning and never glue in front of the real reply.
+    # not the answer — it streams live (so the answer never stalls) but a ReasoningReclassify
+    # then moves it out of the answer and into the thinking trace once the tool call is known.
     turns = [
         LlmTurn(
             "We produced the report. Now call write_plan_result, then confirm.",
@@ -965,13 +968,30 @@ async def test_run_stream_hides_a_leaked_tool_round_analysis_on_the_local_route(
         ],
     )
     events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
-    answer = "".join(e.text for e in events if isinstance(e, TextDelta))
-    reasoning = "".join(e.text for e in events if isinstance(e, ReasoningDelta))
-    # The leaked tool-round analysis is NOT in the visible answer …
-    assert answer == "Step 3 done — generated the comparison."
-    assert "write_plan_result" not in answer
-    # … it is routed to the thinking trace instead.
-    assert "Now call write_plan_result" in reasoning
+    # The leaked round streams live as answer, THEN a reclassify names it for relocation.
+    reclassified = [e.text for e in events if isinstance(e, ReasoningReclassify)]
+    assert reclassified == ["We produced the report. Now call write_plan_result, then confirm."]
+    # Folding the stream to the persisted transcript, the leak lands in the thinking trace and
+    # the answer is only the final, genuine reply — never glued in front of it.
+    acc = TranscriptAccumulator()
+    for e in events:
+        acc.feed(e)
+    assert acc.answer_text == "Step 3 done — generated the comparison."
+    assert "write_plan_result" not in acc.answer_text
+    assert "Now call write_plan_result" in acc.reasoning_text
+
+
+async def test_run_stream_streams_the_final_answer_live_on_the_local_route() -> None:
+    # The reported bug: on the local route the answer used to arrive as one lump because the
+    # whole round was buffered. Now each content chunk of the final (non-tool) round streams
+    # as its own TextDelta, so the answer renders token-by-token like the thinking trace.
+    turns = [LlmTurn("the whole answer", (), "end_turn", LlmUsage(1, 1))]
+    router, _ = stream_router_local(turns, stream_chunks=[["the ", "whole ", "answer"]])
+    events = await collect(AgentLoop(router, registry_with(make_tool("search", search))))
+    text_deltas = [e.text for e in events if isinstance(e, TextDelta)]
+    assert text_deltas == ["the ", "whole ", "answer"]
+    # No reclassify on a clean final-answer round.
+    assert not any(isinstance(e, ReasoningReclassify) for e in events)
 
 
 async def test_run_routes_a_leaked_tool_round_analysis_to_reasoning_on_the_local_route() -> None:

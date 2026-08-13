@@ -252,6 +252,17 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       // multi-step turn) appends to the trace without reopening the disclosure.
       next.thinking = next.text === "";
       break;
+    case "reasoning_reclassify":
+      // The local (harmony) route streamed a tool-call round's leaked analysis into the
+      // answer before the tool call was known; relocate that tail into the thinking trace.
+      // `text` is exactly what was streamed this round, so it sits at the answer's end.
+      if (next.text.endsWith(event.text)) {
+        next.text = next.text.slice(0, next.text.length - event.text.length);
+      }
+      next.reasoning += event.text;
+      // With the answer emptied back out, the "thinking" disclosure is live again.
+      next.thinking = next.text === "";
+      break;
     case "tool_call":
       next.tools = [
         ...next.tools,

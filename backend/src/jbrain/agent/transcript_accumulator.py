@@ -36,6 +36,17 @@ class TranscriptAccumulator:
             self.answer.append(event.text)
         elif event.type == "reasoning_delta":
             self.reasoning.append(event.text)
+        elif event.type == "reasoning_reclassify":
+            # A local (harmony) tool-call round's content streamed live into the answer but was
+            # leaked analysis, not the reply — move it from the answer tail into the reasoning
+            # trace so the persisted transcript matches the pre-streaming buffered classification
+            # (and the grounding corpus never sees it). The event carries this round's exact
+            # streamed text, so strip it from the answer's tail and append it to the reasoning.
+            joined = "".join(self.answer)
+            if joined.endswith(event.text):
+                remaining = joined[: len(joined) - len(event.text)]
+                self.answer = [remaining] if remaining else []
+            self.reasoning.append(event.text)
         elif event.type == "tool_call":
             self._steps[event.id] = {
                 "id": event.id,

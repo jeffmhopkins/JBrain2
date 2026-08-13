@@ -202,6 +202,26 @@ class ReasoningDelta(BaseModel):
     text: str
 
 
+class ReasoningReclassify(BaseModel):
+    """Move the answer's most-recently-streamed tail into the thinking trace.
+
+    The local gpt-oss harmony route sometimes emits a tool-call round's ANALYSIS on the
+    `content` channel instead of `reasoning_content` (docs/reference/ASSISTANT.md — the
+    `_hide_tool_round_text` case). A tool call is signalled only at the round's END, so the
+    loop can't classify that content until then. Rather than withhold the WHOLE round (which
+    stalled the final answer into a single lump — the answer never streamed on the local
+    route), the loop now streams every content chunk live as a `TextDelta` and, once a round
+    turns out to have called a tool, emits this event carrying that round's text so the PWA
+    relocates it from the answer bubble into the "thinking" disclosure. `text` is the exact
+    run just streamed as answer this round, so the client removes it from the answer tail and
+    appends it to the reasoning trace (the persisted transcript ends identical to the old
+    buffered classification — only the streaming is now live). The final, non-tool round's
+    content is the real answer and is never reclassified."""
+
+    type: Literal["reasoning_reclassify"] = "reasoning_reclassify"
+    text: str
+
+
 class ToolCallEvent(BaseModel):
     type: Literal["tool_call"] = "tool_call"
     id: str
@@ -439,6 +459,7 @@ class GeneralKnowledgeEvent(BaseModel):
 ChatEvent = Annotated[
     TextDelta
     | ReasoningDelta
+    | ReasoningReclassify
     | ToolCallEvent
     | ToolResultEvent
     | ToolViewEvent
