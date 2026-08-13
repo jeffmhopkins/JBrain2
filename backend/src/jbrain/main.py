@@ -851,6 +851,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # The SAME FeedClient the news_feed tool uses, so the deep-research engine's Wave-B
             # feed pre-pull and a scout's news_feed call share one cache (NEWS_FEED_PLAN.md).
             feeds=news_feeds,
+            # SearXNG + the URL fetcher back the `engine: briefing` deterministic-gather builder
+            # (DAILY_NEWS_V2_PLAN.md) — the same instances the web tools use.
+            searxng=searxng,
+            fetcher=web_fetcher,
             image_handlers=image_handlers,
             transcribe_handlers=transcribe_handlers,
             video_handlers=video_handlers,

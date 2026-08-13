@@ -48,6 +48,20 @@ def test_shipped_daily_news_is_dated_and_retained() -> None:
     assert other.question != r.question
 
 
+def test_shipped_daily_news_v2_runs_on_the_briefing_engine() -> None:
+    # The experimental twin selects the lean deterministic-gather builder via `engine: briefing`,
+    # and does NOT set news_feeds/min_reads (the builder gathers itself; those are pipeline knobs).
+    preset = rp.get("daily_news_v2")
+    assert preset is not None
+    assert preset.engine == "briefing"
+    assert preset.output_kind == "brief" and preset.retention_days == 7
+    assert preset.news_feeds == () and preset.min_reads is None
+    assert preset.sections[0] == "Good Morning" and preset.sections[-1] == "That's Your Briefing"
+    # The shipped daily_news stays on the default pipeline — the v2 twin is additive.
+    v1 = rp.get("daily_news")
+    assert v1 is not None and v1.engine == "pipeline"
+
+
 def test_render_substitutes_every_slot_across_all_fields() -> None:
     r = rp.render_preset(
         "candidate_profile", {"candidate": "Jane Doe", "office": "U.S. Senate (Florida)"}
@@ -93,6 +107,7 @@ def test_coerce_defaults_and_angle_title_fallback() -> None:
     )
     assert preset.output_kind == "report"  # default
     assert preset.source_mode == "web"  # default
+    assert preset.engine == "pipeline"  # default engine (the fan pipeline)
     assert preset.variables == ("x",)
     assert preset.angles[0][0] == "research {{x}}"  # title falls back to the brief
     assert preset.retention_days is None  # absent → keep forever

@@ -64,6 +64,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.briefs import compose_feed_block, prepend_feed
 from jbrain.agent.contracts import ToolProgressEvent, ViewPayload, WebSource
+from jbrain.agent.daily_briefing import BriefingResult, DailyBriefingBuilder
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.reflexion import (
     VerificationResult,
@@ -89,6 +90,8 @@ from jbrain.llm import LlmBadResponseError, LlmRouter
 from jbrain.llm.promptfile import load_prompt
 from jbrain.llm.types import LlmResult, LlmTurn, TextChunk, UserMessage
 from jbrain.web.feeds import FeedClient, FeedItem
+from jbrain.web.fetch import WebFetcher
+from jbrain.web.search import SearxngClient
 
 log = structlog.get_logger()
 
@@ -156,6 +159,11 @@ _DEFAULT_SOURCE_MODE = "web"
 # deep_research behaviour and stays the default; the other kinds are the deep_produce verb.
 _OUTPUT_KINDS = ("report", "plan", "table", "brief", "differential", "timeline")
 _DEFAULT_OUTPUT_KIND = "report"
+
+# The engine a preset selects (research_presets `engine` field): the default multi-stage fan
+# `pipeline`, or the lean deterministic-gather → single-writer `briefing` builder
+# (DAILY_NEWS_V2_PLAN.md). Validated when a rendered preset is consumed.
+_PRESET_ENGINES = ("pipeline", "briefing")
 
 # Where a finished artifact is persisted. `external` is the owner-wide research corpus jerv
 # reads back and shares; a seeded (health/KB) deep_produce run uses a non-external sink so a
@@ -1059,6 +1067,8 @@ class DeepResearchService:
         maker: async_sessionmaker[AsyncSession] | None = None,
         embed: EmbedClient | None = None,
         feeds: FeedClient | None = None,
+        searxng: SearxngClient | None = None,
+        fetcher: WebFetcher | None = None,
     ) -> None:
         self._router = router
         self._spawn = spawn
@@ -1074,6 +1084,10 @@ class DeepResearchService:
         # Optional: with no embedder wired, curation is a no-op and the full registry passes
         # through unchanged (fail-open), so the pipeline still runs — it just isn't pruned.
         self._embed = embed
+        # SearXNG + the URL fetcher back the `engine: briefing` deterministic-gather builder
+        # (DAILY_NEWS_V2_PLAN.md), an alternative to the fan pipeline for the daily-news shape.
+        # Unused by the default pipeline path; optional in a headless/test build.
+        self._briefing = DailyBriefingBuilder(router, feeds=feeds, searxng=searxng, fetcher=fetcher)
 
     async def research(
         self,
@@ -1160,6 +1174,81 @@ class DeepResearchService:
             log.warning("deep_research.owner_tz_read_failed", exc_info=True)
             return None
 
+    async def _run_briefing(
+        self, ctx: ToolContext, rp: RenderedPreset, *, require_persist: bool = False
+    ) -> str:
+        """The `engine: briefing` path (DAILY_NEWS_V2_PLAN.md): deterministic per-beat gather +
+        force-fetch + one tool-less writer, in place of the fan pipeline. Persists, finalizes the
+        `## Sources` block, and frames the report exactly like `_run` so the library card and the
+        `deep_research_report` tool-view render identically to a pipeline run."""
+        self._phase(ctx, 2, "Gathering the day's news")
+        # Move the progress phase to "Writing" exactly when gather is done and the writer begins,
+        # so the owner doesn't watch "Writing the report" appear after it already finished.
+        result: BriefingResult = await self._briefing.build(
+            ctx,
+            question=rp.question,
+            objective=rp.objective,
+            sections=list(rp.sections),
+            on_write=lambda: self._phase(ctx, _WRITE_STEP, _WRITE_LABEL),
+        )
+        # A totally-empty gather refuses rather than shipping a hollow "nothing happened anywhere"
+        # briefing — the empty-gather parity with the pipeline (`_run`'s empty-gather refusal).
+        if result.empty:
+            return _refuse(_empty_gather_msg(rp.source_mode))
+        # Neutralize a dangling in-body marker (the writer invented a `[^n]` past the registry): the
+        # pipeline re-synthesizes; here we just drop the orphan so the card view has no broken chip.
+        n_src = len(result.sources)
+        body = re.sub(
+            r"\[\^(\d+)\]",
+            lambda m: m.group(0) if int(m.group(1)) <= n_src else "",
+            result.report_md,
+        )
+        # Deterministically rebuild the trailing Sources block from the body's markers — the same
+        # bookkeeping fix the pipeline applies, so `[^n]` binds positionally to the registry.
+        report = _finalize_sources(body, result.sources)
+        # `revised=False`: a briefing has no critique pass, so it must not render "revised after
+        # critique"; the completeness repair is an internal fix, surfaced only in logs.
+        await self._persist(
+            ctx,
+            question=rp.question,
+            report=report,
+            complexity="deep",
+            rounds=1,
+            roster=result.roster,
+            sources=result.sources,
+            analyzed=False,
+            revised=False,
+            coverage_limited=result.coverage_limited,
+            source_mode=rp.source_mode,
+            tool="deep_research",
+            require_persist=require_persist,
+            retention_days=rp.retention_days,
+        )
+        return ToolOutput(
+            _frame(
+                report,
+                rp.question,
+                "deep",
+                result.roster,
+                False,
+                result.coverage_limited,
+                False,
+                rp.source_mode,
+            ),
+            view=_report_view(
+                report,
+                rp.question,
+                "deep",
+                1,
+                result.roster,
+                result.sources,
+                False,
+                result.coverage_limited,
+                False,
+                rp.source_mode,
+            ),
+        )
+
     async def _run_preset(
         self,
         ctx: ToolContext,
@@ -1203,6 +1292,16 @@ class DeepResearchService:
                 f"preset {preset_name!r} has unknown sources {rp.source_mode!r}; "
                 f"choose one of {list(_SOURCE_MODES)}."
             )
+        if rp.engine not in _PRESET_ENGINES:
+            return _refuse(
+                f"preset {preset_name!r} has unknown engine {rp.engine!r}; "
+                f"choose one of {list(_PRESET_ENGINES)}."
+            )
+        # The `briefing` engine is the lean deterministic-gather → single-writer builder — an
+        # alternative to the fan pipeline for the daily-news shape (DAILY_NEWS_V2_PLAN.md). It does
+        # not plan angles or run a fan, so it branches off here before the pipeline setup below.
+        if rp.engine == "briefing":
+            return await self._run_briefing(ctx, rp, require_persist=require_persist)
         # The gather fan is capped at DR_MAX_BREADTH so the later analyst/critique fans still
         # fit under the tree; a preset listing more angles runs the first N (its outline can
         # still carry as many SECTIONS as it likes — those aren't fans). Log any truncation.
