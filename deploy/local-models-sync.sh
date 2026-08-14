@@ -11,7 +11,9 @@
 # then: downloads any missing weights, re-stamps llama-swap.yaml, rewrites only
 # LOCAL_MODELS in .env (every other line — the GPU GIDs, the gateway URL — is
 # preserved, which is WHY this does not re-run the host setup script in the
-# bash-less, GPU-less updater), restarts the gateway + api, and clears the queue.
+# bash-less, GPU-less updater), restarts the gateway + api, points agent.turn at
+# the just-installed model so it becomes the box's active chat model (step 7d), and
+# clears the queue.
 #
 # Idempotent: an unchanged set re-runs as a cheap no-op (huggingface skips files
 # already present). Best-effort by contract — callers tolerate a non-zero exit so
@@ -222,6 +224,22 @@ for cache in "$PWD"/local-models/*/.cache; do
   say "clearing partials: $(basename "$(dirname "$cache_abs")")/.cache"
   rm -rf -- "$cache_abs" || true
 done
+
+# 7d. Make the just-installed model the box's ACTIVE chat model (owner decision): re-point
+#    agent.turn to the model the operator queued this update, so the WarmKeeper keeps THAT
+#    model hot instead of the standing default (which otherwise leaves whatever the post-update
+#    smoke-test probe loaded, e.g. gpt-oss-120b, resident). Only when a model was actually
+#    INSTALLED this run — a routine/no-op update or a pure uninstall leaves routing untouched.
+#    The install queue keeps insertion order, so `tail -n1` is the most-recently-added model;
+#    it is confirmed to be in the FINAL served roster ($ids) so a same-update install+uninstall
+#    can't activate a model that isn't served. Runs BEFORE the queue is cleared below (it reads
+#    the queue captured at step 1). Best-effort: a failed activation only leaves routing as-is.
+activate="$(printf '%s\n' "$requested" | grep -v '^[[:space:]]*$' | tail -n1 || true)"
+case " $ids " in *" $activate "*) : ;; *) activate='' ;; esac
+if [ -n "$activate" ]; then
+  say "activating just-installed model as the active chat model (agent.turn): $activate"
+  docker compose run --rm -T api python -m jbrain.cli local-activate "$activate" || true
+fi
 
 # 8. Clear the queues — everything requested is now provisioned and enabled, and every
 #    uninstall has been applied, so both must stop showing as queued. Best-effort: a

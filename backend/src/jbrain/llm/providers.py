@@ -29,6 +29,19 @@ REASONING_EFFORTS: tuple[str, ...] = ("none", "low", "medium", "high")
 REASONING_DEFAULT = "low"
 
 
+def active_local_override(model: local_catalog.LocalModel) -> dict[str, str]:
+    """The agent.turn task-override entry that makes `model` the active local chat model:
+    its `local:<served>` spec, plus a `reasoning_effort` ONLY when the model can think —
+    the exact gating the settings-screen PUT applies (jbrain.api.llm_settings), so a model
+    activated by the update one-shot ends up with the same stored shape as one picked in
+    the UI. The update's `local-activate` writes this under `agent.turn` so a just-installed
+    model becomes the box's active model and the WarmKeeper keeps it hot."""
+    entry = {"spec": model.spec}
+    if model.supports_reasoning:
+        entry["reasoning_effort"] = REASONING_DEFAULT
+    return entry
+
+
 @dataclass(frozen=True)
 class ProviderChoice:
     id: str
