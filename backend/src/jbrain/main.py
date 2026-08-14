@@ -1007,6 +1007,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 broadcaster=app.state.pet_broadcaster,
             )
         )
+        # Re-stamp llama-swap.yaml with the operator's SAVED per-model context-window/slot
+        # overrides BEFORE the warm keeper primes. A deploy's config re-stamp
+        # (deploy/local-models-sync.sh → llama_swap_config._main) regenerates from the BASE
+        # catalog and drops these overrides, so a model whose saved window exceeds its base
+        # (Nemotron 3.5 Lightning: 500k over a 32k base) would otherwise reload at 32k and every
+        # agent turn — whose own system+tools prefix is ~33k tokens — would overflow. Idempotent
+        # and best-effort: a no-op when the config already matches, so a plain restart keeps its
+        # warm model. Awaited (not detached) so the config is correct before the prime below.
+        with suppress(Exception):
+            await llm_settings_api.reconcile_gateway_windows_on_boot(
+                settings, settings_store, app.state.local_gateway, SYSTEM_CTX
+            )
         # Keep the interactive model (agent.turn, when it routes local) resident AND primed
         # so the first jerv message after a restart/update is instant, not a cold weight-load
         # + persona+tools prefill. Nothing else does this on boot: schedule_restore only undoes

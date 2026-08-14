@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-13
+> **Status:** Living · **Last verified:** 2026-08-14
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -198,6 +198,20 @@ Two subtleties the prime must respect, both learned the hard way:
   silently defeats the reuse. So the keeper keys its "already primed" state on
   `(model, hidden-tool-set)` and re-primes when the hidden set changes, self-correcting once
   liveness settles. The manual **Load** button primes the same persona+tools shape too.
+
+**Per-model context windows survive a deploy (`jbrain.api.llm_settings.reconcile_gateway_windows_on_boot`).**
+Each on-box model has a **context-window** picker (Settings → LLM); the chosen value is persisted
+(`app.settings → llm_local_context_windows`) and stamped into the gateway's `-c` by the runtime
+re-stamp. But the **deploy** re-stamp (`deploy/local-models-sync.sh` → `python -m
+jbrain.llm.llama_swap_config`) regenerates `llama-swap.yaml` from the **base catalog** and passes
+no overrides — so, left alone, every update silently reset a model to its catalog-default window.
+That bit hard once: Nemotron 3.5 Lightning (32k base, raised to 500k) was reset to 32k on a deploy,
+and since the agent's own persona + 39 tool schemas is ~33k tokens, **every** chat turn then
+overflowed ("this model ran out of context") even on a bare "Hi". The app now **reconciles the
+saved windows/slots back into `llama-swap.yaml` on boot**, before the WarmKeeper primes — idempotent
+(a no-op when the config already matches, so a plain restart keeps its warm model) and best-effort
+(a missing weight or down gateway never blocks startup). Only when the served config actually
+changed does it evict the affected resident models so they reload at the corrected `-c`.
 
 **Optional: a dedicated interactive slot (Settings → LLM → On-box models).** A single llama-server
 KV slot holds the primed jerv prefix well enough for ordinary traffic (small background/title
