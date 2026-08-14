@@ -1173,14 +1173,12 @@ def _public_records_child(
             tax = prov.taxonomies[0] if prov.taxonomies else None
             spec = f" · {tax.desc}" if tax and tax.desc else ""
             lic = f" · license {tax.license} ({tax.state})" if tax and tax.license else ""
-            others = (
-                f" · other names: {', '.join(prov.other_names)}" if prov.other_names else ""
-            )
+            others = f" · other names: {', '.join(prov.other_names)}" if prov.other_names else ""
             lines.append(
                 f"  • NPI {prov.npi} — {prov.name}{cred} [{prov.status}]{spec}{lic}{others} "
                 f"[under: {name}]"
             )
-            if (url := _nppes_url(prov.npi)):
+            if url := _nppes_url(prov.npi):
                 web_sources.append(
                     WebSource(url=url, title=f"NPI {prov.npi} — {prov.name}", read=True)
                 )

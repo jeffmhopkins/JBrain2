@@ -337,9 +337,7 @@ def render_preset(name: str, variables: dict[str, str]) -> RenderedPreset:
         min_reads=preset.min_reads,
         news_feeds=preset.news_feeds,
         engine=preset.engine,
-        records_subject=_render(
-            preset.records_subject, v, where=f"preset {name!r} records_subject"
-        )
+        records_subject=_render(preset.records_subject, v, where=f"preset {name!r} records_subject")
         if preset.records_subject
         else "",
         lean_tail=preset.lean_tail,
