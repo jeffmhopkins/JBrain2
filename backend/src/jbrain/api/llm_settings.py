@@ -8,7 +8,9 @@ implicit pre-P7; the store's RLS enforces it regardless.
 """
 
 import contextlib
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
+from pathlib import Path
 from typing import Annotated, Literal, cast
 
 import structlog
@@ -25,7 +27,7 @@ from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import llama_swap_config, local_catalog, local_weights
 from jbrain.llm.errors import LlmError
-from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
+from jbrain.llm.local_gateway import LocalGateway, LocalGatewayClient, LocalGatewayError
 from jbrain.llm.providers import (
     REASONING_DEFAULT,
     REASONING_EFFORTS,
@@ -640,6 +642,76 @@ async def _unload_if_loaded(
             await gateway.unload(model.served_model)
     except LocalGatewayError as exc:
         log.warning("llm_settings.reload_unload_failed", model=model.id, error=str(exc))
+
+
+async def reconcile_gateway_config(
+    models_dir: str,
+    manifest: Sequence[Mapping[str, object]],
+    *,
+    windows: Mapping[str, int],
+    slots: Mapping[str, int],
+    gateway: LocalGateway,
+) -> bool:
+    """Re-stamp llama-swap.yaml with the operator's SAVED per-model context-window/slot overrides,
+    and — ONLY if the served config actually changed — evict any resident local model so its next
+    request reloads at the corrected `-c`. Returns True when it re-stamped, False on a no-op.
+
+    Why this exists: the DEPLOY re-stamp (`deploy/local-models-sync.sh` step 5 →
+    `python -m jbrain.llm.llama_swap_config`) regenerates the config from the BASE catalog manifest
+    and passes NO overrides, so a model whose saved window exceeds its catalog default (Nemotron 3.5
+    Lightning at 500k over a 32k base) is silently reset to that base on every deploy — and the
+    agent's own system+tools prefix (~33k tokens) then overflows every turn ('ran out of context').
+    The runtime settings path (`_try_regenerate`) DOES apply the overrides; this reconciles them
+    back at boot so a deploy self-heals. Idempotent: when the on-disk config already matches the
+    saved overrides it is a no-op and nothing is evicted, so a plain restart keeps its warm model.
+    Best-effort — a render/glob miss or a down gateway is logged, never raised into boot."""
+    try:
+        desired = llama_swap_config.render(list(manifest), models_dir, windows=windows, slots=slots)
+    except Exception as exc:  # noqa: BLE001 — a missing weight/glob must never fail boot
+        log.warning("llm_settings.gateway_reconcile_render_failed", error=str(exc))
+        return False
+    path = Path(models_dir) / "llama-swap.yaml"
+    with contextlib.suppress(OSError):
+        if path.read_text() == desired:
+            return False  # already correct — the common case; leave any resident model warm
+    llama_swap_config.write(models_dir, list(manifest), windows=windows, slots=slots)
+    log.info("llm_settings.gateway_config_reconciled")
+    # The served `-c` changed under a possibly-resident gateway (an app restart with the gateway
+    # still up, or a deploy race): evict resident local models so their next request reloads at the
+    # corrected window (a running llama-server can't resize its KV cache live). On a fresh
+    # post-deploy boot nothing is resident yet, so this loop is a no-op there.
+    try:
+        running = await gateway.running()
+    except LocalGatewayError:
+        return True
+    served = {str(m["served_model"]) for m in manifest}
+    for name in sorted(running & served):
+        with contextlib.suppress(LocalGatewayError):
+            await gateway.unload(name)
+    return True
+
+
+async def reconcile_gateway_windows_on_boot(
+    settings: Settings,
+    store: SqlSettingsStore,
+    gateway: LocalGateway,
+    ctx: SessionContext,
+) -> bool:
+    """Boot hook: load the saved window/slot overrides and reconcile the gateway config against
+    them (see `reconcile_gateway_config`). Inert when local hosting is off. Best-effort — a settings
+    read hiccup or missing weights simply skips the reconcile rather than blocking startup."""
+    if not settings.local_llm_enabled:
+        return False
+    try:
+        windows = await store.llm_local_context_windows(ctx)
+        slots = await store.llm_local_parallel_slots(ctx)
+        manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
+    except Exception as exc:  # noqa: BLE001 — never fail boot on a reconcile-setup hiccup
+        log.warning("llm_settings.gateway_reconcile_load_failed", error=str(exc))
+        return False
+    return await reconcile_gateway_config(
+        settings.local_models_dir, manifest, windows=windows, slots=slots, gateway=gateway
+    )
 
 
 @router.get("/settings/llm")
