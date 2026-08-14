@@ -32,6 +32,18 @@ _ENTITY = {
                         }
                     }
                 ],
+                "P569": [
+                    {
+                        "mainsnak": {
+                            "snaktype": "value",
+                            "datatype": "time",
+                            "datavalue": {
+                                "value": {"time": "+1970-06-04T00:00:00Z", "precision": 11},
+                                "type": "time",
+                            },
+                        }
+                    }
+                ],
             },
         }
     }
@@ -81,9 +93,18 @@ async def test_resolve_harvests_aliases_occupation_and_identifiers() -> None:
     assert e.aliases == ("Jane Doe", "J. M. Roe")  # the prior-name harvest
     assert e.occupations == ("physician",)  # the P106 QID resolved to a label
     assert e.identifiers == (("National Provider Identifier", "1234567890"),)  # NPI pivot
+    assert e.birth_year == 1970  # P569 harvested — the records identity gate's era signal
     assert e.url == "https://www.wikidata.org/wiki/Q1"
     # A descriptive User-Agent (Wikidata's policy requires it) rides every call.
     assert all("JBrain2 research" in r.headers["user-agent"] for r in client.seen)  # type: ignore[attr-defined]
+
+
+async def test_resolve_without_birth_date_leaves_birth_year_none() -> None:
+    # Not every entity records P569; the records identity gate then degrades to no era check (the
+    # party-name gate still applies), so birth_year must be None rather than raising.
+    no_dob = {"entities": {"Q1": {"labels": {"en": {"value": "Jane Roe"}}, "claims": {}}}}
+    entities, ok = await _client(_SEARCH, no_dob, _LABELS).resolve("Jane Roe")
+    assert ok is True and entities[0].birth_year is None
 
 
 async def test_resolve_sends_a_user_agent() -> None:

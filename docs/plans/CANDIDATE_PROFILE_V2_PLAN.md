@@ -1,6 +1,6 @@
 # JBrain2 — Candidate Profile v2 (Records Pre-gather) Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-14 · **Waves:** C1✅ C2◻️
+> **Status:** In progress · **Last verified:** 2026-08-14 · **Waves:** C1✅ C3✅ C2◻️
 
 A leaner, more reliable variant of the `candidate_profile` report preset, offered **side-by-side**
 with the shipped preset for a risk-free A/B (the `daily_news_v2` pattern — see
@@ -58,6 +58,16 @@ Two things, found by comparing `candidate_profile` against the redone daily-news
    the later synth passes: it sits in a cacheable prompt prefix, so re-sending it is nearly free,
    and dropping it risked losing the nuanced status/label rules on the revise.)
 
+3. **Court identity-verification gate (C3).** A CourtListener name search full-text-matches, so it
+   returns two kinds of junk: cases that merely MENTION the subject (a legislator named in a
+   voting-rights suit — not their own legal matter) and same-surname cases about a DIFFERENT person.
+   The pre-gather now applies two deterministic filters to its court hits: a **party gate** (keep only
+   captions that name the subject/an alias as a party) and, when a birth year is known (harvested from
+   Wikidata P569), an **era gate** (drop a matter dated before the subject turned 18). It also surfaces
+   the birth year + the rule as an explicit `IDENTITY GATE` line in the injected finding, so the
+   *writer* applies the same test to a court matter a gather sub-agent found on its own (the vector the
+   pre-gather filter alone can't reach). Excluded counts are reported in the finding (no silent drop).
+
 ## Wiring
 
 - `research_presets.py`: two new preset fields — `records_subject` (a `{{var}}` template, rendered
@@ -71,6 +81,9 @@ Two things, found by comparing `candidate_profile` against the redone daily-news
 - `DeepResearchService` gains the four keyless public-records clients (`wikidata`, `courtlistener`,
   `nppes`, `federal_register`) — the SAME instances the `public_records` tool uses — threaded from
   `build_registry`/`main.py` alongside `feeds`/`searxng`/`fetcher`.
+- `web/wikidata.py`: `WikidataEntity` gains `birth_year` (parsed from the P569 date-of-birth claim,
+  `None` when absent). `_public_records_child` uses it plus `_surname`/`_names_party`/`_record_year`
+  helpers for the C3 court identity gate.
 - New `candidate_profile_v2.preset`: a faithful twin of `candidate_profile` (same variables,
   sections, and angle substance) that sets `records_subject: "{{candidate}}"` and `lean_tail: true`,
   with the alias-harvest prose rewritten to build on the pre-gathered finding.
@@ -88,10 +101,28 @@ Two things, found by comparing `candidate_profile` against the redone daily-news
   landed on-branch with unit coverage (preset load/render/validation; the pre-gather injects an
   alias-cross-referenced citable finding; v1 runs no pre-gather even with clients wired; `lean_tail`
   skips the revise on a clean critique). The shipped `candidate_profile` is byte-unchanged.
+- **C3 ✅** — the court identity-verification gate: `WikidataClient` harvests the birth year (P569);
+  `_public_records_child` runs the party + era gates over the CourtListener hits and surfaces the
+  `IDENTITY GATE` rule line. Unit-covered (drops the 5 mention-only + 1 pre-adulthood hit on the real
+  Ingoglia case set, keeps the one party case; degrades to party-only when no birth year is recorded).
 - **C2 ◻️** — live on-box A/B against `candidate_profile` on real candidates: measure record
   coverage (aliases surfaced, primary-source citations), faithfulness, and wall-clock; tune the name-
-  variant cap / per-source limits. If v2 wins, **promote** it (fold the policies into
-  `candidate_profile`, retire the twin) and decide the standalone `RESEARCH_TOOLS` allowlist fix.
+  variant cap / per-source limits; re-test on a candidate who actually has aliases (Ingoglia had
+  none, so the alias-harvest was a no-op for the first run). If v2 wins, **promote** it (fold the
+  policies into `candidate_profile`, retire the twin) and decide the standalone `RESEARCH_TOOLS`
+  allowlist fix.
+
+## Live A/B finding (first run: Blaise Ingoglia, FL 2026 CFO)
+
+The first v2 run confirmed the mechanism end-to-end (jerv called `candidate_profile_v2`, the
+pre-gather fired, a complete 9-section / 60-source report), and surfaced the failure C3 fixes: **both
+v1 and v2 asserted a "1983 federal narcotics conviction" (`United States v. Ingoglia`) as fact** — a
+common-name misattribution (Ingoglia was born in 1970; that defendant is a different person). It is a
+**pre-existing pipeline weakness, not v2-caused** (v1 has it with no pre-gather), and it survived the
+critique/revise in both. C3's era gate rejects exactly this case, and the `IDENTITY GATE` rule
+propagates the birth-year test to the writer for the agent-found copy. Note the pre-gather's raw
+CourtListener sweep also returned 5 tangential mention-only hits for Ingoglia — the party gate drops
+those too.
 
 ## Not doing (yet)
 

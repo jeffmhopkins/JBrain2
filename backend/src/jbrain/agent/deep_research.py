@@ -1113,6 +1113,30 @@ def _nppes_url(npi: str) -> str:
     return f"https://npiregistry.cms.hhs.gov/provider-view/{npi}" if npi else ""
 
 
+def _surname(name: str) -> str:
+    """The surname key for a person name — the last alphabetic token, lowercased. Court captions
+    cite parties by surname, so this is the key the identity gate matches on ("Blaise Ingoglia" ->
+    "ingoglia")."""
+    toks = re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*", name, re.UNICODE)
+    return toks[-1].lower() if toks else ""
+
+
+def _names_party(case_name: str, surnames: set[str]) -> bool:
+    """True when a subject surname appears as a WHOLE WORD in the case caption — i.e. the subject
+    is a NAMED PARTY, not merely mentioned in the opinion body. CourtListener's name search
+    full-text-matches, so a hit whose caption lacks the surname is a case ABOUT something else that
+    references the person (a legislator named in a voting-rights suit), not their own legal matter —
+    the identity gate drops it."""
+    caption = case_name.lower()
+    return any(re.search(rf"(?<![\w'-]){re.escape(s)}(?![\w'-])", caption) for s in surnames)
+
+
+def _record_year(date_filed: str) -> int | None:
+    """The 4-digit year in a CourtListener date (`2019-04-01`, `2019`, `n.d.`), or None."""
+    m = re.search(r"\b(1[89]\d\d|20\d\d)\b", date_filed or "")
+    return int(m.group(1)) if m else None
+
+
 def _public_records_child(
     subject: str,
     identity: list[WikidataEntity],
@@ -1151,11 +1175,43 @@ def _public_records_child(
                 )
     lines.append(f"Names searched across all record sources: {', '.join(names)}.")
 
-    # COURT — CourtListener opinions + RECAP dockets, per name.
-    court_hits = [(n, r) for n in names for r in court.get(n, [])]
-    if court_hits:
-        lines.append("\nCOURT RECORDS (CourtListener — verify each belongs to this person):")
-        for name, rec in court_hits:
+    # --- Identity-verification gate on the COURT hits (CANDIDATE_PROFILE_V2_PLAN.md) ---
+    # A CourtListener name search full-text-matches, so it returns (a) cases that merely MENTION the
+    # subject (not their legal matter) and (b) same-surname cases about a DIFFERENT person. Two
+    # deterministic filters cut the common-name misattribution that put a 1983 "United States v.
+    # Ingoglia" narcotics conviction into a profile of a man born in 1970: a PARTY gate (the caption
+    # must name the subject/an alias as a party) and, when a birth year is known, an ERA gate (drop
+    # a matter dated before the subject turned 18). The birth year is ALSO surfaced as a rule below,
+    # so the writer applies the same test to a court matter a gather sub-agent found itself.
+    surnames = {s for s in (_surname(n) for n in names) if s}
+    birth_years = [e.birth_year for e in identity if e.birth_year]
+    adult_year = (min(birth_years) + 18) if birth_years else None
+    if adult_year is not None:
+        lines.append(
+            f"IDENTITY GATE — the subject was born in {min(birth_years)}. Treat ANY court or "
+            f"criminal matter dated before {adult_year}, or one not naming the subject as a party, "
+            f"as a DIFFERENT person of the same surname unless independently confirmed — do NOT "
+            f"attribute it to the subject."
+        )
+    kept_court: list[tuple[str, Record]] = []
+    dropped_mention = dropped_era = 0
+    for name in names:
+        for rec in court.get(name, []):
+            if not _names_party(rec.case_name, surnames):
+                dropped_mention += 1
+                continue
+            year = _record_year(rec.date_filed)
+            if adult_year is not None and year is not None and year < adult_year:
+                dropped_era += 1
+                continue
+            kept_court.append((name, rec))
+
+    # COURT — CourtListener opinions + RECAP dockets that survived the identity gate.
+    if kept_court:
+        lines.append(
+            "\nCOURT RECORDS (CourtListener — subject named as a party; confirm identity):"
+        )
+        for name, rec in kept_court:
             date = rec.date_filed or "n.d."
             docket = f" · {rec.docket_number}" if rec.docket_number else ""
             lines.append(
@@ -1163,6 +1219,17 @@ def _public_records_child(
             )
             if rec.url:
                 web_sources.append(WebSource(url=rec.url, title=rec.case_name, read=True))
+    gate_drops: list[str] = []
+    if dropped_mention:
+        gate_drops.append(
+            f"{dropped_mention} not naming the subject as a party (full-text mention)"
+        )
+    if dropped_era:
+        gate_drops.append(
+            f"{dropped_era} predating the subject's adulthood (same surname, other person)"
+        )
+    if gate_drops:
+        lines.append("  (identity gate excluded " + "; ".join(gate_drops) + ".)")
 
     # LICENSE — NPPES/NPI providers (a clinician's license + any prior/maiden name it records).
     license_hits = [(n, p) for n in names for p in licenses.get(n, [])]
@@ -1196,8 +1263,9 @@ def _public_records_child(
 
     # Nothing reachable at all — let the gather fan cover the subject rather than inject an empty
     # finding. (A partial sweep — identity but no matches — DOES ship: "searched, none found under
-    # these names" is itself citable evidence for the verify-an-absence rule.)
-    if not identity and not court_hits and not license_hits and not federal_hits:
+    # these names" is itself citable evidence for the verify-an-absence rule. Court hits that only
+    # the identity gate dropped don't count as reachable records here.)
+    if not identity and not kept_court and not license_hits and not federal_hits:
         return None
 
     lines.insert(
