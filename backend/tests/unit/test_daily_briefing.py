@@ -206,9 +206,7 @@ async def test_writer_budget_is_sized_for_reasoning_headroom() -> None:
     # produced the empty report).
     feeds = _FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]})
     router = _FakeRouter([_full_report()])
-    await _builder(router, feeds=feeds).build(
-        CTX, question="q", objective="", sections=_SECTIONS
-    )
+    await _builder(router, feeds=feeds).build(CTX, question="q", objective="", sections=_SECTIONS)
     assert router.max_tokens_seen == [_WRITER_MAX_TOKENS]
     assert _WRITER_MAX_TOKENS >= 24000
 
