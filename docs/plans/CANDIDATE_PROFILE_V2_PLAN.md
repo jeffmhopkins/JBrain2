@@ -73,9 +73,14 @@ Two things, found by comparing `candidate_profile` against the redone daily-news
   `build_registry`/`main.py` alongside `feeds`/`searxng`/`fetcher`.
 - New `candidate_profile_v2.preset`: a faithful twin of `candidate_profile` (same variables,
   sections, and angle substance) that sets `records_subject: "{{candidate}}"` and `lean_tail: true`,
-  with the alias-harvest prose rewritten to build on the pre-gathered finding. Not advertised in the
-  `deep_research` tool schema (the owner invokes it by name for the A/B, exactly as `daily_news_v2`
-  was).
+  with the alias-harvest prose rewritten to build on the pre-gathered finding.
+- The `deep_research` tool description lists `candidate_profile_v2` as an EXPLICIT-opt-in
+  experimental twin: jerv uses it only when the owner asks for the "v2"/"experimental" profile and
+  passes the name verbatim; an ordinary profile request still routes to `candidate_profile`. This
+  correction landed after a first live A/B attempt: with v2 UN-advertised, jerv silently normalized
+  an explicit "candidate_profile_v2" request back to the known `candidate_profile` (the twin never
+  ran). Unlike `daily_news_v2` — pointed at by a scheduled task's preset name, bypassing jerv's
+  tool-choice — a candidate profile is invoked conversationally, so the twin has to be namable.
 
 ## Waves
 

@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 10
+version: 11
 permission: web
 cost_class: expensive
 params:
@@ -89,6 +89,12 @@ of composing the run yourself. Available presets:
   Variables: `candidate` (full name) and `office` (the seat + race, e.g. "U.S. Senate
   (Florida), 2026 Republican primary"). Reach for it whenever the owner wants a profile of, or
   to research, a candidate — and run it once PER candidate to compare a field.
+- `candidate_profile_v2` — an EXPERIMENTAL A/B twin of `candidate_profile` (same variables, same
+  report shape) with a deterministic public-records pre-gather (identity/aliases + court/license/
+  federal records searched under every alias) and a leaner write tail. Use it ONLY when the owner
+  explicitly asks for the "v2" / "experimental" candidate profile (e.g. to compare it against
+  `candidate_profile`); pass this exact preset name verbatim — do NOT substitute `candidate_profile`.
+  For an ordinary profile request, use `candidate_profile`.
 - `compare_candidates` — a contrast-and-compare report across a whole field, built ONLY from
   the candidate_profile reports already in the owner's library (no web). Variables: `office`
   and `candidates` (a comma-separated list). Run this AFTER the per-candidate profiles exist —
