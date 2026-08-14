@@ -44,14 +44,18 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # text instead of sub-agent findings. Reused, not forked, so writing quality tracks the pipeline.
 _SYNTH = load_prompt(_PROMPTS / "deep_research_synthesize.prompt")
 _TASK = "agent.turn"
-# The writer's output ceiling. Sized WELL above the ~2-4k tokens a six-section briefing actually
-# needs because the `agent.turn` task can be routed to a HYBRID REASONER (gpt-oss, Nemotron): those
-# models spend part — sometimes all — of the output budget in a `<think>` channel BEFORE emitting
-# any visible briefing text. A tight cap starves the visible answer: the model burns the whole
-# budget thinking, hits `max_tokens`, and returns an empty briefing (the chars=0 failure this
-# builder now detects and refuses loudly, below). A generous cap gives the reasoning room to finish
-# and still leave the briefing; a non-thinking model just stops at `end_turn` far under it, so the
-# larger ceiling costs nothing there. Both the initial write and the one repair pass use it.
+# The writer runs NON-THINKING (`effort_override="none"`, in `_write`) regardless of what reasoning
+# effort `agent.turn` carries for chat. This is deliberate and load-bearing: the writer is a
+# tool-less synthesis over article text already in hand — there is nothing to reason about — but a
+# HYBRID REASONER (Nemotron, gpt-oss) at any thinking effort will run away in its `<think>` channel,
+# spending the WHOLE output budget on reasoning and emitting zero briefing (observed: 130k reasoning
+# chars, 0 briefing chars, 25 min — budget-independent, a bigger cap just thinks longer). Forcing
+# the thinking toggle off makes it write the briefing directly, in seconds. The chat task keeps its
+# own effort; only this synthesis call is pinned off.
+_WRITER_EFFORT = "none"
+# The writer's output ceiling. With thinking off (above) a six-section briefing needs only ~2-4k
+# tokens, so this is generous headroom, not a thinking allowance — a non-thinking model stops at
+# `end_turn` far under it, so the size costs nothing. Both the initial write and the repair use it.
 _WRITER_MAX_TOKENS = 32000
 
 # The builder's OWN progress timeline (deep_research's `pipeline` engine has its own, fixed one).
@@ -503,6 +507,9 @@ class DailyBriefingBuilder:
             system=_SYNTH.render(),
             messages=[UserMessage(text=user_text)],
             max_tokens=_WRITER_MAX_TOKENS,
+            # Pin thinking OFF for this synthesis call, whatever effort chat runs at — a hybrid
+            # reasoner otherwise burns the whole budget in <think> and writes no briefing.
+            effort_override=_WRITER_EFFORT,
         ):
             if isinstance(part, TextChunk):
                 if part.text:
@@ -616,11 +623,13 @@ def _writer_failure_detail(outcome: _WriteOutcome, articles: int) -> str:
     )
     runaway = outcome.hit_cap and outcome.reasoning_chars > max(outcome.text_chars, 1)
     if runaway:
+        # The writer already pins thinking OFF (_WRITER_EFFORT). A large reasoning trace despite
+        # that means the model/gateway ignored the enable_thinking toggle — a model-side problem,
+        # not a budget one, so route agent.turn to a model that honours it.
         return (
-            f"{stem} The model spent the entire {_WRITER_MAX_TOKENS}-token budget on its reasoning "
-            "channel before writing the briefing — a hybrid reasoner running away in <think>. The "
-            "writer rides the `agent.turn` task: route it to a non-thinking / faster model or "
-            "lower its reasoning effort in LLM Settings, or raise the writer token budget further."
+            f"{stem} The model emitted a large reasoning trace even though the writer runs with "
+            "thinking disabled — the model or gateway is ignoring the non-thinking toggle. Route "
+            "`agent.turn` to a model that honours it (or a non-reasoning model) in LLM Settings."
         )
     if outcome.hit_cap:
         return f"{stem} The writer hit the token ceiling before finishing — raise the budget."

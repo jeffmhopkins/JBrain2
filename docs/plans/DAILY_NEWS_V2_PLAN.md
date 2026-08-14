@@ -129,9 +129,15 @@ gaps — the writer spent its whole output budget in the `<think>` channel, hit 
 emitted no visible briefing, so a **chars=0 report** was persisted while the PWA showed a frozen
 "Writing…" for minutes. Fixed:
 
-- **Budget sized for reasoning headroom.** `_WRITER_MAX_TOKENS` 12k → **32k**, so a reasoner has
-  room to finish thinking *and* write. A non-thinking model still stops far under it, so the larger
-  ceiling costs nothing there. The initial write and the one repair both use it.
+- **The writer runs NON-THINKING (`_WRITER_EFFORT = "none"`) — the load-bearing fix.** The
+  budget bump (12k → **32k**) alone did *not* solve it: a re-run showed Nemotron burning the whole
+  32k on `<think>` (130k reasoning chars, **0** briefing chars, **25 minutes**) — the runaway is
+  budget-independent, a bigger cap just thinks longer. The writer is a tool-less synthesis over
+  text already gathered, so there is nothing to reason about; `_write` now passes
+  `effort_override="none"` to `converse_stream`, pinning the thinking toggle off for this one call
+  regardless of the effort `agent.turn` carries for chat. The model writes the briefing directly,
+  in seconds. The 32k ceiling stays as generous headroom (a non-thinking model stops at `end_turn`
+  far under it), not a thinking allowance.
 - **Loud failure instead of a hollow report.** If the gather succeeded but the writer returns an
   empty body — or **no** content heading even after the repair — the builder no longer ships the
   silent chars=0 report: it sets **`writer_failed`** with a `failure_detail` (stop reason, how the
@@ -142,9 +148,10 @@ emitted no visible briefing, so a **chars=0 report** was persisted while the PWA
   (`ToolProgressEvent.reasoning`, rendered as a collapsible "Thinking…" disclosure) so a long think
   shows the model working, not a blank pane. Only the tail is sent (the trace can run to megabytes).
 
-Note: the writer rides the shared `agent.turn` task, so swapping the agent chat model silently
-swaps the news writer too. Giving the writer its own routable task (or a forced non-thinking
-config) is a natural follow-up, called out in the failure_detail remedy.
+Note: the writer still rides the shared `agent.turn` task for its *model* (so swapping the agent
+chat model swaps the news writer too), but its *effort* is now pinned off, so a thinking-heavy chat
+setting no longer breaks the briefing. A fully separate routable writer task remains a possible
+follow-up if the model itself ever needs to diverge from chat.
 
 ## Tradeoffs / open risks
 
