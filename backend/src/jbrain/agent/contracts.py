@@ -276,6 +276,11 @@ class ToolProgressEvent(BaseModel):
     # `briefing` engine sends its own (Gather/Read/Write); None keeps the pipeline's fixed
     # timeline (the frontend falls back to its canonical stage list), so old runs are unchanged.
     phases: list[str] | None = None
+    # The model's live reasoning ("thinking") trace for a phase driven by a HYBRID reasoner — the
+    # briefing writer streams the TAIL of its `<think>` channel here so the owner sees the model
+    # working during a long think instead of a frozen "Writing…" with an empty pane (the 7-minute
+    # blank this fixed). Display-only, ephemeral, never the answer; None for non-reasoning phases.
+    reasoning: str | None = None
 
 
 class JobEnqueuedEvent(BaseModel):

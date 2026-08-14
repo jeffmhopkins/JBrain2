@@ -98,6 +98,46 @@ describe("DeepResearchProgress", () => {
     expect(container.querySelectorAll(".fb-drp-step.todo")).toHaveLength(0);
   });
 
+  it("streams the writer's thinking into a disclosure during the Write phase", () => {
+    const { container } = render(
+      <DeepResearchProgress
+        tool={tool({
+          step: 3,
+          total: 0,
+          label: "Writing the briefing",
+          phases: ["Gather", "Read", "Write"],
+          reasoning: "Let me weigh the top national stories before I write.",
+        })}
+      />,
+    );
+    // The thinking trace renders (so a long think shows the model working, not a blank pane).
+    expect(screen.getByText(/weigh the top national stories/)).toBeInTheDocument();
+    const thinking = container.querySelector(".fb-drp-thinking");
+    expect(thinking).toBeInTheDocument();
+    // With no draft yet, the disclosure is open so the thinking is visible.
+    expect(thinking).toHaveAttribute("open");
+  });
+
+  it("collapses the thinking disclosure once the briefing draft starts streaming", () => {
+    const { container } = render(
+      <DeepResearchProgress
+        tool={tool({
+          step: 3,
+          total: 0,
+          label: "Writing the briefing",
+          phases: ["Gather", "Read", "Write"],
+          reasoning: "some earlier thinking",
+          preview: "## Top National Stories\n\nNews happened.",
+        })}
+      />,
+    );
+    // The draft pane shows, and the thinking is present but collapsed (not `open`).
+    expect(container.querySelector(".fb-drp-report")).toBeInTheDocument();
+    const thinking = container.querySelector(".fb-drp-thinking");
+    expect(thinking).toBeInTheDocument();
+    expect(thinking).not.toHaveAttribute("open");
+  });
+
   it("keeps a home for a fan that spawned before the first phase event (step 0)", () => {
     const { container } = render(
       <DeepResearchProgress

@@ -108,6 +108,9 @@ export interface ToolActivity {
      * progress rail draws the engine's real phases instead of a hardcoded list; absent for the
      * pipeline (the rail falls back to its canonical stage list). */
     phases?: string[];
+    /** The writer's live "thinking" tail (the briefing engine streams it during a long think),
+     * shown as a collapsible disclosure in the active phase; absent for non-reasoning phases. */
+    reasoning?: string;
   };
   /** The last live preview frame, kept after the result settles so the final image
    * view can show it as a placeholder until the full-res image loads — no blank gap
@@ -294,6 +297,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
                 ...(event.preview ? { preview: event.preview } : {}),
                 ...(event.label ? { label: event.label } : {}),
                 ...(event.phases ? { phases: event.phases } : {}),
+                ...(event.reasoning ? { reasoning: event.reasoning } : {}),
               },
             }
           : t,
