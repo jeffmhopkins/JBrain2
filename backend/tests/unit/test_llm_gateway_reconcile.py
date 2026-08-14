@@ -61,9 +61,12 @@ class _FakeGateway:
             raise LocalGatewayError("gateway down")
         return set(self._running)
 
-    async def unload(self, name: str) -> None:
-        self.unloaded.append(name)
-        self._running.discard(name)
+    async def unload(self, served_model: str) -> None:
+        self.unloaded.append(served_model)
+        self._running.discard(served_model)
+
+    async def load(self, served_model: str) -> None:  # satisfies the LocalGateway protocol
+        self._running.add(served_model)
 
 
 async def test_reconcile_rewrites_a_base_stamped_config_and_evicts_the_resident_model(
@@ -140,5 +143,10 @@ async def test_on_boot_reconcile_is_inert_when_local_hosting_is_off(tmp_path: Pa
         local_llm_enabled=False, local_models=[], local_models_dir=str(tmp_path)
     )
     # store is never touched when hosting is off — pass a bare object to prove it.
-    changed = await reconcile_gateway_windows_on_boot(settings, object(), _FakeGateway(set()), CTX)
+    changed = await reconcile_gateway_windows_on_boot(
+        settings,  # type: ignore[arg-type]  # SimpleNamespace stands in for Settings
+        object(),  # type: ignore[arg-type]  # store is untouched on the hosting-off path
+        _FakeGateway(set()),
+        CTX,
+    )
     assert changed is False

@@ -27,7 +27,7 @@ from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import llama_swap_config, local_catalog, local_weights
 from jbrain.llm.errors import LlmError
-from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError
+from jbrain.llm.local_gateway import LocalGateway, LocalGatewayClient, LocalGatewayError
 from jbrain.llm.providers import (
     REASONING_DEFAULT,
     REASONING_EFFORTS,
@@ -650,7 +650,7 @@ async def reconcile_gateway_config(
     *,
     windows: Mapping[str, int],
     slots: Mapping[str, int],
-    gateway: LocalGatewayClient,
+    gateway: LocalGateway,
 ) -> bool:
     """Re-stamp llama-swap.yaml with the operator's SAVED per-model context-window/slot overrides,
     and — ONLY if the served config actually changed — evict any resident local model so its next
@@ -694,7 +694,7 @@ async def reconcile_gateway_config(
 async def reconcile_gateway_windows_on_boot(
     settings: Settings,
     store: SqlSettingsStore,
-    gateway: LocalGatewayClient,
+    gateway: LocalGateway,
     ctx: SessionContext,
 ) -> bool:
     """Boot hook: load the saved window/slot overrides and reconcile the gateway config against
