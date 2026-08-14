@@ -2093,6 +2093,84 @@ async def test_candidate_v2_lean_tail_skips_the_revise_on_a_clean_critique() -> 
     assert not any("must be removed" in s for s in clean_router.synth_calls)
 
 
+def _court(case_name: str, date: str, kind: str = "docket") -> _Record:
+    return _Record(
+        case_name=case_name,
+        court="Ct",
+        date_filed=date,
+        docket_number="",
+        url="https://cl/" + case_name[:8],
+        kind=kind,
+    )
+
+
+def test_public_records_court_identity_gate() -> None:
+    """The court identity gate keeps only cases that NAME the subject as a party and (given a birth
+    year) fall in their adulthood — dropping full-text mentions and the same-surname, wrong-person
+    case (the 1983 'United States v. Ingoglia' narcotics conviction misattributed to a man born
+    1970). The birth-year rule is also surfaced for the writer to apply to agent-found cases."""
+    from jbrain.agent.deep_research import _public_records_child, _record_name_variants
+
+    ent = _WdEntity(
+        qid="Q1",
+        label="Blaise Ingoglia",
+        description="politician",
+        aliases=(),
+        occupations=(),
+        identifiers=(),
+        url="https://wd/Q1",
+        birth_year=1970,
+    )
+    names = _record_name_variants("Blaise Ingoglia", [ent])
+    cases = [
+        _court("League of Women Voters v. Secretary of State", "2023-04-27"),  # mention → dropped
+        _court("MARON v. INGOGLIA", "2022-07-15"),  # named party → kept
+        _court("United States v. Ingoglia", "1983-03-31", "opinion"),  # pre-adulthood → dropped
+    ]
+    child = _public_records_child(
+        "Blaise Ingoglia", [ent], names, {"Blaise Ingoglia": cases}, {}, {}
+    )
+    assert child is not None
+    s = child.summary
+    assert "MARON v. INGOGLIA" in s  # the one legitimate party case survives
+    assert "League of Women Voters" not in s  # full-text mention dropped
+    assert "United States v. Ingoglia" not in s  # wrong-person 1983 case dropped
+    assert "born in 1970" in s and "before 1988" in s  # the era rule is surfaced for the writer
+    assert "identity gate excluded" in s and "predating the subject's adulthood" in s
+    # Only Wikidata + the one kept case are citable — the dropped noise never becomes a source.
+    assert len(child.web_sources) == 2
+
+
+def test_public_records_court_gate_degrades_without_birth_year() -> None:
+    """With no birth year (Wikidata didn't record P569), the era gate is skipped but the party-name
+    gate still drops full-text mentions — and no era rule line is emitted."""
+    from jbrain.agent.deep_research import _public_records_child, _record_name_variants
+
+    ent = _WdEntity(
+        qid="Q1",
+        label="Blaise Ingoglia",
+        description="politician",
+        aliases=(),
+        occupations=(),
+        identifiers=(),
+        url="https://wd/Q1",
+        birth_year=None,
+    )
+    names = _record_name_variants("Blaise Ingoglia", [ent])
+    cases = [
+        _court("League of Women Voters v. Secretary of State", "2023-04-27"),  # mention → dropped
+        _court("United States v. Ingoglia", "1983-03-31", "opinion"),  # party, no era check → kept
+    ]
+    child = _public_records_child(
+        "Blaise Ingoglia", [ent], names, {"Blaise Ingoglia": cases}, {}, {}
+    )
+    assert child is not None
+    s = child.summary
+    assert "IDENTITY GATE — the subject was born" not in s  # no birth year → no era rule
+    assert "United States v. Ingoglia" in s  # party match kept (era check unavailable)
+    assert "League of Women Voters" not in s  # party gate still drops the mention
+
+
 def test_personas_for_reports_mode_are_report_library_only() -> None:
     from jbrain.agent.deep_research import _personas_for
 

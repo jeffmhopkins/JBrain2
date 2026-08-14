@@ -19,6 +19,7 @@ runs a tool policy itself — the handler does.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -42,6 +43,11 @@ _CACHE_MAX_ENTRIES = 256
 
 # The occupation claim (P106). Its object QIDs are label-resolved in the batch call.
 _OCCUPATION_PROP = "P106"
+# Date of birth (P569) — a `time` claim (no QID to label-resolve). The records identity gate uses
+# the YEAR to reject a court/criminal matter that predates the subject's adulthood (a common-name
+# mix-up: a 1983 "United States v. Ingoglia" cannot be a person born in 1970). Year is enough — the
+# gate needs an era, and Wikidata often records only the year anyway.
+_BIRTH_DATE_PROP = "P569"
 # Pivot-useful external identifiers worth surfacing — kept tight so the 200+ library/catalog
 # IDs Wikidata carries don't drown the signal. NPI (P9450) links directly to `provider_license`.
 # The property LABELS are resolved dynamically (never hardcoded), so this stays a plain id set.
@@ -59,6 +65,9 @@ class WikidataEntity:
     occupations: tuple[str, ...]
     identifiers: tuple[tuple[str, str], ...]  # (property label, value), e.g. ("NPI", "1234567890")
     url: str
+    # Birth YEAR from P569, when Wikidata records it (else None) — the records identity gate's era
+    # signal. Defaulted so existing constructors/fixtures that predate the field keep working.
+    birth_year: int | None = None
 
 
 class WikidataClient:
@@ -241,6 +250,25 @@ def _identifier_values(entity: dict) -> list[tuple[str, str]]:
     return out
 
 
+def _birth_year(entity: dict) -> int | None:
+    """The subject's birth YEAR from the P569 (date of birth) time claim, or None. The time value
+    looks like `+1970-06-04T00:00:00Z` (or a negative/BCE lead); only the leading year is taken."""
+    claims = entity.get("claims")
+    rows = claims.get(_BIRTH_DATE_PROP) if isinstance(claims, dict) else None
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        snak = row.get("mainsnak") if isinstance(row, dict) else None
+        if not isinstance(snak, dict) or snak.get("snaktype") != "value":
+            continue
+        value = (snak.get("datavalue") or {}).get("value")
+        if isinstance(value, dict):
+            m = re.match(r"^[+-]?(\d{1,4})-", str(value.get("time") or ""))
+            if m:
+                return int(m.group(1))
+    return None
+
+
 def _referenced_qids(entity: dict) -> set[str]:
     """Every QID whose label the entity needs resolved: its occupations + identifier props."""
     return set(_claim_qids(entity, _OCCUPATION_PROP)) | {p for p, _ in _identifier_values(entity)}
@@ -263,4 +291,5 @@ def _build_entity(hit: dict, entity: dict, labels: dict[str, str], base_url: str
         occupations=occupations,
         identifiers=identifiers,
         url=f"{base_url}/wiki/{qid}" if qid else "",
+        birth_year=_birth_year(entity),
     )
