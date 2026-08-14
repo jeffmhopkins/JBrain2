@@ -112,7 +112,7 @@ describe("DeepResearchProgress", () => {
     );
     // The thinking trace renders (so a long think shows the model working, not a blank pane).
     expect(screen.getByText(/weigh the top national stories/)).toBeInTheDocument();
-    const thinking = container.querySelector(".fb-drp-thinking");
+    const thinking = container.querySelector(".fb-drp-think");
     expect(thinking).toBeInTheDocument();
     // With no draft yet, the disclosure is open so the thinking is visible.
     expect(thinking).toHaveAttribute("open");
@@ -133,7 +133,7 @@ describe("DeepResearchProgress", () => {
     );
     // The draft pane shows, and the thinking is present but collapsed (not `open`).
     expect(container.querySelector(".fb-drp-report")).toBeInTheDocument();
-    const thinking = container.querySelector(".fb-drp-thinking");
+    const thinking = container.querySelector(".fb-drp-think");
     expect(thinking).toBeInTheDocument();
     expect(thinking).not.toHaveAttribute("open");
   });

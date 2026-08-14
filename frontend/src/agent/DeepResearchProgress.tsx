@@ -10,6 +10,7 @@
 // engine's Gather/Read/Write), else the canonical pipeline eight — so the rail always matches the
 // engine actually running instead of showing pipeline stages a lean briefing never enters.
 import { type ReactNode, useEffect, useRef } from "react";
+import { BrainGlyph } from "./glyphs";
 import { Markdown } from "./markdown";
 import type { ToolActivity } from "./transcript";
 
@@ -82,11 +83,16 @@ export function DeepResearchProgress({
                   {p?.label && <div className="fb-drp-active">{p.label}</div>}
                   {fan}
                   {reasoning && (
-                    // Open while the model is only thinking (no draft yet), so the long think is
-                    // visible; collapses to a summary once the briefing draft starts streaming in.
-                    <details className="fb-drp-thinking" open={!preview}>
-                      <summary>Thinking…</summary>
-                      <div className="fb-drp-thinking-trace">{reasoning}</div>
+                    // The model's live reasoning, styled to match the main turn's "Thinking"
+                    // disclosure (the violet register + `fb-thinking-trace` box from ActivityLine),
+                    // so an in-tool think reads the same as one outside the tool. Open while the
+                    // model is only thinking (no draft yet); collapses once the draft streams in.
+                    <details className="fb-drp-think" open={!preview}>
+                      <summary className="fb-drp-think-sum">
+                        <BrainGlyph className="fb-act-ic" />
+                        <span className="fb-act-lab">Thinking…</span>
+                      </summary>
+                      <div className="fb-thinking-trace">{reasoning}</div>
                     </details>
                   )}
                   {preview && (
