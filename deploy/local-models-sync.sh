@@ -99,38 +99,67 @@ fi
 say "syncing models: ${ids:-<none>}"
 
 if [ -n "$ids" ]; then
-  # 4. Manifest for the union; download any missing weights (idempotent). The
-  #    download streams into this script's stdout -> the update log, so the PWA can
-  #    follow it; the per-model % bar reads on-disk bytes via the settings API.
+  # 4. Manifest for the FULL roster — this drives the llama-swap re-stamp below, which
+  #    must describe every served model (present or freshly pulled), not just the ones
+  #    downloaded this round.
   # shellcheck disable=SC2086  # $ids is a deliberately word-split id list.
   manifest="$(catalog -m jbrain.llm.local_catalog $ids)"
   [ -n "$manifest" ] || { say "empty manifest — aborting sync"; exit 1; }
-  # Log the provisioning plan (id -> repo (quant) include=glob) so the update/provision
-  # log names exactly what it is about to pull — the first thing to read when a
-  # download fails. Pure catalog read in the api image; best-effort (never fatal).
-  # Pass MAN with `docker compose run -e` — a bare `MAN=… catalog …` sets it only in THIS shell,
-  # never inside the api container, so os.environ["MAN"] used to KeyError every round (harmless but
-  # dead). -e injects it into the container like the MANIFEST step below.
-  docker compose run --rm --no-deps -T -e MAN="$manifest" api python -c 'import json,os
+
+  # 4b. Download ONLY the models whose weights are missing on disk. `hf download` re-hashes
+  #     every file it is handed even when the bytes are already present (~2 min/model), so
+  #     pulling the whole roster re-verifies models that never changed — the dominant cost
+  #     when provisioning onto a box that already holds most of the set (adding one model to
+  #     a ten-model roster re-verified all ten). Filter to the missing ones with the same
+  #     cheap `ls *.gguf` presence check the routine-update fast-path above uses (NOT an hf
+  #     hash): a genuinely missing or interrupted weight still falls through to a full,
+  #     self-healing pull. The trade — a present-but-corrupt weight is not re-hashed — matches
+  #     that fast-path's, and is backstopped: the re-stamp below runs resolve_weight over the
+  #     WHOLE roster, so a present-but-INCOMPLETE weight (missing shards) still fails loudly
+  #     there rather than being served, and an already-downloaded model stays wired in.
+  download_ids=''
+  present_ids=''
+  for id in $ids; do
+    # A `*.gguf` under the model dir means its weights landed; `ls` (no hash) keeps this cheap.
+    if ls "$PWD"/local-models/"$id"/*.gguf >/dev/null 2>&1; then
+      present_ids="${present_ids} ${id}"
+    else
+      download_ids="${download_ids} ${id}"
+    fi
+  done
+  download_ids="${download_ids# }"
+  present_ids="${present_ids# }"
+  [ -n "$present_ids" ] && say "weights present — skipping re-verify for: ${present_ids}"
+
+  if [ -n "$download_ids" ]; then
+    # shellcheck disable=SC2086  # $download_ids is a deliberately word-split id list.
+    dl_manifest="$(catalog -m jbrain.llm.local_catalog $download_ids)"
+    [ -n "$dl_manifest" ] || { say "empty manifest — aborting sync"; exit 1; }
+    # Log the provisioning plan (id -> repo (quant) include=glob) for the models actually
+    # pulled — the first thing to read when a download fails. Best-effort (never fatal).
+    # -e injects MAN into the api container (a bare `MAN=…` would set it only in THIS shell).
+    docker compose run --rm --no-deps -T -e MAN="$dl_manifest" api python -c 'import json,os
 for m in json.loads(os.environ["MAN"]):
     print("[local-llm]   %s <- %s (%s) include=%s" % (m["id"], m["hf_repo"], m["quant"], m["gguf_include"]))' \
-    || true
-  # Absolute models dir: `docker run -v` resolves its source on the daemon, which has
-  # no notion of this script's cwd, so a relative `./local-models` is not the host
-  # path the api reads — pass the absolute path (cwd is the install dir).
-  # Capture the download's exit code so a failure is a LOUD, greppable line in the log
-  # (both the Ops screen and /api/debug/provision/status read this tail) instead of a
-  # bare non-zero exit. On failure we exit here: steps 5-8 (re-stamp, enable, restart,
-  # clear-queue) are deliberately skipped so a half-downloaded model is never served,
-  # and the queue persists for a retry.
-  set +e
-  MANIFEST="$manifest" DOWNLOAD_CONTAINER="jbrain-local-models-sync-dl" \
-    sh src/deploy/download-local-weights.sh "$PWD/local-models"
-  dl_rc=$?
-  set -e
-  if [ "$dl_rc" -ne 0 ]; then
-    say "DOWNLOAD FAILED for [${ids}] (rc=${dl_rc}) — see the hf output above for the reason (404 / auth / disk / network). Models stay queued for a retry."
-    exit "$dl_rc"
+      || true
+    # Absolute models dir: `docker run -v` resolves its source on the daemon, which has no
+    # notion of this script's cwd, so a relative `./local-models` is not the host path the api
+    # reads — pass the absolute path (cwd is the install dir). Capture the download's exit code
+    # so a failure is a LOUD, greppable line in the log (both the Ops screen and
+    # /api/debug/provision/status read this tail) instead of a bare non-zero exit. On failure we
+    # exit here: steps 5-8 (re-stamp, enable, restart, clear-queue) are deliberately skipped so a
+    # half-downloaded model is never served, and the queue persists for a retry.
+    set +e
+    MANIFEST="$dl_manifest" DOWNLOAD_CONTAINER="jbrain-local-models-sync-dl" \
+      sh src/deploy/download-local-weights.sh "$PWD/local-models"
+    dl_rc=$?
+    set -e
+    if [ "$dl_rc" -ne 0 ]; then
+      say "DOWNLOAD FAILED for [${download_ids}] (rc=${dl_rc}) — see the hf output above for the reason (404 / auth / disk / network). Models stay queued for a retry."
+      exit "$dl_rc"
+    fi
+  else
+    say "all roster weights already present — no downloads needed"
   fi
 
   # 5. Re-stamp llama-swap.yaml for the new set (the api re-renders it, resolving
