@@ -14,7 +14,7 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import get_settings
 from jbrain.queue import SYSTEM_CTX
-from jbrain.settings_store import SqlSettingsStore
+from jbrain.settings_store import LLM_TASK_OVERRIDES_KEY, SqlSettingsStore
 
 
 def _print_key_block(key: str) -> None:
@@ -92,6 +92,34 @@ async def _clear_remove_ids() -> None:
         await engine.dispose()
 
 
+async def _local_activate(model_id: str) -> None:
+    """Re-point agent.turn to a just-installed local model so it becomes the box's ACTIVE
+    chat model and the WarmKeeper keeps it hot (owner decision — 'install a model' also makes
+    it active). The update one-shot calls this after a successful install with the model the
+    operator queued. An unknown or non-tool-capable id is a logged no-op (agent.turn is a
+    tool-using agent); every OTHER stored task override is preserved. Owner-scoped like the
+    queue commands (settings RLS is is_owner())."""
+    from jbrain.llm import local_catalog
+    from jbrain.llm.providers import active_local_override
+    from jbrain.llm.router import _PRIMARY_MODEL_TASK
+
+    model = local_catalog.get(model_id)
+    if model is None or not model.supports_tools:
+        print(f"[local-llm] not activating {model_id!r} — unknown or not tool-capable")
+        return
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        raw = await store.get(SYSTEM_CTX, LLM_TASK_OVERRIDES_KEY, {})
+        overrides = dict(raw) if isinstance(raw, dict) else {}
+        overrides[_PRIMARY_MODEL_TASK] = active_local_override(model)
+        await store.upsert(SYSTEM_CTX, LLM_TASK_OVERRIDES_KEY, overrides)
+        print(f"[local-llm] agent.turn now routes to {model.spec} — active chat model")
+    finally:
+        await engine.dispose()
+
+
 async def _local_llm_smoketest() -> int:
     """Smoke-test the on-box gateway's current build (the opt-in LOCAL_LLM_AUTO_UPDATE
     path calls this after floating the gateway onto the newest llama.cpp). Exit 0 =
@@ -122,6 +150,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("local-provision-clear", help="empty the local-model install queue")
     sub.add_parser("local-remove-ids", help="print the local-model uninstall queue")
     sub.add_parser("local-remove-clear", help="empty the local-model uninstall queue")
+    p_activate = sub.add_parser(
+        "local-activate",
+        help="make a just-installed local model the active chat model (agent.turn)",
+    )
+    p_activate.add_argument("model_id", help="catalog id of the installed model to activate")
     sub.add_parser(
         "local-llm-smoketest",
         help="load a model (+ gpt-oss tool probe) to verify the gateway's llama.cpp build",
@@ -142,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "local-remove-clear":
         asyncio.run(_clear_remove_ids())
+        return 0
+    if args.command == "local-activate":
+        asyncio.run(_local_activate(args.model_id))
         return 0
     if args.command == "local-llm-smoketest":
         return asyncio.run(_local_llm_smoketest())

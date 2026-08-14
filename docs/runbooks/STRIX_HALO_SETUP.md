@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-13
+> **Status:** Living · **Last verified:** 2026-08-14
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -186,6 +186,15 @@ reuse actually lands. That call also loads the model on demand through residency
 both resides and warms it. It only ever *adds* that one model, under the same free-RAM floor
 and code-mode hold as everything else, and reconciles on an interval so it self-heals after an
 app restart, an update (fresh container), or a standalone gateway (llama-swap) restart.
+
+**Installing a model from the PWA makes it the active model.** When an update installs a
+model the operator queued, the model sync re-points `agent.turn` at it (`jbrain.cli
+local-activate`, called from `deploy/local-models-sync.sh`), so the just-installed model
+becomes the box's active chat model and the WarmKeeper above keeps *it* hot — instead of
+leaving whatever the post-update smoke-test probe loaded (e.g. gpt-oss-120b) resident. It
+activates the most-recently-queued installed model, with the same reasoning-effort gating the
+Settings screen applies; a routine or uninstall-only update leaves routing untouched. Change
+your active model any time in **Settings → LLM routing** (or the debug console's `llm-set`).
 
 Two subtleties the prime must respect, both learned the hard way:
 - **Match the tools exactly.** Under the gateway's `--jinja` the chat template renders the tool

@@ -5,7 +5,7 @@ from typing import Any
 
 from jbrain.config import Settings
 from jbrain.llm import local_catalog
-from jbrain.llm.providers import provider_choices
+from jbrain.llm.providers import active_local_override, provider_choices
 from jbrain.llm.router import PROVIDERS, _split_spec
 
 
@@ -431,6 +431,16 @@ def _settings(**kw: Any) -> Settings:
     kw.setdefault("xai_api_key", "test-xai")
     kw.setdefault("anthropic_api_key", "test-anthropic")
     return Settings(database_url="postgresql+asyncpg://nobody@localhost:1/none", **kw)
+
+
+def test_active_local_override_gates_reasoning_effort() -> None:
+    # The agent.turn override the update's `local-activate` writes: a reasoning model carries
+    # an effort (mirrors the settings PUT's REASONING_DEFAULT), a non-thinking one spec only.
+    gpt = local_catalog.get("gpt-oss-120b")
+    vl = local_catalog.get("qwen3-vl-30b")
+    assert gpt is not None and vl is not None
+    assert active_local_override(gpt) == {"spec": "local:gpt-oss-120b", "reasoning_effort": "low"}
+    assert active_local_override(vl) == {"spec": "local:qwen3-vl-30b-a3b"}
 
 
 def test_choices_are_cloud_only_when_local_hosting_off() -> None:

@@ -83,3 +83,42 @@ def test_local_remove_clear_empties_queue(patched_store: FakeSettingsStore) -> N
     patched_store.values["llm_local_remove_requested"] = ["gpt-oss-120b"]
     assert cli.main(["local-remove-clear"]) == 0
     assert patched_store.values["llm_local_remove_requested"] == []
+
+
+def test_local_activate_points_agent_turn_at_a_reasoning_model(
+    patched_store: FakeSettingsStore,
+) -> None:
+    # 'install a model' also makes it active: agent.turn is re-pointed at the just-installed
+    # model, with a reasoning_effort because gpt-oss can think (same gating as the UI).
+    assert cli.main(["local-activate", "gpt-oss-120b"]) == 0
+    assert patched_store.values["llm_task_overrides"]["agent.turn"] == {
+        "spec": "local:gpt-oss-120b",
+        "reasoning_effort": "low",
+    }
+
+
+def test_local_activate_drops_effort_for_a_non_reasoning_model(
+    patched_store: FakeSettingsStore,
+) -> None:
+    # A non-thinking model (Qwen3-VL Instruct) stores spec only — no reasoning_effort.
+    assert cli.main(["local-activate", "qwen3-vl-30b"]) == 0
+    assert patched_store.values["llm_task_overrides"]["agent.turn"] == {
+        "spec": "local:qwen3-vl-30b-a3b"
+    }
+
+
+def test_local_activate_preserves_other_task_overrides(
+    patched_store: FakeSettingsStore,
+) -> None:
+    # Re-pointing agent.turn must not clobber a stored override on another task.
+    patched_store.values["llm_task_overrides"] = {"note.extract": {"spec": "xai:grok-4.3"}}
+    assert cli.main(["local-activate", "gpt-oss-120b"]) == 0
+    overrides = patched_store.values["llm_task_overrides"]
+    assert overrides["note.extract"] == {"spec": "xai:grok-4.3"}
+    assert overrides["agent.turn"]["spec"] == "local:gpt-oss-120b"
+
+
+def test_local_activate_is_a_no_op_for_an_unknown_id(patched_store: FakeSettingsStore) -> None:
+    # An id not in the catalog writes nothing (agent.turn keeps whatever it had).
+    assert cli.main(["local-activate", "not-a-model"]) == 0
+    assert "llm_task_overrides" not in patched_store.values
