@@ -21,7 +21,9 @@ operator enables local hosting and selects it.
 import json
 import sys
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+
+from jbrain.llm.types import Sampling
 
 # The router spec for a local model is always "local:<served_model>": the local
 # provider client posts <served_model> as the OpenAI `model`, and llama-swap
@@ -90,6 +92,17 @@ class LocalModel:
     # portion of each model's segment, scaled linearly by the configured window.
     # gpt-oss is low (alternating sliding-window attention); dense models are higher.
     kv_gb_per_128k: float = 0.0
+    # The vendor's RECOMMENDED sampling for this model (docs/reference/MODEL_PROMPTING.md).
+    # The router applies it to every call so the model runs at its card's values instead of
+    # llama.cpp's engine defaults (temp 0.8 / top_p 0.95 / top_k 40 / min_p 0.1 — which match
+    # no card and, for gpt-oss, actively prune tokens the model wants). Empty for a model
+    # whose vendor publishes none. A per-task `.prompt` `sampling:` override merges on top.
+    sampling: Sampling = field(default_factory=Sampling)
+    # A hybrid reasoner whose card gives DIFFERENT sampling for thinking vs non-thinking mode
+    # (the Qwen hybrids) sets this to the thinking-mode values; the router picks it when the
+    # model is generating a thinking trace, else `sampling`. None when the card is unified
+    # (Nemotron/GLM) or the model has no thinking mode — `sampling` then applies always.
+    sampling_thinking: Sampling | None = None
 
     @property
     def spec(self) -> str:
@@ -108,6 +121,9 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3-vl-30b",
         label="Qwen3-VL 30B · vision",
         served_model="qwen3-vl-30b-a3b",
+        # Qwen VL Instruct card values; presence_penalty 1.5 is Qwen's headline knob for
+        # the repetition/endless-loop failure VL models hit on dense images and long OCR.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
         tiers=("vision", "low"),
         supports_vision=True,
         supports_tools=True,
@@ -126,6 +142,8 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3-vl-30b-q4",
         label="Qwen3-VL 30B · vision (Q4, memory-saver)",
         served_model="qwen3-vl-30b-a3b-q4",
+        # Same model as the Q8 twin — same VL card sampling.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
         tiers=("vision", "low"),
         supports_vision=True,
         supports_tools=True,
@@ -165,6 +183,10 @@ CATALOG: tuple[LocalModel, ...] = (
         id="llama-4-scout-int4",
         label="Llama 4 Scout · vision (int4)",
         served_model="llama-4-scout-int4",
+        # Meta ships temp 0.6 / top_p 0.9 (generation_config.json); min_p 0.01 is Unsloth's
+        # community default for Scout. Meta gives no top_k, so disable it (0) and sample from
+        # pure temperature/top_p — the way the card was validated — not llama.cpp's top_k 40.
+        sampling=Sampling(temperature=0.6, top_p=0.9, top_k=0, min_p=0.01),
         tiers=("vision", "low"),
         supports_vision=True,
         supports_tools=True,
@@ -205,6 +227,10 @@ CATALOG: tuple[LocalModel, ...] = (
         id="gpt-oss-120b",
         label="GPT-OSS 120B · reasoning",
         served_model="gpt-oss-120b",
+        # OpenAI's guidance: sample from the model's own distribution — temp 1.0, top_p 1.0,
+        # top_k 0 (off). min_p 0.0 is CRITICAL here: llama.cpp's default min_p 0.1 would prune
+        # low-probability tokens gpt-oss wants, fighting the model. Penalties stay off.
+        sampling=Sampling(temperature=1.0, top_p=1.0, top_k=0, min_p=0.0),
         tiers=("high",),
         supports_vision=False,
         supports_tools=True,
@@ -226,6 +252,10 @@ CATALOG: tuple[LocalModel, ...] = (
         id="nemotron-3-super-120b",
         label="Nemotron 3 Super 120B · reasoning (alt)",
         served_model="nemotron-3-super-120b",
+        # NVIDIA's card prescribes temp 1.0 / top_p 0.95 across ALL modes (reasoning, tools,
+        # chat) — no thinking/non-thinking split, so no sampling_thinking. top_k/min_p disabled
+        # to honour the pure temp/top_p sampling the card documents.
+        sampling=Sampling(temperature=1.0, top_p=0.95, top_k=0, min_p=0.0),
         tiers=("high",),
         supports_vision=False,
         supports_tools=True,
@@ -269,6 +299,8 @@ CATALOG: tuple[LocalModel, ...] = (
         id="nemotron-3.5-lightning-30b",
         label="Nemotron 3.5 Lightning 30B · reasoning (alt)",
         served_model="nemotron-3.5-lightning-30b",
+        # Same NVIDIA guidance as the Super 120B: temp 1.0 / top_p 0.95, unified across modes.
+        sampling=Sampling(temperature=1.0, top_p=0.95, top_k=0, min_p=0.0),
         tiers=("high",),
         supports_vision=False,
         supports_tools=True,
@@ -304,6 +336,11 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3.6-27b",
         label="Qwen3.6 27B · vision + reasoning (Q8)",
         served_model="qwen3.6-27b",
+        # Hybrid reasoner: the card splits sampling by mode. Non-thinking (Instruct) wants
+        # temp 0.7 / top_p 0.8 / presence_penalty 1.5; thinking wants temp 1.0 / top_p 0.95
+        # and no presence penalty. The router picks by whether thinking is on for the call.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
+        sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
         tiers=("vision", "high"),
         supports_vision=True,
         supports_tools=True,
@@ -339,6 +376,9 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3.6-27b-q4",
         label="Qwen3.6 27B · vision + reasoning (Q4, interactive)",
         served_model="qwen3.6-27b-q4",
+        # Same model as the Q8 twin — same hybrid thinking/non-thinking sampling split.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
+        sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
         tiers=("vision", "high"),
         supports_vision=True,
         supports_tools=True,
@@ -368,6 +408,9 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3-coder-next",
         label="Qwen3-Coder-Next 80B · coding agent (Q4)",
         served_model="qwen3-coder-next",
+        # Qwen3-Coder-Next card: temp 1.0 / top_p 0.95 / top_k 40 (the Coder line uses 40, not
+        # the 20 the rest of the Qwen family uses). Agentic coder, no separate thinking mode.
+        sampling=Sampling(temperature=1.0, top_p=0.95, top_k=40, min_p=0.0),
         tiers=("high",),
         supports_vision=False,
         supports_tools=True,
@@ -395,6 +438,8 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3-coder-next-q8",
         label="Qwen3-Coder-Next 80B · coding agent (Q8)",
         served_model="qwen3-coder-next-q8",
+        # Same model as the Q4 twin — same Coder card sampling.
+        sampling=Sampling(temperature=1.0, top_p=0.95, top_k=40, min_p=0.0),
         tiers=("high",),
         supports_vision=False,
         supports_tools=True,
@@ -426,6 +471,9 @@ CATALOG: tuple[LocalModel, ...] = (
         id="glm-4.5-air",
         label="GLM-4.5 Air · reasoning (alt)",
         served_model="glm-4.5-air",
+        # Z.ai's GLM-4.5-series API default: temp 0.6 / top_p 0.95 (the 4.5 series defaults to
+        # 0.6, distinct from 4.6+). No official top_k/min_p, so disable them for pure temp/top_p.
+        sampling=Sampling(temperature=0.6, top_p=0.95, top_k=0, min_p=0.0),
         tiers=("high",),
         supports_vision=False,
         supports_tools=True,
@@ -445,6 +493,9 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3-30b-a3b",
         label="Qwen3 30B · lightweight",
         served_model="qwen3-30b-a3b",
+        # The Instruct-2507 (non-thinking) checkpoint — Qwen's non-thinking values:
+        # temp 0.7 / top_p 0.8 / top_k 20. presence_penalty is optional here, left off.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0),
         tiers=("low",),
         supports_vision=False,
         supports_tools=True,
@@ -463,6 +514,12 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3.5-0.8b",
         label="Qwen3.5 0.8B · tiny",
         served_model="qwen3.5-0.8b",
+        # Hybrid, and the card warns this tiny one is especially loop-prone — hence the high
+        # presence_penalty (2.0 non-thinking, 1.5 thinking) as the mitigation.
+        sampling=Sampling(temperature=1.0, top_p=1.0, top_k=20, min_p=0.0, presence_penalty=2.0),
+        sampling_thinking=Sampling(
+            temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5
+        ),
         tiers=("low",),
         supports_vision=False,
         supports_tools=True,
@@ -495,6 +552,12 @@ CATALOG: tuple[LocalModel, ...] = (
         id="qwen3.5-4b",
         label="Qwen3.5 4B · small",
         served_model="qwen3.5-4b",
+        # Hybrid: non-thinking temp 0.7 / top_p 0.8, thinking temp 1.0 / top_p 0.95; both keep
+        # presence_penalty 1.5 (Qwen3.5's anti-loop default), top_k 20.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
+        sampling_thinking=Sampling(
+            temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5
+        ),
         tiers=("low",),
         supports_vision=False,
         supports_tools=True,
@@ -524,6 +587,9 @@ CATALOG: tuple[LocalModel, ...] = (
         id="llama-3.3-70b",
         label="Llama 3.3 70B · batch (slow)",
         served_model="llama-3.3-70b",
+        # Meta's shipped default (generation_config.json): temp 0.6 / top_p 0.9. No Meta
+        # top_k/min_p, so disable them for pure temp/top_p sampling.
+        sampling=Sampling(temperature=0.6, top_p=0.9, top_k=0, min_p=0.0),
         tiers=("high",),
         supports_vision=False,
         supports_tools=True,

@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from jbrain.llm.types import Sampling
+
 # Capability tiers a prompt may request; jbrain.llm.router maps each to a
 # concrete provider:model, so a prompt file never names a model.
 STRENGTHS = frozenset({"high", "low", "vision", "embedding"})
@@ -44,6 +46,11 @@ class PromptFile:
     body: str
     description: str = ""
     config: dict[str, Any] = field(default_factory=dict)
+    # Per-task sampling override (the `config: sampling:` block), or None to run at the
+    # resolved model's recommended defaults. Merged OVER those defaults by the router, so a
+    # prompt pins only the knobs it wants to deviate (e.g. vision.ocr → near-greedy). Parsed
+    # and validated at load time so a bad key/value fails at startup, never mid-call.
+    sampling: Sampling | None = None
     inputs: tuple[str, ...] = ()
     output_format: str | None = None
     output_schema: dict[str, Any] | None = None
@@ -101,13 +108,25 @@ def load_prompt(path: Path) -> PromptFile:
     if schema is not None and not isinstance(schema, dict):
         raise PromptError(f"{path}: output.schema must be a mapping (JSON Schema)")
 
+    config = dict(meta.get("config") or {})
+    raw_sampling = config.get("sampling")
+    sampling: Sampling | None = None
+    if raw_sampling is not None:
+        if not isinstance(raw_sampling, dict):
+            raise PromptError(f"{path}: config.sampling must be a mapping")
+        try:
+            sampling = Sampling.from_mapping(raw_sampling)
+        except ValueError as exc:
+            raise PromptError(f"{path}: {exc}") from exc
+
     return PromptFile(
         name=str(meta["name"]),
         version=str(meta["version"]),
         strength=strength,
         body=body,
         description=str(meta.get("description", "")),
-        config=dict(meta.get("config") or {}),
+        config=config,
+        sampling=sampling,
         inputs=inputs,
         output_format=output.get("format"),
         output_schema=schema,

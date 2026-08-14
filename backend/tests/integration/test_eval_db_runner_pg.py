@@ -19,7 +19,7 @@ from sqlalchemy import text
 from jbrain.analysis.predicates import record_predicate_alias
 from jbrain.db.session import scoped_session
 from jbrain.llm import LlmRouter
-from jbrain.llm.types import LlmImage, LlmResult, LlmUsage, parse_json_payload
+from jbrain.llm.types import LlmImage, LlmResult, LlmUsage, Sampling, parse_json_payload
 from jbrain.queue import SYSTEM_CTX
 from tests.conftest import docker_available
 from tests.eval.assertions import check_case_db
@@ -55,6 +55,7 @@ class _ScriptedFake:
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = 4096,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmResult:
         i = len(self.calls)
         self.calls.append({"user_text": user_text})

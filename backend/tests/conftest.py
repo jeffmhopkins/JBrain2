@@ -5,7 +5,14 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from jbrain.llm.fake import FakeLlmClient
-from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmImage, LlmResult, LlmUsage, parse_json_payload
+from jbrain.llm.types import (
+    DEFAULT_MAX_TOKENS,
+    LlmImage,
+    LlmResult,
+    LlmUsage,
+    Sampling,
+    parse_json_payload,
+)
 
 if TYPE_CHECKING:
     from testcontainers.postgres import PostgresContainer
@@ -37,6 +44,7 @@ class SchemaRoutedLlmClient(FakeLlmClient):
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmResult:
         self.calls.append(
             {
@@ -47,6 +55,7 @@ class SchemaRoutedLlmClient(FakeLlmClient):
                 "json_schema": json_schema,
                 "max_tokens": max_tokens,
                 "reasoning_effort": reasoning_effort,
+                "sampling": sampling,
             }
         )
         props = (json_schema or {}).get("properties", {})

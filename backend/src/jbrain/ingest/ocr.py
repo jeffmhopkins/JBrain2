@@ -91,6 +91,9 @@ OCR_MAX_TOKENS = int(_OCR.config["max_tokens"])
 DESCRIPTION_MAX_TOKENS = int(_DESCRIPTION.config["max_tokens"])
 OCR_STRENGTH = _OCR.strength
 DESCRIPTION_STRENGTH = _DESCRIPTION.strength
+# OCR pins its own near-greedy sampling (see the prompt's config); captioning runs at
+# the resolved model's recommended defaults, so it has no override to pass.
+OCR_SAMPLING = _OCR.sampling
 OCR_SYSTEM = _OCR.render()
 DESCRIPTION_SYSTEM = _DESCRIPTION.render()
 
@@ -182,6 +185,7 @@ async def ocr_pdf_pages(router: LlmRouter, data: bytes, filename: str) -> list[s
             images=[image],
             max_tokens=OCR_MAX_TOKENS,
             strength=OCR_STRENGTH,
+            sampling=OCR_SAMPLING,
         )
         texts.append(result.text.strip())
     return texts
@@ -274,6 +278,7 @@ class OcrPipeline:
                     images=[image],
                     max_tokens=OCR_MAX_TOKENS,
                     strength=OCR_STRENGTH,
+                    sampling=OCR_SAMPLING,
                 )
                 return result.text
 

@@ -12,6 +12,7 @@ from jbrain.llm.types import (
     LlmTurn,
     LlmUsage,
     ReasoningChunk,
+    Sampling,
     StreamPart,
     TextChunk,
     parse_json_payload,
@@ -51,6 +52,7 @@ class FakeLlmClient:
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmResult:
         self.calls.append(
             {
@@ -61,6 +63,7 @@ class FakeLlmClient:
                 "json_schema": json_schema,
                 "max_tokens": max_tokens,
                 "reasoning_effort": reasoning_effort,
+                "sampling": sampling,
             }
         )
         text = self._responses[min(len(self.calls) - 1, len(self._responses) - 1)]
@@ -76,6 +79,7 @@ class FakeLlmClient:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmTurn:
         self.converse_calls.append(
             {
@@ -85,6 +89,7 @@ class FakeLlmClient:
                 "tools": list(tools),
                 "max_tokens": max_tokens,
                 "reasoning_effort": reasoning_effort,
+                "sampling": sampling,
             }
         )
         if not self._turns:
@@ -100,6 +105,7 @@ class FakeLlmClient:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> AsyncIterator[StreamPart]:
         self.stream_calls.append(
             {
@@ -109,6 +115,7 @@ class FakeLlmClient:
                 "tools": list(tools),
                 "max_tokens": max_tokens,
                 "reasoning_effort": reasoning_effort,
+                "sampling": sampling,
             }
         )
         idx = len(self.stream_calls) - 1

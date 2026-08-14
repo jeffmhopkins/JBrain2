@@ -11,6 +11,7 @@ from jbrain.llm import (
     LlmBadResponseError,
     LlmError,
     LlmRouter,
+    Sampling,
     build_router,
 )
 from jbrain.llm.router import CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW, JSON_NUDGE
@@ -139,6 +140,51 @@ async def test_no_schema_means_no_parse_and_no_reask() -> None:
     result = await fake_router(fake).complete("note.extract", system="s", user_text="u")
     assert result.parsed is None
     assert len(fake.calls) == 1
+
+
+async def test_model_recommended_sampling_is_applied_with_no_override() -> None:
+    # The whole-catalog fix: even when the caller passes NO sampling, the resolved model's
+    # recommended defaults reach the client — a local Qwen VL runs at its card values, not
+    # llama.cpp's engine defaults.
+    fake = FakeLlmClient(["ok"])
+    router = LlmRouter({"local": fake}, {"vision.caption": ("local", "qwen3-vl-30b-a3b")})
+    await router.complete("vision.caption", system="s", user_text="u")
+    sampling = fake.calls[0]["sampling"]
+    assert sampling.temperature == 0.7 and sampling.top_p == 0.8
+    assert sampling.top_k == 20 and sampling.presence_penalty == 1.5
+
+
+async def test_cloud_default_sampling_reaches_the_client() -> None:
+    fake = FakeLlmClient(["ok"])
+    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")})
+    await router.complete("note.extract", system="s", user_text="u")
+    assert fake.calls[0]["sampling"] == Sampling(temperature=0.7, top_p=0.95)
+
+
+async def test_per_task_override_merges_over_the_model_default() -> None:
+    # The OCR case: a near-greedy override (temperature + presence_penalty) merges ON TOP of
+    # the model's recommended defaults, so top_p/top_k stay the card's while temperature drops.
+    fake = FakeLlmClient(["ok"])
+    router = LlmRouter({"local": fake}, {"vision.ocr": ("local", "qwen3-vl-30b-a3b")})
+    await router.complete(
+        "vision.ocr",
+        system="s",
+        user_text="u",
+        sampling=Sampling(temperature=0.1, presence_penalty=1.5),
+    )
+    s = fake.calls[0]["sampling"]
+    assert s.temperature == 0.1  # override won
+    assert s.top_p == 0.8 and s.top_k == 20  # model default preserved
+    assert s.presence_penalty == 1.5
+
+
+async def test_converse_threads_resolved_sampling() -> None:
+    fake = FakeLlmClient()
+    router = LlmRouter({"local": fake}, {"agent.turn": ("local", "qwen3.5-4b")})
+    await router.converse("agent.turn", system="s", messages=[])
+    # qwen3.5-4b is hybrid; agent.turn is the medium bucket (reasoning_effort None → thinking
+    # on for a hybrid), so the thinking-mode row is what reaches the client.
+    assert fake.converse_calls[0]["sampling"].temperature == 1.0
 
 
 async def test_build_router_wires_all_three_providers() -> None:
