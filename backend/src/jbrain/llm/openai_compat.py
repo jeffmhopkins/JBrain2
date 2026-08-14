@@ -26,6 +26,7 @@ from jbrain.llm.types import (
     LlmTurn,
     LlmUsage,
     ReasoningChunk,
+    Sampling,
     StopReason,
     StreamPart,
     TextChunk,
@@ -130,6 +131,7 @@ class OpenAiCompatClient:
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmResult:
         user_content: str | list[dict[str, Any]]
         if images:
@@ -157,6 +159,7 @@ class OpenAiCompatClient:
                 "json_schema": {"name": "response", "schema": json_schema, "strict": True},
             }
         self._apply_reasoning(payload, reasoning_effort)
+        self._apply_sampling(payload, sampling)
         # Local servers run keyless; omitting the header beats sending "Bearer ".
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         data = await post_json(
@@ -209,6 +212,33 @@ class OpenAiCompatClient:
             return
         payload["reasoning_effort"] = reasoning_effort
 
+    def _apply_sampling(self, payload: dict[str, Any], sampling: Sampling | None) -> None:
+        # Put the resolved sampling on the wire, honoring each provider's param support.
+        # temperature/top_p are OpenAI-standard, so both providers take them. The rest are
+        # LOCAL-only: xAI's OpenAI-compatible API doesn't accept top_k/min_p, and its Grok 4.x
+        # reasoning models REJECT presence/frequency penalties (a 4xx). So a task override that
+        # sets a penalty (the vision.ocr near-greedy one, meant for the local VL model) lands
+        # correctly on local and is simply omitted for cloud Grok — no error, no config fork.
+        # llama.cpp names the repetition knob `repeat_penalty`; we map onto that here.
+        if sampling is None or sampling.is_empty:
+            return
+        if sampling.temperature is not None:
+            payload["temperature"] = sampling.temperature
+        if sampling.top_p is not None:
+            payload["top_p"] = sampling.top_p
+        if self.provider != "local":
+            return
+        if sampling.top_k is not None:
+            payload["top_k"] = sampling.top_k
+        if sampling.min_p is not None:
+            payload["min_p"] = sampling.min_p
+        if sampling.presence_penalty is not None:
+            payload["presence_penalty"] = sampling.presence_penalty
+        if sampling.frequency_penalty is not None:
+            payload["frequency_penalty"] = sampling.frequency_penalty
+        if sampling.repetition_penalty is not None:
+            payload["repeat_penalty"] = sampling.repetition_penalty
+
     def _converse_payload(
         self,
         *,
@@ -218,6 +248,7 @@ class OpenAiCompatClient:
         tools: Sequence[LlmTool],
         max_tokens: int,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -227,6 +258,7 @@ class OpenAiCompatClient:
         if tools:
             payload["tools"] = openai_tools(tools)
         self._apply_reasoning(payload, reasoning_effort)
+        self._apply_sampling(payload, sampling)
         return payload
 
     def _auth_headers(self) -> dict[str, str]:
@@ -242,6 +274,7 @@ class OpenAiCompatClient:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmTurn:
         payload = self._converse_payload(
             model=model,
@@ -250,6 +283,7 @@ class OpenAiCompatClient:
             tools=tools,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
+            sampling=sampling,
         )
         headers = self._auth_headers()
         data = await post_json(
@@ -302,6 +336,7 @@ class OpenAiCompatClient:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a turn over chat-completions SSE chunks. Content deltas stream
         live; tool_call deltas arrive fragmented and keyed by index (id/name on
@@ -315,6 +350,7 @@ class OpenAiCompatClient:
             tools=tools,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
+            sampling=sampling,
         )
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}

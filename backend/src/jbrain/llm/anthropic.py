@@ -18,6 +18,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    Sampling,
     StopReason,
     StreamPart,
     TextChunk,
@@ -121,6 +122,7 @@ class AnthropicClient:
         # xAI's `reasoning_effort`; accept the kwarg for protocol compatibility
         # and ignore it (out of scope for this control surface).
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmResult:
         content: list[dict[str, Any]] = [
             {
@@ -138,6 +140,7 @@ class AnthropicClient:
         }
         if json_schema is not None:
             payload["output_config"] = {"format": {"type": "json_schema", "schema": json_schema}}
+        self._apply_sampling(payload, sampling)
         data = await post_json(
             f"{self._base_url}/v1/messages",
             headers={"x-api-key": self._api_key, "anthropic-version": API_VERSION},
@@ -158,6 +161,22 @@ class AnthropicClient:
         parsed = parse_json_payload(text) if json_schema is not None else None
         return LlmResult(text=text, parsed=parsed, usage=usage)
 
+    @staticmethod
+    def _apply_sampling(payload: dict[str, Any], sampling: Sampling | None) -> None:
+        # Anthropic supports temperature, top_p, and top_k — but NOT penalties or min_p, and
+        # it REJECTS temperature and top_p in the SAME request (a 4xx since Opus 4.1). So set
+        # temperature when present and drop top_p (Anthropic frames temperature as the primary
+        # knob), falling back to top_p only when temperature is unset. top_k pairs with either.
+        # The unsupported knobs are silently dropped — a shared task override stays valid.
+        if sampling is None or sampling.is_empty:
+            return
+        if sampling.temperature is not None:
+            payload["temperature"] = sampling.temperature
+        elif sampling.top_p is not None:
+            payload["top_p"] = sampling.top_p
+        if sampling.top_k is not None:
+            payload["top_k"] = sampling.top_k
+
     def _converse_payload(
         self,
         *,
@@ -166,6 +185,7 @@ class AnthropicClient:
         messages: Sequence[LlmMessage],
         tools: Sequence[LlmTool],
         max_tokens: int,
+        sampling: Sampling | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -178,6 +198,7 @@ class AnthropicClient:
                 {"name": t.name, "description": t.description, "input_schema": t.input_schema}
                 for t in tools
             ]
+        self._apply_sampling(payload, sampling)
         return payload
 
     async def converse(
@@ -189,9 +210,15 @@ class AnthropicClient:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,  # ignored — see `complete`
+        sampling: Sampling | None = None,
     ) -> LlmTurn:
         payload = self._converse_payload(
-            model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            sampling=sampling,
         )
         data = await post_json(
             f"{self._base_url}/v1/messages",
@@ -228,12 +255,18 @@ class AnthropicClient:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,  # ignored — see `complete`
+        sampling: Sampling | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a turn over the Messages SSE events. Text deltas stream live;
         tool_use blocks arrive as `input_json_delta` fragments accumulated per
         block and parsed whole at `content_block_stop`."""
         payload = self._converse_payload(
-            model=model, system=system, messages=messages, tools=tools, max_tokens=max_tokens
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            sampling=sampling,
         )
         payload["stream"] = True
         events = stream_sse(

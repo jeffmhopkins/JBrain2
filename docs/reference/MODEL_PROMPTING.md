@@ -1,6 +1,19 @@
 # Model prompting reference — gpt-oss-120b & Qwen3-VL-30B
 
-> **Status:** Living · **Last verified:** 2026-08-10
+> **Status:** Living · **Last verified:** 2026-08-14
+
+> **Applied (2026-08-14):** the sampling gap below is CLOSED. Per-model recommended sampling
+> now rides every call: each local model carries its vendor-recommended `sampling` (and, for a
+> hybrid whose card splits thinking vs non-thinking, `sampling_thinking`) on its catalog entry
+> (`jbrain.llm.local_catalog`), cloud models have a small table (`jbrain.llm.model_sampling`),
+> and the router applies the resolved model's bundle to EVERY call — so a model runs at its
+> card's values instead of llama.cpp's engine defaults (temp 0.8 / top_p 0.95 / top_k 40 /
+> min_p 0.1) with no per-call code. A `.prompt` `config: sampling:` block overrides per task,
+> merging on top (`vision_ocr` now pins near-greedy temp 0.1 + presence_penalty 1.5). Provider
+> quirks are enforced at the client boundary, not in config: the xAI client sends only
+> temperature/top_p (Grok 4.x reasoning models reject penalties and don't take top_k/min_p),
+> and the Anthropic client sends temperature *or* top_p, never both (a 4xx since Opus 4.1). See
+> "The sampling plumbing" below for the full per-model table.
 
 > **Applied (2026-08-10):** a live daily-news run exposed the deep-research scout over-searching
 > (34-36 `web_search` calls/angle), and a parallel audit checked the whole deep-research prompt
@@ -245,11 +258,11 @@ The **presence_penalty ≈ 1.5** is the headline knob: Qwen calls it out to
 suppress the repetition / endless-loop failure mode VL models fall into on dense
 images and long OCR runs.
 
-> **Config gap (as of this writing):** neither `llama_swap_config.py` nor the LLM
-> adapter sends any sampling params, so every Qwen call runs at llama.cpp
-> defaults (temp 0.8, top_p 0.95, top_k 40, presence_penalty 0). For deterministic
-> jobs — OCR, classification, titling — that is the wrong end of the dial. See
-> "Actionable" below.
+> **Now wired:** the VL column is what we serve — `qwen3-vl-30b`'s catalog `sampling`
+> pins temp 0.7 / top_p 0.8 / top_k 20 / presence_penalty 1.5, and the `vision_ocr`
+> prompt overrides temperature down to 0.1 (near-greedy transcription) while keeping
+> presence_penalty 1.5. The "llama.cpp default" column is what we USED to serve before
+> the sampling plumbing (see the header note and "The sampling plumbing" below).
 
 ### Image / OCR behaviour
 - Visual-token budget per image ≈ 256–1280 tokens (32× spatial compression);
@@ -280,23 +293,64 @@ Sources: [Qwen3-VL repo](https://github.com/QwenLM/Qwen3-VL) ·
 
 ---
 
-## Actionable: the sampling gap
+## The sampling plumbing
 
-The single highest-leverage change is **per-task sampling**. Today all local
-calls inherit llama.cpp defaults (temp 0.8, top_p 0.95, top_k 40, no presence
-penalty) regardless of task. Recommended direction (not yet built):
+Per-model recommended sampling rides every call, with a per-task override on top.
+The chain: `jbrain.llm.model_sampling.default_sampling(provider, model, effort)`
+returns the resolved model's recommended `Sampling` (local models carry it on their
+catalog entry; cloud models are a small table). The router merges the prompt's
+per-task override (`.prompt` `config: sampling:`) over that default and passes the
+result to the provider client, which renders only the knobs its API accepts. So a
+model runs at its card's values with NO per-call code, and a prompt pins only the
+knobs it wants to deviate.
 
-- Plumb per-task sampling through the LLM adapter, sourced from the `.prompt`
-  `config:` block (which already carries `max_tokens`), so each prompt can pin its
-  own temperature / top_p / top_k / presence_penalty.
-- **Qwen `vision` prompts:** `vision_ocr` → near-greedy (temp ≈ 0–0.2) with
-  presence_penalty ≈ 1.5 to prevent loops; `vision_caption` / `video_frame` →
-  Qwen's VL defaults (temp 0.7 / top_p 0.8 / top_k 20 / presence_penalty 1.5).
-- **gpt-oss `low` prompts** (session_title, entity_disambiguate, triage_classify,
-  video_summary): these are deterministic classify/title jobs — they benefit from
-  a low temperature too, but the primary lever there is the low reasoning effort
-  they already run at, not Qwen's VL numbers. Tune temperature down if they show
-  variance; don't apply the Qwen VL sampling table to them.
-- Server-wide `--temp/--top-p` flags in `llama_swap_config.py` are the blunt
-  alternative; they apply to the whole served model and can't distinguish OCR from
-  captioning (or one text tier from another), so prefer the per-task route.
+**Two layers, on purpose.** The recommended-value layer (`model_sampling` / the
+catalog) is the vendor's numbers verbatim. The provider-quirk layer (each client's
+`_apply_sampling`) drops what an API can't take. That split is what lets ONE
+`vision_ocr` override (near-greedy + presence_penalty 1.5) do the right thing on both
+the local VL model (both knobs land) and cloud Grok (only the temperature lands — its
+reasoning model rejects penalties). It also means a hybrid reasoner picks its
+thinking-mode vs non-thinking-mode row automatically from the resolved reasoning
+effort (`sampling_thinking`).
+
+### Per-model recommended values (what we now serve)
+
+Local models (llama.cpp). top_k `0` and min_p `0` mean *disabled* — for a card that
+prescribes only temp/top_p we sample purely on those rather than inherit llama.cpp's
+top_k 40 / min_p 0.1. Hybrid rows show non-thinking → thinking.
+
+| Model (served) | temp | top_p | top_k | min_p | presence_penalty | source |
+|---|---|---|---|---|---|---|
+| qwen3-vl-30b-a3b (+q4) | 0.7 | 0.8 | 20 | 0 | 1.5 | Qwen VL card |
+| qwen3.6-27b (+q4) | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5→– | Qwen3.6 card |
+| qwen3-coder-next (+q8) | 1.0 | 0.95 | 40 | 0 | – | Qwen Coder card |
+| qwen3-30b-a3b | 0.7 | 0.8 | 20 | 0 | – | Qwen 30B-A3B (Instruct-2507) |
+| qwen3.5-0.8b | 1.0→1.0 | 1.0→0.95 | 20 | 0 | 2.0→1.5 | Qwen3.5 card (loop-prone) |
+| qwen3.5-4b | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5 | Qwen3.5 card |
+| gpt-oss-120b | 1.0 | 1.0 | 0 | 0 | – | OpenAI (min_p 0 is critical) |
+| glm-4.5-air | 0.6 | 0.95 | 0 | 0 | – | Z.ai GLM-4.5 API default |
+| nemotron-3-super-120b | 1.0 | 0.95 | 0 | 0 | – | NVIDIA card (unified) |
+| nemotron-3.5-lightning-30b | 1.0 | 0.95 | 0 | 0 | – | NVIDIA card (unified) |
+| llama-4-scout-int4 | 0.6 | 0.9 | 0 | 0.01 | – | Meta config + Unsloth min_p |
+| llama-3.3-70b | 0.6 | 0.9 | 0 | 0 | – | Meta generation_config |
+
+Cloud: `xai:grok-4.3` → temp 0.7 / top_p 0.95 (documented default; penalties dropped —
+Grok 4.x are reasoning models). `anthropic:claude-sonnet-4-6` → nothing set, so
+Anthropic's own default (temp 1.0) stands and we never trip the temp-and-top_p-both
+error; a per-task override may still set a lower temperature.
+
+### Per-task overrides
+
+A prompt deviates by adding a `config: sampling:` block; it merges over the model
+default. Today the one override that matters is `vision_ocr` (near-greedy temp 0.1 +
+presence_penalty 1.5 — verbatim transcription must not drift or loop). `vision_caption`
+and the deterministic `low` classify/title jobs run at their model's defaults; the
+primary lever for the latter is the low reasoning effort they already carry, not the
+Qwen VL numbers — tune temperature down per-prompt if one shows variance.
+
+Server-wide `--temp/--top-p` flags in `llama_swap_config.py` remain the blunt
+alternative we deliberately did NOT take: they apply to a whole served model and can't
+tell OCR from captioning on the same model, which is exactly what the per-task route
+buys. Operator-tunable sampling (a Settings surface, like the per-task model/effort
+overrides) is a possible follow-up — today the values live in code (catalog + prompts),
+the same source-of-truth as the rest of the sampling doctrine.

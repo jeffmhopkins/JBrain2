@@ -20,7 +20,7 @@ import httpx
 import structlog
 
 from jbrain.config import Settings
-from jbrain.llm import local_catalog
+from jbrain.llm import local_catalog, model_sampling
 from jbrain.llm.anthropic import AnthropicClient
 from jbrain.llm.errors import LlmBadResponseError, LlmError
 from jbrain.llm.openai_compat import OpenAiCompatClient
@@ -33,6 +33,7 @@ from jbrain.llm.types import (
     LlmTool,
     LlmTurn,
     LlmUsage,
+    Sampling,
     StreamPart,
     UsageRecorder,
 )
@@ -521,6 +522,16 @@ class LlmRouter:
         llama-server's own timings (llama-swap doesn't surface those)."""
         return round(output_tokens / elapsed_s, 1) if elapsed_s > 0 else None
 
+    @staticmethod
+    def _resolve_sampling(
+        provider: str, model: str, reasoning_effort: str | None, override: Sampling | None
+    ) -> Sampling:
+        """The sampling a call actually runs with: the resolved model's recommended
+        defaults (jbrain.llm.model_sampling) with the caller's per-task `.prompt`
+        override merged on top. Applied to EVERY call, so a model runs at its card's
+        values even when no override is given — the fix for the whole-catalog gap."""
+        return model_sampling.default_sampling(provider, model, reasoning_effort).merge(override)
+
     async def _record(self, task: str, provider: str, model: str, usage: LlmUsage) -> None:
         if self._recorder is None:
             return
@@ -540,12 +551,16 @@ class LlmRouter:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
         spec_override: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmResult:
         # `spec_override` is the per-call model pick (the omnibox's per-conversation
         # agent model) — same precedence as in converse_stream, so a background
         # completion (e.g. the session titler) can run on the exact model the chat
         # turn will use, no separate route and no model swap.
         provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
+        # `sampling` is the prompt's per-task override (its `.prompt` `config: sampling:`
+        # block); it merges over the resolved model's recommended defaults.
+        resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
         await self._admit_local(provider, model)
         start = time.perf_counter()
@@ -557,6 +572,7 @@ class LlmRouter:
             json_schema=json_schema,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
+            sampling=resolved_sampling,
         )
         # Recorded per provider call (the re-ask spends tokens too): the
         # ledger tracks what was billed, not what was usable.
@@ -571,6 +587,7 @@ class LlmRouter:
                 json_schema=json_schema,
                 max_tokens=max_tokens,
                 reasoning_effort=reasoning_effort,
+                sampling=resolved_sampling,
             )
             await self._record(task, provider, model, result.usage)
             if result.parsed is None:
@@ -604,6 +621,7 @@ class LlmRouter:
         strength: str | None = None,
         effort_override: str | None = None,
         spec_override: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmTurn:
         """One tool-aware turn for the agent loop. Unlike `complete` there is no
         JSON re-ask — tool calls are structured by the provider, and the loop
@@ -619,6 +637,7 @@ class LlmRouter:
         provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
+        resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
         await self._admit_local(provider, model)
         start = time.perf_counter()
@@ -629,6 +648,7 @@ class LlmRouter:
             tools=tools,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
+            sampling=resolved_sampling,
         )
         elapsed = time.perf_counter() - start
         await self._record(task, provider, model, turn.usage)
@@ -657,6 +677,7 @@ class LlmRouter:
         strength: str | None = None,
         effort_override: str | None = None,
         spec_override: str | None = None,
+        sampling: Sampling | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
         is recorded once from the closing LlmTurn — the streamed text chunks
@@ -667,6 +688,7 @@ class LlmRouter:
         provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
+        resolved_sampling = self._resolve_sampling(provider, model, reasoning_effort, sampling)
         client = self._clients[provider]
         await self._admit_local(provider, model)
         final: LlmTurn | None = None
@@ -678,6 +700,7 @@ class LlmRouter:
             tools=tools,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
+            sampling=resolved_sampling,
         ):
             if isinstance(part, LlmTurn):
                 final = part

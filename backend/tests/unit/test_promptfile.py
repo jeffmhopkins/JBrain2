@@ -41,6 +41,32 @@ def test_loads_renders_and_leaves_literal_braces(tmp_path: Path) -> None:
     assert pf.render(who="world") == 'Hello world — keep this literal: {"k": 1}.'
 
 
+def test_no_sampling_block_leaves_sampling_none(tmp_path: Path) -> None:
+    pf = load_prompt(_write(tmp_path, _MINIMAL))
+    assert pf.sampling is None  # runs at the resolved model's recommended defaults
+
+
+def test_sampling_block_parses_into_a_validated_bundle(tmp_path: Path) -> None:
+    text = _MINIMAL.replace(
+        "config: { max_tokens: 16 }",
+        "config: { max_tokens: 16, sampling: { temperature: 0.1, presence_penalty: 1.5 } }",
+    )
+    pf = load_prompt(_write(tmp_path, text))
+    assert pf.sampling is not None
+    assert pf.sampling.temperature == 0.1 and pf.sampling.presence_penalty == 1.5
+    # The sampling sub-key stays in the raw config too (it is one config block).
+    assert pf.config["max_tokens"] == 16
+
+
+def test_bad_sampling_key_fails_at_load(tmp_path: Path) -> None:
+    text = _MINIMAL.replace(
+        "config: { max_tokens: 16 }",
+        "config: { max_tokens: 16, sampling: { temperatur: 0.1 } }",
+    )
+    with pytest.raises(PromptError, match="unknown sampling keys"):
+        load_prompt(_write(tmp_path, text))
+
+
 def test_missing_template_var_raises(tmp_path: Path) -> None:
     pf = load_prompt(_write(tmp_path, _MINIMAL))
     with pytest.raises(PromptError, match="missing template vars"):

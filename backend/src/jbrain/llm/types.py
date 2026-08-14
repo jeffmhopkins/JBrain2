@@ -2,8 +2,8 @@
 
 import json
 import re
-from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import dataclass, fields
 from typing import Any, Literal, Protocol
 
 DEFAULT_MAX_TOKENS = 4096
@@ -25,6 +25,64 @@ class LlmImage:
 class LlmUsage:
     input_tokens: int
     output_tokens: int
+
+
+# Decode-time sampling controls, one immutable bundle threaded from the router to
+# each provider client. EVERY field is optional (None): an unset field is left OFF
+# the wire so the provider/engine default applies — the point is that a model gets
+# ONLY the knobs its vendor actually recommends, never a value we invented. The
+# router fills these from the resolved model's recommended defaults
+# (jbrain.llm.model_sampling), a `.prompt` `config: sampling:` block overriding
+# per-task. Provider quirks (Anthropic rejecting temperature+top_p together, xAI's
+# reasoning models rejecting penalties, llama.cpp's non-OpenAI knob names) are the
+# CLIENT's job, not this bundle's — see each client's `_apply_sampling`.
+@dataclass(frozen=True)
+class Sampling:
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    # llama.cpp's `repeat_penalty` (1.0 = off). Named `repetition_penalty` here for
+    # the HF/vendor convention; the local client maps it onto llama.cpp's flag name.
+    repetition_penalty: float | None = None
+
+    def merge(self, other: "Sampling | None") -> "Sampling":
+        """Overlay `other` on top of self: every field `other` sets (non-None) wins,
+        the rest keep self's value. This is how a per-task `.prompt` override lands
+        on top of the model's recommended defaults."""
+        if other is None:
+            return self
+        # Explicit None check, NOT `or`: a 0 override (greedy temperature, min_p 0,
+        # top_k 0 to disable it) is a real value that must win, not be treated as unset.
+        return Sampling(
+            **{
+                f.name: o if (o := getattr(other, f.name)) is not None else getattr(self, f.name)
+                for f in fields(self)
+            }
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        """True when nothing is set — nothing goes on the wire, provider default wins."""
+        return all(getattr(self, f.name) is None for f in fields(self))
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any]) -> "Sampling":
+        """Build a Sampling from a `.prompt` `config: sampling:` mapping, validating
+        strictly so a typo fails at prompt-load time, never mid-call. Unknown keys and
+        non-numeric values raise ValueError (the loader re-raises as PromptError)."""
+        allowed = {f.name for f in fields(cls)}
+        unknown = set(raw) - allowed
+        if unknown:
+            raise ValueError(f"unknown sampling keys {sorted(unknown)}; allowed: {sorted(allowed)}")
+        values: dict[str, Any] = {}
+        for key, value in raw.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"sampling {key!r} must be a number, got {value!r}")
+            values[key] = int(value) if key == "top_k" else float(value)
+        return cls(**values)
 
 
 @dataclass(frozen=True)
@@ -185,6 +243,7 @@ class LlmClient(Protocol):
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmResult: ...
 
     async def converse(
@@ -196,6 +255,7 @@ class LlmClient(Protocol):
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> LlmTurn: ...
 
     def converse_stream(
@@ -207,6 +267,7 @@ class LlmClient(Protocol):
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream one tool-aware turn: incremental TextChunks then one final
         LlmTurn (see StreamPart). An async generator, so it is declared — not
