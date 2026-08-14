@@ -223,6 +223,64 @@ def test_qwen36_27b_q4_is_the_interactive_twin() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
+def test_qwen38_27b_is_a_dense_vision_hybrid_reasoner_high_tier() -> None:
+    # Qwen3.8-27B: the newer-generation successor to qwen3.6-27b — a DENSE 27B multimodal
+    # (text + vision, image & video) hybrid reasoner at 8-bit. Thinking is the enable_thinking
+    # chat-template toggle (hybrid), and it emits <think> so it pins --reasoning-format deepseek.
+    from fnmatch import fnmatch
+
+    m = local_catalog.get("qwen3.8-27b")
+    assert m is not None
+    assert m.tiers == ("vision", "high")
+    assert m.supports_vision and m.supports_tools
+    # The projector include is the EXACT F16 name, not a glob: this repo also has a
+    # `mmproj-BF16.gguf` that a `mmproj*F16.gguf` glob would wrongly match.
+    assert m.mmproj_include == "mmproj-F16.gguf"
+    assert fnmatch("mmproj-F16.gguf", m.mmproj_include)
+    assert not fnmatch("mmproj-BF16.gguf", m.mmproj_include)
+    # Hybrid reasoner: in the gating set, <think> split via deepseek, on/off via enable_thinking.
+    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    # 8-bit (near-lossless) from Unsloth's Qwen3.8 GGUF repo; the Q4 twin shares the repo.
+    assert m.quant == "Q8_0" and "Q8_0" in m.gguf_include
+    assert m.hf_repo == "unsloth/Qwen3.8-27B-GGUF"
+    assert m.spec == "local:qwen3.8-27b"
+    assert m.size_gb == 27.9
+    # Its recommended sampling splits thinking vs non-thinking, like the other Qwen hybrids.
+    assert m.sampling.presence_penalty == 1.5 and m.sampling.temperature == 0.7
+    assert m.sampling_thinking is not None and m.sampling_thinking.temperature == 1.0
+    # Serves the conservative gateway default with its native 262k window as the ceiling.
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144 and m.max_context_window == 262144
+    # Opt-in: the recommended default set stays the two resident models.
+    assert m.id not in local_catalog.recommended_ids()
+
+
+def test_qwen38_27b_q4_is_the_interactive_twin() -> None:
+    # The Q4_K_M twin of the Q8 entry: same dense 27B + repo + projector, ~17 GiB — the
+    # interactive daily driver while the Q8 twin is the quality-first option.
+    m = local_catalog.get("qwen3.8-27b-q4")
+    q8 = local_catalog.get("qwen3.8-27b")
+    assert m is not None and q8 is not None
+    assert m.tiers == ("vision", "high")
+    assert m.supports_vision and m.supports_tools
+    # The projector stays F16 even at Q4 weights (fine text degrades first under quantization).
+    assert m.mmproj_include == "mmproj-F16.gguf"
+    # Same hybrid-reasoner profile as the Q8 twin.
+    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    # Q4_K_M from the SAME repo as the Q8 default, but a DISTINCT served name (both can be
+    # provisioned side by side) and materially lighter weights.
+    assert m.quant == "Q4_K_M" and "Q4_K_M" in m.gguf_include
+    assert m.hf_repo == q8.hf_repo == "unsloth/Qwen3.8-27B-GGUF"
+    assert m.spec == "local:qwen3.8-27b-q4"
+    assert m.served_model != q8.served_model
+    assert m.size_gb == 16.8 and m.size_gb < q8.size_gb
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144
+    assert m.id not in local_catalog.recommended_ids()
+
+
 def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
     # --reasoning-format deepseek is pinned ONLY for entries that emit <think> inline: the two
     # Qwen3.6 hybrids, the two small Qwen3.5 hybrids, and the Nemotron hybrid. The harmony/GLM
@@ -231,6 +289,8 @@ def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
     assert {x.id for x in local_catalog.CATALOG if x.reasoning_format} == {
         "qwen3.6-27b",
         "qwen3.6-27b-q4",
+        "qwen3.8-27b",
+        "qwen3.8-27b-q4",
         "nemotron-3-super-120b",
         "nemotron-3.5-lightning-30b",
         "qwen3.5-0.8b",

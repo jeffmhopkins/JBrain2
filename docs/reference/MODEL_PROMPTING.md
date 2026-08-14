@@ -2,6 +2,11 @@
 
 > **Status:** Living · **Last verified:** 2026-08-14
 
+> **Applied (2026-08-14):** added `Qwen/Qwen3.8-27B` to the local catalog (Q8 + Q4 twin,
+> `qwen3.8-27b` / `qwen3.8-27b-q4`) — the newer-generation successor to the qwen3.6-27b
+> dense-27B vision hybrid. Same Qwen hybrid sampling split as 3.6 (non-thinking 0.7/0.80/pp 1.5,
+> thinking 1.0/0.95), carried on the catalog entry; see the per-model table below.
+
 > **Applied (2026-08-14):** the sampling gap below is CLOSED. Per-model recommended sampling
 > now rides every call: each local model carries its vendor-recommended `sampling` (and, for a
 > hybrid whose card splits thinking vs non-thinking, `sampling_thinking`) on its catalog entry
@@ -323,6 +328,7 @@ top_k 40 / min_p 0.1. Hybrid rows show non-thinking → thinking.
 |---|---|---|---|---|---|---|
 | qwen3-vl-30b-a3b (+q4) | 0.7 | 0.8 | 20 | 0 | 1.5 | Qwen VL card |
 | qwen3.6-27b (+q4) | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5→– | Qwen3.6 card |
+| qwen3.8-27b (+q4) | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5→– | Qwen3.8 card |
 | qwen3-coder-next (+q8) | 1.0 | 0.95 | 40 | 0 | – | Qwen Coder card |
 | qwen3-30b-a3b | 0.7 | 0.8 | 20 | 0 | – | Qwen 30B-A3B (Instruct-2507) |
 | qwen3.5-0.8b | 1.0→1.0 | 1.0→0.95 | 20 | 0 | 2.0→1.5 | Qwen3.5 card (loop-prone) |

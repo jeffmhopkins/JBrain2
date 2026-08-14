@@ -405,6 +405,77 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=6.0,
     ),
     LocalModel(
+        id="qwen3.8-27b",
+        label="Qwen3.8 27B · vision + reasoning (Q8)",
+        served_model="qwen3.8-27b",
+        # Same Qwen hybrid split as the 3.6 twin: non-thinking (Instruct) temp 0.7 / top_p 0.8 /
+        # presence_penalty 1.5; thinking temp 1.0 / top_p 0.95, no presence penalty. The router
+        # picks by whether thinking is on for the call.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
+        sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
+        tiers=("vision", "high"),
+        supports_vision=True,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="unsloth/Qwen3.8-27B-GGUF",
+        gguf_include="*Q8_0*.gguf",
+        # Keep the F16 projector (fine text degrades first under quantization). Name it EXACTLY:
+        # a `mmproj*F16.gguf` glob would also match this repo's `mmproj-BF16.gguf` (it ends in
+        # `F16.gguf` too), so the exact name pulls only the F16 one and skips the BF16 beside it.
+        mmproj_include="mmproj-F16.gguf",
+        quant="Q8_0",
+        # GiB on disk (the catalog's unit): the single Q8_0 weight (~27.0 GiB from HF's 29
+        # decimal-GB listing) plus the ~0.86 GiB F16 projector. ESTIMATE until measured on-box;
+        # kept at the GiB (not decimal-GB) sum so the install bar doesn't cap early.
+        size_gb=27.9,
+        note="Dense 27B (text + vision, image & video) — Qwen3.8's hybrid reasoner at 8-bit "
+        "(near-lossless), the newer-generation successor to the qwen3.6-27b vision + high-tier "
+        "entry. A DENSE 27B is memory-bandwidth-bound on this box, so Q8 runs ~7 t/s "
+        "(quality-first / batch) — prefer the Q4 twin for interactive use. Thinking is the "
+        "enable_thinking chat-template toggle, set per task in LLM Settings ('none' runs it as a "
+        "snappy Instruct model). ~28 GiB, co-resides beside gpt-oss-120b. Needs a llama.cpp "
+        "build with --reasoning-format and Qwen3.8 mmproj support.",
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        # Native 262k (YaRN-extensible to ~1M upstream); serves the conservative gateway
+        # default with the native window as the picker's ceiling.
+        native_context_window=262144,
+        kv_gb_per_128k=6.0,
+    ),
+    LocalModel(
+        id="qwen3.8-27b-q4",
+        label="Qwen3.8 27B · vision + reasoning (Q4, interactive)",
+        served_model="qwen3.8-27b-q4",
+        # Same model as the Q8 twin — same hybrid thinking/non-thinking sampling split.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
+        sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
+        tiers=("vision", "high"),
+        supports_vision=True,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="unsloth/Qwen3.8-27B-GGUF",
+        gguf_include="*Q4_K_M*.gguf",
+        # Same F16 projector as the Q8 twin (kept full precision even at Q4 weights). Exact
+        # name, not `mmproj*F16.gguf`, so it doesn't also pull the `mmproj-BF16.gguf` beside it.
+        mmproj_include="mmproj-F16.gguf",
+        quant="Q4_K_M",
+        # GiB on disk: the Q4_K_M weight (~15.9 GiB from HF's 17.1 decimal-GB listing) plus the
+        # ~0.86 GiB F16 projector. ESTIMATE until measured on-box.
+        size_gb=16.8,
+        note="Dense 27B (text + vision) hybrid reasoner at Q4_K_M — the INTERACTIVE twin of the "
+        "Q8 entry, same model + repo. A dense 27B is bandwidth-bound here, so Q4 roughly doubles "
+        "Q8's throughput: the better daily driver, at some quality cost the Q8 twin keeps. ~17 "
+        "GiB, so it co-resides beside gpt-oss-120b with wide headroom. Projector stays F16 "
+        "(fine-text OCR degrades first under weight quantization). Thinking is the "
+        "enable_thinking toggle, set per task in LLM Settings.",
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        native_context_window=262144,
+        kv_gb_per_128k=6.0,
+    ),
+    LocalModel(
         id="qwen3-coder-next",
         label="Qwen3-Coder-Next 80B · coding agent (Q4)",
         served_model="qwen3-coder-next",
