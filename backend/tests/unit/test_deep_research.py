@@ -1994,8 +1994,7 @@ def _v2_svc(
 ) -> DeepResearchService:
     # The fakes stand in structurally for the real router/spawn/record clients. Splat the kwargs so
     # the type friction lands on ONE call line a single `# type: ignore` covers — a multi-line call
-    # with explicit keywords scatters a per-argument error onto each line, past the line-level ignore
-    # (this is why `_svc` keeps its construction on one line).
+    # with explicit keywords scatters a per-arg error onto each line, past a line-level ignore.
     kwargs = {
         "router": router,
         "spawn": spawn,
