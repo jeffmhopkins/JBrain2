@@ -81,6 +81,21 @@ class Preset:
     # builder, docs/plans/DAILY_NEWS_V2_PLAN.md). A scalar, not a `{{var}}` slot; the engine
     # validates the value when it consumes the rendered preset (no import cycle here).
     engine: str
+    # Optional deterministic public-records PRE-GATHER (docs/plans/CANDIDATE_PROFILE_V2_PLAN.md):
+    # the subject NAME (a `{{var}}` template, e.g. `{{candidate}}`) whose free, keyless structured
+    # records the engine gathers ITSELF — Wikidata identity/aliases → CourtListener, NPPES, and
+    # Federal Register under the ballot name AND every alias — and injects as the first cited
+    # finding, before the gather fan. This is the alias-harvest + primary-record sweep the preset
+    # methodology hinges on, done in engine code (zero model tokens, guaranteed) instead of hoping a
+    # sub-agent calls a tool it may not even hold. Empty/absent = off (web mode only). Rendered like
+    # question/objective, so it carries the run's `{{candidate}}`.
+    records_subject: str
+    # Optional LEAN WRITE TAIL (docs/plans/CANDIDATE_PROFILE_V2_PLAN.md): when set, the grounding
+    # critique still runs, but it may return the sentinel "NO REVISION NEEDED" for a clean draft,
+    # and the engine then SKIPS the second full-report revise write — cutting the redundant
+    # ~12k-token pass on a draft the critic found nothing to fix in, while still revising whenever
+    # it flags something. A scalar, not a `{{var}}` slot. False/absent = the full critique→revise.
+    lean_tail: bool
 
 
 @dataclass(frozen=True)
@@ -106,6 +121,10 @@ class RenderedPreset:
     news_feeds: tuple[str, ...]
     # The engine that renders this preset (`pipeline` default, or `briefing`), passed through.
     engine: str
+    # The rendered public-records pre-gather subject (empty = off). Carries the run's {{candidate}}.
+    records_subject: str
+    # The lean-write-tail policy, passed straight through render. False = the full critique→revise.
+    lean_tail: bool
 
 
 def _slots(text: str) -> set[str]:
@@ -158,6 +177,17 @@ def _str_list_field(preset: str, field: str, value: object) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _bool_field(preset: str, field: str, value: object) -> bool:
+    """A scalar boolean preset policy: absent → False (off), else a real bool. Anything non-bool
+    (a truthy string, an int) is a load-time refusal (fail fast at startup) — a policy silently
+    misread as on/off is worse than a clean crash."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    raise PresetError(f"preset {preset!r}: `{field}` must be a boolean")
+
+
 def _coerce_preset(name: str, raw: object) -> Preset:
     """Validate one loaded YAML doc into a Preset, or raise PresetError. Structure only —
     the `output_kind` / `source_mode` value allowlists live in the engine (no import cycle),
@@ -192,6 +222,18 @@ def _coerce_preset(name: str, raw: object) -> Preset:
     output_kind = str(raw.get("output_kind") or "report")
     source_mode = str(raw.get("sources") or "web")
     engine = str(raw.get("engine") or "pipeline")
+    # The deterministic public-records pre-gather subject template (empty = off) and the lean
+    # write-tail switch (CANDIDATE_PROFILE_V2_PLAN.md). `records_subject` is a `{{var}}` template
+    # (rendered per run, so its slots join `variables` below); `lean_tail` is a scalar bool.
+    records_subject = str(raw.get("records_subject") or "").strip()
+    lean_tail = _bool_field(name, "lean_tail", raw.get("lean_tail"))
+    # The records pre-gather runs only on the open web (it grounds a web report); refuse it on a
+    # library/reports preset at load rather than let the policy rot as a silent no-op.
+    if records_subject and source_mode != "web":
+        raise PresetError(
+            f"preset {name!r}: `records_subject` requires `sources: web` (the public-records "
+            "pre-gather grounds an open-web report; it is inert on a library/reports source)"
+        )
     # Optional scalar policies. Absent → None (the feature is off). Present → a positive int; a
     # bool, non-int, or non-positive value is a load-time refusal (fail fast at startup, like
     # every other malformed field) rather than a silently ignored policy.
@@ -209,9 +251,17 @@ def _coerce_preset(name: str, raw: object) -> Preset:
             f"preset {name!r}: `news_feeds` requires `min_reads` (the feed pre-pull runs only on "
             "the two-phase scout→read gather, so it is inert without a read target)"
         )
-    # The variables the caller must supply = every slot used anywhere in the template.
+    # The variables the caller must supply = every slot used anywhere in the template, the
+    # records_subject template included (its {{candidate}} must be a declared, required variable).
     used: set[str] = set()
-    for text in (question, objective, *sections, *(b for _, b in angles), *(t for t, _ in angles)):
+    for text in (
+        question,
+        objective,
+        records_subject,
+        *sections,
+        *(b for _, b in angles),
+        *(t for t, _ in angles),
+    ):
         used |= _slots(text)
     return Preset(
         name=name,
@@ -227,6 +277,8 @@ def _coerce_preset(name: str, raw: object) -> Preset:
         min_reads=min_reads,
         news_feeds=news_feeds,
         engine=engine,
+        records_subject=records_subject,
+        lean_tail=lean_tail,
     )
 
 
@@ -285,4 +337,8 @@ def render_preset(name: str, variables: dict[str, str]) -> RenderedPreset:
         min_reads=preset.min_reads,
         news_feeds=preset.news_feeds,
         engine=preset.engine,
+        records_subject=_render(preset.records_subject, v, where=f"preset {name!r} records_subject")
+        if preset.records_subject
+        else "",
+        lean_tail=preset.lean_tail,
     )
