@@ -5,12 +5,17 @@ inside the api container against the owner-scoped settings store. Here we stub t
 engine/sessionmaker/store so the command logic is exercised without a real DB.
 """
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from jbrain import cli
 from tests.unit.fakes import FakeSettingsStore
+
+
+def _overrides(store: FakeSettingsStore) -> dict[str, dict[str, str]]:
+    """The stored llm_task_overrides, typed for indexing (values is dict[str, object])."""
+    return cast(dict[str, dict[str, str]], store.values["llm_task_overrides"])
 
 
 class _FakeEngine:
@@ -91,7 +96,7 @@ def test_local_activate_points_agent_turn_at_a_reasoning_model(
     # 'install a model' also makes it active: agent.turn is re-pointed at the just-installed
     # model, with a reasoning_effort because gpt-oss can think (same gating as the UI).
     assert cli.main(["local-activate", "gpt-oss-120b"]) == 0
-    assert patched_store.values["llm_task_overrides"]["agent.turn"] == {
+    assert _overrides(patched_store)["agent.turn"] == {
         "spec": "local:gpt-oss-120b",
         "reasoning_effort": "low",
     }
@@ -102,9 +107,7 @@ def test_local_activate_drops_effort_for_a_non_reasoning_model(
 ) -> None:
     # A non-thinking model (Qwen3-VL Instruct) stores spec only — no reasoning_effort.
     assert cli.main(["local-activate", "qwen3-vl-30b"]) == 0
-    assert patched_store.values["llm_task_overrides"]["agent.turn"] == {
-        "spec": "local:qwen3-vl-30b-a3b"
-    }
+    assert _overrides(patched_store)["agent.turn"] == {"spec": "local:qwen3-vl-30b-a3b"}
 
 
 def test_local_activate_preserves_other_task_overrides(
@@ -113,7 +116,7 @@ def test_local_activate_preserves_other_task_overrides(
     # Re-pointing agent.turn must not clobber a stored override on another task.
     patched_store.values["llm_task_overrides"] = {"note.extract": {"spec": "xai:grok-4.3"}}
     assert cli.main(["local-activate", "gpt-oss-120b"]) == 0
-    overrides = patched_store.values["llm_task_overrides"]
+    overrides = _overrides(patched_store)
     assert overrides["note.extract"] == {"spec": "xai:grok-4.3"}
     assert overrides["agent.turn"]["spec"] == "local:gpt-oss-120b"
 
