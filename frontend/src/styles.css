@@ -11936,30 +11936,42 @@ button.small {
   border-radius: 12px;
 }
 
-/* The writer's live "thinking" tail — a muted, collapsible disclosure so a long think reads as
-   the model working (open until the draft streams) without competing with the briefing draft. */
-.fb-shell .fb-drp-thinking {
-  font-size: 12px;
-  color: var(--text-2);
+/* The writer's live "thinking" tail. The toggle mirrors the main turn's `fb-act-think` chip
+   (violet BrainGlyph + label, pill on hover/open) and the body reuses `fb-thinking-trace`
+   verbatim, so an in-tool think is visually identical to one shown outside the tool. */
+.fb-shell .fb-drp-think {
+  font-size: 11.5px;
 }
-.fb-shell .fb-drp-thinking > summary {
+.fb-shell .fb-drp-think-sum {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 25px;
+  padding: 3px 9px;
+  margin-left: -9px; /* pull the pill's padding back to the panel's left edge */
+  border-radius: 999px;
+  color: var(--text-2);
+  font-weight: 500;
   cursor: pointer;
-  color: var(--text-2);
   user-select: none;
+  list-style: none;
+  transition: background 0.14s, color 0.14s;
 }
-.fb-shell .fb-drp-thinking-trace {
-  margin-top: 6px;
-  max-height: 22vh;
-  overflow-y: auto;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  border-radius: 12px;
-  white-space: pre-wrap;
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-3, var(--text-2));
+.fb-shell .fb-drp-think-sum::-webkit-details-marker {
+  display: none; /* drop the native disclosure triangle — the BrainGlyph is the mark */
+}
+.fb-shell .fb-drp-think-sum .fb-act-ic {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--violet);
+}
+.fb-shell .fb-drp-think:hover > .fb-drp-think-sum {
+  color: var(--text);
+}
+.fb-shell .fb-drp-think[open] > .fb-drp-think-sum {
+  background: var(--violet-tint);
+  color: var(--violet);
 }
 
 /* Deepest research (DEEPEST_RESEARCH_TOOL_PLAN.md, R8): the deep_research timeline
