@@ -21,9 +21,13 @@ if TYPE_CHECKING:
     from jbrain.push.repo import FcmTokenRepo
     from jbrain.push.sender import PushNotifier
     from jbrain.settings_store import SqlSettingsStore
+    from jbrain.web.federal_register import FederalRegisterClient
     from jbrain.web.feeds import FeedClient
     from jbrain.web.fetch import WebFetcher
+    from jbrain.web.nppes import NppesClient
+    from jbrain.web.public_records import CourtListenerClient
     from jbrain.web.search import SearxngClient
+    from jbrain.web.wikidata import WikidataClient
 
 from jbrain.agent.appointmenttools import (
     build_appointment_handlers,
@@ -694,6 +698,10 @@ def build_registry(
     feeds: "FeedClient | None" = None,
     searxng: "SearxngClient | None" = None,
     fetcher: "WebFetcher | None" = None,
+    wikidata: "WikidataClient | None" = None,
+    courtlistener: "CourtListenerClient | None" = None,
+    nppes: "NppesClient | None" = None,
+    federal_register: "FederalRegisterClient | None" = None,
     image_handlers: dict[str, ToolHandler] | None = None,
     transcribe_handlers: dict[str, ToolHandler] | None = None,
     video_handlers: dict[str, ToolHandler] | None = None,
@@ -873,6 +881,12 @@ def build_registry(
             feeds=feeds,
             searxng=searxng,
             fetcher=fetcher,
+            # The free public-records clients backing the deterministic pre-gather
+            # (CANDIDATE_PROFILE_V2_PLAN.md) — the same instances the `public_records` tool uses.
+            wikidata=wikidata,
+            courtlistener=courtlistener,
+            nppes=nppes,
+            federal_register=federal_register,
         )
         # deep_produce is the same engine, a different verb: share the one service instance.
         deep_produce_ref.service = deep_research_ref.service

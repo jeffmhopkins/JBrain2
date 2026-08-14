@@ -857,6 +857,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # (DAILY_NEWS_V2_PLAN.md) — the same instances the web tools use.
             searxng=searxng,
             fetcher=web_fetcher,
+            # The free, keyless public-records clients backing the deterministic pre-gather
+            # (CANDIDATE_PROFILE_V2_PLAN.md) — the SAME instances the `public_records` tool uses.
+            wikidata=app.state.wikidata,
+            courtlistener=app.state.courtlistener,
+            nppes=app.state.nppes,
+            federal_register=app.state.federal_register,
             image_handlers=image_handlers,
             transcribe_handlers=transcribe_handlers,
             video_handlers=video_handlers,

@@ -42,6 +42,8 @@ from jbrain.db.session import SessionContext
 from jbrain.llm import LlmBadResponseError
 from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
 from jbrain.web.feeds import FeedItem
+from jbrain.web.public_records import Record as _Record
+from jbrain.web.wikidata import WikidataEntity as _WdEntity
 
 
 @pytest.fixture
@@ -308,6 +310,25 @@ class _FakeSpawn:
             )
             for i, (label, _brief) in enumerate(briefs)
         ]
+
+
+class _FakeRecordClient:
+    """A stand-in for a public-records client (Wikidata / CourtListener / NPPES / Federal Register)
+    for the deterministic pre-gather: returns its canned rows + ok=True and records every name it
+    was queried under, so the alias-driven fan is observable. One class covers all four — the engine
+    calls `.resolve(name)` on the identity client and `.search(name, ...)` on the others."""
+
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+        self.queries: list[str] = []
+
+    async def resolve(self, name: str, *, limit: int = 3):  # noqa: ANN001, ANN201
+        self.queries.append(name)
+        return list(self._rows), True
+
+    async def search(self, name: str, *, state: str = "", limit: int = 10):  # noqa: ANN001, ANN201
+        self.queries.append(name)
+        return list(self._rows), True
 
 
 def _ctx(
@@ -1957,6 +1978,115 @@ async def test_non_preset_run_never_enforces_headings() -> None:
     router, spawn = _FakeRouter(), _FakeSpawn()
     await _svc(router, spawn).research(_ctx(), {"question": "some open question"})
     assert not any("STRUCTURE DEFECT" in s for s in router.synth_calls)
+
+
+# --- candidate_profile_v2: deterministic public-records pre-gather + lean write tail -----------
+
+
+def _v2_svc(
+    router: _FakeRouter,
+    spawn: _FakeSpawn,
+    *,
+    wikidata: "_FakeRecordClient | None" = None,
+    court: "_FakeRecordClient | None" = None,
+    nppes: "_FakeRecordClient | None" = None,
+    federal: "_FakeRecordClient | None" = None,
+) -> DeepResearchService:
+    return DeepResearchService(  # type: ignore[arg-type]
+        router=router,
+        spawn=spawn,
+        wikidata=wikidata,
+        courtlistener=court,
+        nppes=nppes,
+        federal_register=federal,
+    )
+
+
+async def test_candidate_v2_injects_a_deterministic_public_records_finding() -> None:
+    """candidate_profile_v2 resolves the subject's identity/aliases and sweeps the record sources in
+    ENGINE code, injecting the result as the first finding — so the writer sees the primary records
+    (and every alias) even though no gather sub-agent ever calls `public_records`."""
+    ent = _WdEntity(
+        qid="Q1",
+        label="Jane Q. Doe",
+        description="physician",
+        aliases=("Jane Smith",),
+        occupations=("physician",),
+        identifiers=(),
+        url="https://www.wikidata.org/wiki/Q1",
+    )
+    rec = _Record(
+        case_name="Doe v. Acme",
+        court="S.D. Fla.",
+        date_filed="2019",
+        docket_number="1:19-cv-1",
+        url="https://courtlistener.com/x",
+        kind="docket",
+    )
+    wd, court = _FakeRecordClient([ent]), _FakeRecordClient([rec])
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    out = await _v2_svc(router, spawn, wikidata=wd, court=court).research(
+        _ctx(),
+        {
+            "preset": "candidate_profile_v2",
+            "variables": {"candidate": "Jane Doe", "office": "U.S. Senate"},
+        },
+    )
+    assert isinstance(out, ToolOutput)
+    # The writer's prompt carries the injected records finding, incl. the alias-driven court hit.
+    synth = router.synth_calls[0]
+    assert "DETERMINISTIC PUBLIC-RECORDS SWEEP" in synth
+    assert "Jane Smith" in synth and "Doe v. Acme" in synth
+    # Court was searched under BOTH the ballot name and the harvested alias (the alias-harvest win).
+    assert "Jane Doe" in court.queries and "Jane Smith" in court.queries
+
+
+async def test_candidate_v1_does_not_run_the_records_pregather() -> None:
+    """v1 candidate_profile declares no records_subject, so even with the clients wired the engine
+    runs no deterministic pre-gather — v1 behaviour is byte-unchanged."""
+    ent = _WdEntity(
+        qid="Q1",
+        label="Jane Q. Doe",
+        description="",
+        aliases=(),
+        occupations=(),
+        identifiers=(),
+        url="https://www.wikidata.org/wiki/Q1",
+    )
+    wd = _FakeRecordClient([ent])
+    router, spawn = _FakeRouter(), _FakeSpawn()
+    await _v2_svc(router, spawn, wikidata=wd).research(
+        _ctx(),
+        {
+            "preset": "candidate_profile",
+            "variables": {"candidate": "Jane Doe", "office": "U.S. Senate"},
+        },
+    )
+    assert wd.queries == []  # the identity client was never touched
+    assert all("DETERMINISTIC PUBLIC-RECORDS SWEEP" not in s for s in router.synth_calls)
+
+
+async def test_candidate_v2_lean_tail_skips_the_revise_on_a_clean_critique() -> None:
+    """lean_tail lets the critic bless a clean draft with the NO REVISION NEEDED sentinel; the
+    engine then skips the second full-report write. The critique fan STILL runs (grounding sweep) —
+    only the redundant revise is spared. Isolated from the heading backstop by a delta: a clean
+    sentinel vs a real critique differ by EXACTLY the one revise write."""
+    args = {
+        "preset": "candidate_profile_v2",
+        "variables": {"candidate": "Jane Doe", "office": "U.S. Senate"},
+    }
+    # Clean draft: every review child (incl. the critic) returns the sentinel → revise skipped.
+    clean_router, clean_spawn = _FakeRouter(), _FakeSpawn(finding_summary="NO REVISION NEEDED")
+    await _v2_svc(clean_router, clean_spawn).research(_ctx(), args)
+    # A real critique (no sentinel) → the revise runs exactly as before.
+    dirty_router = _FakeRouter()
+    dirty_spawn = _FakeSpawn(finding_summary="Claim X is unsupported and must be removed.")
+    await _v2_svc(dirty_router, dirty_spawn).research(_ctx(), args)
+    # The critique fan ran in both cases (grounding is never skipped)…
+    assert any(f["briefs"][0][0] == "critique" for f in _review_fans(clean_spawn))
+    # …but the clean run wrote ONE FEWER synthesis: the skipped revise.
+    assert len(dirty_router.synth_calls) == len(clean_router.synth_calls) + 1
+    assert not any("must be removed" in s for s in clean_router.synth_calls)
 
 
 def test_personas_for_reports_mode_are_report_library_only() -> None:

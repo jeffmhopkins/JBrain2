@@ -100,6 +100,8 @@ def test_coerce_defaults_and_angle_title_fallback() -> None:
     assert preset.angles[0][0] == "research {{x}}"  # title falls back to the brief
     assert preset.retention_days is None  # absent → keep forever
     assert preset.news_feeds == ()  # absent → no feed pre-pull
+    assert preset.records_subject == ""  # absent → no public-records pre-gather
+    assert preset.lean_tail is False  # absent → the full critique→revise tail
 
 
 def test_retention_days_parsed_and_carried_through_render(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,6 +139,74 @@ def test_news_feeds_parses_a_list_and_defaults_empty() -> None:
     # Absent → empty (feature off), carried through render unchanged.
     bare = rp._coerce_preset("p", {"question": "q", "sections": ["S"], "angles": [{"brief": "b"}]})
     assert bare.news_feeds == ()
+
+
+def test_shipped_candidate_profile_v2_opts_into_the_records_pregather_and_lean_tail() -> None:
+    # The A/B twin (CANDIDATE_PROFILE_V2_PLAN.md): same product + variables as candidate_profile,
+    # but it turns on the deterministic public-records pre-gather (subject = the {{candidate}}) and
+    # the lean write tail. v1 stays byte-unchanged (no such fields).
+    assert "candidate_profile_v2" in rp.available()
+    v2 = rp.get("candidate_profile_v2")
+    v1 = rp.get("candidate_profile")
+    assert v2 is not None and v1 is not None
+    assert v2.records_subject == "{{candidate}}"
+    assert v2.lean_tail is True
+    assert v2.variables == v1.variables == ("candidate", "office")  # same caller contract
+    assert v2.sections == v1.sections  # same product shape
+    # v1 is untouched by the new policies.
+    assert v1.records_subject == "" and v1.lean_tail is False
+    # The subject template renders to the run's candidate (a real {{var}}, not a scalar).
+    r = rp.render_preset(
+        "candidate_profile_v2", {"candidate": "Jane Q. Doe", "office": "U.S. Senate (Florida)"}
+    )
+    assert r.records_subject == "Jane Q. Doe" and r.lean_tail is True
+
+
+def test_records_subject_requires_web_sources() -> None:
+    # The public-records pre-gather grounds an OPEN-WEB report; on a library/reports preset it would
+    # be a silent no-op, so it is a load-time refusal.
+    with pytest.raises(rp.PresetError) as exc:
+        rp._coerce_preset(
+            "p",
+            {
+                "question": "Profile {{x}}",
+                "sections": ["S"],
+                "angles": [{"brief": "b {{x}}"}],
+                "sources": "reports",
+                "records_subject": "{{x}}",
+            },
+        )
+    assert "records_subject" in str(exc.value) and "web" in str(exc.value)
+
+
+def test_records_subject_slots_join_the_required_variables() -> None:
+    # A {{var}} used ONLY in records_subject must still be a declared, required variable, so a run
+    # missing it is refused rather than rendering a half-filled subject.
+    preset = rp._coerce_preset(
+        "p",
+        {
+            "question": "Profile someone",
+            "sections": ["S"],
+            "angles": [{"brief": "gather"}],
+            "records_subject": "{{subject}}",
+        },
+    )
+    assert "subject" in preset.variables
+
+
+@pytest.mark.parametrize("bad", ["true", 1, "yes"])
+def test_lean_tail_rejects_a_non_boolean(bad: object) -> None:
+    with pytest.raises(rp.PresetError) as exc:
+        rp._coerce_preset(
+            "p",
+            {
+                "question": "q",
+                "sections": ["S"],
+                "angles": [{"brief": "b"}],
+                "lean_tail": bad,
+            },
+        )
+    assert "lean_tail" in str(exc.value)
 
 
 def test_news_feeds_requires_min_reads() -> None:
