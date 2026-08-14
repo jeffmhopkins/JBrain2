@@ -122,6 +122,10 @@ export interface ToolProgressEvent {
    * instead of a hardcoded list (deep_research's `briefing` engine sends Gather/Read/Write);
    * absent keeps the frontend's canonical fallback list. */
   phases?: string[] | null;
+  /** The model's live "thinking" tail for a reasoner-driven phase (the briefing writer streams
+   * its `<think>` trace here) — so a long think shows the model working, not a frozen empty pane.
+   * Display-only, ephemeral, never the answer; absent for non-reasoning phases. */
+  reasoning?: string | null;
 }
 export interface JobEnqueuedEvent {
   type: "job_enqueued";

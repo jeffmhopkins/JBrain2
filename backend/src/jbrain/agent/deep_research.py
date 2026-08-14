@@ -1430,12 +1430,23 @@ class DeepResearchService:
             question=rp.question,
             objective=rp.objective,
             sections=list(rp.sections),
-            progress=lambda step, label, preview: self._briefing_phase(ctx, step, label, preview),
+            progress=lambda step, label, preview, reasoning: self._briefing_phase(
+                ctx, step, label, preview, reasoning
+            ),
         )
         # A totally-empty gather refuses rather than shipping a hollow "nothing happened anywhere"
         # briefing — the empty-gather parity with the pipeline (`_run`'s empty-gather refusal).
         if result.empty:
             return _refuse(_empty_gather_msg(rp.source_mode))
+        # The gather worked but the WRITER failed to produce a briefing (empty body / no section
+        # landed even after the repair) — refuse LOUDLY with the model diagnosis instead of
+        # persisting the hollow chars=0 report this used to ship. The builder already error-logged
+        # the full token/stop-reason detail; surface the same remedy to the caller.
+        if result.writer_failed:
+            return _refuse(
+                "deep research gathered the day's articles but the writer failed to produce the "
+                f"briefing — {result.failure_detail}"
+            )
         # Neutralize a dangling in-body marker (the writer invented a `[^n]` past the registry): the
         # pipeline re-synthesizes; here we just drop the orphan so the card view has no broken chip.
         n_src = len(result.sources)
@@ -2308,11 +2319,19 @@ class DeepResearchService:
         if ctx.emit_event is not None:
             ctx.emit_event(ToolProgressEvent(tool_call_id="", step=step, total=0, label=label))
 
-    def _briefing_phase(self, ctx: ToolContext, step: int, label: str, preview: str | None) -> None:
+    def _briefing_phase(
+        self,
+        ctx: ToolContext,
+        step: int,
+        label: str,
+        preview: str | None,
+        reasoning: str | None = None,
+    ) -> None:
         """Emit one `briefing`-engine phase, carrying the builder's OWN stage list (Gather / Read /
         Write) so the PWA draws those three instead of the pipeline's fixed eight. `step` is the
-        1-based index into that list; `preview` streams the writer's text on the Write phase (None
-        for the deterministic gather/read steps). Ephemeral and best-effort, like `_phase`."""
+        1-based index into that list; `preview` streams the writer's text on the Write phase and
+        `reasoning` streams its thinking tail (both None for the deterministic gather/read steps).
+        Ephemeral and best-effort, like `_phase`."""
         if ctx.emit_event is not None:
             ctx.emit_event(
                 ToolProgressEvent(
@@ -2321,6 +2340,7 @@ class DeepResearchService:
                     total=0,
                     label=label,
                     preview=preview,
+                    reasoning=reasoning,
                     phases=list(BRIEFING_PHASES),
                 )
             )

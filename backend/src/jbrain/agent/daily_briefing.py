@@ -31,7 +31,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.agent.spawn import _ChildResult
 from jbrain.llm import LlmRouter
 from jbrain.llm.promptfile import load_prompt
-from jbrain.llm.types import LlmTurn, TextChunk, UserMessage
+from jbrain.llm.types import LlmTurn, ReasoningChunk, TextChunk, UserMessage
 from jbrain.web.feeds import FeedClient
 from jbrain.web.fetch import WebFetcher, WebFetchError
 from jbrain.web.search import SearxngClient, WebSearchError
@@ -44,7 +44,15 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # text instead of sub-agent findings. Reused, not forked, so writing quality tracks the pipeline.
 _SYNTH = load_prompt(_PROMPTS / "deep_research_synthesize.prompt")
 _TASK = "agent.turn"
-_WRITER_MAX_TOKENS = 12000
+# The writer's output ceiling. Sized WELL above the ~2-4k tokens a six-section briefing actually
+# needs because the `agent.turn` task can be routed to a HYBRID REASONER (gpt-oss, Nemotron): those
+# models spend part — sometimes all — of the output budget in a `<think>` channel BEFORE emitting
+# any visible briefing text. A tight cap starves the visible answer: the model burns the whole
+# budget thinking, hits `max_tokens`, and returns an empty briefing (the chars=0 failure this
+# builder now detects and refuses loudly, below). A generous cap gives the reasoning room to finish
+# and still leave the briefing; a non-thinking model just stops at `end_turn` far under it, so the
+# larger ceiling costs nothing there. Both the initial write and the one repair pass use it.
+_WRITER_MAX_TOKENS = 32000
 
 # The builder's OWN progress timeline (deep_research's `pipeline` engine has its own, fixed one).
 # It rides in the ToolProgressEvent so the PWA draws THESE stages instead of the pipeline's eight:
@@ -55,11 +63,19 @@ BRIEFING_PHASES: tuple[str, ...] = ("Gather", "Read", "Write")
 # chars so the PWA renders the briefing being written without an event per token (mirrors the
 # pipeline synthesizer's _SYNTH_PREVIEW_STRIDE).
 _WRITE_PREVIEW_STRIDE = 240
+# A hybrid reasoner emits its `<think>` trace BEFORE any visible briefing text — often for minutes.
+# Stream that reasoning too so the Write pane shows the model working instead of a frozen empty
+# spinner (the 7-minute blank the owner hit). Only the TAIL is sent (the trace can run to
+# megabytes), on its own stride, as a live "thinking" ticker — never the whole accumulation.
+_REASON_PREVIEW_STRIDE = 200
+_REASON_PREVIEW_TAIL = 1200
 
-# The builder's progress callback: `(step, label, preview)`, where `step` is the 1-based index into
-# BRIEFING_PHASES, `label` is the human status line, and `preview` is the streamed writer text (None
-# for the deterministic phases). The caller turns each call into a ToolProgressEvent.
-ProgressFn = Callable[[int, str, "str | None"], None]
+# The builder's progress callback: `(step, label, preview, reasoning)`, where `step` is the 1-based
+# index into BRIEFING_PHASES, `label` is the human status line, `preview` is the streamed writer
+# draft, and `reasoning` is the streamed thinking tail (both None for the deterministic phases, and
+# each None when the other channel is the one that ticked). The caller turns each call into a
+# ToolProgressEvent.
+ProgressFn = Callable[[int, str, "str | None", "str | None"], None]
 
 # Per-article text handed to the writer. News is inverted-pyramid — the who/what/when is up top —
 # so a few thousand chars carries the facts without ballooning the writer's context (the one
@@ -137,6 +153,47 @@ class BriefingResult:
     # Some (but not all) content beats came back empty — an honest "coverage may be partial" signal
     # the stored report carries, so an infra hiccup that blanked 2 of 6 sections isn't invisible.
     coverage_limited: bool
+    # The gather succeeded but the WRITER produced no usable briefing — an empty body, or NOT ONE
+    # content section landing even after the repair pass. Distinct from `empty` (nothing gathered):
+    # here the day's articles were in hand and the model failed to write over them, typically a
+    # hybrid reasoner burning the whole token budget in its `<think>` channel. The caller refuses
+    # LOUDLY on this rather than persisting the hollow chars=0 report this used to ship silently.
+    writer_failed: bool = False
+    # Human-readable diagnosis for the refusal message + the loud log (model stop reason, how the
+    # budget split between reasoning and the briefing, and the likely remedy). "" unless failed.
+    failure_detail: str = ""
+
+
+@dataclass(frozen=True)
+class _WriteOutcome:
+    """One writer turn plus the diagnostics that explain a hollow result. `text` is the visible
+    briefing; `stop_reason` is why the model stopped; `output_tokens` is what it spent; and
+    `reasoning_chars` is the size of the `<think>` trace the provider split off. A large
+    `reasoning_chars` over a near-empty `text` with `stop_reason == "max_tokens"` IS the
+    runaway-thinking signature — a hybrid reasoner burning the whole cap before writing anything."""
+
+    text: str
+    stop_reason: str | None
+    output_tokens: int
+    reasoning_chars: int
+
+    @property
+    def text_chars(self) -> int:
+        return len(self.text)
+
+    @property
+    def hit_cap(self) -> bool:
+        return self.stop_reason == "max_tokens"
+
+    def diag(self) -> dict[str, object]:
+        """The structlog key/values that make a writer failure legible in `logs api`."""
+        return {
+            "stop_reason": self.stop_reason,
+            "output_tokens": self.output_tokens,
+            "reasoning_chars": self.reasoning_chars,
+            "briefing_chars": self.text_chars,
+            "hit_token_cap": self.hit_cap,
+        }
 
 
 def _host(url: str) -> str:
@@ -204,9 +261,11 @@ class DailyBriefingBuilder:
         model-free deterministic steps get a status line, and the streamed writer gets live preview
         text — so the PWA shows the zero-token gather happening and then the briefing written."""
 
-        def _emit(step: int, label: str, preview: str | None = None) -> None:
+        def _emit(
+            step: int, label: str, preview: str | None = None, reasoning: str | None = None
+        ) -> None:
             if progress is not None:
-                progress(step, label, preview)
+                progress(step, label, preview, reasoning)
 
         # 1. GATHER (concurrent, model-free): pull each beat's curated feed + news search, deduped.
         # This spends zero model tokens — feeds and news search are plain network I/O — so it is a
@@ -266,29 +325,48 @@ class DailyBriefingBuilder:
         prompt = _writer_prompt(question, objective, sections, by_section, index)
         write_label = "Writing the briefing"
         _emit(3, write_label)
-        report = await self._write(prompt, on_preview=lambda text: _emit(3, write_label, text))
+        on_stream = lambda draft, reasoning: _emit(3, write_label, draft, reasoning)  # noqa: E731
+        outcome = await self._write(prompt, on_stream=on_stream)
         # 4. Deterministic completeness check over HEADING LINES (not the whole body — a section's
         # words appear in prose too, which would blind a substring test), normalized so `&`≡"and"
         # (the TTS objective spells symbols out, so the writer renders `Business and the Economy`).
         content_sections = [b.section for b in _BRIEFING_BEATS]
-        missing = _missing_sections(report, content_sections)
+        missing = _missing_sections(outcome.text, content_sections)
         repaired = False
         if missing:
-            log.info("daily_briefing.repairing", missing=missing)
-            report = await self._write(
-                prompt + _repair_note(missing),
-                on_preview=lambda text: _emit(3, write_label, text),
-            )
+            log.info("daily_briefing.repairing", missing=missing, **outcome.diag())
+            outcome = await self._write(prompt + _repair_note(missing), on_stream=on_stream)
             repaired = True
-            still = _missing_sections(report, content_sections)
-            if still:  # one bounded repair only — don't loop; log the residual for diagnosis
-                log.warning("daily_briefing.repair_incomplete", missing=still)
+            missing = _missing_sections(outcome.text, content_sections)
+            if missing:  # one bounded repair only — don't loop; log the residual for diagnosis
+                log.warning("daily_briefing.repair_incomplete", missing=missing, **outcome.diag())
+        report = outcome.text
+        # 5. LOUD failure gate. The gather worked (`articles` is non-empty), but if the writer came
+        # back with an empty body — or with NOT ONE content heading even after the repair — there is
+        # no briefing to ship. This used to slip through as a persisted chars=0 report that looked
+        # "built"; now it fails loudly: an error-level log with the full token/stop-reason detail,
+        # and a `writer_failed` result the caller refuses on (so the owner sees a real error, not a
+        # blank report). All-missing is the runaway-reasoning signature; empty body is the same.
+        writer_failed = (not report.strip()) or len(missing) == len(content_sections)
+        failure_detail = ""
+        if writer_failed:
+            failure_detail = _writer_failure_detail(outcome, len(articles))
+            log.error(
+                "daily_briefing.writer_produced_no_briefing",
+                articles=len(articles),
+                missing_sections=missing,
+                repaired=repaired,
+                writer_max_tokens=_WRITER_MAX_TOKENS,
+                remedy=failure_detail,
+                **outcome.diag(),
+            )
         log.info(
             "daily_briefing.built",
             articles=len(articles),
             repaired=repaired,
             empty_beats=empty_beats,
             chars=len(report),
+            writer_failed=writer_failed,
         )
         return BriefingResult(
             report_md=report,
@@ -297,6 +375,8 @@ class DailyBriefingBuilder:
             repaired=repaired,
             empty=False,
             coverage_limited=bool(empty_beats),
+            writer_failed=writer_failed,
+            failure_detail=failure_detail,
         )
 
     async def _open_beat(
@@ -391,17 +471,33 @@ class DailyBriefingBuilder:
         return out
 
     async def _write(
-        self, user_text: str, *, on_preview: Callable[[str], None] | None = None
-    ) -> str:
+        self,
+        user_text: str,
+        *,
+        on_stream: Callable[[str | None, str | None], None] | None = None,
+    ) -> _WriteOutcome:
         """One writer turn through the LLM adapter (never a provider SDK directly, invariant #1),
         using the pipeline's synthesizer system prompt. STREAMED so the caller can surface the
-        briefing being written live: `on_preview`, if given, receives the accumulated draft every
-        ~stride chars (and once more at the end). Usage is recorded once at the router from the
-        closing turn — the streamed text chunks carry none — so accounting is unchanged from the
-        old non-streaming call."""
+        briefing being written live: `on_stream`, if given, receives `(draft, reasoning_tail)` every
+        ~stride chars on EITHER channel (and once more at the end). Both current values ride every
+        call so the progress event never drops one — the frozen empty Write pane the owner saw was
+        the writer thinking for minutes with its `<think>` trace discarded; now it streams. Usage is
+        recorded once at the router from the closing turn — the streamed chunks carry none — so
+        accounting is unchanged. Returns a `_WriteOutcome` with the text AND the stop-reason / token
+        diagnostics, so `build` can tell a hollow briefing apart from a real one and log why."""
         parts: list[str] = []
-        since = 0
+        reason_parts: list[str] = []
+        since = rsince = 0
         final: LlmTurn | None = None
+
+        def _flush() -> None:
+            if on_stream is None:
+                return
+            draft = "".join(parts).strip()
+            reason = "".join(reason_parts)
+            tail = reason[-_REASON_PREVIEW_TAIL:] if reason else ""
+            on_stream(draft or None, tail or None)
+
         async for part in self._router.converse_stream(
             _TASK,
             system=_SYNTH.render(),
@@ -412,17 +508,36 @@ class DailyBriefingBuilder:
                 if part.text:
                     parts.append(part.text)
                     since += len(part.text)
-                    if on_preview is not None and since >= _WRITE_PREVIEW_STRIDE:
+                    if since >= _WRITE_PREVIEW_STRIDE:
                         since = 0
-                        on_preview("".join(parts))
+                        _flush()
+            elif isinstance(part, ReasoningChunk):
+                # The thinking channel: stream its tail live so a long think shows the model working
+                # rather than a blank pane. Only the tail is sent (the trace can be megabytes).
+                if part.text:
+                    reason_parts.append(part.text)
+                    rsince += len(part.text)
+                    if rsince >= _REASON_PREVIEW_STRIDE:
+                        rsince = 0
+                        _flush()
             elif isinstance(part, LlmTurn):
                 final = part
         # The closing turn carries the authoritative text; fall back to the streamed accumulation
-        # if it's empty. Flush the full draft as the final preview so the PWA shows the whole thing.
+        # if it's empty. Flush the full draft (and closing reasoning tail) as the final frame.
         report = (final.text if final and final.text.strip() else "".join(parts)).strip()
-        if on_preview is not None:
-            on_preview(report)
-        return report
+        streamed_reason = "".join(reason_parts)
+        # The closing turn's `reasoning` is the authoritative full trace; prefer it for the diag
+        # count, falling back to the streamed accumulation when the provider only streamed it.
+        full_reason = (final.reasoning if final and final.reasoning else streamed_reason) or ""
+        if on_stream is not None:
+            tail = full_reason[-_REASON_PREVIEW_TAIL:] if full_reason else ""
+            on_stream(report or None, tail or None)
+        return _WriteOutcome(
+            text=report,
+            stop_reason=final.stop_reason if final else None,
+            output_tokens=final.usage.output_tokens if final else 0,
+            reasoning_chars=len(full_reason),
+        )
 
 
 def _writer_prompt(
@@ -487,6 +602,29 @@ def _missing_sections(report: str, sections: list[str]) -> list[str]:
     of some heading line's normalized text."""
     heads = [_normalize_heading(ln) for ln in report.splitlines() if ln.lstrip().startswith("#")]
     return [s for s in sections if not any(_normalize_heading(s) in h for h in heads)]
+
+
+def _writer_failure_detail(outcome: _WriteOutcome, articles: int) -> str:
+    """The human-readable diagnosis carried on the loud log and the refusal: what the writer spent
+    and the concrete remedy. Distinguishes the two failure shapes — a hybrid reasoner running away
+    in its `<think>` channel (reasoning ate the budget) versus a plain truncation — because the fix
+    differs (route/effort vs. a bigger cap)."""
+    stem = (
+        f"the writer produced no usable briefing over {articles} gathered article(s) "
+        f"(stop={outcome.stop_reason}, output_tokens={outcome.output_tokens}, "
+        f"reasoning_chars={outcome.reasoning_chars}, briefing_chars={outcome.text_chars})."
+    )
+    runaway = outcome.hit_cap and outcome.reasoning_chars > max(outcome.text_chars, 1)
+    if runaway:
+        return (
+            f"{stem} The model spent the entire {_WRITER_MAX_TOKENS}-token budget on its reasoning "
+            "channel before writing the briefing — a hybrid reasoner running away in <think>. The "
+            "writer rides the `agent.turn` task: route it to a non-thinking / faster model or "
+            "lower its reasoning effort in LLM Settings, or raise the writer token budget further."
+        )
+    if outcome.hit_cap:
+        return f"{stem} The writer hit the token ceiling before finishing — raise the budget."
+    return f"{stem} The model returned an empty draft (stopped early); check the gateway logs."
 
 
 def _repair_note(missing: list[str]) -> str:

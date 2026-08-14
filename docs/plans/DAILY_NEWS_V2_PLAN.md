@@ -1,6 +1,6 @@
 # JBrain2 — Daily News v2 (Briefing Engine) Plan
 
-> **Status:** In progress · **Last verified:** 2026-08-13 · **Waves:** V1✅ V2◻️ V3✅
+> **Status:** In progress · **Last verified:** 2026-08-14 · **Waves:** V1✅ V2◻️ V3✅
 
 A lean, deterministic-gather → single-writer engine for the daily-news briefing. It was built
 side-by-side with the fan pipeline for a risk-free A/B (V1); the briefing engine won decisively
@@ -121,6 +121,30 @@ the repair when the writer spelled `&` as "and"); the fetch semaphore is now **g
 with the bare search URL; gather is **exception-isolated** (an off-contract raise skips one
 lead, never crashes the run); dangling `[^n]` markers are neutralized before the Sources block
 is rebuilt; and the progress phase moves to "Writing" at the right moment.
+
+## Hardened for hybrid reasoners (live-ops fix)
+
+A live run on a **hybrid reasoner** (`agent.turn` routed to Nemotron 3.5 Lightning) exposed three
+gaps — the writer spent its whole output budget in the `<think>` channel, hit `max_tokens`, and
+emitted no visible briefing, so a **chars=0 report** was persisted while the PWA showed a frozen
+"Writing…" for minutes. Fixed:
+
+- **Budget sized for reasoning headroom.** `_WRITER_MAX_TOKENS` 12k → **32k**, so a reasoner has
+  room to finish thinking *and* write. A non-thinking model still stops far under it, so the larger
+  ceiling costs nothing there. The initial write and the one repair both use it.
+- **Loud failure instead of a hollow report.** If the gather succeeded but the writer returns an
+  empty body — or **no** content heading even after the repair — the builder no longer ships the
+  silent chars=0 report: it sets **`writer_failed`** with a `failure_detail` (stop reason, how the
+  budget split between reasoning and the briefing, the remedy), **error-logs**
+  `daily_briefing.writer_produced_no_briefing`, and the caller **refuses** with that diagnosis
+  (distinct from the empty-gather refusal). The runaway-reasoning shape is named explicitly.
+- **Reasoning is streamed.** The writer's `<think>` tail now streams to the Write phase
+  (`ToolProgressEvent.reasoning`, rendered as a collapsible "Thinking…" disclosure) so a long think
+  shows the model working, not a blank pane. Only the tail is sent (the trace can run to megabytes).
+
+Note: the writer rides the shared `agent.turn` task, so swapping the agent chat model silently
+swaps the news writer too. Giving the writer its own routable task (or a forced non-thinking
+config) is a natural follow-up, called out in the failure_detail remedy.
 
 ## Tradeoffs / open risks
 

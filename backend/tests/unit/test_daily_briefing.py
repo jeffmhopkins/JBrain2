@@ -3,10 +3,14 @@ gather + force-fetch + one tool-less writer, all deps faked (no network, no real
 
 from __future__ import annotations
 
-from jbrain.agent.daily_briefing import _BRIEFING_BEATS, DailyBriefingBuilder
+from jbrain.agent.daily_briefing import (
+    _BRIEFING_BEATS,
+    _WRITER_MAX_TOKENS,
+    DailyBriefingBuilder,
+)
 from jbrain.agent.loop import ToolContext
 from jbrain.db.session import SessionContext
-from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
+from jbrain.llm.types import LlmTurn, LlmUsage, ReasoningChunk, TextChunk
 from jbrain.web.feeds import FeedItem
 from jbrain.web.fetch import FetchResult
 from jbrain.web.search import NewsHit
@@ -37,19 +41,36 @@ def _full_report(missing: str | None = None) -> str:
 
 
 class _FakeRouter:
-    """Records each writer prompt and STREAMS canned report text per call, in order (the writer
-    now goes through `converse_stream`): one text chunk, then the closing turn carrying the
-    authoritative text — the two shapes `_write` reads from."""
+    """Records each writer prompt (and the `max_tokens` it was called with) and STREAMS canned
+    report text per call, in order (the writer goes through `converse_stream`): an optional
+    reasoning chunk, a text chunk, then the closing turn carrying the authoritative text, stop
+    reason, and reasoning trace — the shapes `_write` reads from. `stop_reason` / `reasoning` are
+    overridable so the writer-failure (runaway-thinking) path can be exercised."""
 
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(
+        self, responses: list[str], *, stop_reason: str = "end_turn", reasoning: str = ""
+    ) -> None:
         self._responses = responses
+        self._stop_reason = stop_reason
+        self._reasoning = reasoning
         self.prompts: list[str] = []
+        self.max_tokens_seen: list[int] = []
 
     async def converse_stream(self, task, *, system, messages, max_tokens, **_kw):  # noqa: ANN001
         self.prompts.append(messages[0].text)
+        self.max_tokens_seen.append(max_tokens)
         text = self._responses[min(len(self.prompts) - 1, len(self._responses) - 1)]
-        yield TextChunk(text=text)
-        yield LlmTurn(text=text, tool_calls=(), stop_reason="end_turn", usage=LlmUsage(10, 20))
+        if self._reasoning:
+            yield ReasoningChunk(text=self._reasoning)
+        if text:
+            yield TextChunk(text=text)
+        yield LlmTurn(
+            text=text,
+            tool_calls=(),
+            stop_reason=self._stop_reason,  # type: ignore[arg-type]
+            usage=LlmUsage(10, 20),
+            reasoning=self._reasoning,
+        )
 
 
 class _FakeFeeds:
@@ -137,22 +158,104 @@ async def test_build_fires_the_three_phases_and_streams_the_writer() -> None:
     feeds = _FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]})
     searx = _FakeSearx([NewsHit(title="N", url="https://npr.org/n", snippet="s", published="Thu")])
     router = _FakeRouter([_full_report()])
-    calls: list[tuple[int, str, str | None]] = []
+    calls: list[tuple[int, str, str | None, str | None]] = []
     result = await _builder(router, feeds=feeds, searxng=searx, fetcher=_FakeFetcher()).build(
         CTX,
         question="q",
         objective="",
         sections=_SECTIONS,
-        progress=lambda step, label, preview: calls.append((step, label, preview)),
+        progress=lambda step, label, preview, reasoning: calls.append(
+            (step, label, preview, reasoning)
+        ),
     )
     steps = [c[0] for c in calls]
     assert steps[0] == 1 and 2 in steps and steps[-1] == 3  # Gather → Read → Write, in order
     # The deterministic gather/read steps carry a label and no streamed preview.
     assert calls[0][1] and calls[0][2] is None
-    assert any(s == 2 and "Reading" in lbl and pv is None for s, lbl, pv in calls)
+    assert any(s == 2 and "Reading" in lbl and pv is None for s, lbl, pv, _ in calls)
     # The write phase streams the draft: a step-3 call carries the report text as preview.
-    assert any(s == 3 and pv and "## Space Industry" in pv for s, _, pv in calls)
+    assert any(s == 3 and pv and "## Space Industry" in pv for s, _, pv, _r in calls)
     assert not result.empty
+
+
+async def test_writer_reasoning_is_streamed_to_the_progress_component() -> None:
+    # A hybrid reasoner emits a <think> trace before any visible text. The builder must stream that
+    # thinking to the Write phase (the frozen empty pane the owner hit) — a step-3 progress call
+    # carries the reasoning tail, and the eventual draft too.
+    feeds = _FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]})
+    router = _FakeRouter([_full_report()], reasoning="I am thinking hard about the news. " * 10)
+    calls: list[tuple[int, str, str | None, str | None]] = []
+    await _builder(router, feeds=feeds).build(
+        CTX,
+        question="q",
+        objective="",
+        sections=_SECTIONS,
+        progress=lambda step, label, preview, reasoning: calls.append(
+            (step, label, preview, reasoning)
+        ),
+    )
+    # A Write-phase tick surfaced the model's thinking (not just the draft).
+    assert any(s == 3 and r and "thinking hard" in r for s, _, _p, r in calls)
+    # And the draft still streams on the same phase.
+    assert any(s == 3 and p and "## Space Industry" in p for s, _, p, _r in calls)
+
+
+async def test_writer_budget_is_sized_for_reasoning_headroom() -> None:
+    # The writer's max_tokens is passed through and sized well above the old 12k cap, so a hybrid
+    # reasoner has room to finish thinking AND still write the briefing (the starvation that
+    # produced the empty report).
+    feeds = _FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]})
+    router = _FakeRouter([_full_report()])
+    await _builder(router, feeds=feeds).build(
+        CTX, question="q", objective="", sections=_SECTIONS
+    )
+    assert router.max_tokens_seen == [_WRITER_MAX_TOKENS]
+    assert _WRITER_MAX_TOKENS >= 24000
+
+
+async def test_empty_writer_output_fails_loudly_rather_than_shipping_a_hollow_report() -> None:
+    # Gather works (a space article), but the writer burns the whole budget on reasoning and returns
+    # an EMPTY body on both the initial write and the repair — the runaway-thinking failure. The
+    # builder must NOT ship a chars=0 report: it flags writer_failed with a diagnosis naming the
+    # cause, distinct from an empty gather.
+    feeds = _FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]})
+    router = _FakeRouter(["", ""], stop_reason="max_tokens", reasoning="think " * 500)
+    result = await _builder(router, feeds=feeds).build(
+        CTX, question="q", objective="", sections=_SECTIONS
+    )
+    assert result.writer_failed is True
+    assert result.empty is False  # gather was fine — the WRITER failed, a distinct signal
+    assert len(router.prompts) == 2  # it still tried the one repair before giving up
+    assert "reasoning channel" in result.failure_detail  # the runaway remedy is named
+    assert "output_tokens" in result.failure_detail  # the token diagnosis rides along
+
+
+async def test_writer_with_no_headings_fails_loudly_even_when_body_is_nonempty() -> None:
+    # The writer returns prose with NOT ONE section heading, even after the repair (a big think dump
+    # with no `##`). All content sections missing == a hollow briefing → writer_failed, not a
+    # silently-shipped partial.
+    feeds = _FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]})
+    blob = "I keep thinking and never write a heading. " * 30
+    router = _FakeRouter([blob, blob], stop_reason="max_tokens", reasoning="x" * 4000)
+    result = await _builder(router, feeds=feeds).build(
+        CTX, question="q", objective="", sections=_SECTIONS
+    )
+    assert result.writer_failed is True and result.failure_detail
+
+
+async def test_run_briefing_refuses_loudly_on_a_writer_failure() -> None:
+    from jbrain.agent.deep_research import DeepResearchService
+    from jbrain.agent.research_presets import render_preset
+
+    rp = render_preset("daily_news", {"today": "Thu", "now": "Thu 6am"})
+    svc = DeepResearchService(
+        router=_FakeRouter(["", ""], stop_reason="max_tokens", reasoning="t" * 3000),  # type: ignore[arg-type]
+        spawn=object(),  # type: ignore[arg-type]
+        feeds=_FakeFeeds({"space": [_feed_item("https://nasa.gov/a", body="Z" * 500)]}),  # type: ignore[arg-type]
+    )
+    out = str(await svc._run_briefing(CTX, rp))
+    assert "refused" in out.lower()
+    assert "writer failed to produce" in out.lower()  # the loud, specific refusal
 
 
 async def test_missing_section_triggers_exactly_one_repair() -> None:

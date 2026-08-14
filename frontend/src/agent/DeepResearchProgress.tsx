@@ -41,6 +41,10 @@ export function DeepResearchProgress({
   const phases = p?.phases ?? DR_PHASES;
   const step = p?.step ?? 0; // 1-based; 0 before the first phase event lands
   const preview = p?.preview ?? "";
+  // The writer's live "thinking" tail (the briefing engine streams it): shown as a collapsible
+  // disclosure so a long think reads as the model working, not a frozen empty pane — but stays out
+  // of the way of the briefing draft once it starts streaming.
+  const reasoning = p?.reasoning ?? "";
   // The stage whose slot the detail/fan/report hang under: the live ordinal, or Plan while
   // we wait for the first phase event (so a fan that spawned pre-phase still has a home).
   const active = step > 0 ? step : 1;
@@ -73,10 +77,18 @@ export function DeepResearchProgress({
               <span className="fb-drp-name">{name}</span>
               {/* The active stage's slot: its live detail, the sub-agent fan it spawned, and
                   (Write / Revise) the report streaming in — all indented under the stage. */}
-              {isActive && (p?.label || fan || preview) && (
+              {isActive && (p?.label || fan || preview || reasoning) && (
                 <div className="fb-drp-panel">
                   {p?.label && <div className="fb-drp-active">{p.label}</div>}
                   {fan}
+                  {reasoning && (
+                    // Open while the model is only thinking (no draft yet), so the long think is
+                    // visible; collapses to a summary once the briefing draft starts streaming in.
+                    <details className="fb-drp-thinking" open={!preview}>
+                      <summary>Thinking…</summary>
+                      <div className="fb-drp-thinking-trace">{reasoning}</div>
+                    </details>
+                  )}
                   {preview && (
                     <div className="fb-drp-report" ref={paneRef} onScroll={onScroll}>
                       <Markdown text={preview} harmonyCitations />
