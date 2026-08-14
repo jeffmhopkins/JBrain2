@@ -1992,14 +1992,19 @@ def _v2_svc(
     nppes: "_FakeRecordClient | None" = None,
     federal: "_FakeRecordClient | None" = None,
 ) -> DeepResearchService:
-    return DeepResearchService(  # type: ignore[arg-type]
-        router=router,
-        spawn=spawn,
-        wikidata=wikidata,
-        courtlistener=court,
-        nppes=nppes,
-        federal_register=federal,
-    )
+    # The fakes stand in structurally for the real router/spawn/record clients. Splat the kwargs so
+    # the type friction lands on ONE call line a single `# type: ignore` covers — a multi-line call
+    # with explicit keywords scatters a per-argument error onto each line, past the line-level ignore
+    # (this is why `_svc` keeps its construction on one line).
+    kwargs = {
+        "router": router,
+        "spawn": spawn,
+        "wikidata": wikidata,
+        "courtlistener": court,
+        "nppes": nppes,
+        "federal_register": federal,
+    }
+    return DeepResearchService(**kwargs)  # type: ignore[arg-type]
 
 
 async def test_candidate_v2_injects_a_deterministic_public_records_finding() -> None:
