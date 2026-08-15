@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-12
+> **Status:** Living · **Last verified:** 2026-08-15
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -202,7 +202,11 @@ threads it as a per-turn `spec_override` through the router so the effort, conte
 window, and vision gate all reflect the chosen model. It is **turn-local**: scoped
 to that conversation, never persisted on the session, and it does **not** change the
 global task routing in Settings. A sub-agent the turn spawns still runs on its own
-configured model — the override is the top-level loop's only.
+configured model — the override is the top-level loop's only. The conversation's
+best-effort follow-up titling **follows the pick too**: both the chat's
+`session.title` and a research run's `research.title` job run the same
+`spec_override`, so the heading is written by the model the owner steered the
+conversation onto, not the persistent `agent.turn` default.
 
 **No standing multi-agent orchestra.** One context window holds a personal chat
 task. The one exception is a narrow, **jerv-only** `spawn_subagent` escape hatch

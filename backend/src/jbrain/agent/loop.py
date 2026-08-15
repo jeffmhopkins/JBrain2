@@ -257,6 +257,13 @@ class ToolContext:
     scopes: tuple[str, ...]
     timezone: str | None = None
     agent_session_id: str | None = None
+    # The per-conversation model pick (a "provider:model" spec, e.g. local:qwen3.8-27b-mtp)
+    # the omnibox chose for THIS conversation — the same value AgentLoop routes turns onto as
+    # `spec_override` — or None for the resolved default. Threaded onto the ctx so a tool that
+    # enqueues a background follow-up (deep_research → its `research.title` job) can route that
+    # follow-up onto the SAME model the conversation ran on, instead of falling back to the
+    # persistent agent.turn. Set from AgentLoop._model_override; None for background/deepest runs.
+    model_override: str | None = None
     here: tuple[float, float] | None = None
     here_as_of: datetime | None = None
     # Sub-agent spawning context (docs/archive/SUBAGENT_SPAWNING_PLAN.md). `depth` is this
@@ -669,6 +676,7 @@ class AgentLoop:
             scopes=scopes,
             timezone=timezone,
             agent_session_id=agent_session_id,
+            model_override=self._model_override,
             depth=depth,
             agent_tools=allowed,
             tree=tree,
@@ -938,6 +946,7 @@ class AgentLoop:
             scopes=scopes,
             timezone=timezone,
             agent_session_id=agent_session_id,
+            model_override=self._model_override,
             here=here,
             here_as_of=here_as_of,
             depth=depth,
@@ -1372,6 +1381,7 @@ class AgentLoop:
             scopes=scopes,
             timezone=timezone,
             agent_session_id=agent_session_id,
+            model_override=self._model_override,
             here=here,
             here_as_of=here_as_of,
             depth=depth,

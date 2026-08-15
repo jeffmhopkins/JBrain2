@@ -80,11 +80,16 @@ class ResearchReportTitler:
         user_text = f"Question:\n{question[:_QUESTION_CAP]}"
         if row.summary:
             user_text += f"\n\nReport excerpt:\n{row.summary[:_EXCERPT_CAP]}"
+        # The model the research ran on (the omnibox's per-conversation pick), threaded from
+        # persist_report so the title follows the SAME model as the report — mirroring how the
+        # session titler follows the chat's model. None (default route) when no model was pinned.
+        model_spec = payload.get("model_spec")
         result = await self._router.complete(
             _TASK,
             system=_TITLE.render(),
             user_text=user_text,
             max_tokens=_TITLE_MAX_TOKENS,
+            spec_override=str(model_spec) if model_spec is not None else None,
         )
         title = _clean_title(result.text or "")
         if not title:

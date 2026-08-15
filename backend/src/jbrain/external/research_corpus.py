@@ -111,6 +111,7 @@ async def persist_report(
     source_mode: str | None = None,
     tool: str | None = None,
     retention_days: int | None = None,
+    model_spec: str | None = None,
 ) -> str:
     """Upsert the library row for one completed report and enqueue its summary embedding. Keyed on
     `(question_hash, tool)` (migration 0148): a re-run of the same question BY THE SAME TOOL
@@ -183,7 +184,13 @@ async def persist_report(
         ).scalar_one()
     report_id = str(report_id)
     await enqueue(maker, SYSTEM_CTX, KIND_EMBED_RESEARCH_REPORT, {"report_id": report_id})
-    await enqueue(maker, SYSTEM_CTX, KIND_TITLE_RESEARCH_REPORT, {"report_id": report_id})
+    # Carry the per-conversation model pick onto the title job so the report is titled on the
+    # SAME model the research ran on (the omnibox override), not the persistent agent.turn.
+    # Omitted from the payload when no model was pinned, so the titler falls back to its default.
+    title_payload: dict[str, str] = {"report_id": report_id}
+    if model_spec is not None:
+        title_payload["model_spec"] = model_spec
+    await enqueue(maker, SYSTEM_CTX, KIND_TITLE_RESEARCH_REPORT, title_payload)
     log.info("research_report.persisted", report_id=report_id, question=question[:80])
     return report_id
 
