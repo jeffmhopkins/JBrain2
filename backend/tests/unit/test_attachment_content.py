@@ -163,6 +163,31 @@ async def test_image_becomes_one_llm_image() -> None:
     assert "scan.png" in text
 
 
+async def test_vision_capable_turn_tells_the_model_to_look_directly() -> None:
+    # When the turn model can see the bytes (can_see_images=True), the note must steer it
+    # to describe the image itself instead of priming a redundant analyze_image round-trip
+    # (the self-contradiction: "I can't see images" while describing the image in the tool
+    # args). The id and OCR/edit escape hatches stay, but the "delegate to describe" pointer
+    # is gone.
+    repo, blobs = FakeRepo(), FakeBlobs()
+    blobs.put("sha-img", b"\x89PNG-bytes")
+    aid = repo.add("image/png", "sha-img", filename="scan.png")
+    images, text = await build_attachment_content(
+        repo,  # type: ignore[arg-type]
+        blobs,  # type: ignore[arg-type]
+        CTX,
+        [aid],
+        can_see_images=True,
+    )
+    assert len(images) == 1  # the bytes still ride inline
+    assert aid in text and "scan.png" in text
+    assert "see this image directly" in text
+    # It is NOT told to route to analyze_image merely to look at / describe it…
+    assert "to look at it" not in text
+    # …but OCR (exact text) and edit_image remain available by id.
+    assert "OCR" in text and "edit_image" in text
+
+
 async def test_pdf_yields_page_images_and_extracted_text() -> None:
     repo, blobs = FakeRepo(), FakeBlobs()
     pdf = make_pdf("page one text", "page two text")

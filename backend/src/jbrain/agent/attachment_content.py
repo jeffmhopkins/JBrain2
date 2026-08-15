@@ -55,15 +55,26 @@ class _Converted:
     text_blocks: list[str]
 
 
-def _image_block(info: AttachmentInfo, data: bytes) -> _Converted:
+def _image_block(info: AttachmentInfo, data: bytes, *, can_see_images: bool) -> _Converted:
     image = LlmImage(media_type=info.media_type, data=_b64(data))
-    # Name the attachment's id alongside the vision content so the model can act on it
-    # by reference even when it can't see the bytes (a text-only agent model): pass the
-    # id as source_attachment_id to analyze_image to look at it or edit_image to change it.
-    note = (
-        f'[attached image "{info.filename}" — its id is {info.id}: pass it as '
-        "source_attachment_id to analyze_image to look at it or edit_image to change it]"
-    )
+    # The note's wording follows the SAME vision gate that decides whether the bytes ride
+    # inline (api.agent). When the turn model is vision-capable the bytes ARE in view, so
+    # tell it to look directly — otherwise it dutifully delegates to analyze_image while its
+    # own perception leaks into the tool args (it "can't see" yet describes the image), a
+    # self-contradiction that also pays a redundant vision round-trip. When it's text-only
+    # the bytes were dropped, so the id-by-reference pointer is the only way in.
+    if can_see_images:
+        note = (
+            f'[attached image "{info.filename}" — its id is {info.id}. You can see this '
+            "image directly here: describe and reason about it yourself, do NOT say you "
+            "can't see it. Use analyze_image ONLY to read its exact text (OCR), or "
+            "edit_image to change it.]"
+        )
+    else:
+        note = (
+            f'[attached image "{info.filename}" — its id is {info.id}: pass it as '
+            "source_attachment_id to analyze_image to look at it or edit_image to change it]"
+        )
     return _Converted(images=[image], text_blocks=[note])
 
 
@@ -132,12 +143,21 @@ def _b64(data: bytes) -> str:
 
 
 def _convert_one(
-    info: AttachmentInfo, data: bytes, image_budget: int, *, transcribe_enabled: bool
+    info: AttachmentInfo,
+    data: bytes,
+    image_budget: int,
+    *,
+    transcribe_enabled: bool,
+    can_see_images: bool,
 ) -> _Converted:
     """Route one attachment to its conversion by media type. CPU-bound for PDFs, so
     the caller invokes this off the event loop (asyncio.to_thread)."""
     if info.media_type.startswith("image/"):
-        return _image_block(info, data) if image_budget > 0 else _Converted([], [])
+        return (
+            _image_block(info, data, can_see_images=can_see_images)
+            if image_budget > 0
+            else _Converted([], [])
+        )
     if info.media_type == "application/pdf":
         return _pdf_block(info, data, image_budget)
     if info.media_type.startswith("audio/"):
@@ -160,6 +180,7 @@ async def build_attachment_content(
     attachment_ids: list[str],
     *,
     transcribe_enabled: bool = True,
+    can_see_images: bool = False,
 ) -> tuple[list[LlmImage], str]:
     """`(images, extra_text)` for the turn's attachments, in request order.
 
@@ -172,6 +193,12 @@ async def build_attachment_content(
     `transcribe_enabled` (the `transcribe` tool is in the turn's registry) shapes the
     audio hint: an actionable tool pointer when on, a plain "not configured" note when
     off, so an audio upload on a whisper-less box is never a dead-end.
+
+    `can_see_images` (the resolved agent.turn model is vision-capable, the SAME gate the
+    caller uses to keep image bytes inline) shapes each image note: when the model can see
+    the bytes it's told to look directly; when it can't (bytes dropped) the note points at
+    analyze_image by id. Defaults False — the safe, text-only wording for any caller that
+    can't vouch for vision.
     """
     images: list[LlmImage] = []
     text_blocks: list[str] = []
@@ -186,7 +213,12 @@ async def build_attachment_content(
         budget = MAX_IMAGES_PER_TURN - len(images)
         try:
             converted = await asyncio.to_thread(
-                _convert_one, info, data, budget, transcribe_enabled=transcribe_enabled
+                _convert_one,
+                info,
+                data,
+                budget,
+                transcribe_enabled=transcribe_enabled,
+                can_see_images=can_see_images,
             )
         except Exception:
             # A corrupt/encrypted/otherwise-unreadable file must not abort the turn or
