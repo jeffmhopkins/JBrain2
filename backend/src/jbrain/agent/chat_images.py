@@ -27,6 +27,7 @@ from jbrain.storage import BlobStore
 
 if TYPE_CHECKING:
     from jbrain.agent.attachments import TurnAttachmentRepo
+    from jbrain.llm import LlmRouter
 
 # The provenance stamps (migration 0139): a frame grabbed from a video, an image
 # fetched from a URL, a side-by-side built for a compare. NULL provenance stays a real
@@ -49,6 +50,22 @@ class UndecodableImage(ValueError):
 class ImageTooLarge(ValueError):
     """The image's pixel count exceeds MAX_IMAGE_PIXELS — refused before decode so a
     decompression bomb can't exhaust memory."""
+
+
+async def vision_read_spec(router: LlmRouter, model_override: str | None) -> str | None:
+    """The model a vision read (`analyze_image`/`compare_images`, the `agent.vision` task)
+    should run on. When the owner steered this turn onto a vision-capable model (the omnibox
+    pick, `model_override`), reuse THAT model: routing `agent.vision` to a different served
+    model would force a residency swap on the memory-bound box (the cold-load the owner saw as
+    a slow analyze_image), and the picked model can already see. Returns None — so the
+    `agent.vision` route's own default applies (its configured local VL model or the multimodal
+    cloud model) — when no model was pinned, or the pinned one is text-only (it genuinely can't
+    see, so the separate vision route is the point)."""
+    if model_override is None:
+        return None
+    if await router.supports_vision("agent.vision", spec_override=model_override):
+        return model_override
+    return None
 
 
 def sniff_image_media_type(data: bytes) -> str | None:

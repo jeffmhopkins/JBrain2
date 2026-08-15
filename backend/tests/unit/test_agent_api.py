@@ -123,6 +123,9 @@ class FakeTranscript:
     def __init__(self) -> None:
         self.recorded: list[dict] = []
         self.turns: dict[str, list[TurnRecord]] = {}
+        # Images the carry-forward path (recent_image_attachments) should hand back for a
+        # session; empty by default so the chat path never re-injects unless a test opts in.
+        self.recent_images: dict[str, list] = {}
 
     async def record_exchange(  # type: ignore[no-untyped-def]
         self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning=""
@@ -142,6 +145,9 @@ class FakeTranscript:
 
     async def load(self, ctx, session_id):  # type: ignore[no-untyped-def]
         return self.turns.get(session_id, [])
+
+    async def recent_image_attachments(self, ctx, session_id, *, now):  # type: ignore[no-untyped-def]
+        return self.recent_images.get(session_id, [])
 
 
 class FakeChatBlobs:
@@ -1022,6 +1028,38 @@ def test_chat_attachments_ride_the_final_user_message(
     assert base64.b64decode(final.images[0].data) == b"\x89PNGdata"
     assert "what is this?" in final.text
     assert "[notes.txt]:" in final.text and "some notes" in final.text
+
+
+def test_chat_carries_a_recent_prior_image_back_into_view(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+    chat_blobs: FakeChatBlobs,
+) -> None:
+    import base64
+
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    # A picture from an earlier turn: its blob persists, and recent_image_attachments (the
+    # last-4-turns-OR-15-min window) surfaces it for this follow-up.
+    chat_blobs.data["sha-prior"] = b"\x89PNGprior"
+    transcript.recent_images["sess-1"] = [
+        AttachmentInfo("old1", "prior.png", "image/png", 8, "sha-prior", "general")
+    ]
+
+    # The follow-up turn attaches nothing new, yet the vision model gets the prior image inline
+    # (no analyze_image round-trip) with a note flagging it as carried forward.
+    resp = client.post(
+        "/api/chat", json={"session_id": "sess-1", "message": "re-evaluate the picture"}
+    )
+    assert resp.status_code == 200
+    final = fake.stream_calls[0]["messages"][-1]
+    assert [im.media_type for im in final.images] == ["image/png"]
+    assert base64.b64decode(final.images[0].data) == b"\x89PNGprior"
+    assert "carried forward" in final.text and "prior.png" in final.text
 
 
 def test_chat_binds_attachments_to_the_user_turn(

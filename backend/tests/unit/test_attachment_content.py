@@ -16,6 +16,7 @@ from jbrain.agent.attachment_content import (
     MAX_PDF_PAGE_PIXELS,
     MAX_PDF_PAGES,
     build_attachment_content,
+    carry_forward_content,
 )
 from jbrain.agent.attachments import AttachmentInfo
 from jbrain.db.session import SessionContext
@@ -186,6 +187,50 @@ async def test_vision_capable_turn_tells_the_model_to_look_directly() -> None:
     assert "to look at it" not in text
     # …but OCR (exact text) and edit_image remain available by id.
     assert "OCR" in text and "edit_image" in text
+
+
+def _img_info(id_: str, sha: str, filename: str = "pic.png") -> AttachmentInfo:
+    return AttachmentInfo(
+        id=id_,
+        filename=filename,
+        media_type="image/png",
+        size_bytes=1,
+        sha256=sha,
+        domain_code="general",
+    )
+
+
+async def test_carry_forward_refetches_bytes_and_flags_them_as_prior() -> None:
+    # A carried-forward image is re-fetched from its persisted blob and noted as an EARLIER
+    # image now back in view, so a vision follow-up describes it directly instead of delegating.
+    blobs = FakeBlobs()
+    blobs.put("sha-a", b"\x89PNG-a")
+    blobs.put("sha-b", b"\x89PNG-b")
+    infos = [_img_info("a1", "sha-a", "one.png"), _img_info("a2", "sha-b", "two.png")]
+    images, notes = await carry_forward_content(blobs, infos, image_budget=5)  # type: ignore[arg-type]
+    assert [base64.b64decode(im.data) for im in images] == [b"\x89PNG-a", b"\x89PNG-b"]
+    assert "one.png" in notes[0] and "carried forward" in notes[0] and "a1" in notes[0]
+
+
+async def test_carry_forward_respects_the_image_budget() -> None:
+    blobs = FakeBlobs()
+    blobs.put("sha-a", b"a")
+    blobs.put("sha-b", b"b")
+    infos = [_img_info("a1", "sha-a"), _img_info("a2", "sha-b")]
+    images, notes = await carry_forward_content(blobs, infos, image_budget=1)  # type: ignore[arg-type]
+    assert len(images) == 1 and len(notes) == 1  # the remaining budget is one
+
+
+async def test_carry_forward_skips_an_image_whose_blob_is_gone() -> None:
+    # A row that outlived its blob is skipped, exactly like build_attachment_content — never a
+    # crash and never a broken re-inject.
+    blobs = FakeBlobs()
+    images, notes = await carry_forward_content(
+        blobs,  # type: ignore[arg-type]
+        [_img_info("a1", "missing-sha")],
+        image_budget=5,
+    )
+    assert images == [] and notes == []
 
 
 async def test_pdf_yields_page_images_and_extracted_text() -> None:

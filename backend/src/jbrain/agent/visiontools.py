@@ -33,6 +33,7 @@ from jbrain.agent.chat_images import (
     resolve_source,
     sniff_image_media_type,
     stitch_side_by_side,
+    vision_read_spec,
 )
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.llm import LlmImage, LlmRouter
@@ -121,9 +122,16 @@ def build_compare_handlers(
             )
             for data in resolved
         ]
+        # Reuse the conversation's own vision-capable pick for the read (no residency swap on
+        # the memory-bound box), exactly like analyze_image; None → the agent.vision default.
+        vision_spec = await vision_read_spec(router, ctx.model_override)
         try:
             result = await router.complete(
-                "agent.vision", system=_COMPARE_SYSTEM, user_text=prompt, images=images
+                "agent.vision",
+                system=_COMPARE_SYSTEM,
+                user_text=prompt,
+                images=images,
+                spec_override=vision_spec,
             )
         except LlmError as exc:
             log.warning("compare_images_failed", error=str(exc))

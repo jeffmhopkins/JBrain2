@@ -10,6 +10,7 @@ Recording is best-effort at the call site — a write failure never breaks a tur
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -18,6 +19,38 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.agent import AgentTurn
+
+# How far back an earlier image is carried forward inline so a vision-capable turn can
+# re-see it without an analyze_image round-trip (docs/reference/ASSISTANT.md). A UNION, not
+# an intersection: the last CARRY_TURN_WINDOW user turns (so a rapid back-and-forth keeps the
+# picture in view) OR any user turn within CARRY_TIME_WINDOW (so a slow-but-recent discussion
+# keeps it too). An image drops from view only once it is BOTH more than N turns back AND
+# older than the time window — bounding the re-paid vision tokens.
+CARRY_TURN_WINDOW = 4
+CARRY_TIME_WINDOW = timedelta(minutes=15)
+# A ceiling on the user turns scanned for the time-window arm, so a pathological session
+# can't unbounded-scan. Far above any real rate (200 user turns inside 15 minutes).
+_CARRY_SCAN_LIMIT = 200
+
+
+def _carry_forward_turn_ids(
+    rows: Sequence[tuple[Any, datetime | None]],
+    *,
+    now: datetime,
+    turn_window: int = CARRY_TURN_WINDOW,
+    time_window: timedelta = CARRY_TIME_WINDOW,
+) -> list[str]:
+    """From the session's user turns NEWEST-first (by seq) as `(id, created_at)` pairs, the ids
+    eligible to carry an image forward: the newest `turn_window` (always) UNION any whose
+    `created_at` is within `time_window` of `now`. Returned OLDEST-first so re-injected images
+    read chronologically. Pure — the DB query wraps it; unit-tested for the union/boundary."""
+    cutoff = now - time_window
+    eligible = [
+        turn_id
+        for i, (turn_id, created_at) in enumerate(rows)
+        if i < turn_window or (created_at is not None and created_at >= cutoff)
+    ]
+    return [str(turn_id) for turn_id in reversed(eligible)]
 
 
 @dataclass(frozen=True)
@@ -104,6 +137,40 @@ class AgentTranscript:
                     reasoning=reasoning,
                 )
             )
+
+    async def recent_image_attachments(
+        self, ctx: SessionContext, session_id: str, *, now: datetime
+    ) -> list[AttachmentInfo]:
+        """Image attachments from the session's RECENT user turns — the ones a vision-capable
+        follow-up turn should re-see inline without an analyze_image round-trip. "Recent" is the
+        `_carry_forward_turn_ids` union (last N turns OR within the time window). Returned in
+        chronological turn order, images only (a re-injected PDF's pages would be heavy; the
+        owner's case is a picture). Empty when this transcript has no attachment repo, or the
+        session has no recent image."""
+        if self._attachments is None:
+            return []
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    select(AgentTurn.id, AgentTurn.created_at)
+                    .where(
+                        AgentTurn.session_id == uuid.UUID(session_id),
+                        AgentTurn.role == "user",
+                    )
+                    .order_by(AgentTurn.seq.desc())
+                    .limit(_CARRY_SCAN_LIMIT)
+                )
+            ).all()
+        turn_ids = _carry_forward_turn_ids([(r[0], r[1]) for r in rows], now=now)
+        if not turn_ids:
+            return []
+        by_turn = await self._attachments.list_for_turns(ctx, turn_ids)
+        return [
+            info
+            for tid in turn_ids  # oldest-first, so the images read chronologically
+            for info in by_turn.get(tid, [])
+            if info.media_type.startswith("image/")
+        ]
 
     async def load(self, ctx: SessionContext, session_id: str) -> list[TurnRecord]:
         async with scoped_session(self._maker, ctx) as session:

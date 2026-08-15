@@ -561,10 +561,31 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   to look at it" pointer. jerv's persona prompt defers to that per-turn note instead of a blanket
   "you can't see images." This kills the self-contradiction a vision model otherwise showed —
   claiming blindness while describing the image in the `analyze_image` args — and the redundant
-  vision round-trip (a model swap on this memory-bound box) it paid for. Video and audio always
-  route to their tools (`analyze_video`/`analyze_stream`/`transcribe`): the pipeline never feeds
-  frames or audio inline, so a "video-capable" model's native video support does not apply to the
-  top-level turn.
+  vision round-trip it paid for. And when `analyze_image`/`compare_images` *are* the right call
+  on a vision-capable turn (an image the model can't see this turn, e.g. an older attachment
+  pulled by id), the read now **reuses the conversation's own model** (`chat_images.vision_read_spec`
+  passes the per-conversation pick as the `agent.vision` `spec_override`) instead of the separate
+  `agent.vision` route — so it no longer forces a residency **model swap** on this memory-bound
+  box (the cold-load that read as a slow analyze_image). A text-only turn still delegates to the
+  dedicated vision route, which is the point. Video and audio always route to their tools
+  (`analyze_video`/`analyze_stream`/`transcribe`): the pipeline never feeds frames or audio
+  inline, so a "video-capable" model's native video support does not apply to the top-level turn.
+
+  **A recent image is carried forward so a later turn re-sees it — no re-attach, no tool call.**
+  History is text-only (past image bytes are dropped so they don't re-cost vision every turn),
+  so a follow-up like "re-evaluate the picture" would otherwise have no image in context and
+  fall back to `analyze_image`. Instead, on a vision-capable turn the endpoint re-fetches the
+  persisted bytes of images from **recent** user turns — the union of the **last 4 turns**
+  (`AgentTurn.seq`) **OR** anything within the **last 15 minutes** (`created_at`), so a rapid
+  back-and-forth AND a slow-but-recent discussion both keep the picture in view; an image drops
+  only once it is BOTH past the turn floor and older than the window — and re-injects them inline
+  on the current (volatile) user message, flagged as carried-forward. It excludes ids already
+  attached this turn and honors the per-turn image budget, and the bytes ride the volatile tail
+  so history's KV-cache prefix is untouched (only this turn re-pays the vision tokens). Bounded
+  by `transcript_store.CARRY_TURN_WINDOW` / `CARRY_TIME_WINDOW`; images only (a re-injected PDF's
+  pages would be heavy). A tool *result* cannot carry an image back on the local stack — only a
+  user message can (llama.cpp serializes tool messages as text) — so this re-attach is the only
+  native way to re-see a prior image; a `view_image`-style tool is not viable there.
 
   **`ocr`** (`../plans/RAPIDOCR_PLAN.md`) remains the deterministic, verbatim counterpart: it
   reads the **exact text** out of an attached image or PDF via the on-box RapidOCR sidecar — no
