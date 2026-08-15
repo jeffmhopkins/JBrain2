@@ -241,7 +241,7 @@ export function HomeScreen({
 
   return (
     <>
-      <TopBar syncStatus={notes.syncStatus} onBolt={onOpenLauncher} session={fbSession} />
+      <TopBar syncStatus={notes.syncStatus} session={fbSession} />
       {conversational ? (
         <FullBrainSurface
           fb={fb}

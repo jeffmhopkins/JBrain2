@@ -180,12 +180,7 @@ export function TalkScreen({ articleId, syncStatus, onClose, onOpenArticle }: Ta
 
   return (
     <div className="subscreen subscreen-talk" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
-      <TopBar
-        title={board ? board.title : "Talk"}
-        onBack={onClose}
-        syncStatus={syncStatus}
-        onBolt={onClose}
-      />
+      <TopBar title={board ? board.title : "Talk"} onBack={onClose} syncStatus={syncStatus} />
       <main className="screen-body talk-view" ref={scrollerRef}>
         {state.phase === "loading" && <p className="analysis-quiet">loading discussion…</p>}
         {state.phase === "error" && (

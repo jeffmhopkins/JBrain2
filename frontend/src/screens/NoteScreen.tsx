@@ -343,7 +343,7 @@ export function NoteScreen({
 
   return (
     <div className="subscreen subscreen-note" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
-      <TopBar title="Note" onBack={onClose} syncStatus={syncStatus} onBolt={onClose} />
+      <TopBar title="Note" onBack={onClose} syncStatus={syncStatus} />
       <div className="screen-body note-view" ref={scrollerRef}>
         <div className="note-view-head">
           <span

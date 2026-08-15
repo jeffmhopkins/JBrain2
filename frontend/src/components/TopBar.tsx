@@ -1,25 +1,19 @@
 import type { SyncStatus } from "../notes/useNotes";
-import { BoltIcon, ChevronLeftIcon } from "./icons";
-
-const SYNC_TEXT: Record<SyncStatus, string> = {
-  synced: "synced",
-  pending: "sync pending",
-  unreachable: "server unreachable",
-};
+import { TopBarVitals } from "./TopBarVitals";
+import { ChevronLeftIcon } from "./icons";
 
 interface TopBarProps {
   /** Sub-screen title; omitted on home, where the wordmark (or session) shows. */
   title?: string;
   onBack?: () => void;
   syncStatus: SyncStatus;
-  onBolt: () => void;
   /** On home, the active Full Brain session: its name takes the wordmark's slot
    *  so the conversation doesn't spend a second row on a title, and a tap reopens
    *  the Sessions list. Absent in the other home modes, where the wordmark shows. */
   session?: { title: string; onOpen: () => void } | undefined;
 }
 
-export function TopBar({ title, onBack, syncStatus, onBolt, session }: TopBarProps) {
+export function TopBar({ title, onBack, syncStatus, session }: TopBarProps) {
   return (
     <header className="top-bar">
       {title ? (
@@ -36,16 +30,12 @@ export function TopBar({ title, onBack, syncStatus, onBolt, session }: TopBarPro
           JBrain<i>.</i>
         </span>
       )}
+      {/* The right cluster is a readout now, not a control: the sync dot and the
+          launcher bolt both gave up their slot to the vitals chart. The launcher is
+          reached by swiping up on the omnibox, and a sub-screen climbs a level via
+          the back chevron or the down-swipe — see docs/reference/DESIGN.md. */}
       <div className="top-bar-right">
-        <span
-          className={`sync-dot sync-${syncStatus}`}
-          role="status"
-          aria-label={SYNC_TEXT[syncStatus]}
-          title={SYNC_TEXT[syncStatus]}
-        />
-        <button type="button" className="icon-btn" onClick={onBolt} aria-label="Open launcher">
-          <BoltIcon size={20} />
-        </button>
+        <TopBarVitals syncStatus={syncStatus} />
       </div>
     </header>
   );

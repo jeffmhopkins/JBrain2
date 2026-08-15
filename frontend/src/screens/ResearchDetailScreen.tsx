@@ -96,7 +96,7 @@ export function ResearchDetailScreen({ kind, id, syncStatus, onClose }: Research
 
   return (
     <div className="subscreen" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
-      <TopBar title={title} onBack={onClose} syncStatus={syncStatus} onBolt={onClose} />
+      <TopBar title={title} onBack={onClose} syncStatus={syncStatus} />
       <div className="screen-body rl-detail">
         {state.phase === "loading" && <p className="muted rl-empty">Loading…</p>}
         {state.phase === "error" && (

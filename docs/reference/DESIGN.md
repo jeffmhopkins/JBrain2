@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-13
+> **Status:** Living · **Last verified:** 2026-08-15
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -129,8 +129,9 @@ accent as the glyph color — one tint formula, no per-type `-tint` tokens.
 
 ## Core components
 
-**Top bar** — wordmark (or back chevron + screen title) left; right cluster:
-status dot, notifications bell, mute, quick-action bolt. Height 56px.
+**Top bar** — wordmark (or back chevron + screen title) left; right cluster: the
+**vitals chart** (below). Height 56px. The right cluster is a *readout*, not a
+control — nothing in it is tappable.
 
 **Status banner** — full-width strip under the top bar for connectivity/sync
 problems: `--rose` text on rose-tint background, e.g. *"Browser online, but
@@ -138,7 +139,37 @@ JBrain server unreachable — retrying…"*. Auto-dismisses on recovery. Never
 use modals for connectivity.
 
 **Status dot** — 8px circle: green=healthy, amber=degraded/retrying,
-rose=error, `--text-3`=unknown. Appears in top bar and composer footer.
+rose=error, `--text-3`=unknown. Used in the composer footer. It no longer
+appears in the top bar — see the vitals chart, which carries sync as its
+baseline rule.
+
+**Vitals chart** (settled in a two-round GUI gate — chosen **E "instrument"** over
+D "typographic" and F "stateful block"; binding mock
+`docs/mocks/topbar-vitals/e-instrument.html`, rivals `{d-typographic,f-stateful-chip}.html`).
+The top bar's right cluster is a **12-second strip chart** of the box's vitals,
+resampled once a second:
+
+- **GPU busy %** is a row of hairline columns that ticks left each second. Columns
+  fade with age so the eye reads direction of travel, and go `--warn` past 85%.
+  When the box exposes no amdgpu gauge, a **dashed mid-line** stands in — a flat row
+  of zero-height columns would misread as an idle GPU.
+- **Tokens/sec** is a `--steel` trace over the same axis, drawn only while a turn
+  streams and **broken by a gap** wherever nothing was generated (a tool call). The
+  two channels share a box but not a y-scale, so each is comparable against itself
+  over time and never against the other.
+- **Sync is the chart's baseline rule** — `--ok` / `--warn` / `--danger`, with its
+  word ("synced / pending / offline") directly beneath as the axis label. This is
+  what replaced the top bar's 8px status dot, and it is why colour is still never
+  the only encoding. Unreachable also **freezes and dims** the trace: with nothing
+  arriving, advancing the axis would draw blanks that read as "the box went idle"
+  when they mean "we stopped being told".
+- Digits sit in fixed tabular slots and the t/s row keeps its space when idle, so
+  no state change can nudge the ellipsizing session title.
+
+The honest signal this buys: **streaming fast while the GPU stays cold means a
+cloud model answered, not the box.** The first round (A/B/C) folded the launcher
+into the readout as a tap target; the owner ruled that out — the bolt is gone
+entirely and nothing in the cluster is tappable.
 
 **Segmented control** — pill row on `--surface-2`; inactive segments
 transparent with `--text-2` label + icon; active segment gets the
@@ -792,8 +823,9 @@ There is **no bottom tab bar**. Navigation is a full-screen **card
 launcher** (the v1 knowledge-hub tile grid: 3-column tiles under uppercase
 section headers — KNOWLEDGE, AUTHORING, SYSTEM):
 
-- Opened by tapping the **bolt icon** in the top bar, or by **swiping up on
-  the omnibox**.
+- Opened by **swiping up on the omnibox** (settled when the top bar's right
+  cluster became the vitals chart — the bolt icon that used to open it is gone,
+  and nothing in that cluster is tappable any more).
 - Slides up over the home screen; dismissed by the **explicit ✕ button or
   tapping the handle row** (primary paths — gestures proved unreliable on
   real devices and are an enhancement only), swipe down, or Escape. It is a
@@ -809,8 +841,8 @@ section headers — KNOWLEDGE, AUTHORING, SYSTEM):
 - **Levels are stacked slide-up layers**: card screens animate exactly like
   the launcher — rising from the bottom over the still-open launcher,
   sinking back down to reveal it (150ms ease-out, disabled under reduced
-  motion). Each card carries its own top bar (chevron + title); the bolt on
-  a card climbs one level, like the down-swipe.
+  motion). Each card carries its own top bar (chevron + title); the chevron
+  jumps home and the down-swipe climbs one level.
 - **The platform back gesture climbs one level too** (`useBackGesture`), exactly
   like swipe-down — closing the topmost layer in z-order (sheets, then reading
   layers, then card/launcher, then the Full Brain Proposal/panel and the Tasks
@@ -881,8 +913,8 @@ Rules:
   it never fights the vertical nav-tree gestures (up → launcher, down → climb).
   Horizontal is available precisely because modes switch by *tap*, not swipe.
 - Sessions and Proposals open as **standard full-screen cards** (own top bar + back
-  chevron; bolt or down-swipe climbs home, satisfying the required visible tappable
-  exit). The panel tracks the finger and snaps in past threshold; disabled under
+  chevron, which satisfies the required visible tappable exit; the down-swipe climbs
+  too). The panel tracks the finger and snaps in past threshold; disabled under
   reduced motion.
 - **Full-Brain-only:** Entry/Research composers do not carry these shortcuts (Entry
   keeps its transcript-item action rail).
@@ -982,7 +1014,7 @@ See `docs/archive/IMAGE_LAUNCHER_PLAN.md`.
 | Job | Paradigm |
 |---|---|
 | Primary tasks (capture, reading an article, chat) | Full screen with top-bar back chevron |
-| App-wide navigation | Card launcher (bolt tap / swipe up on omnibox) |
+| App-wide navigation | Card launcher (swipe up on omnibox) |
 | Contextual quick forms & actions (add list item, edit appointment, filters) | **Bottom sheet** — the workhorse modal on phone |
 | Confirmation of a destructive/irreversible act | Center **confirm dialog**, destructive variant |
 | Row-level detail that doesn't warrant navigation | Inline expansion within the list |
