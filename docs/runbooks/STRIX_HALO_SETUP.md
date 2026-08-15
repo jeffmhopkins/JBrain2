@@ -301,8 +301,8 @@ one) → **Settings → LLM**:
 
 ### Adding / removing models later — from the PWA, no shell
 Once hosting is on, **Settings → LLM → On-box models** lists the whole catalog,
-not just what's provisioned. Each un-provisioned model (e.g. **Qwen3.6 27B** at
-Q8, ~27 GB) has an **Install** button. Tapping it **starts the download
+not just what's provisioned. Each un-provisioned model (e.g. **Qwen3.8 27B** at
+Q8, ~28 GB) has an **Install** button. Tapping it **starts the download
 immediately** — a dedicated weight-sync one-shot, **not** a system update: it
 pulls the queued weights, adds them to `LOCAL_MODELS`, re-stamps the gateway
 config, and restarts the gateway — the same provisioning `enable-local-models`

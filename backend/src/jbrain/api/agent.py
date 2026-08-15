@@ -732,6 +732,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # read as missing, so it is silently skipped rather than reaching the turn (Decision:
     # skip, not 4xx — a stray id must never break the conversation).
     attachment_ctx = read_context(principal.id, attachment_scopes(session.domain_scopes))
+    # Whether the resolved agent.turn model (incl. the per-conversation override) can see
+    # images. Resolved ONCE here: it both drops the bytes for a text-only model AND words
+    # each attachment note (build_attachment_content) so a vision model is told to look
+    # directly instead of being primed to delegate to analyze_image.
+    can_see_images = await router.supports_vision("agent.turn", spec_override=model_override)
     images, attach_text = await build_attachment_content(
         get_turn_attachments(request),
         get_blob_store(request),
@@ -740,13 +745,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # The transcribe sidecar is registered only when the whisper backend is
         # configured, so its presence is the audio hint's actionable/not signal.
         transcribe_enabled="transcribe" in get_agent_registry(request),
+        can_see_images=can_see_images,
     )
     # A text-only agent model (e.g. local gpt-oss, no vision projector) would error
     # at the gateway on raw image bytes — so drop them when the resolved agent.turn
     # model can't see. The attachment's id still rides in attach_text, so the model
     # can edit it (edit_image) or look at it (analyze_image) BY REFERENCE without the
     # bytes; a vision-capable route keeps the images inline as before.
-    if images and not await router.supports_vision("agent.turn", spec_override=model_override):
+    if images and not can_see_images:
         images = []
     conversation = _conversation(body, images, attach_text)
     # Cache-stable prompt layout (docs/plans/LLM_PROMPT_CACHE_PLAN.md W1): keep the STATIC

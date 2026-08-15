@@ -513,8 +513,8 @@ class _FakeTitleRouter:
         self._reply = reply
         self.calls: list[dict] = []
 
-    async def complete(self, task, *, system, user_text, max_tokens, **_):  # noqa: ANN001
-        self.calls.append({"task": task, "user_text": user_text})
+    async def complete(self, task, *, system, user_text, max_tokens, spec_override=None, **_):  # noqa: ANN001
+        self.calls.append({"task": task, "user_text": user_text, "spec_override": spec_override})
         return SimpleNamespace(text=self._reply, parsed=None)
 
 
@@ -565,3 +565,77 @@ async def test_persist_enqueues_title_job_and_titler_fills_it(maker) -> None:  #
     assert router2.calls == []
     reports2, _ = await list_reports(maker, limit=10)
     assert reports2[0].title == "1918 Flu Death-Toll Estimates"
+
+
+async def test_title_job_carries_and_uses_the_per_conversation_model(maker) -> None:  # noqa: F811
+    """A run pinned to an omnibox model titles its report on that SAME model: persist_report
+    stamps the pick onto the title job payload, and the titler routes the completion with it as
+    spec_override (mirroring the session titler). No pin → no spec_override (default route)."""
+    await _clear_reports(maker)
+    report_id = await persist_report(
+        maker,
+        session_id=None,
+        question="What drives the price of vanadium redox-flow batteries?",
+        report_md="## Cost\n\nElectrolyte vanadium dominates the bill of materials.",
+        complexity="deep",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+        model_spec="local:qwen3.8-27b-mtp",
+    )
+
+    # The per-conversation model rides the title job's payload, not a schema column.
+    async with scoped_session(maker, OWNER) as s:
+        spec = (
+            await s.execute(
+                text(
+                    "SELECT payload->>'model_spec' FROM app.jobs"
+                    " WHERE kind = 'title_research_report' AND payload->>'report_id' = :r"
+                ),
+                {"r": report_id},
+            )
+        ).scalar_one()
+    assert spec == "local:qwen3.8-27b-mtp"
+
+    # The titler forwards that model to the router as the per-call spec_override.
+    router = _FakeTitleRouter("Vanadium Flow-Battery Cost Drivers")
+    await ResearchReportTitler(maker, router).title_research_report(  # type: ignore[arg-type]
+        {"report_id": report_id, "model_spec": "local:qwen3.8-27b-mtp"}
+    )
+    assert router.calls[0]["spec_override"] == "local:qwen3.8-27b-mtp"
+
+    # A report with no pinned model enqueues no model_spec and titles on the default route.
+    plain_id = await persist_report(
+        maker,
+        session_id=None,
+        question="How do tidal barrages compare to tidal-stream turbines?",
+        report_md="## Comparison\n\nBarrages front-load capital; streams scale incrementally.",
+        complexity="deep",
+        rounds=1,
+        sub_agents=1,
+        analyzed=False,
+        revised=False,
+        coverage_limited=False,
+        truncated=False,
+        sources=[],
+    )
+    async with scoped_session(maker, OWNER) as s:
+        has_spec = (
+            await s.execute(
+                text(
+                    "SELECT payload ? 'model_spec' FROM app.jobs"
+                    " WHERE kind = 'title_research_report' AND payload->>'report_id' = :r"
+                ),
+                {"r": plain_id},
+            )
+        ).scalar_one()
+    assert has_spec is False
+    router2 = _FakeTitleRouter("Tidal Barrages vs Stream Turbines")
+    await ResearchReportTitler(maker, router2).title_research_report(  # type: ignore[arg-type]
+        {"report_id": plain_id}
+    )
+    assert router2.calls[0]["spec_override"] is None

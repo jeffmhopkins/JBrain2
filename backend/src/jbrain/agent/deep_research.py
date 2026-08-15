@@ -2302,6 +2302,10 @@ class DeepResearchService:
                 source_mode=source_mode,
                 tool=tool,
                 retention_days=retention_days,
+                # The per-conversation model this research ran on (the omnibox pick), so the
+                # follow-up `research.title` job titles the report on the SAME model instead of
+                # the persistent agent.turn default. None when no model was pinned for the run.
+                model_spec=ctx.model_override,
             )
         except Exception:  # noqa: BLE001 - best-effort; the report already rendered
             log.warning("deep_research.persist_failed", exc_info=True)

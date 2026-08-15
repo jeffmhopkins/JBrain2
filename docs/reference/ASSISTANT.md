@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-12
+> **Status:** Living · **Last verified:** 2026-08-15
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -202,7 +202,11 @@ threads it as a per-turn `spec_override` through the router so the effort, conte
 window, and vision gate all reflect the chosen model. It is **turn-local**: scoped
 to that conversation, never persisted on the session, and it does **not** change the
 global task routing in Settings. A sub-agent the turn spawns still runs on its own
-configured model — the override is the top-level loop's only.
+configured model — the override is the top-level loop's only. The conversation's
+best-effort follow-up titling **follows the pick too**: both the chat's
+`session.title` and a research run's `research.title` job run the same
+`spec_override`, so the heading is written by the model the owner steered the
+conversation onto, not the persistent `agent.turn` default.
 
 **No standing multi-agent orchestra.** One context window holds a personal chat
 task. The one exception is a narrow, **jerv-only** `spawn_subagent` escape hatch
@@ -547,6 +551,20 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   never pays for one. With no detector wired the tool stays description-only; a
   configured-but-unreachable detector degrades to running the pass anyway (its prompt self-gates,
   emitting nothing when there is no text).
+
+  **A vision-capable turn sees the image directly — it does not delegate to describe it.** The
+  same `supports_vision` gate that keeps an attachment's bytes inline for a vision-capable
+  `agent.turn` model (including the omnibox's per-conversation pick) now also **words the
+  attachment note**: when the model can see the bytes the note tells it to describe and reason
+  about the image itself and reserves `analyze_image` for OCR/verbatim text or a change
+  (`edit_image`); only a text-only turn (bytes dropped) gets the "pass the id to `analyze_image`
+  to look at it" pointer. jerv's persona prompt defers to that per-turn note instead of a blanket
+  "you can't see images." This kills the self-contradiction a vision model otherwise showed —
+  claiming blindness while describing the image in the `analyze_image` args — and the redundant
+  vision round-trip (a model swap on this memory-bound box) it paid for. Video and audio always
+  route to their tools (`analyze_video`/`analyze_stream`/`transcribe`): the pipeline never feeds
+  frames or audio inline, so a "video-capable" model's native video support does not apply to the
+  top-level turn.
 
   **`ocr`** (`../plans/RAPIDOCR_PLAN.md`) remains the deterministic, verbatim counterpart: it
   reads the **exact text** out of an attached image or PDF via the on-box RapidOCR sidecar — no
