@@ -504,6 +504,17 @@ _REFLECT_MAX_TOKENS = 1200
 # in the user message by complexity (`_depth_directive`), so a `simple` run still stays tight.
 # Both the draft and the critique-revise pass use this cap; both stream under the turn clock.
 _SYNTH_MAX_TOKENS = 12000
+# The synthesizer runs on `agent.turn`, whose served context window varies by the box's active
+# model (gpt-oss-120b's 128k, or a local pick the operator made active). The whole synthesis
+# prompt — findings + sources + cross-check + critique — plus the reserved output must fit that
+# window, or llama.cpp rejects the call and the entire run is lost to a "ran out of context".
+# So the findings block is trimmed to the room left after output + a fixed overhead for the other
+# blocks. A generous window never trims (≤60k-char findings fit 128k with room); a too-small
+# served `-c` degrades to a shorter report instead of a hard overflow. Chars-per-token is a
+# deliberately conservative estimate (English trends ~4) so the budget under- rather than
+# over-fills. Belt to the deploy-preserves-overrides fix's suspenders (llama_swap_config).
+_SYNTH_CHARS_PER_TOKEN = 3.5
+_SYNTH_OVERHEAD_TOKENS = 20000
 
 # The two report-writing phases are jerv's own (non-spawn) model calls — the longest in
 # the run — so they STREAM: `_synthesize` accumulates the draft and emits it into the
@@ -1039,6 +1050,23 @@ def _cited_findings_block(entries: list[ScratchEntry], sources: list[WebSource])
             body = e.text
         fed.append((e.author, e.persona, body))
     return compose_feed_block(fed)
+
+
+def _fit_findings_to_window(block: str, window_tokens: int) -> str:
+    """Trim the findings block so the whole synthesis prompt fits the synthesizer's served context
+    window: budget = window − reserved output (`_SYNTH_MAX_TOKENS`) − a fixed overhead for the
+    prompt's other blocks (`_SYNTH_OVERHEAD_TOKENS`), converted to chars. Returns the block
+    unchanged when it already fits (the common case on a 128k window); otherwise truncates on the
+    nearest earlier paragraph boundary and appends a marker, so a too-small served `-c` degrades to
+    a shorter report instead of losing the entire run to a context overflow."""
+    budget_tokens = window_tokens - _SYNTH_MAX_TOKENS - _SYNTH_OVERHEAD_TOKENS
+    budget_chars = max(0, int(budget_tokens * _SYNTH_CHARS_PER_TOKEN))
+    if len(block) <= budget_chars:
+        return block
+    cut = block.rfind("\n\n", 0, budget_chars)
+    kept = block[: cut if cut > 0 else budget_chars].rstrip()
+    log.warning("deep_research.findings_trimmed", kept_chars=len(kept), full_chars=len(block))
+    return kept + "\n\n[Earlier findings were trimmed to fit the model's context window.]"
 
 
 def _opt_str(v: object) -> str | None:
@@ -2896,6 +2924,16 @@ class DeepResearchService:
             if objective and objective != question.strip()
             else ""
         )
+        # Phase 1.5: each finding is prefixed with the SOURCES numbers it actually drew on, so the
+        # writer cites a claim against the source that finding reached instead of re-guessing by
+        # title (the mislabelled-citation failure mode). Trimmed to the synthesizer's served context
+        # window so a run can't overflow it and lose the whole report — the box's active agent.turn
+        # model sets the window, and on a mis-provisioned small `-c` this degrades to a shorter
+        # report instead of a hard "ran out of context".
+        findings_block = _fit_findings_to_window(
+            _cited_findings_block(results, sources),
+            await self._router.context_window(_TASK),
+        )
         user_text = (
             objective_block
             # The artifact-shape/depth line: the exact complexity length target for a `report`
@@ -2903,11 +2941,7 @@ class DeepResearchService:
             + f"Question:\n{question}\n\n"
             + f"{_shape_directive(directive.output_kind, complexity)}\n\n"
             + f"Outline (section headings, in order):\n{_outline_text(sections)}\n\n"
-            # Phase 1.5: each finding is prefixed with the SOURCES numbers it actually drew on,
-            # so the writer cites a claim against the source that finding reached instead of
-            # re-guessing by title (the mislabelled-citation failure mode). Falls back to the
-            # plain block with no sources to bind against.
-            + f"Findings:\n{_cited_findings_block(results, sources)}"
+            + f"Findings:\n{findings_block}"
         )
         if sources:
             # The canonical, pre-numbered source registry (real URLs). The synthesizer
