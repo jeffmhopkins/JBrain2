@@ -530,12 +530,7 @@ export function App() {
             onTouchStart={onSubTouchStart}
             onTouchMove={onSubTouchMove}
           >
-            <TopBar
-              title={SCREEN_TITLES[card]}
-              onBack={jumpHome}
-              syncStatus={notes.syncStatus}
-              onBolt={closeCardToLauncher}
-            />
+            <TopBar title={SCREEN_TITLES[card]} onBack={jumpHome} syncStatus={notes.syncStatus} />
             {card === "ops" && (
               <main className="screen-body">
                 <OpsScreen />

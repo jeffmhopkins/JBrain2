@@ -165,7 +165,7 @@ export function ListDetailScreen({ listId, syncStatus, onClose }: ListDetailScre
 
   return (
     <div className="subscreen subscreen-list" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
-      <TopBar title="List" onBack={onClose} syncStatus={syncStatus} onBolt={onClose} />
+      <TopBar title="List" onBack={onClose} syncStatus={syncStatus} />
       <div className="screen-body list-detail" ref={scrollerRef}>
         {state.phase === "loading" && <p className="analysis-quiet">loading list…</p>}
         {state.phase === "error" && (

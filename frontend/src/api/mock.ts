@@ -4150,6 +4150,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   if (path === "/api/ops/llm-usage") return json(LLM_USAGE);
 
+  // The top bar's vitals probe. Its 1 Hz stream is an EventSource, which this fetch
+  // shim cannot serve — like the log stream, live host telemetry is out of mock
+  // scope — so the chart seeds from this reading, then drops to "no gauge" when the
+  // stream fails. Answered anyway because an unanswered probe is not a rejection:
+  // the meter would re-probe every 30s for the life of the mock session.
+  if (path === "/api/ops/vitals") {
+    return json({ gpu_busy_percent: 64 });
+  }
+
   if (path === "/api/ops/update" && init?.method === "POST") {
     mockUpdate.state = "running";
     mockUpdate.ticks = 0;

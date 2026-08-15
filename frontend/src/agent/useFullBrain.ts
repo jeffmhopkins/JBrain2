@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { freshCoords } from "../location";
 import { isForeground } from "../visibility";
+import { endTurnRate, recordStreamedText } from "./tokenMeter";
 import {
   type TranscriptMessage,
   applyEvent,
@@ -755,6 +756,16 @@ export function useFullBrain(
         // later fresh chat meters against the live figure rather than the probe's.
         setWindowHint(event.context_window);
       } else {
+        // Weigh generated text for the top bar's rate — the owner's own answer and
+        // thinking, plus any running sub-agent's, so a deep-research fan (parent idle
+        // for minutes, children streaming) still reads as the box working.
+        if (
+          event.type === "text_delta" ||
+          event.type === "reasoning_delta" ||
+          event.type === "subagent_delta"
+        ) {
+          recordStreamedText(event.text);
+        }
         setSessionMessages(turnSessionId, (ms) => applyEvent(ms, event));
         // A child was just minted server-side (children persist eagerly) — refresh the
         // sessions list so the manager's rail shows the sub-agent nested under this chat
@@ -841,6 +852,9 @@ export function useFullBrain(
         await recover();
       }
     } finally {
+      // Drop the rate the instant the turn settles; without this the gauge coasts on
+      // the trailing window for a beat after the last token.
+      endTurnRate();
       abortRef.current = null;
       // Cleared only now (not before the recovery loop) so a Stop during the multi-minute
       // recovery still cancels the detached turn by id; a stale id can't linger into

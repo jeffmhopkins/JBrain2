@@ -171,22 +171,175 @@ h3 {
   color: var(--text-2);
 }
 
-.sync-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--r-pill);
+/* ===== Top-bar vitals — the 12-second strip chart =====
+   Binding mock: docs/mocks/topbar-vitals/e-instrument.html (option E). GPU busy is
+   the column trace, tokens/sec the steel line over the same axis, and the baseline
+   rule is the sync channel — colour paired with the word beneath it, which is what
+   replaced the 8px sync dot. */
+
+/* A 2×2 grid rather than two independently-centred columns. Centring the columns
+   against each other put the chart's middle 11px above the GPU figure's — the two
+   things the eye pairs sat on different lines. Here the chart and the GPU figure
+   share row 2, so they centre on each other at any --font-scale, and the reserved
+   t/s slot above can never drag the figure off the chart again. */
+.vitals {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: 7px;
+  row-gap: 3px;
+  flex: none;
+  color: var(--text-2);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
-.sync-synced {
-  background: var(--ok);
+/* Both wrappers dissolve into the grid so every part lands on its own row. */
+.vitals-scope,
+.vitals-reads {
+  display: contents;
 }
 
-.sync-pending {
-  background: var(--warn);
+.vitals-chart {
+  grid-column: 1;
+  grid-row: 2;
+  display: block;
+  width: 48px;
+  height: 20px;
+  overflow: visible;
+  shape-rendering: crispEdges;
 }
 
-.sync-unreachable {
-  background: var(--danger);
+.vitals-bar {
+  fill: var(--text-3);
+}
+
+.vitals-bar.hot {
+  fill: var(--warn);
+}
+
+.vitals-trace {
+  fill: none;
+  stroke: var(--steel);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.vitals-trace-head {
+  fill: var(--steel);
+}
+
+/* No amdgpu gauge on this box: a dashed mid-line says "no channel here", which a
+   flat row of zero-height columns would misread as an idle GPU. */
+.vitals-nogauge {
+  stroke: var(--text-3);
+  stroke-width: 1;
+  stroke-dasharray: 2 2.5;
+  opacity: 0.65;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A healthy connection is QUIET: the rail stays neutral and the word is hidden, so
+   the bar says nothing when there is nothing to say. Colour therefore only ever
+   appears next to its word, which is what keeps the pairing rule true. */
+.vitals-rail {
+  stroke: var(--text-3);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.vitals[data-sync="pending"] .vitals-rail {
+  stroke: var(--warn);
+  stroke-width: 1.6;
+}
+
+.vitals[data-sync="unreachable"] .vitals-rail {
+  stroke: var(--danger);
+  stroke-width: 1.6;
+}
+
+/* The word gets its OWN row under the chart, and is dropped from flow entirely when
+   healthy — reserving its line box instead would make the cluster permanently taller
+   and hang the readout high in a bar that is mostly empty beneath it. Degrading adds
+   the row and re-centres the cluster by a few pixels; that is a moment worth
+   noticing, and the chart-to-figure alignment is untouched by it because those two
+   always share row 2. */
+.vitals-sync {
+  grid-column: 1;
+  grid-row: 3;
+  justify-self: start;
+  display: none;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.02em;
+  padding-left: 1px;
+  white-space: nowrap;
+}
+
+.vitals[data-sync="pending"] .vitals-sync {
+  color: var(--warn);
+  display: block;
+}
+
+.vitals[data-sync="unreachable"] .vitals-sync {
+  color: var(--danger);
+  display: block;
+}
+
+.vitals-read {
+  display: flex;
+  align-items: baseline;
+  justify-self: end;
+  gap: 2px;
+}
+
+.vitals-tps {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.vitals-gpu {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+/* Fixed slots + tabular figures: a changing digit must never nudge the session
+   title, and the t/s row must not reflow the bar as turns start and stop. */
+.vitals-value {
+  font-size: var(--fs-head);
+  font-weight: 500;
+  min-width: 3ch;
+  text-align: right;
+}
+
+.vitals-unit {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  min-width: 2.6ch;
+  text-align: left;
+}
+
+/* The row keeps its space when idle so nothing shifts when a turn begins. */
+.vitals-tps {
+  color: var(--steel);
+  visibility: hidden;
+}
+
+.vitals[data-turn="live"] .vitals-tps {
+  visibility: visible;
+}
+
+.vitals-gpu .vitals-value {
+  color: var(--text-2);
+}
+
+/* Server unreachable: the readings stopped being refreshed, so they look stale
+   rather than sitting there looking current. */
+.vitals[data-sync="unreachable"] .vitals-chart,
+.vitals[data-sync="unreachable"] .vitals-reads {
+  opacity: 0.42;
 }
 
 .screen-home {

@@ -59,6 +59,13 @@ export interface Principal {
   label: string;
 }
 
+/** A host-vitals sample (GET /api/ops/vitals, and each frame of its stream).
+ *  `gpu_busy_percent` is null when the box exposes no amdgpu gauge — "no telemetry
+ *  here", which the top bar renders as an absent reading rather than an idle GPU. */
+export interface HostVitals {
+  gpu_busy_percent: number | null;
+}
+
 /** A deferred media analysis' live state (GET /api/chat/deferred/{id}), polled by the
  * task_status card. `result` is the finished video_analysis card data once `status` is
  * `done`; `progress` drives the bar/label while running. */
@@ -2764,6 +2771,22 @@ export const api = {
   // the stream simply errors — log-following is out of mock scope.
   opsLogStream(service: string): EventSource {
     return new EventSource(`/api/ops/logs/${encodeURIComponent(service)}/stream`);
+  },
+
+  /** One host-vitals reading. The top bar's PROBE: because EventSource cannot see a
+   *  status code, this is how the meter learns whether this principal may read host
+   *  telemetry at all — a family member gets the 403 here, once, instead of an
+   *  EventSource retrying against it forever. */
+  async opsVitals(): Promise<HostVitals> {
+    const response = await request("/api/ops/vitals");
+    return (await response.json()) as HostVitals;
+  },
+
+  /** The 1 Hz host-vitals stream behind the top bar's GPU trace. Open only after
+   *  `opsVitals` has succeeded. Errors (and retries) in mock mode — like the log
+   *  stream, live host telemetry is out of mock scope. */
+  opsVitalsStream(): EventSource {
+    return new EventSource("/api/ops/vitals/stream");
   },
 
   // ===== The workflow run log — the Ops "Runs" surface (owner-only) =====

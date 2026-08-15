@@ -189,7 +189,7 @@ export function EntityScreen({
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
     >
-      <TopBar title="Entity" onBack={onClose} syncStatus={syncStatus} onBolt={onClose} />
+      <TopBar title="Entity" onBack={onClose} syncStatus={syncStatus} />
       <div className="screen-body entity-view" ref={scrollerRef}>
         {state.phase === "loading" && <p className="analysis-quiet">loading entity…</p>}
         {state.phase === "error" && (

@@ -5,7 +5,9 @@ authenticated path from the outside world to host control, and it forwards
 only the supervisor's fixed command set.
 """
 
-from collections.abc import AsyncIterator
+import asyncio
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -23,6 +25,7 @@ from jbrain.api.settings import get_settings_store
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
+from jbrain.host_metrics import read_gpu_busy_percent
 from jbrain.storage import BackupShelf, BlobStore
 from jbrain.tasks.schedule import FREQS
 from jbrain.usage import usage_summary
@@ -407,6 +410,49 @@ async def metrics(
 # A llama-server argv is long; the model path that distinguishes the co-resident
 # models sits near the front, so a generous head is enough for the card's row.
 _PROCESS_CMD_MAX = 200
+
+
+# --- Top-bar vitals (the always-on GPU reading) -----------------------------
+# The top bar shows GPU busy % continuously, so this is deliberately NOT the
+# /metrics route above: that one runs `docker stats` + `docker top` across every
+# container and queries the DB, which is fine once a screen but ruinous once a
+# second. These two read one small /sys file and nothing else.
+
+# The top bar's refresh cadence. One second is the point of the surface — the
+# owner watches it to see the box respond as a turn runs.
+_VITALS_PERIOD_S = 1.0
+
+
+@router.get("/vitals")
+async def vitals() -> dict[str, object]:
+    """One host-vitals reading. Also the PWA's PROBE: the top-bar meter calls this
+    once and only opens the stream below if it succeeds, so a family member (whom
+    the router's owner_only rejects) never opens an EventSource that would retry
+    against a 403 forever."""
+    return {"gpu_busy_percent": read_gpu_busy_percent()}
+
+
+async def vitals_frames(disconnected: Callable[[], Awaitable[bool]]) -> AsyncIterator[bytes]:
+    """SSE frames of host vitals, one per `_VITALS_PERIOD_S`, until the client goes.
+
+    Every frame is sent whether or not the value moved: the constant tick doubles as
+    the liveness signal that tells the meter its reading is still current, so a
+    stalled stream can go stale rather than freeze on a stale number.
+
+    The disconnect check is a parameter rather than a captured `Request` so the loop
+    can be driven directly in tests — `TestClient` never delivers an ASGI
+    `http.disconnect`, so a route-local closure over `request.is_disconnected` would
+    spin forever with no way to stop it."""
+    while not await disconnected():
+        payload = json.dumps({"gpu_busy_percent": read_gpu_busy_percent()})
+        yield f"data: {payload}\n\n".encode()
+        await asyncio.sleep(_VITALS_PERIOD_S)
+
+
+@router.get("/vitals/stream")
+async def vitals_stream(request: Request) -> StreamingResponse:
+    """Host vitals as SSE at 1 Hz, for the top bar's GPU reading."""
+    return StreamingResponse(vitals_frames(request.is_disconnected), media_type="text/event-stream")
 
 
 # The history ranges the Ops graph offers. Spans up to RAW_QUERY_MAX read raw

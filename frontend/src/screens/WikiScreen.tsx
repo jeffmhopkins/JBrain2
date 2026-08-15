@@ -104,12 +104,7 @@ export function WikiScreen({ articleId, syncStatus, onClose, onOpenTalk }: WikiS
 
   return (
     <div className="subscreen subscreen-wiki" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
-      <TopBar
-        title={article ? article.title : "Wiki"}
-        onBack={onClose}
-        syncStatus={syncStatus}
-        onBolt={onClose}
-      />
+      <TopBar title={article ? article.title : "Wiki"} onBack={onClose} syncStatus={syncStatus} />
       <main className="screen-body wiki-view" ref={scrollerRef}>
         {state.phase === "loading" && <p className="analysis-quiet">loading article…</p>}
         {state.phase === "error" && (
