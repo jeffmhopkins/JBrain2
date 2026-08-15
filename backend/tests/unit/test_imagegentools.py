@@ -6,12 +6,13 @@ The handler behaviour (insert, view, source resolution, error paths) is covered 
 Postgres in tests/integration/test_imagegentools_pg.py."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from jbrain.agent.agents import JERV_TOOLS
 from jbrain.agent.readtools import IMAGE_TOOL_NAMES, TOOLS_DIR
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry, load_registry
+from jbrain.llm import LlmRouter
 
 
 async def _noop(_arguments: dict, _ctx: Any) -> str:
@@ -36,17 +37,17 @@ async def test_vision_read_reuses_a_vision_capable_pick_else_the_default_route()
     from jbrain.agent.chat_images import vision_read_spec
 
     # A vision-capable omnibox pick → reuse it (the read runs on the resident turn model).
-    seeing = _VisionRouter(vision=True)
+    seeing = cast(LlmRouter, _VisionRouter(vision=True))
     assert await vision_read_spec(seeing, "local:qwen3.8-27b") == "local:qwen3.8-27b"
-    assert seeing.checked == [("agent.vision", "local:qwen3.8-27b")]
+    assert cast(_VisionRouter, seeing).checked == [("agent.vision", "local:qwen3.8-27b")]
 
     # A text-only pick can't see → None, so the separate vision route (its point) applies.
-    blind = _VisionRouter(vision=False)
+    blind = cast(LlmRouter, _VisionRouter(vision=False))
     assert await vision_read_spec(blind, "local:gpt-oss-120b") is None
 
     # No pick at all → None without even probing (the default route already fits).
     unasked = _VisionRouter(vision=True)
-    assert await vision_read_spec(unasked, None) is None
+    assert await vision_read_spec(cast(LlmRouter, unasked), None) is None
     assert unasked.checked == []
 
 
