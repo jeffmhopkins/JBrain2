@@ -38,7 +38,7 @@ from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.llm import local_catalog
 from jbrain.llm.residency import ResidencyError
 from jbrain.vision import OcrServiceError
-from jbrain.web.fetch import WebFetchError
+from jbrain.web.fetch import JS_SHELL_MESSAGE, JS_SHELL_NOTE, WebFetchError
 from jbrain.web.search import WebSearchError
 
 if TYPE_CHECKING:
@@ -257,11 +257,18 @@ async def web_fetch(request: Request) -> Response:
     except WebFetchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not result.text:
-        return Response(
-            content=f"That page ({url}) had no readable text.\n", media_type="text/plain"
+        # An un-rendered JS app is not an empty page — the in-sandbox CLI gets the same
+        # diagnosis jerv's web_fetch does, or it will burn its turns re-fetching the URL.
+        empty = (
+            JS_SHELL_MESSAGE.format(url=url)
+            if result.js_shell
+            else (f"That page ({url}) had no readable text.")
         )
+        return Response(content=f"{empty}\n", media_type="text/plain")
     header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
     body = header + result.text
+    if result.js_shell:
+        body += f"\n\n{JS_SHELL_NOTE}"
     if result.links:
         links = "\n".join(f"- {u}" for u in result.links)
         body += f"\n\nLinks on this page (web-fetch any of these to follow it):\n{links}"

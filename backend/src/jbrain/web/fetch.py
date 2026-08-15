@@ -369,6 +369,34 @@ def _looks_like_js_app(html: str, text: str) -> bool:
     )
 
 
+# What a model is told when a fetch came back as an un-rendered shell (`FetchResult.js_shell`).
+# It lives here, beside the detector and next to `_SEARCH_FORM_MESSAGE`, because BOTH fetch
+# surfaces need it — jerv's `web_fetch` tool and the jcode sandbox's `web-fetch` bridge — and
+# two copies of a message this specific would drift. Two jobs, both learned from watching a
+# real miss: say WHY the page looks empty, so "no readable text" isn't read as "this topic has
+# no page"; and say what the fetcher ALREADY tried (the whole direct → reader → solver → Tavily
+# ladder ran before this message existed), so the next call goes to another source instead of
+# re-fetching the same URL in the hope of shaking content loose.
+JS_SHELL_MESSAGE = (
+    "That page ({url}) is a JavaScript app: its HTML carries no readable content — the text is"
+    " painted by scripts in a browser. It was already retried through a headless renderer and a"
+    " stealth browser, which recovered nothing either, so re-fetching this URL (with any offset,"
+    " find, or method) will not help. Get the same material another way: search for it on a site"
+    " that serves real HTML (a write-up, a mirror, the project's docs, repository, or arXiv"
+    " page), or fetch a data endpoint if you have its URL (an RSS feed, or the JSON API the page"
+    " itself calls). This is NOT evidence that the page is empty or that the topic doesn't exist."
+)
+# The same warning for the more dangerous half — a shell that leaked a few words of chrome. It
+# LOOKS like a successful (if short) read, so without the note the model quotes page furniture
+# as if it were the article.
+JS_SHELL_NOTE = (
+    "[Note: this URL is a JavaScript app and the text above is only the shell that survived —"
+    " the renderer and stealth browser were already tried and recovered no more. Treat this as an"
+    " UNREAD page, not a short one: find the same material on a site that serves real HTML rather"
+    " than re-fetching this URL.]"
+)
+
+
 # --- Paywall / subscriber-wall detection -------------------------------------
 # A metered/subscriber site often answers 200 with a SHORT wall in place of the article
 # ("Subscribe to continue reading"), which the extractor pulls as the page's "content" —

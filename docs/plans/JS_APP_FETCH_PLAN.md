@@ -54,14 +54,16 @@ existing recovery ladder, with the shell seeded as the thin fallback so escalati
 improve on what we hold, never lose it. Held to the same `_MIN_RECOVERED_CHARS` bar as
 every other tier — the asymmetry that caused the miss is gone.
 
-**Telling the model (`_JS_SHELL_MESSAGE` / `_JS_SHELL_NOTE`,
-`backend/src/jbrain/agent/webtools.py`).** `FetchResult.js_shell` rides back on a result no
+**Telling the model (`JS_SHELL_MESSAGE` / `JS_SHELL_NOTE`, `web/fetch.py`, beside the
+detector and `_SEARCH_FORM_MESSAGE`).** `FetchResult.js_shell` rides back on a result no
 tier could paint, and the tool says three things the old message didn't: the page is a
 JavaScript app, the renderer and stealth browser **were already tried** (so don't re-fetch
 this URL), and this is not evidence the topic doesn't exist — go find it on a site that
 serves real HTML, or hit the feed/JSON endpoint behind it. A shell that leaked a few words
 gets the same warning appended to its text, because that is the more dangerous half: it
 reads as a successful short page, and the model will otherwise quote chrome as content.
+Both fetch surfaces carry it — jerv's `web_fetch` tool and the jcode sandbox's `web-fetch`
+bridge (`api/jcode_llm.py`), which shares the fetcher and so inherited the same blind spot.
 
 **Diagnosability.** `web.js_shell_unrecovered` (with the char count) marks a page the whole
 ladder failed to render, alongside the existing `web.challenge_blocked` /
@@ -71,11 +73,13 @@ ladder failed to render, alongside the existing `web.challenge_blocked` /
 
 - **J1 ✅ (this PR)** — `_looks_like_js_app`, the widened escalation trigger + `_richer`
   seeding, `FetchResult.js_shell`, the two tool messages, the
-  `web.js_shell_unrecovered` log. Unit coverage in `test_web.py` (11 cases: leaky-shell
+  `web.js_shell_unrecovered` log, and the same two messages on the jcode `web-fetch`
+  bridge. Unit coverage in `test_web.py` (11 cases: leaky-shell
   escalation to reader and to solver, shape-only detection with no framework marker, the
   unrecovered/thin-recovery flag, the offset-page guard, and the two precision cases that
   must NOT escalate — a genuinely short page and a hydrated framework page — plus the two
-  tool-message cases), web fetch faked via `MockTransport`.
+  tool-message cases), web fetch faked via `MockTransport`, plus two bridge cases in
+  `test_jcode_web_bridge.py`.
 - **J2 ◻️** — live validation on-box via `POST /api/debug/fetch`: confirm a known SPA
   (`qwen.ai/blog`) either renders through a tier or comes back honestly flagged, and check
   whether the on-box reader needs a hydration wait (`X-Timeout` / `X-Wait-For-Selector`)

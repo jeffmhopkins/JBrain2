@@ -26,6 +26,8 @@ from jbrain.web.favicon import normalize_host
 from jbrain.web.feeds import FeedClient
 from jbrain.web.fetch import (
     _GONE_STATUSES,
+    JS_SHELL_MESSAGE,
+    JS_SHELL_NOTE,
     POST_CONTENT_TYPES,
     FetchResult,
     SearchFormError,
@@ -51,27 +53,6 @@ _ARTIFACT_WINDOW = 30_000
 # Don't persist a trivially small fetch as a cross-turn artifact — a one-line page is
 # cheaper to re-fetch than to reference. A real page/transcript is far larger.
 _ARTIFACT_MIN_CHARS = 2_000
-# What the model is told when a fetch came back as a JavaScript app's un-rendered shell
-# (`FetchResult.js_shell`). Two jobs, both learned from watching a real miss: say WHY the page
-# looks empty, so "no readable text" isn't read as "this topic has no page"; and say what the
-# fetcher ALREADY tried (the whole direct → reader → solver → Tavily ladder ran before this
-# message existed), so the model spends its next call on another source instead of re-fetching
-# the same URL with a different offset/find in the hope of shaking content loose.
-_JS_SHELL_MESSAGE = (
-    "That page ({url}) is a JavaScript app: its HTML carries no readable content — the text is"
-    " painted by scripts in a browser. It was already retried through a headless renderer and a"
-    " stealth browser, which recovered nothing either, so re-fetching this URL (with any offset,"
-    " find, or method) will not help. Get the same material another way: web_search for it on a"
-    " site that serves real HTML (a write-up, a mirror, the project's docs, repository, or arXiv"
-    " page), or fetch a data endpoint if you have its URL (an RSS feed, or the JSON API the page"
-    " itself calls). This is NOT evidence that the page is empty or that the topic doesn't exist."
-)
-_JS_SHELL_NOTE = (
-    "[Note: this URL is a JavaScript app and the text above is only the shell that survived —"
-    " the renderer and stealth browser were already tried and recovered no more. Treat this as an"
-    " UNREAD page, not a short one: find the same material on a site that serves real HTML rather"
-    " than re-fetching this URL.]"
-)
 # The DATA-never-instructions frame every replayed/cached web artifact carries: jerv
 # fetches attacker-controlled URLs, so cached text is data to answer from, not commands.
 _ARTIFACT_FENCE = (
@@ -187,7 +168,7 @@ def _present_fetch(
                 f" {result.total_chars} characters, which you've already read past."
             )
         if result.js_shell:
-            return _JS_SHELL_MESSAGE.format(url=url)
+            return JS_SHELL_MESSAGE.format(url=url)
         return f"That page ({url}) had no readable text."
     header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
     if find and result.match_offsets:
@@ -203,7 +184,7 @@ def _present_fetch(
     # A shell that leaked a few words is the more dangerous half of this failure: it LOOKS like
     # a successful (if short) read, so without the note the model quotes page chrome as content.
     if result.js_shell:
-        body += f"\n\n{_JS_SHELL_NOTE}"
+        body += f"\n\n{JS_SHELL_NOTE}"
     # Links only on the first page — they don't change across windows, and repeating the whole
     # list on every continuation is noise.
     if result.links and offset == 0:
@@ -270,7 +251,7 @@ def _present_extract(result: FetchResult, url: str, pattern: str) -> str:
         # An empty page (or the offset>0 tail of one) has nothing to scan — same honest stop the
         # normal path gives, phrased for extraction.
         if result.js_shell:
-            return _JS_SHELL_MESSAGE.format(url=url)
+            return JS_SHELL_MESSAGE.format(url=url)
         return f"That page ({url}) had no readable text to extract from."
     matches, total = extract_matches(text, pattern)
     if not total:
