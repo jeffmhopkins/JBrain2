@@ -1,0 +1,576 @@
+<!doctype html>
+<!--
+  ============================================================================
+  Top-bar vitals — OPTION D · "TYPOGRAPHIC"
+  ============================================================================
+
+  Rationale: The right cluster is set as pure type — no container, no rule, no
+  glyph — a lead numeral in tabular system-ui with its unit set small in the
+  mono stack, and the sync state carried by a micro-caps word where the 8px dot
+  used to be, so status is read rather than decoded. The composition recomposes
+  rather than merely appending: idle is one line (SYNCED · 6%) with the GPU
+  figure holding the lead weight, and the moment a turn streams the block folds
+  into two lines — tokens/sec takes the lead, GPU demotes to 400/--text-2, and
+  the status word drops to a second baseline beneath.
+
+  Cost: it is small and unlabelled — at the 0.75 font scale the lead figure
+  draws at 13.5px and the units at 9px, so the reading depends on the owner
+  already knowing that "t/s" is generation rate and the bare "%" is the box's
+  GPU; there is no icon or tooltip target to fall back on, and the one-line ↔
+  two-line fold means the bar's right edge visibly re-sets at turn start.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Top-bar vitals — D · Typographic</title>
+<style>
+  /* ---------------------------------------------------------------------
+     Design tokens — lifted verbatim from frontend/src/styles/tokens.css.
+     This is the ONLY block in the file that may contain raw hex.
+     --------------------------------------------------------------------- */
+  :root{
+    color-scheme: dark;
+
+    --bg:#0e0f11;
+    --surface:#17181b;
+    --surface-2:#1e2024;
+    --surface-composer:#141518;
+    --border:#26282c;
+    --text:#e6e7e9;
+    --text-2:#9a9da3;
+    --text-3:#5c5f66;
+
+    --steel:#7fa7c9;  --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;  --green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;  --amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f;   --rose-tint:rgba(207,138,143,.13);
+    --violet:#a493c9; --violet-tint:rgba(164,147,201,.13);
+
+    --accent:var(--steel);
+    --accent-tint:var(--steel-tint);
+    --ok:var(--green);
+    --warn:var(--amber);
+    --danger:var(--rose);
+
+    /* Type scale — the app default. A nominal 12px therefore DRAWS at 9px. */
+    --font-scale:0.75;
+    --fs-micro:calc(12px * var(--font-scale));
+    --fs-head:calc(13px * var(--font-scale));
+    --fs-secondary:calc(14px * var(--font-scale));
+    --fs-note:calc(15px * var(--font-scale));
+    --fs-body:calc(16px * var(--font-scale));
+    --fs-title:calc(18px * var(--font-scale));
+    --fs-screen:calc(22px * var(--font-scale));
+
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --shadow-card:none;
+
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+
+    /* mock-only: the page behind the phone, and the phone's outer bezel */
+    --page-bg:#08090a;
+    --bezel:#2a2c30;
+  }
+
+  [data-theme="light"]{
+    color-scheme: light;
+    --bg:#f7f7f5;
+    --surface:#ffffff;
+    --surface-2:#f0f0ee;
+    --border:#e2e2df;
+    --text:#1a1b1e;
+    --text-2:#5c5f66;
+    --text-3:#9a9da3;
+    --surface-composer:#ffffff;
+    --shadow-card:0 1px 2px rgba(0,0,0,.06);
+    --bezel:#d8d8d4;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{
+    background:var(--page-bg); color:var(--text);
+    display:flex; flex-direction:column; align-items:center; gap:18px;
+    padding:22px 0 56px; min-height:100vh;
+  }
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  /* ---- page furniture (not part of the component) ---- */
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.6;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);
+    font-size:11px;padding:2px 9px;border-radius:var(--r-pill);margin-bottom:7px;letter-spacing:.04em;}
+
+  /* =====================================================================
+     .opt-d — THE COMPONENT. Everything below is scoped under .opt-d and is
+     self-contained: lift this block, the markup, and window.optD.render().
+     ===================================================================== */
+
+  .opt-d{
+    display:grid;
+    justify-items:end;
+    align-items:baseline;
+    line-height:1;
+    /* the numbers are the design: no background, no border, no glyph */
+    font-variant-numeric:tabular-nums lining-nums;
+    font-feature-settings:"tnum" 1,"lnum" 1;
+  }
+
+  /* IDLE — one line: the status word sits on the figure's own baseline. */
+  .opt-d[data-turn="idle"]{
+    grid-template-areas:"s f";
+    grid-template-columns:auto auto;
+    column-gap:9px;
+    row-gap:0;
+  }
+  /* STREAMING — the block folds: figures take the top line, status drops. */
+  .opt-d[data-turn="live"]{
+    grid-template-areas:"f" "s";
+    grid-template-columns:auto;
+    column-gap:0;
+    row-gap:3px;
+  }
+
+  .opt-d .d-figs{
+    grid-area:f;
+    display:flex;
+    align-items:baseline;
+    gap:11px;
+  }
+  .opt-d .d-status{grid-area:s;}
+
+  .opt-d .d-fig{
+    display:inline-flex;
+    align-items:baseline;
+  }
+
+  /* The numeral. Fixed 3ch slot, right-aligned — a changing digit never
+     shifts anything to its right (or left). */
+  .opt-d .d-num{
+    font-size:var(--fs-title);
+    font-weight:600;
+    color:var(--text);
+    min-width:3ch;
+    text-align:right;
+    font-variant-numeric:tabular-nums lining-nums;
+    font-feature-settings:"tnum" 1,"lnum" 1;
+    font-variant-ligatures:none;
+  }
+
+  /* The unit. Mono against the sans numerals — the one texture change in the
+     cluster, and the thing that tells you what the figure is. */
+  .opt-d .d-unit{
+    font-family:var(--font-mono);
+    font-size:var(--fs-micro);
+    font-weight:400;
+    color:var(--text-3);
+    letter-spacing:0;
+    margin-left:2px;
+  }
+  .opt-d .d-pct{margin-left:1px;}
+
+  /* --- the reshape: which figure holds the lead ------------------------ */
+
+  /* idle → GPU is the only figure, so it carries the lead weight/tracking */
+  .opt-d[data-turn="idle"] .d-tps{display:none;}
+  .opt-d[data-turn="idle"] .d-gpu .d-num{
+    font-weight:600; color:var(--text); letter-spacing:-.03em;
+  }
+
+  /* streaming → tokens/sec takes the lead; GPU steps back to context */
+  .opt-d[data-turn="live"] .d-tps .d-num{
+    font-weight:600; color:var(--text); letter-spacing:-.03em;
+  }
+  .opt-d[data-turn="live"] .d-gpu .d-num{
+    font-weight:400; color:var(--text-2); letter-spacing:0;
+  }
+
+  /* a sleeping box recedes: value, not hue, carries the load reading */
+  .opt-d[data-load="quiet"] .d-gpu .d-num{color:var(--text-3);}
+
+  /* no gauge → an en dash in the figure slot, the way a table sets a blank */
+  .opt-d[data-gpu="off"] .d-gpu .d-num{
+    color:var(--text-3); font-weight:400; letter-spacing:0;
+  }
+  .opt-d[data-gpu="off"] .d-pct{display:none;}
+  .opt-d .d-nogpu{display:none;}
+  .opt-d[data-gpu="off"] .d-nogpu{display:inline;}
+  .opt-d .d-nogpu::after{content:"\00B7";margin:0 .45em 0 .4em;color:var(--text-3);}
+
+  /* --- the status word: what replaces the 8px dot ---------------------- */
+  .opt-d .d-status{
+    font-size:var(--fs-micro);
+    font-weight:600;
+    text-transform:uppercase;
+    letter-spacing:.14em;
+    /* uppercase tracking adds a trailing gap; pull it back so the right
+       edge optically aligns with the figures above it */
+    margin-right:-.14em;
+    color:var(--text-3);
+    white-space:nowrap;
+  }
+  .opt-d .d-sync{color:var(--text-3);}
+  .opt-d[data-sync="pending"] .d-sync{color:var(--warn);}
+  .opt-d[data-sync="unreachable"] .d-sync{color:var(--danger);}
+
+  .opt-d .d-num,.opt-d .d-unit,.opt-d .d-sync{transition:color .22s ease,font-weight .22s ease;}
+  @media (prefers-reduced-motion:reduce){
+    .opt-d,.opt-d *{transition:none !important;animation:none !important;}
+  }
+  /* ===================== end .opt-d ==================================== */
+
+  /* ---- phone frame (app chrome reproduction) ---- */
+  .phone{
+    width:390px;height:722px;background:var(--bg);border:1px solid var(--bezel);
+    border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;
+  }
+  .top-bar{
+    display:flex;align-items:center;gap:14px;height:56px;padding:0 16px;flex:none;
+  }
+  .session-title{
+    font-weight:700;font-size:var(--fs-screen);color:var(--text);text-align:left;
+    min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .top-bar-right{margin-left:auto;display:flex;align-items:center;gap:18px;color:var(--text-2);}
+
+  .stream{flex:1;overflow-y:auto;padding:0 16px;display:flex;flex-direction:column;}
+  .stream-inner{margin-top:auto;display:flex;flex-direction:column;gap:12px;padding-bottom:10px;}
+  .bubble{max-width:82%;padding:11px 14px;border-radius:var(--r-card);
+    font-size:var(--fs-note);line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid var(--steel-tint);
+    border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);
+    border-bottom-left-radius:5px;}
+  .ai .cursor{display:inline-block;width:1px;height:1em;background:var(--text-2);
+    vertical-align:-2px;margin-left:2px;animation:blink 1.05s steps(2,start) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+  @media (prefers-reduced-motion:reduce){.cursor{animation:none;}}
+  .phone[data-turn="idle"] .cursor{display:none;}
+
+  .dock{flex:none;padding:6px 14px 14px;background:var(--bg);}
+  .omnibox{background:var(--surface-composer);border:1px solid var(--border);
+    border-radius:24px;padding:12px;display:flex;flex-direction:column;}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .seg span{flex:1;color:var(--text-2);font-size:var(--fs-head);font-weight:500;padding:9px 0;
+    display:flex;align-items:center;justify-content:center;gap:6px;}
+  .seg .on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .field{color:var(--text-3);font-size:var(--fs-body);line-height:1.4;padding:12px 6px 0;min-height:2.6em;}
+  .foot{display:flex;align-items:center;justify-content:space-between;
+    padding:8px 4px 0;color:var(--text-2);font-size:var(--fs-micro);}
+  .foot .left{display:flex;align-items:center;gap:7px;}
+  .foot .mdot{width:9px;height:9px;border-radius:var(--r-pill);background:var(--steel);flex:none;}
+  .swipe-hint{text-align:center;font-size:var(--fs-micro);color:var(--text-3);
+    letter-spacing:.06em;padding-top:9px;}
+
+  /* ---- control desk ---- */
+  .desk{width:390px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-card);padding:14px 16px 16px;display:flex;flex-direction:column;gap:11px;}
+  .desk h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);font-weight:600;}
+  .row{display:grid;grid-template-columns:74px 1fr;align-items:center;gap:10px;}
+  .row .lbl{font-size:12px;color:var(--text-2);}
+  .ctl{display:flex;border:1px solid var(--border);border-radius:var(--r-input);overflow:hidden;}
+  .ctl button{flex:1;border:none;background:none;color:var(--text-2);font:inherit;font-size:12px;
+    font-weight:500;padding:8px 4px;cursor:pointer;border-left:1px solid var(--border);}
+  .ctl button:first-child{border-left:none;}
+  .ctl button.on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .note{font-size:11.5px;color:var(--text-3);line-height:1.55;padding-top:2px;}
+  .note code{font-family:var(--font-mono);color:var(--text-2);font-size:11px;}
+
+  /* ---- static state gallery ---- */
+  .gallery{width:390px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-card);padding:14px 16px 16px;display:flex;flex-direction:column;gap:12px;}
+  .gallery .grid{display:grid;grid-template-columns:1fr auto;gap:13px 14px;align-items:center;}
+  .gallery .n{font-size:12px;color:var(--text-2);}
+  .gallery .sep{grid-column:1/-1;height:1px;background:var(--border);}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Top-bar vitals · D — Typographic</span><br/>
+  The numerals <b>are</b> the component: sans tabular figures, units set small in the
+  mono stack, and the old 8px sync dot replaced by a <b>micro-caps word</b> so the
+  status is read, not decoded. Idle sets one line with GPU holding the lead weight;
+  when a turn streams the block <b>folds to two lines</b> — tokens/sec takes the lead,
+  GPU steps back to <code style="font-family:var(--font-mono);font-size:11px">--text-2</code>,
+  and the status word drops to its own baseline.
+</div>
+
+<!-- ======================= PHONE ======================= -->
+<div class="phone" id="phone" data-theme="dark" data-turn="idle">
+  <header class="top-bar">
+    <div class="session-title">Initial Greeting Message</div>
+
+    <div class="top-bar-right">
+      <!-- ===== THE COMPONENT ===== -->
+      <div class="opt-d" data-turn="idle" data-sync="synced" data-gpu="on" data-load="quiet">
+        <div class="d-figs" aria-label="GPU 5 percent busy">
+          <span class="d-fig d-tps"><span class="d-num">44</span><span class="d-unit">t/s</span></span>
+          <span class="d-fig d-gpu"><span class="d-num">5</span><span class="d-unit d-pct">%</span></span>
+        </div>
+        <div class="d-status" role="status" title="notes synced"><span class="d-nogpu">no gpu</span><span class="d-sync">synced</span></div>
+      </div>
+      <!-- ===== /THE COMPONENT ===== -->
+    </div>
+  </header>
+
+  <main class="stream">
+    <div class="stream-inner">
+      <div class="bubble ai">Morning. Nothing new landed overnight — your last note was the Tuesday walk.</div>
+      <div class="bubble me">What did I say about the knee after that walk?</div>
+      <div class="bubble ai" id="streamBubble">You logged it as "tight on the downhills, fine on the flat", and you'd said the same thing three weeks earlier<span class="cursor"></span></div>
+    </div>
+  </main>
+
+  <div class="dock">
+    <div class="omnibox">
+      <div class="seg">
+        <span>＋ Entry</span>
+        <span>Research</span>
+        <span class="on">Full Brain</span>
+      </div>
+      <div class="field">Talk it out — full tool access…</div>
+      <div class="foot">
+        <div class="left"><span class="mdot"></span> Full tool access · staged writes need approval</div>
+        <div>📎 ➤</div>
+      </div>
+      <div class="swipe-hint">swipe up for the launcher</div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= CONTROL DESK ======================= -->
+<div class="desk">
+  <h2>Control desk</h2>
+
+  <div class="row">
+    <div class="lbl">Turn</div>
+    <div class="ctl" data-k="turn">
+      <button data-v="live">Streaming</button>
+      <button data-v="idle" class="on">Idle</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="lbl">Box</div>
+    <div class="ctl" data-k="load">
+      <button data-v="busy">Working</button>
+      <button data-v="quiet" class="on">Quiet</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="lbl">Sync</div>
+    <div class="ctl" data-k="sync">
+      <button data-v="synced" class="on">Synced</button>
+      <button data-v="pending">Pending</button>
+      <button data-v="unreachable">Offline</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="lbl">GPU gauge</div>
+    <div class="ctl" data-k="gauge">
+      <button data-v="on" class="on">Present</button>
+      <button data-v="off">Unavailable</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="lbl">Theme</div>
+    <div class="ctl" data-k="theme">
+      <button data-v="dark" class="on">Dark</button>
+      <button data-v="light">Light</button>
+    </div>
+  </div>
+
+  <div class="note">
+    Figures jitter at <b>1&nbsp;Hz</b> — ~35–55&nbsp;t/s on the local 120B, GPU drifting
+    60–98% working / 2–8% quiet. Every numeral sits in a fixed <code>3ch</code>
+    tabular slot, so a digit change never moves the layout; only a <i>state</i>
+    change re-sets the block.
+  </div>
+</div>
+
+<!-- ======================= STATE GALLERY ======================= -->
+<div class="gallery">
+  <h2 style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);font-weight:600;">Every state, at true size</h2>
+  <div class="grid">
+
+    <div class="n">Idle · quiet box · synced</div>
+    <div class="opt-d" data-static data-turn="idle" data-sync="synced" data-gpu="on" data-load="quiet">
+      <div class="d-figs"><span class="d-fig d-tps"><span class="d-num">44</span><span class="d-unit">t/s</span></span><span class="d-fig d-gpu"><span class="d-num">4</span><span class="d-unit d-pct">%</span></span></div>
+      <div class="d-status"><span class="d-nogpu">no gpu</span><span class="d-sync">synced</span></div>
+    </div>
+
+    <div class="n">Idle · working box · synced</div>
+    <div class="opt-d" data-static data-turn="idle" data-sync="synced" data-gpu="on" data-load="busy">
+      <div class="d-figs"><span class="d-fig d-tps"><span class="d-num">44</span><span class="d-unit">t/s</span></span><span class="d-fig d-gpu"><span class="d-num">87</span><span class="d-unit d-pct">%</span></span></div>
+      <div class="d-status"><span class="d-nogpu">no gpu</span><span class="d-sync">synced</span></div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="n">Streaming · local model</div>
+    <div class="opt-d" data-static data-turn="live" data-sync="synced" data-gpu="on" data-load="busy">
+      <div class="d-figs"><span class="d-fig d-tps"><span class="d-num">47</span><span class="d-unit">t/s</span></span><span class="d-fig d-gpu"><span class="d-num">93</span><span class="d-unit d-pct">%</span></span></div>
+      <div class="d-status"><span class="d-nogpu">no gpu</span><span class="d-sync">synced</span></div>
+    </div>
+
+    <div class="n">Streaming · cloud model (box idle)</div>
+    <div class="opt-d" data-static data-turn="live" data-sync="synced" data-gpu="on" data-load="quiet">
+      <div class="d-figs"><span class="d-fig d-tps"><span class="d-num">108</span><span class="d-unit">t/s</span></span><span class="d-fig d-gpu"><span class="d-num">6</span><span class="d-unit d-pct">%</span></span></div>
+      <div class="d-status"><span class="d-nogpu">no gpu</span><span class="d-sync">synced</span></div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="n">Sync pending</div>
+    <div class="opt-d" data-static data-turn="idle" data-sync="pending" data-gpu="on" data-load="busy">
+      <div class="d-figs"><span class="d-fig d-tps"><span class="d-num">44</span><span class="d-unit">t/s</span></span><span class="d-fig d-gpu"><span class="d-num">71</span><span class="d-unit d-pct">%</span></span></div>
+      <div class="d-status"><span class="d-nogpu">no gpu</span><span class="d-sync">pending</span></div>
+    </div>
+
+    <div class="n">Server unreachable</div>
+    <div class="opt-d" data-static data-turn="live" data-sync="unreachable" data-gpu="on" data-load="busy">
+      <div class="d-figs"><span class="d-fig d-tps"><span class="d-num">41</span><span class="d-unit">t/s</span></span><span class="d-fig d-gpu"><span class="d-num">88</span><span class="d-unit d-pct">%</span></span></div>
+      <div class="d-status"><span class="d-nogpu">no gpu</span><span class="d-sync">offline</span></div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="n">No amdgpu gauge · idle</div>
+    <div class="opt-d" data-static data-turn="idle" data-sync="synced" data-gpu="off" data-load="quiet">
+      <div class="d-figs"><span class="d-fig d-tps"><span class="d-num">44</span><span class="d-unit">t/s</span></span><span class="d-fig d-gpu"><span class="d-num">–</span><span class="d-unit d-pct">%</span></span></div>
+      <div class="d-status"><span class="d-nogpu">no gpu</span><span class="d-sync">synced</span></div>
+    </div>
+
+    <div class="n">No amdgpu gauge · streaming</div>
+    <div class="opt-d" data-static data-turn="live" data-sync="synced" data-gpu="off" data-load="quiet">
+      <div class="d-figs"><span class="d-fig d-tps"><span class="d-num">52</span><span class="d-unit">t/s</span></span><span class="d-fig d-gpu"><span class="d-num">–</span><span class="d-unit d-pct">%</span></span></div>
+      <div class="d-status"><span class="d-nogpu">no gpu</span><span class="d-sync">synced</span></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* =======================================================================
+   window.optD — the component's only public surface.
+   render({turn, load, sync, gpu, tps}) updates every non-static .opt-d root.
+   ======================================================================= */
+(function () {
+  var WORD = { synced: "synced", pending: "pending", unreachable: "offline" };
+  var FULL = {
+    synced: "notes synced",
+    pending: "sync pending",
+    unreachable: "server unreachable"
+  };
+
+  function clampInt(n, lo, hi) {
+    n = Math.round(Number(n) || 0);
+    return n < lo ? lo : n > hi ? hi : n;
+  }
+
+  window.optD = {
+    render: function (state) {
+      state = state || {};
+      var live = state.turn === "live";
+      var hasGpu = state.gpu !== null && state.gpu !== undefined && !isNaN(state.gpu);
+      var gpu = hasGpu ? clampInt(state.gpu, 0, 100) : null;
+      var tps = clampInt(state.tps, 0, 999);
+      /* The load reading comes from the gauge itself when we have one; the
+         caller's `load` hint only stands in when there is no gauge. */
+      var quiet = hasGpu ? gpu < 10 : state.load === "quiet";
+      var sync = WORD[state.sync] ? state.sync : "synced";
+
+      var roots = document.querySelectorAll(".opt-d:not([data-static])");
+      for (var i = 0; i < roots.length; i++) {
+        var el = roots[i];
+        el.setAttribute("data-turn", live ? "live" : "idle");
+        el.setAttribute("data-sync", sync);
+        el.setAttribute("data-gpu", hasGpu ? "on" : "off");
+        el.setAttribute("data-load", quiet ? "quiet" : "busy");
+
+        el.querySelector(".d-tps .d-num").textContent = String(tps);
+        el.querySelector(".d-gpu .d-num").textContent = hasGpu ? String(gpu) : "–";
+        el.querySelector(".d-sync").textContent = WORD[sync];
+
+        el.querySelector(".d-figs").setAttribute(
+          "aria-label",
+          (live ? tps + " tokens per second. " : "") +
+            (hasGpu ? "GPU " + gpu + " percent busy." : "No GPU gauge.")
+        );
+        el.querySelector(".d-status").setAttribute("title", FULL[sync]);
+      }
+    }
+  };
+})();
+
+/* =======================================================================
+   Mock harness — control desk + 1 Hz jitter. Not part of the component.
+   ======================================================================= */
+(function () {
+  var phone = document.getElementById("phone");
+
+  var desk = { turn: "idle", load: "quiet", sync: "synced", gauge: "on", theme: "dark" };
+  var tps = 44;
+  var gpu = 5;
+
+  function clamp(n, lo, hi) { return n < lo ? lo : n > hi ? hi : n; }
+
+  function paint() {
+    phone.setAttribute("data-theme", desk.theme);
+    phone.setAttribute("data-turn", desk.turn);
+    window.optD.render({
+      turn: desk.turn,
+      load: desk.load,
+      sync: desk.sync,
+      gpu: desk.gauge === "off" ? null : gpu,
+      tps: tps
+    });
+  }
+
+  /* 1 Hz: a slow drift toward a plausible target plus a little noise, so the
+     figures move the way a real gauge does rather than flickering randomly. */
+  setInterval(function () {
+    if (desk.turn === "live") {
+      tps += (Math.random() - 0.5) * 6;
+      if (Math.random() < 0.12) tps += (Math.random() - 0.5) * 11;
+      tps = clamp(tps, 35, 55);
+    }
+    var target = desk.load === "busy" ? 62 + Math.random() * 34 : 2 + Math.random() * 6;
+    gpu += (target - gpu) * 0.42 + (Math.random() - 0.5) * 2.5;
+    gpu = clamp(gpu, 0, 100);
+    paint();
+  }, 1000);
+
+  document.querySelectorAll(".ctl").forEach(function (ctl) {
+    var key = ctl.getAttribute("data-k");
+    ctl.addEventListener("click", function (e) {
+      var btn = e.target.closest("button");
+      if (!btn) return;
+      desk[key] = btn.getAttribute("data-v");
+      ctl.querySelectorAll("button").forEach(function (b) {
+        b.classList.toggle("on", b === btn);
+      });
+      /* Starting a turn on the local model lights the box up — mirror that so
+         the default demo path shows the honest pairing. */
+      if (key === "turn" && desk.turn === "live" && desk.load === "quiet") {
+        desk.load = "busy";
+        var box = document.querySelector('.ctl[data-k="load"]');
+        box.querySelectorAll("button").forEach(function (b) {
+          b.classList.toggle("on", b.getAttribute("data-v") === "busy");
+        });
+      }
+      paint();
+    });
+  });
+
+  paint();
+})();
+</script>
+</body>
+</html>

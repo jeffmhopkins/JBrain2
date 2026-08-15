@@ -1,0 +1,543 @@
+<!--
+  ============================================================================
+  OPTION F — "Vitals block"
+  Top-bar right cluster · one stateful object
+
+  RATIONALE
+  The two readings and the sync state collapse into a single 2x2 micro-block
+  whose top line is the *glance layer* (colour only: sync dot + word, GPU meter)
+  and whose bottom line is the *literal layer* (exact figures only: t/s, GPU %),
+  so every colour in the bar lives on one row and every number on the other.
+  Because it is one furnished object with fixed-width slots, the app can reason
+  about it as a single component with named states — idle, streaming, hot,
+  sync-degraded, offline, no-gauge — and no state change can ever reflow the
+  session title beside it.
+
+  COST
+  It spends ~137px of a 358px bar — nearly three times the old dot+launcher cluster —
+  so long session titles ellipsize noticeably sooner, and the smallest labels
+  ("GPU", "synced") draw at 9px under the default 0.75 font scale, which is at
+  the edge of comfortable reading.
+  ============================================================================
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Top-bar vitals — F · Vitals block</title>
+<style>
+  /* ---- tokens (verbatim from frontend/src/styles/tokens.css) ---- */
+  :root{
+    color-scheme: dark;
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --surface-composer:#141518;
+
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a; --green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a; --amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f;  --rose-tint:rgba(207,138,143,.13);
+    --violet:#a493c9; --violet-tint:rgba(164,147,201,.13);
+
+    --accent:var(--steel); --accent-tint:var(--steel-tint);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose);
+    --danger-tint:var(--rose-tint); --info:var(--steel);
+
+    /* Type scale — real app default. 12px nominal draws at 9px. */
+    --font-scale:0.75;
+    --fs-micro:calc(12px * var(--font-scale));
+    --fs-head:calc(13px * var(--font-scale));
+    --fs-secondary:calc(14px * var(--font-scale));
+    --fs-note:calc(15px * var(--font-scale));
+    --fs-body:calc(16px * var(--font-scale));
+    --fs-title:calc(18px * var(--font-scale));
+    --fs-screen:calc(22px * var(--font-scale));
+
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-box:16px; --r-pill:999px;
+    --shadow-card:none;
+
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{
+    color-scheme: light;
+    --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3;
+    --surface-composer:#ffffff;
+    --shadow-card:0 1px 2px rgba(0,0,0,.06);
+  }
+
+  /* ==========================================================================
+     THE COMPONENT — every selector scoped under .opt-f
+     Root markup: <div class="opt-f" data-turn data-sync data-gpu>
+     ========================================================================== */
+  .opt-f{
+    position:relative;
+    display:grid;
+    grid-template-columns:56px 54px;   /* fixed slots — content can never resize it */
+    grid-template-rows:auto auto;
+    align-items:center;
+    gap:4px 9px;
+    padding:5px 8px 6px;
+    border:1px solid var(--border);
+    border-radius:var(--r-input);
+    background:var(--surface);
+    overflow:hidden;                    /* clips the live rail to the radius */
+    line-height:1;
+    font-variant-numeric:tabular-nums;
+    font-feature-settings:"tnum" 1;
+    transition:background-color .35s ease, border-color .35s ease;
+  }
+  /* live rail — the "a turn is running" marker. Absolute, so it never reflows. */
+  .opt-f::before{
+    content:"";
+    position:absolute; left:0; top:0; bottom:0; width:2px;
+    background:transparent;
+    transition:background-color .25s ease;
+  }
+  .opt-f[data-turn="live"]::before{
+    background:var(--steel);
+    animation:opt-f-rail 1.6s ease-in-out infinite;
+  }
+  @keyframes opt-f-rail{0%,100%{opacity:1}50%{opacity:.4}}
+
+  /* --- row 1, col 1 : sync (dot ALWAYS paired with its word) --- */
+  .opt-f .f-sync{display:flex;align-items:center;gap:5px;min-width:0;}
+  .opt-f .f-dot{
+    width:6px;height:6px;flex:none;border-radius:var(--r-pill);
+    background:var(--text-3);
+    transition:background-color .3s ease;
+  }
+  .opt-f .f-word{
+    font-size:var(--fs-head);
+    color:var(--text-3);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    transition:color .3s ease;
+  }
+  .opt-f[data-sync="synced"]      .f-dot{background:var(--ok);}
+  .opt-f[data-sync="pending"]     .f-dot{background:var(--warn);}
+  .opt-f[data-sync="pending"]     .f-word{color:var(--warn);}
+  .opt-f[data-sync="unreachable"] .f-dot{background:var(--danger);}
+  .opt-f[data-sync="unreachable"] .f-word{color:var(--danger);}
+  /* the one state loud enough to tint the whole object */
+  .opt-f[data-sync="unreachable"]{background:var(--rose-tint);}
+
+  /* --- row 1, col 2 : GPU meter (glance aid, never the only encoding) --- */
+  .opt-f .f-track{
+    justify-self:end;
+    width:28px;height:3px;
+    border-radius:var(--r-pill);
+    background:var(--border);
+    overflow:hidden;
+  }
+  .opt-f .f-fill{
+    display:block;height:100%;width:0%;
+    border-radius:var(--r-pill);
+    background:var(--ok);
+    transition:width .9s linear, background-color .3s ease;
+  }
+  .opt-f[data-gpu="warn"] .f-fill{background:var(--warn);}
+  .opt-f[data-gpu="hot"]  .f-fill{background:var(--danger);}
+  .opt-f[data-gpu="none"] .f-fill{display:none;}
+  .opt-f[data-gpu="none"] .f-track{opacity:.55;}
+
+  /* --- row 2, col 1 : throughput --- */
+  .opt-f .f-rate{display:flex;align-items:baseline;gap:3px;}
+  .opt-f .f-tps{
+    font-family:var(--font-mono);
+    font-size:var(--fs-note);
+    color:var(--text-3);
+    transition:color .25s ease;
+  }
+  .opt-f .f-unit{font-size:var(--fs-micro);color:var(--text-3);}
+  .opt-f[data-turn="live"] .f-tps{color:var(--steel);}
+  .opt-f[data-turn="idle"] .f-unit{visibility:hidden;}
+
+  /* --- row 2, col 2 : GPU figure --- */
+  .opt-f .f-gpu{display:flex;align-items:baseline;justify-content:flex-end;gap:4px;}
+  .opt-f .f-lab{
+    font-size:var(--fs-micro);
+    letter-spacing:.06em;
+    color:var(--text-3);
+  }
+  .opt-f .f-pct{
+    font-family:var(--font-mono);
+    font-size:var(--fs-note);
+    color:var(--text-2);
+    transition:color .3s ease;
+  }
+  .opt-f[data-gpu="hot"]  .f-pct{color:var(--danger);}
+  .opt-f[data-gpu="none"] .f-pct{color:var(--text-3);}
+
+  @media (prefers-reduced-motion:reduce){
+    .opt-f, .opt-f *, .opt-f::before{
+      transition:none !important;
+      animation:none !important;
+    }
+  }
+  /* ======================= end of component ================================ */
+
+
+  /* ---- page chrome (not part of the lifted component) ---- */
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{
+    background:var(--bg);color:var(--text);
+    display:flex;flex-direction:column;align-items:center;gap:18px;
+    padding:22px 16px 56px;min-height:100vh;
+  }
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:390px;max-width:100%;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{
+    display:inline-block;background:var(--steel-tint);color:var(--steel);
+    font-size:11px;padding:2px 8px;border-radius:var(--r-pill);margin-bottom:7px;
+  }
+
+  .card{
+    width:390px;max-width:100%;
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-card);padding:14px 16px;
+  }
+  .card h2{
+    font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-3);margin-bottom:12px;
+  }
+
+  /* control desk */
+  .ctl{display:grid;grid-template-columns:52px 1fr;gap:9px 10px;align-items:center;}
+  .ctl .k{font-size:12px;color:var(--text-2);}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .seg button{
+    flex:1;border:none;background:none;color:var(--text-2);
+    font:inherit;font-size:12px;font-weight:500;padding:7px 4px;cursor:pointer;
+    border-right:1px solid var(--border);
+  }
+  .seg button:last-child{border-right:none;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .cycle{
+    margin-top:12px;width:100%;border:1px solid var(--border);background:none;
+    color:var(--text-2);font:inherit;font-size:12px;padding:9px;border-radius:var(--r-input);cursor:pointer;
+  }
+  .cycle[data-on="1"]{background:var(--steel-tint);color:var(--steel);border-color:transparent;}
+
+  /* state gallery */
+  .gal{display:grid;grid-template-columns:96px auto 1fr;gap:12px 12px;align-items:center;}
+  .gal .nm{font-size:12px;color:var(--text);font-weight:500;}
+  .gal .ds{font-size:11px;color:var(--text-3);line-height:1.4;}
+  .gal .opt-f{justify-self:start;}
+  .gal .rule{grid-column:1 / -1;height:1px;background:var(--border);}
+
+  /* phone */
+  .phone{
+    width:390px;max-width:100%;height:660px;
+    background:var(--bg);border:1px solid var(--border);border-radius:34px;
+    overflow:hidden;position:relative;display:flex;flex-direction:column;
+  }
+  .top-bar{display:flex;align-items:center;gap:14px;height:56px;padding:0 16px;flex:none;}
+  .session-title{
+    font-weight:700;font-size:var(--fs-screen);color:var(--text);
+    min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    background:none;border:none;text-align:left;padding:0;
+  }
+  .top-bar-right{margin-left:auto;display:flex;align-items:center;gap:18px;color:var(--text-2);}
+
+  .stream{flex:1;overflow-y:auto;padding:4px 16px;display:flex;flex-direction:column;}
+  .stream-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:10px;}
+  .bubble{max-width:82%;padding:10px 13px;border-radius:var(--r-card);font-size:var(--fs-note);line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid var(--border);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .caret{display:none;width:2px;height:1em;background:var(--steel);vertical-align:-2px;margin-left:2px;animation:blink 1s steps(1) infinite;}
+  .phone[data-turn="live"] .caret{display:inline-block;}
+  @keyframes blink{50%{opacity:0}}
+
+  .dock{flex:none;padding:6px 14px 14px;background:var(--bg);}
+  .grabber{width:34px;height:3px;border-radius:var(--r-pill);background:var(--border);margin:0 auto 8px;}
+  .grab-hint{text-align:center;font-size:var(--fs-micro);color:var(--text-3);margin-bottom:8px;}
+  .omnibox{background:var(--surface-composer);border:1px solid var(--border);border-radius:var(--r-card);padding:11px;}
+  .modes{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .modes span{flex:1;text-align:center;font-size:var(--fs-head);color:var(--text-2);padding:8px 0;}
+  .modes .on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .field{color:var(--text-3);font-size:var(--fs-body);padding:12px 5px 0;min-height:2.4em;}
+  .foot{display:flex;align-items:center;justify-content:space-between;padding:7px 3px 0;color:var(--text-2);font-size:var(--fs-micro);}
+  .foot .l{display:flex;align-items:center;gap:6px;}
+  .foot .mdot{width:8px;height:8px;border-radius:var(--r-pill);background:var(--steel);flex:none;}
+  .foot .r{display:flex;gap:12px;color:var(--text-2);}
+
+  @media (prefers-reduced-motion:reduce){ .caret{animation:none;} }
+</style>
+</head>
+<body>
+
+  <div class="caption">
+    <span class="tag">Top-bar vitals · F — Vitals block</span><br/>
+    One furnished object in the right cluster. <b>Top line is the glance layer</b>
+    (sync dot + word, GPU meter — all the colour lives here); <b>bottom line is the
+    literal layer</b> (t/s, GPU % — all the numbers live here). Fixed-width slots and
+    tabular figures mean nothing in it can ever nudge the session title.
+    Nothing here is tappable: the launcher has moved to the omnibox swipe-up.
+  </div>
+
+  <!-- ===================== control desk ===================== -->
+  <div class="card">
+    <h2>Control desk</h2>
+    <div class="ctl">
+      <div class="k">Turn</div>
+      <div class="seg" data-group="turn">
+        <button data-v="live">Streaming</button>
+        <button data-v="idle">Idle</button>
+      </div>
+
+      <div class="k">Box</div>
+      <div class="seg" data-group="load">
+        <button data-v="busy">Working</button>
+        <button data-v="quiet">Quiet</button>
+      </div>
+
+      <div class="k">Sync</div>
+      <div class="seg" data-group="sync">
+        <button data-v="synced">Synced</button>
+        <button data-v="pending">Pending</button>
+        <button data-v="unreachable">Offline</button>
+      </div>
+
+      <div class="k">Gauge</div>
+      <div class="seg" data-group="gauge">
+        <button data-v="on">amdgpu present</button>
+        <button data-v="off">No gauge</button>
+      </div>
+
+      <div class="k">Theme</div>
+      <div class="seg" data-group="theme">
+        <button data-v="dark">Dark</button>
+        <button data-v="light">Light</button>
+      </div>
+    </div>
+    <button class="cycle" id="cycle" data-on="0">▶ Walk every state (watch the transitions)</button>
+  </div>
+
+  <!-- ===================== phone ===================== -->
+  <div class="phone" id="phone" data-theme="dark" data-turn="idle">
+    <header class="top-bar">
+      <button class="session-title">Initial Greeting Message</button>
+      <div class="top-bar-right">
+        <!-- ===== the component ===== -->
+        <div class="opt-f" id="vitals" data-turn="idle" data-sync="synced" data-gpu="ok"
+             role="status" aria-live="off" aria-label="Box vitals">
+          <span class="f-sync"><i class="f-dot"></i><span class="f-word">synced</span></span>
+          <span class="f-track"><i class="f-fill"></i></span>
+          <span class="f-rate"><span class="f-tps">—</span><span class="f-unit">t/s</span></span>
+          <span class="f-gpu"><span class="f-lab">GPU</span><span class="f-pct">4%</span></span>
+        </div>
+        <!-- ===== /the component ===== -->
+      </div>
+    </header>
+
+    <main class="stream">
+      <div class="stream-inner">
+        <div class="bubble ai">Morning. Twelve notes landed overnight — three of them touch the boiler service thread.</div>
+        <div class="bubble me">Summarise the boiler ones and tell me what's still unresolved.</div>
+        <div class="bubble ai">Two quotes, one visit report. The unresolved bit is the flue certificate<span class="caret"></span></div>
+      </div>
+    </main>
+
+    <div class="dock">
+      <div class="grabber"></div>
+      <div class="grab-hint">swipe up for the launcher</div>
+      <div class="omnibox">
+        <div class="modes"><span>Entry</span><span>Research</span><span class="on">Full Brain</span></div>
+        <div class="field">Talk it out — full tool access…</div>
+        <div class="foot">
+          <div class="l"><span class="mdot"></span> Full tool access · staged writes need approval</div>
+          <div class="r">
+            <svg width="15" height="15" viewBox="0 0 24 24"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7.5-7.5"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== state gallery ===================== -->
+  <div class="card" id="galleryCard">
+    <h2>Named states · all six, at rest</h2>
+    <div class="gal" id="gal"></div>
+  </div>
+
+  <div class="caption">
+    <b>How sync survives the dot's removal:</b> the dot is still an 8px-class dot and
+    still lives in the top bar — it has simply moved <i>inside</i> the block and gained
+    the word beside it, so colour is never the only encoding. The full-width rose
+    status banner under the bar is unchanged and still handles the loud case;
+    the block is the persistent, always-visible layer beneath it.<br/><br/>
+    <b>Honest coupling:</b> a cloud turn streams fast (60–120 t/s) while the box's GPU
+    stays near idle — the block shows both, so you can tell at a glance <i>whose</i>
+    silicon is answering.
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  var MARKUP =
+    '<span class="f-sync"><i class="f-dot"></i><span class="f-word">synced</span></span>' +
+    '<span class="f-track"><i class="f-fill"></i></span>' +
+    '<span class="f-rate"><span class="f-tps">—</span><span class="f-unit">t/s</span></span>' +
+    '<span class="f-gpu"><span class="f-lab">GPU</span><span class="f-pct">4%</span></span>';
+
+  var SYNC_WORD = { synced:"synced", pending:"pending", unreachable:"no server" };
+  var SYNC_FULL = { synced:"synced", pending:"sync pending", unreachable:"server unreachable" };
+
+  function bucket(g){
+    if (g === null || g === undefined || isNaN(g)) return "none";
+    if (g >= 92) return "hot";
+    if (g >= 80) return "warn";
+    return "ok";
+  }
+
+  /* Paints one .opt-f element from a state object. */
+  function paint(el, s){
+    if (!el) return;
+    var turn = s.turn === "live" ? "live" : "idle";
+    var sync = SYNC_WORD[s.sync] ? s.sync : "synced";
+    var gpu  = (s.gpu === null || s.gpu === undefined) ? null : Math.max(0, Math.min(100, Math.round(s.gpu)));
+    var lvl  = bucket(gpu);
+
+    el.setAttribute("data-turn", turn);
+    el.setAttribute("data-sync", sync);
+    el.setAttribute("data-gpu", lvl);
+
+    el.querySelector(".f-word").textContent = SYNC_WORD[sync];
+    el.querySelector(".f-tps").textContent = turn === "live" ? String(Math.round(s.tps || 0)) : "—";
+    el.querySelector(".f-pct").textContent = gpu === null ? "—" : gpu + "%";
+    el.querySelector(".f-fill").style.width = (gpu === null ? 0 : gpu) + "%";
+
+    el.setAttribute("aria-label",
+      (gpu === null ? "GPU gauge unavailable" : "GPU " + gpu + " percent") +
+      (turn === "live" ? ", " + Math.round(s.tps || 0) + " tokens per second" : ", no turn running") +
+      ", " + SYNC_FULL[sync]);
+    el.setAttribute("title", el.getAttribute("aria-label"));
+  }
+
+  var phoneChip = document.getElementById("vitals");
+
+  /* Required assembly contract. */
+  window.optF = {
+    render: function(state){ paint(phoneChip, state || {}); }
+  };
+
+  /* ---------------- live phone state ---------------- */
+  var S = { turn:"idle", load:"quiet", sync:"synced", gpu:4, tps:0 };
+  var gaugeOn = true;
+  var holdGpu = false;   /* the state walk pins a value for one tick */
+
+  function target(){
+    return S.load === "busy" ? 60 + Math.random()*38 : 2 + Math.random()*6;
+  }
+  function tick(){
+    if (!gaugeOn) { S.gpu = null; }
+    else if (holdGpu) { holdGpu = false; }
+    else {
+      var t = target();
+      var g = (S.gpu === null ? t : S.gpu);
+      /* ease toward the target, then jitter — reads like a real 1 Hz gauge */
+      S.gpu = g + (t - g) * 0.45 + (Math.random()*6 - 3);
+      S.gpu = Math.max(0, Math.min(100, S.gpu));
+    }
+    if (S.turn === "live"){
+      /* box working = the local 120B model; box quiet during a turn = a cloud model */
+      var base = S.load === "busy" ? 45 : 92;
+      var spread = S.load === "busy" ? 10 : 28;
+      S.tps = base + (Math.random()*spread - spread/2);
+    }
+    window.optF.render(S);
+    document.getElementById("phone").setAttribute("data-turn", S.turn);
+  }
+
+  /* ---------------- control desk ---------------- */
+  function mark(group, v){
+    document.querySelectorAll('.seg[data-group="'+group+'"] button').forEach(function(b){
+      b.setAttribute("aria-pressed", String(b.dataset.v === v));
+    });
+  }
+  function setTheme(v){
+    document.documentElement.setAttribute("data-theme", v);
+    document.getElementById("phone").setAttribute("data-theme", v);
+    mark("theme", v);
+  }
+
+  document.querySelectorAll(".seg button").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var g = btn.parentElement.dataset.group, v = btn.dataset.v;
+      stopCycle();
+      if (g === "theme") { setTheme(v); return; }
+      if (g === "gauge") { gaugeOn = (v === "on"); if (gaugeOn && S.gpu === null) S.gpu = 4; }
+      else { S[g] = v; }
+      mark(g, v);
+      tick();
+    });
+  });
+
+  mark("turn","idle"); mark("load","quiet"); mark("sync","synced"); mark("gauge","on");
+  setTheme("dark");
+
+  /* ---------------- state walk ---------------- */
+  var WALK = [
+    { turn:"idle", load:"quiet", sync:"synced", gauge:true },
+    { turn:"live", load:"busy",  sync:"synced", gauge:true },
+    { turn:"live", load:"quiet", sync:"synced", gauge:true },
+    { turn:"idle", load:"busy",  sync:"synced", gauge:true, pin:94 },
+    { turn:"idle", load:"quiet", sync:"pending", gauge:true },
+    { turn:"idle", load:"quiet", sync:"unreachable", gauge:true },
+    { turn:"idle", load:"busy",  sync:"synced", gauge:false }
+  ];
+  var walkTimer = null, walkIx = 0;
+  var cycleBtn = document.getElementById("cycle");
+
+  function stopCycle(){
+    if (walkTimer){ clearInterval(walkTimer); walkTimer = null; cycleBtn.dataset.on = "0";
+      cycleBtn.textContent = "▶ Walk every state (watch the transitions)"; }
+  }
+  cycleBtn.addEventListener("click", function(){
+    if (walkTimer){ stopCycle(); return; }
+    cycleBtn.dataset.on = "1";
+    cycleBtn.textContent = "■ Stop the walk";
+    walkIx = 0;
+    var step = function(){
+      var w = WALK[walkIx % WALK.length]; walkIx++;
+      S.turn = w.turn; S.load = w.load; S.sync = w.sync; gaugeOn = w.gauge;
+      if (w.pin) { S.gpu = w.pin; holdGpu = true; }
+      mark("turn", w.turn); mark("load", w.load); mark("sync", w.sync);
+      mark("gauge", w.gauge ? "on" : "off");
+      tick();
+    };
+    step();
+    walkTimer = setInterval(step, 2400);
+  });
+
+  /* ---------------- state gallery ---------------- */
+  var GALLERY = [
+    ["idle",          {turn:"idle", sync:"synced",      gpu:4,    tps:0},   "No turn running, box asleep. The rate slot holds a dash — never a zero it hasn't measured."],
+    ["streaming · local", {turn:"live", sync:"synced",  gpu:74,   tps:47},  "Steel rail + steel figure. 120B on the box: ~35–55 t/s, GPU high."],
+    ["streaming · cloud", {turn:"live", sync:"synced",  gpu:5,    tps:98},  "Fast tokens, cold GPU — the pairing tells you the answer isn't coming from the box."],
+    ["hot",           {turn:"live", sync:"synced",      gpu:96,   tps:38},  "≥80% turns the meter amber, ≥92% rose and the figure with it (DESIGN meter rule)."],
+    ["sync-degraded", {turn:"idle", sync:"pending",     gpu:6,    tps:0},   "Amber dot and amber word together. Everything else keeps reporting."],
+    ["offline",       {turn:"idle", sync:"unreachable", gpu:6,    tps:0},   "The only state loud enough to tint the whole object. The rose banner still shows below the bar."],
+    ["no-gauge",      {turn:"idle", sync:"synced",      gpu:null, tps:0},   "No amdgpu reading: the track dims and the figure is a dash. Never a fake 0%."]
+  ];
+  var gal = document.getElementById("gal");
+  GALLERY.forEach(function(row, i){
+    if (i) { var r = document.createElement("div"); r.className = "rule"; gal.appendChild(r); }
+    var nm = document.createElement("div"); nm.className = "nm"; nm.textContent = row[0]; gal.appendChild(nm);
+    var chip = document.createElement("div"); chip.className = "opt-f"; chip.innerHTML = MARKUP;
+    paint(chip, row[1]); gal.appendChild(chip);
+    var ds = document.createElement("div"); ds.className = "ds"; ds.textContent = row[2]; gal.appendChild(ds);
+  });
+
+  /* ---------------- 1 Hz ---------------- */
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

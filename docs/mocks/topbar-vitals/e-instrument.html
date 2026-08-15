@@ -1,0 +1,420 @@
+<!--
+  ============================================================================
+  OPTION E — INSTRUMENT  ("the scope")
+  Top-bar vitals for JBrain2 · right cluster replacement (no dot, no bolt)
+
+  RATIONALE
+  The right cluster becomes one tiny 12-second strip chart: GPU load is a row of
+  hairline columns that ticks left every second, and while an agent turn streams
+  a steel trace of tokens/sec is drawn over the same time axis — so the shape
+  carries "the box woke up" or "the stream just stalled" a full beat before the
+  digits do. Sync survives the dot's death as the chart's own baseline rule,
+  colored by state with its word ("synced / pending / offline") sitting directly
+  under it as the axis label, which keeps color-plus-text honest and keeps the
+  reading visible without a tap.
+
+  COST
+  It is the busiest thing that has ever lived in that 56px bar: ~90px of chrome
+  and two stacked micro-rows next to an already-ellipsizing session title, and
+  the two channels share one box at two different y-scales (0–100% vs 0–140 t/s),
+  so the traces are comparable over time but never against each other.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Top-bar vitals — E · Instrument</title>
+<style>
+  /* ---- tokens (mirrors frontend/src/styles/tokens.css) ---- */
+  :root{
+    color-scheme: dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --surface-composer:#141518; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --accent:var(--steel); --ok:var(--green); --warn:var(--amber); --danger:var(--rose);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --font-scale:0.75;
+    --fs-micro:calc(12px * var(--font-scale));
+    --fs-head:calc(13px * var(--font-scale));
+    --fs-secondary:calc(14px * var(--font-scale));
+    --fs-note:calc(15px * var(--font-scale));
+    --fs-body:calc(16px * var(--font-scale));
+    --fs-screen:calc(22px * var(--font-scale));
+    --mock-page:#000000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme: light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--mock-page);color:var(--text);display:flex;flex-direction:column;
+    align-items:center;gap:16px;padding:22px 0 48px;min-height:100vh;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;
+    padding:2px 8px;border-radius:var(--r-pill);margin-bottom:6px;}
+
+  /* =======================================================================
+     .opt-e — THE RIGHT-CLUSTER COMPONENT. Everything below is scoped to it.
+     Lift this block + the .opt-e markup + window.optE.render() as one unit.
+     ======================================================================= */
+  .opt-e{
+    display:flex; align-items:center; gap:7px; flex:none;
+    color:var(--text-2); line-height:1;
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;
+  }
+  .opt-e-col{display:flex;flex-direction:column;align-items:flex-start;gap:2px;}
+  .opt-e .scope{display:block;width:48px;height:20px;overflow:visible;}
+  .opt-e .plot rect{shape-rendering:crispEdges;}
+  .opt-e .bar{fill:var(--text-3);}
+  .opt-e .bar.hot{fill:var(--warn);}
+  .opt-e .tps-line{fill:none;stroke:var(--steel);stroke-width:1;stroke-linejoin:round;
+    stroke-linecap:round;vector-effect:non-scaling-stroke;}
+  .opt-e .tps-now{fill:var(--steel);}
+  .opt-e .nogauge{stroke:var(--text-3);stroke-width:1;stroke-dasharray:2 2.5;opacity:.65;
+    vector-effect:non-scaling-stroke;}
+  /* the baseline rule IS the sync channel — colour here, word directly beneath */
+  .opt-e .rail{stroke:var(--text-3);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .opt-e[data-sync="synced"] .rail{stroke:var(--ok);}
+  .opt-e[data-sync="pending"] .rail{stroke:var(--warn);stroke-width:1.6;}
+  .opt-e[data-sync="unreachable"] .rail{stroke:var(--danger);stroke-width:1.6;}
+  .opt-e .sync-word{font-size:var(--fs-micro);letter-spacing:.02em;color:var(--text-3);
+    padding-left:1px;white-space:nowrap;}
+  .opt-e[data-sync="pending"] .sync-word{color:var(--warn);}
+  .opt-e[data-sync="unreachable"] .sync-word{color:var(--danger);}
+
+  .opt-e-reads{display:flex;flex-direction:column;align-items:flex-end;gap:3px;}
+  .opt-e .read{display:flex;align-items:baseline;gap:2px;}
+  .opt-e .read .v{font-size:var(--fs-head);font-weight:500;min-width:3ch;text-align:right;}
+  .opt-e .read .u{font-size:var(--fs-micro);color:var(--text-3);min-width:2.6ch;text-align:left;}
+  .opt-e .read-tps{color:var(--steel);visibility:hidden;}     /* slot always reserved */
+  .opt-e[data-turn="live"] .read-tps{visibility:visible;}
+  .opt-e .read-gpu .v{color:var(--text-2);}
+  .opt-e .read-gpu .na{font-size:var(--fs-micro);color:var(--text-3);display:none;}
+  .opt-e[data-gpu="off"] .read-gpu .v,
+  .opt-e[data-gpu="off"] .read-gpu .u{display:none;}
+  .opt-e[data-gpu="off"] .read-gpu .na{display:inline;}
+  /* server unreachable = the readings are stale, so they look stale */
+  .opt-e[data-sync="unreachable"] .scope,
+  .opt-e[data-sync="unreachable"] .opt-e-reads{opacity:.42;}
+
+  @keyframes opt-e-slide{from{transform:translateX(4px);}to{transform:translateX(0);}}
+  .opt-e .plot.tick{animation:opt-e-slide 320ms linear;}
+  @media (prefers-reduced-motion:reduce){ .opt-e .plot.tick{animation:none;} }
+  body.rm .opt-e .plot.tick{animation:none;}
+  /* ======================= end .opt-e ==================================== */
+
+  /* ---- phone chrome ---- */
+  .phone{width:390px;height:718px;background:var(--bg);border:1px solid var(--border);
+    border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;
+    color:var(--text);}
+  .top-bar{display:flex;align-items:center;gap:14px;height:56px;padding:0 16px;flex:none;}
+  .session-title{font-weight:700;font-size:var(--fs-screen);color:var(--text);min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .top-bar-right{margin-left:auto;display:flex;align-items:center;color:var(--text-2);}
+
+  .banner{display:none;padding:7px 16px;background:var(--rose-tint);color:var(--danger);
+    font-size:var(--fs-micro);line-height:1.4;}
+  .phone[data-sync="unreachable"] .banner{display:block;}
+
+  .stream{flex:1;overflow-y:auto;padding:6px 16px 4px;display:flex;flex-direction:column;}
+  .stream-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:10px;}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:var(--r-card);font-size:var(--fs-note);
+    line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);
+    border:1px solid color-mix(in srgb, var(--steel) 22%, transparent);
+    border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);
+    border-bottom-left-radius:5px;}
+  .caret{display:none;width:1.5px;height:1em;background:var(--steel);vertical-align:-2px;
+    margin-left:2px;animation:opt-e-blink 1s steps(2,start) infinite;}
+  .phone[data-turn="live"] .caret{display:inline-block;}
+  @keyframes opt-e-blink{50%{opacity:0;}}
+  @media (prefers-reduced-motion:reduce){.caret{animation:none;}}
+  body.rm .caret{animation:none;}
+
+  .dock{flex:none;padding:6px 14px 14px;background:var(--bg);}
+  .omnibox{background:var(--surface-composer);border:1px solid var(--border);border-radius:24px;
+    padding:12px;display:flex;flex-direction:column;}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .seg span{flex:1;color:var(--text-2);font-size:var(--fs-secondary);font-weight:500;padding:8px 0;
+    display:flex;align-items:center;justify-content:center;gap:6px;}
+  .seg .on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .field{color:var(--text-3);font-size:var(--fs-body);line-height:1.4;padding:12px 6px 0;min-height:2.6em;}
+  .foot{display:flex;align-items:center;justify-content:space-between;padding:7px 4px 0;
+    color:var(--text-3);font-size:var(--fs-micro);}
+  .foot .hint{display:flex;align-items:center;gap:6px;}
+  .foot svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6;
+    stroke-linecap:round;stroke-linejoin:round;}
+  .swipe-hint{display:flex;align-items:center;justify-content:center;gap:5px;color:var(--text-3);
+    font-size:var(--fs-micro);padding:8px 0 0;}
+  .swipe-hint svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round;}
+
+  /* ---- control desk ---- */
+  .desk{width:390px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-card);padding:13px 14px;display:flex;flex-direction:column;gap:9px;}
+  .desk h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);
+    font-weight:600;}
+  .row{display:grid;grid-template-columns:52px 1fr;align-items:center;gap:10px;}
+  .row .lab{font-size:12px;color:var(--text-2);}
+  .ctl{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .ctl button{flex:1;border:none;background:none;color:var(--text-2);font-size:12px;font-weight:500;
+    padding:7px 0;font-family:inherit;}
+  .ctl button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .desk .note{font-size:11px;color:var(--text-3);line-height:1.5;}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Top-bar vitals · E — Instrument</span><br/>
+  A 12-second strip chart in the right cluster. <b>GPU busy</b> is the column trace (it ticks
+  left once a second, columns brighten with recency, amber past 85%); <b>tokens/sec</b> is the
+  steel line drawn over the same axis, present only while a turn streams and scrolling away
+  after it ends. The chart's <b>baseline rule is the sync channel</b> — its colour plus the word
+  underneath, always visible, never tappable.
+</div>
+
+<div class="phone" id="phone" data-turn="idle" data-sync="synced">
+  <header class="top-bar">
+    <span class="session-title">Initial Greeting Message</span>
+
+    <div class="top-bar-right">
+      <!-- ==== the component ==== -->
+      <div class="opt-e" data-turn="idle" data-sync="synced" data-gpu="on" role="status" aria-live="off">
+        <div class="opt-e-col">
+          <svg class="scope" viewBox="0 0 48 20" aria-hidden="true">
+            <defs>
+              <clipPath id="opt-e-clip"><rect x="0" y="0" width="48" height="17.4"/></clipPath>
+            </defs>
+            <g clip-path="url(#opt-e-clip)">
+              <g class="plot">
+                <g class="bars"></g>
+                <path class="tps-line" d=""/>
+                <circle class="tps-now" cx="-9" cy="-9" r="1.15"/>
+              </g>
+            </g>
+            <line class="nogauge" x1="0.5" y1="9" x2="47.5" y2="9" style="display:none"/>
+            <line class="rail" x1="0" y1="17.9" x2="48" y2="17.9"/>
+          </svg>
+          <span class="sync-word">synced</span>
+        </div>
+        <div class="opt-e-reads">
+          <span class="read read-tps"><span class="v">44</span><span class="u">t/s</span></span>
+          <span class="read read-gpu"><span class="v">6</span><span class="u">%</span><span class="na">no gpu</span></span>
+        </div>
+      </div>
+      <!-- ==== /component ==== -->
+    </div>
+  </header>
+
+  <div class="banner">Browser online, but JBrain server unreachable — retrying…</div>
+
+  <main class="stream">
+    <div class="stream-inner">
+      <div class="bubble ai">Morning. Nothing new landed overnight — 3 notes still waiting on review.</div>
+      <div class="bubble me">What did I write about the raised beds last spring?</div>
+      <div class="bubble ai">Two notes from April mention them: the cedar rebuild and the soil mix you
+        settled on<span class="caret"></span></div>
+    </div>
+  </main>
+
+  <div class="dock">
+    <div class="omnibox">
+      <div class="seg"><span>Entry</span><span>Research</span><span class="on">Full Brain</span></div>
+      <div class="field">Talk it out — full tool access…</div>
+      <div class="foot">
+        <span class="hint">Full tool access · staged writes need approval</span>
+        <span class="hint">
+          <svg viewBox="0 0 24 24"><path d="M21 12.8V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8"/><path d="m8 10 3 3 5-5"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg>
+        </span>
+      </div>
+      <div class="swipe-hint">
+        <svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+        swipe up for the launcher
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="desk">
+  <h2>Control desk</h2>
+  <div class="row"><span class="lab">Turn</span>
+    <div class="ctl" data-ctl="turn">
+      <button data-v="live">Streaming</button><button data-v="idle" aria-pressed="true">Idle</button>
+    </div></div>
+  <div class="row"><span class="lab">Box</span>
+    <div class="ctl" data-ctl="load">
+      <button data-v="busy">Working</button><button data-v="quiet" aria-pressed="true">Quiet</button>
+    </div></div>
+  <div class="row"><span class="lab">Sync</span>
+    <div class="ctl" data-ctl="sync">
+      <button data-v="synced" aria-pressed="true">Synced</button><button data-v="pending">Pending</button><button data-v="unreachable">Offline</button>
+    </div></div>
+  <div class="row"><span class="lab">GPU</span>
+    <div class="ctl" data-ctl="gauge">
+      <button data-v="on" aria-pressed="true">Gauge present</button><button data-v="off">No gauge</button>
+    </div></div>
+  <div class="row"><span class="lab">Theme</span>
+    <div class="ctl" data-ctl="theme">
+      <button data-v="dark" aria-pressed="true">Dark</button><button data-v="light">Light</button>
+    </div></div>
+  <div class="row"><span class="lab">Motion</span>
+    <div class="ctl" data-ctl="motion">
+      <button data-v="full" aria-pressed="true">Full</button><button data-v="reduced">Reduced</button>
+    </div></div>
+  <div class="note">
+    Streaming + Working reads the on-box 120B (~35–55 t/s); Streaming + Quiet means a cloud model
+    is answering, so the GPU trace stays flat while the token line runs 60–120 t/s. Offline freezes
+    the trace and dims the readings — the box can't be asked, so the numbers are stale and say so.
+  </div>
+</div>
+
+<script>
+/* ===================== .opt-e component script ==========================
+   window.optE.render(state) — state = {turn, load, sync, gpu, tps}
+   Keeps its own 12-sample history so the caller only ever passes "now".
+   ====================================================================== */
+(function () {
+  var root = document.querySelector('.opt-e');
+  var N = 12, PITCH = 4, BW = 2.6, TOP = 1.4, BOT = 16.6, TPS_MAX = 140;
+
+  var barsG   = root.querySelector('.bars');
+  var line    = root.querySelector('.tps-line');
+  var nowDot  = root.querySelector('.tps-now');
+  var noGauge = root.querySelector('.nogauge');
+  var plot    = root.querySelector('.plot');
+  var word    = root.querySelector('.sync-word');
+  var tpsV    = root.querySelector('.read-tps .v');
+  var gpuV    = root.querySelector('.read-gpu .v');
+
+  var WORD = { synced: 'synced', pending: 'pending', unreachable: 'offline' };
+  var FULL = { synced: 'synced', pending: 'sync pending', unreachable: 'server unreachable' };
+
+  var gpuHist = new Array(N).fill(null);
+  var tpsHist = new Array(N).fill(null);
+
+  var bars = [];
+  for (var i = 0; i < N; i++) {
+    var r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    r.setAttribute('class', 'bar');
+    r.setAttribute('x', (i * PITCH + 0.2).toFixed(2));
+    r.setAttribute('width', BW);
+    r.setAttribute('rx', '0.4');
+    barsG.appendChild(r);
+    bars.push(r);
+  }
+
+  function yFor(v, max) { return BOT - (Math.max(0, Math.min(v, max)) / max) * (BOT - TOP); }
+
+  function render(state) {
+    var gpuOn = state.gpu !== null && state.gpu !== undefined;
+    var live  = state.turn === 'live';
+    var frozen = state.sync === 'unreachable';   // no server, no fresh readings
+
+    root.dataset.turn = state.turn;
+    root.dataset.sync = state.sync;
+    root.dataset.gpu  = gpuOn ? 'on' : 'off';
+
+    if (!frozen) {
+      gpuHist.push(gpuOn ? state.gpu : null);  gpuHist.shift();
+      tpsHist.push(live ? state.tps : null);   tpsHist.shift();
+    }
+
+    /* --- GPU columns --- */
+    noGauge.style.display = gpuOn ? 'none' : '';
+    for (var i = 0; i < N; i++) {
+      var v = gpuHist[i];
+      if (v === null) { bars[i].setAttribute('height', '0'); bars[i].style.display = 'none'; continue; }
+      bars[i].style.display = '';
+      var y = yFor(v, 100), h = Math.max(0.9, BOT - y);
+      bars[i].setAttribute('y', (BOT - h).toFixed(2));
+      bars[i].setAttribute('height', h.toFixed(2));
+      bars[i].setAttribute('opacity', (0.3 + 0.7 * (i / (N - 1))).toFixed(2));
+      bars[i].classList.toggle('hot', v >= 85);
+    }
+
+    /* --- tokens/sec trace over the same axis, gaps where the turn was idle --- */
+    var d = '', open = false, lastPt = null;
+    for (var j = 0; j < N; j++) {
+      var t = tpsHist[j];
+      if (t === null) { open = false; continue; }
+      var px = (j * PITCH + 0.2 + BW / 2), py = yFor(t, TPS_MAX);
+      d += (open ? 'L' : 'M') + px.toFixed(2) + ' ' + py.toFixed(2) + ' ';
+      open = true; lastPt = [px, py];
+    }
+    line.setAttribute('d', d);
+    if (lastPt && tpsHist[N - 1] !== null) {
+      nowDot.setAttribute('cx', lastPt[0].toFixed(2));
+      nowDot.setAttribute('cy', lastPt[1].toFixed(2));
+      nowDot.style.display = '';
+    } else { nowDot.style.display = 'none'; }
+
+    /* --- digits: fixed slots, tabular, never reflow the title --- */
+    tpsV.textContent = live ? String(Math.round(state.tps)) : '';
+    gpuV.textContent = gpuOn ? String(Math.round(state.gpu)) : '';
+    word.textContent = WORD[state.sync];
+
+    root.setAttribute('title',
+      (gpuOn ? 'GPU ' + Math.round(state.gpu) + '% busy' : 'GPU gauge unavailable') +
+      (live ? ' · ' + Math.round(state.tps) + ' tokens/sec' : '') + ' · ' + FULL[state.sync]);
+    root.setAttribute('aria-label', root.getAttribute('title'));
+
+    plot.classList.remove('tick');
+    void root.offsetWidth;
+    if (!frozen) plot.classList.add('tick');
+  }
+
+  window.optE = { render: render };
+})();
+
+/* ===================== mock harness (not part of the component) ========== */
+(function () {
+  var phone = document.getElementById('phone');
+  var state = { turn: 'idle', load: 'quiet', sync: 'synced', gauge: 'on', theme: 'dark', motion: 'full' };
+  var gpu = 5, tps = 44;
+
+  function tick() {
+    var gTarget = state.load === 'busy' ? 62 + Math.random() * 36 : 2 + Math.random() * 6;
+    gpu += (gTarget - gpu) * 0.5 + (Math.random() - 0.5) * 5;
+    gpu = Math.max(0, Math.min(100, gpu));
+
+    // on-box 120B while the GPU works; a cloud model when the box stays quiet
+    var tTarget = state.load === 'busy' ? 35 + Math.random() * 20 : 60 + Math.random() * 60;
+    tps += (tTarget - tps) * 0.35 + (Math.random() - 0.5) * 6;
+    tps = Math.max(20, Math.min(130, tps));
+
+    window.optE.render({
+      turn: state.turn, load: state.load, sync: state.sync,
+      gpu: state.gauge === 'on' ? gpu : null, tps: tps
+    });
+  }
+
+  document.querySelectorAll('.ctl').forEach(function (ctl) {
+    ctl.addEventListener('click', function (e) {
+      var btn = e.target.closest('button'); if (!btn) return;
+      ctl.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b === btn)); });
+      state[ctl.dataset.ctl] = btn.dataset.v;
+      phone.dataset.turn = state.turn;
+      phone.dataset.sync = state.sync;
+      if (state.theme === 'light') phone.setAttribute('data-theme', 'light'); else phone.removeAttribute('data-theme');
+      document.body.classList.toggle('rm', state.motion === 'reduced');
+      tick();
+    });
+  });
+
+  tick();
+  for (var k = 0; k < 11; k++) tick();   // prime the trace so it opens with history
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>
