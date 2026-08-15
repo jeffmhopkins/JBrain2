@@ -281,6 +281,37 @@ def test_qwen38_27b_q4_is_the_interactive_twin() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
+def test_qwen38_27b_mtp_is_a_text_only_self_speculative_variant() -> None:
+    # The MTP (multi-token-prediction) serving variant of Qwen3.8-27B: same unsloth Q4_K_M weights
+    # (which already carry the MTP head) served with --spec-type draft-mtp for ~1.4-2x faster
+    # decode. TEXT-ONLY — llama.cpp MTP can't run the vision projector, so no "vision" tier and
+    # no mmproj — and driven by extra_server_args, NOT a separate MTP repo or draft file.
+    m = local_catalog.get("qwen3.8-27b-mtp")
+    q4 = local_catalog.get("qwen3.8-27b-q4")
+    assert m is not None and q4 is not None
+    # Text-only high tier: not vision-capable, no projector.
+    assert m.tiers == ("high",)
+    assert m.supports_vision is False
+    assert m.mmproj_include is None
+    assert m.supports_tools
+    # Same weights + repo as the q4 twin (MTP is embedded in unsloth's GGUF, no separate repo).
+    assert m.hf_repo == q4.hf_repo == "unsloth/Qwen3.8-27B-GGUF"
+    assert m.quant == "Q4_K_M" and "Q4_K_M" in m.gguf_include
+    # Distinct served name (installs beside the q4 twin), slightly lighter (no projector).
+    assert m.spec == "local:qwen3.8-27b-mtp"
+    assert m.served_model != q4.served_model
+    assert m.size_gb == 15.9 and m.size_gb < q4.size_gb
+    # The MTP flags ride extra_server_args (appended verbatim to the gateway command). No
+    # --model-draft: self-speculation off the model's own baked-in MTP head.
+    assert m.extra_server_args == ("--spec-type", "draft-mtp", "--spec-draft-n-max", "2")
+    assert "--model-draft" not in m.extra_server_args
+    # Still a hybrid reasoner (same model), so it keeps the deepseek reasoning format + gating.
+    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    assert m.native_context_window == 262144
+    assert m.id not in local_catalog.recommended_ids()
+
+
 def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
     # --reasoning-format deepseek is pinned ONLY for entries that emit <think> inline: the two
     # Qwen3.6 hybrids, the two small Qwen3.5 hybrids, and the Nemotron hybrid. The harmony/GLM
@@ -291,6 +322,7 @@ def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
         "qwen3.6-27b-q4",
         "qwen3.8-27b",
         "qwen3.8-27b-q4",
+        "qwen3.8-27b-mtp",
         "nemotron-3-super-120b",
         "nemotron-3.5-lightning-30b",
         "qwen3.5-0.8b",

@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-14
+> **Status:** Living · **Last verified:** 2026-08-15
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -321,6 +321,18 @@ vision projector stays F16, so the fine-text hit is limited). Install it when co
 headroom matters more than the last bit of transcription accuracy. First-time host prep (GPU GIDs, the gateway image,
 kernel params) still needs Phases 1–6 on the box; the PWA path only *adds/removes
 models* on an already-enabled stack.
+
+**MTP (faster text) variant — `Qwen3.8 27B · MTP`.** A catalog entry that serves the same
+Qwen3.8-27B Q4_K_M weights as the interactive twin but with llama.cpp multi-token prediction
+(`--spec-type draft-mtp`) for ~1.4–2× faster **decode** — self-speculation off the MTP head
+that unsloth's GGUF already bakes in (no separate draft model). Two hard limits come from
+llama.cpp's MTP path, both reflected in the entry: it is **text-only** (MTP can't run the
+vision projector, so this variant has no vision) and **single-slot** (`-np 1`, so it can't take
+the interactive keep-warm second slot). It speeds decode only — prompt processing is a touch
+slower. **Caveat:** MTP on the Vulkan/RADV gateway is build-fragile (it crashed on this exact
+gfx1151 arch at llama.cpp's MTP launch and still has open Vulkan MTP bugs), and the gateway
+tracks llama.cpp master (see "Tracking newest llama.cpp" below) — so after an update, confirm
+it loads and generates; if a build regresses, uninstall it and fall back to `qwen3.8-27b-q4`.
 
 > **When a download fails**, the banner shows the reason (last log line). For the
 > full verbose log — the resolved repo, include globs, and the hf error (404 / auth
