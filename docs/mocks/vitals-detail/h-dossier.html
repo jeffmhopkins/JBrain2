@@ -1,0 +1,932 @@
+<!--
+  ============================================================================
+  OPTION H — THE DOSSIER
+  Vitals detail surface for JBrain2 · opens from the top-bar vitals chart
+
+  RATIONALE
+  The graph shrinks to a slim header strip that keeps the 1/5/15 range control,
+  and the screen belongs to the turns: each running turn is a substantial card
+  that expands in place into a real debug dossier — four labelled field groups
+  (identity, model & routing, budget & progress, provenance), the message that
+  started it, and the live raw output in a monospace block with copy. The
+  trigger is traced back to its source (schedule / event / owner) rather than
+  printed as a bare id, so "what set this off" is answerable without leaving.
+
+  COST
+  It is the densest screen in the app — ~26 labelled fields per open dossier —
+  so it reads as an instrument panel, not a JBrain surface, and one open dossier
+  is already taller than the phone: the list stops being scannable the moment
+  two are open at once.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Vitals detail — H · Dossier</title>
+<style>
+  /* ---- tokens (mirrors frontend/src/styles/tokens.css — the ONLY hex in this file) ---- */
+  :root{
+    color-scheme: dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --surface-composer:#141518; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --slate:#9AA0A8;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.13);
+    --scrim:rgba(14,15,17,.6);
+    --accent:var(--steel); --ok:var(--green); --warn:var(--amber); --danger:var(--rose);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-box:16px; --r-pill:999px;
+    --shadow-card:none;
+    --font-scale:0.75;
+    --fs-micro:calc(12px * var(--font-scale));
+    --fs-head:calc(13px * var(--font-scale));
+    --fs-secondary:calc(14px * var(--font-scale));
+    --fs-note:calc(15px * var(--font-scale));
+    --fs-body:calc(16px * var(--font-scale));
+    --fs-title:calc(18px * var(--font-scale));
+    --fs-screen:calc(22px * var(--font-scale));
+    --mock-page:#000000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{
+    color-scheme: light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF;
+    --scrim:rgba(247,247,245,.6);
+    --shadow-card:0 1px 2px rgba(0,0,0,.06);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  button{font-family:inherit;border:none;background:none;color:inherit;}
+  body{background:var(--mock-page);color:var(--text);display:flex;flex-direction:column;
+    align-items:center;gap:16px;padding:22px 0 56px;min-height:100vh;
+    font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;
+    padding:2px 8px;border-radius:var(--r-pill);margin-bottom:6px;}
+
+  /* ---- phone chrome ---- */
+  .phone{width:390px;height:800px;background:var(--bg);border:1px solid var(--border);
+    border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;
+    color:var(--text);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+  .top-bar{display:flex;align-items:center;gap:10px;height:56px;padding:0 16px;flex:none;}
+  .session-title{font-weight:700;font-size:var(--fs-screen);color:var(--text);min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* =====================================================================
+     THE TAP TARGET.  The chart itself is 48×20 — far under the 44px rule.
+     The fix is not to grow the ink but to grow the BUTTON: the whole right
+     cluster (chart + both readouts + sync word) becomes one <button> that
+     is inflated to the bar's full 56px height and pushed out through the
+     16px page gutter to the screen edge, so the target is ~89×56 with the
+     drawing unchanged. Edge-adjacent padding is free real estate.
+     ===================================================================== */
+  .vitals-tap{margin-left:auto;display:flex;align-items:center;
+    padding:11px 16px 11px 10px;margin-right:-16px;min-height:44px;
+    border-radius:var(--r-input);cursor:pointer;position:relative;}
+  .vitals-tap:active{background:var(--surface-2);}
+  .phone[data-target="show"] .vitals-tap::after{content:"";position:absolute;inset:0;
+    border:1px dashed var(--steel);border-radius:var(--r-input);pointer-events:none;}
+  .phone[data-target="show"] .vitals-tap::before{content:"89 × 56";position:absolute;
+    left:0;bottom:-13px;font-size:10px;color:var(--steel);letter-spacing:.04em;}
+
+  /* ---- the top-bar vitals component (lifted from topbar-vitals/e-instrument) ---- */
+  .vitals{display:grid;grid-template-columns:auto auto;align-items:center;
+    column-gap:7px;row-gap:3px;flex:none;color:var(--text-2);line-height:1;}
+  .vitals-scope,.vitals-reads{display:contents;}
+  .vitals-chart{grid-column:1;grid-row:2;display:block;width:48px;height:20px;overflow:visible;}
+  .vitals-chart rect{shape-rendering:crispEdges;}
+  .vitals-bar{fill:var(--text-3);}
+  .vitals-bar.hot{fill:var(--warn);}
+  .vitals-trace{fill:none;stroke:var(--steel);stroke-width:1;stroke-linejoin:round;
+    stroke-linecap:round;vector-effect:non-scaling-stroke;}
+  .vitals-trace-head{fill:var(--steel);}
+  .vitals-rail{stroke:var(--text-3);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .vitals-sync{grid-column:1;grid-row:3;justify-self:start;display:none;
+    font-size:var(--fs-micro);letter-spacing:.02em;padding-left:1px;white-space:nowrap;}
+  .vitals-read{display:flex;align-items:baseline;justify-self:end;gap:2px;}
+  .vitals-tps{grid-column:2;grid-row:1;color:var(--steel);visibility:hidden;}
+  .vitals[data-turn="live"] .vitals-tps{visibility:visible;}
+  .vitals-gpu{grid-column:2;grid-row:2;}
+  .vitals-value{font-size:var(--fs-head);font-weight:500;min-width:3ch;text-align:right;}
+  .vitals-unit{font-size:var(--fs-micro);color:var(--text-3);min-width:2.6ch;text-align:left;}
+
+  /* ---- the chat underneath (context only) ---- */
+  .stream{flex:1;overflow:hidden;padding:6px 16px 4px;display:flex;flex-direction:column;}
+  .stream-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:10px;}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:var(--r-card);font-size:var(--fs-note);
+    line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);
+    border:1px solid color-mix(in srgb, var(--steel) 22%, transparent);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);
+    border-bottom-left-radius:5px;}
+  .dock{flex:none;padding:6px 14px 14px;background:var(--bg);}
+  .omnibox{background:var(--surface-composer);border:1px solid var(--border);border-radius:24px;
+    padding:12px;display:flex;flex-direction:column;}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .seg span{flex:1;color:var(--text-2);font-size:var(--fs-secondary);font-weight:500;padding:8px 0;
+    display:flex;align-items:center;justify-content:center;}
+  .seg .on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .field{color:var(--text-3);font-size:var(--fs-body);line-height:1.4;padding:12px 6px 6px;}
+
+  /* =====================================================================
+     THE CARD SCREEN — full screen, slides up, carries its own top bar.
+     (DESIGN.md paradigm table: graph + drillable list + expandable raw
+     text is a full screen with a back chevron, never a sheet.)
+     ===================================================================== */
+  .card{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;
+    transform:translateY(100%);transition:transform 280ms cubic-bezier(.2,.7,.2,1);
+    border-radius:34px;overflow:hidden;}
+  .card.open{transform:none;}
+  body.rm .card{transition:none;}
+  @media (prefers-reduced-motion:reduce){.card{transition:none;}}
+
+  .card-bar{display:flex;align-items:center;gap:4px;height:56px;padding:0 12px 0 4px;flex:none;}
+  .chev{width:44px;height:44px;display:flex;align-items:center;justify-content:center;
+    color:var(--text-2);flex:none;border-radius:var(--r-input);cursor:pointer;}
+  .chev:active{background:var(--surface-2);}
+  .chev svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.9;
+    stroke-linecap:round;stroke-linejoin:round;}
+  .card-title{font-weight:700;font-size:var(--fs-screen);}
+  .card-sub{margin-left:auto;font-size:var(--fs-micro);color:var(--text-3);letter-spacing:.02em;}
+
+  /* ---- the header strip: the graph, slimmed, with its own range control ---- */
+  .strip{flex:none;padding:0 16px 10px;border-bottom:1px solid var(--border);}
+  .strip-head{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;
+    padding-bottom:7px;}
+  .reads{display:flex;align-items:baseline;gap:14px;}
+  .read{display:flex;align-items:baseline;gap:3px;}
+  .read .v{font-size:var(--fs-title);font-weight:600;color:var(--text);min-width:3ch;
+    text-align:right;letter-spacing:-.01em;}
+  .read .u{font-size:var(--fs-micro);color:var(--text-3);}
+  .read.tps .v{color:var(--steel);}
+  .read.tps[data-live="no"] .v{color:var(--text-3);}
+
+  /* Compact-variant control (34px of ink) whose tap area is inflated to 44px
+     by an invisible ::after — DESIGN.md allows 36px rows, never 36px targets. */
+  .range{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .range button{position:relative;height:34px;min-width:42px;font-size:var(--fs-secondary);
+    font-weight:500;color:var(--text-2);cursor:pointer;letter-spacing:.01em;}
+  .range button::after{content:"";position:absolute;left:0;right:0;top:-5px;bottom:-5px;}
+  .range button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .phone[data-target="show"] .range button::after{border:1px dashed var(--steel);}
+
+  .plot{display:block;width:100%;height:78px;overflow:visible;}
+  .plot rect{shape-rendering:crispEdges;}
+  .p-bar{fill:var(--text-3);}
+  .p-bar.hot{fill:var(--warn);}
+  .p-line{fill:none;stroke:var(--steel);stroke-width:1.3;stroke-linejoin:round;
+    stroke-linecap:round;vector-effect:non-scaling-stroke;}
+  .p-rail{stroke:var(--border);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .p-grid{stroke:var(--border);stroke-width:1;stroke-dasharray:2 4;vector-effect:non-scaling-stroke;}
+  .axis{display:flex;justify-content:space-between;font-size:var(--fs-micro);color:var(--text-3);
+    padding-top:4px;}
+  .legend{display:flex;gap:13px;font-size:var(--fs-micro);color:var(--text-3);padding-top:5px;
+    align-items:center;}
+  .legend i{display:inline-block;width:7px;height:9px;background:var(--text-3);
+    margin-right:5px;vertical-align:-1px;border-radius:1px;}
+  .legend i.ln{width:11px;height:0;border-top:1.4px solid var(--steel);vertical-align:3px;}
+
+  /* ---- the list ---- */
+  .list{flex:1;overflow-y:auto;padding:12px 16px 28px;display:flex;flex-direction:column;gap:9px;}
+  .sec{display:flex;align-items:baseline;justify-content:space-between;
+    font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);
+    font-weight:600;padding:2px 2px 1px;}
+
+  .turn{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
+    box-shadow:var(--shadow-card);overflow:hidden;}
+  .turn-head{width:100%;text-align:left;display:block;padding:11px 12px;cursor:pointer;
+    min-height:44px;}
+  .turn-head:active{background:var(--surface-2);}
+  .kindline{display:flex;align-items:center;gap:7px;padding-bottom:5px;}
+  .kind{font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;
+    padding:2px 6px;border-radius:var(--r-pill);}
+  .kind.agent{background:var(--steel-tint);color:var(--steel);}
+  .kind.subagent{background:var(--violet-tint);color:var(--violet);}
+  .kind.workflow{background:var(--green-tint);color:var(--green);}
+  .kind.job{background:var(--surface-2);color:var(--text-2);}
+  .persona{font-size:var(--fs-micro);color:var(--text-3);font-family:var(--font-mono);}
+  .elapsed{margin-left:auto;font-size:var(--fs-head);color:var(--text-2);font-weight:500;}
+  .turn-name{font-size:var(--fs-note);color:var(--text);line-height:1.35;font-weight:500;}
+  .turn-note{font-size:var(--fs-head);color:var(--text-2);line-height:1.4;padding-top:4px;}
+  .turn-note.none{color:var(--text-3);font-style:italic;}
+  .turn-err{font-size:var(--fs-head);color:var(--danger);line-height:1.4;padding-top:4px;
+    display:flex;gap:6px;}
+  .turn-err b{font-weight:600;flex:none;}
+  .metrics{display:flex;gap:12px;padding-top:6px;font-size:var(--fs-micro);color:var(--text-3);}
+  .metrics b{color:var(--text-2);font-weight:500;}
+  .drill{display:flex;align-items:center;gap:5px;margin-left:auto;color:var(--text-3);}
+  .drill svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;
+    stroke-linecap:round;stroke-linejoin:round;transition:transform 180ms ease;}
+  .turn[data-open="yes"] .drill svg{transform:rotate(180deg);}
+  body.rm .drill svg{transition:none;}
+  @media (prefers-reduced-motion:reduce){.drill svg{transition:none;}}
+
+  /* nested children: one hairline rail, indented, inside the parent's card */
+  .kids{padding:0 12px 10px 12px;}
+  .kids-in{border-left:1px solid var(--border);padding-left:11px;display:flex;
+    flex-direction:column;gap:1px;}
+  .kid{width:100%;text-align:left;padding:9px 2px;min-height:44px;cursor:pointer;display:block;}
+  .kid + .kid{border-top:1px solid var(--border);}
+  .kid:active{background:var(--surface-2);}
+
+  /* ---- the dossier ---- */
+  .dossier{display:none;border-top:1px solid var(--border);background:var(--surface-2);
+    padding:2px 12px 12px;}
+  .turn[data-open="yes"] > .dossier{display:block;}
+  .grp{padding-top:11px;}
+  .grp h3{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);
+    font-weight:600;padding-bottom:5px;}
+  .fields{display:grid;grid-template-columns:82px 1fr;column-gap:10px;row-gap:0;}
+  .fields dt{font-size:var(--fs-micro);color:var(--text-3);padding:4px 0;line-height:1.45;}
+  .fields dd{font-size:var(--fs-head);color:var(--text);padding:4px 0;line-height:1.45;
+    word-break:break-word;}
+  .fields dd.mono{font-family:var(--font-mono);font-size:var(--fs-micro);color:var(--text-2);}
+  .fields dd.dim{color:var(--text-2);}
+  .fields dd.none{color:var(--text-3);font-style:italic;}
+  .fields dd.err{color:var(--danger);}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;padding-top:1px;}
+  .chip{font-family:var(--font-mono);font-size:10px;color:var(--text-2);background:var(--surface);
+    border:1px solid var(--border);border-radius:var(--r-pill);padding:2px 7px;}
+  .trace{font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;padding-top:3px;}
+  .ask{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:9px 10px;font-size:var(--fs-head);color:var(--text-2);line-height:1.5;}
+  .ask.none{color:var(--text-3);font-style:italic;}
+  .footnote{font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;padding-top:6px;}
+
+  .raw-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;}
+  .copy{font-size:var(--fs-micro);color:var(--text-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:0 11px;height:28px;min-width:44px;cursor:pointer;
+    display:flex;align-items:center;position:relative;background:var(--surface);}
+  .copy::after{content:"";position:absolute;left:0;right:0;top:-8px;bottom:-8px;}
+  .copy:active{background:var(--surface-2);}
+  .raw{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:9px 10px;max-height:190px;overflow-y:auto;font-family:var(--font-mono);
+    font-size:var(--fs-micro);line-height:1.6;color:var(--text-2);white-space:pre-wrap;
+    word-break:break-word;}
+  .raw .step{color:var(--text-3);}
+  .raw .out{color:var(--text);}
+  .raw .rerr{color:var(--danger);}
+  .raw.empty{color:var(--text-3);font-family:inherit;font-style:italic;white-space:normal;}
+  .cursor{display:inline-block;width:6px;height:1em;background:var(--steel);
+    vertical-align:-2px;animation:blink 1s steps(2,start) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+  body.rm .cursor{animation:none;}
+  @media (prefers-reduced-motion:reduce){.cursor{animation:none;}}
+
+  /* ---- the honest empty state ---- */
+  .empty-state{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);
+    padding:16px 14px;display:flex;flex-direction:column;gap:9px;}
+  .empty-state h4{font-size:var(--fs-note);font-weight:600;color:var(--text);}
+  .empty-state p{font-size:var(--fs-head);color:var(--text-2);line-height:1.55;}
+  .empty-state .why{display:flex;gap:9px;align-items:flex-start;border-top:1px solid var(--border);
+    padding-top:9px;font-size:var(--fs-micro);color:var(--text-3);line-height:1.55;}
+  .gpu-echo{font-family:var(--font-mono);color:var(--warn);flex:none;}
+
+  /* ---- control desk (mock harness, not part of the design) ---- */
+  .desk{width:390px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-card);padding:13px 14px;display:flex;flex-direction:column;gap:9px;}
+  .desk h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);
+    font-weight:600;}
+  .drow{display:grid;grid-template-columns:52px 1fr;align-items:center;gap:10px;}
+  .drow .lab{font-size:12px;color:var(--text-2);}
+  .ctl{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .ctl button{flex:1;color:var(--text-2);font-size:12px;font-weight:500;padding:7px 4px;cursor:pointer;}
+  .ctl button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .desk .note{font-size:11px;color:var(--text-3);line-height:1.5;}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Vitals detail · H — Dossier</span><br/>
+  Tap the vitals chart in the top bar. The graph becomes a <b>slim header strip</b> with a working
+  <b>1 / 5 / 15 minute</b> range control; everything below it is the <b>turns running right now</b>.
+  Each card expands in place into a <b>debug dossier</b> — identity, model &amp; routing, budget,
+  provenance, the message that started it, and the live raw output.
+</div>
+
+<div class="phone" id="phone" data-target="hide">
+
+  <!-- ======================= app chrome (the surface we open FROM) ======= -->
+  <header class="top-bar">
+    <span class="session-title">Heat-pump sizing</span>
+    <button class="vitals-tap" id="vitalsTap" aria-label="Box vitals — open detail">
+      <span class="vitals" id="vitals" data-turn="live">
+        <span class="vitals-scope">
+          <svg class="vitals-chart" viewBox="0 0 48 20" aria-hidden="true">
+            <g id="vBars"></g>
+            <path class="vitals-trace" id="vTrace" d=""/>
+            <circle class="vitals-trace-head" id="vHead" cx="-9" cy="-9" r="1.15"/>
+            <line class="vitals-rail" x1="0" y1="17.9" x2="48" y2="17.9"/>
+          </svg>
+          <span class="vitals-sync">synced</span>
+        </span>
+        <span class="vitals-reads">
+          <span class="vitals-read vitals-tps"><span class="vitals-value" id="vTps">44</span><span class="vitals-unit">t/s</span></span>
+          <span class="vitals-read vitals-gpu"><span class="vitals-value" id="vGpu">6</span><span class="vitals-unit">%</span></span>
+        </span>
+      </span>
+    </button>
+  </header>
+
+  <main class="stream">
+    <div class="stream-inner">
+      <div class="bubble ai">Morning. Nothing new landed overnight — 3 notes still waiting on review.</div>
+      <div class="bubble me">Work out what size heat pump the house actually needs.</div>
+      <div class="bubble ai">Running a research fan on cold-climate sizing — two children open.</div>
+    </div>
+  </main>
+
+  <div class="dock">
+    <div class="omnibox">
+      <div class="seg"><span>Entry</span><span>Research</span><span class="on">Full Brain</span></div>
+      <div class="field">Talk it out — full tool access…</div>
+    </div>
+  </div>
+
+  <!-- ======================= THE CARD SCREEN ============================ -->
+  <section class="card" id="card" aria-hidden="true">
+    <header class="card-bar">
+      <button class="chev" id="back" aria-label="Back">
+        <svg viewBox="0 0 24 24"><path d="M15 18 9 12l6-6"/></svg>
+      </button>
+      <span class="card-title">Vitals</span>
+      <span class="card-sub" id="cardSub">running now · 4</span>
+    </header>
+
+    <!-- the graph, slimmed to a header strip, keeping the range control -->
+    <div class="strip">
+      <div class="strip-head">
+        <div class="reads">
+          <span class="read"><span class="v" id="bGpu">6</span><span class="u">% gpu</span></span>
+          <span class="read tps" id="bTpsWrap" data-live="yes"><span class="v" id="bTps">44</span><span class="u">t/s</span></span>
+        </div>
+        <div class="range" id="range" role="group" aria-label="Time range">
+          <button data-min="1" aria-pressed="true">1m</button>
+          <button data-min="5" aria-pressed="false">5m</button>
+          <button data-min="15" aria-pressed="false">15m</button>
+        </div>
+      </div>
+
+      <svg class="plot" id="plot" viewBox="0 0 358 78" preserveAspectRatio="none" aria-hidden="true">
+        <line class="p-grid" x1="0" y1="34" x2="358" y2="34"/>
+        <g id="pBars"></g>
+        <path class="p-line" id="pLine" d=""/>
+        <line class="p-rail" x1="0" y1="64.5" x2="358" y2="64.5"/>
+      </svg>
+      <div class="axis"><span id="axLeft">−1 min</span><span id="axMid">30 s</span><span>now</span></div>
+      <div class="legend">
+        <span><i></i>gpu busy 0–100 %</span>
+        <span><i class="ln"></i>tokens/sec 0–140</span>
+      </div>
+    </div>
+
+    <!-- the screen belongs to the turns -->
+    <div class="list" id="list"></div>
+  </section>
+</div>
+
+<div class="desk">
+  <h2>Control desk</h2>
+  <div class="drow"><span class="lab">State</span>
+    <div class="ctl" data-ctl="state">
+      <button data-v="normal" aria-pressed="true">Running</button><button data-v="error">Errored turn</button><button data-v="empty">No turns</button>
+    </div></div>
+  <div class="drow"><span class="lab">Target</span>
+    <div class="ctl" data-ctl="target">
+      <button data-v="hide" aria-pressed="true">Ink only</button><button data-v="show">Show tap targets</button>
+    </div></div>
+  <div class="drow"><span class="lab">Theme</span>
+    <div class="ctl" data-ctl="theme">
+      <button data-v="dark" aria-pressed="true">Dark</button><button data-v="light">Light</button>
+    </div></div>
+  <div class="drow"><span class="lab">Motion</span>
+    <div class="ctl" data-ctl="motion">
+      <button data-v="full" aria-pressed="true">Full</button><button data-v="reduced">Reduced</button>
+    </div></div>
+  <div class="note">
+    <b>Running</b> holds a jerv research fan (two sub-agent children), a scheduled
+    <code>integrate_note</code> pipeline, a turn with no output yet, and a 47-minute OCR job — the
+    top one opens the full dossier. <b>Errored turn</b> keeps a run alive with a
+    <code>last_error</code> on it. <b>No turns</b> is the honesty case: the GPU reads 90-odd %
+    because image generation is on the same card, and the list says so instead of looking broken.
+  </div>
+</div>
+
+<script>
+/* ==========================================================================
+   1. THE DATA.  Only fields that genuinely exist on a running turn, plus the
+      ones cheaply stamped at turn start. The assembled prompt is NOT here —
+      it is not stored, and the dossier says so out loud.
+   ========================================================================== */
+var RUNS_NORMAL = [
+  {
+    id:"run_9f31c4a2", kind:"agent", status:"running", name:"Deep research — heat-pump sizing for a 1,860 ft² envelope",
+    persona:"jerv", session:"Heat-pump sizing", parent:null,
+    elapsed:134, steps:9, tokens:41208,
+    note:"wave 2 of 2 · 2 children open",
+    error:null,
+    model:"gpt-oss-120b", provider:"on-box · llama-swap", effort:"high",
+    ctx:131072, tools:["deep_research","spawn_subagent","web_search","web_fetch","summarize"],
+    toolset:"jerv · 5 tools",
+    trigger:{ kind:"Owner", label:"sent from chat", detail:"Full Brain composer · this session" , id:null},
+    ranAs:"scoped", domain:"general", promptVersion:"jerv.prompt@2026-07-02",
+    started:"14:31:08",
+    ask:"Work out what size heat pump the house actually needs.",
+    raw:[
+      {c:"step", t:"[step 7] spawn_subagent(persona=\"research_scout\", angle=\"cold-climate COP data\")\n          → run_4b7e1d90 started\n"},
+      {c:"step", t:"[step 8] spawn_subagent(persona=\"research_fetch\", urls=4)\n          → run_c19a5f22 started\n"},
+      {c:"step", t:"[step 9] assistant\n"},
+      {c:"out",  t:"For a 1,860 ft² envelope at your −14 °C design temperature the sizing question splits in two: the balance-point load, and what the unit still delivers at that temperature. Nameplate capacity is quoted at 8 °C, so a 3-ton nameplate is nearer 2 tons"}
+    ],
+    stream:[" when it is actually cold."," The two children are checking published COP curves"," against the manufacturer submittal sheets"," rather than the marketing figure."," Once both report back I will reconcile them"," against the April insulation note"," and give you a range rather than a single number."],
+    open:true
+  },
+  {
+    id:"run_4b7e1d90", kind:"subagent", status:"running", name:"Scout — cold-climate COP curves at −15 °C",
+    persona:"research_scout", session:"Heat-pump sizing", parent:"run_9f31c4a2",
+    elapsed:71, steps:3, tokens:6140,
+    note:"searching · 2 of 4 angles",
+    error:null,
+    model:"gpt-oss-120b", provider:"on-box · llama-swap", effort:"medium",
+    ctx:32768, tools:["web_search"], toolset:"research_scout · 1 tool",
+    trigger:{ kind:"Parent turn", label:"spawned by run_9f31c4a2", detail:"step 7 · spawn_subagent", id:null},
+    ranAs:"scoped", domain:"general", promptVersion:"research_scout.prompt@2026-06-18",
+    started:"14:32:11",
+    ask:"(no owner message — this turn was spawned by its parent)",
+    raw:[{c:"step",t:"[step 3] web_search(\"air source heat pump COP -15C field data\")\n"},
+         {c:"out", t:"6 candidates surfaced; 4 look like primary submittal data rather than vendor copy."}],
+    stream:[], open:false
+  },
+  {
+    id:"run_c19a5f22", kind:"subagent", status:"running", name:"Fetch — 4 submittal sheets",
+    persona:"research_fetch", session:"Heat-pump sizing", parent:"run_9f31c4a2",
+    elapsed:44, steps:2, tokens:9877,
+    note:"opened 2 of 4",
+    error:null,
+    model:"qwen3.8-27b", provider:"on-box · llama-swap", effort:"off",
+    ctx:32768, tools:["web_fetch"], toolset:"research_fetch · 1 tool",
+    trigger:{ kind:"Parent turn", label:"spawned by run_9f31c4a2", detail:"step 8 · spawn_subagent", id:null},
+    ranAs:"scoped", domain:"general", promptVersion:"research_fetch.prompt@2026-06-18",
+    started:"14:32:38",
+    ask:"(no owner message — this turn was spawned by its parent)",
+    raw:[{c:"step",t:"[step 2] web_fetch(2 of 4)\n"},{c:"out",t:"Page 2 returns a capacity table down to −25 °C. Extracting rows."}],
+    stream:[], open:false
+  },
+  {
+    id:"run_71dd0e35", kind:"workflow", status:"running", name:"integrate_note",
+    persona:null, session:null, parent:null,
+    elapsed:412, steps:34, tokens:118450,
+    note:"integrated 34 of 51 notes",
+    error:null,
+    model:"gpt-oss-120b", provider:"on-box · llama-swap", effort:"medium",
+    ctx:131072, tools:["integrate_note"], toolset:"pipeline action · 1",
+    trigger:{ kind:"Schedule", label:"nightly backfill · 02:15 daily", detail:"pipeline integrate_note · action integrate_note@3", id:"trig_0a44c1de"},
+    ranAs:"owner-system", domain:"—", promptVersion:"integrate.prompt@2026-05-30",
+    started:"14:26:10",
+    ask:null,
+    raw:[{c:"step",t:"[note 34/51] note_8831 — 3 facts proposed, 1 contradiction flagged\n"},
+         {c:"step",t:"[note 33/51] note_8830 — 6 facts proposed\n"},
+         {c:"step",t:"[note 32/51] note_8829 — skipped, already integrated\n"}],
+    stream:[], open:false
+  },
+  {
+    id:"run_5c02b9f1", kind:"agent", status:"running", name:"Weekly summary — what changed in the garden notes",
+    persona:"curator", session:"Weekly summary", parent:null,
+    elapsed:6, steps:0, tokens:0,
+    note:null,
+    error:null,
+    model:"nemotron-3-super-120b", provider:"on-box · llama-swap", effort:"high",
+    ctx:131072, tools:null, toolset:"curator · full brain (wildcard)",
+    trigger:{ kind:"Event", label:"note.ingested", detail:"event → pipeline weekly_summary", id:"trig_9b12ff07"},
+    ranAs:"scoped", domain:"general", promptVersion:"system.prompt@2026-07-02",
+    started:"14:33:16",
+    ask:"Summarise what changed in the garden notes this week.",
+    raw:[], stream:[], open:false
+  },
+  {
+    id:"run_2e88a740", kind:"job", status:"running", name:"ocr_attachment — 1996 survey scan, 214 pages",
+    persona:null, session:null, parent:null,
+    elapsed:2827, steps:171, tokens:0,
+    note:"page 171 of 214",
+    error:null,
+    model:"qwen3-vl-30b", provider:"on-box · llama-swap", effort:"off",
+    ctx:32768, tools:["ocr_attachment"], toolset:"job action · 1",
+    trigger:{ kind:"Event", label:"note.created", detail:"attachment upload → pipeline ocr", id:"trig_44ae0c31"},
+    ranAs:"owner-system", domain:"—", promptVersion:"ocr.prompt@2026-04-11",
+    started:"13:46:35",
+    ask:null,
+    raw:[{c:"step",t:"[page 171] 1,204 chars · confidence 0.94\n"},{c:"step",t:"[page 170] 980 chars · confidence 0.91\n"}],
+    stream:[], open:false
+  }
+];
+
+/* The errored variant: a live run carrying a last_error on its most recent step. */
+function withError(){
+  var runs = JSON.parse(JSON.stringify(RUNS_NORMAL));
+  runs[2].status = "error";
+  runs[2].error  = "web_fetch: 403 from the vendor host after 2 retries — step abandoned, parent notified";
+  runs[2].note   = "opened 2 of 4 · 1 source unreachable";
+  runs[2].raw.push({c:"rerr", t:"\n[step 3] web_fetch(3 of 4) → HTTP 403 (retry 2/2)\n          giving up on this source; reporting 2 of 4 to parent."});
+  runs[0].note = "wave 2 of 2 · 1 child open, 1 reported an error";
+  return runs;
+}
+
+/* ==========================================================================
+   2. THE CHART.  One 1 Hz ring buffer, 15 minutes deep. The range control
+      changes how much of it is plotted and how many seconds each column
+      averages — the same buffer, three windows. Nothing is re-faked per range.
+   ========================================================================== */
+var MAXS = 900, COLS = 60;
+var gpuBuf = [], tpsBuf = [];
+var W = 358, PAD = 1, PITCH = W / COLS, BW = PITCH - 2.1;
+var TOP = 4, BOT = 64, TPS_MAX = 140;
+var rangeMin = 1;
+
+function seed(){
+  var g = 6, t = 0, burst = false, left = 0;
+  for (var i = 0; i < MAXS; i++){
+    if (left <= 0){ burst = Math.random() < 0.4; left = burst ? (25 + Math.random()*80) : (25 + Math.random()*90); }
+    left--;
+    var gt = burst ? (52 + Math.random()*45) : (2 + Math.random()*8);
+    g += (gt - g) * 0.35 + (Math.random() - 0.5) * 6;
+    g = Math.max(0, Math.min(100, g));
+    gpuBuf.push(g);
+    if (burst){ t += ((36 + Math.random()*26) - t) * 0.4; tpsBuf.push(Math.max(0, t)); }
+    else { t = 0; tpsBuf.push(null); }
+  }
+}
+
+var pBars = document.getElementById('pBars'), pLine = document.getElementById('pLine');
+var barEls = [];
+for (var i = 0; i < COLS; i++){
+  var r = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  r.setAttribute('class','p-bar');
+  r.setAttribute('x', (i*PITCH + PAD).toFixed(2));
+  r.setAttribute('width', BW.toFixed(2));
+  r.setAttribute('rx','0.6');
+  pBars.appendChild(r); barEls.push(r);
+}
+
+function drawPlot(){
+  var window_s = rangeMin * 60;
+  var per = window_s / COLS;                    /* 1, 5 or 15 seconds a column */
+  var start = MAXS - window_s;
+  for (var c = 0; c < COLS; c++){
+    var lo = start + Math.round(c*per), hi = start + Math.round((c+1)*per);
+    var peak = 0;                               /* GPU: the PEAK in the bucket — an */
+    for (var k = lo; k < hi; k++){              /* averaged-away spike is a lie about load */
+      var v = gpuBuf[k]; if (v != null && v > peak) peak = v;
+    }
+    var h = Math.max(0.9, (Math.min(peak,100)/100) * (BOT - TOP));
+    barEls[c].setAttribute('y', (BOT - h).toFixed(2));
+    barEls[c].setAttribute('height', h.toFixed(2));
+    barEls[c].setAttribute('opacity', (0.34 + 0.66*(c/(COLS-1))).toFixed(2));
+    barEls[c].classList.toggle('hot', peak >= 85);
+  }
+  var d = '', open = false;
+  for (var c2 = 0; c2 < COLS; c2++){
+    var lo2 = start + Math.round(c2*per), hi2 = start + Math.round((c2+1)*per);
+    var sum = 0, n = 0;
+    for (var k2 = lo2; k2 < hi2; k2++){ var t = tpsBuf[k2]; if (t != null){ sum += t; n++; } }
+    if (!n){ open = false; continue; }          /* a gap, not a line through zero */
+    var y = BOT - (Math.min(sum/n, TPS_MAX)/TPS_MAX) * (BOT - TOP);
+    d += (open ? 'L' : 'M') + (c2*PITCH + PAD + BW/2).toFixed(2) + ' ' + y.toFixed(2) + ' ';
+    open = true;
+  }
+  pLine.setAttribute('d', d.trim());
+  document.getElementById('axLeft').textContent = '−' + rangeMin + ' min';
+  document.getElementById('axMid').textContent  = rangeMin === 1 ? '30 s' : ('−' + (rangeMin/2) + ' min');
+}
+
+/* the 48×20 top-bar chart, same code shape as the shipped component */
+var vBarsG = document.getElementById('vBars'), vBars = [];
+for (var j = 0; j < 12; j++){
+  var vr = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  vr.setAttribute('class','vitals-bar');
+  vr.setAttribute('x', (j*4 + 0.2).toFixed(2));
+  vr.setAttribute('width','2.6'); vr.setAttribute('rx','0.4');
+  vBarsG.appendChild(vr); vBars.push(vr);
+}
+function drawMini(){
+  var vTrace = document.getElementById('vTrace'), vHead = document.getElementById('vHead');
+  var d = '', open = false, last = null;
+  for (var i = 0; i < 12; i++){
+    var idx = MAXS - 12 + i;
+    var g = gpuBuf[idx], h = Math.max(0.9, (Math.min(g,100)/100)*(16.6-1.4));
+    vBars[i].setAttribute('y', (16.6-h).toFixed(2));
+    vBars[i].setAttribute('height', h.toFixed(2));
+    vBars[i].setAttribute('opacity', (0.3 + 0.7*(i/11)).toFixed(2));
+    vBars[i].classList.toggle('hot', g >= 85);
+    var t = tpsBuf[idx];
+    if (t == null){ open = false; continue; }
+    var x = (i*4 + 0.2 + 1.3), y = 16.6 - (Math.min(t,140)/140)*(16.6-1.4);
+    d += (open?'L':'M') + x.toFixed(2) + ' ' + y.toFixed(2) + ' ';
+    open = true; last = [x,y];
+  }
+  vTrace.setAttribute('d', d.trim());
+  if (last && tpsBuf[MAXS-1] != null){ vHead.setAttribute('cx',last[0]); vHead.setAttribute('cy',last[1]); vHead.style.display=''; }
+  else vHead.style.display = 'none';
+}
+
+/* ==========================================================================
+   3. THE LIST + THE DOSSIER
+   ========================================================================== */
+var KIND_LABEL = { agent:"agent", subagent:"sub-agent", workflow:"workflow", job:"job" };
+var listEl = document.getElementById('list');
+var runs = RUNS_NORMAL, mode = 'normal';
+var copied = { id:null, until:0 };
+/* The lead turn opens with its dossier already down — this screen's whole point
+   is the dossier, and an all-collapsed first paint hides it. */
+var openIds = { "run_9f31c4a2": true };
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function n(x){ return x.toLocaleString('en-US'); }
+function dur(s){
+  if (s < 60) return s + 's';
+  var m = Math.floor(s/60), r = s % 60;
+  if (m < 60) return m + 'm ' + String(r).padStart(2,'0') + 's';
+  return Math.floor(m/60) + 'h ' + String(m%60).padStart(2,'0') + 'm';
+}
+
+function fieldRow(k, v, cls){
+  return '<dt>' + esc(k) + '</dt><dd class="' + (cls||'') + '">' + v + '</dd>';
+}
+
+function dossier(r){
+  var h = '<div class="dossier">';
+
+  h += '<div class="grp"><h3>Identity</h3><dl class="fields">';
+  h += fieldRow('run id', esc(r.id), 'mono');
+  h += fieldRow('kind', esc(KIND_LABEL[r.kind]), 'dim');
+  h += fieldRow('status', r.status === 'error'
+        ? 'running · last step errored' : esc(r.status), r.status === 'error' ? 'err' : 'dim');
+  h += fieldRow('persona', r.persona ? esc(r.persona) : 'none — engine action', r.persona ? 'mono' : 'none');
+  h += fieldRow('session', r.session ? esc(r.session) : 'none — session-less run', r.session ? '' : 'none');
+  h += fieldRow('parent run', r.parent ? esc(r.parent) : '— root', r.parent ? 'mono' : 'none');
+  h += '</dl></div>';
+
+  h += '<div class="grp"><h3>Model &amp; routing</h3><dl class="fields">';
+  h += fieldRow('model', esc(r.model), 'mono');
+  h += fieldRow('provider', esc(r.provider), 'dim');
+  h += fieldRow('reasoning', r.effort === 'off' ? 'off' : esc(r.effort), r.effort === 'off' ? 'none' : 'dim');
+  h += fieldRow('context', n(r.ctx) + ' tokens', 'dim');
+  h += fieldRow('tool set', esc(r.toolset) +
+        (r.tools ? '<div class="chips">' + r.tools.map(function(t){ return '<span class="chip">'+esc(t)+'</span>'; }).join('') + '</div>' : ''), 'dim');
+  h += '</dl></div>';
+
+  h += '<div class="grp"><h3>Budget &amp; progress</h3><dl class="fields">';
+  h += fieldRow('started', esc(r.started), 'dim');
+  h += fieldRow('elapsed', dur(r.elapsed), '');
+  h += fieldRow('steps', n(r.steps), '');
+  h += fieldRow('tokens', r.tokens ? n(r.tokens) : 'none billed yet', r.tokens ? '' : 'none');
+  h += fieldRow('progress', r.note ? esc(r.note) : 'nothing reported', r.note ? 'dim' : 'none');
+  if (r.error) h += fieldRow('last error', esc(r.error), 'err');
+  h += '</dl></div>';
+
+  h += '<div class="grp"><h3>Provenance</h3><dl class="fields">';
+  h += fieldRow('triggered by', '<b style="font-weight:600">' + esc(r.trigger.kind) + '</b> · ' + esc(r.trigger.label) +
+        '<div class="trace">' + esc(r.trigger.detail) + '</div>', 'dim');
+  h += fieldRow('trigger id', r.trigger.id ? esc(r.trigger.id) : 'none — not a stored trigger',
+        r.trigger.id ? 'mono' : 'none');
+  h += fieldRow('ran as', esc(r.ranAs), 'dim');
+  h += fieldRow('domain', r.domain === '—' ? 'cross-domain (no stamp)' : esc(r.domain),
+        r.domain === '—' ? 'none' : 'dim');
+  h += fieldRow('prompt ver.', esc(r.promptVersion), 'mono');
+  h += '</dl></div>';
+
+  h += '<div class="grp"><h3>What started it</h3>';
+  h += r.ask
+    ? '<div class="ask">' + esc(r.ask) + '</div>'
+    : '<div class="ask none">No message — this run was started by the engine, not by a person.</div>';
+  h += '<div class="footnote">The prompt actually sent to the model is not stored, so it cannot be shown here. This is the message the turn was built from.</div>';
+  h += '</div>';
+
+  h += '<div class="grp"><div class="raw-head"><h3 style="padding:0">Raw output · live</h3>' +
+       '<button class="copy" data-copy="' + esc(r.id) + '">' +
+       (copied.id === r.id && Date.now() < copied.until ? 'copied' : 'copy') + '</button></div>';
+  if (!r.raw.length){
+    h += '<div class="raw empty">No output yet — the first token has not arrived. ' +
+         'The turn is open and the model has been called.</div>';
+  } else {
+    var body = r.raw.map(function(seg){ return '<span class="'+seg.c+'">'+esc(seg.t)+'</span>'; }).join('');
+    h += '<div class="raw" data-raw="' + esc(r.id) + '">' + body +
+         (r.status === 'error' ? '' : '<span class="cursor"></span>') + '</div>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+function turnHead(r, isKid){
+  var h = '';
+  h += '<div class="kindline">';
+  h += '<span class="kind ' + r.kind + '">' + esc(KIND_LABEL[r.kind]) + '</span>';
+  if (r.persona) h += '<span class="persona">' + esc(r.persona) + '</span>';
+  h += '<span class="elapsed">' + dur(r.elapsed) + '</span>';
+  h += '</div>';
+  h += '<div class="turn-name">' + esc(r.name) + '</div>';
+  if (r.error) h += '<div class="turn-err"><b>error</b><span>' + esc(r.error) + '</span></div>';
+  if (r.note) h += '<div class="turn-note">' + esc(r.note) + '</div>';
+  else if (!r.error) h += '<div class="turn-note none">no progress reported yet</div>';
+  h += '<div class="metrics">';
+  h += '<span><b>' + n(r.steps) + '</b> steps</span>';
+  h += '<span><b>' + (r.tokens ? n(r.tokens) : '0') + '</b> tokens</span>';
+  h += '<span class="drill">' + (r.open ? 'hide' : 'dossier') +
+       '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span>';
+  h += '</div>';
+  return h;
+}
+
+function render(){
+  var open = openIds;
+  /* The 1 Hz tick rebuilds the list, so the reader's place in it has to survive:
+     the list's own scroll and each open raw block's scroll are carried over. */
+  var keepScroll = listEl.scrollTop;
+  var rawScroll = {};
+  listEl.querySelectorAll('.raw[data-raw]').forEach(function(el){
+    rawScroll[el.dataset.raw] = { top: el.scrollTop, bottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 4 };
+  });
+
+  if (mode === 'empty'){
+    document.getElementById('cardSub').textContent = 'running now · 0';
+    listEl.innerHTML =
+      '<div class="sec"><span>Running now</span><span>0</span></div>' +
+      '<div class="empty-state">' +
+        '<h4>No agent turns running.</h4>' +
+        '<p>Nothing is open — no chat turn, no sub-agent, no scheduled pipeline. ' +
+           'The box is not idle, though.</p>' +
+        '<div class="why"><span class="gpu-echo" id="echoGpu">gpu 94 %</span>' +
+          '<span>The strip above measures the whole card. Image generation and model loading ' +
+          'run on it too, and neither is an agent turn — so a busy trace with an empty list ' +
+          'is the truth, not a stall.</span></div>' +
+      '</div>';
+    return;
+  }
+
+  var roots = runs.filter(function(r){ return !r.parent; });
+  document.getElementById('cardSub').textContent = 'running now · ' + runs.length;
+  var h = '<div class="sec"><span>Running now</span><span>' + runs.length + '</span></div>';
+
+  roots.forEach(function(r){
+    var kids = runs.filter(function(k){ return k.parent === r.id; });
+    r.open = !!open[r.id];
+    h += '<article class="turn" data-id="' + r.id + '" data-open="' + (r.open?'yes':'no') + '">';
+    h += '<button class="turn-head" data-toggle="' + r.id + '">' + turnHead(r) + '</button>';
+    h += dossier(r);
+    if (kids.length){
+      h += '<div class="kids"><div class="kids-in">';
+      kids.forEach(function(k){
+        k.open = !!open[k.id];
+        h += '<div class="turn" data-id="' + k.id + '" data-open="' + (k.open?'yes':'no') +
+             '" style="background:none;border:none;border-radius:0">';
+        h += '<button class="kid" data-toggle="' + k.id + '">' + turnHead(k, true) + '</button>';
+        h += dossier(k);
+        h += '</div>';
+      });
+      h += '</div></div>';
+    }
+    h += '</article>';
+  });
+  listEl.innerHTML = h;
+  /* Pinned to the bottom means "follow the stream"; scrolled up means the reader
+     is reading, so leave them where they were. */
+  listEl.querySelectorAll('.raw[data-raw]').forEach(function(el){
+    var prev = rawScroll[el.dataset.raw];
+    el.scrollTop = (!prev || prev.bottom) ? el.scrollHeight : prev.top;
+  });
+  listEl.scrollTop = keepScroll;
+}
+
+listEl.addEventListener('click', function(e){
+  var copy = e.target.closest('.copy');
+  if (copy){
+    var r = runs.find(function(x){ return x.id === copy.dataset.copy; });
+    var text = r ? r.raw.map(function(s){ return s.t; }).join('') : '';
+    if (navigator.clipboard) navigator.clipboard.writeText(text).catch(function(){});
+    copied = { id: copy.dataset.copy, until: Date.now() + 1500 };
+    copy.textContent = 'copied';
+    setTimeout(function(){ if (Date.now() >= copied.until) render(); }, 1600);
+    return;
+  }
+  var btn = e.target.closest('[data-toggle]');
+  if (!btn) return;
+  var id = btn.dataset.toggle;
+  if (openIds[id]) delete openIds[id]; else openIds[id] = true;
+  render();
+});
+
+/* ==========================================================================
+   4. THE 1 Hz TICK — jitters the live figures and grows the streaming turn.
+   ========================================================================== */
+var gpu = 6, tps = 44;
+function tick(){
+  var busy = (mode === 'empty') ? true : (Math.random() < 0.75);
+  var gTarget = busy ? (58 + Math.random()*40) : (3 + Math.random()*9);
+  gpu += (gTarget - gpu) * 0.4 + (Math.random() - 0.5) * 6;
+  gpu = Math.max(0, Math.min(100, gpu));
+  gpuBuf.push(gpu); gpuBuf.shift();
+
+  var live = mode !== 'empty';
+  if (live){
+    tps += ((34 + Math.random()*28) - tps) * 0.35 + (Math.random() - 0.5) * 7;
+    tps = Math.max(8, Math.min(138, tps));
+    tpsBuf.push(tps);
+  } else { tpsBuf.push(null); }
+  tpsBuf.shift();
+
+  document.getElementById('vGpu').textContent = Math.round(gpu);
+  document.getElementById('vTps').textContent = live ? Math.round(tps) : '';
+  document.getElementById('vitals').dataset.turn = live ? 'live' : 'idle';
+  document.getElementById('bGpu').textContent = Math.round(gpu);
+  document.getElementById('bTps').textContent = live ? Math.round(tps) : '—';
+  document.getElementById('bTpsWrap').dataset.live = live ? 'yes' : 'no';
+  var echo = document.getElementById('echoGpu');
+  if (echo) echo.textContent = 'gpu ' + Math.round(gpu) + ' %';
+
+  drawMini(); drawPlot();
+
+  if (mode === 'empty') return;
+
+  /* live figures on the running turns */
+  runs.forEach(function(r){
+    if (r.status === 'error' && r.id !== runs[0].id) { r.elapsed += 1; return; }
+    r.elapsed += 1;
+    r.tokens += Math.round(20 + Math.random()*140);
+    if (Math.random() < 0.09) r.steps += 1;
+  });
+  var lead = runs[0];
+  if (lead.stream && lead.stream.length && Math.random() < 0.55){
+    var seg = lead.stream.shift();
+    var tail = lead.raw[lead.raw.length - 1];
+    if (tail && tail.c === 'out') tail.t += seg; else lead.raw.push({c:'out', t:seg});
+  }
+  if (runs[3]) {
+    var doneRe = /integrated (\d+) of 51/.exec(runs[3].note || '');
+    if (doneRe && Math.random() < 0.2){
+      var v = Math.min(51, parseInt(doneRe[1],10) + 1);
+      runs[3].note = 'integrated ' + v + ' of 51 notes';
+    }
+  }
+  if (runs[5]){
+    var pg = /page (\d+) of 214/.exec(runs[5].note || '');
+    if (pg && Math.random() < 0.3){
+      runs[5].note = 'page ' + Math.min(214, parseInt(pg[1],10) + 1) + ' of 214';
+    }
+  }
+  /* the no-output-yet turn eventually starts producing, then is left alone */
+  var quiet = runs[4];
+  if (quiet && !quiet.raw.length && quiet.elapsed > 14){
+    quiet.raw = [{c:'step', t:'[step 1] search_notes(topic="garden", since="7d")\n'}];
+    quiet.note = 'searching notes';
+    quiet.steps = 1;
+  }
+  render();
+}
+
+/* ==========================================================================
+   5. Navigation + the mock harness
+   ========================================================================== */
+var phone = document.getElementById('phone'), card = document.getElementById('card');
+document.getElementById('vitalsTap').addEventListener('click', function(){
+  card.classList.add('open'); card.setAttribute('aria-hidden','false');
+});
+document.getElementById('back').addEventListener('click', function(){
+  card.classList.remove('open'); card.setAttribute('aria-hidden','true');
+});
+
+document.getElementById('range').addEventListener('click', function(e){
+  var b = e.target.closest('button'); if (!b) return;
+  this.querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', String(x === b)); });
+  rangeMin = parseInt(b.dataset.min, 10);
+  drawPlot();
+});
+
+document.querySelectorAll('.ctl').forEach(function(ctl){
+  ctl.addEventListener('click', function(e){
+    var b = e.target.closest('button'); if (!b) return;
+    ctl.querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-pressed', String(x === b)); });
+    var k = ctl.dataset.ctl, v = b.dataset.v;
+    if (k === 'state'){
+      mode = v;
+      if (v === 'normal') runs = JSON.parse(JSON.stringify(RUNS_NORMAL));
+      else if (v === 'error') runs = withError();
+      render();
+    }
+    if (k === 'target') phone.dataset.target = v;
+    if (k === 'theme'){ if (v === 'light') phone.setAttribute('data-theme','light'); else phone.removeAttribute('data-theme'); }
+    if (k === 'motion') document.body.classList.toggle('rm', v === 'reduced');
+  });
+});
+
+seed();
+runs = JSON.parse(JSON.stringify(RUNS_NORMAL));
+drawMini(); drawPlot(); render();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
