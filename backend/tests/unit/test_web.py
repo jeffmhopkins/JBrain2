@@ -1572,6 +1572,206 @@ async def test_a_thin_reader_shell_is_returned_when_no_tier_beats_it() -> None:
     assert "reuters.com" in result.text
 
 
+# --- JS-app shells (a 200 whose content is painted by scripts, not served as HTML) ------
+
+
+# An SPA shell that LEAKS a little chrome — the shape that used to defeat escalation entirely,
+# because the trigger was a strictly EMPTY extraction and this is a few words short of empty.
+_JS_SHELL_HTML = (
+    b'<html><head><title>Qwen</title></head><body><div id="root"></div>'
+    b"<p>Loading. Accept cookies to continue.</p>"
+    b'<script src="/app.js"></script></body></html>'
+)
+# The same failure with no framework marker at all (the real `qwen.ai/blog`: ~92 KB of HTML and
+# 53 script tags painting a page our extractor reads as blank). Caught by shape, not by name, so
+# a framework we have never heard of still escalates.
+_SCRIPT_HEAVY_SHELL_HTML = (
+    b"<html><head><title>App</title></head><body>"
+    + b"<script>var payload = '"
+    + b"x" * 25_000
+    + b"';</script>" * 1
+    + b"<script>init();</script>" * 9
+    + b"</body></html>"
+)
+# A reader render long enough to WIN outright (past `_MIN_RECOVERED_CHARS`) rather than merely
+# be held as the best thin candidate — the difference between recovering the app and confirming
+# we still haven't seen it.
+_RENDERED_MD = b"Rendered by the reader: the content the static HTML never carried. " * 5
+# A page that is genuinely short — not a shell. Plain HTML, no scripts: escalating it would burn
+# the heavy solver and the PAID Tavily tier on every fetch, which is why detection needs evidence
+# rather than a text-length rule.
+_SHORT_REAL_HTML = (
+    b"<html><head><title>Status</title></head><body><p>The service is operating normally."
+    b" No incidents are open.</p></body></html>"
+)
+
+
+async def test_a_leaky_js_shell_escalates_to_the_reader() -> None:
+    # The regression this feature targets: a 200 SPA shell carrying a few words of chrome is not
+    # empty, so it used to be returned as a successful fetch and read as "this page has nothing
+    # on it". It now escalates like the empty case and the renderer supplies the real content.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(200, content=_JS_SHELL_HTML, headers={"content-type": "text/html"}),
+                reader=_RENDERED_MD,
+                solver_response=None,
+            )
+        ),
+        reader_url="http://reader:3000",
+    )
+    result = await fetcher.fetch("https://qwen.example/blog")
+    assert "the content the static HTML never carried" in result.text
+    assert not result.js_shell  # the page was recovered, so it is no longer a shell
+
+
+async def test_a_script_heavy_shell_with_no_framework_marker_escalates() -> None:
+    # Detection by SHAPE (a lot of HTML and a lot of script for almost no text), so a framework
+    # whose markers we don't carry is still recovered.
+    shell = httpx.Response(
+        200, content=_SCRIPT_HEAVY_SHELL_HTML, headers={"content-type": "text/html"}
+    )
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_reader_handler(shell)),
+        reader_url="http://reader:3000",
+    )
+    result = await fetcher.fetch("https://spa.example/page")
+    assert "Rendered by the reader" in result.text
+
+
+async def test_a_leaky_js_shell_escalates_all_the_way_to_the_solver() -> None:
+    # The reader renders the shell no better than we did (a thin miss), so the stealth browser
+    # gets its turn — the same ladder a bot-wall walks, now reachable from a 200.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(200, content=_JS_SHELL_HTML, headers={"content-type": "text/html"}),
+                reader=_THIN_READER_MD,
+                solver_response={"url": "https://qwen.example/blog", "response": _SOLVED_HTML},
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    result = await fetcher.fetch("https://qwen.example/blog")
+    assert "Real article content" in result.text
+
+
+async def test_an_unrecovered_js_shell_is_flagged_not_dropped() -> None:
+    # No tier renders it: the shell is still returned (nothing is ever discarded) but carries
+    # `js_shell`, which is what lets the tool say "this needs a browser we already tried"
+    # instead of "no readable text" — the ambiguity the model was left to guess at.
+    shell = httpx.Response(200, content=_JS_SHELL_HTML, headers={"content-type": "text/html"})
+    result = await WebFetcher(transport=httpx.MockTransport(lambda _: shell)).fetch(
+        "https://qwen.example/blog"
+    )
+    assert result.js_shell
+    assert "Accept cookies" in result.text  # the shell we do have is not thrown away
+
+
+async def test_a_thin_recovery_of_a_js_shell_stays_flagged() -> None:
+    # The reader "succeeds" but renders only a bare title: that hasn't painted the app either,
+    # so the flag survives the recovery rather than passing a few words off as the article.
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            _tiered_handler(
+                httpx.Response(200, content=_JS_SHELL_HTML, headers={"content-type": "text/html"}),
+                reader=_THIN_READER_MD,
+                solver_response=None,  # solver 500s → a miss
+            )
+        ),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    result = await fetcher.fetch("https://qwen.example/blog")
+    assert result.js_shell
+
+
+async def test_a_short_real_page_is_not_treated_as_a_js_shell() -> None:
+    # The precision bar: a genuinely short page is served as-is, with no recovery tier touched.
+    # A false positive here would spend a stealth-browser solve and a paid extraction per fetch.
+    hits: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        hits.append(request.url.host or "")
+        if request.url.host == "reader":
+            return httpx.Response(200, content=b"reader ran", headers={"content-type": "text/x"})
+        return httpx.Response(200, content=_SHORT_REAL_HTML, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    result = await fetcher.fetch("https://status.example/")
+    assert "operating normally" in result.text
+    assert not result.js_shell
+    assert "reader" not in hits and "byparr" not in hits
+
+
+async def test_a_real_article_on_a_framework_page_is_never_a_js_shell() -> None:
+    # Every signal is gated on a thin extraction, so a hydrated framework page — markers, scripts
+    # and all — that DID serve its article is never flagged and never re-fetched.
+    article = (
+        b'<html><head><title>Real</title></head><body><div id="root">'
+        b"<p>" + b"Real reporting that the server rendered into the HTML. " * 20 + b"</p>"
+        b'</div><script src="/app.js"></script></body></html>'
+    )
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, content=article, headers={"content-type": "text/html"})
+        ),
+        reader_url="http://reader:3000",
+    )
+    result = await fetcher.fetch("https://news.example/story")
+    assert "Real reporting" in result.text
+    assert not result.js_shell
+
+
+async def test_a_js_shell_at_an_offset_does_not_re_escalate() -> None:
+    # Escalation is a FIRST-page decision: a thin window deep into a page (or a `find` that
+    # simply didn't match) is not a shell, so paging never silently re-runs the whole ladder.
+    hits: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        hits.append(request.url.host or "")
+        return httpx.Response(200, content=_JS_SHELL_HTML, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(transport=httpx.MockTransport(handle), reader_url="http://reader:3000")
+    await fetcher.fetch("https://qwen.example/blog", offset=5_000)
+    assert "reader" not in hits
+
+
+async def test_the_web_fetch_tool_explains_an_unrendered_js_app() -> None:
+    # What the model actually reads. "That page had no readable text" is indistinguishable from
+    # "the topic doesn't exist", and it hides that the whole ladder already ran — so the model
+    # either gives up or burns calls re-fetching the same URL. The message says both.
+    shell = httpx.Response(
+        200,
+        content=b'<html><head><title>Qwen</title></head><body><div id="root"></div></body></html>',
+        headers={"content-type": "text/html"},
+    )
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(lambda _: shell))
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://qwen.example/blog"}, _fresh_ctx()))
+    assert "JavaScript app" in out
+    assert "will not help" in out  # don't re-fetch this URL
+    assert "NOT evidence" in out  # don't read it as "the page/topic is empty"
+
+
+async def test_the_web_fetch_tool_flags_a_shell_that_leaked_a_few_words() -> None:
+    # The more dangerous half: a shell with a little text LOOKS like a successful short read, so
+    # without the note the model quotes page chrome as if it were the article.
+    shell = httpx.Response(200, content=_JS_SHELL_HTML, headers={"content-type": "text/html"})
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(lambda _: shell))
+    )
+    out = str(await handlers["web_fetch"]({"url": "https://qwen.example/blog"}, _fresh_ctx()))
+    assert "UNREAD page" in out
+    assert "Accept cookies" in out  # the shell text is still shown, just labelled
+
+
 # --- solver-first domains (a known hard-wall origin skips the doomed direct+reader legs) ---
 
 

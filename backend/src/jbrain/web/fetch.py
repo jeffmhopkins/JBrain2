@@ -50,7 +50,7 @@ import re
 import socket
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 from urllib.parse import urldefrag, urljoin, urlparse
 
@@ -306,6 +306,69 @@ def _is_challenge_page(title: str, text: str) -> bool:
     return words < _CHALLENGE_TINY_WORDS and any(m in b for m in _CHALLENGE_WEAK_MARKERS)
 
 
+# --- JS-app shell detection (a page whose content is painted by scripts) ------
+# A single-page app serves a near-empty HTML skeleton and paints the article from
+# JavaScript, so the static extractor sees nothing — or only the scraps of chrome that
+# survived stripping (a cookie line, a "Loading…" placeholder, a splash-screen script's
+# stray text). Escalation used to fire ONLY on a strictly EMPTY extraction, while every
+# recovery tier has to clear `_MIN_RECOVERED_CHARS` to win: the direct tier alone won at a
+# single character. So a shell that leaked a few words short-circuited the whole ladder and
+# came back as a successful fetch of an apparently empty page, which reads to the model as
+# "this page has nothing on it" rather than "we never rendered it" (observed on
+# `qwen.ai/blog`: 92 KB of HTML, 53 `<script>` tags, zero extracted text).
+#
+# Detection is EVIDENCE-based, not merely "the text was short", because the two mistakes
+# cost differently. Missing a shell wastes nothing but a page we already failed to read;
+# flagging a genuinely short real page (a three-line status notice) burns the heavy solver
+# and the PAID Tavily tier on every fetch of it. Two independent signals, either sufficient:
+# the classic SPA hydration markers, and the shape that catches a framework we don't know —
+# a lot of HTML and a lot of `<script>`, with almost no readable text to show for it. Both
+# are gated on a thin extraction, so a real article never reaches the marker check at all.
+_JS_APP_MARKERS = (
+    "__next_data__",
+    "__nuxt__",
+    "window.__initial_state__",
+    "window.__initial_data__",
+    "window.__remix_context__",
+    'id="root"',
+    "id='root'",
+    'id="__next"',
+    'id="app"',
+    "data-reactroot",
+    "data-server-rendered",
+    "ng-app",
+)
+# A `<noscript>` telling the reader to switch JavaScript on is the site saying outright that
+# the content needs a browser. Bounded so a giant noscript block can't drive a slow scan.
+_JS_APP_NOSCRIPT_RE = re.compile(
+    r"<noscript[^>]*>.{0,600}?(?:enable|turn on|activate|requires?)\s+javascript",
+    re.IGNORECASE | re.DOTALL,
+)
+_SCRIPT_TAG_RE = re.compile(r"<script\b", re.IGNORECASE)
+# The unknown-framework shape: this much HTML and this many script tags, yet a thin
+# extraction. Sized well above a hand-written page that merely loads analytics.
+_JS_APP_MIN_HTML = 20_000
+_JS_APP_MIN_SCRIPTS = 8
+
+
+def _looks_like_js_app(html: str, text: str) -> bool:
+    """Whether `html` is a JS app's un-rendered shell rather than a page whose content is
+    genuinely short — the signal that makes a thin extraction worth escalating to a
+    renderer. See the block comment above for the two signals and why this is gated on a
+    thin extraction rather than tuned on text length alone. A no-op without raw HTML (the
+    reader path has markdown only)."""
+    if not html or len(text.strip()) >= _MIN_RECOVERED_CHARS:
+        return False
+    lower = html.lower()
+    if any(marker in lower for marker in _JS_APP_MARKERS):
+        return True
+    if _JS_APP_NOSCRIPT_RE.search(lower):
+        return True
+    return len(html) >= _JS_APP_MIN_HTML and len(_SCRIPT_TAG_RE.findall(lower)) >= (
+        _JS_APP_MIN_SCRIPTS
+    )
+
+
 # --- Paywall / subscriber-wall detection -------------------------------------
 # A metered/subscriber site often answers 200 with a SHORT wall in place of the article
 # ("Subscribe to continue reading"), which the extractor pulls as the page's "content" —
@@ -469,6 +532,12 @@ class FetchResult:
     # long page/transcript can be re-read and paged across turns without a network re-fetch
     # (docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md). Empty on a result built without it.
     full_text: str = ""
+    # True when this text is a JavaScript app's un-rendered shell (`_looks_like_js_app`) that
+    # NO tier managed to paint — the page is real, we just never saw it. Set only on a result
+    # `fetch` is about to hand back, so it means "what you are holding is the shell", and the
+    # tool can say the URL needs a browser we already tried instead of the ambiguous "no
+    # readable text", which the model reads as "the page is empty".
+    js_shell: bool = False
 
 
 def _find_offsets(
@@ -660,6 +729,17 @@ def _collect_links(hrefs: list[str], *, base: str) -> tuple[str, ...]:
         if len(out) >= _MAX_LINKS:
             break
     return tuple(out)
+
+
+def _richer(a: FetchResult | None, b: FetchResult | None) -> FetchResult | None:
+    """The fuller of two held-thin results, either of which may be None — so seeding the
+    recovery ladder with an already-held partial page can only add a candidate, never
+    displace a better one."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if a.total_chars >= b.total_chars else b
 
 
 class WebFetcher:
@@ -869,13 +949,24 @@ class WebFetcher:
                 if recovered is not None:
                     return recovered
             raise
-        # Only the FIRST page's emptiness (with no keyword miss) signals a JS-rendered shell
-        # worth recovering; an empty window at offset>0, or a `find` that just didn't match,
+        # Only the FIRST page's thinness (with no keyword miss) signals a JS-rendered shell
+        # worth recovering; a thin window at offset>0, or a `find` that just didn't match,
         # is not a shell.
-        empty_shell = offset == 0 and not find and not result.text.strip()
-        if empty_shell:
+        first_page = offset == 0 and not find
+        # Escalate on an EMPTY extraction (as always) and now equally on a THIN one carrying
+        # JS-app evidence. Emptiness alone was too narrow a trigger: it let the direct tier
+        # win at a single character while every recovery tier must clear
+        # `_MIN_RECOVERED_CHARS`, so an SPA shell that leaked a few words of chrome
+        # short-circuited the ladder and was handed back as a page with nothing on it.
+        # (`_looks_like_js_app` already requires a thin extraction, so the flag alone is the
+        # "thin AND JS evidence" condition — re-testing the length here would only introduce a
+        # second, subtly different bar.)
+        js_shell = first_page and result.js_shell
+        if first_page and (not result.text.strip() or js_shell):
             # A JS-rendered shell our static extractor can't see — a renderer runs the page's
-            # scripts and returns the content that wasn't in the served HTML.
+            # scripts and returns the content that wasn't in the served HTML. The shell we
+            # already hold is seeded as the thin fallback so escalation can only improve on
+            # it, never lose it.
             recovered = await self._recover(
                 url,
                 offset=offset,
@@ -885,10 +976,18 @@ class WebFetcher:
                 skip_solver=solver_first_tried,
                 skip_tavily=tavily_first_tried,
                 solver_already_missed=solver_first_missed,
-                seed_thin=tavily_first_thin,
+                seed_thin=_richer(tavily_first_thin, result if result.text.strip() else None),
             )
             if recovered is not None:
+                # A recovery that is ITSELF still thin has not painted the app either (the
+                # reader rendering a shell as its bare title). Carry the flag so the tool
+                # reports an unrendered page instead of passing a few words off as content.
+                if js_shell and recovered.total_chars < _MIN_RECOVERED_CHARS:
+                    log.info("web.js_shell_unrecovered", url=url, chars=recovered.total_chars)
+                    return replace(recovered, js_shell=True)
                 return recovered
+            if js_shell:
+                log.info("web.js_shell_unrecovered", url=url, chars=result.total_chars)
         return result
 
     async def _recover(
@@ -1064,7 +1163,7 @@ class WebFetcher:
         # `total_chars` lets the tool tell the model whether more remains. `truncated` means
         # the FULL text is itself short of the real page because the download hit the byte
         # cap — not recoverable by paging.
-        return _window_and_find(
+        windowed = _window_and_find(
             text,
             url=final_url,
             title=title,
@@ -1074,6 +1173,14 @@ class WebFetcher:
             find_regex=find_regex,
             body_truncated=body_truncated,
         )
+        # A JS app's un-rendered shell is FLAGGED, never raised: unlike a bot-wall or a
+        # paywall the origin is not refusing us — the page is real and simply needs a
+        # browser. `fetch` escalates on the flag (the raw HTML the detector needs is local to
+        # this method, so the verdict has to be taken here) and, when nothing renders it,
+        # hands the flag to the tool to explain the miss.
+        if _looks_like_js_app(raw_html, text):
+            return replace(windowed, js_shell=True)
+        return windowed
 
     async def _fetch_post(
         self,
