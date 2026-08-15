@@ -1,6 +1,6 @@
 # JS-App Fetch — stop reading an un-rendered SPA as an empty page
 
-> **Status:** In progress · **Last verified:** 2026-08-15 · **Waves:** J1✅ J2◻️
+> **Status:** In progress · **Last verified:** 2026-08-15 · **Waves:** J1✅ J1b✅ J2◻️
 
 `web_fetch` walks a four-tier ladder (direct → reader → byparr → Tavily) whose
 escalation was built entirely around a page being **blocked**: a 403/429, a challenge
@@ -80,6 +80,11 @@ ladder failed to render, alongside the existing `web.challenge_blocked` /
   must NOT escalate — a genuinely short page and a hydrated framework page — plus the two
   tool-message cases), web fetch faked via `MockTransport`, plus two bridge cases in
   `test_jcode_web_bridge.py`.
+- **J1b ✅ (this PR)** — the instrument J2 needs. `FetchResult.tier` records which leg of the
+  ladder produced the text, and `POST /api/debug/fetch` reports it alongside `js_shell`. A
+  recovered page is shaped exactly like a directly-served one, so before this "did the
+  escalation fire?" was only answerable by correlating `logs api` by hand — a poor read on a
+  phone, which is the whole reason J2 hadn't been run. Now it is one call.
 - **J2 ◻️** — live validation on-box via `POST /api/debug/fetch`: confirm a known SPA
   (`qwen.ai/blog`) either renders through a tier or comes back honestly flagged, and check
   whether the on-box reader needs a hydration wait (`X-Timeout` / `X-Wait-For-Selector`)

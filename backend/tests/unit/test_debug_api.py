@@ -589,6 +589,48 @@ def test_fetch_route_runs_the_web_fetcher(debug_client: tuple[TestClient, str]) 
     assert resp.status_code == 200
     body = resp.json()
     assert body["title"] == "Live Page" and "Heading" in body["text"]
+    assert body["tier"] == "direct" and body["js_shell"] is False
+
+
+def test_fetch_route_names_the_tier_that_recovered_the_page(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # The reason this route exists is to watch the escalation work, and a recovered page looks
+    # exactly like a directly-served one. Naming the tier is what makes a live check a single
+    # call instead of a call plus a hunt through `logs api` — the read the owner does on a phone.
+    client, key = debug_client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            return httpx.Response(
+                200,
+                content=b"The article body the renderer recovered. " * 8,
+                headers={"content-type": "text/markdown"},
+            )
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    _state(client).web_fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle), reader_url="http://reader:3000"
+    )
+    resp = client.post("/api/debug/fetch", headers=_auth(key), json={"url": "https://x.example/w"})
+    assert resp.status_code == 200
+    assert resp.json()["tier"] == "reader"
+
+
+def test_fetch_route_reports_an_unrendered_js_app(debug_client: tuple[TestClient, str]) -> None:
+    # An empty `text` is ambiguous on its own — a dead page and an un-rendered SPA read the
+    # same. `js_shell` is what tells the owner which one they are looking at.
+    client, key = debug_client
+    shell = b'<html><head><title>App</title></head><body><div id="root"></div></body></html>'
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=shell, headers={"content-type": "text/html"})
+
+    _state(client).web_fetcher = WebFetcher(transport=httpx.MockTransport(handle))
+    resp = client.post("/api/debug/fetch", headers=_auth(key), json={"url": "https://spa.example"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["js_shell"] is True and body["total_chars"] == 0
 
 
 def test_fetch_route_maps_a_block_to_400(debug_client: tuple[TestClient, str]) -> None:

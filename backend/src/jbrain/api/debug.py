@@ -645,6 +645,14 @@ class FetchOut(BaseModel):
     total_chars: int
     links: int
     truncated: bool
+    # Which leg of the ladder produced this — "direct" means nothing had to be recovered,
+    # "reader"/"solver"/"tavily" name the tier that saved it. The whole point of the route is
+    # to see the escalation work, and the page alone never shows it: before this the answer
+    # lived only in `logs api`, which is a poor read on a phone.
+    tier: str
+    # True when NO tier could paint a JavaScript app — the page is real but was never
+    # rendered, so an empty/tiny `text` here is an unread page, not an empty one.
+    js_shell: bool
 
 
 async def _run_tavily_tier(fetcher: WebFetcher, body: FetchRequest) -> Any:
@@ -676,7 +684,8 @@ async def fetch_url(body: FetchRequest, request: Request, _p: DebugDep) -> Fetch
     agent uses — and return the extracted page, or a 400 carrying the recoverable fetch
     error. The one debug route that drives the live web-fetch path end to end, so the
     bot-challenge detection and the solver fallback can be verified against a real walled URL
-    after a deploy (pair it with `logs api` to see which tier served / blocked)."""
+    after a deploy — `tier` names the leg that served it and `js_shell` marks a JavaScript app
+    no tier could render, so the common checks need no log correlation at all."""
     request.state.debug_detail = f"{body.tier} {body.url}".strip() if body.tier else body.url
     fetcher = cast(WebFetcher, request.app.state.web_fetcher)
     if body.tier == "tavily":
@@ -698,6 +707,8 @@ async def fetch_url(body: FetchRequest, request: Request, _p: DebugDep) -> Fetch
         total_chars=result.total_chars,
         links=len(result.links),
         truncated=result.truncated,
+        tier=result.tier,
+        js_shell=result.js_shell,
     )
 
 
@@ -735,6 +746,8 @@ async def solve_url(body: FetchRequest, request: Request, _p: DebugDep) -> Fetch
         total_chars=result.total_chars,
         links=len(result.links),
         truncated=result.truncated,
+        tier=result.tier,
+        js_shell=result.js_shell,
     )
 
 

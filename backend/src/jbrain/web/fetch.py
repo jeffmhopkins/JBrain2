@@ -560,6 +560,13 @@ class FetchResult:
     # long page/transcript can be re-read and paged across turns without a network re-fetch
     # (docs/plans/CROSS_TURN_TOOL_RESULTS_PLAN.md). Empty on a result built without it.
     full_text: str = ""
+    # Which leg of the direct → reader → solver → tavily ladder actually produced this text.
+    # Escalation is invisible from the outside — a page recovered by the stealth browser is
+    # shaped exactly like one the plain GET served — so without this, diagnosing a fetch means
+    # correlating structured logs by hand. The owner runs this box from a phone with no
+    # terminal (CLAUDE.md #10), so "which tier served?" has to be answerable from the reply
+    # itself. Reported by `POST /api/debug/fetch`; the agent never sees it.
+    tier: str = ""
     # True when this text is a JavaScript app's un-rendered shell (`_looks_like_js_app`) that
     # NO tier managed to paint — the page is real, we just never saw it. Set only on a result
     # `fetch` is about to hand back, so it means "what you are holding is the shell", and the
@@ -675,6 +682,7 @@ def _window_and_find(
     find: str,
     find_regex: bool = False,
     body_truncated: bool,
+    tier: str,
 ) -> FetchResult:
     """Build the FetchResult: window `text` at `offset` (pagination) and, when `find` is
     given, re-anchor the window on the first keyword match at/after `offset` (so the model
@@ -705,11 +713,19 @@ def _window_and_find(
         outline=outline,
         outline_count=outline_count,
         full_text=text,
+        tier=tier,
     )
 
 
 def window_text(
-    text: str, *, url: str, title: str, offset: int = 0, find: str = "", find_regex: bool = False
+    text: str,
+    *,
+    url: str,
+    title: str,
+    offset: int = 0,
+    find: str = "",
+    find_regex: bool = False,
+    tier: str = "youtube",
 ) -> FetchResult:
     """Wrap ready-made text (not fetched HTML — e.g. a composed YouTube view) in a FetchResult
     with the SAME offset/find windowing a fetched page gets, so the tool pages and keyword-jumps
@@ -723,6 +739,7 @@ def window_text(
         find=find,
         find_regex=find_regex,
         body_truncated=False,
+        tier=tier,
     )
 
 
@@ -1200,6 +1217,7 @@ class WebFetcher:
             find=find,
             find_regex=find_regex,
             body_truncated=body_truncated,
+            tier="direct",
         )
         # A JS app's un-rendered shell is FLAGGED, never raised: unlike a bot-wall or a
         # paywall the origin is not refusing us — the page is real and simply needs a
@@ -1274,6 +1292,7 @@ class WebFetcher:
             find=find,
             find_regex=find_regex,
             body_truncated=body_truncated,
+            tier="direct",
         )
 
     async def fetch_feed(self, url: str) -> bytes:
@@ -1457,6 +1476,7 @@ class WebFetcher:
             find=find,
             find_regex=find_regex,
             body_truncated=body_truncated,
+            tier="reader",
         )
 
     async def _fetch_via_solver(
@@ -1524,6 +1544,7 @@ class WebFetcher:
                 find=find,
                 find_regex=find_regex,
                 body_truncated=False,
+                tier="solver",
             ),
             _SolverOutcome.OK,
         )
@@ -1588,6 +1609,7 @@ class WebFetcher:
             find=find,
             find_regex=find_regex,
             body_truncated=False,
+            tier="tavily",
         )
 
     async def _tavily_extract(self, url: str, api_key: str) -> tuple[str, str]:
