@@ -18,7 +18,7 @@ import contextlib
 import time
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 import structlog
@@ -27,7 +27,12 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.agent.agents import DEEP_RESEARCH_TOOL, SPAWN_TOOL, agent_for
-from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_attachment_content
+from jbrain.agent.attachment_content import (
+    MAX_ATTACHMENTS_PER_TURN,
+    MAX_IMAGES_PER_TURN,
+    build_attachment_content,
+    carry_forward_content,
+)
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.brainevents import brain_text_enabled
 from jbrain.agent.clock import now_block
@@ -754,6 +759,28 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # bytes; a vision-capable route keeps the images inline as before.
     if images and not can_see_images:
         images = []
+    # Carry a RECENT earlier image back into view (docs/reference/ASSISTANT.md): history is
+    # text-only, so a follow-up like "re-evaluate the picture" otherwise can't see an image
+    # from a prior turn and must delegate to analyze_image. When the turn model can see, re-fetch
+    # the persisted bytes of images from recent turns (the last-N-turns-OR-15-min window) and
+    # re-inject them inline — excluding any already attached THIS turn, and within the shared
+    # image budget. Only for a vision-capable turn (a text-only model would just drop them).
+    if can_see_images:
+        already = set(body.attachment_ids)
+        recent = [
+            info
+            for info in await get_agent_transcript(request).recent_image_attachments(
+                attachment_ctx, body.session_id, now=datetime.now(UTC)
+            )
+            if info.id not in already
+        ]
+        carried, carried_notes = await carry_forward_content(
+            get_blob_store(request), recent, image_budget=MAX_IMAGES_PER_TURN - len(images)
+        )
+        images.extend(carried)
+        if carried_notes:
+            note_block = "\n\n".join(carried_notes)
+            attach_text = f"{attach_text}\n\n{note_block}" if attach_text else note_block
     conversation = _conversation(body, images, attach_text)
     # Cache-stable prompt layout (docs/plans/LLM_PROMPT_CACHE_PLAN.md W1): keep the STATIC
     # content leading so [system + owner-self + history] is a byte-stable prefix the local

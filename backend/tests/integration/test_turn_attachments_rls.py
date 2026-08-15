@@ -6,6 +6,7 @@ and a scoped principal cannot insert an out-of-scope domain_code.
 """
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -372,6 +373,48 @@ async def test_multi_scope_session_round_trips_its_general_attachment(
     # A location-only session (none of these scopes) cannot read the 'general' file.
     location = read_context(pid, ("location",))
     assert await repo.get(location, att.id) is None
+
+
+async def test_recent_image_attachments_returns_recent_turns_images_chronologically(
+    repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
+) -> None:
+    # The carry-forward source: images from the session's recent user turns, chronological,
+    # images only. All three turns are freshly recorded (well within the window), so both
+    # arms include them; this exercises the DB wiring (RLS ctx, turn ordering, image filter)
+    # — the turn/time boundary itself is unit-tested in test_transcript_store.py.
+    pid = await _owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    att_ctx = read_context(pid, attachment_scopes(()))  # a jerv session's widened context
+    session_id = await _session(sessions, owner, ())
+    transcript = AgentTranscript(maker, repo)
+
+    async def _turn(user_text: str, *, sha: str, filename: str, media_type: str) -> None:
+        att = await repo.add(
+            att_ctx,
+            session_id,
+            sha256=sha,
+            filename=filename,
+            media_type=media_type,
+            size_bytes=4,
+            domain_code="general",
+        )
+        turn_id = await transcript.record_exchange(
+            owner,
+            session_id=session_id,
+            run_id=None,
+            user_text=user_text,
+            assistant_text="ok",
+            tools=[],
+        )
+        await repo.bind_to_turn(att_ctx, [att.id], turn_id)
+
+    await _turn("first", sha="a" * 64, filename="first.png", media_type="image/png")
+    await _turn("a note", sha="b" * 64, filename="notes.txt", media_type="text/plain")
+    await _turn("third", sha="c" * 64, filename="third.png", media_type="image/png")
+
+    recent = await transcript.recent_image_attachments(att_ctx, session_id, now=datetime.now(UTC))
+    # Both images, oldest turn first; the text file is excluded (images only).
+    assert [a.filename for a in recent] == ["first.png", "third.png"]
 
 
 def test_attachment_scopes_rule() -> None:

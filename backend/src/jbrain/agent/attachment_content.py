@@ -19,6 +19,7 @@ import asyncio
 import base64
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pymupdf
@@ -171,6 +172,32 @@ def _convert_one(
     # Everything else reaching here is a known-text type (the upload allowlist gates
     # the set); decode it inline.
     return _text_block(info, data)
+
+
+async def carry_forward_content(
+    blobs: BlobStore, infos: Sequence[AttachmentInfo], *, image_budget: int
+) -> tuple[list[LlmImage], list[str]]:
+    """Inline content for images CARRIED FORWARD from earlier turns (not this turn's own
+    attachments): re-fetch each persisted blob and wrap it as an LlmImage plus a note flagging
+    it as a prior image now back in view — so a vision-capable follow-up ("re-evaluate the
+    picture") sees it directly instead of paying an analyze_image round-trip. Capped at
+    `image_budget`; a blob that outlived its row is skipped. The bytes ride the CURRENT
+    (volatile) user message, so history's cache prefix is untouched — only this turn re-pays."""
+    images: list[LlmImage] = []
+    text_blocks: list[str] = []
+    for info in infos:
+        if len(images) >= image_budget:
+            break
+        try:
+            data = await blobs.get(info.sha256)
+        except FileNotFoundError:
+            continue  # row outlived its blob — skip, like build_attachment_content
+        images.append(LlmImage(media_type=info.media_type, data=_b64(data)))
+        text_blocks.append(
+            f'[earlier image "{info.filename}" (id {info.id}) — carried forward from a previous '
+            "turn so you can see it again; describe or re-evaluate it directly.]"
+        )
+    return images, text_blocks
 
 
 async def build_attachment_content(
