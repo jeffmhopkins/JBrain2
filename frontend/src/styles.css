@@ -177,10 +177,17 @@ h3 {
    rule is the sync channel — colour paired with the word beneath it, which is what
    replaced the 8px sync dot. */
 
+/* A 2×2 grid rather than two independently-centred columns. Centring the columns
+   against each other put the chart's middle 11px above the GPU figure's — the two
+   things the eye pairs sat on different lines. Here the chart and the GPU figure
+   share row 2, so they centre on each other at any --font-scale, and the reserved
+   t/s slot above can never drag the figure off the chart again. */
 .vitals {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto;
   align-items: center;
-  gap: 7px;
+  column-gap: 7px;
+  row-gap: 3px;
   flex: none;
   color: var(--text-2);
   line-height: 1;
@@ -188,14 +195,15 @@ h3 {
   font-feature-settings: "tnum" 1;
 }
 
-.vitals-scope {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+/* Both wrappers dissolve into the grid so every part lands on its own row. */
+.vitals-scope,
+.vitals-reads {
+  display: contents;
 }
 
 .vitals-chart {
+  grid-column: 1;
+  grid-row: 2;
   display: block;
   width: 48px;
   height: 20px;
@@ -253,37 +261,48 @@ h3 {
   stroke-width: 1.6;
 }
 
-/* Hidden rather than unmounted: the word keeps its line box, so the chart above it
-   doesn't jump a few pixels the moment sync degrades. */
+/* The word gets its OWN row under the chart, and is dropped from flow entirely when
+   healthy — reserving its line box instead would make the cluster permanently taller
+   and hang the readout high in a bar that is mostly empty beneath it. Degrading adds
+   the row and re-centres the cluster by a few pixels; that is a moment worth
+   noticing, and the chart-to-figure alignment is untouched by it because those two
+   always share row 2. */
 .vitals-sync {
+  grid-column: 1;
+  grid-row: 3;
+  justify-self: start;
+  display: none;
   font-size: var(--fs-micro);
   letter-spacing: 0.02em;
   padding-left: 1px;
   white-space: nowrap;
-  visibility: hidden;
 }
 
 .vitals[data-sync="pending"] .vitals-sync {
   color: var(--warn);
-  visibility: visible;
+  display: block;
 }
 
 .vitals[data-sync="unreachable"] .vitals-sync {
   color: var(--danger);
-  visibility: visible;
-}
-
-.vitals-reads {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
+  display: block;
 }
 
 .vitals-read {
   display: flex;
   align-items: baseline;
+  justify-self: end;
   gap: 2px;
+}
+
+.vitals-tps {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.vitals-gpu {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 /* Fixed slots + tabular figures: a changing digit must never nudge the session

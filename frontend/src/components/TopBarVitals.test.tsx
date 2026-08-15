@@ -140,10 +140,24 @@ describe("TopBarVitals", () => {
   it("says nothing about a healthy connection", () => {
     const { container } = render(<TopBarVitals syncStatus="synced" />);
 
-    // Quiet, not absent: the word keeps its line box (hidden by the stylesheet off
-    // this attribute) so the chart doesn't jump the moment sync degrades.
+    // The word stays in the DOM (the stylesheet drops it from flow off this
+    // attribute) so the reading is still there for anything reading the markup.
     expect(container.querySelector(".vitals")).toHaveAttribute("data-sync", "synced");
     expect(container.querySelector(".vitals-sync")).not.toBeNull();
+  });
+
+  it("keeps the markup the grid places its rows from", () => {
+    // The chart and the GPU figure must land on one grid row — centring them as two
+    // separate columns instead put the chart's middle 11px above the figure's. That
+    // placement is CSS (so the real check is a browser measurement, not jsdom), but
+    // it addresses these exact nodes through the two `display: contents` wrappers.
+    // Moving or renaming any of them silently breaks the alignment; this catches it.
+    const { container } = render(<TopBarVitals syncStatus="synced" />);
+
+    expect(container.querySelector(".vitals > .vitals-scope > .vitals-chart")).not.toBeNull();
+    expect(container.querySelector(".vitals > .vitals-scope > .vitals-sync")).not.toBeNull();
+    expect(container.querySelector(".vitals > .vitals-reads > .vitals-tps")).not.toBeNull();
+    expect(container.querySelector(".vitals > .vitals-reads > .vitals-gpu")).not.toBeNull();
   });
 
   it("still reports a healthy connection to a screen reader", () => {

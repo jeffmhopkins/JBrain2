@@ -169,6 +169,12 @@ resampled once a second:
   went idle" when they mean "we stopped being told".
 - Digits sit in fixed tabular slots and the t/s row keeps its space when idle, so
   no state change can nudge the ellipsizing session title.
+- **The chart and the GPU figure share one grid row** [decided]. They are the pair
+  the eye reads together, and laying them out as two independently-centred columns
+  put the chart's middle 11px above the figure's — the reserved t/s slot pushed the
+  figure down while the sync word's line box pushed the chart up. Row sharing holds
+  the two on one line at any `--font-scale`; the sync word gets its own row beneath,
+  dropped from flow when healthy so the cluster doesn't hang high in an empty bar.
 
 The honest signal this buys: **streaming fast while the GPU stays cold means a
 cloud model answered, not the box.** The first round (A/B/C) folded the launcher
