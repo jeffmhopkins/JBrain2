@@ -26,6 +26,8 @@ from jbrain.web.favicon import normalize_host
 from jbrain.web.feeds import FeedClient
 from jbrain.web.fetch import (
     _GONE_STATUSES,
+    JS_SHELL_MESSAGE,
+    JS_SHELL_NOTE,
     POST_CONTENT_TYPES,
     FetchResult,
     SearchFormError,
@@ -165,6 +167,8 @@ def _present_fetch(
                 f"No more content at offset {offset}: {result.url} has"
                 f" {result.total_chars} characters, which you've already read past."
             )
+        if result.js_shell:
+            return JS_SHELL_MESSAGE.format(url=url)
         return f"That page ({url}) had no readable text."
     header = f"# {result.title}\n{result.url}\n\n" if result.title else f"{result.url}\n\n"
     if find and result.match_offsets:
@@ -177,6 +181,10 @@ def _present_fetch(
     elif offset:
         header += f"[continued from offset {offset} of {result.total_chars} chars]\n\n"
     body = header + result.text
+    # A shell that leaked a few words is the more dangerous half of this failure: it LOOKS like
+    # a successful (if short) read, so without the note the model quotes page chrome as content.
+    if result.js_shell:
+        body += f"\n\n{JS_SHELL_NOTE}"
     # Links only on the first page — they don't change across windows, and repeating the whole
     # list on every continuation is noise.
     if result.links and offset == 0:
@@ -242,6 +250,8 @@ def _present_extract(result: FetchResult, url: str, pattern: str) -> str:
     if not text:
         # An empty page (or the offset>0 tail of one) has nothing to scan — same honest stop the
         # normal path gives, phrased for extraction.
+        if result.js_shell:
+            return JS_SHELL_MESSAGE.format(url=url)
         return f"That page ({url}) had no readable text to extract from."
     matches, total = extract_matches(text, pattern)
     if not total:

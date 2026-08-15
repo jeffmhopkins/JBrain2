@@ -139,6 +139,33 @@ def test_web_fetch_renders_page_with_links() -> None:
     assert fake.calls == ["https://example.com"]
 
 
+def test_web_fetch_explains_an_unrendered_js_app() -> None:
+    # The in-sandbox CLI shares jerv's fetcher, so it must share the diagnosis too: told only
+    # "no readable text" it would re-fetch the URL rather than go and find another source.
+    fake = _FakeFetcher(
+        FetchResult(title="Qwen", url="https://spa.example", text="", js_shell=True)
+    )
+    client = TestClient(_app(fetcher=fake))
+    resp = client.post(
+        "/api/jcode/llm/v1/web_fetch", headers=_AUTH, json={"url": "https://spa.example"}
+    )
+    assert resp.status_code == 200
+    assert "JavaScript app" in resp.text and "NOT evidence" in resp.text
+
+
+def test_web_fetch_flags_a_js_shell_that_leaked_a_few_words() -> None:
+    # A shell with a little text reads as a successful short page; the note is what stops the
+    # CLI quoting page furniture as the article.
+    fake = _FakeFetcher(
+        FetchResult(title="Qwen", url="https://spa.example", text="Loading.", js_shell=True)
+    )
+    client = TestClient(_app(fetcher=fake))
+    resp = client.post(
+        "/api/jcode/llm/v1/web_fetch", headers=_AUTH, json={"url": "https://spa.example"}
+    )
+    assert "Loading." in resp.text and "UNREAD page" in resp.text
+
+
 def test_web_fetch_requires_a_url() -> None:
     client = TestClient(_app(fetcher=_FakeFetcher(WebFetchError("x"))))
     resp = client.post("/api/jcode/llm/v1/web_fetch", headers=_AUTH, json={})
