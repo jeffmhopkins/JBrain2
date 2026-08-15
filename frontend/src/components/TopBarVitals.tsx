@@ -6,10 +6,11 @@
 // steel trace of tokens/sec is drawn over the same time axis. The shape carries
 // "the box woke up" or "the stream stalled" a beat before the digits do.
 //
-// Sync survives the deleted 8px dot as the chart's own BASELINE RULE — coloured by
-// state, with its word sitting directly beneath as the axis label. That keeps
-// DESIGN.md's rule that colour is never the only encoding, and keeps connectivity
-// visible without a tap.
+// Sync survives the deleted 8px dot as the chart's own BASELINE RULE — but only
+// when there is something to say. A healthy connection is silent: neutral rail, no
+// word. Degraded states colour the rule AND show the word beneath it, so colour is
+// never the only encoding (DESIGN.md), and the loud case still raises the status
+// banner. The full state is always in the aria-label, healthy included.
 
 import { useEffect, useRef, useState } from "react";
 

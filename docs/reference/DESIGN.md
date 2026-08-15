@@ -157,12 +157,16 @@ resampled once a second:
   streams and **broken by a gap** wherever nothing was generated (a tool call). The
   two channels share a box but not a y-scale, so each is comparable against itself
   over time and never against the other.
-- **Sync is the chart's baseline rule** — `--ok` / `--warn` / `--danger`, with its
-  word ("synced / pending / offline") directly beneath as the axis label. This is
-  what replaced the top bar's 8px status dot, and it is why colour is still never
-  the only encoding. Unreachable also **freezes and dims** the trace: with nothing
-  arriving, advancing the axis would draw blanks that read as "the box went idle"
-  when they mean "we stopped being told".
+- **Sync is the chart's baseline rule**, and **a healthy connection is silent**
+  [decided]: synced draws a neutral `--text-3` rule with no word at all. Only
+  `pending` / `unreachable` colour the rule (`--warn` / `--danger`) and show the
+  word beneath it. This is what replaced the top bar's 8px status dot. Note the
+  order of that decision: the word is dropped *and* the colour with it, because a
+  green rule on its own would make colour the only encoding of "healthy" — the one
+  thing the pairing rule forbids. Silence, not a green light, is the healthy state;
+  the aria-label still reports it. Unreachable also **freezes and dims** the trace:
+  with nothing arriving, advancing the axis would draw blanks that read as "the box
+  went idle" when they mean "we stopped being told".
 - Digits sit in fixed tabular slots and the t/s row keeps its space when idle, so
   no state change can nudge the ellipsizing session title.
 

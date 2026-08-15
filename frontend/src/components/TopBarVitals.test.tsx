@@ -123,16 +123,37 @@ describe("TopBarVitals", () => {
     expect(container.querySelector(".vitals-sync")).toHaveTextContent("offline");
   });
 
-  it("pairs every sync colour with its word", () => {
+  it("names the trouble when sync degrades", () => {
+    // The rail's colour and the word are driven off data-sync together, so a coloured
+    // rule can never appear without the word that explains it.
     for (const [status, word] of [
-      ["synced", "synced"],
       ["pending", "pending"],
       ["unreachable", "offline"],
     ] as const) {
       const { container, unmount } = render(<TopBarVitals syncStatus={status} />);
+      expect(container.querySelector(".vitals")).toHaveAttribute("data-sync", status);
       expect(container.querySelector(".vitals-sync")).toHaveTextContent(word);
       unmount();
     }
+  });
+
+  it("says nothing about a healthy connection", () => {
+    const { container } = render(<TopBarVitals syncStatus="synced" />);
+
+    // Quiet, not absent: the word keeps its line box (hidden by the stylesheet off
+    // this attribute) so the chart doesn't jump the moment sync degrades.
+    expect(container.querySelector(".vitals")).toHaveAttribute("data-sync", "synced");
+    expect(container.querySelector(".vitals-sync")).not.toBeNull();
+  });
+
+  it("still reports a healthy connection to a screen reader", () => {
+    // Hiding the word is a visual-noise decision; the state itself stays honest.
+    render(<TopBarVitals syncStatus="synced" />);
+
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("synced"),
+    );
   });
 
   it("describes the whole reading for a screen reader", () => {

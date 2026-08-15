@@ -234,14 +234,13 @@ h3 {
   vector-effect: non-scaling-stroke;
 }
 
+/* A healthy connection is QUIET: the rail stays neutral and the word is hidden, so
+   the bar says nothing when there is nothing to say. Colour therefore only ever
+   appears next to its word, which is what keeps the pairing rule true. */
 .vitals-rail {
   stroke: var(--text-3);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
-}
-
-.vitals[data-sync="synced"] .vitals-rail {
-  stroke: var(--ok);
 }
 
 .vitals[data-sync="pending"] .vitals-rail {
@@ -254,20 +253,24 @@ h3 {
   stroke-width: 1.6;
 }
 
+/* Hidden rather than unmounted: the word keeps its line box, so the chart above it
+   doesn't jump a few pixels the moment sync degrades. */
 .vitals-sync {
   font-size: var(--fs-micro);
   letter-spacing: 0.02em;
-  color: var(--text-3);
   padding-left: 1px;
   white-space: nowrap;
+  visibility: hidden;
 }
 
 .vitals[data-sync="pending"] .vitals-sync {
   color: var(--warn);
+  visibility: visible;
 }
 
 .vitals[data-sync="unreachable"] .vitals-sync {
   color: var(--danger);
+  visibility: visible;
 }
 
 .vitals-reads {
