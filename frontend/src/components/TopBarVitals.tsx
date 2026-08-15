@@ -49,13 +49,20 @@ interface VitalsProps {
 }
 
 export function TopBarVitals({ syncStatus }: VitalsProps) {
-  const gpu = useGpuBusy();
+  const { percent: gpu, state: gauge } = useGpuBusy();
   const tps = useTokenRate();
   const [gpuHistory, tpsHistory] = useVitalsHistory(gpu, tps, syncStatus);
 
   const hasGpu = gpu !== null;
   const live = tps !== null;
-  const gpuLabel = hasGpu ? `GPU ${Math.round(gpu)}% busy` : "GPU gauge unavailable";
+  // Three states, not two. "no gpu" is a claim about the BOX, so it is reserved for
+  // the box actually saying so; a stream that is merely down says nothing at all
+  // rather than accusing the hardware of being absent.
+  const gpuLabel = hasGpu
+    ? `GPU ${Math.round(gpu)}% busy`
+    : gauge === "absent"
+      ? "GPU gauge unavailable"
+      : "GPU reading unavailable";
   const rateLabel = live ? ` · ${tps} tokens/sec` : "";
   const label = `${gpuLabel}${rateLabel} · ${SYNC_FULL[syncStatus]}`;
 
@@ -91,7 +98,9 @@ export function TopBarVitals({ syncStatus }: VitalsProps) {
               />
             );
           })}
-          {!hasGpu && <line className="vitals-nogauge" x1="0.5" y1="9" x2="47.5" y2="9" />}
+          {gauge === "absent" && (
+            <line className="vitals-nogauge" x1="0.5" y1="9" x2="47.5" y2="9" />
+          )}
           <path className="vitals-trace" d={tracePath(tpsHistory)} />
           {traceHead(tpsHistory)}
           <line className="vitals-rail" x1="0" y1="17.9" x2="48" y2="17.9" />
@@ -105,7 +114,7 @@ export function TopBarVitals({ syncStatus }: VitalsProps) {
         </span>
         <span className="vitals-read vitals-gpu">
           <span className="vitals-value">{hasGpu ? Math.round(gpu) : ""}</span>
-          <span className="vitals-unit">{hasGpu ? "%" : "no gpu"}</span>
+          <span className="vitals-unit">{hasGpu ? "%" : gauge === "absent" ? "no gpu" : ""}</span>
         </span>
       </div>
     </output>
