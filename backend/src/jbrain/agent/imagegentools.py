@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Protocol
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.agent.chat_images import resolve_source
+from jbrain.agent.chat_images import resolve_source, vision_read_spec
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.image_gen.comfyui import (
@@ -389,10 +389,16 @@ def build_image_handlers(
         media_type = _sniff_media_type(source_bytes)
         image = LlmImage(media_type=media_type, data=base64.b64encode(source_bytes).decode())
 
+        vision_spec = await vision_read_spec(router, ctx.model_override)
+
         async def _describe() -> str | None:
             try:
                 result = await router.complete(
-                    "agent.vision", system=_VISION_SYSTEM, user_text=prompt, images=[image]
+                    "agent.vision",
+                    system=_VISION_SYSTEM,
+                    user_text=prompt,
+                    images=[image],
+                    spec_override=vision_spec,
                 )
             except LlmError as exc:
                 log.warning("analyze_image_failed", error=str(exc))
@@ -419,6 +425,10 @@ def build_image_handlers(
                     images=[image],
                     max_tokens=OCR_MAX_TOKENS,
                     strength=OCR_STRENGTH,
+                    # Same resident model as the describe pass when the turn is on a
+                    # vision-capable pick — the two vision passes then share one load
+                    # instead of swapping between agent.vision and vision.ocr routes.
+                    spec_override=vision_spec,
                 )
                 transcription = ocr.text.strip()
             except LlmError as exc:

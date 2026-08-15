@@ -18,6 +18,38 @@ async def _noop(_arguments: dict, _ctx: Any) -> str:
     return ""
 
 
+class _VisionRouter:
+    """A stand-in router that only answers supports_vision — records what it was asked."""
+
+    def __init__(self, vision: bool) -> None:
+        self._vision = vision
+        self.checked: list[tuple[str, str | None]] = []
+
+    async def supports_vision(self, task: str, spec_override: str | None = None) -> bool:
+        self.checked.append((task, spec_override))
+        return self._vision
+
+
+async def test_vision_read_reuses_a_vision_capable_pick_else_the_default_route() -> None:
+    """analyze_image's vision read reuses the conversation's own model ONLY when that pick can
+    see (no residency swap); a text-only pick or no pick falls back to the agent.vision route."""
+    from jbrain.agent.chat_images import vision_read_spec
+
+    # A vision-capable omnibox pick → reuse it (the read runs on the resident turn model).
+    seeing = _VisionRouter(vision=True)
+    assert await vision_read_spec(seeing, "local:qwen3.8-27b") == "local:qwen3.8-27b"
+    assert seeing.checked == [("agent.vision", "local:qwen3.8-27b")]
+
+    # A text-only pick can't see → None, so the separate vision route (its point) applies.
+    blind = _VisionRouter(vision=False)
+    assert await vision_read_spec(blind, "local:gpt-oss-120b") is None
+
+    # No pick at all → None without even probing (the default route already fits).
+    unasked = _VisionRouter(vision=True)
+    assert await vision_read_spec(unasked, None) is None
+    assert unasked.checked == []
+
+
 def test_image_sidecars_exist_and_are_web_class() -> None:
     """Both `.tool` sidecars ship and declare the jerv-only `web` permission class
     (the gate that keeps them off the curator) plus the expensive/side-effecting flags."""

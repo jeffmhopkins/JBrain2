@@ -561,10 +561,15 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   to look at it" pointer. jerv's persona prompt defers to that per-turn note instead of a blanket
   "you can't see images." This kills the self-contradiction a vision model otherwise showed —
   claiming blindness while describing the image in the `analyze_image` args — and the redundant
-  vision round-trip (a model swap on this memory-bound box) it paid for. Video and audio always
-  route to their tools (`analyze_video`/`analyze_stream`/`transcribe`): the pipeline never feeds
-  frames or audio inline, so a "video-capable" model's native video support does not apply to the
-  top-level turn.
+  vision round-trip it paid for. And when `analyze_image`/`compare_images` *are* the right call
+  on a vision-capable turn (an image the model can't see this turn, e.g. an older attachment
+  pulled by id), the read now **reuses the conversation's own model** (`chat_images.vision_read_spec`
+  passes the per-conversation pick as the `agent.vision` `spec_override`) instead of the separate
+  `agent.vision` route — so it no longer forces a residency **model swap** on this memory-bound
+  box (the cold-load that read as a slow analyze_image). A text-only turn still delegates to the
+  dedicated vision route, which is the point. Video and audio always route to their tools
+  (`analyze_video`/`analyze_stream`/`transcribe`): the pipeline never feeds frames or audio
+  inline, so a "video-capable" model's native video support does not apply to the top-level turn.
 
   **`ocr`** (`../plans/RAPIDOCR_PLAN.md`) remains the deterministic, verbatim counterpart: it
   reads the **exact text** out of an attached image or PDF via the on-box RapidOCR sidecar — no
