@@ -552,6 +552,20 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   configured-but-unreachable detector degrades to running the pass anyway (its prompt self-gates,
   emitting nothing when there is no text).
 
+  **A vision-capable turn sees the image directly — it does not delegate to describe it.** The
+  same `supports_vision` gate that keeps an attachment's bytes inline for a vision-capable
+  `agent.turn` model (including the omnibox's per-conversation pick) now also **words the
+  attachment note**: when the model can see the bytes the note tells it to describe and reason
+  about the image itself and reserves `analyze_image` for OCR/verbatim text or a change
+  (`edit_image`); only a text-only turn (bytes dropped) gets the "pass the id to `analyze_image`
+  to look at it" pointer. jerv's persona prompt defers to that per-turn note instead of a blanket
+  "you can't see images." This kills the self-contradiction a vision model otherwise showed —
+  claiming blindness while describing the image in the `analyze_image` args — and the redundant
+  vision round-trip (a model swap on this memory-bound box) it paid for. Video and audio always
+  route to their tools (`analyze_video`/`analyze_stream`/`transcribe`): the pipeline never feeds
+  frames or audio inline, so a "video-capable" model's native video support does not apply to the
+  top-level turn.
+
   **`ocr`** (`../plans/RAPIDOCR_PLAN.md`) remains the deterministic, verbatim counterpart: it
   reads the **exact text** out of an attached image or PDF via the on-box RapidOCR sidecar — no
   vision model, no interpretation, no model swap, so it never invents or paraphrases text the way
