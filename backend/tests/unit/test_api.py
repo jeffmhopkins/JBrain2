@@ -1,5 +1,6 @@
 """API-surface tests with a fake repo and a mocked supervisor."""
 
+import itertools
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -169,6 +170,78 @@ def test_ops_metrics_history_returns_series(
 def test_ops_metrics_history_rejects_bad_range(client: TestClient, repo: FakeAuthRepo) -> None:
     login(client, repo)
     assert client.get("/api/ops/metrics/history?range=nonsense").status_code == 400
+
+
+def test_ops_vitals_requires_owner(client: TestClient) -> None:
+    # The top bar probes /vitals before opening the stream precisely so a non-owner
+    # learns it may not read host telemetry WITHOUT an EventSource that would then
+    # retry against the rejection forever.
+    assert client.get("/api/ops/vitals").status_code == 401
+    assert client.get("/api/ops/vitals/stream").status_code == 401
+
+
+def test_ops_vitals_reads_the_gpu(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.api import ops
+
+    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: 73.0)
+    login(client, repo)
+
+    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": 73.0}
+
+
+def test_ops_vitals_reports_a_box_with_no_gauge(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.api import ops
+
+    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: None)
+    login(client, repo)
+
+    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": None}
+
+
+async def test_ops_vitals_stream_repeats_every_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each tick re-reads and re-sends, whether or not the figure moved — the
+    constant cadence is what tells the meter its reading is still live."""
+    from jbrain.api import ops
+
+    readings = iter([61.0, 61.0, 88.5])
+    monkeypatch.setattr(ops, "_VITALS_PERIOD_S", 0)
+    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: next(readings))
+
+    # Three frames, then the client goes away — the loop must notice and finish.
+    checks = iter([False, False, False, True])
+
+    async def disconnected() -> bool:
+        return next(checks)
+
+    frames = [frame async for frame in ops.vitals_frames(disconnected)]
+
+    assert frames == [
+        b'data: {"gpu_busy_percent": 61.0}\n\n',
+        b'data: {"gpu_busy_percent": 61.0}\n\n',
+        b'data: {"gpu_busy_percent": 88.5}\n\n',
+    ]
+
+
+async def test_ops_vitals_stream_stops_when_the_client_leaves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backgrounded PWA closes the stream; the tick loop must not outlive it and
+    keep reading /sys forever on the box's behalf."""
+    from jbrain.api import ops
+
+    reads = itertools.count()
+    monkeypatch.setattr(ops, "_VITALS_PERIOD_S", 0)
+    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: float(next(reads)))
+
+    async def gone() -> bool:
+        return True
+
+    assert [frame async for frame in ops.vitals_frames(gone)] == []
+    assert next(reads) == 0, "the gauge was never read for a client already gone"
 
 
 def test_ops_status_proxies_supervisor(client: TestClient, repo: FakeAuthRepo) -> None:
