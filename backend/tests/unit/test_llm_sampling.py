@@ -82,12 +82,12 @@ def test_gpt_oss_disables_min_p_the_llama_default_would_wrongly_prune() -> None:
 
 
 def test_hybrid_reasoner_picks_thinking_vs_non_thinking_by_effort() -> None:
-    # Qwen3.6 is hybrid: its card splits sampling by mode. "none" (thinking off) → the
+    # Qwen3.8 is hybrid: its card splits sampling by mode. "none" (thinking off) → the
     # Instruct row (temp 0.7, presence_penalty 1.5); a level or None (thinking on) → the
     # thinking row (temp 1.0, no presence penalty).
-    off = model_sampling.default_sampling("local", "qwen3.6-27b", "none")
-    on_level = model_sampling.default_sampling("local", "qwen3.6-27b", "high")
-    on_default = model_sampling.default_sampling("local", "qwen3.6-27b", None)
+    off = model_sampling.default_sampling("local", "qwen3.8-27b", "none")
+    on_level = model_sampling.default_sampling("local", "qwen3.8-27b", "high")
+    on_default = model_sampling.default_sampling("local", "qwen3.8-27b", None)
     assert off.temperature == 0.7 and off.presence_penalty == 1.5
     assert on_level.temperature == 1.0 and on_level.presence_penalty is None
     # None (medium bucket) still means thinking-on for a hybrid — its native default.

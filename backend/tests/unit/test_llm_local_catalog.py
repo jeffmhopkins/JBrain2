@@ -37,6 +37,19 @@ def test_recommended_set_is_the_two_resident_models() -> None:
     assert local_catalog.recommended_ids() == ("qwen3-vl-30b", "gpt-oss-120b")
 
 
+def test_retired_ids_are_gone_from_the_catalog_but_flagged_for_uninstall() -> None:
+    # The decommissioned Qwen3.6 pair: removed from CATALOG (unselectable, unresolvable) but
+    # kept in RETIRED_IDS so the sync force-uninstalls + prunes them from any box still holding
+    # them (deploy/local-models-sync.sh reads retired_ids()). Superseded by the qwen3.8 twins.
+    assert local_catalog.retired_ids() == ("qwen3.6-27b", "qwen3.6-27b-q4")
+    catalog_ids = {m.id for m in local_catalog.CATALOG}
+    for rid in local_catalog.retired_ids():
+        assert rid not in catalog_ids  # dropped from the catalog…
+        assert local_catalog.get(rid) is None  # …so nothing can route to it
+    # A retired id is never also a live one (the tombstone can't shadow a served model).
+    assert not (set(local_catalog.retired_ids()) & catalog_ids)
+
+
 def test_context_window_reads_the_catalog_then_falls_back() -> None:
     # Every catalog model serves its own window (the same value the setup script
     # stamps into the llama-swap config and the meter divides by).
@@ -163,69 +176,9 @@ def test_llama_4_scout_is_a_vision_alt_at_int4() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
-def test_qwen36_27b_is_a_dense_vision_hybrid_reasoner_high_tier() -> None:
-    # Qwen3.6-27B: a DENSE 27B multimodal (text + vision) hybrid reasoner at 8-bit. The compact
-    # vision + high-tier entry that replaced the removed 122B/235B/Next flagships. Thinking is
-    # the enable_thinking chat-template toggle (hybrid), and it emits <think> so it pins
-    # --reasoning-format deepseek like the other Qwen hybrids.
-    m = local_catalog.get("qwen3.6-27b")
-    assert m is not None
-    assert m.tiers == ("vision", "high")
-    # Vision-capable and ships a projector (the well-formed check enforces this too).
-    assert m.supports_vision and m.supports_tools
-    # The projector include is the EXACT F16 name, not a glob: this repo also has a
-    # `mmproj-BF16.gguf` that a `mmproj*F16.gguf` glob would wrongly match.
-    from fnmatch import fnmatch
-
-    assert m.mmproj_include == "mmproj-F16.gguf"
-    assert fnmatch("mmproj-F16.gguf", m.mmproj_include)
-    assert not fnmatch("mmproj-BF16.gguf", m.mmproj_include)
-    assert not fnmatch("mmproj-F32.gguf", m.mmproj_include)
-    # Hybrid reasoner: in the gating set, <think> split via deepseek, on/off via enable_thinking.
-    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
-    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
-    # 8-bit (near-lossless) from Unsloth's Qwen3.6 GGUF repo; the Q4 twin shares the repo.
-    assert m.quant == "Q8_0" and "Q8_0" in m.gguf_include
-    assert m.hf_repo == "unsloth/Qwen3.6-27B-GGUF"
-    assert m.spec == "local:qwen3.6-27b"
-    assert m.size_gb == 27.5
-    # Serves the conservative gateway default with its native 262k window as the ceiling
-    # (YaRN-extensible to ~1M upstream, but the arch window is what the picker exposes).
-    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
-    assert m.native_context_window == 262144 and m.max_context_window == 262144
-    # Opt-in: the recommended default set stays the two resident models.
-    assert m.id not in local_catalog.recommended_ids()
-
-
-def test_qwen36_27b_q4_is_the_interactive_twin() -> None:
-    # The Q4_K_M twin of the Q8 entry: same dense 27B + repo + projector, ~16 GiB. On this
-    # bandwidth-bound box a dense 27B runs materially faster at Q4, so this is the interactive
-    # daily driver while the Q8 twin is the quality-first option.
-    m = local_catalog.get("qwen3.6-27b-q4")
-    q8 = local_catalog.get("qwen3.6-27b")
-    assert m is not None and q8 is not None
-    assert m.tiers == ("vision", "high")
-    assert m.supports_vision and m.supports_tools
-    # The projector stays F16 even at Q4 weights (fine text degrades first under quantization).
-    assert m.mmproj_include == "mmproj-F16.gguf"
-    # Same hybrid-reasoner profile as the Q8 twin.
-    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
-    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
-    # Q4_K_M from the SAME repo as the Q8 default, but a DISTINCT served name (both can be
-    # provisioned side by side) and materially lighter weights.
-    assert m.quant == "Q4_K_M" and "Q4_K_M" in m.gguf_include
-    assert m.hf_repo == q8.hf_repo == "unsloth/Qwen3.6-27B-GGUF"
-    assert m.spec == "local:qwen3.6-27b-q4"
-    assert m.served_model != q8.served_model
-    assert m.size_gb == 16.5 and m.size_gb < q8.size_gb
-    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
-    assert m.native_context_window == 262144
-    assert m.id not in local_catalog.recommended_ids()
-
-
 def test_qwen38_27b_is_a_dense_vision_hybrid_reasoner_high_tier() -> None:
-    # Qwen3.8-27B: the newer-generation successor to qwen3.6-27b — a DENSE 27B multimodal
-    # (text + vision, image & video) hybrid reasoner at 8-bit. Thinking is the enable_thinking
+    # Qwen3.8-27B: a DENSE 27B multimodal (text + vision, image & video) hybrid reasoner at
+    # 8-bit — the compact vision + high-tier entry. Thinking is the enable_thinking
     # chat-template toggle (hybrid), and it emits <think> so it pins --reasoning-format deepseek.
     from fnmatch import fnmatch
 
@@ -313,13 +266,11 @@ def test_qwen38_27b_mtp_is_a_text_only_self_speculative_variant() -> None:
 
 
 def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
-    # --reasoning-format deepseek is pinned ONLY for entries that emit <think> inline: the two
-    # Qwen3.6 hybrids, the two small Qwen3.5 hybrids, and the Nemotron hybrid. The harmony/GLM
+    # --reasoning-format deepseek is pinned ONLY for entries that emit <think> inline: the three
+    # Qwen3.8 hybrids, the two small Qwen3.5 hybrids, and the Nemotron hybrids. The harmony/GLM
     # reasoners keep llama.cpp's auto (empty reasoning_format), so the field is NOT just a
     # synonym for supports_reasoning — renaming or mis-wiring it would fail here.
     assert {x.id for x in local_catalog.CATALOG if x.reasoning_format} == {
-        "qwen3.6-27b",
-        "qwen3.6-27b-q4",
         "qwen3.8-27b",
         "qwen3.8-27b-q4",
         "qwen3.8-27b-mtp",

@@ -8,7 +8,10 @@
 #   1. the PWA install queue   (settings store, owner-scoped, via jbrain.cli),
 #   2. the current LOCAL_MODELS (.env),
 #   3. the recommended set      (the catalog),
-# then: downloads any missing weights, re-stamps llama-swap.yaml, rewrites only
+# MINUS the uninstall set: the PWA uninstall queue PLUS any DECOMMISSIONED catalog id
+# (local_catalog.RETIRED_IDS) still present on the box — so retiring a model from the
+# catalog uninstalls + prunes it on the next update, no shell needed (CLAUDE.md #10).
+# Then: downloads any missing weights, re-stamps llama-swap.yaml, rewrites only
 # LOCAL_MODELS in .env (every other line — the GPU GIDs, the gateway URL — is
 # preserved, which is WHY this does not re-run the host setup script in the
 # bash-less, GPU-less updater), restarts the gateway + api, points agent.turn at
@@ -47,15 +50,33 @@ removing="$(docker compose run --rm -T api python -m jbrain.cli local-remove-ids
 current="$(grep '^LOCAL_MODELS=' .env | sed 's/^LOCAL_MODELS=//' | tr -d '[]" ' | tr ',' '\n' || true)"
 reco="$(catalog -c "from jbrain.llm import local_catalog; print('\n'.join(local_catalog.recommended_ids()))" || true)"
 
-# 3. Union (blank lines dropped), THEN subtract the uninstall queue. Precedence is
-#    deliberate: the subtraction is applied LAST so a removed id can never be
-#    resurrected by the recommended set (uninstalling a recommended model like
-#    gpt-oss-120b must stick until the operator re-installs it). `grep -vxF` against
-#    a temp file of removing ids is the set difference (whole-line, fixed-string).
+# 2b. DECOMMISSIONED catalog ids (local_catalog.RETIRED_IDS) — models dropped from the
+#    catalog that must be actively uninstalled from any box still holding them, not just
+#    hidden from the picker. Folded into the uninstall set below so their weights are
+#    pruned on the next update (the operator can't `rm` them — CLAUDE.md #10). Filter to
+#    the ones ACTUALLY PRESENT (in the .env roster or on disk) so a box that never had one
+#    contributes nothing here and still hits the routine fast-path; once pruned, the next
+#    update sees none present and the tombstone goes quiet.
+retired="$(catalog -c "from jbrain.llm import local_catalog; print('\n'.join(local_catalog.retired_ids()))" || true)"
+retire_present=''
+for rid in $retired; do
+  [ -n "$rid" ] || continue
+  if printf '%s\n' "$current" | grep -qxF "$rid" || ls "$PWD"/local-models/"$rid"/*.gguf >/dev/null 2>&1; then
+    retire_present="${retire_present} ${rid}"
+  fi
+done
+[ -n "$retire_present" ] && say "retiring decommissioned models:${retire_present}"
+
+# 3. Union (blank lines dropped), THEN subtract the uninstall set (the PWA queue PLUS
+#    the present decommissioned ids). Precedence is deliberate: the subtraction is
+#    applied LAST so a removed id can never be resurrected by the recommended set
+#    (uninstalling a recommended model like gpt-oss-120b must stick until the operator
+#    re-installs it; a retired id can never come back at all). `grep -vxF` against a temp
+#    file of the remove ids is the set difference (whole-line, fixed-string).
 union="$(printf '%s\n%s\n%s\n' "$requested" "$current" "$reco" | grep -v '^[[:space:]]*$' | sort -u)"
 remove_file="$(mktemp)"
 trap 'rm -f "$remove_file"' EXIT
-printf '%s\n' "$removing" | grep -v '^[[:space:]]*$' | sort -u > "$remove_file"
+printf '%s\n%s\n' "$removing" "$retire_present" | grep -v '^[[:space:]]*$' | sort -u > "$remove_file"
 # Set difference union - removing. Only run `grep -vxF -f` when the remove file is
 # NON-EMPTY: BusyBox grep (this runs in the docker:cli one-shot, Alpine/busybox — not
 # GNU) treats an EMPTY -f pattern file as a pattern that matches EVERY line, so
