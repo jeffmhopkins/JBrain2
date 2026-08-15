@@ -476,6 +476,53 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=6.0,
     ),
     LocalModel(
+        id="qwen3.8-27b-mtp",
+        label="Qwen3.8 27B · MTP (faster text, no vision)",
+        served_model="qwen3.8-27b-mtp",
+        # Same model + sampling as the Q4 twin — MTP changes only HOW it's served, not the model.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
+        sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
+        # TEXT-ONLY: llama.cpp's MTP path can't run alongside the vision projector (`--mmproj`),
+        # so this variant drops the "vision" tier and serves text/reasoning only.
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        # Same Q4_K_M weights as qwen3.8-27b-q4 — unsloth's GGUF already ships the MTP head
+        # (the `blk.*.nextn.*` / `qwen35.nextn_predict_layers` tensors), which llama.cpp IGNORES
+        # without the flag and USES with `--spec-type draft-mtp`. So no separate MTP repo and no
+        # `--model-draft` file — the speedup is the same weights served differently. (A distinct
+        # served name means a separate ~16 GiB copy on disk from the q4 twin; install whichever
+        # serving mode you want.)
+        hf_repo="unsloth/Qwen3.8-27B-GGUF",
+        gguf_include="*Q4_K_M*.gguf",
+        # No projector — MTP is text-only (see the tiers note), and skipping `--mmproj` also
+        # dodges the RADV mmproj instability. So NO mmproj_include.
+        mmproj_include=None,
+        quant="Q4_K_M",
+        # Just the Q4_K_M weight (~15.9 GiB), no projector — a hair lighter than the q4 twin.
+        size_gb=15.9,
+        note="Dense 27B hybrid reasoner served with MTP (multi-token prediction / self-"
+        "speculative decoding) for ~1.4-2x faster TEXT generation — the same unsloth Q4_K_M "
+        "weights as qwen3.8-27b-q4, which already carry the MTP head; the --spec-type draft-mtp "
+        "flags turn it on. TEXT-ONLY: llama.cpp MTP can't serve the vision projector or a second "
+        "parallel slot, so this variant drops vision and must run single-slot (-np 1). It only "
+        "helps DECODE (prompt processing is a touch slower). Opt-in for a fast text/reasoning "
+        "driver when you don't need Qwen3.8's vision. CAVEAT: MTP on the Vulkan/RADV gateway is "
+        "build-fragile (it crashed on gfx1151 at llama.cpp's MTP launch and still has open Vulkan "
+        "MTP bugs) — since the gateway tracks llama.cpp master, verify it loads + generates after "
+        "an update; if a build regresses, uninstall this entry and use qwen3.8-27b-q4.",
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        # Self-speculation off the model's own MTP head — no separate draft model. n-max 2 is the
+        # AMD/bandwidth-bound sweet spot (acceptance falls as it rises; llama.cpp's own default
+        # is 3). --spec-type/-n-max ride extra_server_args, appended verbatim to the gateway cmd.
+        extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "2"),
+        native_context_window=262144,
+        kv_gb_per_128k=6.0,
+    ),
+    LocalModel(
         id="qwen3-coder-next",
         label="Qwen3-Coder-Next 80B · coding agent (Q4)",
         served_model="qwen3-coder-next",
