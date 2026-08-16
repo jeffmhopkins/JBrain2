@@ -51,20 +51,65 @@ jobs:
   # steps are gated instead of the whole job, so this stays safe with branch
   # protection whatever the required-check names are (a gated job still reports
   # success in seconds). The gate is: this area changed on the PR, OR it's a push.
-  backend:
+  # The backend suite is the long pole, so it is split across runners that work in
+  # PARALLEL rather than one job doing everything in sequence:
+  #
+  #   backend-checks       ruff + format + pyright        (~1 min, no tests)
+  #   backend-unit         pytest -m "not integration"    (~4.2k tests, sharded x3)
+  #   backend-integration  pytest -m integration          (~1.1k tests, testcontainers)
+  #   backend              combines their coverage and enforces the 80% gate
+  #
+  # Wall clock becomes the SLOWEST half rather than the sum of both, and a failure names
+  # which half broke without opening the log. The `backend` job keeps its name because it
+  # is the one branch protection may require — it now means "every backend job passed".
+  #
+  # Integration is deliberately NOT gated on narrower paths than the rest of the backend.
+  # It is where the RLS firewall is proven (CLAUDE.md #3), and a path heuristic that
+  # skipped it would let exactly the change that widens a query past its policy through
+  # unproven.
+  backend-checks:
     needs: changes
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+          python-version: "3.13"
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv sync --all-extras
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff check .
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff format --check .
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run pyright
+
+  backend-unit:
+    needs: changes
+    runs-on: ubuntu-latest
+    # Sharded across runners because this half is the long pole: ~4.2k tests, and xdist
+    # only spreads them over ONE runner's cores. Round-robin by sorted filename — a
+    # deterministic split needing no plugin and no committed durations file to go stale.
+    # Balanced by file COUNT, not runtime, which is close enough on a suite this uniform.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    defaults:
+      run:
+        working-directory: backend
     env:
-      # Ryuk reaps leaked containers; the runner is ephemeral, so it is dead
-      # weight here and its Docker Hub image pull is a recurring flake. Skip it.
-      TESTCONTAINERS_RYUK_DISABLED: "true"
+      SHARD: ${{ matrix.shard }}
+      SHARDS: "3"
       # coverage.py's default C tracer roughly doubles the pytest wall-clock on this
       # suite (measured: +84%). PEP 669 sys.monitoring cuts that to ~+15% while
-      # keeping the same line coverage, so the 80% gate still runs on every PR — it
-      # just costs ~a minute less. Requires the 3.13 pinned below (sysmon is 3.12+);
+      # keeping the same line coverage. Requires the 3.13 pinned below (sysmon is 3.12+);
       # on an older interpreter coverage silently falls back to the C tracer.
       COVERAGE_CORE: sysmon
     steps:
@@ -81,24 +126,109 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-          # Pin 3.13 so coverage's sys.monitoring core (COVERAGE_CORE above) is
-          # available; backend/.python-version keeps local dev on the same runtime.
           python-version: "3.13"
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         run: uv sync --all-extras
+      # No Docker here: everything Docker-backed carries the `integration` marker and runs
+      # in the job below, so this half never waits on a container to come up.
+      #
+      # `-m "not integration"` still applies on top of the shard's file list: it is what
+      # keeps a stray Docker-backed test out of a runner that has no container, and it
+      # costs nothing when the list is already unit files.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        run: uv run ruff check .
+        run: |
+          files=($(ls tests/unit/test_*.py | sort))
+          shard=()
+          for i in "${!files[@]}"; do
+            (( i % SHARDS == SHARD )) && shard+=("${files[$i]}")
+          done
+          echo "shard $SHARD/$SHARDS: ${#shard[@]} of ${#files[@]} files"
+          uv run pytest "${shard[@]}" -m "not integration" -n auto --dist loadscope --cov
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        run: uv run ruff format --check .
+        run: mv .coverage .coverage.unit-${{ matrix.shard }}
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        run: uv run pyright
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit-${{ matrix.shard }}
+          path: backend/.coverage.unit-${{ matrix.shard }}
+          include-hidden-files: true
+          retention-days: 1
+
+  backend-integration:
+    needs: changes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Ryuk reaps leaked containers; the runner is ephemeral, so it is dead
+      # weight here and its Docker Hub image pull is a recurring flake. Skip it.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+      COVERAGE_CORE: sysmon
+    steps:
+      - uses: actions/checkout@v5
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: command -v ffmpeg >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y ffmpeg; }
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+          python-version: "3.13"
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv sync --all-extras
       # Runners have Docker, so the testcontainers RLS suite runs here. One
       # Postgres container is provisioned per xdist worker (session-scoped, shared
       # via a filelock) and each test module clones a fresh DB from the migrated
       # template — so spread modules across cores with xdist; loadscope keeps a
       # module (and its DB) on one worker so the module-scoped fixtures stay valid.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        run: uv run pytest -n auto --dist loadscope --cov --cov-fail-under=80
+        run: uv run pytest -m integration -n auto --dist loadscope --cov
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: mv .coverage .coverage.integration
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: backend/.coverage.integration
+          include-hidden-files: true
+          retention-days: 1
+
+  # The gate. Named `backend` so an existing required status check keeps working; it now
+  # means "checks, unit and integration all passed, and their COMBINED coverage clears
+  # 80%". Combining is the point — neither half covers the codebase alone, so gating each
+  # separately would either fail honest code or force two meaningless thresholds.
+  backend:
+    needs: [changes, backend-checks, backend-unit, backend-integration]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+          python-version: "3.13"
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv sync --all-extras
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+          path: backend
+      # `relative_files` (pyproject) is what lets these merge: the two halves recorded
+      # different absolute checkout paths, and combine only merges files it can see as the
+      # same file.
+      # No arguments: combine globs every .coverage.* in the directory, so changing the
+      # shard count above needs no edit here.
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run coverage combine
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run coverage report --fail-under=80
 
   supervisor:
     needs: changes
