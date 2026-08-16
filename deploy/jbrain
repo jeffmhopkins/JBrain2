@@ -65,104 +65,16 @@ case "${1:-}" in
     docker compose run --rm api python -m jbrain.cli reset-owner-key
     ;;
   update)
-    ./backup.sh || echo "backup skipped (stack not running yet?)"
-    # Mirror the remote exactly rather than `pull --ff-only`: a deploy box should
-    # never diverge, but if it has (a stray commit/edit), ff-only refuses and — under
-    # `set -e` — aborts the whole update, leaving the stack pinned to stale source
-    # that every rebuild keeps baking. fetch + hard reset to the tracked upstream
-    # self-heals, discarding local src changes by design (src is a pristine mirror).
-    git -C src fetch origin
-    git -C src reset --hard "@{u}"
-    # Refresh helpers from the updated tree; mv keeps this running script
-    # reading its old inode safely.
-    for f in docker-compose.yml backup.sh restore.sh jbrain; do
-      cp "src/deploy/$f" "$f.new" && mv "$f.new" "$f"
-    done
-    cp src/deploy/db-init/01-app-role.sh db-init/
-    chmod +x jbrain backup.sh restore.sh db-init/01-app-role.sh
-    # Refresh the SearXNG settings host file (writable bind mount; enables the
-    # JSON format web_search needs) and backfill its secret for stacks older
-    # than the web-search service — without these jerv reports web search as
-    # unavailable. See update-inner.sh for the full rationale.
-    mkdir -p searxng
-    rm -rf searxng/settings.yml
-    cp src/deploy/searxng/settings.yml searxng/settings.yml
-    if ! grep -q '^SEARXNG_SECRET=' .env; then
-      printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
-    fi
-    # Code mode (jcode): self-heal its .env keys when enabled so the host update
-    # keeps it turnkey too — mint the api<->jcode bearer + fail-closed defaults
-    # (compose maps these to the api as JBRAIN_JCODE_* and to the sandbox as
-    # JCODE_*). The jcode profile is already active above, so build/up include it.
-    if grep -q '^JCODE_ENABLED=true' .env; then
-      if ! grep -q '^JCODE_TOKEN=..*' .env; then
-        printf 'JCODE_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
-      fi
-      grep -q '^JCODE_URL=' .env || printf 'JCODE_URL=%s\n' 'http://jcode:9100' >> .env
-      grep -q '^JCODE_MODEL=' .env || printf 'JCODE_MODEL=%s\n' 'qwen3-coder-next' >> .env
-      grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
-    fi
-    # Job launcher (jlaunch): default-on, so always backfill the api<->jlaunch bearer for
-    # boxes that predate it (the fail-closed control server won't start without it). The
-    # URL is defaulted in compose; the service is in the base stack, so `build`/`up` below
-    # include it with no profile.
-    if ! grep -q '^JLAUNCH_TOKEN=..*' .env; then
-      printf 'JLAUNCH_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
-    fi
-    # Turn LAN access on for installs that predate it, then (re)provision the
-    # host mDNS + alias from the freshly pulled source. Best-effort: a setup
-    # failure must not abort an update.
-    if ! grep -q '^JBRAIN_LAN_ADDR=' .env; then
-      printf 'JBRAIN_LAN_ADDR=%s\n' "https://jbrain.local" >> .env
-    fi
-    if grep -q '^JBRAIN_LAN_ADDR=https' .env; then
-      JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/deploy/lan-setup.sh \
-        || echo "LAN setup skipped (run 'jbrain enable-lan' to retry)"
-    fi
-    docker compose "${PROFILE[@]}" build
-    docker compose run --rm migrate
-    # Clear containers left behind by a renamed (server-brain->wall, whisper->tts-stt)
-    # or removed (claude-shim) service before recreating the stack — an old server-brain
-    # holding host port 8800 blocks the new `wall`, and any such labeled orphan lingers on
-    # the Ops screen. The helper sweeps by comparing labels against the file's full service
-    # set, so profile-gated services `--remove-orphans` would wrongly reap are kept.
-    bash /opt/jbrain2/src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
-    docker compose "${PROFILE[@]}" up -d
-    # When on-box image generation is enabled, re-sync its models so an update that adds
-    # newly-recommended models (or new weight files for existing ones) downloads them without a
-    # separate manual step. We provision the UNION of the operator's current selection and the
-    # recommended set, so nothing they chose is dropped and anything newly recommended is pulled
-    # (hf skips files already present, so an unchanged set is a cheap no-op). The api image is
-    # rebuilt above, so the catalog read sees the new code. Best-effort: a provisioning failure
-    # must never abort the update — the operator can re-run `sudo bash scripts/comfyui-setup.sh`.
-    if grep -q '^COMFYUI_ENABLED=true' .env; then
-      current_models="$(python3 -c "import json,re; t=open('.env').read(); m=re.search(r'^COMFYUI_MODELS=(.*)\$',t,re.M); print(' '.join(json.loads(m.group(1))) if m else '')" 2>/dev/null || true)"
-      reco_models="$(docker compose run --rm --no-deps -T api python -c "from jbrain.image_gen import catalog; print(' '.join(catalog.recommended_ids()))" 2>/dev/null || true)"
-      sync_ids="$(printf '%s\n%s\n' "$current_models" "$reco_models" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')"
-      if [ -n "${sync_ids// /}" ]; then
-        echo "[update] syncing on-box image models: $sync_ids"
-        JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/scripts/comfyui-setup.sh $sync_ids \
-          || echo "[update] image-model sync skipped (retry: sudo bash scripts/comfyui-setup.sh)"
-      fi
-    fi
-    # Provision local LLM models the operator queued from the PWA + keep the
-    # current/recommended set present — host parity with the PWA update path
-    # (deploy/update-inner.sh). The shared sync is POSIX sh; best-effort so a
-    # provisioning hiccup never aborts the update.
-    bash /opt/jbrain2/src/deploy/local-models-sync.sh \
-      || echo "[update] local-model sync skipped (retry on next update)"
-    # Re-apply the host OOM hardening (earlyoom + reclaim-headroom sysctls) when local
-    # hosting is on, so a box that predates the automated hardening — or lost it — gets
-    # protected on its next update instead of only at enable-local-models time. Same
-    # idempotent script scripts/local-llm-setup.sh runs; best-effort, never aborts.
-    if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
-      bash /opt/jbrain2/src/deploy/oom-hardening.sh \
-        || echo "[update] OOM hardening skipped (retry on next update)"
-    fi
-    # Reclaim layers orphaned by the rebuild; shared (cached) layers survive,
-    # so disk use stays bounded without losing build speed.
-    docker image prune -f
-    docker builder prune -f --keep-storage 10GB >/dev/null 2>&1 || true
+    # DELEGATES — it does not reimplement. deploy/update-inner.sh is the one definition of
+    # what an update does, shared with the PWA path, because these were two copies that
+    # drifted: the host one never rebuilt the gateway on the floating llama.cpp tag or
+    # smoke-tested it, the containerized one never re-applied the OOM hardening. The PWA
+    # path therefore did the memory-heavy work without the protection against exactly that
+    # and hard-locked the box. JBRAIN_HOST_UPDATE enables the steps that need the real host
+    # (mDNS, on-box image models, OOM hardening) and are skipped in the container.
+    #
+    # `sh`, not `bash`: the script is POSIX so the busybox updater image can run it too.
+    JBRAIN_HOST_UPDATE=1 exec sh /opt/jbrain2/src/deploy/update-inner.sh
     ;;
   enable-lan)
     # Host half of LAN access: mDNS responder + the CNAME alias that resolves

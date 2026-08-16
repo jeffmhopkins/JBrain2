@@ -217,7 +217,19 @@ echo "LOCAL_MODELS=$json" >> .env
 # 7. Restart the gateway + api so the new config and LOCAL_MODELS take effect (api
 #    reads LOCAL_MODELS at boot; the gateway reloads the swap config). The explicit
 #    profile starts the gateway even though the update's plain `up -d` skips it.
-docker compose --profile local-llm up -d
+#
+#    NOT during an update. update-inner.sh deliberately unloads the models and removes the
+#    gateway before it builds, because bringing tens of gigabytes back while the build and
+#    recreate are allocating is what once spiked a kernel reclaim livelock and hard-locked
+#    the host. This `up -d` sat right in that window. When the update sets
+#    JBRAIN_SKIP_GATEWAY_START it restarts the gateway itself, once, after the churn — so
+#    skipping here loses nothing and the api restart still happens below.
+if [ -n "${JBRAIN_SKIP_GATEWAY_START:-}" ]; then
+  say "update in progress — leaving the gateway down; it is restarted after the rebuild"
+  docker compose up -d api
+else
+  docker compose --profile local-llm up -d
+fi
 
 # 7b. Prune the weights for uninstalled models (DESTRUCTIVE — see prune-local-weights.sh
 #    for the four hard guards). The model is ALREADY out of LOCAL_MODELS / the gateway

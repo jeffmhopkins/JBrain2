@@ -538,6 +538,26 @@ installed, runs one tool-carrying probe (the exact surface the past regression b
 rollback net is what makes tracking master safe by default: a bad upstream build never
 leaves the box unable to serve, and a good one lands automatically.
 
+**There is ONE update script.** `deploy/update-inner.sh` is the implementation; the PWA
+runs it as a detached one-shot and `jbrain update` runs it directly with
+`JBRAIN_HOST_UPDATE=1`. It used to be two hand-maintained copies, and they drifted in
+exactly the way that matters: the host copy never rebuilt the gateway on the floating
+llama.cpp tag or loaded a model to smoke-test it, and the containerized copy never
+re-applied the OOM hardening — so the PWA path did the memory-heavy work *without* the
+protection against precisely that, and hard-locked the box. Steps that need the real host
+(mDNS, on-box image models, OOM hardening) are gated on that flag inside the one script
+rather than living in a second one.
+
+**Before any of the churn, the gateway is emptied and removed.** An update asks it to
+release every loaded model (`jbrain.cli local-llm-unload`), then removes the container
+rather than merely stopping it, then waits for it to actually be gone. Stopping alone
+leaves the kernel reclaiming tens of gigabytes exactly as the build starts allocating —
+the race that drove a reclaim livelock and hard-locked the host, keyboard included — and a
+merely-stopped container is one stray `up -d` away from reloading the weights mid-update.
+`local-models-sync.sh` honours `JBRAIN_SKIP_GATEWAY_START` for the same reason: its own
+restart used to land squarely in that window. The gateway comes back once, deliberately,
+after the rebuild.
+
 **Turning it off is a PWA toggle**, not a file edit: **Ops → Update → "Track newest
 llama.cpp"**. The owner runs this box remotely with no terminal (CLAUDE.md #10), and this
 is the one switch that decides whether an update loads a model into the iGPU at all — the
