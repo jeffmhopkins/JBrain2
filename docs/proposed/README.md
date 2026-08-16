@@ -15,12 +15,17 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
-- `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on:
-  reclaim schema tokens (trim the five fattest sidecars; inject config-derived enums at
-  registry load) and spend a capped slice on a cross-session **scratchpad** (owner-only
-  table, 3 KB, DATA-framed injection, PWA-editable), plus the identity-paragraph fix that
-  stopped the on-box model trusting its own prompt. Records five deliberate rejections
-  (Python sandbox, skills-in-memory, per-persona sidecars, `anyOf`, catalog W2/W3).
+- `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on
+  (41 tools ≈ 26.5k tokens of schema per turn, nothing carried across sessions). W1 fixes the
+  identity paragraph that made the on-box model discount its own prompt; W2 adds a
+  cross-session **scratchpad** on a generalized `app.agent_scratchpad` table (the archivist's
+  memory migrates into it) split by **write authority** — the agent writes only dated
+  `Threads`/`Watch`, injected inside the `briefs.py` untrusted-data sentinel, while
+  `Preferences`/`Corrections` are owner-written from the PWA and carry sanctioned-instruction
+  framing; W3 puts config-derived lists into the tool schemas at `schemas_for` time. The
+  description trim lives in `TOOL_CATALOG_PLAN` W0b, which W2 must land after. **Revised after
+  a four-lens adversarial review** (§8); records five deliberate rejections with corrected
+  evidence (Python sandbox, skills-in-memory, per-persona sidecars, `anyOf`, catalog W2/W3).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual

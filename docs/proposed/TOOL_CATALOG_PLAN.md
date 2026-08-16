@@ -1,7 +1,7 @@
 # Tool Catalog — a scalable tool surface for a growing tool count
 
-> **Status:** In progress (W1 shipped) · **Last verified:** 2026-08-08 ·
-> **Waves:** W0◻️ W1✅ W2◻️ W3◻️
+> **Status:** In progress (W1 shipped) · **Last verified:** 2026-08-16 ·
+> **Waves:** W0a◻️ W0b◻️ W1✅ W2◻️ W3◻️
 > **W1 (umbrellas) is shipped** — the four action/source families collapsed with no capability
 > change and no measurable tool-selection regression on the live gpt-oss-120b (validated first via
 > the `/api/debug/tool-probe` harness, then per-family): `grokipedia` (5→1),
@@ -9,10 +9,11 @@
 > reads (3→1, show/remove kept separate), `external_video` reads (3→1, show/remove/check_channel
 > kept separate). jerv's tool surface: **48 → 37**. The read-umbrella + separate-destructive split
 > preserves the sub-agent parent⊆child clamp (a library/report child holds only the read umbrella).
-> Remaining: **W0** (trim the fattest descriptions; the family/summary metadata decision in §5) and
+> Remaining: **W0b** (trim the fattest descriptions — sequenced by `JERV_CONTEXT_BUDGET_PLAN` §4),
+> **W0a** (the family/summary metadata decision in §5) and
 > the **gated W2/W3** (the catalog machinery) — behind a pre-built selection-accuracy eval and
 > resolving the mode-(a) / native-tool-calling contradiction in §7. See §10.
-> (W0 = metadata + trim; W1 = umbrella-consolidate source/action families; W2 = the catalog:
+> (W0a = metadata, W0b = trim — split in §6; W1 = umbrella-consolidate source/action families; W2 = the catalog:
 > always-on menu + hot core + `tool_guide`-before-call + auto-load-on-miss; W3 = tune the hot
 > core, migrate remaining families, measure.)
 
@@ -131,7 +132,10 @@ each capability fully documented in one guide:
   like `self_editable` → keeps them out of the digest, but `summary`/`family` **are**
   model-facing (they render into the menu the model reads), so popping them removes model-facing
   prose from the very guard designed to force deliberate version bumps. Pick (a) and accept the
-  one-time bump wave, or (b) and extend the digest to cover the menu fields. Decide in W0.
+  one-time bump wave, or (b) and extend the digest to cover the menu fields. Decide in W0a.
+  `JERV_CONTEXT_BUDGET_PLAN` W3 (config-derived lists injected at `schemas_for` time) inherits
+  this same question from the other side — injected prose ESCAPES the digest rather than
+  breaking it — and blocks on the decision taken here.
 - `ToolRegistry` (`agent/toolregistry.py:80`) exists and strictly pairs sidecars with handlers;
   it's the right home for the family/summary metadata, the hot-core set, the menu render, and a
   `guide(name)` accessor — all net-new.
@@ -149,11 +153,37 @@ each capability fully documented in one guide:
 
 ## 6. Waves
 
-- **W0 — metadata + trim.** Add `family` + `summary` to every `.tool`; trim the 5–8 fattest
-  descriptions to essentials. Immediate ~20–30% jerv footprint cut and the substrate for the
-  rest. **Not "no-change":** both the metadata decision (§5) and the trims touch model-facing
-  content, so digests change and CI will require version bumps across the affected sidecars —
-  broad but mechanical.
+- **W0a — metadata.** Add `family` + `summary` to every `.tool` — the substrate the catalog
+  waves read. Blocked on the §5 decision (`ToolSpec` is `extra="forbid"` and both fields fold
+  into `ToolFile.digest`, so this is a real decision, not a free add).
+- **W0b — trim.** Trim the fattest descriptions to essentials. **Not "no-change":** the trims
+  touch model-facing content, so digests change and CI requires a `version:` bump plus a
+  pin-hash update in `tests/unit/test_agent_readtools.py` for every sidecar touched — broad
+  but mechanical.
+
+  *W0 was one wave (metadata + trim) because the digest/version-bump cost is shared. It is
+  split because `JERV_CONTEXT_BUDGET_PLAN` sequences the trim as a near-term wave while the
+  metadata half stays blocked on §5 — and shipping half of an undivided W0 would leave this
+  doc's header reading `W0◻️` with the work merged (`DOC_LIFECYCLE` transition 3).*
+
+  Two corrections from that plan's adversarial review, both binding on W0b:
+
+  - **Target ~15–20%, not 20–30%, on the five fattest.** A paragraph-level read found most of
+    the bulk is load-bearing: `web_fetch`'s anti-URL-fabrication rule and its "a search FORM is
+    not evidence of absence" paragraph (both written after production failures), its
+    YouTube-captions paragraph (which already *is* the cross-tool disambiguation), and its
+    `extract` workflow (a mechanical backstop against the number-invention class);
+    `analyze_stream`'s `mode`/`captions` prose, which carries the schema constraint an `enum`
+    cannot (§ the GBNF segfault); `deep_research`'s ~2.6k preset catalog, which the model
+    cannot call a preset without. `deep_produce`'s ~70% overlap with `deep_research` is the one
+    large genuine reclaim — and capturing it means a W1-style umbrella merge, not a trim.
+  - **`/api/debug/tool-probe` is not an acceptance gate.** It is a single ad-hoc converse — one
+    `user_text`, caller-supplied tool list, proposed calls returned, no handler run, no case
+    set, no baseline, no threshold. It was built to bisect gateway segfaults, and it found one.
+    W0b changes *semantic* content, whose failure modes are argument-level and downstream
+    (a guessed URL, `sources: web` for a library-only question). Either pre-build a fixture set
+    with a numeric baseline — which is also finding #2 below, arriving early — or state plainly
+    that W0b's acceptance is human review of the diff.
 - **W1 — umbrellas.** Consolidate the source/action families (`records`, `grokipedia`,
   `research_report`, `external_video`), 19 → 4. Big count drop, no new machinery, per-source
   clarity preserved inside one guide. Keep each umbrella's param a typed discriminated union.
@@ -225,7 +255,7 @@ all exist and are the right seams; every umbrella family count (5/5/5/4).
 **Corrected in this revision:** no prompt caching in the repo (the "dollars are solved" premise
 was wrong); ~15% → ~18–20% of window; `schemas_for` is a registry method (not AgentLoop's);
 `ToolSpec` `extra="forbid"` + digest guard makes `family`/`summary` a real decision, not a free
-add; W0 is broad (digest/version bumps), not "no-change."
+add; W0 is broad (digest/version bumps), not "no-change." (W0 is now split W0a/W0b — §6.)
 
 **The two real design risks (both gate the catalog, not the cheap waves):**
 1. **Mode (a) + auto-load-on-miss contradicts native tool-calling** (§7). Must be resolved on
@@ -234,7 +264,7 @@ add; W0 is broad (digest/version bumps), not "no-change."
    be pre-built with a baseline and threshold *before* the wave it gates.
 
 **Recommendation — split the plan:**
-- **Do now:** W0 (trim + metadata) and W1 (umbrellas). Low risk, no new machinery, capture the
+- **Do now:** W0a/W0b (metadata + trim) and W1 (umbrellas). Low risk, no new machinery, capture the
   bulk of the token win at today's scale. Ship as their own PR(s).
 - **Gate:** W2/W3 (the catalog machinery) behind (1) resolving the mode-(a) contradiction and
   (2) a pre-built selection-accuracy eval with a numeric baseline/threshold — and only if a
