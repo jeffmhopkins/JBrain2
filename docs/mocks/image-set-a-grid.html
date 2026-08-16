@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>image_set — A · uniform grid</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:400 16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px 16px}
+  .wrap{max-width:520px;margin:0 auto}
+  .note{color:var(--text-3);font-size:12px;margin-bottom:16px}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px}
+  .tv-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+  .tv-title{font-size:14px;font-weight:500}
+  .tv-sub{font-size:12px;color:var(--text-2)}
+  /* A: one uniform square grid — every crop gets identical weight. */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .cell{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden;
+        background:var(--surface-2);border:1px solid var(--border);cursor:pointer}
+  .cell img{width:100%;height:100%;object-fit:cover;display:block}
+  .cap{position:absolute;left:0;right:0;bottom:0;padding:5px 7px;font-size:11px;
+       color:var(--text);background:linear-gradient(transparent,rgba(14,15,17,.88));
+       white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cell:focus-visible{outline:2px solid var(--steel);outline-offset:2px}
+  .foot{margin-top:10px;font-size:12px;color:var(--text-2)}
+  .chip{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--steel-tint);
+        color:var(--steel);font-size:11px;margin-left:6px}
+</style></head>
+<body><div class="wrap">
+  <p class="note">image_set — variant A · uniform grid. Every crop identical weight; caption
+  overlaid so the grid stays dense. Tap a cell for the lightbox.</p>
+
+  <div class="bubble">
+    <div class="tv-head">
+      <div class="tv-title">6 faces<span class="chip">from IMG_4471.jpg</span></div>
+      <div class="tv-sub">tap to enlarge</div>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="foot">Cropped from the photo you sent. Long-press any one to save it.</div>
+  </div>
+</div>
+<script>
+  // Placeholder crops — deterministic gradients standing in for real faces.
+  const items = [
+    ["Person 1","#7FA7C9","#26343F"], ["Person 2","#8FBC9A","#243128"],
+    ["Person 3","#C9A36A","#3A2F1E"], ["Person 4","#CF8A8F","#3A2528"],
+    ["Person 5","#A493C9","#2B2438"], ["Person 6","#6FB6B1","#1F3230"],
+  ];
+  const svg = (label,a,b) => "data:image/svg+xml;utf8," + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'>
+      <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+      <stop offset='0' stop-color='${a}'/><stop offset='1' stop-color='${b}'/></linearGradient></defs>
+      <rect width='300' height='300' fill='url(#g)'/>
+      <circle cx='150' cy='120' r='58' fill='rgba(255,255,255,.18)'/>
+      <ellipse cx='150' cy='250' rx='95' ry='68' fill='rgba(255,255,255,.14)'/></svg>`);
+  document.getElementById("grid").innerHTML = items.map(([l,a,b]) =>
+    `<div class="cell" tabindex="0"><img alt="${l}" src="${svg(l,a,b)}"><div class="cap">${l}</div></div>`
+  ).join("");
+</script>
+</body></html>

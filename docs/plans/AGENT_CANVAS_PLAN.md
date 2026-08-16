@@ -628,6 +628,7 @@ per wave, exactly one PR per wave, CI green before merge.
 | 10.4 | Loop budget | **3 looks / 10 calls / 12 crops** |
 | 10.5 | W4 interim fallback | **None — the lane waits for `image_set`** |
 | 10.6 | HTML lane | **Full browser sidecar (real CSS)** |
+| 10.7 | `image_set` GUI gate | **B — source photo + filmstrip** |
 
 **10.1 — separate `show_canvas` verb.** Follows the rule stated at
 `agents.py:181,228` (*"show/remove stay SEPARATE (distinct shapes)"*) and the
@@ -661,6 +662,15 @@ check. See §6.2 for why the ceiling still sits where repair rounds saturate.
 → N durable cards, shippable today with zero frontend change) was declined in favour of
 waiting for the one-call `image_set` gallery. **Consequence: W4 is hard-blocked on the
 three-mock GUI gate, and W5 is blocked behind W4.** Mitigation in §11.4.
+
+**10.7 — the crop gallery is variant B** (`docs/mocks/image-set-b-filmstrip.html`, the
+binding spec; A and C retained as the record). The source photo stays visible with each
+crop's region boxed on it, above a horizontally scrolling filmstrip. Chosen over the
+denser grid (A) and the provenance-labelled list (C) because it answers *"where in the
+photo did this come from?"* without a tap — which matters precisely because VLM
+grounding mis-boxes and undercounts silently, and a wrong crop is only obvious next to
+the region it claims to be. Accepted costs: the tallest card of the three, and the
+source image repeats content already in the chat above it.
 
 **10.6 — the HTML lane is a real browser, and the renderer is a general service.** The
 zero-dependency PyMuPDF `Story` option was evaluated with working renders of both what

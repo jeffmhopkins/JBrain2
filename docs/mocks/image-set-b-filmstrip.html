@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>image_set — B · filmstrip with source</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:400 16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px 16px}
+  .wrap{max-width:520px;margin:0 auto}
+  .note{color:var(--text-3);font-size:12px;margin-bottom:16px}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px}
+  .tv-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+  .tv-title{font-size:14px;font-weight:500}
+  .tv-sub{font-size:12px;color:var(--text-2)}
+  /* B: the SOURCE stays visible with the crop regions marked, then a horizontal
+     filmstrip. Answers "where did each of these come from?" without a second tap. */
+  .source{position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--border);
+          background:var(--surface-2);margin-bottom:10px}
+  .source img{width:100%;display:block}
+  .box{position:absolute;border:2px solid var(--steel);border-radius:6px;
+       box-shadow:0 0 0 1px rgba(14,15,17,.7)}
+  .strip{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x mandatory}
+  .strip::-webkit-scrollbar{height:6px}
+  .strip::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+  .frame{flex:0 0 104px;scroll-snap-align:start;cursor:pointer}
+  .frame img{width:104px;height:104px;object-fit:cover;border-radius:10px;display:block;
+             border:1px solid var(--border);background:var(--surface-2)}
+  .frame span{display:block;font-size:11px;color:var(--text-2);margin-top:5px;
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:104px}
+  .frame:focus-visible img{outline:2px solid var(--steel);outline-offset:2px}
+  .foot{margin-top:10px;font-size:12px;color:var(--text-2)}
+  .chip{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--steel-tint);
+        color:var(--steel);font-size:11px;margin-left:6px}
+</style></head>
+<body><div class="wrap">
+  <p class="note">image_set — variant B · source + filmstrip. Keeps the original visible with
+  each crop's region boxed, so provenance is legible at a glance. Scrolls horizontally.</p>
+
+  <div class="bubble">
+    <div class="tv-head">
+      <div class="tv-title">6 faces<span class="chip">from IMG_4471.jpg</span></div>
+      <div class="tv-sub">swipe · tap to enlarge</div>
+    </div>
+    <div class="source" id="source"></div>
+    <div class="strip" id="strip"></div>
+    <div class="foot">Cropped from the photo you sent. Long-press any one to save it.</div>
+  </div>
+</div>
+<script>
+  const items = [
+    ["Person 1","#7FA7C9","#26343F", 8, 22, 18, 26], ["Person 2","#8FBC9A","#243128", 30, 16, 17, 25],
+    ["Person 3","#C9A36A","#3A2F1E", 52, 24, 17, 25], ["Person 4","#CF8A8F","#3A2528", 72, 18, 18, 26],
+    ["Person 5","#A493C9","#2B2438", 18, 55, 18, 26], ["Person 6","#6FB6B1","#1F3230", 58, 58, 18, 26],
+  ];
+  const face = (a,b) => "data:image/svg+xml;utf8," + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'>
+      <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+      <stop offset='0' stop-color='${a}'/><stop offset='1' stop-color='${b}'/></linearGradient></defs>
+      <rect width='300' height='300' fill='url(#g)'/>
+      <circle cx='150' cy='120' r='58' fill='rgba(255,255,255,.18)'/>
+      <ellipse cx='150' cy='250' rx='95' ry='68' fill='rgba(255,255,255,.14)'/></svg>`);
+  const group = "data:image/svg+xml;utf8," + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='800' height='520'>
+      <rect width='800' height='520' fill='#1E2024'/>
+      <rect y='330' width='800' height='190' fill='#232629'/>
+      ${items.map(([,a,,x,y,w,h])=>`<circle cx='${(x+w/2)*8}' cy='${(y+h/2)*5.2}' r='42' fill='${a}' opacity='.55'/>`).join("")}
+    </svg>`);
+  document.getElementById("source").innerHTML =
+    `<img alt="source photo" src="${group}">` +
+    items.map(([,,,x,y,w,h]) =>
+      `<div class="box" style="left:${x}%;top:${y}%;width:${w}%;height:${h}%"></div>`).join("");
+  document.getElementById("strip").innerHTML = items.map(([l,a,b]) =>
+    `<div class="frame" tabindex="0"><img alt="${l}" src="${face(a,b)}"><span>${l}</span></div>`
+  ).join("");
+</script>
+</body></html>
