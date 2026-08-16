@@ -1083,13 +1083,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "render_chart.tool": (
             "render_chart",
-            2,
-            "06f5703b02f5d1354f7bedc0a25bf098d1c8b7764777980ae829a5208dbb806b",
+            3,
+            "a144b1435c41ab822a8dd29a4b5d1f85b4e85af9ac9e675f7bf05cb00eca1c20",
         ),
         "render_bars.tool": (
             "render_bars",
-            4,
-            "8994d2f5504ff3dfef5b3027aaa39b313d3bbbddfa7cef71f765007b606faef1",
+            5,
+            "efda7b96d4d16b7e34136752ae8e7f201b57cec008e1194b4f64f0ab7a485d08",
         ),
         "read_encounters.tool": (
             "read_encounters",
@@ -1218,8 +1218,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "portal_search.tool": (
             "portal_search",
-            1,
-            "390085c96b13eb36f0667772a159e276e0004fd6c26b30647a58acf18f91167b",
+            2,
+            "0421e4d24f36bfdfb67845bf7d4451258c9ac2532b0ca482a22e3bcb42af73bf",
         ),
         "public_records.tool": (
             "public_records",
@@ -1248,8 +1248,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "transcribe.tool": (
             "transcribe",
-            3,
-            "ab0a7b6e72ca9b9315e28c154a17eaae0d5ee3ac8a53d4175f590e69d665469e",
+            4,
+            "449460d004f2be5ec26c070bdecfa9daa5e354f8bfdb2c256abafe09e483d00b",
         ),
         "analyze_video.tool": (
             "analyze_video",
@@ -1383,8 +1383,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "deep_research.tool": (
             "deep_research",
-            11,
-            "79d10b196c0136c43f48b7802f9bf03bf1c4cf63bcc5f4a0ad06f12157202dea",
+            12,
+            "5d5d9a14cf695d23fd1b51fe1d6c92ac353ec31658364d7ebf66fb4d4e689e84",
         ),
         "deep_produce.tool": (
             "deep_produce",
@@ -1393,13 +1393,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "decompose_research.tool": (
             "decompose_research",
-            1,
-            "1570a30ddcb01a40862c551246e567df9fe739f85ba79b819980d4eeeef37574",
+            2,
+            "15027015ca5ab1af73e06c61f2c7c953c654a02e1d3200a3860f27b5f740a7ea",
         ),
         "deepest_research.tool": (
             "deepest_research",
-            1,
-            "2ce3fab6919ea95b910dcfee09a0862707fb7f6745d81661a45e6f9ed64e62e4",
+            2,
+            "5262e1eff6b5d5e4d39a1c371d16f0e86c361243e290a0aa0553e0fe4ca0292a",
         ),
         "research_report.tool": (
             "research_report",

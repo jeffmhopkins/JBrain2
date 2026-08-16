@@ -99,6 +99,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "analyze_stream",
             "grab_frame",
             "render_bars",
+            "render_chart",
             "fetch_image",
             "compare_images",
             "ocr",
@@ -117,7 +118,6 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "spawn_subagent",
             "deep_research",
             "deep_produce",
-            "decompose_research",
             "deepest_research",
             "research_report",
             "show_research_report",
@@ -134,6 +134,32 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
     assert "deep_produce" in NEVER_DEFAULT
     # jerv has no extra_tools grant (it holds deep_produce via its explicit allowlist).
     assert jerv.extra_tools == frozenset()
+
+
+def test_jerv_is_not_offered_the_task_agent_decompose_tool() -> None:
+    """`decompose_research` refuses at depth 0, so offering it to an interactive jerv turn
+    only spends prompt on a tool whose every call fails. It reaches the parent⊆child clamp
+    through DEEPEST_RUN_TOOLS — the background orchestrator's ceiling — instead, which is the
+    only path that ever spawns the `research_deep` task agent that calls it."""
+    from jbrain.agent.agents import DECOMPOSE_TOOL, DEEPEST_RUN_TOOLS
+
+    assert DECOMPOSE_TOOL not in JERV_TOOLS
+    assert DECOMPOSE_TOOL in DEEPEST_RUN_TOOLS
+    # The ceiling is jerv's set plus exactly that one tool — a task agent inherits nothing
+    # else it could not have inherited before.
+    assert JERV_TOOLS | {DECOMPOSE_TOOL} == DEEPEST_RUN_TOOLS
+    # The task-agent persona still holds it, so the clamp has something to intersect.
+    assert DECOMPOSE_TOOL in AGENTS["research_deep"].tools
+
+
+def test_jerv_holds_both_ungrounded_chart_tools() -> None:
+    """`render_bars` and `render_chart` both plot only numbers the model passes (their
+    handlers never read the session), so both are safe for the KB-blind jerv. They ship as a
+    pair: `render_bars`' own description steers to `render_chart` for a time series, so
+    holding one without the other pointed jerv at a tool it could not call."""
+    assert {"render_bars", "render_chart"} <= JERV_TOOLS
+    # The GROUNDED chart tool stays out — it reads app.facts under the session's scopes.
+    assert "chart_measurements" not in JERV_TOOLS
 
 
 def test_curator_holds_deep_produce_via_extra_tools_only() -> None:

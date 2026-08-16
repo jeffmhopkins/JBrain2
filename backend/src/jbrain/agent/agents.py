@@ -62,8 +62,10 @@ DEEP_RESEARCH_TOOL = "deep_research"
 # sub-question into one bounded fan of depth-2 sub agents, ONCE. `web`-gated and
 # NEVER_DEFAULT like the other spawn primitives; the handler refuses at depth 0 (the
 # orchestrator plans its own fan) and past the run's `max_depth`, so it is inert outside
-# a deepest run that seeded a two-tier tree. jerv formally holds it (so the parent⊆child
-# clamp passes it to a research_deep task agent) but never usefully calls it (depth 0).
+# a deepest run that seeded a two-tier tree. Deliberately NOT in JERV_TOOLS: an interactive
+# jerv turn is depth 0, so offering it there only spends prompt on a tool whose every call
+# refuses. The clamp reaches it through DEEPEST_RUN_TOOLS instead — the background deepest
+# orchestrator's ceiling — which is the only path that ever spawns a research_deep agent.
 DECOMPOSE_TOOL = "decompose_research"
 
 # The no-holds background research primitive (docs/plans/DEEPEST_RESEARCH_TOOL_PLAN.md, R7):
@@ -130,11 +132,16 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # first-class chat image analyze_image/compare_images can read by id
         # (VIDEO_IMAGE_TOOLS_PLAN.md) — the "screenshot the video at this moment" step.
         "grab_frame",
-        # Render a categorical breakdown/ranking jerv assembled (from the web, a count it
-        # tallied) as the general-domain `bar_chart` view — "how many X by Y", "compare X
-        # across Y". The KB-grounded chart tools stay out of jerv's KB-blind set; this one
-        # plots only numbers jerv passes, so it needs no notes (DESIGN.md "bar_chart tool-view").
+        # Render a breakdown jerv assembled (from the web, a count it tallied) as a data plot:
+        # `render_bars` for the categorical `bar_chart` view ("how many X by Y", "compare X
+        # across Y"), `render_chart` for the dated `chart` view (a value trending over time).
+        # The KB-grounded chart tools (`chart_measurements`) stay out of jerv's KB-blind set;
+        # these two plot ONLY numbers jerv passes — their handlers never touch the session — so
+        # they need no notes (DESIGN.md "bar_chart tool-view"). They ship as a pair: bars alone
+        # left jerv steered by its own description toward a `render_chart` it did not hold, and
+        # with no way at all to plot a time series.
         "render_bars",
+        "render_chart",
         # Fetch a web image's bytes so jerv can actually SEE it (web_fetch is text-only) —
         # persisted as a chat image analyze_image/compare_images read by id.
         "fetch_image",
@@ -205,10 +212,6 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "write_plan_result",
         # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,
-        # The two-tier decomposition primitive. jerv holds it only so the parent⊆child
-        # clamp passes it down to a research_deep task agent; the handler refuses at
-        # depth 0, so jerv never usefully calls it (DEEPEST_RESEARCH_TOOL_PLAN.md, R2).
-        DECOMPOSE_TOOL,
         # The deep-research primitive — jerv orchestrates a bounded research run over the
         # same fan (docs/proposed/DEEP_RESEARCH_TOOL_PLAN.md).
         DEEP_RESEARCH_TOOL,
@@ -229,6 +232,13 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "remove_research_report",
     }
 )
+
+# The ceiling a BACKGROUND deepest run's children clamp to (deepest_run.py): jerv's tools
+# plus `decompose_research`, the one tool only a `research_deep` task agent ever calls. It
+# lives here rather than in JERV_TOOLS so an interactive jerv turn is not offered a tool
+# that refuses at depth 0 — the clamp is the only consumer, and this is its only path
+# (a research_deep fan activates solely under a two-tier tree, DEEPEST_RESEARCH_TOOL_PLAN R4).
+DEEPEST_RUN_TOOLS = JERV_TOOLS | frozenset({DECOMPOSE_TOOL})
 
 # The archivist persona's allowlist: the Gmail organize-an-inbox tools and nothing
 # else (the `web` permission class, opt-in like jerv's). The archivist reads no

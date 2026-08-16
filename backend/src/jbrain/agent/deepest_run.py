@@ -31,7 +31,7 @@ from types import ModuleType
 
 import structlog
 
-from jbrain.agent.agents import JERV_TOOLS
+from jbrain.agent.agents import DEEPEST_RUN_TOOLS
 from jbrain.agent.deepest_progress import DeepestProgressChannel
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.session import read_context
@@ -67,8 +67,9 @@ def build_deepest_run_context(
     """The `ToolContext` a background deepest run's orchestrator (depth 0) runs under —
     owner identity so it can mint child sessions and cite, KB-less so it (and its children)
     touch no owner-domain data, and a two-tier tree so the `research_deep` fan activates.
-    `agent_tools=JERV_TOOLS` is the ceiling children clamp to (a `research_deep` task agent
-    needs `decompose_research` + the web tools, all of which jerv holds).
+    `agent_tools=DEEPEST_RUN_TOOLS` is the ceiling children clamp to — jerv's tools plus
+    `decompose_research`, which a `research_deep` task agent needs and which no interactive
+    jerv turn is offered (it refuses at depth 0).
 
     `run_id` is left None on purpose: `ToolContext.run_id` is an `app.runs` UUID used ONLY
     to stamp a spawned child's `parent_run_id` (consumed in spawn.py's child-run start), and
@@ -84,7 +85,7 @@ def build_deepest_run_context(
         timezone=timezone,
         agent_session_id=agent_session_id,
         depth=0,
-        agent_tools=JERV_TOOLS,
+        agent_tools=DEEPEST_RUN_TOOLS,
         tree=TreeState.rooted_deepest(budget_tokens=budget_tokens, wall_clock_s=wall_clock_s),
         run_id=None,
     )

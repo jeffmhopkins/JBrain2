@@ -1,6 +1,6 @@
 ---
 name: portal_search
-version: 1
+version: 2
 permission: web
 params:
   type: object
@@ -13,8 +13,9 @@ params:
     jurisdiction:
       type: string
       description: >-
-        The portal's jurisdiction, e.g. "FL". Pair with kind to pick a portal. Available pairs
-        are listed in the tool's steering message if you omit them.
+        The portal's jurisdiction, e.g. "FL". Pair with kind to pick a portal. This build ships
+        FL/business (Sunbiz corporation registry) and FL/license (DFS licensee lookup); a box may
+        have more adapters wired, and calling with no jurisdiction/kind lists whatever it has.
     kind:
       type: string
       description: >-

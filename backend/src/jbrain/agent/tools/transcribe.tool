@@ -1,6 +1,6 @@
 ---
 name: transcribe
-version: 3
+version: 4
 permission: web
 cost_class: expensive
 params:
@@ -20,3 +20,7 @@ cannot hear it yourself. It renders a transcript card the owner sees (the player
 full text), so do NOT paste the transcript back — answer or summarize only what the
 owner asked, in a line or two. The model loads on demand and is freed afterward, so a
 long clip can take a little while.
+
+When you only need a video's WORDS, use this and not `analyze_video`: this runs speech-to-text
+alone, while `analyze_video` also samples and captions frames, so it costs several times as long
+for the same transcript. Reach for `analyze_video` only when what the video SHOWS matters too.
