@@ -485,6 +485,8 @@ class LiveTurnOut(BaseModel):
     status: str
     name: str
     started_at: datetime
+    # Null while the turn is still running; set once it settles. The roster splits on it.
+    ended_at: datetime | None
     elapsed_ms: int
     step_count: int
     cost_tokens: int
@@ -507,15 +509,22 @@ class LiveTurnsOut(BaseModel):
 
 
 @router.get("/turns")
-async def live_turns(request: Request, principal: PrincipalDep) -> LiveTurnsOut:
-    """The runs in flight right now, oldest first, with the call each was set up with.
+async def live_turns(request: Request, principal: PrincipalDep, seconds: int = 0) -> LiveTurnsOut:
+    """The turns on the box, oldest first, with the call each was set up with.
+
+    `seconds` widens the roster from "running right now" (0, the default) to "ran inside
+    this window", matching the graph's 1/5/15-minute ranges. Capped at the graph's own
+    ceiling so a hand-written query cannot ask for the whole run log through a route
+    that returns every field of every row.
 
     Read from the runs table rather than the in-process live-turn registry: that
     registry holds only parent /chat turns, so a deep-research fan would collapse to one
     row and a workflow run would not appear at all."""
     reader = cast(RunLogReader, request.app.state.run_reader)
     ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
-    rows = await reader.list_live(ctx)
+    window = min(max(seconds, 0), _MAX_HISTORY_SECONDS)
+    since = datetime.now(tz=UTC) - timedelta(seconds=window) if window > 0 else None
+    rows = await reader.list_live(ctx, since=since)
     return LiveTurnsOut(
         turns=[
             LiveTurnOut(

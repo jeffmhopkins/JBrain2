@@ -23287,52 +23287,12 @@ button.task-band:active {
   padding: 14px 14px 10px;
 }
 
-.vitals-plot-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.vitals-plot-label {
-  font-size: var(--fs-secondary);
-  color: var(--text-2);
-}
-
-.vitals-plot-figure {
-  font-size: var(--fs-title);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.vitals-plot-figure .u {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  margin-left: 2px;
-}
-
-/* The plot stretches to the card's width, so the viewBox must NOT preserve its aspect
-   ratio — the default would letterbox a 240x60 box inside a wide short area and park
-   the columns in the middle of empty space. */
-.vitals-plot {
-  display: block;
-  width: 100%;
+/* The detail plot is the shared Ops sparkline (TimeSeriesPlot), not a private drawing:
+   the modal and the Ops screen now render the box's metrics the same way, so a reading
+   learned on one is readable on the other. Only the height is ours — this is the
+   surface the graph was opened for, so it gets more room than an Ops row. */
+.vitals-plot-card .plot-svg {
   height: 84px;
-  margin-top: 10px;
-  shape-rendering: crispEdges;
-}
-
-.vitals-col {
-  fill: var(--text-3);
-}
-
-.vitals-col.hot {
-  fill: var(--warn);
-}
-
-.vitals-plot-rail {
-  stroke: var(--border);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
 }
 
 .vitals-ranges {
@@ -23481,6 +23441,15 @@ button.task-band:active {
   background: var(--danger);
 }
 
+/* A turn that finished cleanly. Hollow rather than filled: in a 15-minute window most
+   rows are settled, and a screen of solid green dots reads as "all of this is running
+   right now". The ring is the shape difference DESIGN.md asks for so the state is not
+   carried by colour alone — the group heading says it in words too. */
+.vitals-dot.done {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
 .vitals-empty {
   padding: 18px 16px;
   display: flex;
@@ -23627,32 +23596,6 @@ button.task-band:active {
 }
 
 /* ---- level 1: the second channel, the axis, the caveat ---- */
-
-.vitals-plot-figures {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.vitals-plot-figure.rate {
-  color: var(--steel);
-}
-
-.vitals-plot-figure.rate .u {
-  color: var(--steel);
-  opacity: 0.62;
-}
-
-/* Tokens/sec over the same time axis as the GPU columns — a different scale, so it is
-   comparable against itself over time and never against the columns. */
-.vitals-plot-trace {
-  fill: none;
-  stroke: var(--steel);
-  stroke-width: 1.4;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
 
 .vitals-axis {
   display: flex;

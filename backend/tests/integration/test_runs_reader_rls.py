@@ -4,6 +4,7 @@ through the reader — the RLS firewall, not the API, is the enforcement point."
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -250,3 +251,92 @@ async def test_queue_depth_counts_queued_jobs(maker: async_sessionmaker) -> None
             text("UPDATE app.jobs SET status = 'running' WHERE id = :id"), {"id": jobs[0]}
         )
     assert await reader.queue_depth(owner) == base + 1
+
+
+# --- list_live's window: turns that RAN, not only turns still running --------
+
+
+async def _seed_live_run(maker: async_sessionmaker, owner: SessionContext) -> str:
+    """A run left OPEN, so it reads as in-flight."""
+    sessions = AgentSessionRepo(maker)
+    info = await sessions.create(owner, domain_scopes=["general"], title="live")
+    return await AgentRunLog(maker).start(
+        owner, session_id=info.id, prompt_version="agent-system-v1"
+    )
+
+
+async def test_list_live_without_a_window_is_running_only(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    finished = await _seed_run(maker, owner)  # _seed_run finishes its run
+    live = await _seed_live_run(maker, owner)
+    reader = RunLogReader(maker)
+
+    ids = {r.id for r in await reader.list_live(owner)}
+
+    assert live in ids
+    assert finished not in ids
+
+
+async def test_list_live_includes_turns_that_finished_inside_the_window(
+    maker: async_sessionmaker,
+) -> None:
+    """The roster emptied the moment a turn settled, so the 5- and 15-minute ranges put a
+    graph full of history above a list with nothing in it."""
+    owner = await _owner(maker)
+    finished = await _seed_run(maker, owner)
+    reader = RunLogReader(maker)
+
+    rows = await reader.list_live(owner, since=datetime.now(tz=UTC) - timedelta(minutes=15))
+
+    row = next(r for r in rows if r.id == finished)
+    assert row.ended_at is not None
+    # Elapsed is the run's DURATION once it has settled — not time-since-start, which
+    # would age a finished turn every second it sat on the window.
+    assert row.elapsed_ms == int((row.ended_at - row.started_at).total_seconds() * 1000)
+
+
+async def test_list_live_excludes_turns_older_than_the_window(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    finished = await _seed_run(maker, owner)
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text(
+                "UPDATE app.runs SET started_at = now() - interval '2 hours',"
+                " ended_at = now() - interval '2 hours' WHERE id = :id"
+            ),
+            {"id": finished},
+        )
+    reader = RunLogReader(maker)
+
+    rows = await reader.list_live(owner, since=datetime.now(tz=UTC) - timedelta(minutes=15))
+
+    assert finished not in {r.id for r in rows}
+
+
+async def test_list_live_keeps_a_run_stranded_without_an_end_time(
+    maker: async_sessionmaker,
+) -> None:
+    """A run killed by a restart is marked 'error' but never gets an ended_at. Matching
+    on ended_at alone would hide exactly the turns worth opening this screen for."""
+    owner = await _owner(maker)
+    stranded = await _seed_live_run(maker, owner)
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text("UPDATE app.runs SET status = 'error', ended_at = NULL WHERE id = :id"),
+            {"id": stranded},
+        )
+    reader = RunLogReader(maker)
+
+    rows = await reader.list_live(owner, since=datetime.now(tz=UTC) - timedelta(minutes=15))
+
+    assert stranded in {r.id for r in rows}
+
+
+async def test_list_live_window_is_still_owner_scoped(maker: async_sessionmaker) -> None:
+    """CLAUDE.md rule 3: widening the read must not widen who can do it."""
+    owner = await _owner(maker)
+    await _seed_run(maker, owner)
+    reader = RunLogReader(maker)
+
+    family = SessionContext(principal_id=str(uuid.uuid4()), principal_kind="family")
+    assert await reader.list_live(family, since=datetime.now(tz=UTC) - timedelta(minutes=15)) == []

@@ -9,7 +9,7 @@ shape, and the owner-only gate.
 import asyncio
 import time
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,6 +31,7 @@ def row(**over: object) -> LiveTurnRow:
         "status": "running",
         "name": "agent",
         "started_at": NOW,
+        "ended_at": None,
         "elapsed_ms": 252_000,
         "step_count": 9,
         "cost_tokens": 38_200,
@@ -61,8 +62,13 @@ class FakeRunReader:
     def __init__(self) -> None:
         self.rows: list[LiveTurnRow] = []
         self.detail: RunDetail | None = None
+        # What the route asked for, so a test can assert the window reached the reader.
+        self.since: datetime | None = None
 
-    async def list_live(self, ctx: object, *, limit: int = 50) -> list[LiveTurnRow]:
+    async def list_live(
+        self, ctx: object, *, limit: int = 50, since: datetime | None = None
+    ) -> list[LiveTurnRow]:
+        self.since = since
         return self.rows
 
     async def load(self, ctx: object, run_id: str) -> RunDetail | None:
@@ -262,6 +268,75 @@ def test_carries_the_gauge_next_to_an_empty_roster(
 
     assert body["turns"] == []
     assert body["gpu_busy_percent"] == 94.0
+
+
+# --- the window: turns that RAN, not only turns still running ----------------
+
+
+def test_defaults_to_running_turns_only(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """No `seconds` is the top bar's question — what is on the box right now — so it must
+    not silently widen into a history read."""
+    login(client, repo)
+
+    client.get("/api/ops/turns")
+
+    assert reader.since is None
+
+
+def test_asks_for_the_window_the_graph_is_showing(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """The roster emptied seconds after a turn finished, so the 5- and 15-minute ranges
+    showed a graph full of history above a list with nothing in it."""
+    login(client, repo)
+    before = datetime.now(tz=UTC)
+
+    client.get("/api/ops/turns?seconds=900")
+
+    assert reader.since is not None
+    elapsed = before - reader.since
+    assert timedelta(seconds=899) <= elapsed <= timedelta(seconds=901)
+
+
+def test_clamps_the_window_to_the_graph_s_ceiling(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """This route returns every field of every row, so a hand-written `seconds` must not
+    turn it into an unbounded run-log export."""
+    login(client, repo)
+    before = datetime.now(tz=UTC)
+
+    client.get("/api/ops/turns?seconds=86400")
+
+    assert reader.since is not None
+    assert before - reader.since <= timedelta(seconds=901)
+
+
+def test_a_negative_window_reads_as_running_only(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    login(client, repo)
+
+    client.get("/api/ops/turns?seconds=-60")
+
+    assert reader.since is None
+
+
+def test_reports_when_a_turn_ended(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """The client splits running from settled on this field alone; without it every
+    finished turn in the window rendered as though it were still going."""
+    ended = NOW + timedelta(seconds=42)
+    reader.rows = [row(id="run_done", status="ok", ended_at=ended, elapsed_ms=42_000)]
+    login(client, repo)
+
+    turn = client.get("/api/ops/turns?seconds=300").json()["turns"][0]
+
+    assert turn["ended_at"] is not None
+    assert turn["elapsed_ms"] == 42_000
 
 
 # --- GET /ops/turns/{run_id} — the step trail + raw output (level 2) ---------
