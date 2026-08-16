@@ -379,6 +379,22 @@ class RunDetail:
     steps: list[RunStepView]
 
 
+def _live_name(run: Run, trigger_pipeline: str | None) -> str:
+    """A roster label that tells one running turn from another.
+
+    RunLogReader._display_name falls back to the run KIND, which is fine for a history
+    list but useless live: a research fan would render as "subagent, subagent,
+    subagent". The call stamp carries what actually distinguishes them — a child's
+    label, or the persona driving a parent turn — so prefer those, and keep the
+    pipeline name for engine runs where it is already the clearest thing.
+    """
+    stamp = run.call_stamp or {}
+    label = stamp.get("label") or stamp.get("persona")
+    if run.kind in ("agent", "subagent") and isinstance(label, str) and label:
+        return label
+    return run.pipeline or trigger_pipeline or run.kind or "agent"
+
+
 class RunLogReader:
     """Owner-scoped reads of the run log for the Ops "Runs" surface. Runs are
     owner-only (RLS), so every read flows through `scoped_session` under the
@@ -463,7 +479,7 @@ class RunLogReader:
                     id=str(run.id),
                     kind=run.kind,
                     status=run.status,
-                    name=self._display_name(run.kind, run.pipeline, trigger_pipeline),
+                    name=_live_name(run, trigger_pipeline),
                     started_at=run.started_at,
                     elapsed_ms=max(0, int((now - run.started_at).total_seconds() * 1000)),
                     step_count=run.step_count,
@@ -529,7 +545,7 @@ class RunLogReader:
                         id=str(run.id),
                         kind=run.kind,
                         status=self._effective_status(run, queued_ids),
-                        name=self._display_name(run.kind, run.pipeline, trigger_pipeline),
+                        name=_live_name(run, trigger_pipeline),
                         started_at=run.started_at,
                         duration_ms=_duration_ms(run.started_at, run.ended_at),
                         step_count=run.step_count,

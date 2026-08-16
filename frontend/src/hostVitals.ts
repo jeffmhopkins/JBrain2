@@ -44,6 +44,21 @@ export interface GpuBusy {
 
 const UNKNOWN: GpuBusy = { percent: null, state: "unknown" };
 
+/** Seconds of history kept for the detail surface's 1/5/15-minute ranges. One sample a
+ *  second, so 15 minutes is 900 — small enough to hold in memory, and the reason the
+ *  ranges need no backend at all. The history is CLIENT-side, so it starts empty on a
+ *  reload; surviving that would need a server-side ring. */
+const HISTORY_SAMPLES = 900;
+
+/** One second of the box, as the detail graph plots it. `gpu` is null wherever there
+ *  was no reading — a gap, never a zero, which would read as an idle GPU. */
+export interface VitalsSample {
+  at: number;
+  gpu: number | null;
+}
+
+const history: VitalsSample[] = [];
+
 type Listener = (busy: GpuBusy) => void;
 type Access = "unknown" | "allowed" | "denied";
 
@@ -56,6 +71,20 @@ let reprobe: ReturnType<typeof setTimeout> | null = null;
 function publish(busy: GpuBusy): void {
   published = busy;
   for (const listener of listeners) listener(busy);
+}
+
+/** Append a sample to the shared ring. Called once per frame — the stream's own 1 Hz
+ *  cadence IS the sample clock, so the detail graph and the top bar plot the same
+ *  seconds instead of each keeping a private timer that drifts against the other. */
+function remember(busy: GpuBusy, at: number): void {
+  history.push({ at, gpu: busy.percent });
+  if (history.length > HISTORY_SAMPLES) history.splice(0, history.length - HISTORY_SAMPLES);
+}
+
+/** The samples inside the trailing `seconds`, oldest first. */
+export function vitalsHistory(seconds: number): VitalsSample[] {
+  const cutoff = Date.now() - seconds * 1000;
+  return history.filter((sample) => sample.at >= cutoff);
 }
 
 /** A frame's reading as one of the three states. A missing or non-finite field is
@@ -83,7 +112,9 @@ function openStream(): void {
   stream.onmessage = (event: MessageEvent<string>) => {
     try {
       const frame = JSON.parse(event.data) as { gpu_busy_percent?: unknown };
-      publish(fromFrame(frame.gpu_busy_percent));
+      const busy = fromFrame(frame.gpu_busy_percent);
+      remember(busy, Date.now());
+      publish(busy);
     } catch {
       // A malformed frame must not kill the stream — the next tick is a second away.
     }

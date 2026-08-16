@@ -7,13 +7,15 @@ interface TopBarProps {
   title?: string;
   onBack?: () => void;
   syncStatus: SyncStatus;
+  /** Opens the vitals detail surface. Absent on screens that have no route to it. */
+  onOpenVitals?: (() => void) | undefined;
   /** On home, the active Full Brain session: its name takes the wordmark's slot
    *  so the conversation doesn't spend a second row on a title, and a tap reopens
    *  the Sessions list. Absent in the other home modes, where the wordmark shows. */
   session?: { title: string; onOpen: () => void } | undefined;
 }
 
-export function TopBar({ title, onBack, syncStatus, session }: TopBarProps) {
+export function TopBar({ title, onBack, syncStatus, session, onOpenVitals }: TopBarProps) {
   return (
     <header className="top-bar">
       {title ? (
@@ -35,7 +37,7 @@ export function TopBar({ title, onBack, syncStatus, session }: TopBarProps) {
           reached by swiping up on the omnibox, and a sub-screen climbs a level via
           the back chevron or the down-swipe — see docs/reference/DESIGN.md. */}
       <div className="top-bar-right">
-        <TopBarVitals syncStatus={syncStatus} />
+        <TopBarVitals syncStatus={syncStatus} onOpen={onOpenVitals} />
       </div>
     </header>
   );

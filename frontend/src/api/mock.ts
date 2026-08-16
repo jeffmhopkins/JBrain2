@@ -4159,6 +4159,88 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json({ gpu_busy_percent: 64 });
   }
 
+  // The vitals detail roster: a parent turn with a two-child research fan, plus a
+  // scheduled workflow run, so the surface can be worked on without a live box.
+  if (path === "/api/ops/turns") {
+    return json({
+      gpu_busy_percent: 88,
+      turns: [
+        {
+          id: "run_9d41c7",
+          kind: "agent",
+          status: "running",
+          name: "agent",
+          started_at: new Date(Date.now() - 252_000).toISOString(),
+          elapsed_ms: 252_000,
+          step_count: 9,
+          cost_tokens: 38_200,
+          progress_note: "synthesising 6 sources",
+          parent_run_id: null,
+          session_id: "sess_4b1e",
+          domain_code: null,
+          ran_as: "scoped",
+          prompt_version: "fullbrain@v14",
+          trigger_pipeline: null,
+          call: {
+            provider: "anthropic",
+            model: "claude-opus-4-6",
+            reasoning_effort: "high",
+            context_window: 200000,
+            vision: true,
+            persona: "jerv",
+            tools: ["notes.search", "notes.read", "web.search", "web.fetch"],
+            user_message: "Dig into what size heat pump the house actually needs.",
+            user_message_truncated: false,
+          },
+        },
+        {
+          id: "run_9d41d2",
+          kind: "subagent",
+          status: "running",
+          name: "source sweep — manufacturer specs",
+          started_at: new Date(Date.now() - 63_000).toISOString(),
+          elapsed_ms: 63_000,
+          step_count: 4,
+          cost_tokens: 6100,
+          progress_note: "reading spec sheet 3 of 5",
+          parent_run_id: "run_9d41c7",
+          session_id: "sess_4b1e",
+          domain_code: null,
+          ran_as: "scoped",
+          prompt_version: "researcher@v6",
+          trigger_pipeline: null,
+          call: {
+            provider: "local",
+            model: "gpt-oss-120b",
+            reasoning_effort: "medium",
+            context_window: 131072,
+            persona: "researcher",
+            tools: ["web.search", "web.fetch"],
+            user_message: "Sweep manufacturer spec sheets for cold-climate capacity.",
+          },
+        },
+        {
+          id: "run_9d41e0",
+          kind: "pipeline",
+          status: "running",
+          name: "nightly-reconcile",
+          started_at: new Date(Date.now() - 41_000).toISOString(),
+          elapsed_ms: 41_000,
+          step_count: 2,
+          cost_tokens: 0,
+          progress_note: "processed 118 of 400 notes",
+          parent_run_id: null,
+          session_id: null,
+          domain_code: null,
+          ran_as: "system",
+          prompt_version: null,
+          trigger_pipeline: "nightly-reconcile",
+          call: null,
+        },
+      ],
+    });
+  }
+
   if (path === "/api/ops/update" && init?.method === "POST") {
     mockUpdate.state = "running";
     mockUpdate.ticks = 0;

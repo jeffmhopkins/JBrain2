@@ -4,14 +4,16 @@ Tapping the top bar's vitals chart opens a detail surface: a larger graph with
 1 / 5 / 15-minute ranges, the agent turns running right now, and per-turn raw
 output plus debug-style metadata about the original call.
 
-**Undecided — awaiting the owner's pick.** Three variants, all built against the
-same brief and the same field inventory.
+**Chosen: `i-drilldown.html`.** It is the binding spec for
+`frontend/src/screens/VitalsScreen.tsx`; the reasoning lives in
+`docs/reference/DESIGN.md` under "Vitals detail". The rivals are kept because that
+doc records *what was chosen over what*.
 
-| Mock | Variant | Shape |
-|---|---|---|
-| `g-instrument-panel.html` | Instrument panel | Plot pinned top, shrinking to a strip when a row opens; turns expand in place |
-| `h-dossier.html` | Dossier | Graph as a header strip; each turn opens a thorough labelled-field dossier |
-| `i-drilldown.html` | Drill-down | Two levels — overview, then a pushed page that is entirely one turn |
+| Mock | Variant | Shape | Outcome |
+|---|---|---|---|
+| `i-drilldown.html` | Drill-down | Two levels — overview, then a pushed page that is entirely one turn | **Chosen** |
+| `g-instrument-panel.html` | Instrument panel | Plot pinned top, shrinking to a strip when a row opens | Rejected |
+| `h-dossier.html` | Dossier | Graph as a header strip; each turn opens a labelled-field dossier | Rejected |
 
 Each file is standalone and interactive — open it directly, no build step. The
 control desk drives the running / errored / no-turns states, the tap-target
@@ -37,10 +39,10 @@ treatment, theme, and reduced motion.
   so the graph can read 95% with an empty turn list. Each variant explains that
   instead of looking broken.
 
-## Open questions the pick does not settle
+## Settled alongside the pick
 
-- **Bucketing.** G means the 5m/15m columns; H and I take the peak. Peak is the
-  more honest default for a load gauge — a mean hides the spike you opened the
-  screen to find.
-- **History across a reload.** The graph runs off a ~900-sample client-side ring,
-  so it resets on reload. Surviving that needs a server-side ring.
+- **Bucketing is by PEAK.** G averaged the 5m/15m columns; peak won, because a mean
+  hides the spike the screen was opened to find.
+- **History still resets on reload.** The graph runs off a ~900-sample client-side
+  ring fed by the 1 Hz stream. Surviving a reload would need a server-side ring; not
+  built, and the surface does not pretend otherwise.

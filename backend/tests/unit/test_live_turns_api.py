@@ -173,6 +173,19 @@ def test_distinguishes_a_wildcard_toolset_from_none(
     assert turns[1]["call"]["tools"] == []
 
 
+def test_names_a_child_by_its_label_not_its_kind(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """A fan of children all named "subagent" is useless. The reader prefers the call
+    stamp's label, so this pins the shape the API hands the roster."""
+    reader.rows = [
+        row(id="kid", kind="subagent", name="source sweep — manufacturer specs"),
+    ]
+    login(client, repo)
+
+    assert client.get("/api/ops/turns").json()["turns"][0]["name"] != "subagent"
+
+
 def test_carries_the_gauge_next_to_an_empty_roster(
     client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, monkeypatch: pytest.MonkeyPatch
 ) -> None:
