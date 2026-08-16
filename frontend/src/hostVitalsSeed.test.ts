@@ -173,3 +173,50 @@ describe("a stream that dies fatally", () => {
     expect(FakeSource.opened).toHaveLength(1);
   });
 });
+
+describe("a retry handle that was never cleared", () => {
+  afterEach(() => vi.useRealTimers());
+
+  class Src {
+    static readonly opened: Src[] = [];
+    onmessage: ((e: MessageEvent<string>) => void) | null = null;
+    onerror: (() => void) | null = null;
+    readyState = 1;
+    closed = false;
+    close(): void {
+      this.closed = true;
+    }
+    constructor() {
+      Src.opened.push(this);
+    }
+  }
+
+  it("reopens after a silent stream even once a probe has failed", async () => {
+    // The dead-end this pins: probe()'s retry timer fired without clearing its own handle,
+    // so `reprobe` stayed non-null forever. reopenLater reads that as "an attempt is
+    // already scheduled" and declines to arm one — so the watchdog could tear a dead
+    // stream down but never bring one back, and the meter stayed blind for the rest of the
+    // session with no reconnects reaching the box. A probe fails on every deploy, when
+    // /ops/vitals is briefly gone, so one update was enough to arm it.
+    vi.useFakeTimers();
+    Src.opened.length = 0;
+    const { api } = await import("./api/client");
+    vi.mocked(api.opsVitals)
+      .mockRejectedValueOnce(new Error("box restarting"))
+      .mockResolvedValue({ gpu_busy_percent: 12 });
+    vi.mocked(api.opsVitalsStream).mockImplementation(() => new Src() as never);
+
+    const { subscribeGpuBusy } = await load();
+    subscribeGpuBusy(() => {});
+    await vi.advanceTimersByTimeAsync(0); // the first probe rejects, arming the retry
+    expect(Src.opened).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(31_000); // retry fires, succeeds, opens a stream
+    expect(Src.opened).toHaveLength(1);
+
+    // Now let that stream go silent. The watchdog must be able to replace it.
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(Src.opened.length).toBeGreaterThan(1);
+  });
+});

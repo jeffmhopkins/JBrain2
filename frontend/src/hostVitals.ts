@@ -265,11 +265,8 @@ function reopenLater(stream: EventSource): void {
   if (source !== stream) return;
   stream.close();
   source = null;
-  if (reprobe !== null) return; // a retry is already armed
-  reprobe = setTimeout(() => {
-    reprobe = null;
-    start();
-  }, REOPEN_MS);
+  if (reprobe !== null) return; // a genuine retry is already pending
+  armRetry(start, REOPEN_MS);
 }
 
 async function probe(): Promise<void> {
@@ -287,8 +284,26 @@ async function probe(): Promise<void> {
       access = "denied";
       return;
     }
-    reprobe = setTimeout(() => void probe(), REPROBE_MS);
+    armRetry(() => void probe(), REPROBE_MS);
   }
+}
+
+/** Schedule the next attempt, clearing the handle when it fires.
+ *
+ *  Every retry goes through here because the handle is not just a timer — `reopenLater`
+ *  reads it as "an attempt is already scheduled, don't add another". A callback that
+ *  forgot to clear it therefore did not merely leak a handle: it left `reprobe` non-null
+ *  forever, and from that moment the silence watchdog could tear a dead stream down but
+ *  never reopen it. The meter stayed blind for the rest of the session, with no reconnect
+ *  attempts reaching the box at all — which is precisely what the api log showed while the
+ *  server was serving 97% perfectly well. One probe failure was enough to arm it, and a
+ *  probe fails on every deploy, when /ops/vitals is briefly gone. */
+function armRetry(attempt: () => void, delay: number): void {
+  if (reprobe !== null) clearTimeout(reprobe);
+  reprobe = setTimeout(() => {
+    reprobe = null;
+    attempt();
+  }, delay);
 }
 
 function start(): void {
