@@ -196,6 +196,14 @@ resampled once a second:
   arriving*, and *arriving but dropped* need different fixes yet look identical from the
   box — a connection the browser declines to open leaves no trace there at all. Collapsed,
   because it is a diagnostic and not part of the reading.
+- **Every retry clears its own handle** [decided]. The pending-retry handle is not just a
+  timer — the reopen path reads it as *an attempt is already scheduled, don't add
+  another*. So a callback that fired without clearing it did not merely leak a handle: it
+  left the slot occupied forever, and from that moment the silence watchdog could tear a
+  dead stream down but never bring one back. The meter stayed blind for the rest of the
+  session with no reconnects reaching the box at all. One failed probe was enough to arm
+  it, and a probe fails on every deploy, when the route is briefly gone. All retries now
+  go through one helper that nulls the handle before running the attempt.
 - **The chart and the GPU figure share one grid row** [decided]. They are the pair
   the eye reads together, and laying them out as two independently-centred columns
   put the chart's middle 11px above the figure's — the reserved t/s slot pushed the
