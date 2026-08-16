@@ -87,6 +87,22 @@ function remember(busy: GpuBusy, at: number): void {
   if (history.length > HISTORY_SAMPLES) history.splice(0, history.length - HISTORY_SAMPLES);
 }
 
+/** Seed the ring with history recorded server-side, so the detail graph opens with a
+ *  past instead of filling from empty after a reload.
+ *
+ *  Only samples OLDER than what this session already holds are taken: the live stream
+ *  is the authority for anything it has seen, and its samples carry the token rate,
+ *  which the server never sees (that is measured in the browser off the chat stream). */
+export function seedVitalsHistory(seeds: { at_ms: number; gpu: number | null }[]): void {
+  const earliest = history[0]?.at ?? Number.POSITIVE_INFINITY;
+  const older = seeds
+    .filter((s) => s.at_ms < earliest)
+    .map((s) => ({ at: s.at_ms, gpu: s.gpu, tps: null }));
+  if (older.length === 0) return;
+  history.unshift(...older);
+  if (history.length > HISTORY_SAMPLES) history.splice(0, history.length - HISTORY_SAMPLES);
+}
+
 /** The samples inside the trailing `seconds`, oldest first. */
 export function vitalsHistory(seconds: number): VitalsSample[] {
   const cutoff = Date.now() - seconds * 1000;

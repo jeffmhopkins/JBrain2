@@ -203,6 +203,14 @@ plus expandable detail — with **two levels**:
   never registers a live handle, or any settled turn) reads its stored transcript and
   says so. Collapsing the two would let a finished answer masquerade as one still
   arriving.
+- **The graph opens with a past** [decided]: GPU load is sampled once a second into an
+  in-process ring server-side (`backend/src/jbrain/vitals_ring.py`) and the screen seeds
+  its own buffer from it, so a reload no longer starts the plot empty. Deliberately not
+  `app.host_metrics`, which samples every 30s for a 30-day graph — a one-minute window
+  read from it is two points, and writing a row a second to serve a fifteen-minute view
+  would multiply that table thirtyfold for a question that stops mattering a quarter of
+  an hour later. The **token rate stays session-local**: it is measured in the browser
+  off the chat stream, so its trace still begins empty after a reload.
 - **Both channels share the plot, not a scale**: GPU as columns against 0–100%, the
   token rate as a `--steel` trace against its own full scale, so each is comparable
   against itself over time and never against the other — the same rule the top bar's
@@ -213,8 +221,16 @@ Three things this surface is careful about:
 - **Longer ranges bucket by PEAK, not mean** [decided]. This gauge is read to find the
   moment the box was pinned; averaging a 15-minute window flattens a ten-second spike
   into nothing, hiding exactly what the screen was opened to see.
-- **The verbatim prompt is never shown**, because it is assembled per model call and
-  stored nowhere. The screen says so rather than leaving a suggestive gap.
+- **The verbatim prompt is shown, from memory only** [decided]. It is captured as each
+  model call goes out and held in a process-lifetime ring
+  (`backend/src/jbrain/agent/prompt_capture.py`), never written to a table. An assembled
+  agent prompt is a verbatim copy of everything the turn retrieved — including whatever
+  crossed the health, finance and location domains — so persisting it would duplicate
+  data whose protection is row-level security into a new artifact every backup then
+  carries, to answer a question about what the box is doing *now*. A restart empties it
+  and the screen says the prompt was not recorded. It is collapsed by default (the
+  largest thing on the surface) and states its own clipping when a prompt is too long
+  to render whole.
 - **A busy GPU with an empty roster is a real state**, not a bug: GPU busy covers the
   whole box, image generation and model loads included. The empty state explains that
   in words instead of looking broken.

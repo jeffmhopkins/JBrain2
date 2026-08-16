@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from jbrain import ops_metrics
+from jbrain.agent.prompt_capture import prompt_for
 from jbrain.agent.runlog import RunLogReader
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
@@ -31,6 +32,7 @@ from jbrain.host_metrics import read_gpu_busy_percent
 from jbrain.storage import BackupShelf, BlobStore
 from jbrain.tasks.schedule import FREQS
 from jbrain.usage import usage_summary
+from jbrain.vitals_ring import VitalsRing
 from jbrain.workflow import scheduler
 from jbrain.workflow.automations import AutomationsReader
 from jbrain.workflow.registry import ActionRegistry
@@ -551,9 +553,32 @@ class TurnOutputOut(BaseModel):
     steps: list[TurnStepOut]
 
 
+class PromptMessageOut(BaseModel):
+    role: str
+    content: str
+
+
+class CapturedPromptOut(BaseModel):
+    """The assembled prompt this run last sent to the model.
+
+    Kept in memory for the life of the process (agent/prompt_capture.py), so it is
+    absent for a run that predates a restart, was evicted by a newer one, or never
+    reached a model call. `truncated` says the text was clipped, so a long prompt reads
+    as clipped rather than as a short one."""
+
+    system: str
+    messages: list[PromptMessageOut]
+    tools: list[str]
+    round_index: int
+    truncated: bool
+    system_chars: int
+    message_chars: int
+
+
 class TurnDetailOut(BaseModel):
     steps: list[TurnStepOut]
     output: TurnOutputOut | None
+    prompt: CapturedPromptOut | None
 
 
 def _steps_from_snapshot(tools: list[dict[str, Any]]) -> list[TurnStepOut]:
@@ -588,12 +613,28 @@ async def turn_detail(run_id: str, request: Request, principal: PrincipalDep) ->
         for s in (detail.steps if detail else [])
     ]
 
+    captured = prompt_for(run_id)
+    prompt = (
+        CapturedPromptOut(
+            system=captured.system,
+            messages=[PromptMessageOut(**m) for m in captured.messages],
+            tools=captured.tools,
+            round_index=captured.round_index,
+            truncated=captured.truncated,
+            system_chars=captured.system_chars,
+            message_chars=captured.message_chars,
+        )
+        if captured is not None
+        else None
+    )
+
     live = request.app.state.live_turns.get(run_id)
     acc = getattr(live, "acc", None) if live is not None else None
     if live is not None and acc is not None and not live.done:
         snapshot = cast(dict[str, Any], acc.render_snapshot())
         return TurnDetailOut(
             steps=steps,
+            prompt=prompt,
             output=TurnOutputOut(
                 live=True,
                 answer=str(snapshot.get("content") or ""),
@@ -612,6 +653,7 @@ async def turn_detail(run_id: str, request: Request, principal: PrincipalDep) ->
             latest = answers[-1]
             return TurnDetailOut(
                 steps=steps,
+                prompt=prompt,
                 output=TurnOutputOut(
                     live=False,
                     answer=latest.content,
@@ -619,7 +661,32 @@ async def turn_detail(run_id: str, request: Request, principal: PrincipalDep) ->
                     steps=[],
                 ),
             )
-    return TurnDetailOut(steps=steps, output=None)
+    return TurnDetailOut(steps=steps, output=None, prompt=prompt)
+
+
+class VitalsSampleOut(BaseModel):
+    at_ms: int
+    gpu: float | None
+
+
+class VitalsHistoryOut(BaseModel):
+    samples: list[VitalsSampleOut]
+
+
+# The widest window the detail graph offers. A request past this is clamped rather than
+# rejected — the ring simply has no more to give.
+_MAX_HISTORY_SECONDS = 900
+
+
+@router.get("/vitals/history")
+async def vitals_history(request: Request, seconds: int = _MAX_HISTORY_SECONDS) -> VitalsHistoryOut:
+    """The GPU load already recorded, so the detail graph opens with a past instead of
+    filling from empty after a reload. Sampled once a second in-process (vitals_ring)."""
+    ring = cast(VitalsRing, request.app.state.vitals_ring)
+    window = max(1, min(seconds, _MAX_HISTORY_SECONDS))
+    return VitalsHistoryOut(
+        samples=[VitalsSampleOut(**cast(dict[str, Any], s)) for s in ring.since(window)]
+    )
 
 
 @router.get("/vitals/stream")

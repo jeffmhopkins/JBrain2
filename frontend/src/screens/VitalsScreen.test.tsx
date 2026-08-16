@@ -11,11 +11,16 @@ const history = vi.hoisted(() => ({
 
 vi.mock("../api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/client")>()),
-  api: { opsTurns, opsTurnDetail },
+  api: { opsTurns, opsTurnDetail, opsVitalsHistory },
 }));
-vi.mock("../hostVitals", () => ({ vitalsHistory: () => history.samples }));
+vi.mock("../hostVitals", () => ({
+  vitalsHistory: () => history.samples,
+  seedVitalsHistory: seedSpy,
+}));
 
 const opsTurnDetail = vi.hoisted(() => vi.fn());
+const opsVitalsHistory = vi.hoisted(() => vi.fn());
+const seedSpy = vi.hoisted(() => vi.fn());
 
 function turn(over: Partial<LiveTurn> = {}): LiveTurn {
   return {
@@ -55,7 +60,9 @@ describe("VitalsScreen", () => {
   beforeEach(() => {
     history.samples = [];
     opsTurns.mockReset().mockResolvedValue(roster([turn()]));
-    opsTurnDetail.mockReset().mockResolvedValue({ steps: [], output: null });
+    opsTurnDetail.mockReset().mockResolvedValue({ steps: [], output: null, prompt: null });
+    opsVitalsHistory.mockReset().mockResolvedValue([]);
+    seedSpy.mockReset();
   });
   afterEach(() => vi.useRealTimers());
 
@@ -98,10 +105,13 @@ describe("VitalsScreen", () => {
     expect(screen.getByText("Dig into heat pump sizing.")).toBeInTheDocument();
   });
 
-  it("says the prompt is not stored rather than implying it has it", async () => {
+  it("says a turn's prompt was not recorded rather than leaving a blank", async () => {
+    // Prompts live in the server's memory for the life of the process, so a run from
+    // before a restart genuinely has none — the screen explains that.
+    opsTurnDetail.mockResolvedValue({ steps: [], output: null, prompt: null });
     render(<VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />);
 
-    expect(await screen.findByText(/not stored, so it is not shown/)).toBeInTheDocument();
+    expect(await screen.findByText(/Not recorded for this turn/)).toBeInTheDocument();
   });
 
   it("tells the truth when the GPU is busy with no turns running", async () => {
@@ -221,6 +231,72 @@ describe("VitalsScreen", () => {
     expect(bucket(samples, 1, 2, (x) => x.tps)).toContain(48);
     // The GPU channel is unaffected by a gap in the other one.
     expect(bucket(samples, 1, 2, (x) => x.gpu)).toContain(91);
+  });
+
+  it("seeds the graph from the server's recorded history", async () => {
+    // Without this the plot starts empty after a reload — you could not open the screen
+    // to look at the spike you had just felt.
+    opsVitalsHistory.mockResolvedValue([{ at_ms: 1_000_000, gpu: 61 }]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    await waitFor(() => expect(seedSpy).toHaveBeenCalledWith([{ at_ms: 1_000_000, gpu: 61 }]));
+  });
+
+  it("survives having no recorded history", async () => {
+    opsVitalsHistory.mockRejectedValue(new Error("nope"));
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    // The graph still fills from the live stream; a missing past is not an error state.
+    expect(await screen.findByText("Running now")).toBeInTheDocument();
+  });
+
+  it("shows the prompt the model actually received, behind a toggle", async () => {
+    opsTurnDetail.mockResolvedValue({
+      steps: [],
+      output: null,
+      prompt: {
+        system: "You are jerv.",
+        messages: [{ role: "user", content: "size the heat pump" }],
+        tools: ["web.fetch"],
+        round_index: 3,
+        truncated: false,
+        system_chars: 4200,
+        message_chars: 18_400,
+      },
+    });
+    render(<VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />);
+
+    // Collapsed by default — it is the largest thing on the screen.
+    const toggle = await screen.findByRole("button", { name: /Show the .* actually sent/ });
+    expect(screen.queryByText("You are jerv.")).toBeNull();
+
+    fireEvent.click(toggle);
+
+    expect(screen.getByText(/You are jerv./)).toBeInTheDocument();
+    expect(screen.getByText(/size the heat pump/)).toBeInTheDocument();
+    expect(screen.getByText("round 3")).toBeInTheDocument();
+  });
+
+  it("says a clipped prompt was clipped rather than showing it as short", async () => {
+    opsTurnDetail.mockResolvedValue({
+      steps: [],
+      output: null,
+      prompt: {
+        system: "s",
+        messages: [{ role: "user", content: "x" }],
+        tools: [],
+        round_index: 1,
+        truncated: true,
+        system_chars: 4000,
+        message_chars: 500_000,
+      },
+    });
+    render(<VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Show the .* actually sent/ }));
+
+    // The size reported is the REAL one, not the clipped length.
+    expect(screen.getByText(/Clipped for display/)).toHaveTextContent("504k chars");
   });
 
   it("stops polling the roster when unmounted", async () => {

@@ -168,6 +168,7 @@ from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, til
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
 from jbrain.vision import RapidOcrClient
+from jbrain.vitals_ring import VitalsRing, sample_loop
 from jbrain.web import (
     CourtListenerClient,
     DomainSkipRepo,
@@ -919,6 +920,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         stranded_reaper_task = asyncio.create_task(
             reap_stranded_loop(app.state.agent_runlog, SYSTEM_CTX)
         )
+        # The vitals graph's past: GPU load sampled once a second into memory, so the
+        # detail screen opens with a history instead of an empty plot after a reload.
+        # Runs whether or not anyone is watching — that is what makes it a history.
+        app.state.vitals_ring = VitalsRing()
+        vitals_sampler_task = asyncio.create_task(sample_loop(app.state.vitals_ring))
         app.state.run_reader = RunLogReader(maker)
         # The owner-facing Research Library reader: browse/search/delete over jerv's
         # persisted deep-research reports + analysed videos (the external corpus).
@@ -1046,6 +1052,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         plan_continuation_task.cancel()
         intake_reaper_task.cancel()
         stranded_reaper_task.cancel()
+        vitals_sampler_task.cancel()
         jpet_loop_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT

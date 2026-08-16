@@ -4159,6 +4159,17 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json({ gpu_busy_percent: 64 });
   }
 
+  // The graph's recorded past, so mock mode shows a filled plot.
+  if (path.startsWith("/api/ops/vitals/history")) {
+    const now = Date.now();
+    return json({
+      samples: Array.from({ length: 300 }, (_, i) => ({
+        at_ms: now - (300 - i) * 1000,
+        gpu: Math.round(40 + 45 * Math.sin(i / 18) ** 2),
+      })),
+    });
+  }
+
   // One turn's trail + raw output for the vitals detail's level 2.
   if (path.startsWith("/api/ops/turns/")) {
     return json({
@@ -4188,6 +4199,18 @@ export const mockFetch: typeof fetch = async (input, init) => {
           error: null,
         },
       ],
+      prompt: {
+        system: "You are jerv. You answer from the owner's notes first.",
+        messages: [
+          { role: "user", content: "Dig into what size heat pump the house actually needs." },
+          { role: "tool", content: '[result notes.search]\n11 hits for "heat pump"' },
+        ],
+        tools: ["notes.search", "notes.read", "web.search", "web.fetch"],
+        round_index: 3,
+        truncated: false,
+        system_chars: 4200,
+        message_chars: 18400,
+      },
       output: {
         live: true,
         reasoning:
