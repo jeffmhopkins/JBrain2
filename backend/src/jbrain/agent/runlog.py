@@ -55,7 +55,15 @@ class AgentRunLog:
         prompt_version: str,
         kind: str = "agent",
         parent_run_id: str | None = None,
+        call_stamp: dict[str, Any] | None = None,
     ) -> str:
+        """Open a RUNNING run row and return its id.
+
+        `call_stamp` records what this run was asked to do — model, provider, effort,
+        context window, tools, persona, the triggering message (migration 0166). It is
+        resolved at turn start and was otherwise discarded, so the vitals detail surface
+        would have had to guess which model is answering. Optional: a driver that
+        doesn't stamp leaves it NULL and the surface renders what it has."""
         async with scoped_session(self._maker, ctx) as session:
             # kind='agent' is explicit so the shared run log's CHECK admits this row
             # (it requires session_id + prompt_version for agent runs). A spawned
@@ -67,10 +75,25 @@ class AgentRunLog:
                 session_id=uuid.UUID(session_id),
                 prompt_version=prompt_version,
                 parent_run_id=uuid.UUID(parent_run_id) if parent_run_id else None,
+                call_stamp=call_stamp,
             )
             session.add(run)
             await session.flush()
             return str(run.id)
+
+    async def stamp(self, ctx: SessionContext, run_id: str, call_stamp: dict[str, Any]) -> None:
+        """Record what the run was asked to do, once the route is resolved.
+
+        A separate write from `start` because the run row is opened before the model is
+        chosen — effort, context window and vision support are all awaited off the
+        router afterwards. Reordering the turn's startup to stamp inside that INSERT
+        would leave no run row while they resolve, losing any turn that failed during
+        resolution. Best-effort by design: the caller swallows errors, because a
+        provenance blob must never take a turn down with it."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                update(Run).where(Run.id == uuid.UUID(run_id)).values(call_stamp=call_stamp)
+            )
 
     async def step(
         self,
@@ -291,6 +314,39 @@ class RunSummary:
 
 
 @dataclass(frozen=True)
+class LiveTurnRow:
+    """One run that is in flight right now, for the vitals detail roster.
+
+    Read from `app.runs` rather than the in-process live-turn registry on purpose: that
+    registry holds only parent /chat turns (api/agent.py), so a deep-research fan would
+    collapse to a single row and a workflow run would not appear at all. The table sees
+    every kind, carries the parent link that nests a fan's children, and survives an API
+    restart that would empty the registry."""
+
+    id: str
+    kind: str
+    status: str
+    name: str
+    started_at: datetime
+    elapsed_ms: int
+    step_count: int
+    cost_tokens: int
+    progress_note: str | None
+    parent_run_id: str | None
+    session_id: str | None
+    domain_code: str | None
+    ran_as: str
+    prompt_version: str | None
+    # What triggered it: the trigger's pipeline name for an engine run, else None —
+    # which the surface reads as "the owner started this".
+    trigger_pipeline: str | None
+    # The resolved call (migration 0166): model, provider, effort, window, tools,
+    # persona, opening message. None for a run whose driver doesn't stamp, and for
+    # every run that predates the column.
+    call_stamp: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
 class RunStepView:
     """A node in the split-panel step tree."""
 
@@ -383,6 +439,46 @@ class RunLogReader:
         """A run's display status: the stored value, except an in-flight pipeline run
         whose steps are all still queued reads as 'queued' (see `_queued_pipeline_ids`)."""
         return "queued" if str(run.id) in queued_ids else run.status
+
+    async def list_live(self, ctx: SessionContext, *, limit: int = 50) -> list[LiveTurnRow]:
+        """Every run in flight right now, oldest first so a parent precedes the children
+        it spawned. RLS-scoped like every other read here.
+
+        Ordering is by start time rather than by tree: a fan's children are always
+        started after their parent, so oldest-first already yields a renderable order
+        without a recursive query, and `parent_run_id` lets the surface nest them."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                await session.execute(
+                    select(Run, Trigger.pipeline)
+                    .outerjoin(Trigger, Run.trigger_id == Trigger.id)
+                    .where(Run.status == "running")
+                    .order_by(Run.started_at)
+                    .limit(limit)
+                )
+            ).all()
+            now = datetime.now(tz=UTC)
+            return [
+                LiveTurnRow(
+                    id=str(run.id),
+                    kind=run.kind,
+                    status=run.status,
+                    name=self._display_name(run.kind, run.pipeline, trigger_pipeline),
+                    started_at=run.started_at,
+                    elapsed_ms=max(0, int((now - run.started_at).total_seconds() * 1000)),
+                    step_count=run.step_count,
+                    cost_tokens=run.cost_tokens,
+                    progress_note=run.progress_note,
+                    parent_run_id=str(run.parent_run_id) if run.parent_run_id else None,
+                    session_id=str(run.session_id) if run.session_id else None,
+                    domain_code=run.domain_code,
+                    ran_as=run.ran_as,
+                    prompt_version=run.prompt_version,
+                    trigger_pipeline=trigger_pipeline,
+                    call_stamp=run.call_stamp,
+                )
+                for run, trigger_pipeline in rows
+            ]
 
     async def list_recent(
         self,
