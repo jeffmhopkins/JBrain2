@@ -5,7 +5,9 @@ import { TopBarVitals } from "./TopBarVitals";
 
 // The two live sources are hooks with their own network/timer lifecycles; the chart's
 // job is what it DRAWS from them, so they're driven directly here.
-const gpu = vi.hoisted(() => ({ value: null as number | null }));
+const gpu = vi.hoisted(() => ({
+  value: { percent: null as number | null, state: "unknown" as "reading" | "absent" | "unknown" },
+}));
 const rate = vi.hoisted(() => ({ value: null as number | null }));
 
 vi.mock("../hostVitals", () => ({ useGpuBusy: () => gpu.value }));
@@ -21,13 +23,13 @@ function ticks(seconds: number): void {
 describe("TopBarVitals", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    gpu.value = null;
+    gpu.value = { percent: null, state: "unknown" };
     rate.value = null;
   });
   afterEach(() => vi.useRealTimers());
 
   it("reads out the GPU figure and the sync word", () => {
-    gpu.value = 73;
+    gpu.value = { percent: 73, state: "reading" };
     render(<TopBarVitals syncStatus="synced" />);
 
     expect(screen.getByRole("status")).toHaveTextContent("73");
@@ -35,7 +37,7 @@ describe("TopBarVitals", () => {
   });
 
   it("keeps the token row's space but hides it until a turn streams", () => {
-    gpu.value = 40;
+    gpu.value = { percent: 40, state: "reading" };
     const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
     expect(container.querySelector(".vitals")).toHaveAttribute("data-turn", "idle");
 
@@ -47,7 +49,7 @@ describe("TopBarVitals", () => {
   });
 
   it("grows one GPU column per second, up to the window", () => {
-    gpu.value = 50;
+    gpu.value = { percent: 50, state: "reading" };
     const { container } = render(<TopBarVitals syncStatus="synced" />);
     expect(container.querySelectorAll(".vitals-bar")).toHaveLength(0);
 
@@ -60,14 +62,14 @@ describe("TopBarVitals", () => {
   });
 
   it("marks a pinned GPU column hot", () => {
-    gpu.value = 40;
+    gpu.value = { percent: 40, state: "reading" };
     const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
     ticks(1);
     expect(container.querySelector(".vitals-bar.hot")).toBeNull();
 
     // A new frame from the stream re-renders before the next sampling tick, which is
     // what publishes the value the tick then reads.
-    gpu.value = 93;
+    gpu.value = { percent: 93, state: "reading" };
     rerender(<TopBarVitals syncStatus="synced" />);
     ticks(1);
 
@@ -75,7 +77,7 @@ describe("TopBarVitals", () => {
   });
 
   it("shows a dashed no-gauge line, not an idle GPU, when the box has no amdgpu", () => {
-    gpu.value = null;
+    gpu.value = { percent: null, state: "absent" };
     const { container } = render(<TopBarVitals syncStatus="synced" />);
     ticks(3);
 
@@ -88,8 +90,23 @@ describe("TopBarVitals", () => {
     );
   });
 
+  it("does not accuse the box of having no GPU when the stream is merely down", () => {
+    // The bug this pins: `absent` and `unknown` were one null, so a dropped stream
+    // printed "no gpu" on one screen while another screen showed 94%.
+    gpu.value = { percent: null, state: "unknown" };
+    const { container } = render(<TopBarVitals syncStatus="synced" />);
+    ticks(3);
+
+    expect(container.querySelector(".vitals-gpu")).not.toHaveTextContent("no gpu");
+    expect(container.querySelector(".vitals-nogauge")).toBeNull();
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("GPU reading unavailable"),
+    );
+  });
+
   it("breaks the token trace over a gap instead of drawing through zero", () => {
-    gpu.value = 20;
+    gpu.value = { percent: 20, state: "reading" };
     rate.value = 50;
     const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
     ticks(2);
@@ -108,7 +125,7 @@ describe("TopBarVitals", () => {
   });
 
   it("freezes the axis while the server is unreachable", () => {
-    gpu.value = 60;
+    gpu.value = { percent: 60, state: "reading" };
     const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
     ticks(4);
     const drawn = container.querySelectorAll(".vitals-bar").length;
@@ -171,7 +188,7 @@ describe("TopBarVitals", () => {
   });
 
   it("describes the whole reading for a screen reader", () => {
-    gpu.value = 71;
+    gpu.value = { percent: 71, state: "reading" };
     rate.value = 44;
     render(<TopBarVitals syncStatus="pending" />);
 
@@ -182,7 +199,7 @@ describe("TopBarVitals", () => {
   });
 
   it("stops its clock when unmounted", () => {
-    gpu.value = 50;
+    gpu.value = { percent: 50, state: "reading" };
     const { unmount } = render(<TopBarVitals syncStatus="synced" />);
     ticks(2);
     unmount();

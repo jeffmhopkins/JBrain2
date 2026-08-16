@@ -37,6 +37,8 @@ interface HomeScreenProps {
   onOpenEntity?: (entityId: string) => void;
   onOpenSearch: () => void;
   onOpenLauncher: () => void;
+  /** Opens the box-vitals detail surface from the top bar's chart. */
+  onOpenVitals: () => void;
   /** A handoff (e.g. the calendar's reschedule) that flips to Full Brain and
    * seeds the composer, attaching the appointment pill; cleared via
    * onComposeConsumed. */
@@ -63,6 +65,7 @@ export function HomeScreen({
   onOpenNote,
   onOpenSearch,
   onOpenLauncher,
+  onOpenVitals,
   onOpenNoteById,
   onOpenEntity,
   compose,
@@ -241,7 +244,7 @@ export function HomeScreen({
 
   return (
     <>
-      <TopBar syncStatus={notes.syncStatus} session={fbSession} />
+      <TopBar syncStatus={notes.syncStatus} session={fbSession} onOpenVitals={onOpenVitals} />
       {conversational ? (
         <FullBrainSurface
           fb={fb}

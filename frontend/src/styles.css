@@ -195,6 +195,30 @@ h3 {
   font-feature-settings: "tnum" 1;
 }
 
+/* As a control the DRAWING is unchanged — only the hit area grows. The chart is 48×20,
+   under the 44px minimum, so the button claims the full bar height and bleeds into the
+   right padding; negative margins keep it from widening the cluster's layout box. */
+button.vitals {
+  background: none;
+  border: none;
+  padding: 0 16px 0 12px;
+  margin: 0 -16px 0 -12px;
+  min-height: 44px;
+  font: inherit;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+button.vitals:active {
+  opacity: 0.6;
+}
+
+button.vitals:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--r-input);
+}
+
 /* Both wrappers dissolve into the grid so every part lands on its own row. */
 .vitals-scope,
 .vitals-reads {
@@ -23245,4 +23269,359 @@ button.task-band:active {
   color: var(--text-3);
   text-align: center;
   margin-top: 18px;
+}
+
+/* ===== Vitals detail — the drill-down surface =====
+   Binding mock: docs/mocks/vitals-detail/i-drilldown.html (option I). Two levels: the
+   graph plus a roster of what is running, then a pushed page that is entirely one turn. */
+
+.vitals-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 16px 32px;
+  overflow-y: auto;
+}
+
+.vitals-plot-card {
+  padding: 14px 14px 10px;
+}
+
+.vitals-plot-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.vitals-plot-label {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.vitals-plot-figure {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.vitals-plot-figure .u {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-left: 2px;
+}
+
+/* The plot stretches to the card's width, so the viewBox must NOT preserve its aspect
+   ratio — the default would letterbox a 240x60 box inside a wide short area and park
+   the columns in the middle of empty space. */
+.vitals-plot {
+  display: block;
+  width: 100%;
+  height: 84px;
+  margin-top: 10px;
+  shape-rendering: crispEdges;
+}
+
+.vitals-col {
+  fill: var(--text-3);
+}
+
+.vitals-col.hot {
+  fill: var(--warn);
+}
+
+.vitals-plot-rail {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.vitals-ranges {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.vitals-ranges button {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+.vitals-ranges button.on {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.vitals-note {
+  margin-top: 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.vitals-sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0 2px;
+}
+
+.vitals-sec-head .count {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.vitals-roster {
+  padding: 0;
+  overflow: hidden;
+}
+
+.vitals-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  min-height: 44px;
+}
+
+.vitals-roster > div:first-child > .vitals-row:first-child {
+  border-top: none;
+}
+
+/* A child is indented under the turn that spawned it, so a research fan reads as a
+   tree without a second query or a disclosure control. */
+.vitals-row.child {
+  padding-left: 30px;
+  background: var(--surface-2);
+}
+
+.vr-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.vr-name .n {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-note);
+}
+
+.vr-name .kind {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.vr-meta {
+  grid-column: 1;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vr-meta .sep {
+  color: var(--text-3);
+  margin-left: 5px;
+}
+
+.vr-right {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vr-elapsed {
+  font-size: var(--fs-secondary);
+}
+
+.vr-tok {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.vitals-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  flex: none;
+  background: var(--ok);
+}
+
+.vitals-dot.err {
+  background: var(--danger);
+}
+
+.vitals-empty {
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.vitals-empty .hl {
+  font-size: var(--fs-note);
+  color: var(--text);
+}
+
+.vitals-empty p {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.vitals-quiet {
+  font-size: var(--fs-secondary);
+  color: var(--text-3);
+  padding: 4px 2px;
+}
+
+/* ---- level 2: one turn ---- */
+
+.vitals-level2 {
+  z-index: 3;
+}
+
+.vitals-hero {
+  padding: 14px;
+}
+
+.vh-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vh-status {
+  font-size: var(--fs-note);
+  font-weight: 600;
+}
+
+.vh-top .kind {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.vh-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.vh-grid .k {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.vh-grid .v {
+  font-size: var(--fs-title);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+}
+
+.vh-note {
+  margin-top: 12px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.vitals-child-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+  min-height: 44px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+}
+
+.vitals-child-row:first-child {
+  border-top: none;
+}
+
+.vitals-child-row .cn {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-secondary);
+}
+
+.vitals-kv {
+  padding: 4px 14px;
+}
+
+.vitals-field {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  align-items: baseline;
+}
+
+.vitals-field:first-child {
+  border-top: none;
+}
+
+.vitals-field .k {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.vitals-field .v {
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  word-break: break-word;
+}
+
+.vitals-field .v.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.vitals-quote {
+  padding: 12px 14px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.55;
+  border-left: 2px solid var(--border);
 }

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.agent.agents import DEEP_RESEARCH_TOOL, SPAWN_TOOL, agent_for
+from jbrain.agent.agents import DEEP_RESEARCH_TOOL, SPAWN_TOOL, AgentProfile, agent_for
 from jbrain.agent.attachment_content import (
     MAX_ATTACHMENTS_PER_TURN,
     MAX_IMAGES_PER_TURN,
@@ -563,6 +563,43 @@ def _appt_hint(appointment_id: str | None) -> str | None:
         return None
 
 
+# A turn's opening message can be long (a pasted article, a dictated ramble). The stamp
+# only needs enough to RECOGNISE which turn a row is, so it keeps a generous head rather
+# than a second copy of the whole message — the transcript already holds the full text.
+_STAMP_MESSAGE_MAX = 400
+
+
+def _call_stamp(
+    *,
+    profile: AgentProfile,
+    spec: tuple[str, str],
+    effort: str | None,
+    context_window: int,
+    can_see_images: bool,
+    user_message: str,
+) -> dict[str, Any]:
+    """What this turn was asked to do, for the vitals detail surface (migration 0166).
+
+    Everything here is already resolved by the time the turn starts and was previously
+    discarded, so recording it costs one UPDATE and no new resolution work. The
+    VERBATIM PROMPT is deliberately absent: it is assembled per model call and stored
+    nowhere, and a stamp that implied otherwise would be a lie on a debug screen."""
+    provider, model = spec
+    return {
+        "provider": provider,
+        "model": model,
+        "reasoning_effort": effort,
+        "context_window": context_window,
+        "vision": can_see_images,
+        "persona": profile.name,
+        # None is the registry WILDCARD ("every in-scope knowledge tool"), not an empty
+        # allowlist — flattening the two would tell the owner a jerv turn holds no tools.
+        "tools": sorted(profile.tools) if profile.tools is not None else None,
+        "user_message": user_message[:_STAMP_MESSAGE_MAX],
+        "user_message_truncated": len(user_message) > _STAMP_MESSAGE_MAX,
+    }
+
+
 def _model_override_spec(model_id: str | None) -> str | None:
     """Validate the owner's per-conversation model pick (a local catalog id) into a
     `local:<served>` spec the router can steer this turn onto, or None to leave the
@@ -742,6 +779,25 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # each attachment note (build_attachment_content) so a vision model is told to look
     # directly instead of being primed to delegate to analyze_image.
     can_see_images = await router.supports_vision("agent.turn", spec_override=model_override)
+    # Record WHAT this turn was asked to do, now that the route is resolved — the run
+    # row was opened before any of it was known. This is the provenance the vitals
+    # detail surface reads to answer "which model is answering, set up how". Wrapped
+    # because it is display-only: a failed stamp must never cost the owner their turn.
+    try:
+        await runlog.stamp(
+            owner_ctx,
+            run_id,
+            _call_stamp(
+                profile=profile,
+                spec=await router.effective_spec("agent.turn", spec_override=model_override),
+                effort=effort,
+                context_window=context_window,
+                can_see_images=can_see_images,
+                user_message=body.message,
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("agent.call_stamp_failed", run_id=run_id)
     images, attach_text = await build_attachment_content(
         get_turn_attachments(request),
         get_blob_store(request),

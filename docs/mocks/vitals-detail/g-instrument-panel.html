@@ -1,0 +1,949 @@
+<!--
+  ============================================================================
+  OPTION G — INSTRUMENT PANEL  ("the engine-room readout")
+  Vitals detail · full-screen card opened FROM the top-bar vitals chart
+
+  RATIONALE
+  The graph is the hero and never leaves: a large 1/5/15-minute plot pinned to
+  the top of the card, with the running turns beneath it as a dense one-line-
+  per-turn register that expands in place into a debug dossier — so the spike
+  and the thing that caused it stay on one screen. When a row opens the plot
+  shrinks to a persistent 40px strip rather than scrolling away, which keeps
+  "what the box is doing" readable while you read "what this turn is doing".
+
+  COST
+  Density is the price: seven fields per collapsed row at --font-scale 0.75 is
+  the smallest type in the app doing the most work, and the sticky strip eats
+  ~40px of an already short card — a dossier with a long raw output scrolls
+  inside its own box rather than the page, which is a second scroll axis.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Vitals detail — G · Instrument panel</title>
+<style>
+  /* ---- tokens (mirrors frontend/src/styles/tokens.css) ---- */
+  :root{
+    color-scheme: dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --surface-composer:#141518; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.13);
+    --accent:var(--steel); --accent-tint:var(--steel-tint);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --danger-tint:var(--rose-tint);
+    --info:var(--steel);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-box:16px; --r-pill:999px;
+    --shadow-card:none;
+    --font-scale:0.75;
+    --fs-micro:calc(12px * var(--font-scale));
+    --fs-head:calc(13px * var(--font-scale));
+    --fs-secondary:calc(14px * var(--font-scale));
+    --fs-note:calc(15px * var(--font-scale));
+    --fs-body:calc(16px * var(--font-scale));
+    --fs-title:calc(18px * var(--font-scale));
+    --fs-screen:calc(22px * var(--font-scale));
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --mock-page:#000000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme: light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --surface-composer:#FFFFFF;
+    --scrim:rgba(247,247,245,.6);
+    --shadow-card:0 1px 2px rgba(0,0,0,.06);
+  }
+  /* ---- end token block: no raw hex below this line ---- */
+
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--mock-page);color:var(--text);display:flex;flex-direction:column;
+    align-items:center;gap:16px;padding:22px 0 48px;min-height:100vh;
+    font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+  button{font-family:inherit;font-variant-numeric:tabular-nums;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;
+    padding:2px 8px;border-radius:var(--r-pill);margin-bottom:6px;}
+
+  /* ---- phone chrome ---- */
+  .phone{width:390px;height:800px;background:var(--bg);border:1px solid var(--border);
+    border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;
+    color:var(--text);}
+  .top-bar{display:flex;align-items:center;gap:10px;height:56px;padding:0 6px 0 16px;flex:none;}
+  .session-title{font-weight:700;font-size:var(--fs-screen);color:var(--text);min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .top-bar-right{margin-left:auto;display:flex;align-items:center;}
+
+  /* ===== THE TAP TARGET =========================================================
+     The readout stays 48×20 and still looks like a readout. What grows is the HIT
+     AREA: the whole cluster is wrapped in a transparent button 44px tall and the
+     full cluster wide (~92px), padded out to the top bar's own height. Nothing
+     visible is added — the affordance is the press state, not an icon. */
+  .vitals-tap{
+    display:flex;align-items:center;justify-content:center;
+    min-height:44px;min-width:44px;padding:12px 10px;
+    background:none;border:1px solid transparent;border-radius:var(--r-input);
+    color:inherit;cursor:pointer;
+  }
+  .vitals-tap:active{background:var(--surface-2);}
+  .vitals-tap:focus-visible{outline:2px solid var(--steel);outline-offset:-2px;}
+  body.show-hit .vitals-tap{border-color:var(--steel);border-style:dashed;}
+  body.show-hit .hit-note{display:block;}
+  .hit-note{display:none;position:absolute;top:58px;right:12px;z-index:5;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:5px 8px;font-size:var(--fs-micro);color:var(--steel);}
+
+  /* ---- the vitals cluster (option E, unchanged) ---- */
+  .opt-e{display:grid;grid-template-columns:auto auto;align-items:center;column-gap:7px;row-gap:3px;
+    flex:none;color:var(--text-2);line-height:1;
+    font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+  .opt-e-scope,.opt-e-reads{display:contents;}
+  .opt-e .scope{grid-column:1;grid-row:2;display:block;width:48px;height:20px;overflow:visible;}
+  .opt-e .bar{fill:var(--text-3);shape-rendering:crispEdges;}
+  .opt-e .bar.hot{fill:var(--warn);}
+  .opt-e .tps-line{fill:none;stroke:var(--steel);stroke-width:1;stroke-linejoin:round;
+    stroke-linecap:round;vector-effect:non-scaling-stroke;}
+  .opt-e .tps-now{fill:var(--steel);}
+  .opt-e .rail{stroke:var(--text-3);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .opt-e .read{display:flex;align-items:baseline;justify-self:end;gap:2px;}
+  .opt-e .read-tps{grid-column:2;grid-row:1;color:var(--steel);visibility:hidden;}
+  .opt-e[data-turn="live"] .read-tps{visibility:visible;}
+  .opt-e .read-gpu{grid-column:2;grid-row:2;}
+  .opt-e .read .v{font-size:var(--fs-head);font-weight:500;min-width:3ch;text-align:right;}
+  .opt-e .read .u{font-size:var(--fs-micro);color:var(--text-3);min-width:2.6ch;text-align:left;}
+
+  /* ---- home stream behind the card ---- */
+  .stream{flex:1;overflow:hidden;padding:6px 16px 4px;display:flex;flex-direction:column;}
+  .stream-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:10px;}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:var(--r-card);font-size:var(--fs-note);
+    line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);
+    border:1px solid color-mix(in srgb, var(--steel) 22%, transparent);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);
+    border-bottom-left-radius:5px;}
+  .dock{flex:none;padding:6px 14px 14px;background:var(--bg);}
+  .omnibox{background:var(--surface-composer);border:1px solid var(--border);border-radius:24px;
+    padding:12px;display:flex;flex-direction:column;}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .seg span{flex:1;color:var(--text-2);font-size:var(--fs-secondary);font-weight:500;padding:8px 0;
+    display:flex;align-items:center;justify-content:center;}
+  .seg .on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .field{color:var(--text-3);font-size:var(--fs-body);line-height:1.4;padding:12px 6px 8px;}
+
+  /* =======================================================================
+     THE CARD — full screen, slides up, carries its own top bar (DESIGN.md
+     "Levels are stacked slide-up layers": 150ms ease-out, chevron + title).
+     ======================================================================= */
+  .card{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;
+    transform:translateY(100%);transition:transform 150ms ease-out;visibility:hidden;z-index:4;}
+  .card.open{transform:none;visibility:visible;}
+  @media (prefers-reduced-motion:reduce){.card{transition:none;}}
+  body.rm .card{transition:none;}
+
+  .card-bar{display:flex;align-items:center;gap:4px;height:56px;padding:0 8px;flex:none;
+    border-bottom:1px solid var(--border);}
+  .chev{display:flex;align-items:center;justify-content:center;width:44px;height:44px;
+    background:none;border:none;color:var(--text-2);border-radius:var(--r-input);cursor:pointer;}
+  .chev:active{background:var(--surface-2);}
+  .chev svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round;}
+  .card-title{font-size:var(--fs-title);font-weight:600;}
+  .card-count{margin-left:auto;margin-right:8px;font-size:var(--fs-micro);color:var(--text-2);
+    border:1px solid var(--border);border-radius:var(--r-pill);padding:4px 9px;white-space:nowrap;}
+
+  .card-body{flex:1;overflow-y:auto;overscroll-behavior:contain;}
+
+  /* ---- graph section: sticky, shrinks to a strip when a row is open ---- */
+  .graph{position:sticky;top:0;z-index:2;background:var(--bg);
+    border-bottom:1px solid var(--border);padding:10px 16px 8px;}
+  .graph-head{display:flex;align-items:flex-end;gap:10px;margin-bottom:8px;}
+  .reads{display:flex;align-items:baseline;gap:14px;}
+  .read-big{display:flex;align-items:baseline;gap:3px;}
+  .read-big .v{font-size:var(--fs-screen);font-weight:600;color:var(--text);min-width:3ch;
+    text-align:right;letter-spacing:-.01em;}
+  .read-big .u{font-size:var(--fs-micro);color:var(--text-3);}
+  .read-big.tps .v{color:var(--steel);}
+  .read-big.tps[data-live="0"] .v,.read-big.tps[data-live="0"] .u{color:var(--text-3);}
+  .range{margin-left:auto;display:flex;border:1px solid var(--border);border-radius:var(--r-seg);
+    overflow:hidden;flex:none;}
+  .range button{min-width:44px;min-height:32px;padding:0 6px;border:none;background:none;
+    color:var(--text-2);font-size:var(--fs-micro);font-weight:500;cursor:pointer;}
+  .range button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+
+  .plot{display:block;width:100%;height:132px;transition:height 160ms ease-out;}
+  @media (prefers-reduced-motion:reduce){.plot{transition:none;}}
+  body.rm .plot{transition:none;}
+  .plot .grid{stroke:var(--border);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .plot .zero{stroke:var(--text-3);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .plot .col{fill:var(--text-3);shape-rendering:crispEdges;}
+  .plot .col.hot{fill:var(--warn);}
+  .plot .tps{fill:none;stroke:var(--steel);stroke-width:1.4;stroke-linejoin:round;
+    stroke-linecap:round;vector-effect:non-scaling-stroke;}
+  .plot .tick{fill:var(--text-3);font-size:8px;font-family:var(--font-mono);}
+  .graph[data-compact="1"] .plot{height:40px;}
+  .graph[data-compact="1"] .plot .labels{display:none;}
+  .graph[data-compact="1"] .axis-note{display:none;}
+  .graph[data-compact="1"] .graph-head{margin-bottom:4px;}
+  .graph[data-compact="1"] .read-big .v{font-size:var(--fs-title);}
+
+  .legend{display:flex;align-items:center;gap:12px;margin-top:5px;
+    font-size:var(--fs-micro);color:var(--text-3);}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .legend i{display:block;width:9px;height:9px;background:var(--text-3);border-radius:1px;}
+  .legend i.line{width:12px;height:0;border-top:1.4px solid var(--steel);background:none;}
+  .axis-note{margin-left:auto;}
+
+  /* ---- register ---- */
+  .reg-head{display:flex;align-items:baseline;gap:8px;padding:14px 16px 6px;}
+  .reg-head h2{font-size:var(--fs-micro);letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-3);font-weight:600;}
+  .reg-head .n{font-size:var(--fs-micro);color:var(--text-3);}
+  .register{display:flex;flex-direction:column;padding-bottom:28px;}
+
+  .turn{border-top:1px solid var(--border);}
+  .turn:last-child{border-bottom:1px solid var(--border);}
+  .turn[data-depth="1"]{border-top:1px solid var(--border);}
+  .turn[data-depth="1"] .turn-head{padding-left:30px;}
+  /* the nesting rail: a child belongs to the run above it */
+  .turn[data-depth="1"] .turn-head::before{content:"";position:absolute;left:18px;top:0;bottom:0;
+    width:1px;background:var(--border);}
+  .turn[data-depth="1"].last-child .turn-head::before{bottom:auto;height:22px;}
+  .turn[data-depth="1"] .turn-head::after{content:"";position:absolute;left:18px;top:22px;width:7px;
+    height:1px;background:var(--border);}
+
+  .turn-head{position:relative;width:100%;min-height:52px;display:grid;
+    grid-template-columns:auto 1fr auto 16px;align-items:center;column-gap:9px;
+    padding:8px 12px 8px 14px;background:none;border:none;color:inherit;text-align:left;
+    cursor:pointer;}
+  .turn-head:active{background:var(--surface-2);}
+  .turn-head:focus-visible{outline:2px solid var(--steel);outline-offset:-3px;}
+
+  .k{font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;color:var(--text-3);
+    border:1px solid var(--border);border-radius:4px;padding:2px 3px;width:32px;text-align:center;}
+  .turn-main{min-width:0;display:flex;flex-direction:column;gap:3px;}
+  .turn-title{display:flex;align-items:center;gap:6px;font-size:var(--fs-secondary);
+    color:var(--text);font-weight:500;min-width:0;}
+  .turn-title .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dot{flex:none;width:7px;height:7px;border-radius:var(--r-pill);background:var(--steel);}
+  .turn[data-status="starting"] .dot{background:none;border:1px solid var(--text-3);}
+  .turn[data-status="error"] .dot{background:var(--danger);}
+  .turn[data-status="waiting"] .dot{background:var(--warn);}
+  .turn-sub{font-size:var(--fs-micro);color:var(--text-2);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;}
+  .turn-sub .mut{color:var(--text-3);}
+  .turn[data-status="error"] .turn-sub{color:var(--danger);}
+
+  .turn-figs{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;}
+  .el{font-size:var(--fs-secondary);font-weight:500;color:var(--text);letter-spacing:.01em;}
+  .turn[data-long="1"] .el{color:var(--warn);}
+  .sm{font-size:var(--fs-micro);color:var(--text-3);white-space:nowrap;}
+  .longword{font-size:var(--fs-micro);color:var(--warn);}
+
+  .cv{width:14px;height:14px;fill:none;stroke:var(--text-3);stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round;transition:transform 140ms ease-out;}
+  .turn-head[aria-expanded="true"] .cv{transform:rotate(90deg);}
+  @media (prefers-reduced-motion:reduce){.cv{transition:none;}}
+  body.rm .cv{transition:none;}
+
+  /* ---- the dossier ---- */
+  .dossier{padding:2px 14px 16px 14px;background:var(--surface);
+    border-top:1px solid var(--border);}
+  .turn[data-depth="1"] .dossier{padding-left:30px;}
+  .dsec{margin-top:12px;}
+  .dsec h3{font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);
+    font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px;}
+  .dsec h3 .rule{flex:1;height:1px;background:var(--border);}
+  .kv{display:grid;grid-template-columns:80px 1fr;column-gap:10px;row-gap:5px;}
+  .kv dt{font-size:var(--fs-micro);color:var(--text-3);}
+  .kv dd{font-size:var(--fs-micro);color:var(--text-2);font-family:var(--font-mono);
+    word-break:break-word;}
+  .kv dd b{color:var(--text);font-weight:500;}
+  .kv dd .dim{color:var(--text-3);}
+  .quote{font-size:var(--fs-micro);color:var(--text-2);line-height:1.5;
+    border-left:2px solid var(--border);padding:2px 0 2px 9px;}
+
+  .rawhead{display:flex;align-items:center;gap:8px;}
+  .copy{margin-left:auto;min-height:28px;padding:0 10px;background:none;color:var(--text-2);
+    border:1px solid var(--border);border-radius:var(--r-pill);font-size:var(--fs-micro);
+    cursor:pointer;}
+  .copy:active{background:var(--surface-2);}
+  .copy[data-done="1"]{color:var(--ok);border-color:color-mix(in srgb, var(--green) 40%, transparent);}
+  .raw{margin-top:6px;max-height:168px;overflow:auto;background:var(--bg);
+    border:1px solid var(--border);border-radius:var(--r-input);padding:9px 10px;
+    font-family:var(--font-mono);font-size:var(--fs-micro);line-height:1.55;color:var(--text-2);
+    white-space:pre-wrap;word-break:break-word;}
+  .raw .tool{color:var(--text-3);}
+  .raw .err{color:var(--danger);}
+  .caretbar{display:inline-block;width:6px;height:1em;background:var(--steel);
+    vertical-align:-2px;animation:blink 1s steps(2,start) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+  @media (prefers-reduced-motion:reduce){.caretbar{animation:none;}}
+  body.rm .caretbar{animation:none;}
+  .noraw{font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;
+    border:1px dashed var(--border);border-radius:var(--r-input);padding:10px;}
+  .honest{margin-top:10px;font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;}
+  .errbox{margin-top:10px;background:var(--rose-tint);border-radius:var(--r-input);padding:9px 10px;
+    font-size:var(--fs-micro);color:var(--danger);line-height:1.5;font-family:var(--font-mono);}
+
+  /* ---- empty register ---- */
+  .empty{margin:16px;border:1px solid var(--border);border-radius:var(--r-card);
+    background:var(--surface);padding:16px;}
+  .empty h3{font-size:var(--fs-note);font-weight:600;color:var(--text);margin-bottom:7px;}
+  .empty p{font-size:var(--fs-micro);color:var(--text-2);line-height:1.6;}
+  .empty .ledger{margin-top:12px;padding-top:11px;border-top:1px solid var(--border);
+    display:flex;flex-direction:column;gap:6px;}
+  .empty .lrow{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-micro);
+    color:var(--text-3);}
+  .empty .lrow b{margin-left:auto;color:var(--text-2);font-weight:500;font-family:var(--font-mono);}
+  .empty .lrow.hot b{color:var(--warn);}
+
+  /* ---- control desk ---- */
+  .desk{width:390px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-card);padding:13px 14px;display:flex;flex-direction:column;gap:9px;}
+  .desk h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);
+    font-weight:600;}
+  .row{display:grid;grid-template-columns:58px 1fr;align-items:center;gap:10px;}
+  .row .lab{font-size:12px;color:var(--text-2);}
+  .ctl{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .ctl button{flex:1;border:none;background:none;color:var(--text-2);font-size:12px;font-weight:500;
+    padding:8px 2px;cursor:pointer;}
+  .ctl button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .desk .note{font-size:11px;color:var(--text-3);line-height:1.5;}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Vitals detail · G — Instrument panel</span><br/>
+  Tap the vitals readout in the top bar. The graph is the hero and <b>stays put</b>: 1/5/15-minute
+  window at the top, running turns beneath as a dense register. Open a row and the plot
+  <b>shrinks to a 40px strip</b> instead of scrolling away, so the spike and its cause share a screen.
+</div>
+
+<div class="phone" id="phone">
+  <header class="top-bar">
+    <span class="session-title">Raised beds</span>
+    <div class="top-bar-right">
+      <button class="vitals-tap" id="vitalsTap" aria-haspopup="dialog"
+              aria-label="Box vitals: open detail">
+        <span class="opt-e" id="mini" data-turn="live">
+          <span class="opt-e-scope">
+            <svg class="scope" viewBox="0 0 48 20" aria-hidden="true">
+              <g class="bars" id="miniBars"></g>
+              <path class="tps-line" id="miniLine" d=""/>
+              <circle class="tps-now" id="miniDot" cx="-9" cy="-9" r="1.15"/>
+              <line class="rail" x1="0" y1="17.9" x2="48" y2="17.9"/>
+            </svg>
+          </span>
+          <span class="opt-e-reads">
+            <span class="read read-tps"><span class="v" id="miniTps">44</span><span class="u">t/s</span></span>
+            <span class="read read-gpu"><span class="v" id="miniGpu">61</span><span class="u">%</span></span>
+          </span>
+        </span>
+      </button>
+    </div>
+  </header>
+  <div class="hit-note">44px hit area · readout unchanged</div>
+
+  <main class="stream">
+    <div class="stream-inner">
+      <div class="bubble ai">Two notes from April mention the cedar rebuild and the soil mix you settled on.</div>
+      <div class="bubble me">Dig into whether anything newer changes that.</div>
+      <div class="bubble ai">Running a deeper sweep — two sub-agents are out on it now.</div>
+    </div>
+  </main>
+
+  <div class="dock">
+    <div class="omnibox">
+      <div class="seg"><span>Entry</span><span>Research</span><span class="on">Full Brain</span></div>
+      <div class="field">Talk it out — full tool access…</div>
+    </div>
+  </div>
+
+  <!-- ============================ THE CARD ============================ -->
+  <section class="card" id="card" role="dialog" aria-label="Box vitals" aria-modal="true">
+    <header class="top-bar card-bar">
+      <button class="chev" id="back" aria-label="Back">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <span class="card-title">Box vitals</span>
+      <span class="card-count" id="cardCount">6 running</span>
+    </header>
+
+    <div class="card-body" id="cardBody">
+
+      <section class="graph" id="graph" data-compact="0">
+        <div class="graph-head">
+          <div class="reads">
+            <span class="read-big"><span class="v" id="bigGpu">61</span><span class="u">% gpu</span></span>
+            <span class="read-big tps" id="bigTpsWrap" data-live="1">
+              <span class="v" id="bigTps">44</span><span class="u">t/s</span></span>
+          </div>
+          <div class="range" id="range" role="group" aria-label="Time range">
+            <button data-m="1" aria-pressed="true">1m</button>
+            <button data-m="5" aria-pressed="false">5m</button>
+            <button data-m="15" aria-pressed="false">15m</button>
+          </div>
+        </div>
+
+        <svg class="plot" id="plot" viewBox="0 0 358 132" preserveAspectRatio="xMidYMid meet"
+             role="img" aria-label="GPU busy percent and tokens per second, last minute">
+          <g id="plotGrid"></g>
+          <g id="plotCols"></g>
+          <path class="tps" id="plotLine" d=""/>
+          <g class="labels" id="plotLabels"></g>
+        </svg>
+
+        <div class="legend">
+          <span><i></i>gpu busy 0–100%</span>
+          <span><i class="line"></i>tokens/sec 0–140</span>
+          <span class="axis-note" id="axisNote">1 s per column</span>
+        </div>
+      </section>
+
+      <div class="reg-head">
+        <h2>Running now</h2>
+        <span class="n" id="regNote">4 top-level · 2 sub-agent</span>
+      </div>
+      <div class="register" id="register"></div>
+    </div>
+  </section>
+</div>
+
+<div class="desk">
+  <h2>Control desk</h2>
+  <div class="row"><span class="lab">Register</span>
+    <div class="ctl" data-ctl="scene">
+      <button data-v="busy" aria-pressed="true">Running</button>
+      <button data-v="error">One errored</button>
+      <button data-v="empty">No turns</button>
+    </div></div>
+  <div class="row"><span class="lab">Hit area</span>
+    <div class="ctl" data-ctl="hit">
+      <button data-v="off" aria-pressed="true">Hidden</button><button data-v="on">Show 44px</button>
+    </div></div>
+  <div class="row"><span class="lab">Theme</span>
+    <div class="ctl" data-ctl="theme">
+      <button data-v="dark" aria-pressed="true">Dark</button><button data-v="light">Light</button>
+    </div></div>
+  <div class="row"><span class="lab">Motion</span>
+    <div class="ctl" data-ctl="motion">
+      <button data-v="full" aria-pressed="true">Full</button><button data-v="reduced">Reduced</button>
+    </div></div>
+  <div class="note">
+    <b>No turns</b> is the honesty case: the GPU sits at ~95% with an empty register because GPU busy
+    counts everything on the box — image generation included. The card says so in words rather than
+    pretending the list is broken. Every field in a dossier is one the run row already stamps; the
+    verbatim prompt is not among them, and the dossier says that too.
+  </div>
+</div>
+
+<script>
+/* ========================================================================
+   DATA — only fields the run row / call stamp actually carries.
+   ==================================================================== */
+var TURNS = [
+  { id:'r1', depth:0, kind:'agent', tag:'AGT', status:'running',
+    name:'Deep research · soil amendments', started:252, steps:14, tokens:41200,
+    note:'synthesising 6 sources', trigger:'owner · omnibox', triggerId:'trg_owner_5f21',
+    session:'Raised beds', domain:'general', ranAs:'owner', parent:'—',
+    model:'gpt-oss-120b', provider:'on-box (vLLM)', effort:'high', ctx:'131 072',
+    tools:'brain.search, brain.fetch, wiki.read, subagent.spawn', persona:'Researcher',
+    promptV:'agent.research/v7',
+    msg:'Dig into whether anything newer changes the soil mix I settled on for the raised beds.',
+    raw:'Two April notes anchor this: the cedar rebuild (2025-04-11) and the mix you settled on\n' +
+        '(2025-04-19, 3 parts topsoil / 2 compost / 1 coarse sand).\n' +
+        '<span class="tool">▸ brain.search(q="raised bed soil mix", k=8) → 8 passages · 412 ms</span>\n' +
+        '<span class="tool">▸ subagent.spawn(sweep) → run_9c4a</span>\n' +
+        '<span class="tool">▸ subagent.spawn(contradiction) → run_9c4b</span>\n' +
+        'Waiting on both sweeps before committing a recommendation. Early read: the sand fraction is' },
+  { id:'r1a', depth:1, kind:'subagent', tag:'SUB', status:'running', parentOf:'r1',
+    name:'sweep · sources 2019–2026', started:121, steps:6, tokens:12400,
+    note:'reading 4 of 9', trigger:'parent run_9c40', triggerId:'trg_fanout',
+    session:'Raised beds', domain:'general', ranAs:'owner', parent:'run_9c40',
+    model:'qwen3-30b', provider:'on-box (vLLM)', effort:'medium', ctx:'32 768',
+    tools:'brain.search, brain.fetch', persona:'Sweeper', promptV:'subagent.sweep/v3',
+    msg:'(fan-out) Sweep sources newer than the April notes for raised-bed soil guidance.',
+    raw:'<span class="tool">▸ brain.fetch(note=2025-11-02) → 1.2 kB</span>\n' +
+        'Nov note repeats the 3-2-1 mix but adds leaf mould in year two.\n' +
+        '<span class="tool">▸ brain.fetch(note=2026-03-18) → 0.8 kB</span>\n' +
+        'March note is about the fence, not the beds — discarding.\n' +
+        'Reading 4 of 9' },
+  { id:'r1b', depth:1, kind:'subagent', tag:'SUB', status:'running', parentOf:'r1', last:true,
+    name:'contradiction check', started:104, steps:3, tokens:5100,
+    note:'comparing 2 claims', trigger:'parent run_9c40', triggerId:'trg_fanout',
+    session:'Raised beds', domain:'general', ranAs:'owner', parent:'run_9c40',
+    model:'qwen3-30b', provider:'on-box (vLLM)', effort:'medium', ctx:'32 768',
+    tools:'brain.search, registry.lookup', persona:'Checker', promptV:'subagent.check/v2',
+    msg:'(fan-out) Check the April mix against anything the sweep returns that disagrees.',
+    raw:'<span class="tool">▸ registry.lookup(pred="amended_with") → 3 rows</span>\n' +
+        'Claim A (April): coarse sand for drainage.\n' +
+        'Claim B (Nov): leaf mould in year two — additive, not a contradiction.\n' +
+        'Continuing',
+    errName:'contradiction check',
+    errNote:'failed after 3 steps',
+    err:'ToolError brain.fetch: note 4f2a91 not visible under domain scope "general"\n' +
+        '  run_9c4b · step 3 · 00:01:44 elapsed · RLS denied, not retried' },
+  { id:'r2', depth:0, kind:'workflow', tag:'WFL', status:'running',
+    name:'Nightly note analysis', started:511, steps:41, tokens:96700,
+    note:'batch 3 of 5 · 118 notes', trigger:'schedule · nightly 03:15', triggerId:'trg_sched_0031',
+    session:'—', domain:'general', ranAs:'scoped', parent:'—',
+    model:'gpt-oss-120b', provider:'on-box (vLLM)', effort:'low', ctx:'65 536',
+    tools:'analysis.extract, registry.lookup', persona:'Analyst',
+    promptV:'analysis.extract/v11',
+    msg:'(scheduled) Extract predicates from notes added since the last successful run.',
+    raw:'<span class="tool">▸ analysis.extract(batch=3, n=42) → 168 candidate facts</span>\n' +
+        'Batch 3 · note 87 of 118 · 12 tier-1 predicates matched, 4 long-tail committed raw.\n' +
+        '<span class="tool">▸ registry.lookup(pred="grows_in") → hit</span>\n' +
+        'Continuing batch 3' },
+  { id:'r3', depth:0, kind:'job', tag:'JOB', status:'starting',
+    name:'Embedding backfill · 2019 archive', started:6, steps:0, tokens:0,
+    note:'', trigger:'event · notes.imported', triggerId:'trg_evt_note_import',
+    session:'—', domain:'general', ranAs:'scoped', parent:'—',
+    model:'bge-m3', provider:'on-box (embeddings)', effort:'—', ctx:'8 192',
+    tools:'—', persona:'—', promptV:'index.embed/v4',
+    msg:'(event) 412 notes imported from the 2019 archive.',
+    raw:'' },
+  { id:'r4', depth:0, kind:'agent', tag:'AGT', status:'waiting',
+    name:'Weekly finance rollup', started:761, steps:27, tokens:78900, long:true,
+    note:'waiting on tool ledger.aggregate · 9m', trigger:'schedule · Sun 07:00',
+    triggerId:'trg_sched_0007',
+    session:'—', domain:'finance', ranAs:'scoped', parent:'—',
+    model:'claude-sonnet', provider:'cloud', effort:'medium', ctx:'200 000',
+    tools:'ledger.aggregate, brain.search', persona:'Bookkeeper',
+    promptV:'agent.finance/v5',
+    msg:'(scheduled) Roll up last week’s transactions and flag anything unusual.',
+    raw:'<span class="tool">▸ ledger.aggregate(from=2026-08-03, to=2026-08-09)</span>\n' +
+        'No response for 9m 04s — the tool has not returned and has not errored.\n' +
+        'Nothing generated since 07:04' }
+];
+
+var STREAM_WORDS = [' the',' mix',' holds',' — ',' checking',' one',' more',' passage',' now',
+  ' against',' the',' April',' note',' and',' the',' registry',' row'];
+
+/* ========================================================================
+   STATE + BUFFERS
+   ==================================================================== */
+var HIST = 900;                       /* 15 min at 1 Hz */
+var gpuBuf = new Array(HIST).fill(0);
+var tpsBuf = new Array(HIST).fill(null);
+var state = { scene:'busy', range:1, open:null, cardOpen:false, theme:'dark', motion:'full' };
+var gpuNow = 61, tpsNow = 44;
+
+/* Prime 15 minutes of plausible history: quiet stretches, a long image-gen block
+   (GPU pinned, no tokens), and agent turns (GPU up AND a token trace). */
+(function prime(){
+  for (var i = 0; i < HIST; i++) {
+    var t = i / HIST, g, s = null;
+    if (i > 300 && i < 430)      { g = 88 + Math.random()*10; }              /* image gen: no tokens */
+    else if (i > 500 && i < 700) { g = 55 + Math.random()*18; s = 30 + Math.random()*22; }
+    else if (i > 760)            { g = 52 + Math.random()*26; s = 34 + Math.random()*24; }
+    else if (i % 97 < 8)         { g = 20 + Math.random()*25; }
+    else                         { g = 3 + Math.random()*7; }
+    gpuBuf[i] = Math.max(0, Math.min(100, g));
+    tpsBuf[i] = s;
+  }
+})();
+
+/* ========================================================================
+   GRAPH
+   ==================================================================== */
+var COLS = 60, TPS_MAX = 140;
+var plot = document.getElementById('plot');
+var gGrid = document.getElementById('plotGrid'), gCols = document.getElementById('plotCols');
+var pLine = document.getElementById('plotLine'), gLab = document.getElementById('plotLabels');
+var SVGNS = 'http://www.w3.org/2000/svg';
+
+function el(n, a){ var e = document.createElementNS(SVGNS, n);
+  for (var k in a) e.setAttribute(k, a[k]); return e; }
+
+function bucket(buf, span){
+  var out = [], per = span / COLS, start = buf.length - span;
+  for (var c = 0; c < COLS; c++){
+    var s = Math.floor(start + c*per), e = Math.floor(start + (c+1)*per), sum = 0, n = 0;
+    if (e <= s) e = s + 1;
+    for (var i = s; i < e; i++){ var v = buf[i]; if (v !== null && v !== undefined){ sum += v; n++; } }
+    out.push(n ? sum/n : null);
+  }
+  return out;
+}
+
+var TIME_LABELS = {
+  1:  ['-60s','-45','-30','-15','now'],
+  5:  ['-5m','-4','-3','-2','-1','now'],
+  15: ['-15m','-12','-9','-6','-3','now']
+};
+var PER_COL = { 1:'1 s per column', 5:'5 s per column (mean)', 15:'15 s per column (mean)' };
+
+function drawGraph(){
+  var compact = document.getElementById('graph').dataset.compact === '1';
+  var W = 358, H = compact ? 40 : 132;
+  var TOP = compact ? 3 : 10, BOT = compact ? 33 : 100, R = compact ? 2 : 26;
+  plot.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+  var span = state.range * 60;
+  var gCol = bucket(gpuBuf, span), tCol = bucket(tpsBuf, span);
+  var plotW = W - R, pitch = plotW / COLS, bw = Math.max(2, pitch * 0.62);
+
+  gGrid.textContent = ''; gCols.textContent = ''; gLab.textContent = '';
+
+  if (!compact){
+    gGrid.appendChild(el('line', {class:'grid', x1:0, y1:TOP, x2:plotW, y2:TOP}));
+    gGrid.appendChild(el('line', {class:'grid', x1:0, y1:(TOP+BOT)/2, x2:plotW, y2:(TOP+BOT)/2}));
+  }
+  gGrid.appendChild(el('line', {class:'zero', x1:0, y1:BOT+0.5, x2:W, y2:BOT+0.5}));
+
+  for (var c = 0; c < COLS; c++){
+    var v = gCol[c]; if (v === null) continue;
+    var h = Math.max(1, (v/100) * (BOT-TOP));
+    var r = el('rect', {class:'col' + (v >= 85 ? ' hot' : ''),
+      x:(c*pitch + (pitch-bw)/2).toFixed(2), y:(BOT-h).toFixed(2),
+      width:bw.toFixed(2), height:h.toFixed(2), rx:0.5,
+      opacity:(0.42 + 0.58 * (c/(COLS-1))).toFixed(2)});
+    gCols.appendChild(r);
+  }
+
+  var d = '', open = false;
+  for (var j = 0; j < COLS; j++){
+    var t = tCol[j];
+    if (t === null){ open = false; continue; }
+    var x = j*pitch + pitch/2;
+    var y = BOT - (Math.max(0, Math.min(t, TPS_MAX))/TPS_MAX) * (BOT-TOP);
+    d += (open ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2) + ' ';
+    open = true;
+  }
+  pLine.setAttribute('d', d.trim());
+
+  if (!compact){
+    gLab.appendChild(el2('text', {class:'tick', x:plotW+4, y:TOP+6}, '100'));
+    gLab.appendChild(el2('text', {class:'tick', x:plotW+4, y:BOT}, '0'));
+    var labs = TIME_LABELS[state.range];
+    for (var q = 0; q < labs.length; q++){
+      var lx = (q/(labs.length-1)) * plotW;
+      var anchor = q === 0 ? 'start' : (q === labs.length-1 ? 'end' : 'middle');
+      gLab.appendChild(el2('text', {class:'tick', x:lx.toFixed(1), y:BOT+13, 'text-anchor':anchor},
+        labs[q]));
+    }
+  }
+  document.getElementById('axisNote').textContent = PER_COL[state.range];
+  plot.setAttribute('aria-label',
+    'GPU busy percent and tokens per second, last ' + state.range + ' minute' +
+    (state.range > 1 ? 's' : ''));
+}
+function el2(n, a, text){ var e = el(n, a); e.textContent = text; return e; }
+
+/* ---- the 12-second cluster in the top bar (option E, fed from the same buffer) ---- */
+var miniBars = [], MB_N = 12, MB_PITCH = 4, MB_W = 2.6, MB_TOP = 1.4, MB_BOT = 16.6;
+(function(){
+  var g = document.getElementById('miniBars');
+  for (var i = 0; i < MB_N; i++){
+    var r = el('rect', {class:'bar', x:(i*MB_PITCH+0.2).toFixed(2), width:MB_W, rx:0.4});
+    g.appendChild(r); miniBars.push(r);
+  }
+})();
+function drawMini(){
+  var gTail = gpuBuf.slice(HIST-MB_N), tTail = tpsBuf.slice(HIST-MB_N);
+  for (var i = 0; i < MB_N; i++){
+    var v = gTail[i], h = Math.max(0.9, (Math.min(v,100)/100)*(MB_BOT-MB_TOP));
+    miniBars[i].setAttribute('y', (MB_BOT-h).toFixed(2));
+    miniBars[i].setAttribute('height', h.toFixed(2));
+    miniBars[i].setAttribute('opacity', (0.3 + 0.7*(i/(MB_N-1))).toFixed(2));
+    miniBars[i].classList.toggle('hot', v >= 85);
+  }
+  var d = '', open = false, last = null;
+  for (var j = 0; j < MB_N; j++){
+    var t = tTail[j];
+    if (t === null){ open = false; continue; }
+    var x = j*MB_PITCH + 0.2 + MB_W/2;
+    var y = MB_BOT - (Math.min(t, TPS_MAX)/TPS_MAX)*(MB_BOT-MB_TOP);
+    d += (open ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2) + ' ';
+    open = true; last = [x, y];
+  }
+  document.getElementById('miniLine').setAttribute('d', d.trim());
+  var dot = document.getElementById('miniDot');
+  if (last && tTail[MB_N-1] !== null){
+    dot.setAttribute('cx', last[0].toFixed(2)); dot.setAttribute('cy', last[1].toFixed(2));
+    dot.style.display = '';
+  } else dot.style.display = 'none';
+
+  var live = tpsBuf[HIST-1] !== null;
+  document.getElementById('mini').dataset.turn = live ? 'live' : 'idle';
+  document.getElementById('miniTps').textContent = live ? Math.round(tpsNow) : '';
+  document.getElementById('miniGpu').textContent = Math.round(gpuNow);
+  document.getElementById('vitalsTap').setAttribute('aria-label',
+    'Box vitals: GPU ' + Math.round(gpuNow) + '% busy' +
+    (live ? ', ' + Math.round(tpsNow) + ' tokens per second' : '') +
+    ', ' + activeTurns().length + ' turns running. Open detail.');
+}
+
+/* ========================================================================
+   REGISTER
+   ==================================================================== */
+function activeTurns(){
+  if (state.scene === 'empty') return [];
+  return TURNS;
+}
+function mmss(s){
+  var m = Math.floor(s/60), r = s % 60;
+  return (m < 10 ? '0' : '') + m + ':' + (r < 10 ? '0' : '') + r;
+}
+function kfmt(n){
+  if (n === 0) return '0';
+  return n >= 1000 ? (n/1000).toFixed(1) + 'k' : String(n);
+}
+function isErr(t){ return state.scene === 'error' && t.id === 'r1b'; }
+
+function statusOf(t){ return isErr(t) ? 'error' : t.status; }
+
+function subLine(t){
+  if (isErr(t)) return t.errNote;
+  if (t.status === 'starting') return '<span class="mut">no output yet · ' + t.trigger + '</span>';
+  return t.note + ' <span class="mut">· ' + t.trigger + '</span>';
+}
+
+function renderRegister(){
+  var reg = document.getElementById('register');
+  var turns = activeTurns();
+  reg.textContent = '';
+
+  if (!turns.length){
+    reg.insertAdjacentHTML('beforeend',
+      '<div class="empty">' +
+        '<h3>No agent turns running</h3>' +
+        '<p>The GPU column is high because <b>GPU busy counts the whole box</b> — image ' +
+        'generation, embeddings and other services included. None of those are agent turns, so ' +
+        'a pinned graph over an empty register is a normal reading, not a fault.</p>' +
+        '<div class="ledger">' +
+          '<div class="lrow hot">gpu busy <b id="empGpu">95%</b></div>' +
+          '<div class="lrow">tokens/sec <b>— none generated</b></div>' +
+          '<div class="lrow">agent turns <b>0</b></div>' +
+          '<div class="lrow">workflow runs <b>0</b></div>' +
+        '</div>' +
+      '</div>');
+    document.getElementById('regNote').textContent = 'nothing to drill into';
+    document.getElementById('cardCount').textContent = '0 running';
+    return;
+  }
+
+  turns.forEach(function(t){
+    var st = statusOf(t), expanded = state.open === t.id;
+    var wrap = document.createElement('div');
+    wrap.className = 'turn' + (t.last ? ' last-child' : '');
+    wrap.dataset.depth = t.depth; wrap.dataset.status = st; wrap.dataset.kind = t.kind;
+    if (t.long) wrap.dataset.long = '1';
+    wrap.innerHTML =
+      '<button class="turn-head" aria-expanded="' + expanded + '" data-id="' + t.id + '">' +
+        '<span class="k">' + t.tag + '</span>' +
+        '<span class="turn-main">' +
+          '<span class="turn-title"><span class="dot"></span>' +
+            '<span class="nm">' + (isErr(t) ? t.errName : t.name) + '</span></span>' +
+          '<span class="turn-sub">' + subLine(t) + '</span>' +
+        '</span>' +
+        '<span class="turn-figs">' +
+          '<span class="el" data-el="' + t.id + '">' + mmss(t.started) + '</span>' +
+          '<span class="sm">' + t.steps + ' st · <span data-tk="' + t.id + '">' +
+            kfmt(t.tokens) + '</span>' + (t.long ? ' <span class="longword">long</span>' : '') +
+          '</span>' +
+        '</span>' +
+        '<svg class="cv" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>' +
+      '</button>' +
+      (expanded ? dossier(t) : '');
+    reg.appendChild(wrap);
+  });
+
+  var top = turns.filter(function(t){ return t.depth === 0; }).length;
+  var kids = turns.length - top;
+  document.getElementById('regNote').textContent =
+    top + ' top-level · ' + kids + ' sub-agent';
+  document.getElementById('cardCount').textContent = turns.length + ' running';
+}
+
+function dossier(t){
+  var st = statusOf(t);
+  var raw = isErr(t)
+    ? '<div class="errbox">' + t.err + '</div>'
+    : (t.raw
+        ? '<div class="raw" data-raw="' + t.id + '">' + t.raw + '<span class="caretbar"></span></div>'
+        : '<div class="noraw">Nothing streamed yet — the run is ' + t.steps +
+          ' steps in and has produced no output. This box fills as it arrives.</div>');
+
+  return '<div class="dossier">' +
+    '<div class="dsec"><h3>Run<span class="rule"></span></h3>' +
+      '<dl class="kv">' +
+        '<dt>kind</dt><dd><b>' + t.kind + '</b></dd>' +
+        '<dt>status</dt><dd><b>' + st + '</b></dd>' +
+        '<dt>started</dt><dd>' + mmss(t.started) + ' ago</dd>' +
+        '<dt>steps</dt><dd>' + t.steps + '</dd>' +
+        '<dt>cost</dt><dd>' + t.tokens.toLocaleString('en-US') + ' tok</dd>' +
+        '<dt>parent run</dt><dd>' + t.parent + '</dd>' +
+        '<dt>trigger</dt><dd>' + t.trigger + ' <span class="dim">(' +
+          t.triggerId + ')</span></dd>' +
+        '<dt>session</dt><dd>' + t.session + '</dd>' +
+        '<dt>domain</dt><dd>' + t.domain + '</dd>' +
+        '<dt>ran as</dt><dd>' + t.ranAs + '</dd>' +
+      '</dl></div>' +
+    '<div class="dsec"><h3>Call<span class="rule"></span></h3>' +
+      '<dl class="kv">' +
+        '<dt>model</dt><dd><b>' + t.model + '</b> · ' + t.provider + '</dd>' +
+        '<dt>reasoning</dt><dd>' + t.effort + '</dd>' +
+        '<dt>context</dt><dd>' + t.ctx + ' tok</dd>' +
+        '<dt>persona</dt><dd>' + t.persona + '</dd>' +
+        '<dt>tool set</dt><dd>' + t.tools + '</dd>' +
+        '<dt>prompt ver</dt><dd>' + t.promptV + '</dd>' +
+      '</dl>' +
+      '<p class="honest">The prompt actually sent to the model is not recorded — these are the ' +
+      'parameters stamped when the call was made.</p></div>' +
+    '<div class="dsec"><h3>Triggering message<span class="rule"></span></h3>' +
+      '<p class="quote">' + t.msg + '</p></div>' +
+    '<div class="dsec"><h3 class="rawhead">' + (isErr(t) ? 'Last error' : 'Raw output · live') +
+      '<span class="rule"></span>' +
+      '<button class="copy" data-copy="' + t.id + '">Copy</button></h3>' +
+      raw + '</div>' +
+  '</div>';
+}
+
+/* ========================================================================
+   INTERACTION
+   ==================================================================== */
+var card = document.getElementById('card'), graph = document.getElementById('graph');
+
+document.getElementById('vitalsTap').addEventListener('click', function(){
+  state.cardOpen = true; card.classList.add('open');
+  document.getElementById('back').focus();
+});
+document.getElementById('back').addEventListener('click', function(){
+  state.cardOpen = false; card.classList.remove('open');
+  document.getElementById('vitalsTap').focus();
+});
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape' && state.cardOpen) document.getElementById('back').click();
+});
+
+document.getElementById('range').addEventListener('click', function(e){
+  var b = e.target.closest('button'); if (!b) return;
+  this.querySelectorAll('button').forEach(function(x){
+    x.setAttribute('aria-pressed', String(x === b)); });
+  state.range = Number(b.dataset.m);
+  drawGraph();
+});
+
+document.getElementById('register').addEventListener('click', function(e){
+  var cp = e.target.closest('.copy');
+  if (cp){
+    e.stopPropagation();
+    var box = document.querySelector('[data-raw="' + cp.dataset.copy + '"]') ||
+              document.querySelector('.errbox');
+    copyText(box ? box.textContent : '');
+    cp.dataset.done = '1'; cp.textContent = 'Copied';
+    setTimeout(function(){ cp.removeAttribute('data-done'); cp.textContent = 'Copy'; }, 1500);
+    return;
+  }
+  var head = e.target.closest('.turn-head'); if (!head) return;
+  state.open = (state.open === head.dataset.id) ? null : head.dataset.id;
+  graph.dataset.compact = state.open ? '1' : '0';
+  renderRegister();
+  drawGraph();
+});
+
+function copyText(txt){
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt);
+    else {
+      var ta = document.createElement('textarea');
+      ta.value = txt; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+    }
+  } catch (_) {}
+}
+
+document.querySelectorAll('.ctl').forEach(function(ctl){
+  ctl.addEventListener('click', function(e){
+    var b = e.target.closest('button'); if (!b) return;
+    ctl.querySelectorAll('button').forEach(function(x){
+      x.setAttribute('aria-pressed', String(x === b)); });
+    var k = ctl.dataset.ctl, v = b.dataset.v;
+    if (k === 'scene'){
+      state.scene = v;
+      if (v === 'empty'){ state.open = null; graph.dataset.compact = '0'; gpuNow = 94; }
+      if (v === 'error'){ state.open = 'r1b'; graph.dataset.compact = '1'; }
+      renderRegister(); drawGraph();
+    }
+    if (k === 'hit')    document.body.classList.toggle('show-hit', v === 'on');
+    if (k === 'theme'){
+      if (v === 'light') document.getElementById('phone').setAttribute('data-theme','light');
+      else document.getElementById('phone').removeAttribute('data-theme');
+    }
+    if (k === 'motion') document.body.classList.toggle('rm', v === 'reduced');
+  });
+});
+
+/* ========================================================================
+   1 Hz TICK — advances the buffers and jitters the live figures.
+   ==================================================================== */
+function tick(){
+  var empty = state.scene === 'empty';
+
+  /* empty scene: the GPU is pinned by image generation, and NOTHING is generating tokens */
+  var gTarget = empty ? 92 + Math.random()*7 : 52 + Math.random()*30;
+  gpuNow += (gTarget - gpuNow) * 0.45 + (Math.random() - 0.5) * 6;
+  gpuNow = Math.max(0, Math.min(100, gpuNow));
+
+  var tTarget = 34 + Math.random()*26;
+  tpsNow += (tTarget - tpsNow) * 0.4 + (Math.random() - 0.5) * 8;
+  tpsNow = Math.max(12, Math.min(130, tpsNow));
+
+  gpuBuf.push(gpuNow); gpuBuf.shift();
+  tpsBuf.push(empty ? null : tpsNow); tpsBuf.shift();
+
+  if (!empty){
+    TURNS.forEach(function(t){
+      t.started += 1;
+      if (statusOf(t) === 'running') t.tokens += Math.round(18 + Math.random()*70);
+      if (t.id === 'r4') t.note = 'waiting on tool ledger.aggregate · ' +
+        Math.floor((t.started - 220)/60) + 'm';
+    });
+    /* stream a few characters into whichever raw box is open */
+    if (state.open){
+      var t = TURNS.filter(function(x){ return x.id === state.open; })[0];
+      if (t && t.raw && !isErr(t) && statusOf(t) === 'running'){
+        t.raw += STREAM_WORDS[Math.floor(Math.random()*STREAM_WORDS.length)];
+        var box = document.querySelector('[data-raw="' + t.id + '"]');
+        if (box){
+          var atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 6;
+          box.innerHTML = t.raw + '<span class="caretbar"></span>';
+          if (atEnd) box.scrollTop = box.scrollHeight;
+        }
+      }
+    }
+    /* cheap in-place figure updates so the whole list doesn't re-render each second */
+    TURNS.forEach(function(t){
+      var e = document.querySelector('[data-el="' + t.id + '"]');
+      if (e) e.textContent = mmss(t.started);
+      var k = document.querySelector('[data-tk="' + t.id + '"]');
+      if (k) k.textContent = kfmt(t.tokens);
+    });
+  } else {
+    var eg = document.getElementById('empGpu');
+    if (eg) eg.textContent = Math.round(gpuNow) + '%';
+  }
+
+  document.getElementById('bigGpu').textContent = Math.round(gpuNow);
+  document.getElementById('bigTps').textContent = empty ? '—' : Math.round(tpsNow);
+  document.getElementById('bigTpsWrap').dataset.live = empty ? '0' : '1';
+
+  drawGraph(); drawMini();
+}
+
+renderRegister();
+drawGraph();
+drawMini();
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

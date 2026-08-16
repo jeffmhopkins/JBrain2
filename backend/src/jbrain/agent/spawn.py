@@ -79,6 +79,10 @@ _TITLE_LEN = 120  # a child session title is a short label; longer is clamped
 # The LLM task a child loop runs on (mirrors AgentLoop's default) — consulted to
 # detect a local route, which serializes the fan (see _effective_max_parallel).
 _CHILD_TASK = "agent.turn"
+
+# A child's brief can run long. The call stamp only needs enough to recognise which
+# child a row is; the full brief stays in the child's own transcript.
+_STAMP_BRIEF_MAX = 400
 # The working word each persona shows while running (the live status word; a neutral
 # tag carries the persona itself — see DESIGN.md "Sub-agent spawning surfaces").
 _PHASE = {
@@ -942,12 +946,31 @@ class SpawnService:
             # was inserted (but before the guarding try/finally) used to strand the row
             # 'running' with 0 steps — exactly the zombie sub-agent the Runs surface showed.
             child_window = await self._router.context_window("agent.turn")
+            # Stamp the child's call the same way the parent turn stamps its own, so a
+            # research fan's children are legible on the vitals detail surface instead
+            # of appearing as unattributed rows under it (migration 0166). Resolved
+            # here, alongside the window and BEFORE the run row exists, for the
+            # cancellation reason above; it rides the INSERT rather than a second write.
+            child_provider, child_model = await self._router.effective_spec(_CHILD_TASK)
             child_run = await self._runlog.start(
                 owner_ctx,
                 session_id=child.id,
                 prompt_version=profile.version,
                 kind="subagent",
                 parent_run_id=ctx.run_id,
+                call_stamp={
+                    "provider": child_provider,
+                    "model": child_model,
+                    "reasoning_effort": plan.effort,
+                    "context_window": child_window,
+                    "persona": plan.persona,
+                    "tools": sorted(child_tools) if child_tools is not None else None,
+                    # The child's brief IS its instruction — the parent's own message is
+                    # the wrong provenance for a row the parent spawned.
+                    "user_message": plan.brief_text[:_STAMP_BRIEF_MAX],
+                    "user_message_truncated": len(plan.brief_text) > _STAMP_BRIEF_MAX,
+                    "label": plan.label,
+                },
             )
             tally = StepTally(self._runlog.bound(owner_ctx, child_run))
             # Once the run row exists it MUST reach a terminal status. `finished` guards a

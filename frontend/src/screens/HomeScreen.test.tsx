@@ -125,6 +125,7 @@ function setup(notes: NotesController = fakeController()) {
       onOpenNote={vi.fn()}
       onOpenSearch={vi.fn()}
       onOpenLauncher={vi.fn()}
+      onOpenVitals={vi.fn()}
       fbDeps={fbDeps()}
     />,
   );
@@ -140,6 +141,7 @@ describe("HomeScreen compose handoff", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={fbDeps()}
         compose={{ text: 'Reschedule my "Dentist" appointment to ' }}
         onComposeConsumed={onComposeConsumed}
@@ -165,6 +167,7 @@ describe("HomeScreen compose handoff", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
         compose={{
           text: 'About my "Dentist" appointment: ',
@@ -202,6 +205,7 @@ describe("HomeScreen compose handoff", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
         compose={{ text: 'Cancel my "Dentist" appointment.' }}
         onComposeConsumed={vi.fn()}
@@ -265,6 +269,7 @@ describe("HomeScreen mode scoping", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
       />,
     );
@@ -283,6 +288,7 @@ describe("HomeScreen mode scoping", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
       />,
     );
@@ -312,6 +318,7 @@ describe("HomeScreen mode scoping", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
       />,
     );
@@ -353,6 +360,7 @@ describe("HomeScreen mode scoping", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
       />,
     );
@@ -461,6 +469,7 @@ describe("HomeScreen mode scoping", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={offDeps}
       />,
     );
@@ -488,6 +497,7 @@ describe("HomeScreen mode scoping", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={onDeps}
       />,
     );
@@ -516,6 +526,7 @@ describe("HomeScreen mode scoping", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
       />,
     );
@@ -540,6 +551,7 @@ describe("HomeScreen mode scoping", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
       />,
     );
@@ -593,6 +605,7 @@ describe("HomeScreen read-aloud", () => {
         onOpenNote={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenLauncher={vi.fn()}
+        onOpenVitals={vi.fn()}
         fbDeps={deps}
       />,
     );

@@ -117,6 +117,12 @@ class Run(Base):
     step_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cost_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # What the run was actually asked to do, resolved at turn start (migration 0166):
+    # model, provider, reasoning effort, context window, tool names, persona, and the
+    # message that set it off. Display-only provenance for the vitals detail surface —
+    # never queried by field, so it rides as one JSONB blob rather than seven columns.
+    # NULL for runs that predate it and for drivers that don't stamp.
+    call_stamp: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

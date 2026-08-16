@@ -1,0 +1,1162 @@
+<!--
+  ============================================================================
+  OPTION I — DRILL-DOWN  ("two levels, each doing one job")
+  Vitals detail surface for JBrain2 · opens FROM the top-bar vitals chart
+
+  RATIONALE
+  Tapping the strip chart pushes a full-screen card (level 1) that is only the
+  graph — 1/5/15-minute ranges at full width — plus a flat roster of what is
+  running right now; tapping any turn pushes a second layer (level 2) that is
+  only that turn: its call metadata, step trail, children, and its live raw
+  output, which gets the whole viewport instead of an accordion inside a list.
+  Both levels are the app's own stacked slide-up layers, so the back chevron,
+  the down-swipe and the platform back gesture all climb exactly one level.
+
+  COST
+  Two taps and a layer of chrome to compare two turns' raw output — the drill-
+  down trades side-by-side scanning for depth, and it puts a second navigable
+  level under a top-bar element the design system currently calls a readout.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Vitals detail — I · Drill-down</title>
+<style>
+  /* ---- tokens (mirrors frontend/src/styles/tokens.css) ---- */
+  :root{
+    color-scheme: dark;
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --surface-composer:#141518; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.13);
+    --accent:var(--steel); --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-box:16px; --r-pill:999px;
+    --font-scale:0.75;
+    --fs-micro:calc(12px * var(--font-scale));
+    --fs-head:calc(13px * var(--font-scale));
+    --fs-secondary:calc(14px * var(--font-scale));
+    --fs-note:calc(15px * var(--font-scale));
+    --fs-body:calc(16px * var(--font-scale));
+    --fs-title:calc(18px * var(--font-scale));
+    --fs-screen:calc(22px * var(--font-scale));
+    --fs-hero:calc(28px * var(--font-scale));
+    --mock-page:#000000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{
+    color-scheme: light;
+    --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3; --surface-composer:#ffffff;
+    --scrim:rgba(247,247,245,.6);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--mock-page);color:var(--text);display:flex;flex-direction:column;
+    align-items:center;gap:16px;padding:22px 0 56px;min-height:100vh;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+  button{font-family:inherit;}
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;
+    padding:2px 8px;border-radius:var(--r-pill);margin-bottom:6px;}
+
+  /* ================= phone frame ================= */
+  .phone{width:390px;height:800px;background:var(--bg);border:1px solid var(--border);
+    border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;
+    color:var(--text);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+
+  .top-bar{display:flex;align-items:center;gap:12px;height:56px;padding:0 16px;flex:none;}
+  .session-title{font-weight:700;font-size:var(--fs-screen);color:var(--text);min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* ---- the vitals cluster, now a control ----
+     The 48×20 chart alone is a 48×20 target. The whole cluster becomes the button:
+     44px minimum height, and it eats the bar's 16px right padding so the target runs
+     to the screen edge. The drawing is untouched — only the hit area grew. */
+  .vitals-tap{margin-left:auto;display:grid;grid-template-columns:auto auto;align-items:center;
+    column-gap:7px;row-gap:3px;flex:none;color:var(--text-2);line-height:1;background:none;
+    border:none;border-radius:10px;min-height:44px;padding:0 16px 0 6px;margin-right:-16px;
+    position:relative;font-variant-numeric:tabular-nums;text-align:left;}
+  .vitals-tap:active{background:var(--surface-2);}
+  .vitals-tap:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+  body.show-target .vitals-tap::after{content:"";position:absolute;inset:0;
+    border:1px dashed var(--steel);border-radius:10px;pointer-events:none;}
+  body.show-target .vitals-tap .scope{outline:1px dashed var(--rose);outline-offset:1px;}
+
+  .scope{grid-column:1;grid-row:2;display:block;width:48px;height:20px;overflow:visible;}
+  .scope rect{shape-rendering:crispEdges;}
+  .bar{fill:var(--text-3);}
+  .bar.hot{fill:var(--warn);}
+  .tps-line{fill:none;stroke:var(--steel);stroke-width:1;stroke-linejoin:round;
+    stroke-linecap:round;vector-effect:non-scaling-stroke;}
+  .tps-now{fill:var(--steel);}
+  .rail{stroke:var(--text-3);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .reads{display:contents;}
+  .read{display:flex;align-items:baseline;justify-self:end;gap:2px;}
+  .read .v{font-size:var(--fs-head);font-weight:500;min-width:3ch;text-align:right;}
+  .read .u{font-size:var(--fs-micro);color:var(--text-3);min-width:2.6ch;text-align:left;}
+  .read-tps{grid-column:2;grid-row:1;color:var(--steel);visibility:hidden;}
+  .vitals-tap[data-turn="live"] .read-tps{visibility:visible;}
+  .read-gpu{grid-column:2;grid-row:2;}
+  .read-gpu .v{color:var(--text-2);}
+
+  /* ---- home stream behind ---- */
+  .stream{flex:1;overflow:hidden;padding:6px 16px 4px;display:flex;flex-direction:column;}
+  .stream-inner{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:10px;}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:var(--r-card);font-size:var(--fs-note);
+    line-height:1.45;}
+  .me{align-self:flex-end;background:var(--steel-tint);
+    border:1px solid color-mix(in srgb, var(--steel) 22%, transparent);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);
+    border-bottom-left-radius:5px;}
+  .dock{flex:none;padding:6px 14px 14px;}
+  .omnibox{background:var(--surface-composer);border:1px solid var(--border);border-radius:24px;padding:12px;}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .seg span{flex:1;color:var(--text-2);font-size:var(--fs-secondary);font-weight:500;padding:8px 0;
+    display:flex;align-items:center;justify-content:center;}
+  .seg .on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .field{color:var(--text-3);font-size:var(--fs-body);line-height:1.4;padding:12px 6px 4px;min-height:2.4em;}
+
+  /* ================= stacked slide-up layers ================= */
+  .layer{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;
+    transform:translateY(100%);visibility:hidden;
+    transition:transform 150ms ease-out, visibility 0s linear 150ms;}
+  .layer.up{transform:translateY(0);visibility:visible;transition:transform 150ms ease-out, visibility 0s;}
+  #l1{z-index:20;}
+  #l2{z-index:30;}
+  @media (prefers-reduced-motion:reduce){ .layer{transition:none;} }
+  body.rm .layer{transition:none;}
+
+  .layer-bar{display:flex;align-items:center;gap:4px;height:56px;padding:0 8px 0 4px;flex:none;}
+  .chev{width:44px;height:44px;border:none;background:none;color:var(--text-2);
+    display:flex;align-items:center;justify-content:center;border-radius:10px;flex:none;}
+  .chev:active{background:var(--surface-2);}
+  .chev svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;
+    stroke-linecap:round;stroke-linejoin:round;}
+  .layer-title{font-size:var(--fs-title);font-weight:600;color:var(--text);min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .layer-sub{margin-left:auto;padding-right:12px;font-size:var(--fs-micro);color:var(--text-3);
+    white-space:nowrap;}
+  .handle-row{flex:none;display:flex;justify-content:center;align-items:center;height:22px;}
+  .handle-row button{width:120px;height:22px;border:none;background:none;display:flex;
+    align-items:center;justify-content:center;}
+  .handle{width:32px;height:4px;border-radius:2px;background:var(--border);display:block;}
+  .body{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:4px 14px 28px;
+    display:flex;flex-direction:column;gap:12px;}
+
+  .sec-head{font-size:var(--fs-micro);letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-3);font-weight:600;padding:2px 2px 0;display:flex;align-items:baseline;gap:8px;}
+  .sec-head .count{margin-left:auto;color:var(--text-3);letter-spacing:0;text-transform:none;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);}
+
+  /* ================= level 1 — the graph ================= */
+  .graph-card{padding:12px 12px 10px;display:flex;flex-direction:column;gap:10px;}
+  .figs{display:flex;align-items:flex-end;gap:18px;}
+  .fig{display:flex;flex-direction:column;gap:3px;}
+  .fig .lab{font-size:var(--fs-micro);color:var(--text-3);}
+  .fig .val{font-size:var(--fs-hero);font-weight:500;line-height:1;color:var(--text);}
+  .fig .val .u{font-size:var(--fs-secondary);color:var(--text-3);font-weight:400;margin-left:2px;}
+  .fig.tps .val{color:var(--steel);}
+  .fig.off .val{color:var(--text-3);}
+  .range{margin-left:auto;display:flex;border:1px solid var(--border);border-radius:var(--r-seg);
+    overflow:hidden;height:32px;}
+  .range button{width:38px;border:none;background:none;color:var(--text-2);
+    font-size:var(--fs-secondary);font-weight:500;font-variant-numeric:tabular-nums;}
+  .range button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .plot{display:block;width:100%;height:auto;}
+  .plot .gline{stroke:var(--border);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .plot .axis{fill:var(--text-3);font-size:8px;font-family:var(--font-mono);}
+  .plot .axis-tps{fill:var(--steel);font-size:8px;font-family:var(--font-mono);opacity:.85;}
+  .plot .bigbar{fill:var(--text-3);}
+  .plot .bigbar.hot{fill:var(--warn);}
+  .plot .bigtrace{fill:none;stroke:var(--steel);stroke-width:1.4;stroke-linejoin:round;
+    stroke-linecap:round;vector-effect:non-scaling-stroke;}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:var(--fs-micro);color:var(--text-3);
+    line-height:1.5;}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .swatch-col{width:3px;height:11px;background:var(--text-3);display:block;}
+  .swatch-line{width:13px;height:0;border-top:1.4px solid var(--steel);display:block;}
+  .bucket-note{font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;}
+
+  /* ---- honesty strip: GPU busy is not the same thing as agent turns ---- */
+  .honesty{padding:10px 12px;font-size:var(--fs-micro);color:var(--text-2);line-height:1.55;
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);}
+  .honesty b{color:var(--text);font-weight:500;}
+
+  /* ================= level 1 — the roster ================= */
+  .roster{display:flex;flex-direction:column;}
+  .turn-row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;width:100%;
+    min-height:60px;padding:10px 12px;border:none;background:none;text-align:left;
+    border-top:1px solid var(--border);color:var(--text);align-items:center;}
+  .turn-row:first-child{border-top:none;}
+  .turn-row:active{background:var(--surface-2);}
+  .turn-row.child{padding-left:26px;position:relative;}
+  .turn-row.child::before{content:"";position:absolute;left:14px;top:0;bottom:0;
+    border-left:1px solid var(--border);}
+  .turn-row.child.last::before{bottom:50%;}
+  .turn-row.child::after{content:"";position:absolute;left:14px;top:50%;width:8px;
+    border-top:1px solid var(--border);}
+  .tr-name{font-size:var(--fs-note);color:var(--text);line-height:1.35;
+    display:flex;align-items:center;gap:7px;min-width:0;}
+  .tr-name .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .kind{font-size:var(--fs-micro);font-family:var(--font-mono);letter-spacing:.04em;
+    color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:1px 4px;flex:none;}
+  .tr-meta{grid-column:1;font-size:var(--fs-micro);color:var(--text-2);line-height:1.5;
+    min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .tr-meta .sep{color:var(--text-3);padding:0 4px;}
+  .tr-meta .err{color:var(--danger);}
+  .tr-meta .wait{color:var(--text-3);}
+  .tr-right{grid-column:2;grid-row:1 / span 2;display:flex;flex-direction:column;
+    align-items:flex-end;gap:3px;flex:none;}
+  .tr-elapsed{font-size:var(--fs-secondary);color:var(--text-2);}
+  .tr-elapsed.long{color:var(--warn);}
+  .tr-tok{font-size:var(--fs-micro);color:var(--text-3);}
+  .status-dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block;
+    background:var(--text-3);}
+  .status-dot.run{background:var(--ok);}
+  .status-dot.err{background:var(--danger);}
+  .status-dot.wait{background:var(--text-3);}
+
+  .empty{padding:22px 16px;display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
+  .empty .hl{font-size:var(--fs-note);color:var(--text);}
+  .empty .p{font-size:var(--fs-micro);color:var(--text-2);line-height:1.6;}
+  .empty .p b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums;}
+
+  /* ================= level 2 — the turn dossier ================= */
+  .hero{padding:12px;display:flex;flex-direction:column;gap:9px;}
+  .hero-top{display:flex;align-items:center;gap:8px;}
+  .hero-status{font-size:var(--fs-note);color:var(--text);}
+  .hero-status.err{color:var(--danger);}
+  .hero-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+  .hero-grid .k{font-size:var(--fs-micro);color:var(--text-3);}
+  .hero-grid .v{font-size:var(--fs-title);color:var(--text);font-weight:500;}
+  .hero-note{font-size:var(--fs-micro);color:var(--text-2);line-height:1.55;}
+  .errbox{background:var(--rose-tint);border-radius:10px;padding:9px 10px;
+    font-size:var(--fs-micro);color:var(--danger);line-height:1.55;font-family:var(--font-mono);}
+
+  .kv{padding:4px 12px 8px;}
+  .kv-row{display:grid;grid-template-columns:96px 1fr;gap:10px;padding:6px 0;
+    border-top:1px solid var(--border);align-items:baseline;}
+  .kv-row:first-child{border-top:none;}
+  .kv .k{font-size:var(--fs-micro);color:var(--text-3);}
+  .kv .v{font-size:var(--fs-micro);color:var(--text-2);font-family:var(--font-mono);
+    line-height:1.55;word-break:break-word;}
+  .kv .v em{font-style:normal;color:var(--text);}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;}
+  .chips span{font-size:var(--fs-micro);font-family:var(--font-mono);color:var(--text-2);
+    border:1px solid var(--border);border-radius:4px;padding:1px 5px;}
+  .quote{padding:11px 12px;font-size:var(--fs-note);color:var(--text);line-height:1.5;
+    border-left:2px solid var(--steel);background:var(--steel-tint);border-radius:0 10px 10px 0;}
+
+  .trail{padding:6px 12px 10px;display:flex;flex-direction:column;}
+  .step{display:grid;grid-template-columns:18px 1fr auto;gap:8px;padding:7px 0;
+    border-top:1px solid var(--border);align-items:baseline;}
+  .step:first-child{border-top:none;}
+  .step .i{font-size:var(--fs-micro);color:var(--text-3);font-family:var(--font-mono);}
+  .step .t{font-size:var(--fs-micro);color:var(--text-2);line-height:1.5;}
+  .step .t b{color:var(--text);font-weight:500;font-family:var(--font-mono);}
+  .step .d{font-size:var(--fs-micro);color:var(--text-3);font-family:var(--font-mono);}
+  .step.now .t{color:var(--text);}
+
+  .raw{padding:10px 12px 12px;}
+  .raw-head{display:flex;align-items:center;gap:7px;padding-bottom:7px;}
+  .raw-head .t{font-size:var(--fs-micro);letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-3);font-weight:600;}
+  .raw-head .live{font-size:var(--fs-micro);color:var(--steel);margin-left:auto;}
+  .rawtext{font-family:var(--font-mono);font-size:var(--fs-note);line-height:1.6;
+    color:var(--text-2);white-space:pre-wrap;word-break:break-word;}
+  .rawtext .marker{color:var(--text-3);}
+  .rawtext .tool{color:var(--violet);}
+  .rawtext .answer{color:var(--text);}
+  .caret{display:inline-block;width:1.5px;height:1em;background:var(--steel);
+    vertical-align:-2px;margin-left:1px;animation:blink 1s steps(2,start) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+  @media (prefers-reduced-motion:reduce){.caret{animation:none;}}
+  body.rm .caret{animation:none;}
+  .raw-empty{font-size:var(--fs-micro);color:var(--text-3);line-height:1.6;font-family:var(--font-mono);}
+
+  .child-row{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;
+    padding:9px 12px;border:none;background:none;border-top:1px solid var(--border);
+    text-align:left;color:var(--text);}
+  .child-row:first-child{border-top:none;}
+  .child-row:active{background:var(--surface-2);}
+  .child-row .cn{font-size:var(--fs-secondary);min-width:0;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;}
+  .child-row .cm{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);flex:none;}
+  .climb{display:flex;align-items:center;justify-content:center;gap:6px;padding:2px 0 0;
+    color:var(--text-3);font-size:var(--fs-micro);}
+  .climb svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round;}
+
+  /* ================= control desk ================= */
+  .desk{width:390px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
+    padding:13px 14px;display:flex;flex-direction:column;gap:9px;color:var(--text);}
+  .desk h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);font-weight:600;}
+  .drow{display:grid;grid-template-columns:58px 1fr;align-items:center;gap:10px;}
+  .drow .lab{font-size:12px;color:var(--text-2);}
+  .ctl{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;}
+  .ctl button{flex:1;border:none;background:none;color:var(--text-2);font-size:12px;font-weight:500;padding:8px 2px;}
+  .ctl button[aria-pressed="true"]{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .desk .note{font-size:11px;color:var(--text-3);line-height:1.55;}
+  .desk .note b{color:var(--text-2);font-weight:500;}
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <span class="tag">Vitals detail · I — Drill-down</span><br/>
+  Tap the strip chart in the top bar. <b>Level 1</b> is the graph (1/5/15 min) plus the roster of
+  what is running. <b>Tap any turn</b> to push <b>level 2</b> — that turn alone: the call it was
+  made with, its step trail, its children, and its live raw output. Back chevron, the handle row,
+  or a down-swipe at scroll-top climbs one level.
+</div>
+
+<div class="phone" id="phone">
+
+  <!-- ===================== level 0 — home ===================== -->
+  <header class="top-bar">
+    <span class="session-title">Full Brain</span>
+    <button class="vitals-tap" id="vitalsTap" data-turn="live" aria-label="Box vitals — open detail">
+      <svg class="scope" viewBox="0 0 48 20" aria-hidden="true">
+        <g class="bars-mini"></g>
+        <path class="tps-line mini-line" d=""/>
+        <circle class="tps-now mini-now" cx="-9" cy="-9" r="1.15"/>
+        <line class="rail" x1="0" y1="17.9" x2="48" y2="17.9"/>
+      </svg>
+      <span class="reads">
+        <span class="read read-tps"><span class="v" id="miniTps">44</span><span class="u">t/s</span></span>
+        <span class="read read-gpu"><span class="v" id="miniGpu">62</span><span class="u">%</span></span>
+      </span>
+    </button>
+  </header>
+
+  <main class="stream">
+    <div class="stream-inner">
+      <div class="bubble ai">Morning. Nothing new landed overnight — 3 notes still waiting on review.</div>
+      <div class="bubble me">Dig into what size heat pump the house actually needs.</div>
+      <div class="bubble ai">On it — I've sent two researchers at the manufacturer specs and the
+        installer forums, and I'll synthesise when they land.</div>
+    </div>
+  </main>
+
+  <div class="dock">
+    <div class="omnibox">
+      <div class="seg"><span>Entry</span><span>Research</span><span class="on">Full Brain</span></div>
+      <div class="field">Talk it out — full tool access…</div>
+    </div>
+  </div>
+
+  <!-- ===================== level 1 — box vitals ===================== -->
+  <section class="layer" id="l1" aria-label="Box vitals">
+    <div class="layer-bar">
+      <button class="chev" id="l1Back" aria-label="Back to chat">
+        <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <span class="layer-title">Box vitals</span>
+      <span class="layer-sub" id="l1Sub">live</span>
+    </div>
+    <div class="handle-row"><button id="l1Handle" aria-label="Close box vitals"><span class="handle"></span></button></div>
+
+    <div class="body" id="l1Body">
+      <div class="card graph-card">
+        <div class="figs">
+          <div class="fig">
+            <span class="lab">GPU busy</span>
+            <span class="val" id="bigGpu">62<span class="u">%</span></span>
+          </div>
+          <div class="fig tps" id="bigTpsFig">
+            <span class="lab">tokens/sec</span>
+            <span class="val" id="bigTps">44</span>
+          </div>
+          <div class="range" role="group" aria-label="Time range">
+            <button data-r="60" aria-pressed="true">1m</button>
+            <button data-r="300" aria-pressed="false">5m</button>
+            <button data-r="900" aria-pressed="false">15m</button>
+          </div>
+        </div>
+
+        <svg class="plot" id="plot" viewBox="0 0 340 122" aria-hidden="true">
+          <line class="gline" x1="28" y1="12" x2="332" y2="12"/>
+          <line class="gline" x1="28" y1="55" x2="332" y2="55"/>
+          <line class="gline" x1="28" y1="98" x2="332" y2="98"/>
+          <text class="axis" x="24" y="15" text-anchor="end">100</text>
+          <text class="axis" x="24" y="58" text-anchor="end">50</text>
+          <text class="axis" x="24" y="101" text-anchor="end">0</text>
+          <text class="axis-tps" x="336" y="15" text-anchor="end" opacity="0">140</text>
+          <g id="bigBars"></g>
+          <path class="bigtrace" id="bigTrace" d=""/>
+          <text class="axis" id="xLeft" x="28" y="115">−60s</text>
+          <text class="axis" id="xMid" x="180" y="115" text-anchor="middle">−30s</text>
+          <text class="axis" x="332" y="115" text-anchor="end">now</text>
+        </svg>
+
+        <div class="legend">
+          <span><i class="swatch-col"></i> GPU busy, 0–100%</span>
+          <span><i class="swatch-line"></i> tokens/sec, 0–140</span>
+        </div>
+        <div class="bucket-note" id="bucketNote">1-second samples. Two channels, two scales — each
+          reads against itself over time, never against the other.</div>
+      </div>
+
+      <div class="honesty" id="honesty" hidden>
+        <b>GPU busy counts everything the box does</b> — image generation, embedding, indexing —
+        not just agent turns. A high column with an empty roster is the box working on something
+        that isn't a turn, not a broken list.
+      </div>
+
+      <div class="sec-head">Running now <span class="count" id="rosterCount">5 turns</span></div>
+      <div class="card roster" id="roster"></div>
+
+      <div class="climb">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+        swipe down to climb back
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== level 2 — one turn ===================== -->
+  <section class="layer" id="l2" aria-label="Turn detail">
+    <div class="layer-bar">
+      <button class="chev" id="l2Back" aria-label="Back to box vitals">
+        <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <span class="layer-title" id="l2Title">Turn</span>
+      <span class="layer-sub" id="l2Sub"></span>
+    </div>
+    <div class="handle-row"><button id="l2Handle" aria-label="Back to box vitals"><span class="handle"></span></button></div>
+    <div class="body" id="l2Body"></div>
+  </section>
+</div>
+
+<div class="desk">
+  <h2>Control desk</h2>
+  <div class="drow"><span class="lab">Scenario</span>
+    <div class="ctl" data-ctl="scenario">
+      <button data-v="normal" aria-pressed="true">5 running</button>
+      <button data-v="error">One errored</button>
+      <button data-v="idle">None running</button>
+    </div></div>
+  <div class="drow"><span class="lab">Tap target</span>
+    <div class="ctl" data-ctl="target">
+      <button data-v="off" aria-pressed="true">Hidden</button><button data-v="on">Show</button>
+    </div></div>
+  <div class="drow"><span class="lab">Theme</span>
+    <div class="ctl" data-ctl="theme">
+      <button data-v="dark" aria-pressed="true">Dark</button><button data-v="light">Light</button>
+    </div></div>
+  <div class="drow"><span class="lab">Motion</span>
+    <div class="ctl" data-ctl="motion">
+      <button data-v="full" aria-pressed="true">Full</button><button data-v="reduced">Reduced</button>
+    </div></div>
+  <div class="note">
+    <b>Show</b> outlines the proposed hit area (steel) against today's 48×20 chart (rose): the whole
+    cluster becomes the button — 44px tall, running to the screen edge — while the drawing is
+    untouched. <b>None running</b> is the honesty case: the GPU is pinned at ~94% on image
+    generation and the roster is legitimately empty.
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ===================== shared 1 Hz sample buffer =====================
+     One 900-sample ring at 1 Hz feeds both the 48px top-bar chart and the big
+     plot, so the two can never disagree about what the box was doing. */
+  var CAP = 900;
+  var gpuBuf = new Array(CAP).fill(null);
+  var tpsBuf = new Array(CAP).fill(null);
+
+  function pushSample(gpu, tps) {
+    gpuBuf.push(gpu); gpuBuf.shift();
+    tpsBuf.push(tps); tpsBuf.shift();
+  }
+
+  /* Seed 15 minutes of plausible history, including an image-generation hump
+     ~7 minutes back: GPU pinned, not a single token — the honesty case, visible
+     on the 15m range from the moment the surface opens. */
+  (function seed() {
+    for (var i = 0; i < CAP; i++) {
+      var ago = CAP - i;
+      var gpu, tps = null;
+      if (ago > 700) { gpu = 5 + Math.random() * 7; }
+      else if (ago > 640) { gpu = 26 + Math.random() * 14; tps = 68 + Math.random() * 45; }
+      else if (ago > 520) { gpu = 4 + Math.random() * 6; }
+      else if (ago > 380) { gpu = 88 + Math.random() * 9; }          /* image generation */
+      else if (ago > 330) { gpu = 6 + Math.random() * 6; }
+      else { gpu = 46 + Math.random() * 26; tps = 33 + Math.random() * 22; }
+      pushSample(gpu, tps);
+    }
+  })();
+
+  /* ===================== the turns =====================
+     Only fields the run row / turn stamp actually carries. No verbatim prompt —
+     that is not stored, so it is not shown. */
+  var TURNS = [
+    {
+      id: "run_9d41c7", kind: "agent", persona: "Jerv · full brain",
+      name: "Deep research — heat pump sizing",
+      status: "running", startedAt: "07:41:56", elapsed: 252, steps: 9, tokens: 38200,
+      note: "synthesising 6 sources", err: null, parent: null,
+      trigger: "owner · this session", session: "sess_4b1e", domain: "general",
+      ranAs: "owner", promptVersion: "fullbrain@v14",
+      model: "claude-opus-4-6", provider: "anthropic", effort: "high",
+      ctx: 200000, tools: ["notes.search", "notes.read", "web.search", "web.fetch", "wiki.read", "subagent.spawn"],
+      userMsg: "Dig into what size heat pump the house actually needs.",
+      trail: [
+        ["notes.search", "\"heat pump\" · 11 hits", "0.4s"],
+        ["notes.read", "3 notes · 2.1k tokens", "0.6s"],
+        ["subagent.spawn", "source sweep — manufacturer specs", "0.1s"],
+        ["subagent.spawn", "source sweep — installer forums", "0.1s"],
+        ["web.search", "manual J load calculation", "1.9s"],
+        ["web.fetch", "acca.org/manual-j", "2.4s"],
+        ["wiki.read", "House · envelope", "0.3s"],
+        ["reasoning", "reconciling 2 conflicting sizing rules", "—"],
+        ["answer", "streaming", "live"]
+      ],
+      raw: [
+        ["marker", "» reasoning\n"],
+        ["", "Two sources disagree on the sizing rule. The 20 BTU/sq-ft heuristic gives 34k BTU for 1,700 sq-ft; the Manual J the notes reference lands nearer 26k because the 2019 envelope work is not in the heuristic.\n\n"],
+        ["tool", "» tool web.fetch acca.org/manual-j → 200, 41.2 kB\n"],
+        ["marker", "» answer\n"],
+        ["answer", "Short version: the heuristic is oversizing you. Your April 2019 note records R-21 walls and the attic taken to R-49, and the "]
+      ],
+      more: ["window replacement ", "on the north face ", "closes the last big ", "leak. Against that ", "envelope a Manual J ", "run comes out around ", "26,000 BTU at design ", "temperature, not the ", "34,000 the rule of ", "thumb suggests. A ", "3-ton unit would ", "short-cycle. "]
+    },
+    {
+      id: "run_9d41d2", kind: "subagent", persona: "researcher",
+      name: "source sweep — manufacturer specs",
+      status: "running", startedAt: "07:44:05", elapsed: 63, steps: 4, tokens: 6100,
+      note: "reading spec sheet 3 of 5", err: null, parent: "run_9d41c7",
+      trigger: "parent run_9d41c7", session: "sess_4b1e", domain: "general",
+      ranAs: "scoped", promptVersion: "researcher@v6",
+      model: "gpt-oss-120b", provider: "on-box (vLLM)", effort: "medium",
+      ctx: 131072, tools: ["web.search", "web.fetch"],
+      userMsg: "Dig into what size heat pump the house actually needs.",
+      trail: [
+        ["web.search", "cold climate heat pump 2.5 ton spec", "1.2s"],
+        ["web.fetch", "mitsubishi · MXZ-SM36 datasheet", "3.1s"],
+        ["web.fetch", "fujitsu · AOU36RLXFZ datasheet", "2.8s"],
+        ["reasoning", "extracting capacity at 5°F", "live"]
+      ],
+      raw: [
+        ["tool", "» tool web.fetch mitsubishi/MXZ-SM36 → 200, 812 kB (pdf)\n"],
+        ["marker", "» extract\n"],
+        ["", "MXZ-SM36: rated 36,000 BTU, 24,600 BTU maintained at 5°F, HSPF 10.6.\n"]
+      ],
+      more: ["AOU36: 33,600 rated, ", "21,000 at 5°F. ", "Both hold above the ", "26k target only down ", "to about 12°F. "]
+    },
+    {
+      id: "run_9d41d3", kind: "subagent", persona: "researcher",
+      name: "source sweep — installer forums",
+      status: "running", startedAt: "07:44:10", elapsed: 58, steps: 3, tokens: 4400,
+      note: "reading thread 2 of 4", err: null, parent: "run_9d41c7",
+      trigger: "parent run_9d41c7", session: "sess_4b1e", domain: "general",
+      ranAs: "scoped", promptVersion: "researcher@v6",
+      model: "gpt-oss-120b", provider: "on-box (vLLM)", effort: "medium",
+      ctx: 131072, tools: ["web.search", "web.fetch"],
+      userMsg: "Dig into what size heat pump the house actually needs.",
+      trail: [
+        ["web.search", "heat pump oversizing short cycle forum", "1.4s"],
+        ["web.fetch", "hvac-talk · thread 418822", "2.2s"],
+        ["reasoning", "weighing anecdote against spec", "live"]
+      ],
+      raw: [
+        ["marker", "» reasoning\n"],
+        ["", "Forum consensus tracks the Manual J side: installers report oversized units short-cycling in shoulder season.\n"]
+      ],
+      more: ["One installer notes ", "a 2-ton with a strip ", "backup outperformed ", "a 3-ton in the same ", "stock. "],
+      /* the 'error' scenario overwrites status/err/note on this one */
+      errText: "web.fetch failed: 504 from hvac-talk.com after 3 retries (last at 07:45:02)"
+    },
+    {
+      id: "run_9d3f80", kind: "workflow", persona: "note-analysis pipeline",
+      name: "Nightly note analysis",
+      status: "running", startedAt: "07:33:28", elapsed: 760, steps: 214, tokens: 96400,
+      note: "batch 7 of 11 · 62 notes done", err: null, parent: null,
+      trigger: "trig_0f2a91 · schedule", session: "—", domain: "general",
+      ranAs: "scoped", promptVersion: "analysis@v22",
+      model: "gpt-oss-120b", provider: "on-box (vLLM)", effort: "low",
+      ctx: 131072, tools: ["notes.read", "predicates.lookup", "graph.write"],
+      userMsg: null,
+      trail: [
+        ["notes.read", "batch 7 · 8 notes", "0.7s"],
+        ["predicates.lookup", "tier-1 registry · 34 probes", "1.1s"],
+        ["graph.write", "staged 12 candidate facts", "0.5s"],
+        ["reasoning", "batch 7 · note 3 of 8", "live"]
+      ],
+      raw: [
+        ["marker", "» batch 7 · note 3/8 — \"Saturday, the shed\"\n"],
+        ["", "candidate: (Shed) built_year 2019 · conf 0.81\ncandidate: (Jeff) owns (Ryobi mitre saw) · conf 0.74\n"]
+      ],
+      more: ["candidate: (Shed) ", "roof_material metal ", "· conf 0.66\n", "» batch 7 · note 4/8\n"]
+    },
+    {
+      id: "run_9d41e0", kind: "agent", persona: "Jerv · entry",
+      name: "Draft the Tuesday summary",
+      status: "starting", startedAt: "07:46:06", elapsed: 2, steps: 0, tokens: 0,
+      note: "queued behind the researchers — no output yet", err: null, parent: null,
+      trigger: "trig_31c4aa · event (note committed)", session: "sess_4b1e", domain: "general",
+      ranAs: "owner", promptVersion: "entry@v9",
+      model: "claude-haiku-4-6", provider: "anthropic", effort: "none",
+      ctx: 200000, tools: ["notes.search", "notes.read"],
+      userMsg: null,
+      trail: [],
+      raw: [],
+      more: []
+    },
+    {
+      id: "run_9c8814", kind: "job", persona: "wiki builder",
+      name: "Weekly wiki rebuild",
+      status: "running", startedAt: "06:01:14", elapsed: 6412, steps: 1204, tokens: 812000,
+      note: "rewriting 41 of 96 pages", err: null, parent: null,
+      trigger: "trig_5ab002 · schedule", session: "—", domain: "general",
+      ranAs: "scoped", promptVersion: "wiki@v31",
+      model: "gpt-oss-120b", provider: "on-box (vLLM)", effort: "medium",
+      ctx: 131072, tools: ["graph.read", "notes.read", "wiki.write"],
+      userMsg: null,
+      trail: [
+        ["graph.read", "entity Priya · 61 facts", "0.3s"],
+        ["notes.read", "9 source notes", "0.9s"],
+        ["wiki.write", "page Priya · 4 sections", "1.6s"],
+        ["reasoning", "page 41 · drafting Household", "live"]
+      ],
+      raw: [
+        ["marker", "» page 41/96 — \"Priya\"\n"],
+        ["answer", "Priya has lived at the Cedar Street house since March 2021 [note 2021-03-14]. "]
+      ],
+      more: ["She works as a ", "structural engineer ", "[note 2022-08-02]. ", "» page 41 · section ", "Household\n"]
+    }
+  ];
+
+  var byId = {};
+  TURNS.forEach(function (t) { byId[t.id] = t; });
+  TURNS.forEach(function (t) { t.rawLive = t.raw.slice(); t.feed = 0; });
+
+  var KIND_LABEL = { agent: "AGENT", subagent: "SUB", workflow: "FLOW", job: "JOB" };
+
+  /* ===================== mock state ===================== */
+  var state = { scenario: "normal", range: 60, theme: "dark", motion: "full", target: "off" };
+  var stack = [];                 /* level-2 turn ids, deepest last */
+  var gpuNow = 62, tpsNow = 44;
+
+  function activeTurns() {
+    if (state.scenario === "idle") return [];
+    return TURNS;
+  }
+  function anyStreaming() {
+    return activeTurns().some(function (t) { return t.status === "running"; });
+  }
+
+  /* ===================== formatting ===================== */
+  function fmtElapsed(s) {
+    if (s < 60) return s + "s";
+    if (s < 3600) return Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+    return Math.floor(s / 3600) + "h " + String(Math.floor((s % 3600) / 60)).padStart(2, "0") + "m";
+  }
+  function fmtTok(n) {
+    if (n >= 1000) return (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k";
+    return String(n);
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /* ===================== the 48×20 top-bar chart ===================== */
+  var N = 12, PITCH = 4, BW = 2.6, MTOP = 1.4, MBOT = 16.6, TPS_MAX = 140;
+  var miniBarsG = document.querySelector(".bars-mini");
+  var miniBars = [];
+  for (var i = 0; i < N; i++) {
+    var r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    r.setAttribute("class", "bar");
+    r.setAttribute("x", (i * PITCH + 0.2).toFixed(2));
+    r.setAttribute("width", BW);
+    r.setAttribute("rx", "0.4");
+    miniBarsG.appendChild(r);
+    miniBars.push(r);
+  }
+  var miniLine = document.querySelector(".mini-line");
+  var miniNow = document.querySelector(".mini-now");
+  var vitalsTap = document.getElementById("vitalsTap");
+
+  function drawMini() {
+    var g = gpuBuf.slice(-N), t = tpsBuf.slice(-N), last = null;
+    for (var i = 0; i < N; i++) {
+      var v = g[i];
+      if (v === null) { miniBars[i].style.display = "none"; continue; }
+      miniBars[i].style.display = "";
+      var h = Math.max(0.9, (Math.min(v, 100) / 100) * (MBOT - MTOP));
+      miniBars[i].setAttribute("y", (MBOT - h).toFixed(2));
+      miniBars[i].setAttribute("height", h.toFixed(2));
+      miniBars[i].setAttribute("opacity", (0.3 + 0.7 * (i / (N - 1))).toFixed(2));
+      miniBars[i].classList.toggle("hot", v >= 85);
+    }
+    var d = "", open = false;
+    for (var j = 0; j < N; j++) {
+      var s = t[j];
+      if (s === null) { open = false; continue; }
+      var px = j * PITCH + 0.2 + BW / 2;
+      var py = MBOT - (Math.min(s, TPS_MAX) / TPS_MAX) * (MBOT - MTOP);
+      d += (open ? "L" : "M") + px.toFixed(2) + " " + py.toFixed(2) + " ";
+      open = true; last = [px, py];
+    }
+    miniLine.setAttribute("d", d.trim());
+    if (last && t[N - 1] !== null) {
+      miniNow.setAttribute("cx", last[0].toFixed(2));
+      miniNow.setAttribute("cy", last[1].toFixed(2));
+      miniNow.style.display = "";
+    } else { miniNow.style.display = "none"; }
+
+    var live = tpsBuf[CAP - 1] !== null;
+    vitalsTap.dataset.turn = live ? "live" : "idle";
+    document.getElementById("miniTps").textContent = live ? String(Math.round(tpsNow)) : "";
+    document.getElementById("miniGpu").textContent = String(Math.round(gpuNow));
+    vitalsTap.setAttribute("aria-label",
+      "GPU " + Math.round(gpuNow) + "% busy" + (live ? " · " + Math.round(tpsNow) + " tokens/sec" : "") +
+      " · open box vitals");
+  }
+
+  /* ===================== the big plot ===================== */
+  var COLS = 60, PX0 = 28, PX1 = 332, PY0 = 12, PY1 = 98;
+  var CW = (PX1 - PX0) / COLS;
+  var bigBarsG = document.getElementById("bigBars");
+  var bigBars = [];
+  for (var b = 0; b < COLS; b++) {
+    var rr = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rr.setAttribute("class", "bigbar");
+    rr.setAttribute("x", (PX0 + b * CW + (CW - Math.min(CW - 1.2, 3.4)) / 2).toFixed(2));
+    rr.setAttribute("width", Math.min(CW - 1.2, 3.4).toFixed(2));
+    rr.setAttribute("rx", "0.6");
+    bigBarsG.appendChild(rr);
+    bigBars.push(rr);
+  }
+  var bigTrace = document.getElementById("bigTrace");
+  var tpsAxis = document.querySelector(".axis-tps");
+
+  /* Ranges longer than a minute bucket the ring: GPU keeps its PEAK (a spike that
+     is averaged away is a lie about a pinned GPU), tokens/sec takes the mean of
+     the seconds that actually produced, and a bucket with no production stays null
+     so the trace breaks instead of drawing a line through zero. */
+  function windowed(seconds) {
+    var per = seconds / COLS;
+    var g = [], t = [];
+    for (var c = 0; c < COLS; c++) {
+      var from = CAP - seconds + c * per, to = from + per;
+      var peak = null, sum = 0, cnt = 0;
+      for (var k = Math.floor(from); k < Math.floor(to); k++) {
+        var gv = gpuBuf[k], tv = tpsBuf[k];
+        if (gv !== null && (peak === null || gv > peak)) peak = gv;
+        if (tv !== null) { sum += tv; cnt++; }
+      }
+      g.push(peak);
+      t.push(cnt ? sum / cnt : null);
+    }
+    return [g, t];
+  }
+
+  function drawBig() {
+    var w = windowed(state.range), g = w[0], t = w[1];
+    for (var i = 0; i < COLS; i++) {
+      var v = g[i];
+      if (v === null) { bigBars[i].style.display = "none"; continue; }
+      bigBars[i].style.display = "";
+      var h = Math.max(1, (Math.min(v, 100) / 100) * (PY1 - PY0));
+      bigBars[i].setAttribute("y", (PY1 - h).toFixed(2));
+      bigBars[i].setAttribute("height", h.toFixed(2));
+      bigBars[i].setAttribute("opacity", (0.4 + 0.6 * (i / (COLS - 1))).toFixed(2));
+      bigBars[i].classList.toggle("hot", v >= 85);
+    }
+    var d = "", open = false, drew = false;
+    for (var j = 0; j < COLS; j++) {
+      var s = t[j];
+      if (s === null) { open = false; continue; }
+      var px = PX0 + j * CW + CW / 2;
+      var py = PY1 - (Math.min(s, TPS_MAX) / TPS_MAX) * (PY1 - PY0);
+      d += (open ? "L" : "M") + px.toFixed(2) + " " + py.toFixed(2) + " ";
+      open = true; drew = true;
+    }
+    bigTrace.setAttribute("d", d.trim());
+    tpsAxis.setAttribute("opacity", drew ? "1" : "0");
+
+    var label = state.range === 60 ? "−60s" : state.range === 300 ? "−5m" : "−15m";
+    var mid = state.range === 60 ? "−30s" : state.range === 300 ? "−2m 30s" : "−7m 30s";
+    document.getElementById("xLeft").textContent = label;
+    document.getElementById("xMid").textContent = mid;
+    document.getElementById("bucketNote").textContent =
+      state.range === 60
+        ? "1-second samples. Two channels, two scales — each reads against itself over time, never against the other."
+        : (state.range / COLS) + "-second buckets: GPU keeps the peak of each bucket, tokens/sec the mean of the seconds that produced.";
+
+    document.getElementById("bigGpu").innerHTML = Math.round(gpuNow) + '<span class="u">%</span>';
+    var live = tpsBuf[CAP - 1] !== null;
+    var fig = document.getElementById("bigTpsFig");
+    fig.classList.toggle("off", !live);
+    document.getElementById("bigTps").textContent = live ? String(Math.round(tpsNow)) : "—";
+    document.getElementById("l1Sub").textContent = live ? "live" : "no turn streaming";
+  }
+
+  /* ===================== level 1 — roster ===================== */
+  function statusClass(t) {
+    if (t.status === "error") return "err";
+    if (t.status === "starting") return "wait";
+    return "run";
+  }
+
+  function rosterRow(t, isChild, isLast) {
+    var kids = TURNS.filter(function (c) { return c.parent === t.id; });
+    var meta;
+    if (t.status === "error") {
+      meta = '<span class="err">failed</span><span class="sep">·</span>' + esc(t.err || "");
+    } else if (t.status === "starting") {
+      meta = '<span class="wait">' + esc(t.note) + "</span>";
+    } else {
+      meta = esc(t.note) + '<span class="sep">·</span>' + t.steps + " steps";
+    }
+    return '<button class="turn-row' + (isChild ? " child" : "") + (isLast ? " last" : "") +
+      '" data-turn="' + t.id + '">' +
+      '<span class="tr-name"><i class="status-dot ' + statusClass(t) + '"></i>' +
+        '<span class="n">' + esc(t.name) + "</span>" +
+        '<span class="kind">' + KIND_LABEL[t.kind] + "</span></span>" +
+      '<span class="tr-meta">' + meta + (kids.length ? '<span class="sep">·</span>' + kids.length + " children" : "") + "</span>" +
+      '<span class="tr-right">' +
+        '<span class="tr-elapsed' + (t.elapsed > 3600 ? " long" : "") + '" data-el="' + t.id + '">' + fmtElapsed(t.elapsed) + "</span>" +
+        '<span class="tr-tok" data-tk="' + t.id + '">' + fmtTok(t.tokens) + " tok</span>" +
+      "</span></button>";
+  }
+
+  function renderRoster() {
+    var host = document.getElementById("roster");
+    var turns = activeTurns();
+    var honesty = document.getElementById("honesty");
+
+    if (!turns.length) {
+      document.getElementById("rosterCount").textContent = "0 turns";
+      honesty.hidden = true;   /* the empty state says it in full instead */
+      host.innerHTML =
+        '<div class="empty">' +
+          '<span class="hl">No agent turns running.</span>' +
+          '<span class="p">The GPU is at <b>' + Math.round(gpuNow) + '%</b> because the box is generating an image — ' +
+          'that is real work, but it is not an agent turn, so it has no row here. GPU busy counts ' +
+          'everything the box does; this list only counts turns.</span>' +
+          '<span class="p">Nothing is wrong, and nothing is hidden.</span>' +
+        "</div>";
+      return;
+    }
+
+    honesty.hidden = !(gpuNow >= 85);
+    document.getElementById("rosterCount").textContent = turns.length + " turns";
+
+    var html = "";
+    turns.filter(function (t) { return !t.parent; }).forEach(function (p) {
+      html += rosterRow(p, false, false);
+      var kids = turns.filter(function (c) { return c.parent === p.id; });
+      kids.forEach(function (c, i) { html += rosterRow(c, true, i === kids.length - 1); });
+    });
+    host.innerHTML = html;
+  }
+
+  /* Cheap per-tick refresh so the whole roster isn't rebuilt under the finger. */
+  function tickRoster() {
+    activeTurns().forEach(function (t) {
+      var e = document.querySelector('[data-el="' + t.id + '"]');
+      if (e) { e.textContent = fmtElapsed(t.elapsed); e.classList.toggle("long", t.elapsed > 3600); }
+      var k = document.querySelector('[data-tk="' + t.id + '"]');
+      if (k) k.textContent = fmtTok(t.tokens) + " tok";
+    });
+  }
+
+  /* ===================== level 2 — the turn dossier ===================== */
+  function rawHtml(t) {
+    if (!t.rawLive.length) {
+      return '<div class="raw-empty">no output yet — the turn is stamped and queued, ' +
+        "the model has not returned a first token</div>";
+    }
+    var out = t.rawLive.map(function (seg) {
+      return seg[0] ? '<span class="' + seg[0] + '">' + esc(seg[1]) + "</span>" : esc(seg[1]);
+    }).join("");
+    return '<div class="rawtext">' + out +
+      (t.status === "running" ? '<span class="caret"></span>' : "") + "</div>";
+  }
+
+  function renderL2(t) {
+    document.getElementById("l2Title").textContent = t.name;
+    document.getElementById("l2Sub").textContent = KIND_LABEL[t.kind].toLowerCase();
+
+    var kids = activeTurns().filter(function (c) { return c.parent === t.id; });
+    var statusWord = t.status === "error" ? "failed" : t.status;
+
+    var h = "";
+
+    /* --- what it is doing right now --- */
+    h += '<div class="card hero">' +
+      '<div class="hero-top"><i class="status-dot ' + statusClass(t) + '"></i>' +
+        '<span class="hero-status' + (t.status === "error" ? " err" : "") + '">' + statusWord + "</span>" +
+        '<span class="kind">' + KIND_LABEL[t.kind] + "</span>" +
+        '<span class="layer-sub" style="padding-right:0">' + esc(t.persona) + "</span></div>" +
+      '<div class="hero-grid">' +
+        '<div><div class="k">elapsed</div><div class="v" data-el2>' + fmtElapsed(t.elapsed) + "</div></div>" +
+        '<div><div class="k">steps</div><div class="v">' + t.steps + "</div></div>" +
+        '<div><div class="k">cost</div><div class="v" data-tk2>' + fmtTok(t.tokens) + "</div></div>" +
+      "</div>" +
+      (t.status === "error"
+        ? '<div class="errbox">' + esc(t.err) + "</div>"
+        : '<div class="hero-note">' + esc(t.note) + "</div>") +
+      "</div>";
+
+    /* --- children, tappable: the fan pushes another level --- */
+    if (kids.length) {
+      h += '<div class="sec-head">Children <span class="count">' + kids.length + "</span></div>";
+      h += '<div class="card">';
+      kids.forEach(function (c) {
+        h += '<button class="child-row" data-turn="' + c.id + '">' +
+          '<i class="status-dot ' + statusClass(c) + '"></i>' +
+          '<span class="cn">' + esc(c.name) + "</span>" +
+          '<span class="cm">' + (c.status === "error" ? "failed" : fmtElapsed(c.elapsed)) + "</span>" +
+          '<svg style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;color:var(--text-3);flex:none" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>' +
+          "</button>";
+      });
+      h += "</div>";
+    }
+
+    /* --- the call: everything stamped at turn start --- */
+    h += '<div class="sec-head">The call</div>';
+    h += '<div class="card kv">' +
+      kv("model", "<em>" + esc(t.model) + "</em> · " + esc(t.provider)) +
+      kv("reasoning", esc(t.effort)) +
+      kv("context", t.ctx.toLocaleString("en-US") + " tokens") +
+      kv("agent", esc(t.persona) + " · " + esc(t.promptVersion)) +
+      kv("tools", '<span class="chips">' + t.tools.map(function (x) { return "<span>" + esc(x) + "</span>"; }).join("") + "</span>") +
+      "</div>";
+
+    h += '<div class="sec-head">The run</div>';
+    h += '<div class="card kv">' +
+      kv("run id", "<em>" + esc(t.id) + "</em>") +
+      (t.parent ? kv("parent", esc(t.parent)) : "") +
+      kv("started", esc(t.startedAt)) +
+      kv("trigger", esc(t.trigger)) +
+      kv("session", esc(t.session)) +
+      kv("domain", esc(t.domain) + " · ran as " + esc(t.ranAs)) +
+      "</div>";
+
+    if (t.userMsg) {
+      h += '<div class="sec-head">Triggering message</div>';
+      h += '<div class="card"><div class="quote">' + esc(t.userMsg) + "</div></div>";
+      h += '<div class="bucket-note" style="padding:0 2px">The prompt actually sent to the model is not stored, so it is not shown.</div>';
+    }
+
+    /* --- step trail --- */
+    if (t.trail.length) {
+      h += '<div class="sec-head">Steps <span class="count">' + t.steps + " total</span></div>";
+      h += '<div class="card trail">';
+      t.trail.forEach(function (s, i) {
+        var live = s[2] === "live";
+        h += '<div class="step' + (live ? " now" : "") + '">' +
+          '<span class="i">' + (t.steps - t.trail.length + i + 1) + "</span>" +
+          '<span class="t"><b>' + esc(s[0]) + "</b> " + esc(s[1]) + "</span>" +
+          '<span class="d">' + esc(s[2]) + "</span></div>";
+      });
+      h += "</div>";
+    }
+
+    /* --- raw output last, so it can be as long as it likes --- */
+    h += '<div class="card raw"><div class="raw-head">' +
+      '<span class="t">Raw output</span>' +
+      (t.status === "running" ? '<span class="live">streaming</span>' : "") +
+      "</div>" + rawHtml(t) + "</div>";
+
+    h += '<div class="climb"><svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg> swipe down to climb back</div>';
+
+    document.getElementById("l2Body").innerHTML = h;
+  }
+
+  function kv(k, v) {
+    return '<div class="kv-row"><span class="k">' + k + '</span><span class="v">' + v + "</span></div>";
+  }
+
+  function tickL2() {
+    if (!stack.length) return;
+    var t = byId[stack[stack.length - 1]];
+    var e = document.querySelector("[data-el2]"); if (e) e.textContent = fmtElapsed(t.elapsed);
+    var k = document.querySelector("[data-tk2]"); if (k) k.textContent = fmtTok(t.tokens);
+    var rawHost = document.querySelector("#l2Body .raw");
+    if (rawHost) {
+      var body = document.getElementById("l2Body");
+      var atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+      var head = rawHost.querySelector(".raw-head").outerHTML;
+      rawHost.innerHTML = head + rawHtml(t);
+      if (atBottom) body.scrollTop = body.scrollHeight;
+    }
+  }
+
+  /* ===================== layers ===================== */
+  var l1 = document.getElementById("l1"), l2 = document.getElementById("l2");
+
+  function openL1() {
+    renderRoster();
+    drawBig();
+    l1.classList.add("up");
+    document.getElementById("l1Body").scrollTop = 0;
+  }
+  function closeL1() { closeL2(); l1.classList.remove("up"); }
+
+  function pushTurn(id) {
+    stack.push(id);
+    renderL2(byId[id]);
+    document.getElementById("l2Body").scrollTop = 0;
+    if (!l2.classList.contains("up")) { l2.classList.add("up"); }
+    else if (state.motion === "full") {
+      /* pushing a child over a turn replays the same rise, so depth still reads */
+      l2.style.transition = "none"; l2.style.transform = "translateY(14%)";
+      void l2.offsetWidth;
+      l2.style.transition = ""; l2.style.transform = "";
+    }
+  }
+  function popTurn() {
+    stack.pop();
+    if (!stack.length) { l2.classList.remove("up"); return; }
+    renderL2(byId[stack[stack.length - 1]]);
+  }
+  function closeL2() { stack = []; l2.classList.remove("up"); }
+
+  vitalsTap.addEventListener("click", openL1);
+  document.getElementById("l1Back").addEventListener("click", closeL1);
+  document.getElementById("l1Handle").addEventListener("click", closeL1);
+  document.getElementById("l2Back").addEventListener("click", popTurn);
+  document.getElementById("l2Handle").addEventListener("click", popTurn);
+
+  document.getElementById("roster").addEventListener("click", function (e) {
+    var row = e.target.closest("[data-turn]");
+    if (row) pushTurn(row.dataset.turn);
+  });
+  document.getElementById("l2Body").addEventListener("click", function (e) {
+    var row = e.target.closest("[data-turn]");
+    if (row) pushTurn(row.dataset.turn);
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (stack.length) popTurn(); else if (l1.classList.contains("up")) closeL1();
+  });
+
+  /* Down-swipe climbs one level, armed only at scroll-top so it never fights
+     content scrolling (DESIGN.md: "navigation is a tree, swiping down climbs it"). */
+  function armSwipe(layer, bodyId, onClimb) {
+    var body = document.getElementById(bodyId), y0 = null, armed = false;
+    layer.addEventListener("pointerdown", function (e) {
+      y0 = e.clientY; armed = body.scrollTop <= 0;
+    });
+    layer.addEventListener("pointerup", function (e) {
+      if (armed && y0 !== null && e.clientY - y0 > 70) onClimb();
+      y0 = null; armed = false;
+    });
+  }
+  armSwipe(l1, "l1Body", closeL1);
+  armSwipe(l2, "l2Body", popTurn);
+
+  /* ===================== range control ===================== */
+  document.querySelector(".range").addEventListener("click", function (e) {
+    var btn = e.target.closest("button"); if (!btn) return;
+    this.querySelectorAll("button").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b === btn));
+    });
+    state.range = Number(btn.dataset.r);
+    drawBig();
+  });
+
+  /* ===================== 1 Hz tick ===================== */
+  var beat = 0;
+  function tick() {
+    beat++;
+    var idle = state.scenario === "idle";
+    /* Image generation pins the GPU with no turn behind it. In the busy scenario it
+       still happens — an 8-second hump every half minute — so the "GPU busy is not
+       agent turns" note is something the reviewer actually sees fire. */
+    var imaging = idle || beat % 30 < 8;
+    var gTarget = imaging ? 90 + Math.random() * 8 : 48 + Math.random() * 26;
+    gpuNow += (gTarget - gpuNow) * 0.45 + (Math.random() - 0.5) * 4;
+    gpuNow = Math.max(0, Math.min(100, gpuNow));
+
+    var streaming = anyStreaming();
+    if (streaming) {
+      var tTarget = 34 + Math.random() * 22;
+      tpsNow += (tTarget - tpsNow) * 0.4 + (Math.random() - 0.5) * 7;
+      tpsNow = Math.max(8, Math.min(TPS_MAX, tpsNow));
+    }
+    pushSample(gpuNow, streaming ? tpsNow : null);
+
+    activeTurns().forEach(function (t) {
+      if (t.status === "error") return;
+      t.elapsed += 1;
+      if (t.status === "starting") return;
+      t.tokens += Math.round(40 + Math.random() * 260);
+      if (Math.random() < 0.12) t.steps += 1;
+      /* raw output grows a fragment at a time */
+      if (t.more.length && Math.random() < 0.5) {
+        t.feed = (t.feed + 1) % t.more.length;
+        var cls = t.rawLive.length ? t.rawLive[t.rawLive.length - 1][0] : "";
+        t.rawLive.push([cls, t.more[t.feed]]);
+        if (t.rawLive.length > 60) t.rawLive.splice(0, 1);
+      }
+    });
+
+    drawMini();
+    if (l1.classList.contains("up")) {
+      drawBig();
+      if (activeTurns().length) {
+        tickRoster();
+        document.getElementById("honesty").hidden = gpuNow < 85;
+      } else {
+        renderRoster();   /* the empty state quotes the live GPU figure */
+      }
+    }
+    if (stack.length) tickL2();
+  }
+
+  /* ===================== scenarios & desk ===================== */
+  function applyScenario() {
+    var forumChild = byId.run_9d41d3, parent = byId.run_9d41c7;
+    if (state.scenario === "error") {
+      forumChild.status = "error";
+      forumChild.err = forumChild.errText;
+      parent.note = "one source failed — continuing with 5";
+    } else {
+      forumChild.status = "running";
+      forumChild.err = null;
+      parent.note = "synthesising 6 sources";
+    }
+    if (state.scenario === "idle" && stack.length) closeL2();
+    renderRoster();
+    if (stack.length) renderL2(byId[stack[stack.length - 1]]);
+  }
+
+  document.querySelectorAll(".ctl").forEach(function (ctl) {
+    ctl.addEventListener("click", function (e) {
+      var btn = e.target.closest("button"); if (!btn) return;
+      ctl.querySelectorAll("button").forEach(function (b) {
+        b.setAttribute("aria-pressed", String(b === btn));
+      });
+      state[ctl.dataset.ctl] = btn.dataset.v;
+      var phone = document.getElementById("phone");
+      if (state.theme === "light") phone.setAttribute("data-theme", "light");
+      else phone.removeAttribute("data-theme");
+      document.body.classList.toggle("rm", state.motion === "reduced");
+      document.body.classList.toggle("show-target", state.target === "on");
+      applyScenario();
+      drawBig();
+    });
+  });
+
+  renderRoster();
+  drawMini();
+  drawBig();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

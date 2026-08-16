@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-15
+> **Status:** Living · **Last verified:** 2026-08-16
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -130,8 +130,10 @@ accent as the glyph color — one tint formula, no per-type `-tint` tokens.
 ## Core components
 
 **Top bar** — wordmark (or back chevron + screen title) left; right cluster: the
-**vitals chart** (below). Height 56px. The right cluster is a *readout*, not a
-control — nothing in it is tappable.
+**vitals chart** (below). Height 56px. The chart is a readout that is also the *only*
+control in the cluster: it opens the vitals detail card. Nothing else there is
+tappable, and the chart never became a launcher — the launcher stays on the omnibox
+swipe-up.
 
 **Status banner** — full-width strip under the top bar for connectivity/sync
 problems: `--rose` text on rose-tint background, e.g. *"Browser online, but
@@ -180,6 +182,36 @@ The honest signal this buys: **streaming fast while the GPU stays cold means a
 cloud model answered, not the box.** The first round (A/B/C) folded the launcher
 into the readout as a tap target; the owner ruled that out — the bolt is gone
 entirely and nothing in the cluster is tappable.
+
+**Vitals detail** (settled in a three-way GUI gate — chosen **I "drill-down"** over
+G "instrument panel" and H "dossier"; binding mock
+`docs/mocks/vitals-detail/i-drilldown.html`). Tapping the top bar's vitals chart opens
+a **full-screen card** — the paradigm table's answer for a graph plus a drillable list
+plus expandable detail — with **two levels**:
+
+- **Level 1** is the graph at **1 / 5 / 15 minutes** plus a roster of every run in
+  flight, children indented under the turn that spawned them.
+- **Level 2** is a pushed layer that is entirely one turn: what it is doing now, its
+  children, **the call** (model, provider, reasoning effort, context window, tools,
+  persona) and **the run** (id, parent, started, trigger, session, domain, ran-as).
+  It climbs back with the chevron, the down-swipe and the platform back gesture, like
+  every other stacked layer.
+
+Three things this surface is careful about:
+
+- **Longer ranges bucket by PEAK, not mean** [decided]. This gauge is read to find the
+  moment the box was pinned; averaging a 15-minute window flattens a ten-second spike
+  into nothing, hiding exactly what the screen was opened to see.
+- **The verbatim prompt is never shown**, because it is assembled per model call and
+  stored nowhere. The screen says so rather than leaving a suggestive gap.
+- **A busy GPU with an empty roster is a real state**, not a bug: GPU busy covers the
+  whole box, image generation and model loads included. The empty state explains that
+  in words instead of looking broken.
+
+**Making the chart a control** [decided]: the drawing is untouched at 48×20, and only
+the hit area grows to clear the 44px minimum. It also stops being an `<output>` when
+tappable — a live region that is also a control would announce the whole reading on
+every 1 Hz tick — so it becomes a button with a stable name.
 
 **Segmented control** — pill row on `--surface-2`; inactive segments
 transparent with `--text-2` label + icon; active segment gets the
@@ -834,8 +866,9 @@ launcher** (the v1 knowledge-hub tile grid: 3-column tiles under uppercase
 section headers — KNOWLEDGE, AUTHORING, SYSTEM):
 
 - Opened by **swiping up on the omnibox** (settled when the top bar's right
-  cluster became the vitals chart — the bolt icon that used to open it is gone,
-  and nothing in that cluster is tappable any more).
+  cluster became the vitals chart — the bolt icon that used to open it is gone).
+  The chart itself is tappable, but it opens the vitals detail card, never the
+  launcher: one gesture, one destination.
 - Slides up over the home screen; dismissed by the **explicit ✕ button or
   tapping the handle row** (primary paths — gestures proved unreliable on
   real devices and are an enhancement only), swipe down, or Escape. It is a

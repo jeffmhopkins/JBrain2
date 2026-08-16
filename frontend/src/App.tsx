@@ -41,6 +41,7 @@ import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { TalkScreen } from "./screens/TalkScreen";
 import { TasksScreen } from "./screens/TasksScreen";
+import { VitalsScreen } from "./screens/VitalsScreen";
 import { WikiLandingScreen } from "./screens/WikiLandingScreen";
 import { WikiScreen } from "./screens/WikiScreen";
 import { useBackGesture } from "./useBackGesture";
@@ -70,7 +71,8 @@ type Card =
   | "intake"
   | "petcontrol"
   | "jcode"
-  | "jlaunch";
+  | "jlaunch"
+  | "vitals";
 
 // Automations, Tasks, Image and jcode bring their own full-screen overlay (own back
 // bar + slide-in), so they render outside the shared subscreen TopBar wrapper — hence
@@ -80,6 +82,7 @@ const SCREEN_TITLES: Record<
   string
 > = {
   ops: "Ops",
+  vitals: "Box vitals",
   data: "Data",
   settings: "Settings",
   "llm-settings": "LLM Settings",
@@ -102,6 +105,10 @@ export function App() {
   const [card, setCard] = useState<Card | null>(null);
   const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // Which turn's detail level is open on the vitals card. Held here, not inside the
+  // screen, so closeTopLayer and the platform back gesture climb it like every other
+  // stacked layer instead of closing the whole card from under it.
+  const [vitalsTurn, setVitalsTurn] = useState<string | null>(null);
   // The Runs surface stacks one layer above Automations: Automations' "All runs"
   // drill-through opens it, and its own back bar closes it back to Automations.
   const [runsOpen, setRunsOpen] = useState(false);
@@ -455,6 +462,8 @@ export function App() {
     // Runs stacks above Automations, so it climbs off first.
     if (runsOpen) return setRunsOpen(false);
     if (card === "automations") return closeAutomations();
+    // The vitals turn detail is a layer above its card, so it climbs off first.
+    if (vitalsTurn !== null) return setVitalsTurn(null);
     // Tasks/Image/jcode close straight to the launcher (own overlay, no subscreen slide).
     if (card === "tasks") return setCard(null);
     if (card === "image") return setCard(null);
@@ -501,6 +510,7 @@ export function App() {
           onOpenEntity={setEntityView}
           onOpenSearch={() => setCard("search")}
           onOpenLauncher={() => setLauncherOpen(true)}
+          onOpenVitals={() => setCard("vitals")}
           compose={compose}
           onComposeConsumed={clearCompose}
           openSession={openSession}
@@ -530,11 +540,19 @@ export function App() {
             onTouchStart={onSubTouchStart}
             onTouchMove={onSubTouchMove}
           >
-            <TopBar title={SCREEN_TITLES[card]} onBack={jumpHome} syncStatus={notes.syncStatus} />
+            <TopBar
+              title={SCREEN_TITLES[card]}
+              onBack={jumpHome}
+              syncStatus={notes.syncStatus}
+              onOpenVitals={card === "vitals" ? undefined : () => setCard("vitals")}
+            />
             {card === "ops" && (
               <main className="screen-body">
                 <OpsScreen />
               </main>
+            )}
+            {card === "vitals" && (
+              <VitalsScreen selectedTurnId={vitalsTurn} onSelectTurn={setVitalsTurn} />
             )}
             {card === "settings" && (
               <SettingsScreen

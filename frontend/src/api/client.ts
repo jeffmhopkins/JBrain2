@@ -66,6 +66,53 @@ export interface HostVitals {
   gpu_busy_percent: number | null;
 }
 
+/** What a turn was asked to do, resolved at its start (backend migration 0166). Every
+ *  field is optional — a run predating the column, or one whose driver doesn't stamp,
+ *  still lists and renders whatever it has. There is no verbatim prompt here: it is
+ *  assembled per model call and stored nowhere. */
+export interface TurnCall {
+  provider?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  context_window?: number | null;
+  vision?: boolean | null;
+  persona?: string | null;
+  /** null is the registry WILDCARD ("every in-scope tool"), not the empty allowlist. */
+  tools?: string[] | null;
+  user_message?: string | null;
+  user_message_truncated?: boolean | null;
+  label?: string | null;
+}
+
+/** One run in flight, for the vitals detail roster. `parent_run_id` nests a
+ *  deep-research fan's children under the turn that spawned them. */
+export interface LiveTurn {
+  id: string;
+  kind: string;
+  status: string;
+  name: string;
+  started_at: string;
+  elapsed_ms: number;
+  step_count: number;
+  cost_tokens: number;
+  progress_note: string | null;
+  parent_run_id: string | null;
+  session_id: string | null;
+  domain_code: string | null;
+  ran_as: string;
+  prompt_version: string | null;
+  /** The pipeline of the trigger that fired it; null means the owner started it. */
+  trigger_pipeline: string | null;
+  call: TurnCall | null;
+}
+
+export interface LiveTurns {
+  turns: LiveTurn[];
+  /** Carried with the roster so the surface can say "busy box, no turns" in one
+   *  breath — GPU busy covers the whole box, image generation included. */
+  gpu_busy_percent: number | null;
+}
+
 /** A deferred media analysis' live state (GET /api/chat/deferred/{id}), polled by the
  * task_status card. `result` is the finished video_analysis card data once `status` is
  * `done`; `progress` drives the bar/label while running. */
@@ -2787,6 +2834,13 @@ export const api = {
    *  stream, live host telemetry is out of mock scope. */
   opsVitalsStream(): EventSource {
     return new EventSource("/api/ops/vitals/stream");
+  },
+
+  /** The runs in flight right now, with the call each was set up with, for the vitals
+   *  detail roster. Polled while that surface is open and in the foreground. */
+  async opsTurns(): Promise<LiveTurns> {
+    const response = await request("/api/ops/turns");
+    return (await response.json()) as LiveTurns;
   },
 
   // ===== The workflow run log — the Ops "Runs" surface (owner-only) =====

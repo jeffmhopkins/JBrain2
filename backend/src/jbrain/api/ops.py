@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from jbrain import ops_metrics
+from jbrain.agent.runlog import RunLogReader
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
 from jbrain.api.settings import get_settings_store
 from jbrain.config import Settings
@@ -447,6 +448,75 @@ async def vitals_frames(disconnected: Callable[[], Awaitable[bool]]) -> AsyncIte
         payload = json.dumps({"gpu_busy_percent": read_gpu_busy_percent()})
         yield f"data: {payload}\n\n".encode()
         await asyncio.sleep(_VITALS_PERIOD_S)
+
+
+class CallStampOut(BaseModel):
+    """What a run was asked to do, resolved at turn start (migration 0166). Every field
+    is optional: a run whose driver doesn't stamp, or one predating the column, renders
+    whatever it has rather than being hidden. The VERBATIM PROMPT is absent by design —
+    it is assembled per model call and stored nowhere."""
+
+    provider: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    context_window: int | None = None
+    vision: bool | None = None
+    persona: str | None = None
+    # None is the registry wildcard ("every in-scope tool"), which is not the same
+    # thing as the empty list ("no tools") — the surface words them differently.
+    tools: list[str] | None = None
+    user_message: str | None = None
+    user_message_truncated: bool | None = None
+    label: str | None = None
+
+
+class LiveTurnOut(BaseModel):
+    id: str
+    kind: str
+    status: str
+    name: str
+    started_at: datetime
+    elapsed_ms: int
+    step_count: int
+    cost_tokens: int
+    progress_note: str | None
+    parent_run_id: str | None
+    session_id: str | None
+    domain_code: str | None
+    ran_as: str
+    prompt_version: str | None
+    trigger_pipeline: str | None
+    call: CallStampOut | None
+
+
+class LiveTurnsOut(BaseModel):
+    turns: list[LiveTurnOut]
+    # The gauge alongside the roster, so the surface can say "the GPU is busy but no
+    # turn is running" in one breath — that happens legitimately, because GPU busy
+    # covers the whole box, image generation included.
+    gpu_busy_percent: float | None
+
+
+@router.get("/turns")
+async def live_turns(request: Request, principal: PrincipalDep) -> LiveTurnsOut:
+    """The runs in flight right now, oldest first, with the call each was set up with.
+
+    Read from the runs table rather than the in-process live-turn registry: that
+    registry holds only parent /chat turns, so a deep-research fan would collapse to one
+    row and a workflow run would not appear at all."""
+    reader = cast(RunLogReader, request.app.state.run_reader)
+    ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+    rows = await reader.list_live(ctx)
+    return LiveTurnsOut(
+        turns=[
+            LiveTurnOut(
+                **{k: v for k, v in vars(row).items() if k != "call_stamp"},
+                call=CallStampOut(**row.call_stamp) if row.call_stamp else None,
+            )
+            for row in rows
+        ],
+        gpu_busy_percent=read_gpu_busy_percent(),
+    )
 
 
 @router.get("/vitals/stream")

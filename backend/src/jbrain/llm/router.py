@@ -505,13 +505,18 @@ class LlmRouter:
         prompt's `strength` so a tier resolves the way `complete` would."""
         return self._resolve(task, strength)
 
-    async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+    async def effective_spec(
+        self, task: str, strength: str | None = None, spec_override: str | None = None
+    ) -> tuple[str, str]:
         """The (provider, model) a task will ACTUALLY run on after folding in the live
         DB overrides — the override-aware sibling of `spec()`. Provenance stamps
         (`extractor`, an extract's `tool`) MUST use this so the recorded model matches
         the one `complete` used; `spec()` would mis-stamp the static default for any
-        task the operator re-routed in Settings."""
-        return (await self._resolve_live(task, strength))[:2]
+        task the operator re-routed in Settings. `spec_override` (the per-conversation
+        model pick) reports the model the turn actually runs on, matching what its
+        sibling resolvers here already do — without it, a turn steered onto another
+        model would be stamped with the default route's name."""
+        return (await self._resolve_live(task, strength, spec_override))[:2]
 
     @staticmethod
     def _toks_per_s(output_tokens: int, elapsed_s: float) -> float | None:
