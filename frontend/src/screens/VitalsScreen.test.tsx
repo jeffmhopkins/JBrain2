@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LiveTurn, LiveTurns } from "../api/client";
-import { VitalsScreen, bucket, formatElapsed } from "./VitalsScreen";
+import { VitalsScreen, formatElapsed, perSecond } from "./VitalsScreen";
 
 const opsTurns = vi.hoisted(() => vi.fn());
 const history = vi.hoisted(() => ({
@@ -229,9 +229,11 @@ describe("VitalsScreen", () => {
       { at: now - 400, gpu: 91, tps: null },
     ];
 
-    expect(bucket(samples, 1, 2, (x) => x.tps)).toContain(48);
+    // A 2s window, because sub-second offsets straddle the whole-second grid depending
+    // on where `now` falls inside its second.
+    expect(perSecond(samples, 2, (x) => x.tps, now)).toContain(48);
     // The GPU channel is unaffected by a gap in the other one.
-    expect(bucket(samples, 1, 2, (x) => x.gpu)).toContain(91);
+    expect(perSecond(samples, 2, (x) => x.gpu, now)).toContain(91);
   });
 
   it("seeds the graph from the server's recorded history", async () => {
@@ -358,62 +360,55 @@ describe("VitalsScreen", () => {
   });
 });
 
-describe("bucket", () => {
-  it("takes the peak of each column, not the mean", () => {
-    // A 15-minute mean flattens a 10-second spike into nothing — hiding exactly what
-    // the screen was opened to find.
-    const now = Date.now();
-    const samples = [
-      { at: now - 900, gpu: 4, tps: null },
-      { at: now - 800, gpu: 97, tps: null },
-      { at: now - 700, gpu: 6, tps: null },
-    ];
+describe("perSecond", () => {
+  const at = (secondsAgo: number, gpu: number | null) => ({
+    at: NOW_MS - secondsAgo * 1000,
+    gpu,
+    tps: null,
+  });
+  const NOW_MS = 1_760_000_000_000;
 
-    const columns = bucket(samples, 1, 1);
+  it("gives every second its own slot, at full resolution", () => {
+    const slots = perSecond([at(2, 10), at(1, 20), at(0, 30)], 3, (s) => s.gpu, NOW_MS);
 
-    expect(columns[0]).toBe(97);
+    expect(slots).toEqual([10, 20, 30]);
   });
 
-  it("leaves a gap where nothing was sampled rather than drawing a zero", () => {
-    const columns = bucket([], 60, 4);
+  it("keeps a sample in the same slot as the window scrolls", () => {
+    // The bucketer this replaced derived its edges from Date.now() on every tick, so the
+    // partition slid and samples visibly hopped columns while the data sat still.
+    const sample = at(5, 42);
+    const first = perSecond([sample], 10, (s) => s.gpu, NOW_MS);
+    const later = perSecond([sample], 10, (s) => s.gpu, NOW_MS + 3000);
 
-    expect(columns).toEqual([null, null, null, null]);
+    expect(first.indexOf(42)).toBe(4);
+    expect(later.indexOf(42)).toBe(1); // moved left by exactly the 3s that elapsed
   });
 
-  it("ignores samples older than the window", () => {
-    const now = Date.now();
-    const columns = bucket([{ at: now - 600_000, gpu: 88, tps: null }], 60, 2);
+  it("leaves a second with no reading null rather than zero", () => {
+    const slots = perSecond([at(2, 10), at(0, 30)], 3, (s) => s.gpu, NOW_MS);
 
-    expect(columns).toEqual([null, null]);
-  });
-});
-
-describe("formatElapsed", () => {
-  it("reads in the unit that fits", () => {
-    expect(formatElapsed(42_000)).toBe("42s");
-    expect(formatElapsed(252_000)).toBe("4m 12s");
-    expect(formatElapsed(7_500_000)).toBe("2h 05m");
-  });
-});
-
-describe("bucket, as the mean", () => {
-  it("averages the samples in a bucket", () => {
-    const now = Date.now();
-    const samples = [
-      { at: now - 900, gpu: 10, tps: null },
-      { at: now - 800, gpu: 90, tps: null },
-    ];
-
-    expect(bucket(samples, 1, 1, (s) => s.gpu, "mean")[0]).toBe(50);
+    expect(slots).toEqual([10, null, 30]);
   });
 
-  it("still leaves an empty bucket null rather than averaging to zero", () => {
-    // A zero would read as an idle GPU. The plot needs a gap.
-    const now = Date.now();
-    const columns = bucket([{ at: now - 100, gpu: 40, tps: null }], 60, 4, (s) => s.gpu, "mean");
+  it("drops samples outside the window", () => {
+    expect(perSecond([at(600, 88)], 60, (s) => s.gpu, NOW_MS).every((v) => v === null)).toBe(true);
+  });
 
-    expect(columns.slice(0, 3)).toEqual([null, null, null]);
-    expect(columns[3]).toBe(40);
+  it("keeps the higher of two readings landing in one second", () => {
+    // Both land in the second BEFORE `now` (NOW_MS is a whole second), so the window has
+    // to be wide enough to include it.
+    const slots = perSecond(
+      [
+        { at: NOW_MS - 400, gpu: 12, tps: null },
+        { at: NOW_MS - 200, gpu: 97, tps: null },
+      ],
+      2,
+      (s) => s.gpu,
+      NOW_MS,
+    );
+
+    expect(slots).toEqual([97, null]);
   });
 });
 
@@ -494,5 +489,13 @@ describe("a payload that omits ended_at", () => {
 
     expect(await screen.findByText("Running now")).toBeInTheDocument();
     expect(screen.queryByText(/^Finished, last/)).not.toBeInTheDocument();
+  });
+});
+
+describe("formatElapsed", () => {
+  it("reads in the unit that fits", () => {
+    expect(formatElapsed(42_000)).toBe("42s");
+    expect(formatElapsed(252_000)).toBe("4m 12s");
+    expect(formatElapsed(7_500_000)).toBe("2h 05m");
   });
 });

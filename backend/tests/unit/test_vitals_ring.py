@@ -7,6 +7,8 @@ answer a question that stops mattering a quarter of an hour later.
 """
 
 import asyncio
+import contextlib
+import time
 
 import pytest
 
@@ -87,3 +89,65 @@ async def test_sample_loop_records_and_survives_a_failing_gauge() -> None:
     # which is the proof the loop carried on past the error.
     assert kept == [50.0, None, None]
     assert calls == 4
+
+
+async def test_sample_loop_survives_a_gauge_that_hangs() -> None:
+    """A blocking sysfs read is the one thing in this loop that can stall the whole API:
+    it runs once a second for the life of the process, on the same event loop that serves
+    every request. A hung amdgpu attribute must cost one sample, not the box."""
+    ring = VitalsRing()
+    calls = 0
+
+    def hangs() -> float | None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            time.sleep(5)  # far past READ_TIMEOUT_SECONDS
+            return 99.0
+        raise asyncio.CancelledError
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await sample_loop(ring, read=hangs, interval=0)
+
+    samples = ring.since(3600)
+    # The hung read was abandoned as a gap rather than blocking the loop behind it.
+    assert samples[0]["gpu"] is None
+    assert calls == 2  # the loop kept going
+
+
+async def test_sample_loop_does_not_block_the_event_loop() -> None:
+    """The read runs in a THREAD, so other tasks keep being scheduled while it is stuck.
+
+    Asserted while the slow read is still in flight, not after: awaiting the other task
+    first would let it finish either way and the test would pass against an inline read —
+    which is precisely the bug. In production the "other task" is every request the API
+    is serving."""
+    ring = VitalsRing()
+    ticks = 0
+
+    async def other_work() -> None:
+        nonlocal ticks
+        for _ in range(5):
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    calls = 0
+
+    def slow() -> float | None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            time.sleep(0.3)
+            return 12.0
+        raise asyncio.CancelledError
+
+    task = asyncio.create_task(other_work())
+    with contextlib.suppress(asyncio.CancelledError):
+        await sample_loop(ring, read=slow, interval=0)
+
+    # 0.3s of read against 0.05s of ticks: threaded, every tick has landed. Inline, the
+    # loop never yielded and none had.
+    assert ticks == 5
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task

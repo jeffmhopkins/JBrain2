@@ -38,6 +38,18 @@ const REOPEN_MS = 5_000;
  *  every runtime this module is imported into. */
 const SOURCE_CLOSED = 2;
 
+/** How long a stream may go silent before we stop believing it.
+ *
+ *  The route sends a frame every second whether or not the reading moved, precisely so
+ *  silence is diagnostic. A stream can stop delivering while the socket stays OPEN — a
+ *  proxy buffering `text/event-stream`, a half-open connection after a network change, a
+ *  server that stopped writing — and none of those raise an error event, so the fatal-
+ *  close recovery never fires. That is the state the top bar was found in: EventSource
+ *  reporting a perfectly healthy connection with no data behind it, while the detail
+ *  screen (plain fetches) kept showing numbers. Six missed frames is well clear of
+ *  ordinary jitter. */
+const SILENCE_MS = 6_000;
+
 /** Why there is or isn't a number.
  *  - `reading` — a live figure from the box.
  *  - `absent`  — the box answered, and it has no amdgpu gauge to report.
@@ -80,6 +92,7 @@ let source: EventSource | null = null;
 let access: Access = "unknown";
 let published: GpuBusy = UNKNOWN;
 let reprobe: ReturnType<typeof setTimeout> | null = null;
+let silence: ReturnType<typeof setTimeout> | null = null;
 
 function publish(busy: GpuBusy): void {
   published = busy;
@@ -155,7 +168,9 @@ function openStream(): void {
     return;
   }
   source = stream;
+  armSilenceWatchdog(stream);
   stream.onmessage = (event: MessageEvent<string>) => {
+    armSilenceWatchdog(stream); // a frame arrived: the stream is alive, restart the clock
     try {
       const frame = JSON.parse(event.data) as { gpu_busy_percent?: unknown };
       const busy = fromFrame(frame.gpu_busy_percent);
@@ -180,9 +195,25 @@ function openStream(): void {
   };
 }
 
-/** Tear a fatally-closed stream down and try again shortly. Guarded against reopening a
- *  stream that has already been replaced or stopped, so a late error from a torn-down
- *  EventSource cannot resurrect one nobody is listening to. */
+/** (Re)start the silence timer for a stream. A stream that goes quiet is replaced, not
+ *  waited on: the reading is already stale by then, and nothing else will notice. */
+function armSilenceWatchdog(stream: EventSource): void {
+  if (silence !== null) clearTimeout(silence);
+  silence = setTimeout(() => {
+    silence = null;
+    if (source !== stream) return;
+    publish(UNKNOWN); // stale is not a reading — say so before trying again
+    reopenLater(stream);
+  }, SILENCE_MS);
+}
+
+/** Tear a stream down and try again shortly. Guarded against reopening a stream that has
+ *  already been replaced or stopped, so a late error from a torn-down EventSource cannot
+ *  resurrect one nobody is listening to.
+ *
+ *  Callers decide WHEN: the error path only acts on a CLOSED socket, because EventSource
+ *  handles a dropped one itself. The silence path acts on a socket still claiming to be
+ *  OPEN — which is exactly the failure a readyState check would wave through. */
 function reopenLater(stream: EventSource): void {
   if (source !== stream) return;
   stream.close();
@@ -222,6 +253,10 @@ function start(): void {
 function stop(): void {
   source?.close();
   source = null;
+  if (silence !== null) {
+    clearTimeout(silence);
+    silence = null;
+  }
   if (reprobe !== null) {
     clearTimeout(reprobe);
     reprobe = null;

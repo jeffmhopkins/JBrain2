@@ -22,6 +22,11 @@ export interface PlotLine {
    * shorter than a bucket isn't averaged out of view. Not a fill: an area anchored
    * to the floor reads as "quantity used", not "peak". */
   band?: (number | null)[];
+  /** Shade the area between the line and the floor. Opt-in, because it only reads
+   * honestly for a series whose floor IS zero — a load percentage. On an auto-scaled
+   * series the baseline is the window's minimum, so the shading would start part-way
+   * up and imply a quantity that isn't there. */
+  fill?: boolean;
 }
 
 export interface PlotSeries {
@@ -61,6 +66,34 @@ function linePath(values: (number | null)[], min: number, max: number): string {
     d += `${penDown ? "L" : "M"}${xAt(i, n).toFixed(2)} ${yAt(v, min, max).toFixed(2)} `;
     penDown = true;
   });
+  return d.trim();
+}
+
+/** The area between the line and the floor, as one path per unbroken run.
+ *
+ *  Per RUN, not one path for the whole series: closing across a gap would shade a
+ *  stretch where there was no reading, turning "we weren't told" into "it was zero". */
+function areaPath(values: (number | null)[], min: number, max: number): string {
+  const n = values.length;
+  let d = "";
+  let run: [number, number][] = [];
+  const close = (): void => {
+    const first = run[0];
+    const last = run[run.length - 1];
+    if (first !== undefined && last !== undefined) {
+      const points = run.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join(" L");
+      d += `M${first[0].toFixed(2)} ${H} L${points} L${last[0].toFixed(2)} ${H} Z `;
+    }
+    run = [];
+  };
+  values.forEach((v, i) => {
+    if (v == null) {
+      close();
+      return;
+    }
+    run.push([xAt(i, n), yAt(v, min, max)]);
+  });
+  close();
   return d.trim();
 }
 
@@ -117,6 +150,17 @@ function Sparkline({ label, lines, fmt, scale }: PlotSeries): ReactNode {
         preserveAspectRatio="none"
         aria-hidden="true"
       >
+        {lines.map((l, i) =>
+          l.fill === true ? (
+            <path
+              key={`area-${l.label ?? i}`}
+              d={areaPath(l.values, min, max)}
+              fill={l.color}
+              fillOpacity={0.16}
+              stroke="none"
+            />
+          ) : null,
+        )}
         {lines.map((l, i) =>
           l.band?.some((v) => v != null) ? (
             <path

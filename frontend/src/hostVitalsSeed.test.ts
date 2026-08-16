@@ -101,7 +101,7 @@ describe("a stream that dies fatally", () => {
     expect(FakeSource.opened).toHaveLength(2);
   });
 
-  it("leaves a merely-dropped stream alone, because EventSource retries that itself", async () => {
+  it("leaves a merely-dropped stream alone at first, because EventSource retries it", async () => {
     vi.useFakeTimers();
     FakeSource.opened.length = 0;
     const { api } = await import("./api/client");
@@ -117,7 +117,57 @@ describe("a stream that dies fatally", () => {
     first.readyState = 0; // CONNECTING — its own retry is in flight
     first.onerror?.();
 
-    await vi.advanceTimersByTimeAsync(6000);
+    await vi.advanceTimersByTimeAsync(1000); // still inside the silence budget
+
+    expect(first.closed).toBe(false);
+    expect(FakeSource.opened).toHaveLength(1);
+  });
+
+  it("replaces a stream that stays OPEN but stops delivering", async () => {
+    // The failure with no error event: a proxy buffering text/event-stream, or a
+    // half-open socket after a network change. EventSource reports a healthy connection
+    // with nothing behind it, so the fatal-close path never fires — this is what left the
+    // top bar blank while the detail screen, on plain fetches, kept showing numbers.
+    vi.useFakeTimers();
+    FakeSource.opened.length = 0;
+    const { api } = await import("./api/client");
+    vi.mocked(api.opsVitals).mockResolvedValue({ gpu_busy_percent: 12 });
+    vi.mocked(api.opsVitalsStream).mockImplementation(() => new FakeSource() as never);
+
+    const { subscribeGpuBusy } = await load();
+    const seen: (number | null)[] = [];
+    subscribeGpuBusy((b) => seen.push(b.percent));
+    await vi.advanceTimersByTimeAsync(0);
+
+    const first = FakeSource.opened[0];
+    if (first === undefined) throw new Error("no stream opened");
+    first.readyState = 1; // OPEN, and silent — no error will ever be raised
+
+    await vi.advanceTimersByTimeAsync(12_000);
+
+    expect(first.closed).toBe(true);
+    expect(FakeSource.opened.length).toBeGreaterThan(1);
+    expect(seen[seen.length - 1]).toBeNull(); // stale is reported as no reading, not 12
+  });
+
+  it("keeps a stream that is delivering", async () => {
+    vi.useFakeTimers();
+    FakeSource.opened.length = 0;
+    const { api } = await import("./api/client");
+    vi.mocked(api.opsVitals).mockResolvedValue({ gpu_busy_percent: 12 });
+    vi.mocked(api.opsVitalsStream).mockImplementation(() => new FakeSource() as never);
+
+    const { subscribeGpuBusy } = await load();
+    subscribeGpuBusy(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+
+    const first = FakeSource.opened[0];
+    if (first === undefined) throw new Error("no stream opened");
+    first.readyState = 1;
+    for (let i = 0; i < 12; i += 1) {
+      first.onmessage?.({ data: '{"gpu_busy_percent": 40}' } as MessageEvent<string>);
+      await vi.advanceTimersByTimeAsync(1000);
+    }
 
     expect(first.closed).toBe(false);
     expect(FakeSource.opened).toHaveLength(1);

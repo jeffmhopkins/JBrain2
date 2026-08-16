@@ -34,19 +34,17 @@ const RANGES = [
 
 type RangeKey = (typeof RANGES)[number]["key"];
 
-/** How often the roster refetches while the surface is open and in the foreground. A
- *  turn's elapsed time ticks locally between fetches, so this only has to keep up with
- *  turns starting and settling, not with the clock. */
-const ROSTER_POLL_MS = 3000;
-
-/** How often level 2 refetches a RUNNING turn, so a streaming answer grows on screen.
- *  A settled turn is fetched once — its output cannot change. */
-const DETAIL_POLL_MS = 2000;
-
-/** Columns across the plot. Every range renders the same number of columns, so the
- *  shape stays comparable as the window widens — only the seconds each column covers
- *  changes. */
-const COLUMNS = 60;
+/** ONE clock for this whole surface, matching the vitals stream's own 1 Hz.
+ *
+ *  The graph ticked at 1 Hz while the roster refetched every 3s and an open turn every
+ *  2s, so three things describing the same instant visibly disagreed: the plot showed a
+ *  turn's load arriving before the row appeared, and a turn's step count sat a beat
+ *  behind its own output. If the page claims to be live at 1 Hz, everything on it is
+ *  live at 1 Hz — streamed or polled.
+ *
+ *  Affordable because it is tightly bounded: owner-only, only while this screen is open,
+ *  and only in the foreground (`useForeground`). Backgrounding stops it entirely. */
+const TICK_MS = 1000;
 
 /** GPU load that reads as pinned. Matches the top bar's band. */
 const HOT_PERCENT = 85;
@@ -114,29 +112,26 @@ function VitalsPlot({
 }) {
   const seconds = RANGES.find((r) => r.key === range)?.seconds ?? 60;
   const samples = useTickingHistory(seconds);
-  // Mean AND peak per bucket, drawn as the Ops screen draws every other metric: a solid
-  // average with a fainter peak line above it. The columns this replaced could only
-  // carry one of the two, so the peak was chosen and the ordinary load was never shown.
-  const gpuMean = bucket(samples, seconds, COLUMNS, (s) => s.gpu, "mean");
-  const gpuPeak = bucket(samples, seconds, COLUMNS, (s) => s.gpu, "peak");
-  const tpsMean = bucket(samples, seconds, COLUMNS, (s) => s.tps, "mean");
-  const tpsPeak = bucket(samples, seconds, COLUMNS, (s) => s.tps, "peak");
-  const hasGpu = gpuMean.some((v) => v !== null);
+  const gpu = perSecond(samples, seconds, (s) => s.gpu);
+  const tps = perSecond(samples, seconds, (s) => s.tps);
+  const hasGpu = gpu.some((v) => v !== null);
 
   const series: PlotSeries[] = [
     {
       label: "GPU busy",
-      // Pinned 0–100: a percentage fitted to its own range draws an idle box hovering
-      // at 1–3% as the same dramatic range as one that was pinned all minute.
+      // Pinned 0–100: a percentage fitted to its own range draws an idle box hovering at
+      // 1–3% as the same dramatic range as one that was pinned all minute. It is also what
+      // makes the shading honest — the area runs to a real zero, not to whatever the
+      // window's minimum happened to be.
       scale: { min: 0, max: 100 },
-      lines: [{ color: "var(--amber)", values: gpuMean, band: gpuPeak }],
+      lines: [{ color: "var(--amber)", values: gpu, fill: true }],
       fmt: (v) => `${Math.round(v)}%`,
     },
     {
       label: "tokens/sec",
       // Unpinned: a token rate has no ceiling to draw against, so it fits its own window
-      // like every other Ops series.
-      lines: [{ color: "var(--steel)", values: tpsMean, band: tpsPeak }],
+      // like every other Ops series — and so it is NOT shaded (see PlotLine.fill).
+      lines: [{ color: "var(--steel)", values: tps }],
       fmt: (v) => `${Math.round(v)}/s`,
     },
   ];
@@ -172,11 +167,7 @@ function VitalsPlot({
           just as an agent turn does. A high reading is not proof these turns are what is using it.
         </p>
       )}
-      <p className="vitals-note">
-        {range === "1m"
-          ? "One-second samples."
-          : `Each point averages ${Math.round(seconds / COLUMNS)}s; the fainter line above is that bucket's PEAK — an average alone would hide the spike you opened this for.`}
-      </p>
+      <p className="vitals-note">One-second samples — every reading the box recorded.</p>
     </section>
   );
 }
@@ -622,15 +613,23 @@ function useTurnDetail(runId: string, running: boolean): TurnDetailPayload | nul
         // A failed poll leaves what is on screen; the next tick retries.
       }
     };
-    void load();
     // A settled turn's output cannot change, so it is fetched once — but the cleanup
     // still has to run. Returning early left `cancelled` unset, so tapping a child row
     // (which changes runId WITHOUT unmounting) could let the previous turn's in-flight
     // response resolve last and render under the new turn's header.
-    const timer = running ? setInterval(() => void load(), DETAIL_POLL_MS) : null;
+    //
+    // Chained from completion rather than on an interval, for the same reason as the
+    // roster: this is the heavier of the two reads (steps plus output), so at 1 Hz an
+    // interval is the one most likely to stack.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const loop = async (): Promise<void> => {
+      await load();
+      if (!cancelled && running) timer = setTimeout(() => void loop(), TICK_MS);
+    };
+    void loop();
     return () => {
       cancelled = true;
-      if (timer !== null) clearInterval(timer);
+      if (timer !== null) clearTimeout(timer);
     };
   }, [runId, running, foreground]);
 
@@ -685,11 +684,19 @@ function useLiveTurns(seconds: number): LiveTurns | null {
         // A failed poll leaves the last roster on screen; the next tick retries.
       }
     };
-    void load();
-    const timer = setInterval(() => void load(), ROSTER_POLL_MS);
+    // Self-scheduling, NOT setInterval. At 1 Hz a roster read that takes longer than the
+    // period would have intervals stacking requests on a slow box — the moment the box is
+    // busiest is exactly when this screen is being watched. Chaining from completion keeps
+    // at most one in flight and degrades to "as fast as the box can answer".
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const loop = async (): Promise<void> => {
+      await load();
+      if (!cancelled) timer = setTimeout(() => void loop(), TICK_MS);
+    };
+    void loop();
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer !== null) clearTimeout(timer);
     };
   }, [foreground, seconds]);
 
@@ -710,40 +717,41 @@ function useTickingHistory(seconds: number): VitalsSample[] {
   return samples;
 }
 
-/** Fold samples into `count` columns, as either the mean or the PEAK of each bucket.
+/** One slot per SECOND across the window, oldest first — the plot's full resolution.
  *
- *  Both are drawn, and deliberately: this gauge is read to find the moment the box was
- *  pinned, and averaging a 15-minute window flattens a 10-second spike into nothing —
- *  but a peak-only plot never shows what the box was doing the rest of the time. The
- *  mean is the line, the peak is the band above it, and the gap between them is the
- *  burstiness. */
-export function bucket(
+ *  This replaced a 60-column bucketer, which had two problems visible on screen. It threw
+ *  away resolution the ring already held (900 samples squeezed into 60 columns), and its
+ *  bucket edges were derived from `Date.now()` on every tick, so the whole partition slid
+ *  a fraction of a bucket each second and samples visibly hopped between columns — the
+ *  line reshaped itself once a second while the data behind it had not changed.
+ *
+ *  The grid here is anchored to ABSOLUTE whole seconds, so a sample's slot is a property
+ *  of the sample, not of when the plot was drawn. The window still scrolls, but it
+ *  scrolls exactly one slot per second instead of re-partitioning.
+ *
+ *  A slot with no reading stays null — a gap, never a zero, which would read as an idle
+ *  GPU or as a turn generating nothing. */
+export function perSecond(
   samples: VitalsSample[],
   seconds: number,
-  count: number,
   channel: (s: VitalsSample) => number | null = (s) => s.gpu,
-  agg: "peak" | "mean" = "peak",
+  now: number = Date.now(),
 ): (number | null)[] {
-  if (samples.length === 0) return new Array<number | null>(count).fill(null);
-  const end = Date.now();
-  const start = end - seconds * 1000;
-  const width = (seconds * 1000) / count;
-  const sums = new Array<number>(count).fill(0);
-  const counts = new Array<number>(count).fill(0);
-  const peaks = new Array<number | null>(count).fill(null);
+  const slots = new Array<number | null>(seconds).fill(null);
+  const end = Math.floor(now / 1000);
+  const start = end - seconds + 1;
   for (const sample of samples) {
+    const second = Math.floor(sample.at / 1000);
+    if (second < start || second > end) continue;
     const value = channel(sample);
-    if (value === null || sample.at < start) continue;
-    const slot = Math.min(count - 1, Math.floor((sample.at - start) / width));
-    const held = peaks[slot];
-    peaks[slot] = held === null || held === undefined ? value : Math.max(held, value);
-    sums[slot] = (sums[slot] ?? 0) + value;
-    counts[slot] = (counts[slot] ?? 0) + 1;
+    if (value === null) continue;
+    const slot = second - start;
+    const held = slots[slot];
+    // More than one sample inside a second (a reconnect overlapping the live stream):
+    // keep the higher. This is a load gauge — under-reporting a spike is the worse lie.
+    slots[slot] = held === null || held === undefined ? value : Math.max(held, value);
   }
-  if (agg === "peak") return peaks;
-  // A bucket with no samples stays null — a gap, never a zero, which would read as an
-  // idle GPU or as a turn generating nothing.
-  return counts.map((n, i) => (n === 0 ? null : (sums[i] ?? 0) / n));
+  return slots;
 }
 
 /** Elapsed, ticking locally so a RUNNING turn's age advances between roster polls.

@@ -253,16 +253,14 @@ def test_names_a_child_by_its_label_not_its_kind(
 
 
 def test_carries_the_gauge_next_to_an_empty_roster(
-    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
 ) -> None:
     """GPU busy covers the whole box — image generation included — so a high reading
     with nothing running is legitimate, and the surface needs both figures at once to
     say so instead of looking broken."""
-    from jbrain.api import ops
-
-    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: 94.0)
     reader.rows = []
     login(client, repo)
+    client.app.state.vitals_ring.record(time.time(), 94.0)  # type: ignore[attr-defined]
 
     body = client.get("/api/ops/turns").json()
 
@@ -506,3 +504,64 @@ def test_history_window_is_clamped_to_the_ring(client: TestClient, repo: FakeAut
     login(client, repo)
 
     assert client.get("/api/ops/vitals/history?seconds=99999").status_code == 200
+
+
+# --- the SSE stream's anti-buffering headers ---------------------------------
+
+
+async def test_vitals_stream_asks_proxies_not_to_buffer() -> None:
+    """An intermediary that buffers text/event-stream turns this into a socket that
+    connects, reports itself healthy, and delivers nothing — a failure EventSource raises
+    no error for, so the client's reconnect never fires and the meter just sits blank.
+
+    Asserted on the response object, NOT through `client.stream`: TestClient never delivers
+    an ASGI `http.disconnect`, so consuming this route's body through it hangs the suite
+    forever — which is exactly what it did the first time this was written."""
+    from types import SimpleNamespace
+
+    from jbrain.api import ops
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(vitals_ring=None)),
+        is_disconnected=None,
+    )
+    response = await ops.vitals_stream(request)  # type: ignore[arg-type]
+
+    assert response.media_type == "text/event-stream"
+    assert "no-cache" in response.headers["cache-control"]
+    assert response.headers["x-accel-buffering"] == "no"
+
+
+# --- one gauge, every surface -------------------------------------------------
+
+
+def test_every_gpu_surface_answers_from_one_sample(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """The probe and the roster must report the SAME figure as the ring behind them.
+
+    They each used to take their own `read_gpu_busy_percent()` at their own instant, which
+    is how two surfaces showing "the GPU" could disagree on screen — one blank while
+    another read 94%. ONE fake reading feeds all of them here, so a future change that
+    reintroduces a second source fails this test instead of shipping."""
+    reader.rows = []
+    login(client, repo)
+    ring = client.app.state.vitals_ring  # type: ignore[attr-defined]
+    ring.record(time.time(), 73.0)
+
+    probe = client.get("/api/ops/vitals").json()["gpu_busy_percent"]
+    roster = client.get("/api/ops/turns").json()["gpu_busy_percent"]
+
+    assert probe == roster == ring.latest() == 73.0
+
+
+def test_the_roster_gauge_goes_quiet_when_the_sampler_does(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """One source is also one point of failure: a stopped sampler must read as no reading,
+    not as a confident frozen number."""
+    reader.rows = []
+    login(client, repo)
+    client.app.state.vitals_ring.record(time.time() - 3600, 99.0)  # type: ignore[attr-defined]
+
+    assert client.get("/api/ops/turns").json()["gpu_busy_percent"] is None

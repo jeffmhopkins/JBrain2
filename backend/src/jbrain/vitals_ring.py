@@ -36,6 +36,15 @@ RING_SAMPLES = 900
 
 SAMPLE_SECONDS = 1.0
 
+# How long one gauge read may take before it is abandoned as a gap. Generous next to a
+# healthy read (microseconds), short next to the cadence.
+READ_TIMEOUT_SECONDS = 2.0
+
+# How stale the newest sample may be and still be served as "the reading". Several ticks,
+# so an ordinary hiccup doesn't blank the meter, but far short of the point where a number
+# would be a lie about the present.
+LATEST_MAX_AGE_SECONDS = 5.0
+
 
 class VitalsRing:
     """The last `RING_SAMPLES` seconds of GPU load, oldest first.
@@ -48,6 +57,27 @@ class VitalsRing:
 
     def record(self, at: float, gpu: float | None) -> None:
         self._samples.append((at, gpu))
+
+    def latest(
+        self, *, max_age: float = LATEST_MAX_AGE_SECONDS, now: float | None = None
+    ) -> float | None:
+        """The newest reading, or None if there isn't a fresh one.
+
+        This is what every GPU-reporting route in the API answers from, so that the top
+        bar, the detail graph and the roster's gauge are the SAME number rather than three
+        separate sysfs reads taken at three different instants — which is how they came to
+        disagree on screen, one showing nothing while another showed 94%.
+
+        The age check matters because a single source is also a single point of failure: if
+        the sampler stops, serving its last value forever would turn "we stopped looking"
+        into a confident, frozen reading. None means no reading, and the surfaces already
+        know how to say that."""
+        if not self._samples:
+            return None
+        at, gpu = self._samples[-1]
+        if (now if now is not None else time.time()) - at > max_age:
+            return None
+        return gpu
 
     def since(self, seconds: float, *, now: float | None = None) -> list[dict[str, object]]:
         """Samples inside the trailing window, as `{at_ms, gpu}` oldest first. Epoch
@@ -70,7 +100,18 @@ async def sample_loop(
     and the loop continues — a gauge that vanishes must not stop the sampler."""
     while True:
         try:
-            ring.record(time.time(), read())
+            # OFF the event loop, with a ceiling. `read` is an ordinary blocking file read
+            # and normally trivial, but it goes through the amdgpu driver: a sysfs
+            # attribute backed by a device under heavy allocation can stall for seconds,
+            # and this loop runs for the life of the process whether or not anyone is
+            # watching. Called inline, one stalled read takes every request in the API
+            # down with it — the whole process is one loop. A thread plus a timeout makes
+            # the worst case a single dropped sample.
+            gpu = await asyncio.wait_for(asyncio.to_thread(read), READ_TIMEOUT_SECONDS)
+            ring.record(time.time(), gpu)
+        except TimeoutError:
+            ring.record(time.time(), None)
+            log.warning("vitals.sample_timeout", timeout_s=READ_TIMEOUT_SECONDS)
         except Exception:  # noqa: BLE001
             ring.record(time.time(), None)
             log.warning("vitals.sample_failed", exc_info=True)

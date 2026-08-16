@@ -2,6 +2,7 @@
 
 import itertools
 import json
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
@@ -180,24 +181,36 @@ def test_ops_vitals_requires_owner(client: TestClient) -> None:
     assert client.get("/api/ops/vitals/stream").status_code == 401
 
 
-def test_ops_vitals_reads_the_gpu(
-    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from jbrain.api import ops
+def _seed_gauge(client: TestClient, gpu: float | None) -> None:
+    """Put ONE reading into the app's vitals ring — the single source every GPU figure in
+    the API now answers from."""
+    client.app.state.vitals_ring.record(time.time(), gpu)  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: 73.0)
+
+def test_ops_vitals_answers_from_the_ring(client: TestClient, repo: FakeAuthRepo) -> None:
+    """The probe reports the sampler's reading rather than taking its own. The
+    cross-surface agreement this buys is asserted in test_live_turns_api.py, which fakes
+    the run reader /ops/turns needs."""
     login(client, repo)
+    _seed_gauge(client, 73.0)
 
     assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": 73.0}
 
 
-def test_ops_vitals_reports_a_box_with_no_gauge(
-    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from jbrain.api import ops
-
-    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: None)
+def test_ops_vitals_reports_a_box_with_no_gauge(client: TestClient, repo: FakeAuthRepo) -> None:
     login(client, repo)
+    _seed_gauge(client, None)
+
+    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": None}
+
+
+def test_ops_vitals_reports_nothing_when_the_sampler_has_gone_stale(
+    client: TestClient, repo: FakeAuthRepo
+) -> None:
+    """A single source is also a single point of failure. If the sampler stops, serving its
+    last value forever would turn "we stopped looking" into a confident, frozen reading."""
+    login(client, repo)
+    client.app.state.vitals_ring.record(time.time() - 3600, 99.0)  # type: ignore[attr-defined]
 
     assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": None}
 
@@ -209,7 +222,6 @@ async def test_ops_vitals_stream_repeats_every_tick(monkeypatch: pytest.MonkeyPa
 
     readings = iter([61.0, 61.0, 88.5])
     monkeypatch.setattr(ops, "_VITALS_PERIOD_S", 0)
-    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: next(readings))
 
     # Three frames, then the client goes away — the loop must notice and finish.
     checks = iter([False, False, False, True])
@@ -217,7 +229,7 @@ async def test_ops_vitals_stream_repeats_every_tick(monkeypatch: pytest.MonkeyPa
     async def disconnected() -> bool:
         return next(checks)
 
-    frames = [frame async for frame in ops.vitals_frames(disconnected)]
+    frames = [frame async for frame in ops.vitals_frames(disconnected, lambda: next(readings))]
 
     assert frames == [
         b'data: {"gpu_busy_percent": 61.0}\n\n',
@@ -230,17 +242,16 @@ async def test_ops_vitals_stream_stops_when_the_client_leaves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A backgrounded PWA closes the stream; the tick loop must not outlive it and
-    keep reading /sys forever on the box's behalf."""
+    keep reading the gauge forever on the box's behalf."""
     from jbrain.api import ops
 
     reads = itertools.count()
     monkeypatch.setattr(ops, "_VITALS_PERIOD_S", 0)
-    monkeypatch.setattr(ops, "read_gpu_busy_percent", lambda: float(next(reads)))
 
     async def gone() -> bool:
         return True
 
-    assert [frame async for frame in ops.vitals_frames(gone)] == []
+    assert [frame async for frame in ops.vitals_frames(gone, lambda: float(next(reads)))] == []
     assert next(reads) == 0, "the gauge was never read for a client already gone"
 
 
