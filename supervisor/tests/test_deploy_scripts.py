@@ -193,7 +193,6 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     stop = idx("rm -sf local-llm")
     build = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE build")
     up = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
-    restart = idx("up -d local-llm")
     assert "LOCAL_LLM_ENABLED=true" in text, (
         "the gateway stop/restart must be gated on LOCAL_LLM_ENABLED so a stock "
         "cloud stack (no local-llm) is never touched"
@@ -201,8 +200,16 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     assert stop is not None, "update must stop the local-llm gateway to free memory"
     assert build is not None and up is not None
     assert stop < build, "the gateway must be stopped before the rebuild/recreate"
-    assert restart is not None, "update must restart the gateway after the stack is up"
-    assert restart > up, "the gateway restart must follow the stack `up -d`"
+    # The gateway comes back INSIDE the quiesced window now (the smoke test needs
+    # it), so "restart after `up -d`" is no longer the invariant. What must still
+    # hold is that an enabled gateway is running when the update finishes — including
+    # when auto-update is off and nothing in the quiesced window ever rebuilt it.
+    restarts = [i for i, ln in enumerate(lines) if "up -d local-llm" in ln]
+    assert restarts, "update must restart the gateway"
+    assert restarts[-1] > up, (
+        "the LAST gateway start must follow the stack `up -d`, so an auto-update-off "
+        "box still ends with its gateway running"
+    )
 
 
 def test_update_gateway_auto_update_is_default_on_smoke_tested_and_rolls_back() -> None:
@@ -642,3 +649,152 @@ def test_a_killed_run_cleans_up_its_orphaned_container() -> None:
 
     assert 'docker ps -aq --filter "name=jbrain-api-run-"' in text
     assert "docker rm -f" in text
+
+
+# --- the update does not compete with itself for memory ----------------------
+#
+# This box hard-locked, repeatedly, part-way through a PWA update. The kernel trace was
+# unambiguous: llama-server failing an order:0 (single 4 KB page) allocation inside
+# amdgpu_ttm_tt_populate, with __GFP_RETRY_MAYFAIL — the kernel reclaims hard and then
+# FAILS rather than OOM-killing, so nothing died, nothing was logged, and the host
+# livelocked in reclaim down to the USB keyboard. earlyoom and the reclaim sysctls were
+# already applied at the time, so hardening alone does not cover this. The fix is
+# structural: the update stops doing several memory-heavy things at once.
+
+
+def _update_lines() -> list[str]:
+    return (DEPLOY / "update-inner.sh").read_text().splitlines()
+
+
+def _cmd_idx(lines: list[str], needle: str) -> int | None:
+    """Index of the first COMMAND (not comment) containing `needle`."""
+    return next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if needle in ln and not ln.lstrip().startswith("#")
+        ),
+        None,
+    )
+
+
+def _call_idx(lines: list[str], name: str) -> int | None:
+    """Index of the bare CALL of a shell function — not its definition, not the trap."""
+    return next((i for i, ln in enumerate(lines) if ln.strip() == name), None)
+
+
+def test_update_quiesces_the_stack_around_the_build_and_the_model_load() -> None:
+    lines = _update_lines()
+
+    quiesce = _call_idx(lines, "quiesce_stack")
+    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+    unquiesce = _call_idx(lines, "unquiesce_stack")
+
+    assert quiesce is not None, "the update must quiesce the stack for the heavy phase"
+    assert build is not None and smoke is not None and up is not None
+    assert quiesce < build < smoke < up, (
+        "order must be: quiesce -> build -> model load -> recreate. The model load is "
+        "what froze the box; it belongs at the emptiest moment, not on top of a "
+        "freshly-recreated stack."
+    )
+    assert unquiesce is not None and unquiesce > up, (
+        "profile-gated services stopped by the quiesce must be put back after "
+        "`up -d` — it does not name them, so they would stay down for good"
+    )
+
+
+def test_the_quiesce_keeps_the_control_plane_so_the_pwa_can_watch() -> None:
+    """Going fully dark would free about a gigabyte and cost the owner any way to
+    tell a slow build from a wedged one — on the operation that has repeatedly
+    frozen the box."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    line = next(ln for ln in text.splitlines() if ln.startswith("QUIESCE_KEEP="))
+    kept = line.split("=", 1)[1].strip().strip('"').split()
+    for service in ("db", "api", "supervisor", "proxy"):
+        assert service in kept, f"{service} must stay up through a quiesce"
+
+
+def test_a_dead_updater_does_not_leave_the_box_half_stopped() -> None:
+    """Without the trap, an updater killed mid-quiesce leaves the box silently missing
+    its worker, embedder and speech services until somebody happens to notice."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert "trap unquiesce_stack EXIT" in text, (
+        "the un-quiesce must run on abnormal exit, not only on the happy path"
+    )
+
+
+def test_the_page_cache_is_dropped_before_the_model_load() -> None:
+    """MemAvailable counts reclaimable page cache as free, and reclaiming it under
+    pressure is exactly what livelocks this hardware. After a build that just wrote tens
+    of GB of layers, the number reads fine and cannot be realised in time — so the gate
+    would be measuring optimism. Dropping first makes the reading honest."""
+    lines = _update_lines()
+
+    drop = _cmd_idx(lines, "drop_page_cache")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    assert drop is not None, "the update must drop the page cache before a load"
+    assert smoke is not None and drop <= smoke, "drop the cache BEFORE the load"
+    assert "drop_caches" in "\n".join(lines)
+
+
+def test_the_gateway_is_emptied_again_before_the_stack_is_recreated() -> None:
+    """The tool probe loads gpt-oss (~60 GB of pinned unified memory). Recreating a
+    dozen containers on top of that is the same collision the pre-build unload
+    prevents, just arriving from the other end."""
+    lines = _update_lines()
+
+    unloads = [i for i, ln in enumerate(lines) if "jbrain.cli local-llm-unload" in ln]
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+
+    assert len(unloads) >= 2, "unload before the build AND after the smoke test"
+    assert smoke is not None and up is not None
+    assert any(smoke < i < up for i in unloads), (
+        "the models the smoke test loaded must be released before the recreate"
+    )
+
+
+def test_reclaim_hardening_runs_before_the_memory_heavy_phase_on_both_paths() -> None:
+    """Hardening applied after the thing it protects against has already run is
+    decoration — it sat below the build and the model load, which is where the
+    freeze happened. And the containerized (PWA) caller is the one that rebuilds the
+    gateway and loads a model, so it must not be the path with no protection: the
+    vm.* knobs are not namespaced, so a privileged one-shot applies the same values
+    the host would."""
+    lines = _update_lines()
+    text = "\n".join(lines)
+
+    harden = _cmd_idx(lines, "oom-hardening.sh")
+    knobs = _cmd_idx(lines, "host_kernel_write vm/min_free_kbytes")
+    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+
+    assert harden is not None and knobs is not None and build is not None
+    assert harden < build and knobs < build, "harden before the build, not after it"
+    assert smoke is not None and knobs < smoke
+    assert "--privileged" in text, "the container path needs a privileged one-shot"
+
+
+def test_container_applied_sysctls_match_the_host_hardening_script() -> None:
+    """Two places write the same kernel knobs — the host script (persistent, in
+    /etc/sysctl.d) and the update's per-boot fallback for the containerized caller.
+    If they drift, a PWA-updated box is tuned differently from a terminal-updated
+    one — the exact class of bug that made these two scripts one in the first
+    place."""
+    import re
+
+    hardening = (DEPLOY / "oom-hardening.sh").read_text()
+    update = (DEPLOY / "update-inner.sh").read_text()
+
+    for knob in ("min_free_kbytes", "watermark_scale_factor", "swappiness"):
+        host = re.search(rf"^vm\.{knob}\s*=\s*(\d+)", hardening, re.M)
+        container = re.search(rf"host_kernel_write vm/{knob} (\d+)", update)
+        assert host is not None, f"oom-hardening.sh must set vm.{knob}"
+        assert container is not None, f"the update must apply vm/{knob} in-container"
+        assert host.group(1) == container.group(1), (
+            f"vm.{knob} differs: host {host.group(1)} vs container {container.group(1)}"
+        )

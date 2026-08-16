@@ -13,10 +13,25 @@
 # box (see the gateway-stop note below, which had already recorded this failure once).
 # Whatever is decided about an update is now decided once.
 #
-# The two callers genuinely differ in CAPABILITY, not in intent: mDNS setup, on-box image
-# models and OOM hardening need the real host (systemd, sysctls, apt), which the updater
-# container has no route to. Those are gated on JBRAIN_HOST_UPDATE and named as such,
-# rather than living in a second script that can fall behind.
+# The two callers genuinely differ in CAPABILITY, not in intent: mDNS setup and on-box
+# image models need the real host (systemd, apt), which the updater container has no
+# route to. Those are gated on JBRAIN_HOST_UPDATE and named as such, rather than living
+# in a second script that can fall behind.
+#
+# The phase order is deliberate, and it is the answer to this box hard-locking mid-update
+# (see the memory section below for the kernel evidence). Nothing here needs to be true at
+# the same time as everything else, so it isn't:
+#
+#   1. backup, source refresh, .env backfills      — stack up, cheap
+#   2. QUIESCE: empty the gateway, stop everything but the control plane
+#   3. reclaim hardening, build, migrate           — quiesced
+#   4. gateway rebuild, drop caches, smoke test    — quiesced; the ~60 GB model load
+#                                                    happens at the emptiest moment
+#   5. empty the gateway again, recreate the stack, restore the quiesced services
+#   6. model syncs, gateway restart, prune         — stack up
+#
+# The single rule behind it: never allocate tens of gigabytes while also recreating a
+# dozen containers.
 set -eu
 
 # Set by `jbrain update`; empty in the container. Gates the host-only steps below.
@@ -50,9 +65,9 @@ run_bounded() {
   _limit="$1"
   shift
   # if/else rather than `cmd; rc=$?`: under `set -e` a failing command aborts the script
-  # before the assignment runs. It only survives today because every caller happens to use
-  # it in an `if` condition, where -e is suspended — which is exactly the kind of thing
-  # that breaks the moment someone calls it plainly.
+  # before the assignment runs. It only survives today because every caller uses it where
+  # -e is suspended (an `if` condition or the left side of `||`) — which is exactly the
+  # kind of thing that breaks the moment someone calls it plainly.
   if timeout "$_limit" "$@"; then
     return 0
   else
@@ -75,7 +90,140 @@ run_bounded() {
   return "$_rc"
 }
 
-echo "[update] starting"
+# --- memory: measuring it, and actually making room --------------------------
+#
+# Everything in this section exists because of ONE failure mode, which has hard-locked
+# this box repeatedly during updates. The iGPU has no VRAM: a model's device buffers are
+# pinned out of unified system RAM through the amdgpu GTT, and the driver requests them
+# with __GFP_RETRY_MAYFAIL — which tells the kernel to reclaim hard and then FAIL the
+# allocation rather than invoke the OOM killer. So nothing is killed, nothing shows up in
+# the app's metrics, and instead the box livelocks in reclaim: a full freeze down to the
+# USB keyboard, needing a power cycle. The kernel trace named it exactly:
+#
+#   llama-server: page allocation failure: order:0, mode:...|__GFP_RETRY_MAYFAIL
+#     amdgpu_ttm_tt_populate -> amdgpu_bo_create -> amdgpu_gem_create_ioctl -> drm_ioctl
+#
+# order:0 is a SINGLE 4 KB page. By the time that fails the box is already gone. earlyoom
+# and the reclaim-headroom sysctls were ALREADY applied when it happened, so hardening
+# alone is not the answer: the update has to stop competing with itself for memory.
+
+# Host RAM in GB, for the log. /proc/meminfo is not namespaced, so this is the host's
+# number even from inside the updater container. Prints "?" rather than 0 when the field
+# is missing: a fabricated zero in an update log about memory would be worse than a gap.
+mem_available_gb() {
+  awk '/^MemAvailable:/ { printf "%d", $2 / 1048576; f = 1; exit }
+       END { if (!f) printf "?" }' /proc/meminfo 2>/dev/null || echo "?"
+}
+
+# Image for the privileged one-shots below. On the PWA path this IS the image we are
+# running in, so it is always present locally and never needs a pull.
+HELPER_IMAGE="${JBRAIN_UPDATER_IMAGE:-docker:cli}"
+
+# Write a host kernel knob (a path under /proc/sys), from either caller.
+#
+# The vm.* knobs are not namespaced — there is one set per kernel — so a privileged
+# container writes exactly what the host would. That is what finally gives the
+# containerized (PWA) caller a route to them: it is the path that rebuilds the gateway
+# and loads a model, and until now it did that with none of the host's protection.
+# Best-effort: a daemon that refuses --privileged just leaves the knob as it was.
+host_kernel_write() {
+  if [ -n "$HOST_UPDATE" ]; then
+    echo "$2" > "/proc/sys/$1" 2>/dev/null
+  else
+    docker run --rm --privileged --network none "$HELPER_IMAGE" \
+      sh -c "echo $2 > /proc/sys/$1" >/dev/null 2>&1
+  fi
+}
+
+# Return the page cache to the kernel before a model load.
+#
+# MemAvailable counts reclaimable page cache as available — and reclaiming it under
+# pressure is precisely what livelocks this box. After a build that just wrote tens of GB
+# of layers, MemAvailable reads fine and cannot be realised in time, so gating on it
+# without dropping first would be gating on a number we know to be optimistic. Dropping
+# converts the optimism into real free pages, or proves it was never there.
+drop_page_cache() {
+  echo "[update] dropping page cache ($(mem_available_gb) GB available before)"
+  if [ -n "$HOST_UPDATE" ]; then
+    sync
+    echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+  else
+    docker run --rm --privileged --network none "$HELPER_IMAGE" \
+      sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' >/dev/null 2>&1 || true
+  fi
+  echo "[update] page cache dropped ($(mem_available_gb) GB available after)"
+  # Explicit, because callers use this in an `&&` chain guarding the model load: a
+  # future edit that ends the function on a failing command would silently skip the
+  # very step this exists to protect.
+  return 0
+}
+
+# --- quiescing the stack for the memory-heavy phase --------------------------
+#
+# The update used to build images, recreate a dozen containers and load a model with the
+# WHOLE stack resident. Nothing needs to be true at once here: the services being rebuilt
+# are of no use to anyone mid-rebuild, and their memory is worth more to the build and the
+# model load than their uptime is during an update nobody can use the box through.
+
+# Every profile, so `stop`/`start` can address — and therefore restore — a profile-gated
+# service such as comfyui or the mqtt pair. Without the flag compose denies it exists.
+ALL_PROFILES="--profile local-llm --profile comfyui --profile mqtt --profile jcode --profile tunnel"
+
+# The control plane, kept up THROUGH the quiesce. Stopping these too would be simpler and
+# free perhaps another gigabyte, but it would also make the PWA go dark for the whole
+# update — no progress log, no way to tell a slow build from a wedged one, on the exact
+# operation that has repeatedly frozen this box. That visibility is worth far more than
+# ~1 GB set against the ~91 GB of models and the tens of GB of page cache this phase is
+# actually fighting.
+QUIESCE_KEEP="db api supervisor proxy cloudflared"
+
+QUIESCED=""
+
+# Compose's project name (docker-compose.yml sets `name: jbrain`); the label every
+# container in the stack carries, and how the supervisor scopes its own view too.
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-jbrain}"
+
+quiesce_stack() {
+  # Read the RUNNING set from the daemon's labels rather than `compose ps --services`.
+  # That flag's meaning has differed across compose versions (v1 listed every service in
+  # the FILE), and getting it wrong here is not cosmetic: unquiesce_stack would later
+  # `start` services that were deliberately off — the PWA's comfyui toggle is a container
+  # stop, so an update would silently switch it back on. `docker ps` without -a is
+  # running-only in every version, and the label says exactly which service it is.
+  for _svc in $(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+      --format '{{.Label "com.docker.compose.service"}}' 2>/dev/null); do
+    case " $QUIESCE_KEEP " in
+      *" $_svc "*) continue ;;
+    esac
+    QUIESCED="$QUIESCED $_svc"
+  done
+  if [ -n "$QUIESCED" ]; then
+    echo "[update] quiescing for the build and the model load:$QUIESCED"
+    docker compose $ALL_PROFILES stop -t 30 $QUIESCED || true
+  fi
+  echo "[update] quiesced ($(mem_available_gb) GB available)"
+}
+
+# Restart exactly what quiesce_stack stopped. `up -d` alone is not enough: it does not
+# cover the profile-gated services (comfyui, the mqtt pair), which would otherwise stay
+# down for good after an update that never mentioned them. Idempotent — `start` on a
+# running service is a no-op — and clearing QUIESCED makes the EXIT trap a no-op once the
+# normal path has already run.
+unquiesce_stack() {
+  [ -n "$QUIESCED" ] || return 0
+  echo "[update] restoring quiesced services:$QUIESCED"
+  for _svc in $QUIESCED; do
+    docker compose $ALL_PROFILES start "$_svc" >/dev/null 2>&1 || true
+  done
+  QUIESCED=""
+}
+
+# An update that dies mid-phase must not leave the box permanently half-stopped. This trap
+# is the only thing between a killed updater and a box silently missing its worker,
+# embedder and speech services until somebody notices.
+trap unquiesce_stack EXIT INT TERM
+
+echo "[update] starting ($(mem_available_gb) GB available)"
 ./backup.sh || echo "[update] backup skipped (stack not fully up?)"
 
 echo "[update] pulling latest main"
@@ -183,7 +331,7 @@ fi
 # other container on top of that once spiked allocation into a kernel reclaim
 # livelock that hard-locked the host (even USB keyboard/mouse), forcing a power
 # cycle. Stopping it here releases the memory for the build/migrate/recreate; it is
-# brought back after the stack is up (below). Gated on hosting being enabled so a
+# brought back deliberately, once, further down. Gated on hosting being enabled so a
 # stock cloud stack is untouched; best-effort so a stop hiccup never fails the update.
 LOCAL_LLM_RUNNING=""
 if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
@@ -258,66 +406,44 @@ for _stamp in "JBRAIN_GIT_SHA=$JBRAIN_GIT_SHA" \
     printf '%s\n' "$_stamp" >> .env
   fi
 done
-echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
-docker compose $JCODE_PROFILE $TUNNEL_PROFILE build
+# Everything from here to the `up -d` below runs against a quiesced stack: only the
+# control plane stays resident, so the build and — far more importantly — the model load
+# are not competing with a dozen services for the same unified memory.
+quiesce_stack
 
-echo "[update] running migrations"
-docker compose run --rm migrate
-
-# Clear containers left behind by a renamed (server-brain->wall, whisper->tts-stt) or removed
-# (claude-shim) service before the `up -d` below — an old server-brain holding host port 8800
-# blocks the new `wall` (which is what took the tunnel down after the split update), and any such
-# labeled orphan lingers on the Ops screen. The helper sweeps by comparing labels against the
-# file's full service set, so profile-gated services `--remove-orphans` would wrongly reap are kept.
-echo "[update] clearing renamed/removed-service orphans"
-sh src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
-
-echo "[update] restarting stack"
-docker compose $JCODE_PROFILE $TUNNEL_PROFILE up -d
-
-# Provision any locally-hosted LLM models the operator queued from the PWA (and
-# keep the current + recommended set present). Runs AFTER the stack is up so the
-# app stays usable during a long weight download, and the per-model progress bar
-# can read on-disk bytes through the live api. Best-effort: a sync failure must
-# never abort the update — the queue persists and the next update retries.
-echo "[update] syncing local models"
-sh src/deploy/local-models-sync.sh || echo "[update] local-model sync skipped (will retry next update)"
-
-# On-box image generation (host-only): re-sync its models so an update that adds newly
-# recommended ones pulls them with no separate manual step. We provision the UNION of the
-# operator's selection and the recommended set, so nothing they chose is dropped. Needs the
-# host installer, so the containerized caller skips it. Best-effort.
-if [ -n "$HOST_UPDATE" ] && grep -q '^COMFYUI_ENABLED=true' .env; then
-  _current="$(python3 -c "import json,re; t=open('.env').read(); m=re.search(r'^COMFYUI_MODELS=(.*)$',t,re.M); print(' '.join(json.loads(m.group(1))) if m else '')" 2>/dev/null || true)"
-  _reco="$(docker compose run --rm --no-deps -T api python -c "from jbrain.image_gen import catalog; print(' '.join(catalog.recommended_ids()))" 2>/dev/null || true)"
-  _ids="$(printf '%s\n%s\n' "$_current" "$_reco" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')"
-  if [ -n "$_ids" ]; then
-    echo "[update] syncing on-box image models: $_ids"
-    JBRAIN_INSTALL_DIR=/opt/jbrain2 sh src/scripts/comfyui-setup.sh $_ids \
-      || echo "[update] image-model sync skipped (retry: sudo bash scripts/comfyui-setup.sh)"
+# OOM hardening, applied BEFORE the memory-heavy phase rather than after it, which is
+# where it used to sit — protection installed after the thing it protects against has
+# already run is decoration. Two halves, because the callers differ in capability:
+#
+#  - The full host script (earlyoom via apt, persistent /etc/sysctl.d) needs the real
+#    host, so it stays gated on HOST_UPDATE.
+#  - The reclaim-headroom knobs themselves are NOT namespaced, so the containerized
+#    caller can still apply them for this boot through a privileged one-shot. That
+#    matters: the PWA path is the one that rebuilds the gateway and loads a model, and
+#    it was doing so with none of this in place. Values mirror oom-hardening.sh, which
+#    is what makes them survive a reboot; a test pins the two together.
+if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
+  if [ -n "$HOST_UPDATE" ]; then
+    sh src/deploy/oom-hardening.sh || echo "[update] OOM hardening skipped (retry next update)"
+  else
+    echo "[update] applying reclaim headroom for this boot (host script needs a terminal)"
+    host_kernel_write vm/min_free_kbytes 2097152 || echo "[update] min_free_kbytes not applied"
+    host_kernel_write vm/watermark_scale_factor 200 || echo "[update] watermark not applied"
+    host_kernel_write vm/swappiness 10 || echo "[update] swappiness not applied"
   fi
 fi
 
-# OOM hardening (host-only): earlyoom + reclaim-headroom sysctls, re-applied so a box that
-# predates the automated hardening — or lost it — is protected on its next update. This is
-# the protection against the reclaim livelock described above, which makes its absence from
-# the containerized path the single worst consequence of the two scripts having drifted:
-# that path is the one that rebuilds the gateway and loads a model. It still cannot run
-# here (sysctls and apt need the real host), so a PWA update relies on hardening a previous
-# host update applied. That is a real remaining gap, not a solved one.
-if [ -n "$HOST_UPDATE" ] && grep -q '^LOCAL_LLM_ENABLED=true' .env; then
-  sh src/deploy/oom-hardening.sh || echo "[update] OOM hardening skipped (retry next update)"
-fi
+echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
+docker compose $JCODE_PROFILE $TUNNEL_PROFILE build
 
-# Bring the LLM gateway back up now the churn is over (it loads models on demand).
-# Only when it was up before this update: the model sync above restarts it when the
-# roster CHANGED, but the common no-op sync ("no models to sync") exits before its
-# own `up -d`, so without this an enabled gateway would stay stopped after every
-# routine update. Idempotent with the sync's own start; best-effort like the rest.
-if [ -n "$LOCAL_LLM_RUNNING" ]; then
-  echo "[update] restarting local-llm gateway"
-  docker compose --profile local-llm up -d local-llm || true
-fi
+# Migrations stay HERE, above the gateway work, even though that leaves the still-running
+# (old-image) api on a migrated schema for as long as the smoke test takes. The other
+# ordering is worse: it would run the new image's CLI reads — the Settings toggle below —
+# against a pre-migration schema on EVERY update, trading a rare long window for a
+# systematic mismatch. The long window is rare in practice because the smoke test only
+# runs when the gateway image actually changed.
+echo "[update] running migrations"
+docker compose run --rm migrate
 
 # DEFAULT-ON: track the newest llama.cpp on the gateway so a freshly-released model's
 # architecture is supported WITHOUT any manual step — the owner drives this box from the
@@ -336,6 +462,12 @@ fi
 # says false, so an existing opt-out keeps working; otherwise the stored setting decides.
 # This is the CLAUDE.md #10 fix for this switch: it governs whether an update loads a model
 # into the GPU at all, and it used to be reachable only by editing .env on the host.
+#
+# This block runs while the stack is QUIESCED and before the recreate, not after it as it
+# once did. The tool probe loads gpt-oss (~60 GB of weights on this box) and that load is
+# what the kernel trace caught freezing the host — so it happens at the emptiest moment of
+# the whole update, not on top of a freshly-recreated stack and a page cache still full of
+# the layers the build just wrote.
 AUTO_UPDATE_ON=1
 if grep -q '^LOCAL_LLM_AUTO_UPDATE=false' .env; then
   AUTO_UPDATE_ON=''
@@ -360,7 +492,11 @@ if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
     AFTER_IMG="$(docker image inspect -f '{{.Id}}' jbrain2-local-llm:local 2>/dev/null || true)"
     if [ -n "$BEFORE_IMG" ] && [ "$BEFORE_IMG" = "$AFTER_IMG" ]; then
       echo "[update] gateway image unchanged — skipping the smoke test (nothing new to vet)"
-    elif run_bounded "$SMOKE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+    # Immediately before the load, and after the build that dirtied the cache — the smoke
+    # test refuses a load it cannot afford (jbrain.llm.smoketest.LOAD_HEADROOM_GB), and it
+    # reads MemAvailable to decide. That number counts reclaimable page cache as free, so
+    # without this it would be measuring optimism rather than memory.
+    elif drop_page_cache && run_bounded "$SMOKE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
         python -m jbrain.cli local-llm-smoketest; then
       echo "[update] gateway smoke test passed on the newest llama.cpp"
     else
@@ -377,6 +513,68 @@ if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
       && docker compose --profile local-llm up -d local-llm \
       || echo "[update] WARNING: gateway rollback rebuild failed — check 'jbrain logs local-llm'"
   fi
+fi
+
+# Release whatever the smoke test loaded before the stack comes back. gpt-oss is ~60 GB
+# of pinned unified memory, and recreating a dozen containers on top of that is the same
+# collision the pre-build unload exists to prevent, just arriving from the other end. The
+# gateway keeps running, holding nothing — it reloads on demand.
+if [ -n "$LOCAL_LLM_RUNNING" ]; then
+  run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+    python -m jbrain.cli local-llm-unload \
+    || echo "[update] post-smoke unload skipped (gateway unreachable?)"
+  echo "[update] gateway emptied before the recreate ($(mem_available_gb) GB available)"
+fi
+
+# Clear containers left behind by a renamed (server-brain->wall, whisper->tts-stt) or removed
+# (claude-shim) service before the `up -d` below — an old server-brain holding host port 8800
+# blocks the new `wall` (which is what took the tunnel down after the split update), and any such
+# labeled orphan lingers on the Ops screen. The helper sweeps by comparing labels against the
+# file's full service set, so profile-gated services `--remove-orphans` would wrongly reap are kept.
+echo "[update] clearing renamed/removed-service orphans"
+sh src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
+
+echo "[update] restarting stack"
+docker compose $JCODE_PROFILE $TUNNEL_PROFILE up -d
+
+# End of the quiesced window. `up -d` covers the base stack; this puts back the
+# profile-gated services it does not name (comfyui, the mqtt pair) so an update never
+# silently leaves a feature the operator enabled switched off.
+unquiesce_stack
+
+# Provision any locally-hosted LLM models the operator queued from the PWA (and
+# keep the current + recommended set present). Runs AFTER the stack is up so the
+# app stays usable during a long weight download, and the per-model progress bar
+# can read on-disk bytes through the live api. Best-effort: a sync failure must
+# never abort the update — the queue persists and the next update retries.
+echo "[update] syncing local models"
+sh src/deploy/local-models-sync.sh || echo "[update] local-model sync skipped (will retry next update)"
+
+# On-box image generation (host-only): re-sync its models so an update that adds newly
+# recommended ones pulls them with no separate manual step. We provision the UNION of the
+# operator's selection and the recommended set, so nothing they chose is dropped. Needs the
+# host installer, so the containerized caller skips it. Best-effort.
+if [ -n "$HOST_UPDATE" ] && grep -q '^COMFYUI_ENABLED=true' .env; then
+  _current="$(python3 -c "import json,re; t=open('.env').read(); m=re.search(r'^COMFYUI_MODELS=(.*)$',t,re.M); print(' '.join(json.loads(m.group(1))) if m else '')" 2>/dev/null || true)"
+  _reco="$(docker compose run --rm --no-deps -T api python -c "from jbrain.image_gen import catalog; print(' '.join(catalog.recommended_ids()))" 2>/dev/null || true)"
+  _ids="$(printf '%s\n%s\n' "$_current" "$_reco" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')"
+  if [ -n "$_ids" ]; then
+    echo "[update] syncing on-box image models: $_ids"
+    JBRAIN_INSTALL_DIR=/opt/jbrain2 sh src/scripts/comfyui-setup.sh $_ids \
+      || echo "[update] image-model sync skipped (retry: sudo bash scripts/comfyui-setup.sh)"
+  fi
+fi
+
+# Bring the LLM gateway back up now the churn is over (it loads models on demand).
+# Only when it was up before this update: the model sync above restarts it when the
+# roster CHANGED, but the common no-op sync ("no models to sync") exits before its
+# own `up -d`, so without this an enabled gateway would stay stopped after every
+# routine update. Idempotent — with the sync's own start, and with the auto-update
+# block's, which already brought it back inside the quiesced window; best-effort. This
+# is the ONLY thing that restarts it when auto-update is off and nothing rebuilt it.
+if [ -n "$LOCAL_LLM_RUNNING" ]; then
+  echo "[update] restarting local-llm gateway"
+  docker compose --profile local-llm up -d local-llm || true
 fi
 
 # Reclaim space, but never let a prune hiccup fail the whole update (set -e) after
