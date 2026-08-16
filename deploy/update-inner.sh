@@ -1,9 +1,26 @@
 #!/bin/sh
-# Containerized `jbrain update`, launched by the supervisor as a detached
-# one-shot (docker:cli image) so it survives the stack — including the
-# supervisor itself — restarting beneath it. The project dir is mounted at
-# its real host path, so compose's relative bind paths resolve correctly.
+# THE update. One implementation, two callers:
+#
+#   PWA   — the supervisor launches this as a detached one-shot (docker:cli image) so it
+#           survives the stack, supervisor included, restarting beneath it. The project
+#           dir is mounted at its real host path so compose's relative binds resolve.
+#   SSH   — `jbrain update` runs this directly with JBRAIN_HOST_UPDATE=1.
+#
+# It is one file because it was two, and they drifted. The host copy never rebuilt the
+# gateway on the floating llama.cpp tag and never loaded a model to smoke-test it; the
+# containerized copy never re-applied the OOM hardening. So the PWA path did the
+# memory-heavy thing WITHOUT the protection against exactly that — and hard-locked the
+# box (see the gateway-stop note below, which had already recorded this failure once).
+# Whatever is decided about an update is now decided once.
+#
+# The two callers genuinely differ in CAPABILITY, not in intent: mDNS setup, on-box image
+# models and OOM hardening need the real host (systemd, sysctls, apt), which the updater
+# container has no route to. Those are gated on JBRAIN_HOST_UPDATE and named as such,
+# rather than living in a second script that can fall behind.
 set -eu
+
+# Set by `jbrain update`; empty in the container. Gates the host-only steps below.
+HOST_UPDATE="${JBRAIN_HOST_UPDATE:-}"
 
 echo "[update] starting"
 ./backup.sh || echo "[update] backup skipped (stack not fully up?)"
@@ -78,6 +95,29 @@ if ! grep -q '^JLAUNCH_TOKEN=..*' .env; then
   printf 'JLAUNCH_TOKEN=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
 fi
 
+# LAN access (host-only): turn it on for installs that predate it, then re-provision the
+# host mDNS responder + alias from the freshly pulled source. Needs systemd/avahi on the
+# real host, so the containerized caller skips it — the setting persists in .env either
+# way, and the next host update re-applies it. Best-effort: never aborts an update.
+if [ -n "$HOST_UPDATE" ]; then
+  if ! grep -q '^JBRAIN_LAN_ADDR=' .env; then
+    printf 'JBRAIN_LAN_ADDR=%s\n' "https://jbrain.local" >> .env
+  fi
+  if grep -q '^JBRAIN_LAN_ADDR=https' .env; then
+    JBRAIN_INSTALL_DIR=/opt/jbrain2 sh src/deploy/lan-setup.sh \
+      || echo "[update] LAN setup skipped (run 'jbrain enable-lan' to retry)"
+  fi
+fi
+
+# The opt-in Cloudflare Tunnel connector is profile-gated. Keep it in the build/recreate
+# when enabled so an update actually refreshes the connector — the host path already did
+# this and the containerized one did not, which meant a PWA update silently left the
+# tunnel on its old image.
+TUNNEL_PROFILE=""
+if grep -q '^TUNNEL_ENABLED=true' .env; then
+  TUNNEL_PROFILE="--profile tunnel"
+fi
+
 # Read-aloud (server-side Kokoro TTS) needs NOTHING here: Kokoro AND its weights
 # are baked into the tts-stt image (deploy/Dockerfile.tts-stt), rebuilt
 # by the `docker compose build` below. It is driven entirely by the Settings toggle
@@ -95,9 +135,47 @@ fi
 LOCAL_LLM_RUNNING=""
 if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
   LOCAL_LLM_RUNNING=1
-  echo "[update] stopping local-llm gateway to free memory for the update"
-  docker compose --profile local-llm stop local-llm || true
+
+  # 1. Ask the gateway to RELEASE its models first. Killing the container alone leaves the
+  #    kernel to reclaim tens of gigabytes as the process dies, at exactly the moment the
+  #    build and recreate start allocating — which is the race the note above describes.
+  #    Unloading first makes that memory go away in a controlled way, before anything
+  #    needs it. Best-effort: a gateway already down or holding nothing is a success.
+  echo "[update] releasing loaded models before stopping the gateway"
+  docker compose run --rm --no-deps -T api python -m jbrain.cli local-llm-unload \
+    || echo "[update] unload skipped (gateway unreachable?)"
+
+  # 2. Stop AND REMOVE it. `stop` leaves a container that a stray `up -d` — including the
+  #    model sync's own, see JBRAIN_SKIP_GATEWAY_START below — can bring straight back
+  #    mid-update, reloading the weights we just released into the middle of the churn.
+  #    Removing it means nothing restarts the gateway by accident: it has to be recreated
+  #    deliberately, which this script does once, at the end.
+  echo "[update] stopping and removing the local-llm gateway"
+  docker compose --profile local-llm rm -sf local-llm || true
+
+  # 3. Do not proceed while it is still winding down. Allocating on top of a gateway that
+  #    has not finished releasing is the whole failure mode; a few seconds of waiting is
+  #    cheap next to a hard-locked host. Bounded, and only a warning if it overruns — the
+  #    update must not hang forever on a wedged container.
+  _waited=0
+  while [ "$_waited" -lt 60 ]; do
+    if [ -z "$(docker compose --profile local-llm ps -q local-llm 2>/dev/null)" ]; then
+      break
+    fi
+    sleep 2
+    _waited=$((_waited + 2))
+  done
+  [ "$_waited" -lt 60 ] \
+    || echo "[update] WARNING: gateway still present after ${_waited}s — continuing anyway"
+  echo "[update] gateway down after ${_waited}s; memory released"
 fi
+
+# Nothing may restart the gateway between here and the deliberate restart at the end.
+# local-models-sync.sh brings it up itself when the roster changed, which lands squarely in
+# the middle of the build and recreate — the one window this whole dance exists to keep
+# clear. It honours this flag and leaves the restart to us.
+JBRAIN_SKIP_GATEWAY_START=1
+export JBRAIN_SKIP_GATEWAY_START
 
 # Stamp the image with the exact source revision being built so the running server
 # can report what is deployed (debug /version) — no more guessing whether a merge is
@@ -128,7 +206,7 @@ for _stamp in "JBRAIN_GIT_SHA=$JBRAIN_GIT_SHA" \
   fi
 done
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
-docker compose $JCODE_PROFILE build
+docker compose $JCODE_PROFILE $TUNNEL_PROFILE build
 
 echo "[update] running migrations"
 docker compose run --rm migrate
@@ -142,7 +220,7 @@ echo "[update] clearing renamed/removed-service orphans"
 sh src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
 
 echo "[update] restarting stack"
-docker compose $JCODE_PROFILE up -d
+docker compose $JCODE_PROFILE $TUNNEL_PROFILE up -d
 
 # Provision any locally-hosted LLM models the operator queued from the PWA (and
 # keep the current + recommended set present). Runs AFTER the stack is up so the
@@ -151,6 +229,32 @@ docker compose $JCODE_PROFILE up -d
 # never abort the update — the queue persists and the next update retries.
 echo "[update] syncing local models"
 sh src/deploy/local-models-sync.sh || echo "[update] local-model sync skipped (will retry next update)"
+
+# On-box image generation (host-only): re-sync its models so an update that adds newly
+# recommended ones pulls them with no separate manual step. We provision the UNION of the
+# operator's selection and the recommended set, so nothing they chose is dropped. Needs the
+# host installer, so the containerized caller skips it. Best-effort.
+if [ -n "$HOST_UPDATE" ] && grep -q '^COMFYUI_ENABLED=true' .env; then
+  _current="$(python3 -c "import json,re; t=open('.env').read(); m=re.search(r'^COMFYUI_MODELS=(.*)$',t,re.M); print(' '.join(json.loads(m.group(1))) if m else '')" 2>/dev/null || true)"
+  _reco="$(docker compose run --rm --no-deps -T api python -c "from jbrain.image_gen import catalog; print(' '.join(catalog.recommended_ids()))" 2>/dev/null || true)"
+  _ids="$(printf '%s\n%s\n' "$_current" "$_reco" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')"
+  if [ -n "$_ids" ]; then
+    echo "[update] syncing on-box image models: $_ids"
+    JBRAIN_INSTALL_DIR=/opt/jbrain2 sh src/scripts/comfyui-setup.sh $_ids \
+      || echo "[update] image-model sync skipped (retry: sudo bash scripts/comfyui-setup.sh)"
+  fi
+fi
+
+# OOM hardening (host-only): earlyoom + reclaim-headroom sysctls, re-applied so a box that
+# predates the automated hardening — or lost it — is protected on its next update. This is
+# the protection against the reclaim livelock described above, which makes its absence from
+# the containerized path the single worst consequence of the two scripts having drifted:
+# that path is the one that rebuilds the gateway and loads a model. It still cannot run
+# here (sysctls and apt need the real host), so a PWA update relies on hardening a previous
+# host update applied. That is a real remaining gap, not a solved one.
+if [ -n "$HOST_UPDATE" ] && grep -q '^LOCAL_LLM_ENABLED=true' .env; then
+  sh src/deploy/oom-hardening.sh || echo "[update] OOM hardening skipped (retry next update)"
+fi
 
 # Bring the LLM gateway back up now the churn is over (it loads models on demand).
 # Only when it was up before this update: the model sync above restarts it when the

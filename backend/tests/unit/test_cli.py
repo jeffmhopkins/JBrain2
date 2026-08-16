@@ -125,3 +125,89 @@ def test_local_activate_is_a_no_op_for_an_unknown_id(patched_store: FakeSettings
     # An id not in the catalog writes nothing (agent.turn keeps whatever it had).
     assert cli.main(["local-activate", "not-a-model"]) == 0
     assert "llm_task_overrides" not in patched_store.values
+
+
+def test_unload_releases_every_loaded_model(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Run before an update stops the gateway. Killing the container alone leaves the
+    kernel to reclaim tens of gigabytes exactly as the build starts allocating — the race
+    that hard-locked this box. Releasing first makes that memory go away in a controlled
+    way, before anything else needs it."""
+    import jbrain.llm.local_gateway as gateway_mod
+
+    released: list[str] = []
+
+    class _Gateway:
+        def __init__(self, _url: str) -> None: ...
+
+        async def running(self) -> set[str]:
+            return {"gpt-oss-120b", "qwen3.5-0.8b"}
+
+        async def unload(self, served: str) -> None:
+            released.append(served)
+
+    class _Settings:
+        local_llm_enabled = True
+        local_llm_url = "http://local-llm:8080/v1"
+
+    monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(gateway_mod, "LocalGatewayClient", _Gateway)
+
+    assert cli.main(["local-llm-unload"]) == 0
+    assert sorted(released) == ["gpt-oss-120b", "qwen3.5-0.8b"]
+
+
+def test_unload_never_fails_the_update(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A gateway already down, unreachable, or holding nothing is a success. This runs
+    inside `set -e` update scripts — it must never be the reason an update aborts."""
+    import jbrain.llm.local_gateway as gateway_mod
+
+    class _Unreachable:
+        def __init__(self, _url: str) -> None: ...
+
+        async def running(self) -> set[str]:
+            raise ConnectionError("gateway is already down")
+
+    class _Settings:
+        local_llm_enabled = True
+        local_llm_url = "http://local-llm:8080/v1"
+
+    monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(gateway_mod, "LocalGatewayClient", _Unreachable)
+
+    assert cli.main(["local-llm-unload"]) == 0
+    assert "unreachable" in capsys.readouterr().out
+
+
+def test_unload_keeps_going_when_one_model_refuses(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Releasing three of four models is still most of the memory, and the container
+    removal that follows is the backstop for the rest."""
+    import jbrain.llm.local_gateway as gateway_mod
+
+    released: list[str] = []
+
+    class _Partial:
+        def __init__(self, _url: str) -> None: ...
+
+        async def running(self) -> set[str]:
+            return {"a-model", "b-model"}
+
+        async def unload(self, served: str) -> None:
+            if served == "a-model":
+                raise RuntimeError("stuck")
+            released.append(served)
+
+    class _Settings:
+        local_llm_enabled = True
+        local_llm_url = "http://local-llm:8080/v1"
+
+    monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(gateway_mod, "LocalGatewayClient", _Partial)
+
+    assert cli.main(["local-llm-unload"]) == 0
+    assert released == ["b-model"]

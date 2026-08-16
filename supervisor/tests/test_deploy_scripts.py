@@ -61,7 +61,11 @@ def test_oneshot_script_parses_under_posix_sh(name: str) -> None:
 # bind source is missing, Docker mounts an empty dir over /etc/searxng/settings.yml,
 # SearXNG drops to its HTML-only defaults, and /search?format=json answers 403, so
 # jerv reports web search as unavailable.
-DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES = ["install.sh", "update-inner.sh", "jbrain"]
+# `jbrain` is deliberately NOT here: its update case delegates to update-inner.sh rather
+# than laying these down itself. Listing it would re-assert the duplication that let the
+# two
+# update paths drift apart — see test_the_host_cli_delegates_to_the_one_update_script.
+DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES = ["install.sh", "update-inner.sh"]
 
 
 @pytest.mark.parametrize("name", DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES)
@@ -99,7 +103,10 @@ def test_script_ensures_searxng_secret(name: str) -> None:
 # Both update paths must keep the opt-in code-mode sandbox (jcode) turnkey: once the
 # operator has enabled it (a one-time scripts/jcode-setup.sh), the PWA update and the
 # host `jbrain update` keep it built/current with no CLI.
-JCODE_TURNKEY_SCRIPTS = ["update-inner.sh", "jbrain"]
+# `jbrain` delegates its update to update-inner.sh, so the shared script is the only
+# place
+# this can be asserted — listing both would re-pin the duplication that let them drift.
+JCODE_TURNKEY_SCRIPTS = ["update-inner.sh"]
 
 
 @pytest.mark.parametrize("name", JCODE_TURNKEY_SCRIPTS)
@@ -122,7 +129,8 @@ def test_update_keeps_jcode_turnkey_when_enabled(name: str) -> None:
 # profile-gated. Every path that provisions the stack must backfill its api<->jlaunch
 # bearer (the fail-closed control server won't start without it), and NONE may hide it
 # behind a JLAUNCH_ENABLED gate or a `--profile jlaunch`.
-JLAUNCH_PROVISION_SCRIPTS = ["install.sh", "update-inner.sh", "jbrain"]
+# Same: the host CLI delegates, so update-inner.sh carries this for both callers.
+JLAUNCH_PROVISION_SCRIPTS = ["install.sh", "update-inner.sh"]
 
 
 @pytest.mark.parametrize("name", JLAUNCH_PROVISION_SCRIPTS)
@@ -182,9 +190,9 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     def idx(needle: str) -> int | None:
         return next((i for i, ln in enumerate(lines) if needle in ln), None)
 
-    stop = idx("stop local-llm")
-    build = idx("compose $JCODE_PROFILE build")
-    up = idx("compose $JCODE_PROFILE up -d")
+    stop = idx("rm -sf local-llm")
+    build = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    up = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
     restart = idx("up -d local-llm")
     assert "LOCAL_LLM_ENABLED=true" in text, (
         "the gateway stop/restart must be gated on LOCAL_LLM_ENABLED so a stock "
@@ -495,3 +503,80 @@ def test_update_persists_the_build_stamp_into_env() -> None:
     # Rewrite-in-place, never append-a-duplicate: two lines for one key would leave the
     # winner decided by file ordering.
     assert 'grep -q "^${_key}=" .env' in text
+
+
+# --- one update, two callers -------------------------------------------------
+
+
+def test_the_host_cli_delegates_to_the_one_update_script() -> None:
+    """`jbrain update` must CALL update-inner.sh, not reimplement it.
+
+    They were two copies and they drifted: the host one never rebuilt the gateway
+    on the floating llama.cpp tag or smoke-tested it, the containerized one never
+    re-applied the OOM hardening. So the PWA path did the memory-heavy work without
+    the protection against exactly that, and hard-locked the box repeatedly. This
+    test is what stops them diverging again."""
+    text = (DEPLOY / "jbrain").read_text()
+    case = text[text.index("  update)") : text.index("  enable-lan)")]
+
+    assert "update-inner.sh" in case, "the host CLI must delegate to the shared script"
+    assert "JBRAIN_HOST_UPDATE=1" in case, "host-only steps are gated on this flag"
+    # No reimplementation: the moment this case grows its own build/migrate/recreate,
+    # the
+    # two paths have started drifting again.
+    for step in ("docker compose build", "docker compose run", "docker compose up"):
+        assert step not in case, f"host update must not reimplement `{step}`"
+
+
+def test_host_only_steps_are_gated_not_duplicated() -> None:
+    """The callers differ in CAPABILITY, not intent — mDNS, on-box image models
+    and OOM hardening need systemd/sysctls/apt, which the updater container has no
+    route to. They live in the shared script behind a flag, not a second copy."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert 'HOST_UPDATE="${JBRAIN_HOST_UPDATE:-}"' in text
+    for host_only in ("lan-setup.sh", "comfyui-setup.sh", "oom-hardening.sh"):
+        assert host_only in text, f"{host_only} must live in the shared script"
+    assert text.count('[ -n "$HOST_UPDATE" ]') >= 3, "each host-only step must be gated"
+
+
+def test_update_releases_models_and_removes_the_gateway_before_building() -> None:
+    """Stopping the container alone leaves the kernel to reclaim tens of gigabytes
+    exactly as the build starts allocating — the race that hard-locked this box,
+    keyboard included. The models are released first, the container is REMOVED (not
+    just stopped) so nothing can bring it back mid-update, and the script waits for
+    it to actually be gone."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+    lines = text.splitlines()
+
+    def idx(needle: str) -> int:
+        return next(
+            i
+            for i, ln in enumerate(lines)
+            if needle in ln and not ln.lstrip().startswith("#")
+        )
+
+    unload = idx("jbrain.cli local-llm-unload")
+    remove = idx("rm -sf local-llm")
+    build = idx("docker compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+
+    assert unload < remove < build, (
+        "release models, then remove the gateway, then build"
+    )
+    # `stop` is not enough: a stopped container is one stray `up -d` away from
+    # reloading.
+    assert "rm -sf local-llm" in text
+    assert "ps -q local-llm" in text, "must wait for the gateway to actually be gone"
+
+
+def test_nothing_restarts_the_gateway_mid_update() -> None:
+    """local-models-sync's own `up -d` landed squarely in the build/recreate
+    window — the one window this whole dance exists to keep clear."""
+    update = (DEPLOY / "update-inner.sh").read_text()
+    sync = (DEPLOY / "local-models-sync.sh").read_text()
+
+    assert "JBRAIN_SKIP_GATEWAY_START=1" in update
+    assert "export JBRAIN_SKIP_GATEWAY_START" in update
+    assert 'if [ -n "${JBRAIN_SKIP_GATEWAY_START:-}" ]; then' in sync, (
+        "the sync must honour the flag, not start the gateway during an update"
+    )
