@@ -28,7 +28,6 @@ from jbrain.api.settings import get_settings_store
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
-from jbrain.host_metrics import read_gpu_busy_percent
 from jbrain.storage import BackupShelf, BlobStore
 from jbrain.tasks.schedule import FREQS
 from jbrain.usage import usage_summary
@@ -433,16 +432,37 @@ _PROCESS_CMD_MAX = 200
 _VITALS_PERIOD_S = 1.0
 
 
+def _gpu_busy(request: Request) -> float | None:
+    """The gauge — from the ONE sampler, never a fresh sysfs read.
+
+    Every GPU figure the API serves comes through here: the top bar's stream, its probe,
+    and the roster's reading. They used to take their own `read_gpu_busy_percent()` at
+    their own instant, which is how two surfaces showing "the GPU" could disagree — and,
+    because that read goes through the amdgpu driver and can stall under heavy allocation,
+    it also put a blocking device read on the request path once per frame per client.
+
+    Reading the ring makes both problems structural rather than managed: there is exactly
+    one sysfs read per second in the process (vitals_ring.sample_loop, on a thread with a
+    timeout), and every surface answers from the same sample, so they cannot disagree.
+
+    Returns None when no sampler has run or its newest sample has gone stale — the
+    surfaces already distinguish "no reading" from "no gauge"."""
+    ring = cast(VitalsRing | None, getattr(request.app.state, "vitals_ring", None))
+    return ring.latest() if ring is not None else None
+
+
 @router.get("/vitals")
-async def vitals() -> dict[str, object]:
+async def vitals(request: Request) -> dict[str, object]:
     """One host-vitals reading. Also the PWA's PROBE: the top-bar meter calls this
     once and only opens the stream below if it succeeds, so a family member (whom
     the router's owner_only rejects) never opens an EventSource that would retry
     against a 403 forever."""
-    return {"gpu_busy_percent": read_gpu_busy_percent()}
+    return {"gpu_busy_percent": _gpu_busy(request)}
 
 
-async def vitals_frames(disconnected: Callable[[], Awaitable[bool]]) -> AsyncIterator[bytes]:
+async def vitals_frames(
+    disconnected: Callable[[], Awaitable[bool]], gauge: Callable[[], float | None]
+) -> AsyncIterator[bytes]:
     """SSE frames of host vitals, one per `_VITALS_PERIOD_S`, until the client goes.
 
     Every frame is sent whether or not the value moved: the constant tick doubles as
@@ -454,7 +474,7 @@ async def vitals_frames(disconnected: Callable[[], Awaitable[bool]]) -> AsyncIte
     `http.disconnect`, so a route-local closure over `request.is_disconnected` would
     spin forever with no way to stop it."""
     while not await disconnected():
-        payload = json.dumps({"gpu_busy_percent": read_gpu_busy_percent()})
+        payload = json.dumps({"gpu_busy_percent": gauge()})
         yield f"data: {payload}\n\n".encode()
         await asyncio.sleep(_VITALS_PERIOD_S)
 
@@ -533,7 +553,7 @@ async def live_turns(request: Request, principal: PrincipalDep, seconds: int = 0
             )
             for row in rows
         ],
-        gpu_busy_percent=read_gpu_busy_percent(),
+        gpu_busy_percent=_gpu_busy(request),
     )
 
 
@@ -716,8 +736,24 @@ async def vitals_history(request: Request, seconds: int = _MAX_HISTORY_SECONDS) 
 
 @router.get("/vitals/stream")
 async def vitals_stream(request: Request) -> StreamingResponse:
-    """Host vitals as SSE at 1 Hz, for the top bar's GPU reading."""
-    return StreamingResponse(vitals_frames(request.is_disconnected), media_type="text/event-stream")
+    """Host vitals as SSE at 1 Hz, for the top bar's GPU reading.
+
+    The headers are load-bearing, not decoration. An intermediary that BUFFERS a
+    `text/event-stream` turns this into a socket that connects, reports itself healthy,
+    and delivers nothing — a failure EventSource has no error event for, so the meter sat
+    blank while the same data read fine over ordinary fetches. `no-cache` and
+    `X-Accel-Buffering: no` are the two asks that make a proxy pass frames straight
+    through; the client's own silence watchdog is the backstop for one that ignores
+    them."""
+    return StreamingResponse(
+        vitals_frames(request.is_disconnected, lambda: _gpu_busy(request)),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # The history ranges the Ops graph offers. Spans up to RAW_QUERY_MAX read raw

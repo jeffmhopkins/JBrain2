@@ -180,7 +180,14 @@ resampled once a second:
   retries a dropped connection but not a fatal one (a 502 while the box redeploys), and
   leaving that stream in place blanked the top bar for the rest of the session while the
   detail screen — reading the server's ring over plain fetches — carried on showing
-  numbers.
+  numbers. **A silent stream is also treated as dead** [decided]: the route sends a frame
+  every second whether or not the reading moved, precisely so silence is diagnostic, and a
+  stream can stop delivering while the socket stays OPEN — a proxy buffering
+  `text/event-stream`, a half-open connection after a network change. Neither raises an
+  error event, so the fatal-close recovery never fires and the meter just sits blank. Six
+  missed frames replaces the stream. The server also asks proxies not to buffer
+  (`Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`); the watchdog is the
+  backstop for one that ignores the ask.
 - **The chart and the GPU figure share one grid row** [decided]. They are the pair
   the eye reads together, and laying them out as two independently-centred columns
   put the chart's middle 11px above the figure's — the reserved t/s slot pushed the
@@ -199,6 +206,26 @@ G "instrument panel" and H "dossier"; binding mock
 a **full-screen card** — the paradigm table's answer for a graph plus a drillable list
 plus expandable detail — with **two levels**:
 
+- **One gauge, one sampler, every surface** [decided]. Inside the API there is exactly
+  ONE reader of `gpu_busy_percent`: `vitals_ring.sample_loop`, once a second, on a thread
+  with a timeout. The probe, the SSE stream and the roster all answer from its newest
+  sample rather than taking their own read. Before this there were three readers — the
+  supervisor's (feeding the Ops tile every 30s), the API's inline read per stream frame,
+  and the ring's — so two surfaces both labelled "GPU" could legitimately disagree, which
+  is exactly what the owner kept seeing. Two consequences follow: a stalled read can no
+  longer block a request path (it is off the loop, and there is one of it rather than one
+  per client per second), and `latest()` returns None once its sample ages past a few
+  ticks, so a dead sampler reads as *no reading* instead of a confident frozen number. The
+  supervisor keeps its own copy on purpose — separate deployable, no shared package — but
+  it feeds only the 30-day history, never a live figure shown next to a live one.
+- **The whole surface runs on ONE clock, at 1 Hz** [decided]. The graph ticked at 1 Hz
+  while the roster refetched every 3s and an open turn every 2s, so three things
+  describing the same instant disagreed on screen — a turn's load appeared in the plot
+  before its row appeared in the list. A page that claims to be live at 1 Hz is live at
+  1 Hz throughout, streamed or polled. The polls chain from completion rather than sitting
+  on an interval: at 1 Hz a read slower than the period would stack requests, and the
+  moment the box is busiest is exactly when this screen is being watched. Bounded by being
+  owner-only, open-only and foreground-only.
 - **Level 1** is the graph at **1 / 5 / 15 minutes** plus a roster of the turns in that
   **same window**, children indented under the turn that spawned them, split into
   *Running now* and *Finished, last N*. The range drives **both halves** [decided]: the
@@ -239,12 +266,21 @@ plus expandable detail — with **two levels**:
 
 Three things this surface is careful about:
 
-- **Longer ranges draw the mean AND the peak** [decided]. This gauge is read to find the
-  moment the box was pinned, and averaging a 15-minute window flattens a ten-second spike
-  into nothing — but a peak-only plot never shows what the box was doing the rest of the
-  time. The mean is the solid line, the bucket's peak is the fainter band above it, and
-  the gap between them is the burstiness. (This supersedes the original peak-only rule,
-  which the column chart could not express both halves of.)
+- **Full resolution, on a grid anchored to absolute seconds** [decided]. One point per
+  second, every reading the ring holds — no bucketing at any range. Both earlier schemes
+  are superseded: peak-only columns, then mean-plus-peak-band. Bucketing threw away
+  resolution already in hand (900 samples squeezed into 60 columns), and because the
+  bucket edges were derived from `Date.now()` on each tick, the whole partition slid a
+  fraction of a bucket every second and samples visibly hopped between columns — the line
+  reshaped itself once a second while the data behind it sat still. Anchoring to whole
+  seconds makes a sample's slot a property of the sample, so the window scrolls by exactly
+  one slot per tick instead of re-partitioning. With every sample drawn, mean-vs-peak
+  stops being a question.
+- **The GPU area is shaded, the token rate is not** [decided]. Shading reads as "how much
+  of the available capacity was used", which is only true when the baseline is a real
+  zero — so it is opt-in (`PlotLine.fill`) and paired with the pinned 0–100 scale. The
+  token rate is auto-scaled to its own window, where the floor is the window's minimum
+  rather than zero, and shading to that floor would imply a quantity that isn't there.
 - **The verbatim prompt is shown, from memory only** [decided]. It is captured as each
   model call goes out and held in a process-lifetime ring
   (`backend/src/jbrain/agent/prompt_capture.py`), never written to a table. An assembled
