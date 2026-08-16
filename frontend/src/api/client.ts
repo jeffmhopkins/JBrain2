@@ -106,6 +106,32 @@ export interface LiveTurn {
   call: TurnCall | null;
 }
 
+/** One step of a turn's trail. `ok` is null while the step is still in flight — a
+ *  running tool call, not a failed one. */
+export interface TurnStep {
+  idx: number;
+  kind: string;
+  name: string;
+  ok: boolean | null;
+  cost_tokens: number;
+  error: string | null;
+}
+
+/** A turn's raw output. `live` says it came from the in-flight render accumulator (a
+ *  parent /chat turn mid-answer) rather than the stored transcript, so the surface can
+ *  label a streaming turn honestly instead of implying a finished answer. */
+export interface TurnOutput {
+  live: boolean;
+  answer: string;
+  reasoning: string;
+  steps: TurnStep[];
+}
+
+export interface TurnDetail {
+  steps: TurnStep[];
+  output: TurnOutput | null;
+}
+
 export interface LiveTurns {
   turns: LiveTurn[];
   /** Carried with the roster so the surface can say "busy box, no turns" in one
@@ -2841,6 +2867,13 @@ export const api = {
   async opsTurns(): Promise<LiveTurns> {
     const response = await request("/api/ops/turns");
     return (await response.json()) as LiveTurns;
+  },
+
+  /** One turn's step trail and raw output, for the vitals detail's level 2. Polled
+   *  while that level is open so a streaming answer grows on screen. */
+  async opsTurnDetail(runId: string): Promise<TurnDetail> {
+    const response = await request(`/api/ops/turns/${encodeURIComponent(runId)}`);
+    return (await response.json()) as TurnDetail;
   },
 
   // ===== The workflow run log — the Ops "Runs" surface (owner-only) =====

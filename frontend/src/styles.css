@@ -23625,3 +23625,146 @@ button.task-band:active {
   line-height: 1.55;
   border-left: 2px solid var(--border);
 }
+
+/* ---- level 1: the second channel, the axis, the caveat ---- */
+
+.vitals-plot-figures {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.vitals-plot-figure.rate {
+  color: var(--steel);
+}
+
+.vitals-plot-figure.rate .u {
+  color: var(--steel);
+  opacity: 0.62;
+}
+
+/* Tokens/sec over the same time axis as the GPU columns — a different scale, so it is
+   comparable against itself over time and never against the columns. */
+.vitals-plot-trace {
+  fill: none;
+  stroke: var(--steel);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.vitals-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The caveat when the box is pinned AND turns are running: the reading still is not
+   proof those turns are what is using it. */
+.vitals-honesty {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.vitals-honesty b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---- level 2: the step trail ---- */
+
+.vitals-trail {
+  padding: 4px 14px;
+}
+
+.vitals-step {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-secondary);
+}
+
+.vitals-step:first-child {
+  border-top: none;
+}
+
+.vitals-step .i {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.vitals-step .t {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.vitals-step .t b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.vitals-step .d {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A step still in flight, and one that failed. */
+.vitals-step.now .d {
+  color: var(--steel);
+}
+
+.vitals-step.bad .t b,
+.vitals-step.bad .d {
+  color: var(--danger);
+}
+
+/* ---- level 2: raw output ---- */
+
+.vitals-sec-head .count.live {
+  color: var(--steel);
+}
+
+.vitals-raw {
+  padding: 12px 14px;
+}
+
+/* The output is verbatim, so it keeps its own line breaks and scrolls sideways inside
+   its own box rather than widening the page. */
+.vitals-raw pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.vitals-raw .marker {
+  color: var(--text-3);
+}
+
+.vitals-raw-empty {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  color: var(--text-3);
+}

@@ -20,6 +20,7 @@
 
 import { useEffect, useState } from "react";
 
+import { currentTokenRate } from "./agent/tokenMeter";
 import { ApiError, api } from "./api/client";
 import { isForeground } from "./visibility";
 
@@ -50,11 +51,13 @@ const UNKNOWN: GpuBusy = { percent: null, state: "unknown" };
  *  reload; surviving that would need a server-side ring. */
 const HISTORY_SAMPLES = 900;
 
-/** One second of the box, as the detail graph plots it. `gpu` is null wherever there
- *  was no reading — a gap, never a zero, which would read as an idle GPU. */
+/** One second of the box, as the detail graph plots it. Either channel is null
+ *  wherever there was no reading — a gap, never a zero, which would read as an idle
+ *  GPU or as a turn generating nothing. */
 export interface VitalsSample {
   at: number;
   gpu: number | null;
+  tps: number | null;
 }
 
 const history: VitalsSample[] = [];
@@ -77,7 +80,10 @@ function publish(busy: GpuBusy): void {
  *  cadence IS the sample clock, so the detail graph and the top bar plot the same
  *  seconds instead of each keeping a private timer that drifts against the other. */
 function remember(busy: GpuBusy, at: number): void {
-  history.push({ at, gpu: busy.percent });
+  // The token rate rides the same sample as the GPU reading, sampled on the stream's
+  // own 1 Hz tick, so the detail graph plots both channels against ONE time axis
+  // rather than two timers drifting against each other.
+  history.push({ at, gpu: busy.percent, tps: currentTokenRate() });
   if (history.length > HISTORY_SAMPLES) history.splice(0, history.length - HISTORY_SAMPLES);
 }
 

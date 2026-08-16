@@ -9,7 +9,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from jbrain import ops_metrics
 from jbrain.agent.runlog import RunLogReader
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
 from jbrain.api.settings import get_settings_store
 from jbrain.config import Settings
@@ -46,6 +47,12 @@ def _owner_ctx(principal: PrincipalDep) -> SessionContext:
     policies on triggers/schedules/pipelines/actions/runs are the real gate; this
     just carries the authenticated owner identity into the scoped session."""
     return SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+
+
+def _transcript(request: Request) -> AgentTranscript:
+    """The stored-conversation reader. The vitals detail falls back to it for any turn
+    with no in-process live handle — a sub-agent, or one that has already settled."""
+    return cast(AgentTranscript, request.app.state.agent_transcript)
 
 
 def _automations_reader(request: Request) -> AutomationsReader:
@@ -517,6 +524,102 @@ async def live_turns(request: Request, principal: PrincipalDep) -> LiveTurnsOut:
         ],
         gpu_busy_percent=read_gpu_busy_percent(),
     )
+
+
+class TurnStepOut(BaseModel):
+    idx: int
+    kind: str
+    name: str
+    # None while the step is still in flight — a live tool call, not a failed one.
+    ok: bool | None
+    cost_tokens: int
+    error: str | None
+
+
+class TurnOutputOut(BaseModel):
+    """A turn's raw output, and where it was read from.
+
+    Two sources by necessity. A live PARENT /chat turn has an in-process render
+    accumulator, which is the only way to see a turn mid-answer. Everything else — a
+    sub-agent (no live handle), or any settled turn — reads its stored transcript. The
+    `live` flag says which, so the surface can label a streaming turn honestly instead
+    of implying a finished answer is still arriving."""
+
+    live: bool
+    answer: str
+    reasoning: str
+    steps: list[TurnStepOut]
+
+
+class TurnDetailOut(BaseModel):
+    steps: list[TurnStepOut]
+    output: TurnOutputOut | None
+
+
+def _steps_from_snapshot(tools: list[dict[str, Any]]) -> list[TurnStepOut]:
+    return [
+        TurnStepOut(
+            idx=i,
+            kind=str(tool.get("name") or "step"),
+            name=str(tool.get("summary") or tool.get("name") or ""),
+            ok=cast(bool | None, tool.get("ok")),
+            cost_tokens=0,
+            error=None,
+        )
+        for i, tool in enumerate(tools)
+    ]
+
+
+@router.get("/turns/{run_id}")
+async def turn_detail(run_id: str, request: Request, principal: PrincipalDep) -> TurnDetailOut:
+    """One running turn's step trail and raw output, for the vitals detail's level 2.
+
+    The step trail comes from run_steps, which every run kind writes. The output comes
+    from the live accumulator when this run is a parent /chat turn still in flight, and
+    from the stored transcript otherwise — a sub-agent never registers a live handle,
+    so without the transcript fallback a fan's children would all read as silent."""
+    ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+    reader = cast(RunLogReader, request.app.state.run_reader)
+    detail = await reader.load(ctx, run_id)
+    steps = [
+        TurnStepOut(
+            idx=s.idx, kind=s.kind, name=s.name, ok=s.ok, cost_tokens=s.cost_tokens, error=s.error
+        )
+        for s in (detail.steps if detail else [])
+    ]
+
+    live = request.app.state.live_turns.get(run_id)
+    acc = getattr(live, "acc", None) if live is not None else None
+    if live is not None and acc is not None and not live.done:
+        snapshot = cast(dict[str, Any], acc.render_snapshot())
+        return TurnDetailOut(
+            steps=steps,
+            output=TurnOutputOut(
+                live=True,
+                answer=str(snapshot.get("content") or ""),
+                reasoning=str(snapshot.get("reasoning") or ""),
+                steps=_steps_from_snapshot(cast(list[dict[str, Any]], snapshot.get("tools") or [])),
+            ),
+        )
+
+    # No live handle: a sub-agent, a workflow run, or a turn that has settled. Its own
+    # session's last assistant turn is the closest honest thing to "its output".
+    session_id = detail.session_id if detail else None
+    if session_id:
+        turns = await _transcript(request).load(ctx, session_id)
+        answers = [t for t in turns if t.role == "assistant"]
+        if answers:
+            latest = answers[-1]
+            return TurnDetailOut(
+                steps=steps,
+                output=TurnOutputOut(
+                    live=False,
+                    answer=latest.content,
+                    reasoning=latest.reasoning or "",
+                    steps=[],
+                ),
+            )
+    return TurnDetailOut(steps=steps, output=None)
 
 
 @router.get("/vitals/stream")

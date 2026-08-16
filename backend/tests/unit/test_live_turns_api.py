@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from jbrain.agent.runlog import LiveTurnRow
+from jbrain.agent.runlog import LiveTurnRow, RunDetail, RunStepView
 from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.main import create_app
@@ -58,9 +58,58 @@ def row(**over: object) -> LiveTurnRow:
 class FakeRunReader:
     def __init__(self) -> None:
         self.rows: list[LiveTurnRow] = []
+        self.detail: RunDetail | None = None
 
     async def list_live(self, ctx: object, *, limit: int = 50) -> list[LiveTurnRow]:
         return self.rows
+
+    async def load(self, ctx: object, run_id: str) -> RunDetail | None:
+        return self.detail
+
+
+class FakeTranscript:
+    def __init__(self) -> None:
+        self.turns: list[object] = []
+
+    async def load(self, ctx: object, session_id: str) -> list[object]:
+        return self.turns
+
+
+class StoredTurn:
+    def __init__(self, role: str, content: str, reasoning: str = "") -> None:
+        self.role = role
+        self.content = content
+        self.reasoning = reasoning
+
+
+def detail(steps: list[RunStepView], session_id: str | None = "sess_4b1e") -> RunDetail:
+    return RunDetail(
+        id="run_parent",
+        kind="agent",
+        status="running",
+        name="agent",
+        started_at=NOW,
+        duration_ms=None,
+        step_count=len(steps),
+        cost_tokens=0,
+        stop_reason=None,
+        progress_note=None,
+        session_id=session_id,
+        steps=steps,
+    )
+
+
+def step(idx: int, *, ok: bool = True, error: str | None = None) -> RunStepView:
+    return RunStepView(
+        idx=idx,
+        kind="web.fetch",
+        name=f"step {idx}",
+        ok=ok,
+        cost_tokens=100,
+        job_id=None,
+        error=error,
+        detail=None,
+    )
 
 
 @pytest.fixture
@@ -74,7 +123,14 @@ def reader() -> FakeRunReader:
 
 
 @pytest.fixture
-def client(repo: FakeAuthRepo, reader: FakeRunReader) -> Iterator[TestClient]:
+def transcript() -> FakeTranscript:
+    return FakeTranscript()
+
+
+@pytest.fixture
+def client(
+    repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
+) -> Iterator[TestClient]:
     settings = Settings(
         secure_cookies=False, database_url="postgresql+asyncpg://nobody@localhost:1/none"
     )
@@ -82,6 +138,8 @@ def client(repo: FakeAuthRepo, reader: FakeRunReader) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         app.state.auth_repo = repo
         app.state.run_reader = reader
+        app.state.agent_transcript = transcript
+        app.state.live_turns = {}
         yield test_client
 
 
@@ -202,3 +260,82 @@ def test_carries_the_gauge_next_to_an_empty_roster(
 
     assert body["turns"] == []
     assert body["gpu_busy_percent"] == 94.0
+
+
+# --- GET /ops/turns/{run_id} — the step trail + raw output (level 2) ---------
+
+
+def test_turn_detail_requires_owner(client: TestClient) -> None:
+    assert client.get("/api/ops/turns/run_parent").status_code == 401
+
+
+def test_returns_the_step_trail(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    reader.detail = detail([step(0), step(1, ok=False, error="timeout")])
+    login(client, repo)
+
+    steps = client.get("/api/ops/turns/run_parent").json()["steps"]
+
+    assert [s["idx"] for s in steps] == [0, 1]
+    assert steps[1]["ok"] is False
+    assert steps[1]["error"] == "timeout"
+
+
+def test_falls_back_to_the_transcript_when_there_is_no_live_handle(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
+) -> None:
+    """A sub-agent never registers a live handle, so without this a fan's children would
+    all read as silent."""
+    reader.detail = detail([])
+    transcript.turns = [
+        StoredTurn("user", "sweep the spec sheets"),
+        StoredTurn("assistant", "MXZ-SM36: rated 36,000 BTU.", reasoning="extracting capacity"),
+    ]
+    login(client, repo)
+
+    output = client.get("/api/ops/turns/run_parent").json()["output"]
+
+    assert output["live"] is False
+    assert output["answer"] == "MXZ-SM36: rated 36,000 BTU."
+    assert output["reasoning"] == "extracting capacity"
+
+
+def test_prefers_the_live_accumulator_over_the_transcript(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
+) -> None:
+    """A turn mid-answer has nothing in the transcript yet — only the live accumulator
+    can show what it has produced so far."""
+
+    class FakeAcc:
+        @staticmethod
+        def render_snapshot() -> dict[str, object]:
+            return {"content": "streaming so far", "reasoning": "thinking", "tools": []}
+
+    class FakeLive:
+        acc = FakeAcc()
+        done = False
+
+    reader.detail = detail([])
+    transcript.turns = [StoredTurn("assistant", "a stale earlier answer")]
+    login(client, repo)
+    client.app.state.live_turns["run_parent"] = FakeLive()  # type: ignore[attr-defined]
+
+    try:
+        output = client.get("/api/ops/turns/run_parent").json()["output"]
+    finally:
+        # App shutdown cancels every live turn's driving task; this stand-in has none,
+        # so it must not still be in the registry at teardown.
+        client.app.state.live_turns.clear()  # type: ignore[attr-defined]
+
+    assert output["live"] is True
+    assert output["answer"] == "streaming so far"
+
+
+def test_reports_no_output_for_a_turn_that_has_produced_none(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    reader.detail = detail([], session_id=None)
+    login(client, repo)
+
+    assert client.get("/api/ops/turns/run_parent").json()["output"] is None

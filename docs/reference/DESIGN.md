@@ -193,9 +193,20 @@ plus expandable detail — with **two levels**:
   flight, children indented under the turn that spawned them.
 - **Level 2** is a pushed layer that is entirely one turn: what it is doing now, its
   children, **the call** (model, provider, reasoning effort, context window, tools,
-  persona) and **the run** (id, parent, started, trigger, session, domain, ran-as).
-  It climbs back with the chevron, the down-swipe and the platform back gesture, like
-  every other stacked layer.
+  persona), **the run** (id, parent, started, trigger, session, domain, ran-as), the
+  triggering message, the **step trail**, and the **raw output** — last, so it can run
+  as long as it likes. It climbs back with the chevron, the down-swipe and the platform
+  back gesture, like every other stacked layer.
+- **Raw output has two sources, and says which** [decided]. A parent `/chat` turn still
+  in flight has an in-process render accumulator — the only way to see a turn
+  mid-answer — and its output is badged *streaming*. Everything else (a sub-agent, which
+  never registers a live handle, or any settled turn) reads its stored transcript and
+  says so. Collapsing the two would let a finished answer masquerade as one still
+  arriving.
+- **Both channels share the plot, not a scale**: GPU as columns against 0–100%, the
+  token rate as a `--steel` trace against its own full scale, so each is comparable
+  against itself over time and never against the other — the same rule the top bar's
+  chart follows.
 
 Three things this surface is careful about:
 
