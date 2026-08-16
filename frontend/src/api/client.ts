@@ -92,6 +92,9 @@ export interface LiveTurn {
   status: string;
   name: string;
   started_at: string;
+  /** Null while the turn is running; set once it settles. The roster splits on it, and
+   *  `elapsed_ms` is the total duration rather than time-so-far once it is set. */
+  ended_at: string | null;
   elapsed_ms: number;
   step_count: number;
   cost_tokens: number;
@@ -2885,8 +2888,10 @@ export const api = {
 
   /** The runs in flight right now, with the call each was set up with, for the vitals
    *  detail roster. Polled while that surface is open and in the foreground. */
-  async opsTurns(): Promise<LiveTurns> {
-    const response = await request("/api/ops/turns");
+  /** The roster. `seconds` widens it from "running right now" (0) to "ran inside this
+   *  window", so the list matches the range the graph is showing. */
+  async opsTurns(seconds = 0): Promise<LiveTurns> {
+    const response = await request(`/api/ops/turns?seconds=${seconds}`);
     return (await response.json()) as LiveTurns;
   },
 

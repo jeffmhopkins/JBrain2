@@ -171,6 +171,16 @@ resampled once a second:
   went idle" when they mean "we stopped being told".
 - Digits sit in fixed tabular slots and the t/s row keeps its space when idle, so
   no state change can nudge the ellipsizing session title.
+- **A reading nobody has is an em dash, not a blank** [decided]. Three states, three
+  renderings: a figure when the box answered, `no gpu` when it answered that it has no
+  amdgpu gauge, and `—` when the stream is merely down. Blank was the original answer for
+  that third case, and it is indistinguishable from an idle box: when the stream died the
+  chart drew no columns and the readout showed nothing, so a dead meter and a quiet one
+  looked identical. The meter also **reopens a fatally-closed stream itself**: EventSource
+  retries a dropped connection but not a fatal one (a 502 while the box redeploys), and
+  leaving that stream in place blanked the top bar for the rest of the session while the
+  detail screen — reading the server's ring over plain fetches — carried on showing
+  numbers.
 - **The chart and the GPU figure share one grid row** [decided]. They are the pair
   the eye reads together, and laying them out as two independently-centred columns
   put the chart's middle 11px above the figure's — the reserved t/s slot pushed the
@@ -189,8 +199,14 @@ G "instrument panel" and H "dossier"; binding mock
 a **full-screen card** — the paradigm table's answer for a graph plus a drillable list
 plus expandable detail — with **two levels**:
 
-- **Level 1** is the graph at **1 / 5 / 15 minutes** plus a roster of every run in
-  flight, children indented under the turn that spawned them.
+- **Level 1** is the graph at **1 / 5 / 15 minutes** plus a roster of the turns in that
+  **same window**, children indented under the turn that spawned them, split into
+  *Running now* and *Finished, last N*. The range drives **both halves** [decided]: the
+  roster first shipped as "runs in flight" only, which emptied within seconds of a turn
+  settling and left fifteen minutes of GPU history sitting above a list with nothing in
+  it. A settled row shows its **total duration** rather than a ticking elapsed time, and
+  a hollow dot rather than a filled one — on a 15-minute window most rows are finished,
+  and a screen of solid dots reads as "all of this is running right now".
 - **Level 2** is a pushed layer that is entirely one turn: what it is doing now, its
   children, **the call** (model, provider, reasoning effort, context window, tools,
   persona), **the run** (id, parent, started, trigger, session, domain, ran-as), the
@@ -211,16 +227,24 @@ plus expandable detail — with **two levels**:
   would multiply that table thirtyfold for a question that stops mattering a quarter of
   an hour later. The **token rate stays session-local**: it is measured in the browser
   off the chat stream, so its trace still begins empty after a reload.
-- **Both channels share the plot, not a scale**: GPU as columns against 0–100%, the
-  token rate as a `--steel` trace against its own full scale, so each is comparable
-  against itself over time and never against the other — the same rule the top bar's
-  chart follows.
+- **The detail plot is the shared Ops sparkline** [decided], not a private drawing:
+  `components/TimeSeriesPlot.tsx`, the same component the Ops screen renders every host
+  metric with. It began as hand-rolled bar columns, which meant the box's load was drawn
+  one way here and another way three taps along. Each channel gets its own panel, since
+  they share no unit: **GPU busy pinned to 0–100%**, the **token rate fitted to its own
+  window**. Pinning the percentage is the point of the `scale` option added to that
+  component — a bounded unit fitted to its own range draws an idle box hovering at 1–3%
+  as the same dramatic mountain range as one that was pinned all minute. The peak/low
+  axis still reports the data's true range, so nothing is hidden by the pinning.
 
 Three things this surface is careful about:
 
-- **Longer ranges bucket by PEAK, not mean** [decided]. This gauge is read to find the
-  moment the box was pinned; averaging a 15-minute window flattens a ten-second spike
-  into nothing, hiding exactly what the screen was opened to see.
+- **Longer ranges draw the mean AND the peak** [decided]. This gauge is read to find the
+  moment the box was pinned, and averaging a 15-minute window flattens a ten-second spike
+  into nothing — but a peak-only plot never shows what the box was doing the rest of the
+  time. The mean is the solid line, the bucket's peak is the fainter band above it, and
+  the gap between them is the burstiness. (This supersedes the original peak-only rule,
+  which the column chart could not express both halves of.)
 - **The verbatim prompt is shown, from memory only** [decided]. It is captured as each
   model call goes out and held in a process-lifetime ring
   (`backend/src/jbrain/agent/prompt_capture.py`), never written to a table. An assembled

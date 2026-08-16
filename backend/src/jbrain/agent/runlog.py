@@ -328,6 +328,12 @@ class LiveTurnRow:
     status: str
     name: str
     started_at: datetime
+    # When it closed, or None while it is still in flight. The roster reads it to tell a
+    # turn that is running from one that merely ran inside the window being shown.
+    ended_at: datetime | None
+    # Time-so-far for a running turn; total duration for a settled one. Not "now minus
+    # start" unconditionally — that would age a finished turn every second it sat on a
+    # window that includes it.
     elapsed_ms: int
     step_count: int
     cost_tokens: int
@@ -462,20 +468,39 @@ class RunLogReader:
         whose steps are all still queued reads as 'queued' (see `_queued_pipeline_ids`)."""
         return "queued" if str(run.id) in queued_ids else run.status
 
-    async def list_live(self, ctx: SessionContext, *, limit: int = 50) -> list[LiveTurnRow]:
-        """Every run in flight right now, oldest first so a parent precedes the children
-        it spawned. RLS-scoped like every other read here.
+    async def list_live(
+        self, ctx: SessionContext, *, limit: int = 50, since: datetime | None = None
+    ) -> list[LiveTurnRow]:
+        """The runs on the box, oldest first so a parent precedes the children it
+        spawned. RLS-scoped like every other read here.
+
+        With no `since`, that is the runs in flight right now. With one, it also includes
+        the turns that RAN during that window and have since settled — the vitals detail
+        asks for 1, 5 or 15 minutes of history, and a roster that only ever showed
+        `status='running'` was empty within seconds of a turn finishing, which made the
+        wider ranges pointless: the graph had fifteen minutes of past and the list had
+        none.
+
+        A run counts as in-window if it ended inside it OR started inside it. The second
+        clause is not redundant: a run stranded by a restart is marked `error` without
+        ever getting an `ended_at`, and dropping those would silently hide exactly the
+        turns worth looking at.
 
         Ordering is by start time rather than by tree: a fan's children are always
         started after their parent, so oldest-first already yields a renderable order
-        without a recursive query, and `parent_run_id` lets the surface nest them."""
+        without a recursive query, and `parent_run_id` lets the surface nest them. The
+        LIMIT is applied newest-first and the page reversed, so a busy window yields the
+        most recent turns rather than the oldest ones still on file."""
+        window = Run.status == "running"
+        if since is not None:
+            window = or_(window, Run.ended_at >= since, Run.started_at >= since)
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
                     select(Run, Trigger.pipeline)
                     .outerjoin(Trigger, Run.trigger_id == Trigger.id)
-                    .where(Run.status == "running")
-                    .order_by(Run.started_at)
+                    .where(window)
+                    .order_by(Run.started_at.desc())
                     .limit(limit)
                 )
             ).all()
@@ -487,7 +512,10 @@ class RunLogReader:
                     status=run.status,
                     name=_live_name(run, trigger_pipeline),
                     started_at=run.started_at,
-                    elapsed_ms=max(0, int((now - run.started_at).total_seconds() * 1000)),
+                    ended_at=run.ended_at,
+                    elapsed_ms=max(
+                        0, int(((run.ended_at or now) - run.started_at).total_seconds() * 1000)
+                    ),
                     step_count=run.step_count,
                     cost_tokens=run.cost_tokens,
                     progress_note=run.progress_note,
@@ -499,7 +527,9 @@ class RunLogReader:
                     trigger_pipeline=trigger_pipeline,
                     call_stamp=run.call_stamp,
                 )
-                for run, trigger_pipeline in rows
+                # Reversed back to oldest-first: the LIMIT had to bite the newest end,
+                # but the surface nests children under parents by reading in order.
+                for run, trigger_pipeline in reversed(rows)
             ]
 
     async def list_recent(

@@ -29,6 +29,7 @@ function turn(over: Partial<LiveTurn> = {}): LiveTurn {
     status: "running",
     name: "agent",
     started_at: "2026-08-16T07:41:56Z",
+    ended_at: null,
     elapsed_ms: 252_000,
     step_count: 9,
     cost_tokens: 38_200,
@@ -120,7 +121,7 @@ describe("VitalsScreen", () => {
     opsTurns.mockResolvedValue(roster([], 94));
     render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
 
-    expect(await screen.findByText("No agent turns running.")).toBeInTheDocument();
+    expect(await screen.findByText(/No agent turns in the last/)).toBeInTheDocument();
     expect(screen.getByText(/94%/)).toBeInTheDocument();
     expect(screen.getByText(/counts everything the box does/)).toBeInTheDocument();
   });
@@ -392,5 +393,106 @@ describe("formatElapsed", () => {
     expect(formatElapsed(42_000)).toBe("42s");
     expect(formatElapsed(252_000)).toBe("4m 12s");
     expect(formatElapsed(7_500_000)).toBe("2h 05m");
+  });
+});
+
+describe("bucket, as the mean", () => {
+  it("averages the samples in a bucket", () => {
+    const now = Date.now();
+    const samples = [
+      { at: now - 900, gpu: 10, tps: null },
+      { at: now - 800, gpu: 90, tps: null },
+    ];
+
+    expect(bucket(samples, 1, 1, (s) => s.gpu, "mean")[0]).toBe(50);
+  });
+
+  it("still leaves an empty bucket null rather than averaging to zero", () => {
+    // A zero would read as an idle GPU. The plot needs a gap.
+    const now = Date.now();
+    const columns = bucket([{ at: now - 100, gpu: 40, tps: null }], 60, 4, (s) => s.gpu, "mean");
+
+    expect(columns.slice(0, 3)).toEqual([null, null, null]);
+    expect(columns[3]).toBe(40);
+  });
+});
+
+describe("the roster over a window", () => {
+  beforeEach(() => {
+    opsTurnDetail.mockResolvedValue({ steps: [], output: null, prompt: null });
+    opsVitalsHistory.mockResolvedValue([]);
+  });
+
+  it("asks the server for the window the graph is showing", async () => {
+    opsTurns.mockResolvedValue(roster([]));
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+    await waitFor(() => expect(opsTurns).toHaveBeenCalledWith(60));
+
+    fireEvent.click(screen.getByRole("button", { name: "15m" }));
+
+    // The list used to ignore the range entirely, so a 15-minute graph sat above a
+    // roster that only ever showed what was running in that instant.
+    await waitFor(() => expect(opsTurns).toHaveBeenCalledWith(900));
+  });
+
+  it("separates turns that are running from turns that merely ran", async () => {
+    opsTurns.mockResolvedValue(
+      roster([
+        turn({ id: "run_live", name: "live one" }),
+        turn({
+          id: "run_done",
+          name: "done one",
+          status: "ok",
+          ended_at: "2026-08-16T07:45:00Z",
+          parent_run_id: null,
+        }),
+      ]),
+    );
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("Running now")).toBeInTheDocument();
+    expect(screen.getByText(/^Finished, last/)).toBeInTheDocument();
+  });
+
+  it("does not age a turn that has already finished", async () => {
+    // Its elapsed time stopped when it did; ticking it would have every settled turn in
+    // a 15-minute window appear to still be going.
+    vi.useFakeTimers();
+    try {
+      opsTurns.mockResolvedValue(
+        roster([
+          turn({
+            id: "run_done",
+            status: "ok",
+            ended_at: "2026-08-16T07:45:00Z",
+            elapsed_ms: 42_000,
+          }),
+        ]),
+      );
+      render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText("42s")).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(screen.getByText("42s")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("a payload that omits ended_at", () => {
+  it("reads as still running, not as finished", async () => {
+    // `undefined === null` is false, so a strict check dropped every turn from a payload
+    // without the field into the settled group and badged live work as done.
+    opsTurnDetail.mockResolvedValue({ steps: [], output: null, prompt: null });
+    opsVitalsHistory.mockResolvedValue([]);
+    const { ended_at: _omitted, ...withoutField } = turn();
+    opsTurns.mockResolvedValue(roster([withoutField as LiveTurn]));
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("Running now")).toBeInTheDocument();
+    expect(screen.queryByText(/^Finished, last/)).not.toBeInTheDocument();
   });
 });

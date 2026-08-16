@@ -28,6 +28,16 @@ import { isForeground } from "./visibility";
  *  mid-restart, a dropped network. A rejection is never retried; see `access`. */
 const REPROBE_MS = 30_000;
 
+/** How long to wait before reopening a stream that died fatally. Shorter than a
+ *  re-probe because the case this exists for is a deploy: the box is a few seconds from
+ *  answering again, and the meter should not stay blank for half a minute after it. */
+const REOPEN_MS = 5_000;
+
+/** `EventSource.CLOSED`, as a literal. The constant is read off a stream instance that
+ *  is a test double as often as a real EventSource, and the global does not exist in
+ *  every runtime this module is imported into. */
+const SOURCE_CLOSED = 2;
+
 /** Why there is or isn't a number.
  *  - `reading` — a live figure from the box.
  *  - `absent`  — the box answered, and it has no amdgpu gauge to report.
@@ -155,9 +165,33 @@ function openStream(): void {
       // A malformed frame must not kill the stream — the next tick is a second away.
     }
   };
-  // EventSource reconnects on its own. Drop to `unknown`, NOT `absent`: the reading
-  // has stopped being current, but nothing has said the gauge went away.
-  stream.onerror = () => publish(UNKNOWN);
+  // Drop to `unknown`, NOT `absent`: the reading has stopped being current, but nothing
+  // has said the gauge went away.
+  stream.onerror = () => {
+    publish(UNKNOWN);
+    // EventSource retries a DROPPED connection by itself, but a FATAL one — the box
+    // answering 502 mid-deploy, a proxy closing with the wrong content type — leaves it
+    // CLOSED, where it never retries again. `source` stayed set through that, so
+    // `start()` short-circuited on `source !== null` and the meter was dead for the rest
+    // of the session: a deploy blanked the top bar until the app was reloaded, while the
+    // detail screen kept showing numbers because it reads the server's ring over plain
+    // fetches. Treat CLOSED as "reopen it myself".
+    if (stream.readyState === SOURCE_CLOSED) reopenLater(stream);
+  };
+}
+
+/** Tear a fatally-closed stream down and try again shortly. Guarded against reopening a
+ *  stream that has already been replaced or stopped, so a late error from a torn-down
+ *  EventSource cannot resurrect one nobody is listening to. */
+function reopenLater(stream: EventSource): void {
+  if (source !== stream) return;
+  stream.close();
+  source = null;
+  if (reprobe !== null) return; // a retry is already armed
+  reprobe = setTimeout(() => {
+    reprobe = null;
+    start();
+  }, REOPEN_MS);
 }
 
 async function probe(): Promise<void> {

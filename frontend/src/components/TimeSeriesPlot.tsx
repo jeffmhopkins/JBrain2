@@ -31,6 +31,11 @@ export interface PlotSeries {
   lines: PlotLine[];
   /** Formats the current / peak / low readouts. */
   fmt: (v: number) => string;
+  /** Pins the drawing's Y-scale instead of fitting it to the data. For a BOUNDED unit
+   *  — a percentage — fitting is actively misleading: a window that never left 0–3%
+   *  gets drawn as the same mountain range as one that pinned the box all minute. The
+   *  peak/low axis still reports the DATA's own range, so nothing is hidden by it. */
+  scale?: { min: number; max: number };
 }
 
 const W = 100;
@@ -67,7 +72,7 @@ function latestOf(values: (number | null)[]): number | null {
   return null;
 }
 
-function Sparkline({ label, lines, fmt }: PlotSeries): ReactNode {
+function Sparkline({ label, lines, fmt, scale }: PlotSeries): ReactNode {
   // A shared Y-scale across every line AND its peak line in the panel, so two
   // series (down/up) are comparable and the peak line fits. Peak/low span the
   // whole panel — with a band present, "peak" is the true bucket-max, not the avg.
@@ -75,8 +80,12 @@ function Sparkline({ label, lines, fmt }: PlotSeries): ReactNode {
     [...l.values, ...(l.band ?? [])].filter((v): v is number => v != null),
   );
   if (present.length === 0) return null;
-  const min = Math.min(...present);
-  const max = Math.max(...present);
+  const low = Math.min(...present);
+  const high = Math.max(...present);
+  // The axis always reports the DATA's range; only the drawing is pinned when the
+  // caller gives a bounded scale, so a flat 1% line still says what it was.
+  const min = scale ? scale.min : low;
+  const max = scale ? scale.max : high;
   const multi = lines.length > 1;
   return (
     <div className="plot">
@@ -133,8 +142,8 @@ function Sparkline({ label, lines, fmt }: PlotSeries): ReactNode {
         ))}
       </svg>
       <div className="plot-axis">
-        <span>{fmt(max)} peak</span>
-        <span>{fmt(min)} low</span>
+        <span>{fmt(high)} peak</span>
+        <span>{fmt(low)} low</span>
       </div>
     </div>
   );

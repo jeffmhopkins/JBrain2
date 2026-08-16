@@ -54,3 +54,72 @@ describe("seedVitalsHistory", () => {
     expect(kept[0]?.gpu).toBe(30);
   });
 });
+
+describe("a stream that dies fatally", () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** A stand-in EventSource whose readyState the test drives. */
+  class FakeSource {
+    static readonly opened: FakeSource[] = [];
+    onmessage: ((e: MessageEvent<string>) => void) | null = null;
+    onerror: (() => void) | null = null;
+    readyState = 0;
+    closed = false;
+    close(): void {
+      this.closed = true;
+    }
+    constructor() {
+      FakeSource.opened.push(this);
+    }
+  }
+
+  it("reopens itself after a fatal close instead of staying dead all session", async () => {
+    // EventSource retries a DROPPED connection on its own, but a fatal one — the box
+    // answering 502 mid-deploy — leaves it CLOSED and it never retries. `source` stayed
+    // set through that, so start() short-circuited forever: a deploy blanked the top bar
+    // until the app was reloaded, while the detail screen kept showing numbers because it
+    // reads the server's ring over plain fetches.
+    vi.useFakeTimers();
+    FakeSource.opened.length = 0;
+    const { api } = await import("./api/client");
+    vi.mocked(api.opsVitals).mockResolvedValue({ gpu_busy_percent: 12 });
+    vi.mocked(api.opsVitalsStream).mockImplementation(() => new FakeSource() as never);
+
+    const { subscribeGpuBusy } = await load();
+    subscribeGpuBusy(() => {});
+    await vi.advanceTimersByTimeAsync(0); // let the access probe resolve
+    expect(FakeSource.opened).toHaveLength(1);
+
+    const first = FakeSource.opened[0];
+    if (first === undefined) throw new Error("no stream opened");
+    first.readyState = 2; // CLOSED — will never retry by itself
+    first.onerror?.();
+
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(first.closed).toBe(true);
+    expect(FakeSource.opened).toHaveLength(2);
+  });
+
+  it("leaves a merely-dropped stream alone, because EventSource retries that itself", async () => {
+    vi.useFakeTimers();
+    FakeSource.opened.length = 0;
+    const { api } = await import("./api/client");
+    vi.mocked(api.opsVitals).mockResolvedValue({ gpu_busy_percent: 12 });
+    vi.mocked(api.opsVitalsStream).mockImplementation(() => new FakeSource() as never);
+
+    const { subscribeGpuBusy } = await load();
+    subscribeGpuBusy(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+
+    const first = FakeSource.opened[0];
+    if (first === undefined) throw new Error("no stream opened");
+    first.readyState = 0; // CONNECTING — its own retry is in flight
+    first.onerror?.();
+
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(first.closed).toBe(false);
+    expect(FakeSource.opened).toHaveLength(1);
+  });
+});

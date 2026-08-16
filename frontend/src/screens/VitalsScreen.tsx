@@ -20,6 +20,7 @@ import {
   type TurnDetail as TurnDetailPayload,
   api,
 } from "../api/client";
+import { type PlotSeries, TimeSeriesPlot } from "../components/TimeSeriesPlot";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
 import { type VitalsSample, seedVitalsHistory, vitalsHistory } from "../hostVitals";
 import { useForeground } from "../visibility";
@@ -50,14 +51,6 @@ const COLUMNS = 60;
 /** GPU load that reads as pinned. Matches the top bar's band. */
 const HOT_PERCENT = 85;
 
-/** Full scale for the token trace. The two channels share the plot but not a y-scale,
- *  so each is comparable against ITSELF over time and never against the other. */
-const TPS_FULL_SCALE = 140;
-
-/** Plot geometry, in the SVG's own units. */
-const PLOT_TOP = 2;
-const PLOT_BOTTOM = 56;
-
 const KIND_LABEL: Record<string, string> = {
   agent: "agent",
   subagent: "sub-agent",
@@ -75,8 +68,12 @@ interface VitalsScreenProps {
 
 export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps) {
   const [range, setRange] = useState<RangeKey>("1m");
+  const seconds = RANGES.find((r) => r.key === range)?.seconds ?? 60;
   useSeededHistory();
-  const roster = useLiveTurns();
+  // The range drives the ROSTER as well as the plot. It used to drive only the graph,
+  // which left the two halves of the screen describing different spans of time: fifteen
+  // minutes of GPU history above a list that emptied the moment a turn finished.
+  const roster = useLiveTurns(seconds);
   const selected = roster?.turns.find((t) => t.id === selectedTurnId) ?? null;
 
   return (
@@ -88,7 +85,7 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
           gpuNow={roster?.gpu_busy_percent ?? null}
           turnCount={roster?.turns.length ?? 0}
         />
-        <Roster roster={roster} onSelect={onSelectTurn} />
+        <Roster roster={roster} range={range} onSelect={onSelectTurn} />
       </main>
       {selected !== null && (
         <TurnDetail
@@ -117,54 +114,40 @@ function VitalsPlot({
 }) {
   const seconds = RANGES.find((r) => r.key === range)?.seconds ?? 60;
   const samples = useTickingHistory(seconds);
-  const columns = bucket(samples, seconds, COLUMNS, (s) => s.gpu);
-  const rateColumns = bucket(samples, seconds, COLUMNS, (s) => s.tps);
-  const latest = samples[samples.length - 1]?.gpu ?? null;
-  const latestRate = samples[samples.length - 1]?.tps ?? null;
+  // Mean AND peak per bucket, drawn as the Ops screen draws every other metric: a solid
+  // average with a fainter peak line above it. The columns this replaced could only
+  // carry one of the two, so the peak was chosen and the ordinary load was never shown.
+  const gpuMean = bucket(samples, seconds, COLUMNS, (s) => s.gpu, "mean");
+  const gpuPeak = bucket(samples, seconds, COLUMNS, (s) => s.gpu, "peak");
+  const tpsMean = bucket(samples, seconds, COLUMNS, (s) => s.tps, "mean");
+  const tpsPeak = bucket(samples, seconds, COLUMNS, (s) => s.tps, "peak");
+  const hasGpu = gpuMean.some((v) => v !== null);
+
+  const series: PlotSeries[] = [
+    {
+      label: "GPU busy",
+      // Pinned 0–100: a percentage fitted to its own range draws an idle box hovering
+      // at 1–3% as the same dramatic range as one that was pinned all minute.
+      scale: { min: 0, max: 100 },
+      lines: [{ color: "var(--amber)", values: gpuMean, band: gpuPeak }],
+      fmt: (v) => `${Math.round(v)}%`,
+    },
+    {
+      label: "tokens/sec",
+      // Unpinned: a token rate has no ceiling to draw against, so it fits its own window
+      // like every other Ops series.
+      lines: [{ color: "var(--steel)", values: tpsMean, band: tpsPeak }],
+      fmt: (v) => `${Math.round(v)}/s`,
+    },
+  ];
 
   return (
     <section className="card vitals-plot-card">
-      <div className="vitals-plot-head">
-        <span className="vitals-plot-label">GPU busy</span>
-        <span className="vitals-plot-figures">
-          {latestRate !== null && (
-            <span className="vitals-plot-figure rate">
-              {Math.round(latestRate)}
-              <span className="u">t/s</span>
-            </span>
-          )}
-          <span className="vitals-plot-figure">
-            {latest === null ? "—" : Math.round(latest)}
-            <span className="u">%</span>
-          </span>
-        </span>
-      </div>
-      <svg
-        className="vitals-plot"
-        viewBox={`0 0 ${COLUMNS * 4} 60`}
-        // The plot stretches to the card's width; the default would preserve the
-        // viewBox's aspect ratio and park the columns inside letterboxed empty space.
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <title>GPU busy over the last {range}</title>
-        {columns.map((value, i) =>
-          value === null ? null : (
-            <rect
-              // biome-ignore lint/suspicious/noArrayIndexKey: each column is a fixed slot on a time axis.
-              key={`col-${i}`}
-              className={`vitals-col${value >= HOT_PERCENT ? " hot" : ""}`}
-              x={i * 4}
-              y={60 - (value / 100) * 56}
-              width={2.6}
-              height={Math.max(0.8, (value / 100) * 56)}
-              rx="0.5"
-            />
-          ),
-        )}
-        <path className="vitals-plot-trace" d={ratePath(rateColumns)} />
-        <line className="vitals-plot-rail" x1="0" y1="59.5" x2={COLUMNS * 4} y2="59.5" />
-      </svg>
+      {hasGpu ? (
+        <TimeSeriesPlot series={series} />
+      ) : (
+        <p className="vitals-quiet">no readings for this window yet</p>
+      )}
       <div className="vitals-axis">
         <span>−{range}</span>
         <span>now</span>
@@ -192,7 +175,7 @@ function VitalsPlot({
       <p className="vitals-note">
         {range === "1m"
           ? "One-second samples."
-          : `Each column is the PEAK of ${Math.round(seconds / COLUMNS)}s — an average would hide the spike you opened this for.`}
+          : `Each point averages ${Math.round(seconds / COLUMNS)}s; the fainter line above is that bucket's PEAK — an average alone would hide the spike you opened this for.`}
       </p>
     </section>
   );
@@ -202,27 +185,36 @@ function VitalsPlot({
 
 function Roster({
   roster,
+  range,
   onSelect,
 }: {
   roster: LiveTurns | null;
+  range: RangeKey;
   onSelect: (id: string) => void;
 }) {
   if (roster === null) {
     return <p className="vitals-quiet">reading the run log…</p>;
   }
-  const parents = roster.turns.filter((t) => t.parent_run_id === null);
   const gpu = roster.gpu_busy_percent;
+  // Two lists, because "running" and "ran" are different claims. Merging them behind one
+  // "turns" heading would put a turn that finished eleven minutes ago next to one still
+  // streaming, with only a dot colour between them.
+  // Loose null, deliberately: a payload that omits the field entirely must read as
+  // "still running", not as a finished turn with no end time. Strict `=== null` let an
+  // absent field fall through to the settled group and badged every live turn as done.
+  const running = roster.turns.filter((t) => t.ended_at == null);
+  const settled = roster.turns.filter((t) => t.ended_at != null);
 
   if (roster.turns.length === 0) {
     return (
       <section className="card vitals-empty">
-        <p className="hl">No agent turns running.</p>
+        <p className="hl">No agent turns in the last {range}.</p>
         <p>
           {gpu !== null && gpu >= 20
             ? `The GPU is at ${Math.round(gpu)}% because the box is doing something else —
                generating an image, or loading a model. That is real work, but it is not an
                agent turn, so it has no row here.`
-            : "The box is idle."}{" "}
+            : "The box has been idle."}{" "}
           GPU busy counts everything the box does; this list counts turns.
         </p>
       </section>
@@ -231,12 +223,48 @@ function Roster({
 
   return (
     <>
+      {running.length > 0 && (
+        <RosterGroup heading="Running now" turns={running} all={roster.turns} onSelect={onSelect} />
+      )}
+      {settled.length > 0 && (
+        <RosterGroup
+          heading={`Finished, last ${range}`}
+          turns={settled}
+          all={roster.turns}
+          onSelect={onSelect}
+        />
+      )}
+    </>
+  );
+}
+
+/** One heading plus its parent rows, each with its children nested underneath. Children
+ *  are drawn under their parent wherever that parent is, so a settled parent carries its
+ *  settled fan rather than scattering it across both groups. */
+function RosterGroup({
+  heading,
+  turns,
+  all,
+  onSelect,
+}: {
+  heading: string;
+  turns: LiveTurn[];
+  all: LiveTurn[];
+  onSelect: (id: string) => void;
+}) {
+  const ids = new Set(turns.map((t) => t.id));
+  // A child whose parent is in this group is drawn nested under it. One whose parent
+  // fell outside the window is promoted to a top-level row instead of vanishing.
+  const parents = turns.filter((t) => t.parent_run_id === null || !ids.has(t.parent_run_id));
+
+  return (
+    <>
       <div className="vitals-sec-head">
-        Running now <span className="count">{roster.turns.length}</span>
+        {heading} <span className="count">{turns.length}</span>
       </div>
       <section className="card vitals-roster">
         {parents.map((parent) => {
-          const kids = roster.turns.filter((t) => t.parent_run_id === parent.id);
+          const kids = all.filter((t) => t.parent_run_id === parent.id && ids.has(t.id));
           return (
             <div key={parent.id}>
               <TurnRow turn={parent} childCount={kids.length} onSelect={onSelect} />
@@ -269,7 +297,7 @@ function TurnRow({
       onClick={() => onSelect(turn.id)}
     >
       <span className="vr-name">
-        <i className={`vitals-dot ${turn.status === "error" ? "err" : "run"}`} />
+        <i className={`vitals-dot ${dotClass(turn)}`} />
         <span className="n">{turn.name}</span>
         <span className="kind">{KIND_LABEL[turn.kind] ?? turn.kind}</span>
       </span>
@@ -282,7 +310,7 @@ function TurnRow({
         )}
       </span>
       <span className="vr-right">
-        <Elapsed sinceMs={turn.elapsed_ms} />
+        <Elapsed sinceMs={turn.elapsed_ms} ticking={turn.ended_at == null} />
         <span className="vr-tok">{formatTokens(turn.cost_tokens)}</span>
       </span>
     </button>
@@ -314,15 +342,15 @@ function TurnDetail({
       <main className="screen-body vitals-detail">
         <section className="card vitals-hero">
           <div className="vh-top">
-            <i className={`vitals-dot ${turn.status === "error" ? "err" : "run"}`} />
+            <i className={`vitals-dot ${dotClass(turn)}`} />
             <span className="vh-status">{turn.status === "error" ? "failed" : turn.status}</span>
             <span className="kind">{KIND_LABEL[turn.kind] ?? turn.kind}</span>
           </div>
           <div className="vh-grid">
             <div>
-              <div className="k">elapsed</div>
+              <div className="k">{turn.ended_at == null ? "elapsed" : "took"}</div>
               <div className="v">
-                <Elapsed sinceMs={turn.elapsed_ms} />
+                <Elapsed sinceMs={turn.elapsed_ms} ticking={turn.ended_at == null} />
               </div>
             </div>
             <div>
@@ -639,8 +667,10 @@ function useSeededHistory(): void {
   }, []);
 }
 
-/** The roster, refetched while the surface is open and the app is in the foreground. */
-function useLiveTurns(): LiveTurns | null {
+/** The roster for the selected window, refetched while the surface is open and the app
+ *  is in the foreground. Changing the range refetches at once rather than waiting out a
+ *  poll, so the list and the graph never disagree about which window is on screen. */
+function useLiveTurns(seconds: number): LiveTurns | null {
   const foreground = useForeground();
   const [roster, setRoster] = useState<LiveTurns | null>(null);
 
@@ -649,7 +679,7 @@ function useLiveTurns(): LiveTurns | null {
     let cancelled = false;
     const load = async (): Promise<void> => {
       try {
-        const next = await api.opsTurns();
+        const next = await api.opsTurns(seconds);
         if (!cancelled) setRoster(next);
       } catch {
         // A failed poll leaves the last roster on screen; the next tick retries.
@@ -661,7 +691,7 @@ function useLiveTurns(): LiveTurns | null {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [foreground]);
+  }, [foreground, seconds]);
 
   return roster;
 }
@@ -680,53 +710,48 @@ function useTickingHistory(seconds: number): VitalsSample[] {
   return samples;
 }
 
-/** Fold samples into `count` columns, taking the PEAK of each bucket.
+/** Fold samples into `count` columns, as either the mean or the PEAK of each bucket.
  *
- *  Peak, not mean, and deliberately: this gauge is read to find the moment the box was
+ *  Both are drawn, and deliberately: this gauge is read to find the moment the box was
  *  pinned, and averaging a 15-minute window flattens a 10-second spike into nothing —
- *  hiding exactly what the screen was opened to see. */
+ *  but a peak-only plot never shows what the box was doing the rest of the time. The
+ *  mean is the line, the peak is the band above it, and the gap between them is the
+ *  burstiness. */
 export function bucket(
   samples: VitalsSample[],
   seconds: number,
   count: number,
   channel: (s: VitalsSample) => number | null = (s) => s.gpu,
+  agg: "peak" | "mean" = "peak",
 ): (number | null)[] {
   if (samples.length === 0) return new Array<number | null>(count).fill(null);
   const end = Date.now();
   const start = end - seconds * 1000;
   const width = (seconds * 1000) / count;
-  const columns = new Array<number | null>(count).fill(null);
+  const sums = new Array<number>(count).fill(0);
+  const counts = new Array<number>(count).fill(0);
+  const peaks = new Array<number | null>(count).fill(null);
   for (const sample of samples) {
     const value = channel(sample);
     if (value === null || sample.at < start) continue;
     const slot = Math.min(count - 1, Math.floor((sample.at - start) / width));
-    const held = columns[slot];
-    columns[slot] = held === null || held === undefined ? value : Math.max(held, value);
+    const held = peaks[slot];
+    peaks[slot] = held === null || held === undefined ? value : Math.max(held, value);
+    sums[slot] = (sums[slot] ?? 0) + value;
+    counts[slot] = (counts[slot] ?? 0) + 1;
   }
-  return columns;
+  if (agg === "peak") return peaks;
+  // A bucket with no samples stays null — a gap, never a zero, which would read as an
+  // idle GPU or as a turn generating nothing.
+  return counts.map((n, i) => (n === 0 ? null : (sums[i] ?? 0) / n));
 }
 
-/** The token trace over the same axis, with a break wherever nothing was generated —
- *  a gap is the honest mark for a tool call, which a line through zero is not. */
-export function ratePath(columns: (number | null)[]): string {
-  let path = "";
-  let open = false;
-  columns.forEach((value, i) => {
-    if (value === null) {
-      open = false;
-      return;
-    }
-    const clamped = Math.max(0, Math.min(value, TPS_FULL_SCALE));
-    const x = (i * 4 + 1.3).toFixed(2);
-    const y = (PLOT_BOTTOM - (clamped / TPS_FULL_SCALE) * (PLOT_BOTTOM - PLOT_TOP)).toFixed(2);
-    path += `${open ? "L" : "M"}${x} ${y} `;
-    open = true;
-  });
-  return path.trim();
-}
-
-/** Elapsed, ticking locally so a turn's age advances between roster polls. */
-function Elapsed({ sinceMs }: { sinceMs: number }) {
+/** Elapsed, ticking locally so a RUNNING turn's age advances between roster polls.
+ *
+ *  A settled turn is shown as a fixed duration: its elapsed time stopped when it did, and
+ *  advancing it would have a finished turn appear to still be aging — the wider windows
+ *  are full of those, so the distinction has to hold. */
+function Elapsed({ sinceMs, ticking = true }: { sinceMs: number; ticking?: boolean }) {
   const mountedAt = useRef(Date.now());
   const base = useRef(sinceMs);
   base.current = sinceMs;
@@ -734,12 +759,20 @@ function Elapsed({ sinceMs }: { sinceMs: number }) {
   const [, force] = useState(0);
 
   useEffect(() => {
+    if (!ticking) return;
     const timer = setInterval(() => force((n) => n + 1), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [ticking]);
 
-  const total = base.current + (Date.now() - mountedAt.current);
+  const total = ticking ? base.current + (Date.now() - mountedAt.current) : base.current;
   return <span className="vr-elapsed">{formatElapsed(total)}</span>;
+}
+
+/** The row's state dot. A settled turn is neither "running" nor "failed" — without a
+ *  third class every finished turn in a 15-minute window rendered as still running. */
+function dotClass(turn: LiveTurn): string {
+  if (turn.status === "error") return "err";
+  return turn.ended_at == null ? "run" : "done";
 }
 
 export function formatElapsed(ms: number): string {

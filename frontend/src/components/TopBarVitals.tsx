@@ -113,7 +113,13 @@ export function TopBarVitals({ syncStatus, onOpen }: VitalsProps) {
           <span className="vitals-unit">t/s</span>
         </span>
         <span className="vitals-read vitals-gpu">
-          <span className="vitals-value">{hasGpu ? Math.round(gpu) : ""}</span>
+          {/* An em dash for `unknown`, not a blank. A blank is indistinguishable from an
+              idle box, which is how a stream that had died fatally went unnoticed: the
+              chart drew no columns and the readout showed nothing, so a dead meter and a
+              quiet one looked identical. DESIGN.md: honest status, always visible. */}
+          <span className="vitals-value">
+            {hasGpu ? Math.round(gpu) : gauge === "unknown" ? "—" : ""}
+          </span>
           <span className="vitals-unit">{hasGpu ? "%" : gauge === "absent" ? "no gpu" : ""}</span>
         </span>
       </div>
