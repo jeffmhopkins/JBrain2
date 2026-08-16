@@ -61,10 +61,10 @@ def test_oneshot_script_parses_under_posix_sh(name: str) -> None:
 # bind source is missing, Docker mounts an empty dir over /etc/searxng/settings.yml,
 # SearXNG drops to its HTML-only defaults, and /search?format=json answers 403, so
 # jerv reports web search as unavailable.
-# `jbrain` is deliberately NOT here: its update case delegates to update-inner.sh rather
-# than laying these down itself. Listing it would re-assert the duplication that let the
-# two
-# update paths drift apart — see test_the_host_cli_delegates_to_the_one_update_script.
+# `jbrain` is deliberately NOT here: its update case delegates to update-inner.sh
+# rather than laying these down itself. Listing it would re-assert the duplication
+# that let the two update paths drift apart — see
+# test_the_host_cli_delegates_to_the_one_update_script.
 DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES = ["install.sh", "update-inner.sh"]
 
 
@@ -104,8 +104,8 @@ def test_script_ensures_searxng_secret(name: str) -> None:
 # operator has enabled it (a one-time scripts/jcode-setup.sh), the PWA update and the
 # host `jbrain update` keep it built/current with no CLI.
 # `jbrain` delegates its update to update-inner.sh, so the shared script is the only
-# place
-# this can be asserted — listing both would re-pin the duplication that let them drift.
+# place this can be asserted — listing both would re-pin the duplication that let
+# them drift.
 JCODE_TURNKEY_SCRIPTS = ["update-inner.sh"]
 
 
@@ -580,3 +580,65 @@ def test_nothing_restarts_the_gateway_mid_update() -> None:
     assert 'if [ -n "${JBRAIN_SKIP_GATEWAY_START:-}" ]; then' in sync, (
         "the sync must honour the flag, not start the gateway during an update"
     )
+
+
+# --- the one-off compose runs are bounded ------------------------------------
+
+
+def test_the_smoke_test_and_toggle_read_are_bounded() -> None:
+    """These are the calls that have actually wedged this box.
+
+    An update stalled twice at `jbrain-api-run-... Created` — a container compose
+    created
+    and never started — and `set -e` plus an unbounded wait means the update stops there
+    forever with the stack half recreated. The gateway client's own httpx timeouts
+    cannot
+    help when the process never starts, so the bound has to be outside it.
+    """
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert "run_bounded()" in text
+
+    # Join shell line-continuations first: both calls are wrapped, so the CLI name and
+    # the
+    # runner that bounds it sit on different physical lines.
+    joined = text.replace("\\\n", " ")
+    for call in ("local-llm-smoketest", "local-llm-auto-update"):
+        line = next(
+            ln
+            for ln in joined.splitlines()
+            if call in ln and not ln.lstrip().startswith("#")
+        )
+        assert "run_bounded" in line, f"{call} must run under the ceiling"
+    assert "SMOKE_TIMEOUT_S=" in text and "TOGGLE_TIMEOUT_S=" in text
+
+
+def test_a_timeout_reads_as_failure_not_success() -> None:
+    """A hung smoke test must take the SAME path as a failed one — roll the gateway
+    back to
+    the pinned base — rather than stopping the update dead or, worse, being mistaken
+    for a
+    pass and keeping an unverified build."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    # Captured in the `else`: after a completed `if ...; fi`, `$?` is the status of the
+    # IF
+    # STATEMENT, which is 0 when the condition merely failed. Reading it below the `fi`
+    # turns every failure into a success — it did exactly that when first written.
+    assert "else\n" in text
+    body = text[text.index("run_bounded()") : text.index("run_bounded()") + 1200]
+    assert body.index("else") < body.index("_rc=$?"), (
+        "the status must be captured inside the else, not after the fi"
+    )
+    # busybox has historically exited 143 rather than GNU's 124.
+    assert '"$_rc" -eq 124' in text and '"$_rc" -eq 143' in text
+
+
+def test_a_killed_run_cleans_up_its_orphaned_container() -> None:
+    """`timeout` kills `docker compose run`, but the container is the DAEMON's child
+    — so
+    --rm never fires and it is left behind, one per attempt."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert 'docker ps -aq --filter "name=jbrain-api-run-"' in text
+    assert "docker rm -f" in text

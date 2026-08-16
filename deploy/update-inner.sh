@@ -22,6 +22,59 @@ set -eu
 # Set by `jbrain update`; empty in the container. Gates the host-only steps below.
 HOST_UPDATE="${JBRAIN_HOST_UPDATE:-}"
 
+# How long a one-off `compose run` may take before the update gives up on it.
+#
+# These are the calls that have actually wedged this box. An update stalled twice at
+# `jbrain-api-run-… Created` — a container that compose created and never started — and
+# `set -e` plus an unbounded wait means the update simply stops there forever, stack half
+# recreated, with nothing timing out and nothing to report. The gateway client has its own
+# httpx timeouts, but they cannot help when the process never starts, and a task stuck in
+# an uninterruptible wait does not honour them either. The bound has to be outside.
+#
+# The smoke test genuinely can be slow — a cold load reads tens of GB — so it gets a
+# generous ceiling. The toggle read is one small query and should answer in seconds.
+SMOKE_TIMEOUT_S=600
+TOGGLE_TIMEOUT_S=120
+
+# Run a one-off compose container under a hard ceiling, and clean up after a kill.
+#
+# `timeout` kills `docker compose run`, but the CONTAINER it spawned is not `docker
+# compose run`'s child — it belongs to the daemon, so --rm never fires and the container is
+# left behind. Left uncollected those accumulate one per attempt, and the next update's
+# `compose run` can queue behind them. Sweeping the service's stale one-offs afterwards
+# keeps a timeout from becoming a slow leak.
+#
+# Returns the command's exit status, or 124 when the ceiling fired — callers treat any
+# non-zero as failure, so a hang degrades to the same path as a genuine failure.
+run_bounded() {
+  _limit="$1"
+  shift
+  # if/else rather than `cmd; rc=$?`: under `set -e` a failing command aborts the script
+  # before the assignment runs. It only survives today because every caller happens to use
+  # it in an `if` condition, where -e is suspended — which is exactly the kind of thing
+  # that breaks the moment someone calls it plainly.
+  if timeout "$_limit" "$@"; then
+    return 0
+  else
+    # Captured HERE, in the else. After a completed `if ...; fi`, `$?` is the status of the
+    # IF STATEMENT — 0 when the condition simply failed — so reading it below the `fi`
+    # silently turns every failure into a success. It did exactly that when first written.
+    _rc=$?
+  fi
+  # GNU timeout reports 124; busybox's has historically exited 143 (128+SIGTERM) instead,
+  # and this runs under busybox in the updater image. Treat either as the ceiling firing —
+  # getting it wrong only costs the cleanup and the log line, but both matter here.
+  if [ "$_rc" -eq 124 ] || [ "$_rc" -eq 143 ]; then
+    echo "[update] TIMEOUT after ${_limit}s: $*"
+    # The container is the DAEMON's child, not `compose run`'s, so killing compose leaves it
+    # behind and --rm never fires. Uncollected they pile up one per attempt.
+    for _cid in $(docker ps -aq --filter "name=jbrain-api-run-" 2>/dev/null); do
+      docker rm -f "$_cid" >/dev/null 2>&1 || true
+    done
+  fi
+  return "$_rc"
+}
+
 echo "[update] starting"
 ./backup.sh || echo "[update] backup skipped (stack not fully up?)"
 
@@ -286,7 +339,8 @@ fi
 AUTO_UPDATE_ON=1
 if grep -q '^LOCAL_LLM_AUTO_UPDATE=false' .env; then
   AUTO_UPDATE_ON=''
-elif ! docker compose run --rm --no-deps -T api python -m jbrain.cli local-llm-auto-update; then
+elif ! run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+    python -m jbrain.cli local-llm-auto-update; then
   echo "[update] gateway auto-update is OFF (Settings) — keeping the pinned base, no model load"
   AUTO_UPDATE_ON=''
 fi
@@ -306,7 +360,8 @@ if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
     AFTER_IMG="$(docker image inspect -f '{{.Id}}' jbrain2-local-llm:local 2>/dev/null || true)"
     if [ -n "$BEFORE_IMG" ] && [ "$BEFORE_IMG" = "$AFTER_IMG" ]; then
       echo "[update] gateway image unchanged — skipping the smoke test (nothing new to vet)"
-    elif docker compose run --rm --no-deps -T api python -m jbrain.cli local-llm-smoketest; then
+    elif run_bounded "$SMOKE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+        python -m jbrain.cli local-llm-smoketest; then
       echo "[update] gateway smoke test passed on the newest llama.cpp"
     else
       SMOKE_FAILED=1

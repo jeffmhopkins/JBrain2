@@ -558,6 +558,16 @@ merely-stopped container is one stray `up -d` away from reloading the weights mi
 restart used to land squarely in that window. The gateway comes back once, deliberately,
 after the rebuild.
 
+**Every one-off `compose run` in an update is bounded.** The toggle read gets 120s and the
+smoke test 600s, and a timeout is treated as a FAILURE — so a hung smoke test rolls the
+gateway back to the pinned base rather than stopping the update dead. This exists because
+an update stalled twice at `jbrain-api-run-… Created`: a container compose created and
+never started, with `set -e` and no ceiling meaning the update simply stopped there
+forever, stack half recreated. The gateway client's own httpx timeouts cannot help when
+the process never starts. A killed run also sweeps the orphaned one-off container, which
+`--rm` never cleans up because the container belongs to the daemon rather than to
+`compose run`.
+
 **Turning it off is a PWA toggle**, not a file edit: **Ops → Update → "Track newest
 llama.cpp"**. The owner runs this box remotely with no terminal (CLAUDE.md #10), and this
 is the one switch that decides whether an update loads a model into the iGPU at all — the
