@@ -18,14 +18,33 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeGateway:
-    def __init__(self, *, oneshot: str = "none") -> None:
+    """Models the REAL label split, which is the point of this double.
+
+    The updater carries `jbrain.updater=1` and is read through `update_status`; only
+    export/import/reset/provision/rebuild carry `jbrain.oneshot=<kind>` and answer to
+    `oneshot_status`. An earlier version of this fake answered "running" from
+    `oneshot_status` for EVERY kind including "update", so the guard's tests passed
+    while the real gateway reported nothing and a restart could land mid-migration."""
+
+    def __init__(self, *, updater: str = "none", oneshot: str = "none") -> None:
         self.restarted: list[str] = []
+        self.updater = updater
         self.oneshot = oneshot
 
     def restart(self, service: str) -> None:
         self.restarted.append(service)
 
+    def update_status(self, tail: int) -> UpdateStatus:
+        return UpdateStatus(state=self.updater, exit_code=None, log_tail="")
+
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
+        # "update" is NOT a oneshot kind. The real gateway does not complain about
+        # it: `_latest("jbrain.oneshot=update")` matches nothing and the status
+        # reads "none". Modelled as that quiet no rather than an exception on
+        # purpose — raising is swallowed by the fail-closed path, which would make
+        # the buggy version look correct. That is how the defect hid the first time.
+        if kind == "update":
+            return UpdateStatus(state="none", exit_code=None, log_tail="")
         return UpdateStatus(state=self.oneshot, exit_code=None, log_tail="")
 
 
@@ -79,10 +98,35 @@ async def test_the_run_up_resets_when_the_api_answers() -> None:
 
 
 async def test_never_restarts_while_an_update_is_running() -> None:
-    """An update stops and recreates the api container on purpose — restarting it mid-
-    run
-    would fight the updater and could leave the box half-migrated."""
+    """An update stops and recreates the api container on purpose; restarting it mid-run
+    would fight the updater and could leave the box half-migrated.
+
+    The updater is found via `update_status`, NOT `oneshot_status("update")`: that kind
+    does not exist, so asking for it returns a quiet "none" and the guard would pass."""
+    gateway = FakeGateway(updater="running")
+
+    await _run(gateway, probes([False] * 6), failures_before_restart=3)
+
+    assert gateway.restarted == []
+
+
+async def test_never_restarts_while_another_oneshot_is_running() -> None:
+    """A restore or a provision stops the stack just as deliberately as an update."""
     gateway = FakeGateway(oneshot="running")
+
+    await _run(gateway, probes([False] * 6), failures_before_restart=3)
+
+    assert gateway.restarted == []
+
+
+async def test_an_unreadable_updater_state_counts_as_busy() -> None:
+    """Fail closed on the updater specifically, not only on the other one-shots."""
+
+    class Unreadable(FakeGateway):
+        def update_status(self, tail: int) -> UpdateStatus:
+            raise RuntimeError("docker unreachable")
+
+    gateway = Unreadable()
 
     await _run(gateway, probes([False] * 6), failures_before_restart=3)
 

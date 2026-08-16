@@ -78,11 +78,22 @@ def http_ok(url: str, timeout: float) -> bool:
 def _update_running(gateway: DockerGateway) -> bool:
     """Whether a one-shot (update, restore, provision…) is in flight.
 
-    Read through the public `oneshot_status`, and treated as "yes" if it cannot be
-    determined: the failure mode to avoid is restarting the API *during* an update, so
-    an
-    unreadable state must not be read as permission to act."""
-    for kind in ("update", "import", "reset", "provision", "rebuild"):
+    The updater is NOT an `oneshot_status` kind. It carries its own label
+    (`jbrain.updater=1`) and is read through `update_status`, while export/import/reset/
+    provision/rebuild carry `jbrain.oneshot=<kind>`. Asking `oneshot_status("update")`
+    silently returns "none" — no error, just a quiet no — which would have left the api
+    unguarded during the exact operation this check exists to protect: a restart landing
+    mid-migration.
+
+    provision/rebuild carry `jbrain.oneshot=<kind>`. Asking `oneshot_status("update")`
+    DURING an update, so an unreadable state must not read as permission to act."""
+    try:
+        if gateway.update_status(0).state == "running":
+            return True
+    except Exception:
+        log.warning("watchdog: could not read updater status; assuming busy")
+        return True
+    for kind in ("export", "import", "reset", "provision", "rebuild"):
         try:
             if gateway.oneshot_status(kind, 0).state == "running":
                 return True
