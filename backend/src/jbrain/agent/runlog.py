@@ -376,11 +376,13 @@ class RunDetail:
     cost_tokens: int
     stop_reason: str | None
     progress_note: str | None
+    steps: list[RunStepView]
     # The run's own chat session, when it has one (agent + subagent runs). The vitals
     # detail reads it to recover a settled or sub-agent turn's output, which has no
-    # in-process live handle to read from.
-    session_id: str | None
-    steps: list[RunStepView]
+    # in-process live handle to read from. Defaulted and LAST so adding it could not
+    # invalidate the existing constructors — which is exactly what it did when it went
+    # in as a required field in the middle.
+    session_id: str | None = None
 
 
 def _live_name(run: Run, trigger_pipeline: str | None) -> str:
