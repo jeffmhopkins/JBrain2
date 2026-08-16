@@ -1436,6 +1436,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "48850737baca1c3308ee7fad4a74484f2b12585958421a2c372af62c1b72904d",
         ),
+        "crop_regions.tool": (
+            "crop_regions",
+            1,
+            "3f159ee1ae9963ca0afe985ebd5f81685311137846973bc2116d0e4f60bcd64d",
+        ),
         "show_canvas.tool": (
             "show_canvas",
             1,

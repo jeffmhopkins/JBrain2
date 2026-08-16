@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import io
 import json
-from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,7 +24,6 @@ from jbrain.agent.drawtools import (
 )
 from jbrain.agent.loop import ToolCallBudget, ToolContext
 from jbrain.db.session import SessionContext
-
 
 # --- fakes ------------------------------------------------------------------
 

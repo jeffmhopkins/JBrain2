@@ -23764,3 +23764,73 @@ button.task-band:active {
   padding: 0 14px 8px;
   margin-top: 0;
 }
+
+/* --- `image_set` tool-view (crop_regions) --------------------------------- */
+/* GUI gate settled: variant B — source photo + filmstrip (binding mock
+   docs/mocks/image-set-b-filmstrip.html). The source stays visible with each crop's
+   region boxed on it, because region-finding fails silently and a wrong crop is only
+   obvious beside the region it claims to be. */
+.tv-imageset-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.tv-imageset-title { font-size: 14px; font-weight: 500; }
+.tv-imageset-sub { font-size: 12px; color: var(--text-2); }
+.tv-imageset-source {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  margin-bottom: 10px;
+}
+.tv-imageset-source img { width: 100%; display: block; }
+/* The region marker. A dark outer ring under the accent keeps it legible over an
+   arbitrary photograph — the same reason the canvas renderer haloes its strokes. */
+.tv-imageset-box {
+  position: absolute;
+  border: 2px solid var(--steel);
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(14, 15, 17, 0.7);
+  pointer-events: none;
+}
+.tv-imageset-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scroll-snap-type: x mandatory;
+}
+.tv-imageset-frame {
+  flex: 0 0 104px;
+  scroll-snap-align: start;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.tv-imageset-frame img {
+  width: 104px;
+  height: 104px;
+  object-fit: cover;
+  border-radius: 10px;
+  display: block;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.tv-imageset-frame span {
+  display: block;
+  width: 104px;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tv-imageset-frame:focus-visible img { outline: 2px solid var(--steel); outline-offset: 2px; }
+.tv-imageset-foot { margin-top: 10px; font-size: 12px; color: var(--text-2); }

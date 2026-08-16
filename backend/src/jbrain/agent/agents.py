@@ -153,6 +153,9 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # offered as blind drawing.
         "canvas",
         "show_canvas",
+        # Cut regions out of one image and return each as its own saveable picture
+        # (AGENT_CANVAS_PLAN W4). Gated with the canvas pair — same grounding path.
+        "crop_regions",
         # Deterministic, verbatim OCR of an attached image/PDF via the on-box RapidOCR
         # sidecar — the hallucination-free counterpart to analyze_image, preferred for
         # literal text (error screenshots, receipts, scanned docs) (RAPIDOCR_PLAN.md).

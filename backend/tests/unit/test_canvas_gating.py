@@ -16,12 +16,15 @@ from jbrain.agent.readtools import (
     CANVAS_MODELS,
     IMAGE_TOOL_NAMES,
     OPTIONAL_CANVAS_TOOLS,
+    OPTIONAL_CROP_TOOLS,
     canvas_hidden_for_model,
     canvas_hidden_tools,
     compose_hidden_tools,
 )
 
-JERV_LIKE = OPTIONAL_CANVAS_TOOLS | IMAGE_TOOL_NAMES | {"web_search"}
+# The crop tool grounds regions with the same vision path, so it rides the same gate.
+GATED = OPTIONAL_CANVAS_TOOLS | OPTIONAL_CROP_TOOLS
+JERV_LIKE = GATED | IMAGE_TOOL_NAMES | {"web_search"}
 
 
 class _Router:
@@ -62,7 +65,7 @@ def test_qualified_models_keep_the_canvas(model: str) -> None:
     ],
 )
 def test_unqualified_models_hide_the_canvas(model: str | None) -> None:
-    assert canvas_hidden_for_model(model, JERV_LIKE) == OPTIONAL_CANVAS_TOOLS
+    assert canvas_hidden_for_model(model, JERV_LIKE) == GATED
 
 
 def test_a_persona_without_the_canvas_hides_nothing() -> None:
@@ -85,20 +88,18 @@ async def test_an_override_onto_a_text_model_hides_it() -> None:
     # model drawing blind.
     router = _Router("qwen3.8-27b")
     hidden = await canvas_hidden_tools(router, "qwen3.8-27b-mtp", JERV_LIKE)
-    assert hidden == OPTIONAL_CANVAS_TOOLS
+    assert hidden == GATED
 
 
 @pytest.mark.asyncio
 async def test_a_routing_failure_hides_rather_than_guesses() -> None:
     # Fail closed: an unknown route must not become "draw anyway".
-    assert await canvas_hidden_tools(_Router("x", boom=True), None, JERV_LIKE) == (
-        OPTIONAL_CANVAS_TOOLS
-    )
+    assert await canvas_hidden_tools(_Router("x", boom=True), None, JERV_LIKE) == (GATED)
 
 
 @pytest.mark.asyncio
 async def test_no_router_hides_it() -> None:
-    assert await canvas_hidden_tools(None, None, JERV_LIKE) == OPTIONAL_CANVAS_TOOLS
+    assert await canvas_hidden_tools(None, None, JERV_LIKE) == GATED
 
 
 # --- composition with the ComfyUI liveness probe ----------------------------
@@ -106,17 +107,17 @@ async def test_no_router_hides_it() -> None:
 
 @pytest.mark.asyncio
 async def test_composes_liveness_and_canvas_hiding() -> None:
-    provider = compose_hidden_tools(_Liveness({"generate_image"}), JERV_LIKE, OPTIONAL_CANVAS_TOOLS)
+    provider = compose_hidden_tools(_Liveness({"generate_image"}), JERV_LIKE, GATED)
     assert provider is not None
-    assert set(await provider()) == {"generate_image"} | OPTIONAL_CANVAS_TOOLS
+    assert set(await provider()) == {"generate_image"} | GATED
 
 
 @pytest.mark.asyncio
 async def test_canvas_hiding_alone_still_yields_a_provider() -> None:
     # No liveness (or a persona without the image tools) must not drop the canvas gate.
-    provider = compose_hidden_tools(None, JERV_LIKE, OPTIONAL_CANVAS_TOOLS)
+    provider = compose_hidden_tools(None, JERV_LIKE, GATED)
     assert provider is not None
-    assert set(await provider()) == OPTIONAL_CANVAS_TOOLS
+    assert set(await provider()) == GATED
 
 
 def test_nothing_to_hide_returns_none() -> None:
@@ -130,6 +131,6 @@ async def test_liveness_is_not_probed_for_a_persona_without_image_tools() -> Non
         async def hidden_tools(self) -> Collection[str]:  # pragma: no cover - must not run
             raise AssertionError("should not probe liveness for this persona")
 
-    provider = compose_hidden_tools(_Boom(), frozenset({"search"}), OPTIONAL_CANVAS_TOOLS)
+    provider = compose_hidden_tools(_Boom(), frozenset({"search"}), GATED)
     assert provider is not None
-    assert set(await provider()) == OPTIONAL_CANVAS_TOOLS
+    assert set(await provider()) == GATED

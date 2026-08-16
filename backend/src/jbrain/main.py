@@ -18,6 +18,7 @@ from jbrain.agent.brainevents import (
     build_value_emitter,
 )
 from jbrain.agent.continuation import PlanContinuationRunner, run_plan_continuation_loop
+from jbrain.agent.croptools import build_crop_handlers
 from jbrain.agent.deepest_tool import DeepestHandle
 from jbrain.agent.drawtools import build_canvas_handlers
 from jbrain.agent.externaltools import build_external_handlers
@@ -851,6 +852,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.llm_router,
             app.state.htmlrender,
         )
+        # jerv's crop lane (AGENT_CANVAS_PLAN W4): cut N regions out of one image and
+        # return them as one image_set card. Model-gated with the canvas pair — it
+        # grounds regions with the vision model, so an unqualified coordinate base
+        # would cut confidently wrong crops.
+        crop_handlers = build_crop_handlers(
+            maker,
+            app.state.blob_store,
+            app.state.generated_image_repo,
+            app.state.turn_attachments,
+            app.state.llm_router,
+        )
         deepest_handle = DeepestHandle()
         app.state.agent_registry = build_registry(
             app.state.search_service,
@@ -894,6 +906,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             compare_handlers=compare_handlers,
             ocr_handlers=ocr_handlers,
             canvas_handlers=canvas_handlers,
+            crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,
             external_handlers=build_external_handlers(
                 maker,

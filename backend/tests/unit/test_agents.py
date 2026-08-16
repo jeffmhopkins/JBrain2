@@ -103,6 +103,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "compare_images",
             "canvas",
             "show_canvas",
+            "crop_regions",
             "ocr",
             "read_artifact",
             "grokipedia",

@@ -8,11 +8,14 @@ from collections.abc import Collection
 from typing import Any, cast
 
 from jbrain.agent.agents import AGENTS
-from jbrain.agent.readtools import OPTIONAL_CANVAS_TOOLS
 from jbrain.agent.priming import jerv_prime_spec
+from jbrain.agent.readtools import OPTIONAL_CANVAS_TOOLS, OPTIONAL_CROP_TOOLS
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.openai_compat import openai_tools
 from jbrain.llm.types import LlmTool
+
+# Both canvas tools and the crop tool ride the same model gate.
+GATED = OPTIONAL_CANVAS_TOOLS | OPTIONAL_CROP_TOOLS
 
 
 class _RecordingRegistry:
@@ -73,7 +76,7 @@ async def test_jerv_prime_spec_uses_the_persona_and_a_real_turns_tool_query() ->
     # because it is model-gated and no served model was named for this prime.
     (scopes, allow, extra, hidden) = reg.calls[0]
     assert scopes == () and allow == profile.tools and extra == tuple(profile.extra_tools)
-    assert set(hidden) == OPTIONAL_CANVAS_TOOLS
+    assert set(hidden) == GATED
     assert primed == openai_tools(tools)
 
 
@@ -83,11 +86,11 @@ async def test_jerv_prime_spec_hides_image_tools_when_comfyui_is_down() -> None:
     reg = _RecordingRegistry([])
     jerv_tools = AGENTS["jerv"].tools
     assert jerv_tools is not None
-    hidden = next(iter(jerv_tools - OPTIONAL_CANVAS_TOOLS))  # any non-canvas tool jerv holds
+    hidden = next(iter(jerv_tools - GATED))  # any non-canvas tool jerv holds
     await jerv_prime_spec(cast(ToolRegistry, reg), _Liveness({hidden}))
     # The canvas pair rides alongside: it is model-gated and no served model was named,
     # so it is hidden here exactly as it would be on a turn routed to an unqualified model.
-    assert set(reg.calls[0][3]) == {hidden} | OPTIONAL_CANVAS_TOOLS
+    assert set(reg.calls[0][3]) == {hidden} | GATED
 
 
 async def test_jerv_prime_spec_is_best_effort_when_the_liveness_probe_fails() -> None:
@@ -97,4 +100,4 @@ async def test_jerv_prime_spec_is_best_effort_when_the_liveness_probe_fails() ->
     await jerv_prime_spec(cast(ToolRegistry, reg), _Liveness((), boom=True))
     # Only the model-gated canvas pair is hidden (no served model named); the probe
     # failure itself hides nothing.
-    assert set(reg.calls[0][3]) == OPTIONAL_CANVAS_TOOLS
+    assert set(reg.calls[0][3]) == GATED

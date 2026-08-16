@@ -1,6 +1,6 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-16 · **Waves:** W0✅ W1✅ W1b✅ W2✅ W3✅ W4◻️ W5◻️ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-08-16 · **Waves:** W0✅ W1✅ W1b✅ W2✅ W3✅ W4✅ W5◻️ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
 
 > **W0–W3 landed on-branch.** W0's *code* is complete (the `--image-min-tokens`
 > floor, `agent/grounding.py`, the EXIF fix, `POST /api/debug/grounding`); its
@@ -9,8 +9,17 @@
 > capability the plan did not originally scope: a general-purpose HTML→PNG renderer
 > (§3b), which is now the sanctioned path for any tool wanting rich visual output.
 > W2/W3 shipped the `canvas` + `show_canvas` pair, the model gate, and the engine
-> ceilings. **W4 is the next wave and is hard-blocked on the three-mock GUI gate**
-> (§10.5, §11.4) — run those mocks before its backend is ready, not after.
+> ceilings. W4 shipped `crop_regions` and the `image_set` card after the owner cleared
+> the three-mock gate (§10.7, variant B).
+>
+> **One item deferred out of W4, deliberately.** §6.4 proposed serving crops through a
+> scope-validating route so a crop of a health-scoped photo could not be read by id from
+> another domain. Crops instead persist through `persist_chat_image` like every other
+> chat image, which means they inherit the SAME firewall step-down `grab_frame` and
+> `compare_images` already have: `generated_images` is owner-only with no domain column
+> (migration 0078). This is not a new hole, and fixing it for crops alone would be
+> inconsistent — the right scope is a `domain_code` on `generated_images` covering every
+> provenanced chat image at once. Tracked as W6 work, not silently dropped.
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — the `look` vision call goes
 > through the LLM adapter (rule 1), every rendered PNG through the storage

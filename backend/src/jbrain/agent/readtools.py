@@ -122,6 +122,10 @@ OPTIONAL_COMPARE_TOOL = frozenset({"compare_images"})
 # when the image/attachment stores exist, and because a box with no htmlrender sidecar
 # still gets the shape ops — the `html` op degrades with a note rather than vanishing.
 OPTIONAL_CANVAS_TOOLS = frozenset({"canvas", "show_canvas"})
+# The crop lane (AGENT_CANVAS_PLAN W4). Model-gated with the canvas pair: it grounds
+# regions with the vision model, so an unmeasured coordinate base would cut confidently
+# wrong crops — the same silent failure the canvas gate exists to prevent.
+OPTIONAL_CROP_TOOLS = frozenset({"crop_regions"})
 # The SERVED models qualified to hold the canvas (AGENT_CANVAS_PLAN §7, owner decision
 # §10.3). Deliberately an allowlist rather than a bare `supports_vision` check: a
 # vision-capable model with a DIFFERENT grounding coordinate base would not fail loudly,
@@ -142,24 +146,26 @@ def canvas_hidden_for_model(
     bytes for it anyway. An unmeasured VISION model is worse — it answers confidently in
     whatever coordinate base it was trained on, so every box lands wrong with no error.
     An unknown model therefore hides the pair rather than betting on it."""
-    if not (profile_tools & OPTIONAL_CANVAS_TOOLS):
+    gated = OPTIONAL_CANVAS_TOOLS | OPTIONAL_CROP_TOOLS
+    if not (profile_tools & gated):
         return frozenset()
-    return frozenset() if served_model in CANVAS_MODELS else OPTIONAL_CANVAS_TOOLS
+    return frozenset() if served_model in CANVAS_MODELS else gated
 
 
 async def canvas_hidden_tools(
     router: "LlmRouter | None", model_override: str | None, profile_tools: frozenset[str]
 ) -> frozenset[str]:
     """`canvas_hidden_for_model` for a turn whose model still has to be resolved."""
-    if not (profile_tools & OPTIONAL_CANVAS_TOOLS):
+    gated = OPTIONAL_CANVAS_TOOLS | OPTIONAL_CROP_TOOLS
+    if not (profile_tools & gated):
         return frozenset()
     if router is None:
-        return OPTIONAL_CANVAS_TOOLS
+        return gated
     try:
         _provider, model = await router.effective_spec("agent.turn", spec_override=model_override)
     except Exception:  # noqa: BLE001 — a routing probe failure must not cost the turn
         log.warning("canvas.model_probe_failed", exc_info=True)
-        return OPTIONAL_CANVAS_TOOLS
+        return gated
     return canvas_hidden_for_model(model, profile_tools)
 
 
@@ -786,6 +792,7 @@ def build_registry(
     compare_handlers: dict[str, ToolHandler] | None = None,
     ocr_handlers: dict[str, ToolHandler] | None = None,
     canvas_handlers: dict[str, ToolHandler] | None = None,
+    crop_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
     research_report_handlers: dict[str, ToolHandler] | None = None,
@@ -884,6 +891,7 @@ def build_registry(
             # is configured; otherwise dropped below (docs/plans/RAPIDOCR_PLAN.md).
             **(ocr_handlers or {}),
             **(canvas_handlers or {}),
+            **(crop_handlers or {}),
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
             # general-domain corpus via a purpose-built scope (EXTERNAL_VIDEO_INGESTION_PLAN.md).
             **(external_handlers or {}),
@@ -933,6 +941,7 @@ def build_registry(
             | OPTIONAL_COMPARE_TOOL
             | OPTIONAL_OCR_TOOL
             | OPTIONAL_CANVAS_TOOLS
+            | OPTIONAL_CROP_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL
             | OPTIONAL_GMAIL_TOOLS
         ),
