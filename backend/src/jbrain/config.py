@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"
 
+    # The 1 Hz GPU sampler behind the vitals graph's history. On everywhere real; the test
+    # suite turns it off, because a background writer that overwrites the ring once a
+    # second makes any test that seeds it and then asserts on it a race — one that only
+    # shows up once the suite runs parallel enough to widen the window.
+    vitals_sampler_enabled: bool = True
+
     # Build provenance baked into the image at build time (deploy/update-inner.sh
     # computes it from the freshly-reset `src` worktree → Dockerfile ARG/ENV →
     # these JBRAIN_GIT_*/JBRAIN_BUILD_TIME vars). This is the git commit the RUNNING

@@ -77,6 +77,13 @@ markers = [
 
 [tool.coverage.run]
 source = ["jbrain"]
+# CI runs the unit and integration halves on SEPARATE runners and combines their data
+# afterwards, so the 80% gate still measures the whole suite rather than each half against
+# a threshold neither can meet alone. `relative_files` is what makes that possible: the two
+# runners record different absolute checkout paths, and combine only merges files it can
+# see as the same file. (pytest-cov already handles the xdist workers WITHIN a run, so no
+# `parallel` here — each job still ends with one .coverage, which CI renames per half.)
+relative_files = true
 
 [tool.coverage.report]
 show_missing = true

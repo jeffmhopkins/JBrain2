@@ -924,7 +924,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # detail screen opens with a history instead of an empty plot after a reload.
         # Runs whether or not anyone is watching — that is what makes it a history.
         app.state.vitals_ring = VitalsRing()
-        vitals_sampler_task = asyncio.create_task(sample_loop(app.state.vitals_ring))
+        # Off under test. The sampler writes a reading a second for the life of the
+        # process, so a test that seeds the ring and then asserts on it races a tick that
+        # overwrites the seed with whatever a CI container's absent gauge reads (None).
+        # That is a genuine flake, not a hypothetical: it surfaced the moment the suite was
+        # run under enough parallelism to make the window likely.
+        vitals_sampler_task = (
+            asyncio.create_task(sample_loop(app.state.vitals_ring))
+            if settings.vitals_sampler_enabled
+            else None
+        )
         app.state.run_reader = RunLogReader(maker)
         # The owner-facing Research Library reader: browse/search/delete over jerv's
         # persisted deep-research reports + analysed videos (the external corpus).
@@ -1052,7 +1061,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         plan_continuation_task.cancel()
         intake_reaper_task.cancel()
         stranded_reaper_task.cancel()
-        vitals_sampler_task.cancel()
+        if vitals_sampler_task is not None:
+            vitals_sampler_task.cancel()
         jpet_loop_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT

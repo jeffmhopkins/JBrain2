@@ -4,7 +4,14 @@ import subprocess
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from jbrain.llm.fake import FakeLlmClient
+# Off for the WHOLE suite, before any Settings is constructed. The vitals sampler writes a
+# reading into the ring once a second for the life of the process, so any test that seeds
+# the ring and then asserts on it is racing a tick that overwrites the seed with whatever an
+# absent gauge reads (None). Set here rather than in 64 individual Settings(...) calls, and
+# as an env var because that is what Settings reads.
+os.environ.setdefault("JBRAIN_VITALS_SAMPLER_ENABLED", "false")
+
+from jbrain.llm.fake import FakeLlmClient  # noqa: E402
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
     LlmImage,
