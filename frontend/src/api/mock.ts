@@ -379,6 +379,7 @@ const SETTINGS: AppSettings = {
   brain_answer_pitch: 0,
   brain_answer_chorus: false,
   brain_answer_robot: false,
+  local_llm_auto_update: true,
   pronunciation_lexicon: {},
 };
 

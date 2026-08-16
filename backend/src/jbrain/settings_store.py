@@ -188,6 +188,17 @@ BRAIN_ANSWER_CHORUS_DEFAULT = False
 BRAIN_ANSWER_ROBOT_KEY = "brain_answer_robot"
 BRAIN_ANSWER_ROBOT_DEFAULT = False
 
+# Whether an update rebuilds the model gateway onto the newest llama.cpp and then SMOKE-TESTS
+# it by loading a model. On by default: tracking master is what makes a freshly-released
+# model's architecture work with no manual step. But the test is not free — it loads a model
+# into the iGPU, tens of GB of disk read and minutes of the box's attention, on every update.
+# It lived only in `.env` (LOCAL_LLM_AUTO_UPDATE), which the owner cannot reach: they run this
+# box remotely with no terminal (CLAUDE.md #10), so the one switch governing whether an update
+# touches the GPU at all was unreachable from the surface they actually operate. Stored here
+# so the PWA can own it; `.env` still wins when set, so an existing opt-out keeps working.
+LOCAL_LLM_AUTO_UPDATE_KEY = "local_llm_auto_update"
+LOCAL_LLM_AUTO_UPDATE_DEFAULT = True
+
 
 # The owner's read-aloud pronunciation lexicon: a plain-English RESPELLING map {word: "say it like"}
 # (e.g. "Titusville" -> "Tight us ville") the api applies as a whole-word, case-insensitive text
@@ -634,6 +645,12 @@ class SqlSettingsStore:
         """Whether the read-aloud applies the robot voice character. Defaults OFF; only an
         explicit `true` enables it (any non-true value reads as off)."""
         return await self.get(ctx, BRAIN_ANSWER_ROBOT_KEY, BRAIN_ANSWER_ROBOT_DEFAULT) is True
+
+    async def local_llm_auto_update(self, ctx: SessionContext) -> bool:
+        """Whether an update tracks the newest llama.cpp and smoke-tests it. Defaults ON;
+        only an explicit `false` disables it (any non-false value reads as on)."""
+        stored = await self.get(ctx, LOCAL_LLM_AUTO_UPDATE_KEY, LOCAL_LLM_AUTO_UPDATE_DEFAULT)
+        return stored is not False
 
     async def pronunciation_lexicon(self, ctx: SessionContext) -> dict[str, str]:
         """The owner's read-aloud respelling map {word: "say it like"}, sanitized (see

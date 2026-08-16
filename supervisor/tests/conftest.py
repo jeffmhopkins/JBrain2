@@ -188,5 +188,6 @@ def gateway() -> FakeGateway:
 @pytest.fixture
 def client(gateway: FakeGateway) -> Iterator[TestClient]:
     settings = Settings(supervisor_token=TOKEN)
-    with TestClient(create_app(settings, gateway)) as test_client:
+    # watch_api off: route tests have no business starting a background network probe.
+    with TestClient(create_app(settings, gateway, watch_api=False)) as test_client:
         yield test_client

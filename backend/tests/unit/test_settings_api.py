@@ -61,6 +61,7 @@ def test_get_settings_defaults_to_full_analysis(
         "brain_answer_pitch": 0.0,
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
+        "local_llm_auto_update": True,
         "pronunciation_lexicon": {},
     }
 
@@ -80,6 +81,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_pitch": 0.0,
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
+        "local_llm_auto_update": True,
         "pronunciation_lexicon": {},
     }
     assert store.values["image_analysis_mode"] == "ocr"
@@ -94,6 +96,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_pitch": 0.0,
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
+        "local_llm_auto_update": True,
         "pronunciation_lexicon": {},
     }
 
@@ -108,6 +111,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_pitch": 0.0,
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
+        "local_llm_auto_update": True,
         "pronunciation_lexicon": {},
     }
 
@@ -129,6 +133,7 @@ def test_put_settings_round_trips_the_timezone(
         "brain_answer_pitch": 0.0,
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
+        "local_llm_auto_update": True,
         "pronunciation_lexicon": {},
     }
     assert store.values["owner_timezone"] == "America/New_York"
@@ -342,5 +347,24 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "brain_answer_pitch": 0.0,
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
+        "local_llm_auto_update": True,
         "pronunciation_lexicon": {},
     }
+
+
+def test_gateway_auto_update_defaults_on_and_can_be_turned_off(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    """The switch governing whether an update loads a model into the GPU at all lived only
+    in the box's `.env` — unreachable for an owner running it remotely with no terminal
+    (CLAUDE.md #10). Default ON, because tracking llama.cpp master is what makes a
+    freshly-released model work with no manual step."""
+    c, _store = client
+
+    assert c.get("/api/settings").json()["local_llm_auto_update"] is True
+
+    patched = c.put("/api/settings", json={"local_llm_auto_update": False})
+
+    assert patched.status_code == 200
+    assert patched.json()["local_llm_auto_update"] is False
+    assert c.get("/api/settings").json()["local_llm_auto_update"] is False

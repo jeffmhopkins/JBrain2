@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hmac
 import re
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import (
@@ -24,11 +25,11 @@ from fastapi import (
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
-from supervisor import host_metrics
+from supervisor import host_metrics, watchdog
 from supervisor.gateway import DockerGateway, UnknownServiceError, UpdateInProgressError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncIterator, Iterator
 
     from supervisor.config import Settings
 
@@ -157,9 +158,29 @@ class RebuildRequest(BaseModel):
 IMPORT_ARCHIVE_RE = re.compile(r"^import-\d{8}-\d{6}\.jbrain\.tar$")
 
 
-def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
-    """Build the supervisor app around an injected gateway."""
-    app = FastAPI(title="jbrain-supervisor")
+def create_app(
+    settings: Settings, gateway: DockerGateway, *, watch_api: bool = True
+) -> FastAPI:
+    """Build the supervisor app around an injected gateway.
+
+    `watch_api` off is for tests: the watchdog is a background task that probes over the
+    network, which a route test has no business starting."""
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # The API's recovery path cannot live in the API (see watchdog.py). The
+        # supervisor
+        # already holds the docker socket and is already always-up, so watching from
+        # here
+        # adds no externally reachable surface and no new credential.
+        task = watchdog.start(gateway) if watch_api else None
+        try:
+            yield
+        finally:
+            if task is not None:
+                await watchdog.stop(task)
+
+    app = FastAPI(title="jbrain-supervisor", lifespan=lifespan)
 
     expected = f"Bearer {settings.supervisor_token}".encode()
 

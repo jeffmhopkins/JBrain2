@@ -30,6 +30,8 @@ from jbrain.settings_store import (
     BRAIN_READ_ALOUD_ENGINE_KEY,
     BRAIN_READ_ALOUD_KEY,
     IMAGE_ANALYSIS_KEY,
+    LOCAL_LLM_AUTO_UPDATE_DEFAULT,
+    LOCAL_LLM_AUTO_UPDATE_KEY,
     OWNER_TIMEZONE_KEY,
     SqlSettingsStore,
     is_valid_timezone,
@@ -72,6 +74,10 @@ class SettingsOut(BaseModel):
     brain_answer_pitch: float = BRAIN_ANSWER_PITCH_DEFAULT
     brain_answer_chorus: bool = BRAIN_ANSWER_CHORUS_DEFAULT
     brain_answer_robot: bool = BRAIN_ANSWER_ROBOT_DEFAULT
+    # Whether an update rebuilds the model gateway onto the newest llama.cpp and smoke-tests
+    # it by loading a model. ON by default; surfaced here because it lived only in `.env`,
+    # which the owner has no terminal to reach.
+    local_llm_auto_update: bool = LOCAL_LLM_AUTO_UPDATE_DEFAULT
     # The owner's read-aloud respelling map {word: "say it like"} — applied as a whole-word text
     # substitution before a clip is rendered (jbrain.api.brain). Empty by default.
     pronunciation_lexicon: dict[str, str] = {}
@@ -99,6 +105,7 @@ class SettingsPatch(BaseModel):
     ) = None
     brain_answer_chorus: bool | None = None
     brain_answer_robot: bool | None = None
+    local_llm_auto_update: bool | None = None
     # The full respelling map to store (replace semantics). The store sanitizes/bounds it; the
     # Field caps the raw payload so a client can't post an unbounded body.
     pronunciation_lexicon: Annotated[dict[str, str], Field(max_length=200)] | None = None
@@ -116,6 +123,7 @@ async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
         brain_answer_pitch=await store.brain_answer_pitch(ctx),
         brain_answer_chorus=await store.brain_answer_chorus(ctx),
         brain_answer_robot=await store.brain_answer_robot(ctx),
+        local_llm_auto_update=await store.local_llm_auto_update(ctx),
         pronunciation_lexicon=await store.pronunciation_lexicon(ctx),
     )
 
@@ -175,6 +183,8 @@ async def update_settings(
         await store.upsert(ctx, BRAIN_ANSWER_ROBOT_KEY, body.brain_answer_robot)
         if value_emit is not None:
             value_emit("answer_robot", body.brain_answer_robot)
+    if body.local_llm_auto_update is not None:
+        await store.upsert(ctx, LOCAL_LLM_AUTO_UPDATE_KEY, body.local_llm_auto_update)
     if body.pronunciation_lexicon is not None:
         # Replace semantics; the store sanitizes + bounds it, so a junk entry is dropped rather
         # than stored (an empty map clears the lexicon).

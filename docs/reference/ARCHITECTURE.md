@@ -224,6 +224,22 @@ per-container health, restart buttons, live log tails (SSE over
 first and the supervisor re-execs itself last; `jbrain` over SSH is the
 same code path when the stack is too wedged for the UI.
 
+The supervisor also **watches the api and restarts it when it stops answering**
+(`supervisor/src/supervisor/watchdog.py`). This is the one recovery path that does not
+run *through* the api: the PWA's restart control posts to `/api/ops/restart` and the
+debug console is mounted there too, so the component whose failure most needs recovering
+is the one whose recovery path dies with it. `restart: unless-stopped` does not cover it
+— that acts when a process EXITS, and the failure seen in practice was a process still
+running and holding its socket while serving nothing (the api's own metrics sampler
+recorded a 328-second gap while the edge answered 530; Docker saw a healthy container
+throughout). Putting the watch in the supervisor adds **no externally reachable surface
+and no new credential** — it already holds the socket, is already always-up, and is
+already internal-only. Three guards keep it from being worse than the problem:
+consecutive failures rather than one (a slow probe during a model load is normal), never
+during a one-shot (an update stops the api on purpose, and an unreadable one-shot state
+fails closed), and a cooldown so a crash-loop surfaces as a crash-loop instead of being
+restarted every minute.
+
 ### Updates
 
 Deployments build from source: `jbrain update` (SSH) and the **Ops screen's

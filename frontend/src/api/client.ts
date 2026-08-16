@@ -496,6 +496,10 @@ export interface AppSettings {
   brain_answer_pitch: number;
   brain_answer_chorus: boolean;
   brain_answer_robot: boolean;
+  /** Whether an update rebuilds the model gateway onto the newest llama.cpp and then
+   *  smoke-tests it by loading a model. ON by default. Surfaced because it lived only in
+   *  the box's `.env`, which the owner has no terminal to reach. */
+  local_llm_auto_update: boolean;
   // The owner's read-aloud respelling map {word: "say it like"} — the api applies it as
   // a whole-word substitution before a clip renders. Empty by default.
   pronunciation_lexicon: Record<string, string>;

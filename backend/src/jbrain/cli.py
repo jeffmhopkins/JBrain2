@@ -40,6 +40,25 @@ async def _rotate() -> None:
         await engine.dispose()
 
 
+async def _print_auto_update() -> int:
+    """Exit 0 when the gateway auto-update + smoke test is ON, 1 when the owner has turned
+    it off from the PWA. An exit code, not stdout, so the update script reads it with a
+    plain `if` and needs no parsing.
+
+    Unreachable DB reads as ON: this gates a safety net (rebuild onto the newest llama.cpp,
+    then verify it can still serve), and failing closed would silently freeze the gateway
+    on an old base every time the database hiccuped during an update."""
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        return 0 if await store.local_llm_auto_update(SYSTEM_CTX) else 1
+    except Exception:  # noqa: BLE001
+        return 0
+    finally:
+        await engine.dispose()
+
+
 async def _print_provision_ids() -> None:
     """Print the install queue (one catalog id per line) for the update one-shot.
     Owner-scoped (settings RLS is is_owner()); empty output is the normal 'nothing
@@ -156,6 +175,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_activate.add_argument("model_id", help="catalog id of the installed model to activate")
     sub.add_parser(
+        "local-llm-auto-update",
+        help="exit 0 if the owner has the gateway auto-update + smoke test on, else 1",
+    )
+    sub.add_parser(
         "local-llm-smoketest",
         help="load a model (+ gpt-oss tool probe) to verify the gateway's llama.cpp build",
     )
@@ -179,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "local-activate":
         asyncio.run(_local_activate(args.model_id))
         return 0
+    if args.command == "local-llm-auto-update":
+        return asyncio.run(_print_auto_update())
     if args.command == "local-llm-smoketest":
         return asyncio.run(_local_llm_smoketest())
     return 1

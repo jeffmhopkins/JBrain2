@@ -231,9 +231,20 @@ def test_update_gateway_auto_update_is_default_on_smoke_tested_and_rolls_back() 
     assert gate is not None, (
         "auto-update must be default-on, opt-out via LOCAL_LLM_AUTO_UPDATE=false"
     )
-    assert "! grep" in gate, "the gate must RUN unless =false is present (negated grep)"
     assert "grep -q '^LOCAL_LLM_AUTO_UPDATE=true'" not in text, (
         "auto-update must not be opt-in (=true) — the owner has no terminal to set .env"
+    )
+    # Default ON: the only things that turn it off are an explicit .env=false or the
+    # owner's stored setting. Asserted on the resolved variable rather than the shape of
+    # one grep, so the gate can be restructured without breaking the guarantee.
+    assert "AUTO_UPDATE_ON=1" in text, (
+        "the flag must start ON and be cleared by an opt-out"
+    )
+    assert '[ -n "$AUTO_UPDATE_ON" ]' in text, (
+        "the block must run off the resolved flag"
+    )
+    assert "jbrain.cli local-llm-auto-update" in text, (
+        "the owner's PWA toggle must be consulted — .env is unreachable for them"
     )
     assert "LOCAL_LLM_RUNNING" in text, (
         "auto-update must be gated on the gateway being enabled"
@@ -451,3 +462,36 @@ def test_prune_deletes_only_guarded_targets(tmp_path: Path) -> None:
     assert outside.exists() and (outside / "canary").exists(), (
         "a symlink escaping the models dir must not be followed into a delete"
     )
+
+
+def test_update_skips_the_smoke_test_when_the_gateway_image_did_not_change() -> None:
+    """The smoke test exists to vet a new UPSTREAM build. When the rebuild produces the
+    identical image there is nothing new to vet — and it is not free: it loads a model
+    into
+    the iGPU, tens of GB of disk read and minutes of the box's attention, on every
+    routine
+    update that changed nothing."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert "BEFORE_IMG=" in text and "AFTER_IMG=" in text, (
+        "the image id must be compared across the rebuild"
+    )
+    assert '[ "$BEFORE_IMG" = "$AFTER_IMG" ]' in text
+    assert "skipping the smoke test" in text
+    # An unknown BEFORE (first build on a fresh box) must NOT read as "unchanged" — that
+    # would skip the vet on the one build nothing has ever verified.
+    assert '[ -n "$BEFORE_IMG" ]' in text
+
+
+def test_update_persists_the_build_stamp_into_env() -> None:
+    """Exporting alone scopes the revision stamp to one script's process, so any later
+    compose build outside it bakes an image that reports its revision as "unknown" — the
+    exact question /api/debug/version exists to answer."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert "JBRAIN_GIT_SHA=$JBRAIN_GIT_SHA" in text
+    for key in ("JBRAIN_GIT_SHA", "JBRAIN_GIT_DESCRIBE", "JBRAIN_BUILD_TIME"):
+        assert 'sed -i "s|^${_key}=.*|${_stamp}|" .env' in text or key in text
+    # Rewrite-in-place, never append-a-duplicate: two lines for one key would leave the
+    # winner decided by file ordering.
+    assert 'grep -q "^${_key}=" .env' in text
