@@ -292,6 +292,12 @@ Three things this surface is careful about:
   seconds makes a sample's slot a property of the sample, so the window scrolls by exactly
   one slot per tick instead of re-partitioning. With every sample drawn, mean-vs-peak
   stops being a question.
+- **A value at the floor still draws a line** [decided]. The plot reserves a stroke's
+  width inside its own box at both ends, because a series sitting exactly at its scale
+  minimum — a token rate of zero, the commonest case — landed on the viewBox edge with
+  half its stroke clipped away, and a real zero became indistinguishable from no data.
+  That is the one distinction these plots exist to keep: a **gap** means "we were not
+  told", a **floor** means "it was zero". Nulls still draw nothing at all.
 - **The GPU area is shaded, the token rate is not** [decided]. Shading reads as "how much
   of the available capacity was used", which is only true when the baseline is a real
   zero — so it is opt-in (`PlotLine.fill`) and paired with the pinned 0–100 scale. The
