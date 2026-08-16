@@ -679,8 +679,12 @@ def _cmd_idx(lines: list[str], needle: str) -> int | None:
 
 
 def _call_idx(lines: list[str], name: str) -> int | None:
-    """Index of the bare CALL of a shell function — not its definition, not the trap."""
-    return next((i for i, ln in enumerate(lines) if ln.strip() == name), None)
+    """Index of the TOP-LEVEL call of a shell function — a bare, unindented `name`.
+
+    Unindented matters: the same call also appears indented inside the signal handler,
+    and matching that instead would compare the handler's position to the phase order.
+    """
+    return next((i for i, ln in enumerate(lines) if ln.rstrip("\n") == name), None)
 
 
 def test_update_quiesces_the_stack_around_the_build_and_the_model_load() -> None:
@@ -727,6 +731,26 @@ def test_a_dead_updater_does_not_leave_the_box_half_stopped() -> None:
     )
 
 
+def _use_idx(lines: list[str], name: str) -> int | None:
+    """Index of the first USE of a shell function — never its `name() {` definition.
+
+    Matching the definition instead is worse than useless: the definition necessarily
+    precedes everything, so an ordering assertion against it can never fail, and the
+    call site could be deleted outright with the test still green. This one did exactly
+    that before a reviewer caught it.
+    """
+    return next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if name in ln
+            and not ln.lstrip().startswith("#")
+            and not ln.strip().startswith(f"{name}()")
+        ),
+        None,
+    )
+
+
 def test_the_page_cache_is_dropped_before_the_model_load() -> None:
     """MemAvailable counts reclaimable page cache as free, and reclaiming it under
     pressure is exactly what livelocks this hardware. After a build that just wrote tens
@@ -734,11 +758,177 @@ def test_the_page_cache_is_dropped_before_the_model_load() -> None:
     would be measuring optimism. Dropping first makes the reading honest."""
     lines = _update_lines()
 
-    drop = _cmd_idx(lines, "drop_page_cache")
+    drop = _use_idx(lines, "drop_page_cache")
     smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
     assert drop is not None, "the update must drop the page cache before a load"
     assert smoke is not None and drop <= smoke, "drop the cache BEFORE the load"
     assert "drop_caches" in "\n".join(lines)
+
+
+def test_a_failed_cache_drop_is_reported_not_assumed() -> None:
+    """Both drop paths are best-effort and silenced, so an unconditional "page cache
+    dropped" would claim something that did not happen — and the headroom gate below
+    would then be counting cache it cannot reclaim. The before/after numbers are the
+    only evidence either way."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    for probe in ('_before="$(mem_available_gb)"', '_after="$(mem_available_gb)"'):
+        assert probe in text, "sample memory on both sides of the drop"
+    assert '[ "$_after" = "$_before" ]' in text, "compare the two, don't assume"
+
+
+def test_the_api_is_paused_for_the_model_load() -> None:
+    """The api is kept up through the build so the PWA can watch — but it runs the
+    keep-warm prime, which retries every 5s and loads the chat model the moment the
+    gateway answers. That is a second ~60 GB allocation racing the smoke test's, and it
+    would defeat the headroom gate outright: the gate samples free memory once, then
+    allocates on top of whatever the prime took."""
+    lines = _update_lines()
+
+    pause = _use_idx(lines, "pause_api")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    build = _cmd_idx(lines, "build --pull local-llm")
+
+    assert pause is not None and smoke is not None and build is not None
+    assert pause < build < smoke, "pause the api before anything can load a model"
+    assert 'QUIESCED="$QUIESCED api"' in "\n".join(lines), (
+        "the paused api must join the restore set, so the trap covers it too"
+    )
+
+
+def test_the_gateway_is_emptied_before_the_rollback_rebuild() -> None:
+    """The rollback is the one branch nobody exercises, and it was the worst one. A
+    smoke
+    test fails at the TOOL PROBE — with both models loaded — and a timeout leaves a load
+    still running, so the gateway can be holding ~90 GB. `up -d` on a changed image
+    force-recreates it, and with no stop_grace_period that is SIGKILL in 10s: the kernel
+    reclaims all of it at once while the rebuild allocates. That is verbatim the
+    collision
+    the pre-build unload exists to prevent."""
+    lines = _update_lines()
+
+    rollback_msg = _cmd_idx(lines, "rolled back to its pinned base")
+    assert rollback_msg is not None
+    rebuild = next(
+        i
+        for i, ln in enumerate(lines)
+        if "build local-llm" in ln
+        and "--pull" not in ln
+        and not ln.lstrip().startswith("#")
+    )
+    release = next(
+        (
+            i
+            for i in range(rollback_msg, rebuild)
+            if lines[i].strip() == "release_models"
+        ),
+        None,
+    )
+    assert release is not None, (
+        "empty the gateway before recreating it on the pinned base"
+    )
+
+
+def test_a_killed_quiesce_is_recoverable_without_a_terminal() -> None:
+    """The EXIT trap cannot cover the kills that actually happen here: the supervisor
+    reaps a hung one-shot with remove(force=True) (SIGKILL) and a power cut runs
+    nothing.
+    Every service is `restart: unless-stopped`, which by definition does NOT restart
+    something explicitly stopped — so without a durable record the box comes back
+    missing
+    its worker, embedder and speech services, and `comfyui`/`mqtt` (which no `up -d`
+    names) would stay down forever. The owner has no terminal to fix that with."""
+    lines = _update_lines()
+    text = "\n".join(lines)
+
+    assert "QUIESCE_STATE=" in text, "the quiesced set must be recorded on disk"
+    write = _cmd_idx(lines, '> "$QUIESCE_STATE"')
+    stop = _cmd_idx(lines, 'stop -t 30 "$_svc"')
+    assert write is not None and stop is not None and write < stop, (
+        "record the set BEFORE stopping, so a kill between the two still leaves a trail"
+    )
+    heal = _use_idx(lines, "restore_stale_quiesce")
+    quiesce = _call_idx(lines, "quiesce_stack")
+    assert heal is not None and quiesce is not None and heal < quiesce, (
+        "heal a previous update's quiesce before taking this update's census, or the "
+        "still-stopped services are invisible to it"
+    )
+
+
+def test_a_signal_trap_exits_instead_of_resuming() -> None:
+    """A POSIX signal trap RESUMES at the next statement. A handler that only restores
+    the stack would therefore un-quiesce and then carry straight on into the build and
+    the ~60 GB load with everything resident — the pre-fix condition, and with QUIESCED
+    now empty it could never re-quiesce. It would also exit 0, so the PWA would report a
+    signalled update as a success."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert "trap on_signal INT TERM" in text, "signals need a handler that exits"
+    start = text.index("on_signal() {")
+    handler = text[start : text.index("trap unquiesce_stack EXIT")]
+    assert "exit" in handler, "the signal handler must exit, not fall through"
+
+
+def test_the_quiesce_stops_services_one_at_a_time() -> None:
+    """`docker compose stop a b c` validates every name against the CURRENT compose file
+    and refuses the whole command if one is unknown. The set here comes from Docker's
+    labels, so a container left by a renamed service (server-brain, whisper) puts an
+    unknown name in the list — the batch fails, `|| true` swallows it, and the log still
+    says "quiesced" over a stack that never stopped. That silently restores the exact
+    pre-fix behaviour, on the class of update most likely to be big."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    quiesce = text[text.index("quiesce_stack() {") : text.index("unquiesce_stack() {")]
+    assert 'stop -t 30 "$_svc"' in quiesce, "stop per service, not one batched command"
+    assert "stop -t 30 $QUIESCED" not in quiesce, (
+        "a batched stop can be vetoed by one name"
+    )
+
+
+def test_a_service_that_does_not_come_back_is_reported() -> None:
+    """This function is the only thing between a failed update and a box silently
+    missing
+    its worker, embedder and speech services — and the owner reads this log because they
+    have no terminal. Swallowing the failure defeats the purpose."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    restore = text[text.index("unquiesce_stack() {") :]
+    restore = restore[: restore.index("\n}")]
+    assert "WARNING" in restore, "a restore that fails must say so in the update log"
+
+
+def test_migrations_run_next_to_the_recreate_not_before_the_gateway_work() -> None:
+    """The api is deliberately kept up, so migrating early leaves the OLD image serving
+    the owner's PWA against a NEW schema for the whole gateway rebuild + smoke test.
+    That
+    was defensible at seconds; the window now contains an unconditional multi-GB base
+    image pull on a rolling tag."""
+    lines = _update_lines()
+
+    migrate = _cmd_idx(lines, "run --rm migrate")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+
+    assert migrate is not None and smoke is not None and up is not None
+    assert smoke < migrate < up, (
+        "migrate after the gateway work, immediately before `up -d`"
+    )
+
+
+def test_the_floating_gateway_pull_is_bounded() -> None:
+    """It is an unconditional multi-GB registry pull on a rolling tag, and it runs with
+    the stack quiesced — so a stall here is a stall of the whole box, not one
+    service."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+    joined = text.replace("\\\n", " ")
+
+    line = next(
+        ln
+        for ln in joined.splitlines()
+        if "build --pull local-llm" in ln and not ln.lstrip().startswith("#")
+    )
+    assert "run_bounded" in line, "the floating pull must run under a ceiling"
+    assert "PULL_TIMEOUT_S=" in text
 
 
 def test_the_gateway_is_emptied_again_before_the_stack_is_recreated() -> None:
@@ -747,11 +937,13 @@ def test_the_gateway_is_emptied_again_before_the_stack_is_recreated() -> None:
     prevents, just arriving from the other end."""
     lines = _update_lines()
 
-    unloads = [i for i, ln in enumerate(lines) if "jbrain.cli local-llm-unload" in ln]
+    # `release_models` is the shared helper; the raw CLI call lives only in its body.
+    unloads = [i for i, ln in enumerate(lines) if ln.strip() == "release_models"]
+    pre_build = _cmd_idx(lines, "jbrain.cli local-llm-unload")
     smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
     up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
 
-    assert len(unloads) >= 2, "unload before the build AND after the smoke test"
+    assert pre_build is not None, "there must be an unload before the build"
     assert smoke is not None and up is not None
     assert any(smoke < i < up for i in unloads), (
         "the models the smoke test loaded must be released before the recreate"

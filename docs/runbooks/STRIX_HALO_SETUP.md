@@ -581,26 +581,52 @@ Its phase order is deliberate:
 2. **Quiesce.** Empty and remove the gateway, then stop every service except the control
    plane (`db`, `api`, `supervisor`, `proxy`, `cloudflared`). Those stay up so the PWA can
    still stream the update log — going fully dark would free about a gigabyte and cost you
-   any way to tell a slow build from a wedged one. An `EXIT` trap restores the stopped
-   services even if the updater is killed mid-phase, and it restores the profile-gated ones
-   (`comfyui`, the mqtt pair) that a plain `up -d` would never name.
-3. Reclaim hardening, image build, migrations — all against the quiesced stack.
-4. Gateway rebuild on the floating tag, **page cache dropped**, then the smoke test. The
-   tool probe loads gpt-oss-120b (~59 GB), so it happens at the emptiest moment of the
-   whole update rather than on top of a freshly-recreated stack.
-5. Empty the gateway again, recreate the stack, restore the quiesced services.
+   any way to tell a slow build from a wedged one.
+3. Reclaim hardening and the image build — against the quiesced stack.
+4. **Pause the `api` too**, rebuild the gateway on the floating tag, **drop the page
+   cache**, then run the smoke test. The tool probe loads gpt-oss-120b (~59 GB), so it
+   happens with as little else resident as the box ever gets.
+5. Empty the gateway again, migrate, recreate the stack, restore everything the quiesce
+   stopped.
 6. Model syncs, gateway restart, prune.
+
+**Why the `api` is paused for step 4 specifically.** It is deliberately kept up through the
+build so you can watch the log — but it runs the keep-warm prime, which retries every five
+seconds and loads the chat model the instant the gateway answers. That is a second ~60 GB
+allocation racing the smoke test's, and the two do not serialize against each other (the
+prime goes through the residency budget; the smoke test's readiness probe does not). It
+would defeat the memory check below outright, since the check samples free memory once and
+then allocates on top of whatever the prime took. So the PWA goes dark for the gateway
+rebuild and smoke test — minutes, and only on an update where the gateway image actually
+changed — and comes back with the full log intact.
+
+**Recovering a quiesce that never finished.** The `EXIT` trap restores the stopped services
+on an ordinary failure or a caught signal, but it cannot cover a `SIGKILL` (the supervisor's
+stale-one-shot reaper uses one) or a power cut — and every service is `restart:
+unless-stopped`, which by definition does *not* restart something explicitly stopped. So the
+quiesced set is also written to `.jbrain-quiesced` in the install dir before the first stop,
+and the **next update restores anything left in it before doing anything else**. That matters
+most for `comfyui` and the mqtt pair: no `up -d` in the update names them, so without the file
+nothing would ever bring them back.
 
 Two details matter more than they look. The **page-cache drop** comes immediately before
 the load because `MemAvailable` counts reclaimable cache as free — and reclaiming it under
 pressure is the very thing that livelocks this box, so after a build that just wrote tens
 of GB of layers the number reads fine and cannot be realised in time. Dropping first turns
-the reading into real free pages. And the smoke test then **refuses a load it cannot
-afford**: it checks `MemAvailable` against the model's weights plus
-`smoketest.LOAD_HEADROOM_GB` (10 GB) and, if short, reports the shortfall and fails —
-which routes into the existing rollback, so a box without the room keeps the pinned,
-known-good base instead of betting the host on a verification step. In the update log
-that reads as `NOT ENOUGH MEMORY to load … Refusing the load`.
+the reading into real free pages; if the drop doesn't move the number, the update log says
+so rather than letting the check quietly measure cache. And the smoke test then **refuses a
+load it cannot afford**: it checks `MemAvailable` against the model's resident cost (weights
+**plus KV cache**) and `smoketest.LOAD_HEADROOM_GB`, and if short it reports the shortfall
+and fails — which routes into the existing rollback, so a box without the room keeps the
+pinned, known-good base instead of betting the host on a verification step. In the update log
+that reads as `NOT ENOUGH MEMORY to load … REFUSED`. A model the gateway already holds is
+never charged for, since loading it allocates nothing.
+
+That headroom is **the app's own floor, not a smaller one invented for the update**: 20 GB,
+matching the ~19.5 GB that `LOCAL_LLM_FREE_RAM_FRACTION` (0.15) keeps free on this 130 GB
+box for every ordinary turn. The update path is the one that has actually frozen this
+hardware; it would be indefensible for it to be the loosest load path on the machine. A unit
+test pins the two together.
 
 **Every one-off `compose run` in an update is bounded.** The toggle read gets 120s and the
 smoke test 600s, and a timeout is treated as a FAILURE — so a hung smoke test rolls the

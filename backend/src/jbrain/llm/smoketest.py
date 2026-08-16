@@ -49,7 +49,7 @@ TOOL_PROBE_MODEL_ID = "gpt-oss-120b"
 # abstraction, the same way vitals sampling reads the amdgpu sysfs attributes.
 MEMINFO_PATH = Path("/proc/meminfo")
 
-# Free RAM a load needs BEYOND the weights themselves, in GB.
+# Free RAM a load needs BEYOND the model's own resident cost, in GB.
 #
 # On a unified-memory box (Strix Halo) a model's device buffers are pinned out of
 # system RAM through the amdgpu GTT, and the driver asks for them with
@@ -63,7 +63,13 @@ MEMINFO_PATH = Path("/proc/meminfo")
 # So this test refuses a load it cannot afford. Rather than bet the host on a
 # verification step, a box without the room keeps the pinned, known-good base — the
 # same outcome as a failed smoke test, which is the conservative one.
-LOAD_HEADROOM_GB = 10.0
+#
+# The number is the app's OWN steady-state floor, not a smaller one invented here. Every
+# ordinary turn loads through `jbrain.llm.residency`, which keeps
+# `local_llm_free_ram_fraction` (0.15) of RAM free — ~19.5 GB on this 130 GB box. It would
+# be indefensible for the update path, the one that has actually frozen the hardware, to
+# be the single loosest load path on the machine. A test pins the two together.
+LOAD_HEADROOM_GB = 20.0
 
 
 def mem_available_gb(meminfo_path: Path = MEMINFO_PATH) -> float | None:
@@ -85,23 +91,56 @@ def mem_available_gb(meminfo_path: Path = MEMINFO_PATH) -> float | None:
     return None
 
 
-def _shortfall(label: str, size_gb: float, available_gb: float | None) -> str | None:
-    """The refusal message when `size_gb` of weights won't fit, else None.
+def _resident_cost_gb(model: local_catalog.LocalModel) -> float:
+    """What holding `model` actually costs in unified memory, not just its weights.
 
-    An unknown MemAvailable proceeds with a note rather than blocking: on any real
-    deployment /proc/meminfo is readable, so "unknown" means an environment odd
-    enough that refusing every load would be the wrong default.
+    Weights alone understate it: the KV cache is a real, non-swappable allocation
+    (`local_catalog.footprint_gb`), and on a 60 GB model it is several more GB. Counted
+    at the catalog's 128k reference window with one slot — the same headline number the
+    settings memory meter shows. A box serving a wider window or a second slot pays more
+    than this, which is part of what LOAD_HEADROOM_GB is absorbing.
     """
+    return model.size_gb + model.kv_gb_per_128k
+
+
+async def _room_for(
+    model: local_catalog.LocalModel,
+    gateway: SmokeGateway,
+    meminfo: Path,
+    messages: list[str],
+) -> bool:
+    """True when this model can be loaded without leaving the box on the edge.
+
+    A model the gateway ALREADY holds is free: gating it would refuse a load that
+    allocates nothing. That is not a corner case — it is the common one. The keep-warm
+    prime in the running api loads the chat model on its own, and on a box whose only
+    tool-capable model is gpt-oss the smoke test's own first step loads the very model
+    the tool probe then wants, so a weights-only check would refuse every update forever.
+    """
+    try:
+        resident = await gateway.running()
+    except Exception:  # noqa: BLE001 — an unreadable roster must gate, not crash
+        resident = set()
+    if model.served_model in resident:
+        messages.append(f"{model.id} already resident — no allocation to gate")
+        return True
+
+    available_gb = mem_available_gb(meminfo)
+    # An unknown MemAvailable proceeds with a note rather than blocking: on any real
+    # deployment /proc/meminfo is readable, so "unknown" means an environment odd enough
+    # that refusing every load would be the wrong default.
     if available_gb is None:
-        return None
-    if available_gb >= size_gb + LOAD_HEADROOM_GB:
-        return None
-    return (
-        f"NOT ENOUGH MEMORY to load {label} safely — {available_gb:.0f} GB available, "
-        f"{size_gb + LOAD_HEADROOM_GB:.0f} GB needed ({size_gb:.0f} GB weights + "
-        f"{LOAD_HEADROOM_GB:.0f} GB headroom). Refusing the load and keeping the "
-        f"pinned base."
+        return True
+    cost = _resident_cost_gb(model)
+    if available_gb >= cost + LOAD_HEADROOM_GB:
+        return True
+    messages.append(
+        f"NOT ENOUGH MEMORY to load {model.id} safely — {available_gb:.0f} GB available, "
+        f"{cost + LOAD_HEADROOM_GB:.0f} GB needed ({cost:.0f} GB resident + "
+        f"{LOAD_HEADROOM_GB:.0f} GB headroom). REFUSED — the build was not tested, and "
+        f"the gateway is being kept on its pinned base."
     )
+    return False
 
 
 class SmokeGateway(Protocol):
@@ -111,6 +150,8 @@ class SmokeGateway(Protocol):
     async def load(self, served_model: str) -> None: ...
 
     async def tool_probe(self, served_model: str) -> None: ...
+
+    async def running(self) -> set[str]: ...
 
 
 async def run_smoketest(
@@ -149,9 +190,7 @@ async def run_smoketest(
     # Cheapest possible load: a build that can't run at all fails here without paying
     # to read tens of GB of a large model's weights.
     smallest = min(installed, key=lambda m: m.size_gb)
-    short = _shortfall(smallest.id, smallest.size_gb, available)
-    if short is not None:
-        messages.append(short)
+    if not await _room_for(smallest, gateway, meminfo, messages):
         return False, messages
     try:
         await gateway.load(smallest.served_model)
@@ -162,13 +201,11 @@ async def run_smoketest(
 
     probe = local_catalog.get(TOOL_PROBE_MODEL_ID)
     if probe is not None and TOOL_PROBE_MODEL_ID in set(local_models):
-        # The expensive one — gpt-oss-120b is ~60 GB of weights, and it is THIS load,
-        # not the cheap one above, that the kernel trace caught freezing the box.
-        # Re-read rather than reuse the number above: the first load just took its own
-        # weights out of the total.
-        short = _shortfall(probe.id, probe.size_gb, mem_available_gb(meminfo))
-        if short is not None:
-            messages.append(short)
+        # The expensive one — gpt-oss-120b is ~60 GB, and it is THIS load, not the cheap
+        # one above, that the kernel trace caught freezing the box. `_room_for` re-reads
+        # MemAvailable rather than reusing the number above, because the first load just
+        # took its own weights out of the total.
+        if not await _room_for(probe, gateway, meminfo, messages):
             return False, messages
         try:
             await gateway.tool_probe(probe.served_model)

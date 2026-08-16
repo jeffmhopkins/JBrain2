@@ -36,11 +36,23 @@ class _FakeGateway:
     """Records load/probe calls; can be told to fail either, mirroring how a bad
     llama.cpp build surfaces (LocalGatewayError on the health/probe request)."""
 
-    def __init__(self, *, fail_load: bool = False, fail_probe: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_load: bool = False,
+        fail_probe: bool = False,
+        resident: set[str] | None = None,
+    ) -> None:
         self.fail_load = fail_load
         self.fail_probe = fail_probe
         self.loaded: list[str] = []
         self.probed: list[str] = []
+        # What the gateway already holds. A resident model costs nothing to "load", so
+        # the headroom gate must not charge for it.
+        self.resident = resident if resident is not None else set()
+
+    async def running(self) -> set[str]:
+        return self.resident | set(self.loaded)
 
     async def load(self, served_model: str) -> None:
         if self.fail_load:
@@ -122,8 +134,8 @@ async def test_unknown_ids_are_ignored() -> None:
 
 async def test_refuses_the_load_when_the_box_has_no_headroom(tmp_path) -> None:
     gw = _FakeGateway()
-    # 4 GB free against qwen3.5-0.8b's ~0.9 GB of weights: enough for the weights,
-    # nowhere near LOAD_HEADROOM_GB beyond them — which is the margin that matters.
+    # 4 GB free against qwen3.5-0.8b's 1.4 GB resident cost: enough for the model itself,
+    # nowhere near LOAD_HEADROOM_GB beyond it — which is the margin that matters.
     ok, messages = await smoketest.run_smoketest(
         ["qwen3.5-0.8b"], gw, meminfo_path=_meminfo(tmp_path, 4)
     )
@@ -135,16 +147,16 @@ async def test_refuses_the_load_when_the_box_has_no_headroom(tmp_path) -> None:
 async def test_refuses_the_expensive_tool_probe_while_allowing_the_cheap_load(
     tmp_path,
 ) -> None:
-    # The load picks the SMALLEST model (~0.9 GB) but the probe loads gpt-oss-120b
-    # (~59 GB) — it is the probe, not the cheap load, that the kernel trace caught
-    # freezing the box. 20 GB clears the first and must not clear the second.
+    # The load picks the SMALLEST model (1.4 GB resident) but the probe loads gpt-oss-120b
+    # (63.5 GB) — it is the probe, not the cheap load, that the kernel trace caught
+    # freezing the box. 40 GB clears the first and must not clear the second.
     gw = _FakeGateway()
     ok, messages = await smoketest.run_smoketest(
-        ["gpt-oss-120b", "qwen3.5-0.8b"], gw, meminfo_path=_meminfo(tmp_path, 20)
+        ["gpt-oss-120b", "qwen3.5-0.8b"], gw, meminfo_path=_meminfo(tmp_path, 40)
     )
     assert not ok
     assert gw.loaded == ["qwen3.5-0.8b"], "the cheap load fits and must still run"
-    assert gw.probed == [], "the ~59 GB probe must be refused"
+    assert gw.probed == [], "the 63.5 GB probe must be refused"
     assert any("NOT ENOUGH MEMORY" in m and "gpt-oss-120b" in m for m in messages)
 
 
@@ -176,3 +188,57 @@ def test_mem_available_reads_the_kb_field_as_gb(tmp_path) -> None:
     # Field absent (a kernel/container that reports no MemAvailable) is unknown, not zero
     # — zero would refuse every load forever.
     assert smoketest.mem_available_gb(_meminfo(tmp_path, None)) is None
+
+
+async def test_an_already_resident_model_is_never_gated(tmp_path) -> None:
+    """A load that allocates nothing must not be refused for lack of room to allocate.
+
+    This is not a corner case. On a box whose only tool-capable model IS gpt-oss, step 1
+    loads it and step 2 wants the very same model — so charging for it again refuses
+    every update forever, deterministically, while the box sits there with the model
+    already loaded. The keep-warm prime in the running api creates the same situation.
+    """
+    gw = _FakeGateway()
+    # 70 GB clears gpt-oss's first load (63.5 + 20 = 83.5 would NOT) only because the
+    # probe sees it as resident; make the point sharply by giving it just enough for the
+    # first load and nowhere near enough for a second.
+    ok, messages = await smoketest.run_smoketest(
+        ["gpt-oss-120b"], gw, meminfo_path=_meminfo(tmp_path, 90)
+    )
+    assert ok, f"gpt-oss-only box must be able to pass: {messages}"
+    assert gw.loaded == ["gpt-oss-120b"] and gw.probed == ["gpt-oss-120b"]
+    assert any("already resident" in m for m in messages)
+
+
+async def test_an_unreadable_roster_gates_rather_than_crashing(tmp_path) -> None:
+    """`running()` failing must not be read as "everything is resident"."""
+
+    class _Blind(_FakeGateway):
+        async def running(self) -> set[str]:
+            raise LocalGatewayError("roster unreachable")
+
+    gw = _Blind()
+    ok, messages = await smoketest.run_smoketest(
+        ["qwen3.5-0.8b"], gw, meminfo_path=_meminfo(tmp_path, 4)
+    )
+    assert not ok and gw.loaded == []
+    assert any("NOT ENOUGH MEMORY" in m for m in messages)
+
+
+def test_the_headroom_matches_the_apps_own_residency_floor() -> None:
+    """The update path is the one that has actually frozen this hardware. It must not be
+    the loosest load path on the box.
+
+    Every ordinary turn loads through `jbrain.llm.residency`, which keeps
+    `local_llm_free_ram_fraction` of RAM free. This test is what stops the two numbers
+    drifting apart — the same guard the deploy suite puts on the sysctl values.
+    """
+    from jbrain.config import Settings
+
+    fraction = Settings.model_fields["local_llm_free_ram_fraction"].default
+    box_ram_gb = 130.0  # the reference Strix Halo box the floor was tuned for
+    turn_floor_gb = fraction * box_ram_gb
+    assert turn_floor_gb <= smoketest.LOAD_HEADROOM_GB, (
+        f"the smoke test would load with less headroom ({smoketest.LOAD_HEADROOM_GB} GB) "
+        f"than a normal turn requires ({turn_floor_gb:.1f} GB)"
+    )

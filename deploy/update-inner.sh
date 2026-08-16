@@ -23,12 +23,13 @@
 # the same time as everything else, so it isn't:
 #
 #   1. backup, source refresh, .env backfills      — stack up, cheap
-#   2. QUIESCE: empty the gateway, stop everything but the control plane
-#   3. reclaim hardening, build, migrate           — quiesced
-#   4. gateway rebuild, drop caches, smoke test    — quiesced; the ~60 GB model load
-#                                                    happens at the emptiest moment
-#   5. empty the gateway again, recreate the stack, restore the quiesced services
-#   6. model syncs, gateway restart, prune         — stack up
+#   2. heal a stale quiesce, sweep renamed-service orphans, empty and REMOVE the gateway
+#   3. QUIESCE: stop everything but the control plane (db/api/supervisor/proxy/cloudflared)
+#   4. reclaim hardening, image build              — quiesced
+#   5. pause the api too, rebuild the gateway, drop caches, smoke test, empty it again
+#      — the ~60 GB model load happens here, with as little else resident as it ever gets
+#   6. migrate, recreate the stack, restore everything the quiesce stopped
+#   7. model syncs, gateway restart, prune         — stack up
 #
 # The single rule behind it: never allocate tens of gigabytes while also recreating a
 # dozen containers.
@@ -50,6 +51,9 @@ HOST_UPDATE="${JBRAIN_HOST_UPDATE:-}"
 # generous ceiling. The toggle read is one small query and should answer in seconds.
 SMOKE_TIMEOUT_S=600
 TOGGLE_TIMEOUT_S=120
+# The floating gateway rebuild pulls a multi-GB base image on a rolling tag. Generous, but
+# not unbounded: it runs with the stack quiesced, so a stall here is a stall of the box.
+PULL_TIMEOUT_S=1800
 
 # Run a one-off compose container under a hard ceiling, and clean up after a kill.
 #
@@ -143,7 +147,8 @@ host_kernel_write() {
 # without dropping first would be gating on a number we know to be optimistic. Dropping
 # converts the optimism into real free pages, or proves it was never there.
 drop_page_cache() {
-  echo "[update] dropping page cache ($(mem_available_gb) GB available before)"
+  _before="$(mem_available_gb)"
+  echo "[update] dropping page cache ($_before GB available before)"
   if [ -n "$HOST_UPDATE" ]; then
     sync
     echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
@@ -151,11 +156,33 @@ drop_page_cache() {
     docker run --rm --privileged --network none "$HELPER_IMAGE" \
       sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' >/dev/null 2>&1 || true
   fi
-  echo "[update] page cache dropped ($(mem_available_gb) GB available after)"
+  _after="$(mem_available_gb)"
+  # Both writes are best-effort (a daemon that refuses --privileged, a read-only /proc/sys),
+  # and both are silenced — so without this the log would claim a drop that never happened
+  # and the gate below would be measuring exactly the reclaimable cache it must not trust.
+  # The before/after numbers are the only evidence either way, so compare them out loud.
+  if [ "$_after" = "$_before" ]; then
+    echo "[update] WARNING: page cache did not drop (still $_after GB) — the memory check"
+    echo "[update]          below may be counting cache it cannot actually reclaim"
+  else
+    echo "[update] page cache dropped ($_after GB available after)"
+  fi
   # Explicit, because callers use this in an `&&` chain guarding the model load: a
   # future edit that ends the function on a failing command would silently skip the
   # very step this exists to protect.
   return 0
+}
+
+# Ask the gateway to release every model it holds, and say so if it wouldn't.
+#
+# A controlled unload, never a container kill: killing it makes the KERNEL reclaim tens of
+# gigabytes of GTT-pinned pages all at once, which is the allocation storm this whole
+# script exists to avoid. Bounded, because an unreachable gateway must not wedge the
+# update.
+release_models() {
+  run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+    python -m jbrain.cli local-llm-unload \
+    || echo "[update] unload skipped (gateway unreachable?)"
 }
 
 # --- quiescing the stack for the memory-heavy phase --------------------------
@@ -165,9 +192,13 @@ drop_page_cache() {
 # are of no use to anyone mid-rebuild, and their memory is worth more to the build and the
 # model load than their uptime is during an update nobody can use the box through.
 
-# Every profile, so `stop`/`start` can address — and therefore restore — a profile-gated
-# service such as comfyui or the mqtt pair. Without the flag compose denies it exists.
-ALL_PROFILES="--profile local-llm --profile comfyui --profile mqtt --profile jcode --profile tunnel"
+# Every profile the compose file defines, DERIVED rather than hand-listed — the same trick
+# prune-orphans.sh uses. A literal list is a second copy of the file's own profile set and
+# goes stale silently (it had already missed `tools`). Compose does auto-enable the profile
+# of a service named explicitly, so this is belt-and-braces; it costs one call and removes
+# a class of drift.
+ALL_PROFILES="$(docker compose config --profiles 2>/dev/null \
+  | sed 's/^/--profile /' | tr '\n' ' ')"
 
 # The control plane, kept up THROUGH the quiesce. Stopping these too would be simpler and
 # free perhaps another gigabyte, but it would also make the PWA go dark for the whole
@@ -178,6 +209,28 @@ ALL_PROFILES="--profile local-llm --profile comfyui --profile mqtt --profile jco
 QUIESCE_KEEP="db api supervisor proxy cloudflared"
 
 QUIESCED=""
+
+# Where the quiesced set is recorded, so it survives the death of this process.
+#
+# The EXIT trap cannot cover the kills that matter: the supervisor reaps a hung one-shot
+# with `remove(force=True)` (SIGKILL, untrappable) and a power cut runs nothing at all —
+# and this box's whole history is hard freezes. Every service uses `restart: unless-stopped`,
+# which by definition does NOT restart something explicitly stopped, so without this a
+# crashed quiesce leaves the box missing its worker, embedder and speech services across
+# reboots. Worse for `comfyui` and the mqtt pair: the next update's `up -d` never names
+# them, so nothing would ever bring them back. The file is the durable half of the trap.
+QUIESCE_STATE=".jbrain-quiesced"
+
+# Heal a quiesce that never finished — run before this update stops anything of its own.
+restore_stale_quiesce() {
+  [ -f "$QUIESCE_STATE" ] || return 0
+  echo "[update] a previous update left services stopped — restoring them first"
+  for _svc in $(cat "$QUIESCE_STATE"); do
+    docker compose $ALL_PROFILES start "$_svc" >/dev/null 2>&1 \
+      || echo "[update] could not restore $_svc"
+  done
+  rm -f "$QUIESCE_STATE"
+}
 
 # Compose's project name (docker-compose.yml sets `name: jbrain`); the label every
 # container in the stack carries, and how the supervisor scopes its own view too.
@@ -199,7 +252,17 @@ quiesce_stack() {
   done
   if [ -n "$QUIESCED" ]; then
     echo "[update] quiescing for the build and the model load:$QUIESCED"
-    docker compose $ALL_PROFILES stop -t 30 $QUIESCED || true
+    # One at a time, NOT one batched `stop`. Compose validates every name up front and
+    # refuses the WHOLE command if any is unknown to the file — and this box carries
+    # containers from renamed services (server-brain, whisper, claude-shim; see
+    # prune-orphans.sh). One orphan would make the batch fail, `|| true` would swallow
+    # it, and the log would still say "quiesced" over a stack that never stopped.
+    # Recorded BEFORE the first stop, so a kill between the two still leaves a trail.
+    printf '%s\n' $QUIESCED > "$QUIESCE_STATE" 2>/dev/null || true
+    for _svc in $QUIESCED; do
+      docker compose $ALL_PROFILES stop -t 30 "$_svc" >/dev/null 2>&1 \
+        || echo "[update] could not stop $_svc — leaving it up"
+    done
   fi
   echo "[update] quiesced ($(mem_available_gb) GB available)"
 }
@@ -213,15 +276,48 @@ unquiesce_stack() {
   [ -n "$QUIESCED" ] || return 0
   echo "[update] restoring quiesced services:$QUIESCED"
   for _svc in $QUIESCED; do
-    docker compose $ALL_PROFILES start "$_svc" >/dev/null 2>&1 || true
+    # NOT `|| true`: this function is the only thing standing between a failed update and
+    # a box silently missing its worker, embedder and speech services, and the owner reads
+    # this log because they have no terminal. A restore that fails must SAY so.
+    docker compose $ALL_PROFILES start "$_svc" >/dev/null 2>&1 \
+      || echo "[update] WARNING: $_svc did not restart — start it from Ops"
   done
   QUIESCED=""
+  rm -f "$QUIESCE_STATE"
+}
+
+# Stop the api for the model-load window only.
+#
+# The api is deliberately kept up through the build so the PWA can stream this log — but it
+# runs the keep-warm prime (jbrain.llm.warm_keeper), which retries every 5s and loads the
+# CHAT model the instant the gateway answers. That is a second ~60 GB allocation racing the
+# smoke test's, and it goes through the residency budget while the smoke test does not, so
+# neither serializes against the other. It would defeat the headroom gate outright: the gate
+# samples free memory once, then allocates on top of whatever the prime took. Appended to
+# QUIESCED so the ordinary restore path and the EXIT trap both cover it.
+pause_api() {
+  echo "[update] pausing api for the model load (its keep-warm prime would race it)"
+  docker compose stop -t 30 api >/dev/null 2>&1 || echo "[update] could not pause api"
+  QUIESCED="$QUIESCED api"
+  printf '%s\n' $QUIESCED > "$QUIESCE_STATE" 2>/dev/null || true
 }
 
 # An update that dies mid-phase must not leave the box permanently half-stopped. This trap
 # is the only thing between a killed updater and a box silently missing its worker,
-# embedder and speech services until somebody notices.
-trap unquiesce_stack EXIT INT TERM
+# embedder and speech services until somebody notices. It cannot cover every death —
+# the supervisor's stale-one-shot reaper uses `remove(force=True)` (SIGKILL) and a power
+# cut runs nothing at all — so it is a safety net, not a guarantee.
+#
+# The signal handler must EXIT. A trap that merely returns lets the script resume at the
+# next statement: a SIGTERM during the build would restore the whole stack and then carry
+# on to load ~60 GB with everything resident — precisely the pre-fix condition, and with
+# QUIESCED now empty it could never re-quiesce.
+on_signal() {
+  unquiesce_stack
+  exit 143
+}
+trap unquiesce_stack EXIT
+trap on_signal INT TERM
 
 echo "[update] starting ($(mem_available_gb) GB available)"
 ./backup.sh || echo "[update] backup skipped (stack not fully up?)"
@@ -406,6 +502,22 @@ for _stamp in "JBRAIN_GIT_SHA=$JBRAIN_GIT_SHA" \
     printf '%s\n' "$_stamp" >> .env
   fi
 done
+# A previous update may have been SIGKILLed mid-quiesce (the supervisor's reaper, a power
+# cut) and left services stopped. Put them back before this update takes its own census,
+# or they would be invisible to it and stay down forever.
+restore_stale_quiesce
+
+# This has to run BEFORE the quiesce, not after it: quiesce_stack reads the running set
+# from Docker's labels, so an orphan from a renamed service (server-brain, whisper) would
+# otherwise land in the list of things to stop and, later, to start again.
+# Clear containers left behind by a renamed (server-brain->wall, whisper->tts-stt) or removed
+# (claude-shim) service before the `up -d` below — an old server-brain holding host port 8800
+# blocks the new `wall` (which is what took the tunnel down after the split update), and any such
+# labeled orphan lingers on the Ops screen. The helper sweeps by comparing labels against the
+# file's full service set, so profile-gated services `--remove-orphans` would wrongly reap are kept.
+echo "[update] clearing renamed/removed-service orphans"
+sh src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
+
 # Everything from here to the `up -d` below runs against a quiesced stack: only the
 # control plane stays resident, so the build and — far more importantly — the model load
 # are not competing with a dozen services for the same unified memory.
@@ -423,10 +535,14 @@ quiesce_stack
 #    it was doing so with none of this in place. Values mirror oom-hardening.sh, which
 #    is what makes them survive a reboot; a test pins the two together.
 if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
-  if [ -n "$HOST_UPDATE" ]; then
-    sh src/deploy/oom-hardening.sh || echo "[update] OOM hardening skipped (retry next update)"
+  if [ -n "$HOST_UPDATE" ] && sh src/deploy/oom-hardening.sh; then
+    :
   else
-    echo "[update] applying reclaim headroom for this boot (host script needs a terminal)"
+    # Either the containerized caller (no apt, no /etc/sysctl.d) or a host run where the
+    # full script bowed out (not root, no systemd). Apply the knobs themselves anyway —
+    # they are the half that matters for the reclaim livelock, and this boot gets them
+    # even when nothing can make them persist.
+    echo "[update] applying reclaim headroom for this boot"
     host_kernel_write vm/min_free_kbytes 2097152 || echo "[update] min_free_kbytes not applied"
     host_kernel_write vm/watermark_scale_factor 200 || echo "[update] watermark not applied"
     host_kernel_write vm/swappiness 10 || echo "[update] swappiness not applied"
@@ -435,15 +551,6 @@ fi
 
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
 docker compose $JCODE_PROFILE $TUNNEL_PROFILE build
-
-# Migrations stay HERE, above the gateway work, even though that leaves the still-running
-# (old-image) api on a migrated schema for as long as the smoke test takes. The other
-# ordering is worse: it would run the new image's CLI reads — the Settings toggle below —
-# against a pre-migration schema on EVERY update, trading a rare long window for a
-# systematic mismatch. The long window is rare in practice because the smoke test only
-# runs when the gateway image actually changed.
-echo "[update] running migrations"
-docker compose run --rm migrate
 
 # DEFAULT-ON: track the newest llama.cpp on the gateway so a freshly-released model's
 # architecture is supported WITHOUT any manual step — the owner drives this box from the
@@ -487,7 +594,13 @@ if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
   # minutes of the box's attention, on every routine update that changed nothing. Skipping
   # the unchanged case is what stops a no-op update from pinning the GPU.
   BEFORE_IMG="$(docker image inspect -f '{{.Id}}' jbrain2-local-llm:local 2>/dev/null || true)"
-  if LOCAL_LLM_BASE="$FLOATING" docker compose --profile local-llm build --pull local-llm \
+  # Everything from here until the unload can allocate tens of GB, so the api's keep-warm
+  # prime must not be running alongside it.
+  pause_api
+  # Bounded like every other one-off: this is an unconditional multi-GB registry pull on a
+  # rolling tag, and an update that hangs here hangs with the stack quiesced.
+  if run_bounded "$PULL_TIMEOUT_S" env LOCAL_LLM_BASE="$FLOATING" \
+      docker compose --profile local-llm build --pull local-llm \
       && docker compose --profile local-llm up -d local-llm; then
     AFTER_IMG="$(docker image inspect -f '{{.Id}}' jbrain2-local-llm:local 2>/dev/null || true)"
     if [ -n "$BEFORE_IMG" ] && [ "$BEFORE_IMG" = "$AFTER_IMG" ]; then
@@ -506,7 +619,15 @@ if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
     SMOKE_FAILED=1
   fi
   if [ -n "${SMOKE_FAILED:-}" ]; then
-    echo "[update] WARNING: newest llama.cpp failed the smoke test — rolling back to the pinned base"
+    SMOKE_VERDICT="the newest llama.cpp did not pass its smoke test — the gateway was rolled back to its pinned base"
+    echo "[update] WARNING: $SMOKE_VERDICT"
+    # EMPTY IT FIRST. A smoke test fails at the tool probe with BOTH models loaded, and a
+    # timeout leaves a load still running — so at this point the gateway can be holding
+    # ~90 GB. `up -d` on a changed image force-recreates it, and with no stop_grace_period
+    # that is SIGKILL in 10s: the kernel then reclaims all of it at once, while the rebuild
+    # below is allocating. That is verbatim the collision this script forbids everywhere
+    # else, and it sat on the one branch nobody exercises.
+    release_models
     # No LOCAL_LLM_BASE override and no --pull: rebuild against the reproducible pinned
     # digest (compose default or the operator's .env value) from cached layers.
     docker compose --profile local-llm build local-llm \
@@ -519,20 +640,27 @@ fi
 # of pinned unified memory, and recreating a dozen containers on top of that is the same
 # collision the pre-build unload exists to prevent, just arriving from the other end. The
 # gateway keeps running, holding nothing — it reloads on demand.
-if [ -n "$LOCAL_LLM_RUNNING" ]; then
-  run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
-    python -m jbrain.cli local-llm-unload \
-    || echo "[update] post-smoke unload skipped (gateway unreachable?)"
+# Gated on AUTO_UPDATE_ON as well: with auto-update off nothing above ever started the
+# gateway (it is still removed at this point), so this would spend a compose run on an
+# unreachable target and then log a reassuring line about memory it never freed.
+if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
+  release_models
   echo "[update] gateway emptied before the recreate ($(mem_available_gb) GB available)"
 fi
 
-# Clear containers left behind by a renamed (server-brain->wall, whisper->tts-stt) or removed
-# (claude-shim) service before the `up -d` below — an old server-brain holding host port 8800
-# blocks the new `wall` (which is what took the tunnel down after the split update), and any such
-# labeled orphan lingers on the Ops screen. The helper sweeps by comparing labels against the
-# file's full service set, so profile-gated services `--remove-orphans` would wrongly reap are kept.
-echo "[update] clearing renamed/removed-service orphans"
-sh src/deploy/prune-orphans.sh || echo "[update] orphan sweep skipped"
+# Migrations run as late as possible — immediately before the recreate that brings up the
+# code they are for. They used to sit above the gateway work, which meant the still-running
+# OLD-image api served the owner's PWA against a migrated schema for the whole gateway
+# rebuild and smoke test. That was defensible when the window was seconds; it is not now
+# that the window includes an unconditional multi-GB base-image pull on a rolling tag.
+#
+# What kept them up there was the Settings read below running on the new image: it would
+# now see a pre-migration schema. That read is explicitly schema-tolerant — an unreachable
+# or unreadable DB returns "auto-update ON" by design (jbrain.cli._print_auto_update),
+# because failing closed would freeze the gateway on an old base on any DB hiccup. So it
+# degrades to the default, and the live api is the larger half of the trade.
+echo "[update] running migrations"
+docker compose run --rm migrate
 
 echo "[update] restarting stack"
 docker compose $JCODE_PROFILE $TUNNEL_PROFILE up -d
