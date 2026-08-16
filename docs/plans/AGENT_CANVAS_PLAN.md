@@ -1,6 +1,6 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** Scheduled · **Last verified:** 2026-08-16 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
+> **Status:** Scheduled · **Last verified:** 2026-08-16 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️ · **All five §10 decisions ratified by the owner 2026-08-16**
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — the `look` vision call goes
 > through the LLM adapter (rule 1), every rendered PNG through the storage
@@ -287,18 +287,21 @@ intent, engine = ceiling*, and a `/chat` turn is supervised with
 fiddle loop. A `canvas_budget: ToolCallBudget` on `ToolContext` (mirroring the existing
 `search_budget`/`fetch_budget`, `loop.py:306`) enforces:
 
-- **2 looks per canvas per turn.** Third → refused with "draw what you have or call
+- **3 looks per canvas per turn.** Fourth → refused with "draw what you have or call
   `show_canvas`".
-- **6 `canvas` calls per turn.** Past it the handler refuses and instructs
+- **10 `canvas` calls per turn.** Past it the handler refuses and instructs
   `show_canvas`.
 - Remaining counts appended to every result, the pattern the scout already uses.
 
 Target shape: blank → one batch → show (2 calls); photo → look to aim → one batch →
-show (3 calls). This is calibrated against the finding that repair rounds improve for
-~3 iterations and then **saturate, with some samples degrading**, and against the
-broader result that intrinsic self-correction without external feedback *degrades*
-performance. A render is genuine external feedback, so the loop works — but the judge
-is the same model, so it must be budgeted, not trusted.
+show (3 calls). The **ceiling sits deliberately well above the target** (owner
+decision, §10.4): it buys a full aim → draw → check → fix → check cycle for the
+experimental blank-canvas lane, where the model genuinely cannot predict what it drew
+and the target shape does not apply. The ceiling still lands at the point where repair
+rounds **saturate, with some samples degrading**, and it exists at all because
+intrinsic self-correction without external feedback *degrades* performance. A render
+is genuine external feedback, so the loop works — but the judge is the same model, so
+it must be budgeted, not trusted. W6 tunes the numbers against measured latency.
 
 **The `look` question must be concrete and answerable** ("does the red box contain the
 water heater?"), never "does this look good?" — an open aesthetic question is what
@@ -487,10 +490,12 @@ per wave, exactly one PR per wave, CI green before merge.
   chosen mock landing in `docs/mocks/`, plus a new `### image_set tool-view` section in
   `DESIGN.md` in the same PR. Note `DESIGN.md:1213-1216` refuses a generic `image`
   component — this must be a purpose-built named component.
-- **Fallback if the mock gate can't clear in this wave:** ship `crop_region`
-  (single-region), which the model calls N times — N tool calls → N durable
-  `generated_image` cards **today**, using the `grab_frame` code path, zero frontend
-  change. Working feature, worse ergonomics.
+- **No interim fallback** (owner decision, §10.5). The single-region `crop_region`
+  variant — N calls → N durable cards today, zero frontend change — was considered and
+  **declined**: the lane waits for `image_set` rather than shipping N stacked
+  full-width cards and N round-trips on a ~7 t/s model. **W4 is therefore hard-blocked
+  on the mock gate.** Run the three mocks *early*, in parallel with W1/W2, rather than
+  when W4's backend is ready — see §11.4.
 
 ### W5 — Faces via YuNet
 - `/detect/faces` route on the rapidocr sidecar using `cv2.FaceDetectorYN`
@@ -532,30 +537,48 @@ per wave, exactly one PR per wave, CI green before merge.
 
 ---
 
-## 10. Open decisions
+## 10. Decisions — all five ratified by the owner, 2026-08-16
 
-1. **`show_canvas` as a separate verb vs a `show:` boolean on `canvas`.** The plan
-   picks the separate verb, following `research_report`/`show_research_report` and
-   `external_video`/`show_external_video` (the rule is stated at `agents.py:181,228`).
-   But **`compare_images` uses `show: true` (default true)** — a direct in-tree
-   precedent the other way. The distinction argued here: `compare_images` is
-   single-call (call → done → show), whereas a canvas is multi-call, so a default-true
-   boolean spams a card per intermediate draft and a default-false one gets forgotten.
-   **Owner call — this is reversible in W3 at the cost of one sidecar rewrite.**
-2. **Scene home.** `ToolArtifactRepo` (chosen — covers both blank and photo-backed
-   canvases in one place, session-scoped and domain-stamped) vs
-   `turn_attachments.analysis` (which anchors the scene to the photo it annotates and
-   inherits that row's firewall by construction, but has no home for a blank canvas,
-   and whose `set_analysis` currently also flips `has_extracts=True` — video-shaped
-   semantics that would make a canvas lie about having OCR extracts).
-3. **The allowlist contents** (§7) — `qwen3.8-27b` and `qwen3.8-27b-q4` only at first,
-   or also the `qwen3-vl-30b` entries? Each added model needs its own W0-style
-   convention check before it goes in.
-4. **Budget values** — 2 looks / 6 calls / 12 crops are reasoned defaults, not measured
-   ones. W6 tunes them.
-5. **W4's fallback** — if the three-mock gate slips, is single-region `crop_region`
-   (working today, worse ergonomics) acceptable as an interim ship, or does the lane
-   wait for `image_set`?
+| # | Decision | Chosen |
+|---|---|---|
+| 10.1 | Publish verb | **Separate `show_canvas`** |
+| 10.2 | Scene home | **`ToolArtifactRepo`** |
+| 10.3 | Model allowlist | **`qwen3.8-27b` + `qwen3.8-27b-q4` only** |
+| 10.4 | Loop budget | **3 looks / 10 calls / 12 crops** |
+| 10.5 | W4 interim fallback | **None — the lane waits for `image_set`** |
+
+**10.1 — separate `show_canvas` verb.** Follows the rule stated at
+`agents.py:181,228` (*"show/remove stay SEPARATE (distinct shapes)"*) and the
+`research_report`/`external_video` precedents. The in-tree counter-precedent —
+`compare_images` uses `show: true`, default true — was weighed and set aside on the
+grounds that `compare_images` is single-call (call → done → show) whereas a canvas is
+multi-call, so a default-true boolean spams a card per intermediate draft and a
+default-false one gets forgotten. Reversible in W3 at the cost of one sidecar rewrite.
+
+**10.2 — `ToolArtifactRepo`.** Session-scoped, RLS-firewalled, blob-backed, already
+domain-stamped by `domain_for_session` (`tool_artifacts.py:32-44`), upsert-on-
+`source_url`. Decisive factor: it houses **both** lanes in one place, and the
+blank-canvas lane is explicitly in scope. `turn_attachments.analysis` was the runner-up
+— it inherits the photo's firewall by construction, which is a tighter security story —
+but it has no home for a blank canvas and its `set_analysis` also flips
+`has_extracts=True`, video-shaped semantics that would make a canvas falsely claim OCR
+extracts.
+
+**10.3 — the two Qwen3.8 vision twins only.** Same weights, same repo, same projector,
+so **one W0 probe qualifies both**. Everything else is hidden, including
+`qwen3.8-27b-mtp` (text-only) and the `qwen3-vl-30b` entries (not probed; and 30B-A3B's
+~3B active parameters are the weakest architecture here). Extending the list is a
+deliberate act requiring that model's own convention check.
+
+**10.4 — 3 looks / 10 calls / 12 crops** (raised from the drafted 2/6/12). The owner
+chose the looser ceiling explicitly to serve the experimental blank-canvas lane, where
+the model cannot predict its own output and needs room for aim → draw → check → fix →
+check. See §6.2 for why the ceiling still sits where repair rounds saturate.
+
+**10.5 — no interim fallback for the crop lane.** Single-region `crop_region` (N calls
+→ N durable cards, shippable today with zero frontend change) was declined in favour of
+waiting for the one-call `image_set` gallery. **Consequence: W4 is hard-blocked on the
+three-mock GUI gate, and W5 is blocked behind W4.** Mitigation in §11.4.
 
 ---
 
@@ -572,8 +595,12 @@ per wave, exactly one PR per wave, CI green before merge.
 3. **The blank-canvas lane disappoints.** Expected, accepted, and explicitly the
    owner's call to build anyway. The risk to manage is scope creep *in response* to
    disappointment — W6 records the outcome rather than opening an optimisation project.
-4. **W4's mock gate stalls the crop lane.** Mitigated by the single-region fallback,
-   which is genuinely shippable with no frontend change.
+4. **W4's mock gate stalls the crop lane — and by decision §10.5 there is no fallback,
+   so the lane simply waits.** W5 (faces) sits behind W4, so a stalled gate stalls both,
+   and "export individual images of faces" is one of the three original asks. The
+   cheapest unblock is process, not code: **run the three `image_set` mocks early, in
+   parallel with W1/W2**, so the gate is cleared before W4's backend is ready rather
+   than after. Keep W4 off the critical path for L1.
 5. **Permanent crop storage.** No GC exists anywhere; 12 crops per call is bounded but
    monotonic. Flagged, not fixed here.
 6. **The template trap eats conversation history** and gets misattributed to this
