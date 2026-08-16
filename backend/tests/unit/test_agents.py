@@ -101,6 +101,8 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "render_bars",
             "fetch_image",
             "compare_images",
+            "canvas",
+            "show_canvas",
             "ocr",
             "read_artifact",
             "grokipedia",

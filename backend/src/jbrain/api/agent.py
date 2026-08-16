@@ -43,7 +43,10 @@ from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.plantools import format_plan_results
-from jbrain.agent.readtools import IMAGE_TOOL_NAMES
+from jbrain.agent.readtools import (
+    canvas_hidden_tools,
+    compose_hidden_tools,
+)
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.titler import SessionTitler
@@ -752,11 +755,15 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # Hide the image-GEN tools when ComfyUI is down — but only for a persona that
     # actually holds them (jerv), so a curator turn never probes a backend it can't use.
     liveness = getattr(request.app.state, "image_liveness", None)
-    hidden_provider = (
-        liveness.hidden_tools
-        if liveness is not None and profile.tools and (profile.tools & IMAGE_TOOL_NAMES)
-        else None
-    )
+    # Hide the CANVAS pair unless this turn's resolved model is one whose grounding
+    # coordinate base has actually been measured (readtools.CANVAS_MODELS). On a
+    # text-only pick the model can neither aim at a photo nor check what it drew, and on
+    # an unmeasured vision model a wrong base would place every box confidently wrong.
+    # Resolved here because this is where the route is already known, and composed into
+    # the same per-turn provider so the tool array is computed once (loop.py builds it
+    # before the step loop, so nothing can be armed mid-turn anyway).
+    canvas_hidden = await canvas_hidden_tools(router, model_override, profile.tools or frozenset())
+    hidden_provider = compose_hidden_tools(liveness, profile.tools or frozenset(), canvas_hidden)
     loop = AgentLoop(
         router,
         get_agent_registry(request),

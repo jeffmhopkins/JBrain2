@@ -1253,6 +1253,31 @@ the record in `docs/mocks/genimage-README.md` (B/C both subsume A's generate-onl
 layout, so this choice still fixes the generate rendering). Owner-only (the table
 mirrors `wiki_*` RLS); never a note, never RAG-indexed — a chat artifact.
 
+#### Canvas renders — a deliberate palette deviation, inside the image
+
+A canvas (`show_canvas`, `docs/plans/AGENT_CANVAS_PLAN.md`) reuses this same card: it
+persists as a `generated_images` row stamped `provenance="canvas"`, so it renders through
+the component above with the origin caption "drawn on the canvas" and no seed line, exactly
+like a grabbed frame. **No new component, no new payload shape.**
+
+What *is* new, and is recorded here because it deviates from the palette rules above: the
+marks drawn INSIDE that image do not obey the UI contrast assumptions. The model still
+authors meaning, never colour — canvas ops carry a `tone` enum (`auto | danger | warn | info
+| ok | accent | neutral`) and hex is rejected at the op boundary, so I-1 holds. But the
+renderer resolves those tones over an arbitrary photograph rather than over `--surface`, and
+the muted accents (`--rose` and friends) are tuned for chrome on a flat ground: on a busy
+photo a 3px `#CF8A8F` stroke and dark label text are both close to invisible.
+
+So the annotation layer adds two affordances the UI itself must never need:
+
+- a **dark outer stroke** under every accent stroke (halo), and
+- a **`--surface`-tinted backing plate at ~85%** behind label text.
+
+Both are **photo-only**. On a blank sheet they are actively harmful — a dark plate behind
+dark text is worse contrast than no plate — so the renderer paints neither, and `tone: auto`
+resolves to near-black instead of rose. A filled rect stays an ~18% tint, never opaque,
+because the point of boxing a thing in a photo is to keep seeing it.
+
 ### `video_analysis` tool-view (settled in a GUI review — binding mock: `docs/mocks/analyze-video-approved.html`)
 
 The in-chat card jerv shows after an `analyze_video` call (`docs/archive/VIDEO_ANALYSIS_PLAN.md`,

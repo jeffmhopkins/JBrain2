@@ -146,6 +146,13 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # Compare two or more chat images (grabbed frames, fetched web images, attachments)
         # and show the owner a side-by-side (VIDEO_IMAGE_TOOLS_PLAN.md).
         "compare_images",
+        # Mark up an image or sketch a figure: a retained scene the model edits by id,
+        # rendered server-side (AGENT_CANVAS_PLAN.md). HIDDEN unless the turn's model is
+        # a qualified vision model — see CANVAS_MODELS in readtools; on a text-only pick
+        # the model can neither aim nor check, so the pair is withheld rather than
+        # offered as blind drawing.
+        "canvas",
+        "show_canvas",
         # Deterministic, verbatim OCR of an attached image/PDF via the on-box RapidOCR
         # sidecar — the hallucination-free counterpart to analyze_image, preferred for
         # literal text (error screenshots, receipts, scanned docs) (RAPIDOCR_PLAN.md).

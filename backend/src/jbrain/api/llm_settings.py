@@ -1202,7 +1202,10 @@ async def gateway_load(
     warm_system: str | None = AGENTS["jerv"].prompt
     warm_tools: list[dict[str, object]] | None = None
     if registry is not None:
-        warm_system, warm_tools = await jerv_prime_spec(registry, liveness)
+        # Pass the model being loaded so the model-gated canvas pair is resolved exactly
+        # here — a prefix primed with a different tool block than the turn will send is
+        # worse than no prime, since the reuse misses from the tools block onward.
+        warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
     try:
         await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
     except LocalGatewayError as exc:

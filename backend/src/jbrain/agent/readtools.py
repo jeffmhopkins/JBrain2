@@ -7,8 +7,11 @@ not the handler's. `build_registry` binds these handlers to their `.tool`
 sidecars (docs/archive/ASSISTANT_PLAN.md P4.4c).
 """
 
+from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+
+import structlog
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -87,6 +90,8 @@ from jbrain.search.service import (
     WikiSearchResult,
 )
 
+log = structlog.get_logger()
+
 TOOLS_DIR = Path(__file__).parent / "tools"
 _DEFAULT_LIMIT = 8
 
@@ -113,6 +118,76 @@ OPTIONAL_FETCH_IMAGE_TOOL = frozenset({"fetch_image"})
 # jerv's multi-image compare (VIDEO_IMAGE_TOOLS_PLAN.md), dropped when no vision router
 # is configured. Router-gated, NOT ComfyUI-gated — a vision read needs no image-gen.
 OPTIONAL_COMPARE_TOOL = frozenset({"compare_images"})
+# The canvas pair (AGENT_CANVAS_PLAN.md): optional because the handlers are only wired
+# when the image/attachment stores exist, and because a box with no htmlrender sidecar
+# still gets the shape ops — the `html` op degrades with a note rather than vanishing.
+OPTIONAL_CANVAS_TOOLS = frozenset({"canvas", "show_canvas"})
+# The SERVED models qualified to hold the canvas (AGENT_CANVAS_PLAN §7, owner decision
+# §10.3). Deliberately an allowlist rather than a bare `supports_vision` check: a
+# vision-capable model with a DIFFERENT grounding coordinate base would not fail loudly,
+# it would silently place every box wrong. Each entry earns its place by passing the
+# `POST /api/debug/grounding` probe, and `agent/grounding.py` refuses anything not here.
+# The two Qwen3.8 twins share weights, repo and projector, so one probe qualifies both.
+CANVAS_MODELS = frozenset({"qwen3.8-27b", "qwen3.8-27b-q4"})
+
+
+def canvas_hidden_for_model(
+    served_model: str | None, profile_tools: frozenset[str]
+) -> frozenset[str]:
+    """The canvas names to withhold for a known served model. Pure — no router.
+
+    Two failure modes this prevents, both silent. A text-only pick (e.g. the MTP twin,
+    which cannot run beside the vision projector) would leave the model drawing blind:
+    it could neither aim at a photo nor check what it drew, and `api.agent` drops image
+    bytes for it anyway. An unmeasured VISION model is worse — it answers confidently in
+    whatever coordinate base it was trained on, so every box lands wrong with no error.
+    An unknown model therefore hides the pair rather than betting on it."""
+    if not (profile_tools & OPTIONAL_CANVAS_TOOLS):
+        return frozenset()
+    return frozenset() if served_model in CANVAS_MODELS else OPTIONAL_CANVAS_TOOLS
+
+
+async def canvas_hidden_tools(
+    router: "LlmRouter | None", model_override: str | None, profile_tools: frozenset[str]
+) -> frozenset[str]:
+    """`canvas_hidden_for_model` for a turn whose model still has to be resolved."""
+    if not (profile_tools & OPTIONAL_CANVAS_TOOLS):
+        return frozenset()
+    if router is None:
+        return OPTIONAL_CANVAS_TOOLS
+    try:
+        _provider, model = await router.effective_spec("agent.turn", spec_override=model_override)
+    except Exception:  # noqa: BLE001 — a routing probe failure must not cost the turn
+        log.warning("canvas.model_probe_failed", exc_info=True)
+        return OPTIONAL_CANVAS_TOOLS
+    return canvas_hidden_for_model(model, profile_tools)
+
+
+def compose_hidden_tools(
+    liveness: Any | None, profile_tools: frozenset[str], extra: frozenset[str]
+) -> "Callable[[], Awaitable[Collection[str]]] | None":
+    """One per-turn hidden-tools provider from the liveness probe plus a static set.
+
+    The loop computes the tool array ONCE per turn, before the step loop, so everything
+    that hides a tool has to be folded in here rather than armed later. Returns None when
+    nothing is hidden, which keeps the common path allocation-free and byte-identical."""
+    probe = (
+        liveness.hidden_tools
+        if liveness is not None and profile_tools and (profile_tools & IMAGE_TOOL_NAMES)
+        else None
+    )
+    if probe is None:
+        return (lambda: _ready(extra)) if extra else None
+
+    async def _hidden() -> Collection[str]:
+        return frozenset(await probe()) | extra
+
+    return _hidden
+
+
+async def _ready(names: frozenset[str]) -> Collection[str]:
+    return names
+
 
 # jerv's deterministic OCR read (docs/plans/RAPIDOCR_PLAN.md), present only when the
 # RapidOCR sidecar is configured; otherwise the `ocr` sidecar is dropped.
@@ -710,6 +785,7 @@ def build_registry(
     fetch_image_handlers: dict[str, ToolHandler] | None = None,
     compare_handlers: dict[str, ToolHandler] | None = None,
     ocr_handlers: dict[str, ToolHandler] | None = None,
+    canvas_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
     research_report_handlers: dict[str, ToolHandler] | None = None,
@@ -807,6 +883,7 @@ def build_registry(
             # hallucination-free counterpart to analyze_image. Present only when the sidecar
             # is configured; otherwise dropped below (docs/plans/RAPIDOCR_PLAN.md).
             **(ocr_handlers or {}),
+            **(canvas_handlers or {}),
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
             # general-domain corpus via a purpose-built scope (EXTERNAL_VIDEO_INGESTION_PLAN.md).
             **(external_handlers or {}),
@@ -855,6 +932,7 @@ def build_registry(
             | OPTIONAL_FETCH_IMAGE_TOOL
             | OPTIONAL_COMPARE_TOOL
             | OPTIONAL_OCR_TOOL
+            | OPTIONAL_CANVAS_TOOLS
             | OPTIONAL_READ_ARTIFACT_TOOL
             | OPTIONAL_GMAIL_TOOLS
         ),

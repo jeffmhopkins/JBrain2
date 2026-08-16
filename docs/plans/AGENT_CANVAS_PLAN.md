@@ -1,13 +1,16 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-16 · **Waves:** W0✅ W1✅ W1b✅ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-08-16 · **Waves:** W0✅ W1✅ W1b✅ W2✅ W3✅ W4◻️ W5◻️ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
 
-> **W0/W1/W1b landed on-branch.** W0's *code* is complete (the `--image-min-tokens`
+> **W0–W3 landed on-branch.** W0's *code* is complete (the `--image-min-tokens`
 > floor, `agent/grounding.py`, the EXIF fix, `POST /api/debug/grounding`); its
 > **measurement is still owed** — the coordinate base is pinned as `AUTO` (inferred per
 > response) until the probe is run on the box and the result recorded here. W1b added a
 > capability the plan did not originally scope: a general-purpose HTML→PNG renderer
 > (§3b), which is now the sanctioned path for any tool wanting rich visual output.
+> W2/W3 shipped the `canvas` + `show_canvas` pair, the model gate, and the engine
+> ceilings. **W4 is the next wave and is hard-blocked on the three-mock GUI gate**
+> (§10.5, §11.4) — run those mocks before its backend is ready, not after.
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — the `look` vision call goes
 > through the LLM adapter (rule 1), every rendered PNG through the storage
