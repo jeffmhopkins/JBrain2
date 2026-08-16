@@ -107,6 +107,26 @@ JBRAIN_GIT_SHA="$(git -C src rev-parse HEAD 2>/dev/null || echo unknown)"
 JBRAIN_GIT_DESCRIBE="$(git -C src describe --tags --always --dirty 2>/dev/null || echo unknown)"
 JBRAIN_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 export JBRAIN_GIT_SHA JBRAIN_GIT_DESCRIBE JBRAIN_BUILD_TIME
+
+# Persist them into .env as well as exporting them. compose reads .env automatically, so
+# the stamp becomes a property of the DEPLOYMENT DIRECTORY rather than of this one script's
+# process environment. Exporting alone means any later `docker compose build` run outside
+# this script — a per-service rebuild from Ops, a hand-run recreate — resolves
+# `${JBRAIN_GIT_SHA:-unknown}` to literally "unknown" and bakes an image that cannot say
+# which revision it is. That is precisely the question /api/debug/version exists to answer,
+# and it was observed answering "unknown" on a box whose deploy history had the real sha.
+for _stamp in "JBRAIN_GIT_SHA=$JBRAIN_GIT_SHA" \
+              "JBRAIN_GIT_DESCRIBE=$JBRAIN_GIT_DESCRIBE" \
+              "JBRAIN_BUILD_TIME=$JBRAIN_BUILD_TIME"; do
+  _key="${_stamp%%=*}"
+  # Rewrite in place when present, append when not — never accumulate duplicate keys, which
+  # would leave the LAST write winning by accident of ordering.
+  if grep -q "^${_key}=" .env; then
+    sed -i "s|^${_key}=.*|${_stamp}|" .env
+  else
+    printf '%s\n' "$_stamp" >> .env
+  fi
+done
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
 docker compose $JCODE_PROFILE build
 
@@ -155,15 +175,42 @@ fi
 # docs/runbooks/STRIX_HALO_SETUP.md, "Reproducibility / trust"). Gated on LOCAL_LLM_RUNNING
 # (so LOCAL_LLM_ENABLED=true), and best-effort: every branch is guarded so a hiccup never
 # aborts the update (set -e).
-if [ -n "$LOCAL_LLM_RUNNING" ] && ! grep -q '^LOCAL_LLM_AUTO_UPDATE=false' .env; then
+# The owner's PWA toggle (Settings), read through the api image. `.env` still wins when it
+# says false, so an existing opt-out keeps working; otherwise the stored setting decides.
+# This is the CLAUDE.md #10 fix for this switch: it governs whether an update loads a model
+# into the GPU at all, and it used to be reachable only by editing .env on the host.
+AUTO_UPDATE_ON=1
+if grep -q '^LOCAL_LLM_AUTO_UPDATE=false' .env; then
+  AUTO_UPDATE_ON=''
+elif ! docker compose run --rm --no-deps -T api python -m jbrain.cli local-llm-auto-update; then
+  echo "[update] gateway auto-update is OFF (Settings) — keeping the pinned base, no model load"
+  AUTO_UPDATE_ON=''
+fi
+
+if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
   FLOATING="$(sed -n 's/^LOCAL_LLM_BASE_FLOATING=//p' .env | tail -n1)"
   [ -n "$FLOATING" ] || FLOATING="docker.io/kyuz0/amd-strix-halo-toolboxes:vulkan-radv"
   echo "[update] LOCAL_LLM_AUTO_UPDATE: rebuilding gateway on newest llama.cpp ($FLOATING)"
+  # The image id BEFORE the rebuild. The smoke test exists to catch a bad UPSTREAM build,
+  # so when the rebuild produces the identical image there is nothing new to vet — and the
+  # test is not free: it loads a model into the iGPU, which is tens of GB of disk read and
+  # minutes of the box's attention, on every routine update that changed nothing. Skipping
+  # the unchanged case is what stops a no-op update from pinning the GPU.
+  BEFORE_IMG="$(docker image inspect -f '{{.Id}}' jbrain2-local-llm:local 2>/dev/null || true)"
   if LOCAL_LLM_BASE="$FLOATING" docker compose --profile local-llm build --pull local-llm \
-      && docker compose --profile local-llm up -d local-llm \
-      && docker compose run --rm --no-deps -T api python -m jbrain.cli local-llm-smoketest; then
-    echo "[update] gateway smoke test passed on the newest llama.cpp"
+      && docker compose --profile local-llm up -d local-llm; then
+    AFTER_IMG="$(docker image inspect -f '{{.Id}}' jbrain2-local-llm:local 2>/dev/null || true)"
+    if [ -n "$BEFORE_IMG" ] && [ "$BEFORE_IMG" = "$AFTER_IMG" ]; then
+      echo "[update] gateway image unchanged — skipping the smoke test (nothing new to vet)"
+    elif docker compose run --rm --no-deps -T api python -m jbrain.cli local-llm-smoketest; then
+      echo "[update] gateway smoke test passed on the newest llama.cpp"
+    else
+      SMOKE_FAILED=1
+    fi
   else
+    SMOKE_FAILED=1
+  fi
+  if [ -n "${SMOKE_FAILED:-}" ]; then
     echo "[update] WARNING: newest llama.cpp failed the smoke test — rolling back to the pinned base"
     # No LOCAL_LLM_BASE override and no --pull: rebuild against the reproducible pinned
     # digest (compose default or the operator's .env value) from cached layers.

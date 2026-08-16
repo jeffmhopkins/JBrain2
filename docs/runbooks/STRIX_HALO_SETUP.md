@@ -538,7 +538,18 @@ installed, runs one tool-carrying probe (the exact surface the past regression b
 rollback net is what makes tracking master safe by default: a bad upstream build never
 leaves the box unable to serve, and a good one lands automatically.
 
-Knobs (all optional, `.env`):
+**Turning it off is a PWA toggle**, not a file edit: **Ops → Update → "Track newest
+llama.cpp"**. The owner runs this box remotely with no terminal (CLAUDE.md #10), and this
+is the one switch that decides whether an update loads a model into the iGPU at all — the
+heaviest thing an otherwise-routine update does — so it has to be reachable from the
+surface they actually operate. The stored setting is read by the update one-shot; an
+`.env` opt-out still wins, so an existing frozen box stays frozen.
+
+The smoke test is also **skipped when the rebuild produces the identical image**: it
+exists to vet a new upstream build, and re-loading a model to re-verify a byte-identical
+gateway was pure cost on every no-op update.
+
+Knobs (all optional, `.env` — the first is the same switch as the PWA toggle above):
 
 ```
 # Freeze the gateway on the pinned base instead of tracking newest (reproducible builds):

@@ -201,6 +201,62 @@ type UpdatePhase =
 
 const UPDATE_POLL_MS = 3000;
 
+/** Whether an update rebuilds the model gateway onto the newest llama.cpp and then
+ *  smoke-tests it by loading a model.
+ *
+ *  It lives next to the update button because that is what it governs, and it is here at
+ *  all because it used to live only in the box's `.env` — unreachable for an owner running
+ *  this thing remotely with no terminal. Worth reaching: the smoke test loads a model into
+ *  the iGPU, which is the heaviest thing an otherwise-routine update does. */
+function GatewayAutoUpdateToggle() {
+  const [on, setOn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await api.getSettings();
+        if (!cancelled) setOn(settings.local_llm_auto_update);
+      } catch {
+        // Leave it unknown rather than guessing a state the owner might act on.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggle(): Promise<void> {
+    if (on === null) return;
+    const next = !on;
+    setOn(next); // optimistic
+    try {
+      await api.updateSettings({ local_llm_auto_update: next });
+    } catch {
+      setOn(!next); // put it back: a toggle that lies about what the box will do is worse
+    }
+  }
+
+  return (
+    <div className="settings-switch-row ops-autoupdate">
+      <span className="settings-meta" style={{ margin: 0 }}>
+        Track newest llama.cpp <span className="muted">— rebuilds and loads a model to verify</span>
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-label="Track newest llama.cpp on update"
+        aria-checked={on ?? false}
+        className={`settings-switch${on ? " on" : ""}`}
+        disabled={on === null}
+        onClick={() => void toggle()}
+      >
+        <span className="knob" />
+      </button>
+    </div>
+  );
+}
+
 function UpdateControl() {
   const [phase, setPhase] = useState<UpdatePhase>({ step: "idle" });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -264,6 +320,7 @@ function UpdateControl() {
           </button>
         </div>
       )}
+      {phase.step === "idle" && <GatewayAutoUpdateToggle />}
       {phase.step === "confirm" && (
         <div className="ops-update-bar">
           <span className="ops-update-dot" />

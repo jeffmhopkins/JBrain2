@@ -499,6 +499,10 @@ class FakeSettingsStore:
     async def brain_answer_robot(self, ctx: object) -> bool:
         return self.values.get("brain_answer_robot", False) is True
 
+    async def local_llm_auto_update(self, ctx: object) -> bool:
+        # Default ON; only an explicit false turns it off (mirrors the SQL store).
+        return self.values.get("local_llm_auto_update", True) is not False
+
     async def pronunciation_lexicon(self, ctx: object) -> dict[str, str]:
         raw = self.values.get("pronunciation_lexicon", {})
         if not isinstance(raw, dict):

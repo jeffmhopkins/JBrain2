@@ -538,4 +538,51 @@ describe("OpsScreen", () => {
     expect(await screen.findByText("Recent runs")).toBeInTheDocument();
     expect(await screen.findByText("integrate_note")).toBeInTheDocument();
   });
+
+  it("lets the owner turn off the update's model load without a terminal", async () => {
+    // This switch decides whether an update rebuilds the gateway and loads a model into the
+    // iGPU — the heaviest thing a routine update does. It lived only in the box's `.env`,
+    // which the owner has no terminal to reach (CLAUDE.md #10).
+    const puts: unknown[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/settings") && init?.method === "PUT") {
+        puts.push(JSON.parse(String(init.body)));
+        return json({ local_llm_auto_update: false });
+      }
+      if (url.endsWith("/api/settings")) return json({ local_llm_auto_update: true });
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+
+    const toggle = await screen.findByRole("switch", { name: /Track newest llama.cpp/ });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(puts).toEqual([{ local_llm_auto_update: false }]));
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("puts the toggle back if the box refuses the change", async () => {
+    // A switch that shows a state the box did not accept is worse than no switch.
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/settings") && init?.method === "PUT") {
+        return new Response(null, { status: 500 });
+      }
+      if (url.endsWith("/api/settings")) return json({ local_llm_auto_update: true });
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+
+    const toggle = await screen.findByRole("switch", { name: /Track newest llama.cpp/ });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+  });
 });
