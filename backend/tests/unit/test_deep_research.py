@@ -30,6 +30,7 @@ from jbrain.agent.deep_research import (
     _collect_sources,
     _dangling_markers,
     _finalize_sources,
+    _fit_findings_to_window,
     _frame,
     _gate_score,
     _missing_headings,
@@ -165,6 +166,11 @@ class _FakeRouter:
         # Source curation is now a deterministic embedding rank (no LLM one-shot), so the
         # planner and the coverage check are the only structured `complete` calls.
         raise AssertionError(f"unexpected complete() for system: {system[:40]!r}")
+
+    async def context_window(self, task, strength=None, spec_override=None):  # noqa: ANN001
+        # A generous window so the synthesizer's findings block is never trimmed under test —
+        # the trim itself is unit-tested directly (test_fit_findings_to_window_*).
+        return 131072
 
     async def converse_stream(self, task, *, system, messages, tools=(), **kw):  # noqa: ANN001
         # The WRITER (synthesize / revise) streams now: yield the report in two text
@@ -379,6 +385,30 @@ def _reflected(router: _FakeRouter) -> bool:
 
 
 # --- single-impl spine: research() and the deepest driver share _run (DEEP_PRODUCE_PLAN) --
+
+
+def test_fit_findings_to_window_keeps_a_block_that_fits() -> None:
+    # A 128k window has ~347k chars of room after output + overhead; a normal findings block
+    # (≤60k chars) is returned untouched — no quality loss on a correctly-provisioned box.
+    block = "para one.\n\npara two.\n\npara three."
+    assert _fit_findings_to_window(block, 131072) == block
+
+
+def test_fit_findings_to_window_trims_on_a_paragraph_boundary_for_a_small_window() -> None:
+    # A mis-provisioned 32k `-c` leaves ~2.7k chars after output + overhead; a large block is
+    # truncated at the paragraph boundary BEFORE the budget and marked, rather than sent whole to
+    # overflow and lose the entire run.
+    block = ("A" * 2000) + "\n\n" + ("B" * 4000)
+    out = _fit_findings_to_window(block, 32768)
+    assert out.endswith("context window.]") and len(out) < len(block)
+    assert "B" * 4000 not in out  # the second paragraph, past the budget, was dropped
+
+
+def test_fit_findings_to_window_degrades_to_the_marker_when_nothing_fits() -> None:
+    # A window below the reserved output + overhead leaves no room; the findings drop to just the
+    # marker (a shorter report shell) instead of a hard "ran out of context".
+    out = _fit_findings_to_window("some findings text", 16000)
+    assert out.strip().startswith("[Earlier findings were trimmed")
 
 
 async def test_research_delegates_to_run_with_a_report_directive() -> None:

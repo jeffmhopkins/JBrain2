@@ -5,13 +5,20 @@ crucially the `-c` context window, which must equal what the router reports to t
 PWA's context meter (jbrain.llm.router.context_window). Two callers share it so the
 two never drift:
 
-  - scripts/local-llm-setup.sh, at install time, via `python -m
-    jbrain.llm.llama_swap_config <models_dir>` reading the MANIFEST env;
+  - scripts/local-llm-setup.sh + the deploy re-stamp (deploy/local-models-sync.sh),
+    via `python -m jbrain.llm.llama_swap_config <models_dir>` reading the MANIFEST env.
+    Its `_main` also loads the operator's SAVED per-model window/slot overrides from the
+    settings store (`_saved_overrides`) and applies them — so an update never resets a raised
+    `-c` back to the catalog default (the bug that let a 128k-configured model overflow at 32k);
   - the settings API, at runtime, to re-stamp a model's `-c` after the operator
     edits its context window — written atomically into the mounted models dir,
     which the gateway (run with `--watch-config`) hot-reloads. A `-c` change takes
     effect on the model's next (re)load, so the API unloads a resident model after
     rewriting so its next request reloads at the new window.
+
+Both non-test callers now pass the saved overrides (the settings API directly, the deploy CLI
+via `_saved_overrides`), so the served `-c` matches the meter without depending on the boot
+reconcile (`api.llm_settings.reconcile_gateway_windows_on_boot`), which stays as a backstop.
 
 Every model joins a single non-swapping group (`swap: false`), so llama-swap never
 evicts one to load another — the app (jbrain.llm.residency) is the sole evictor,
@@ -195,16 +202,65 @@ def write(
     return path
 
 
+def _saved_overrides() -> tuple[dict[str, int], dict[str, int]]:
+    """The operator's SAVED per-model context-window and `-np` slot overrides from the settings
+    store (owner-scoped), so the DEPLOY re-stamp preserves them — the settings API caller already
+    passes overrides, and now the deploy caller does too.
+
+    Without this the deploy regenerates the config from base catalog defaults on every update, so a
+    raised window (e.g. qwen3.8-27b-q4 lifted to 128k) silently drops back to its 32k catalog `-c`
+    while the meter still reports the saved 128k — the model then overflows its real window at a
+    displayed ~25%. `up -d` doesn't restart the api on a model-only sync, so the boot reconcile
+    (the backstop) may not fire; applying the overrides here fixes the config at write time.
+
+    Best-effort: a DB hiccup returns empty maps (catalog defaults, the prior behaviour) rather than
+    failing config generation and wedging the gateway."""
+    try:
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from jbrain.config import get_settings
+        from jbrain.queue import SYSTEM_CTX
+        from jbrain.settings_store import SqlSettingsStore
+
+        async def _load() -> tuple[dict[str, int], dict[str, int]]:
+            engine = create_async_engine(get_settings().database_url)
+            try:
+                store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+                return (
+                    await store.llm_local_context_windows(SYSTEM_CTX),
+                    await store.llm_local_parallel_slots(SYSTEM_CTX),
+                )
+            finally:
+                await engine.dispose()
+
+        return asyncio.run(_load())
+    except Exception as exc:  # noqa: BLE001 — never fail config gen on a settings-read hiccup
+        print(
+            f"[llama-swap] could not load saved window/slot overrides ({exc}); "
+            "using catalog defaults — the boot reconcile will correct it",
+            file=sys.stderr,
+        )
+        return {}, {}
+
+
 def _main(argv: list[str]) -> int:
-    """CLI for scripts/local-llm-setup.sh: `... <models_dir>` reads the MANIFEST
-    env (catalog JSON) and writes the config."""
+    """CLI for the deploy re-stamp (`deploy/local-models-sync.sh`) and scripts/local-llm-setup.sh:
+    `... <models_dir>` reads the MANIFEST env (catalog JSON) and writes the config, applying the
+    operator's saved context-window / slot overrides so an update never resets a raised `-c`."""
     if len(argv) != 1:
         print("usage: python -m jbrain.llm.llama_swap_config <models_dir>", file=sys.stderr)
         return 2
     root = argv[0]
     models = json.loads(os.environ["MANIFEST"])
-    path = write(root, models)
-    print(f"wrote {path}: {len(models)} model(s); the app evicts to make room per load")
+    windows, slots = _saved_overrides()
+    path = write(root, models, windows=windows, slots=slots)
+    applied = sum(1 for m in models if str(m["id"]) in windows or str(m["id"]) in slots)
+    print(
+        f"wrote {path}: {len(models)} model(s), {applied} with a saved window/slot override; "
+        "the app evicts to make room per load"
+    )
     return 0
 
 

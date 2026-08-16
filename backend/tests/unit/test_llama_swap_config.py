@@ -154,6 +154,24 @@ def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
     assert "-c 131072" not in text
 
 
+def test_main_applies_the_operators_saved_overrides_not_just_catalog_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The DEPLOY re-stamp (_main) must apply the operator's SAVED window/slot overrides, not only
+    # the catalog defaults — otherwise an update silently resets a raised -c (the 128k→32k overflow
+    # the operator saw as "ran out of context" at 25%). _saved_overrides reads them from the
+    # settings store; here we stand in for that read.
+    _lay_down(tmp_path)
+    saved = ({"gpt-oss-120b": 65536}, {})
+    monkeypatch.setattr(llama_swap_config, "_saved_overrides", lambda: saved)
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    text = (tmp_path / "llama-swap.yaml").read_text()
+    assert "-c 65536" in text  # the saved override wins over the catalog 131072…
+    assert "-c 32768" in text  # …and an un-overridden model keeps its catalog default
+    assert "-c 131072" not in text
+
+
 def test_render_makes_every_model_a_non_swapping_member_so_the_app_evicts(
     tmp_path: Path,
 ) -> None:

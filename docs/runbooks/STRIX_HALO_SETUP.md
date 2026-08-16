@@ -208,19 +208,22 @@ Two subtleties the prime must respect, both learned the hard way:
   `(model, hidden-tool-set)` and re-primes when the hidden set changes, self-correcting once
   liveness settles. The manual **Load** button primes the same persona+tools shape too.
 
-**Per-model context windows survive a deploy (`jbrain.api.llm_settings.reconcile_gateway_windows_on_boot`).**
+**Per-model context windows survive a deploy (the deploy re-stamp applies overrides; boot reconcile is the backstop).**
 Each on-box model has a **context-window** picker (Settings → LLM); the chosen value is persisted
-(`app.settings → llm_local_context_windows`) and stamped into the gateway's `-c` by the runtime
-re-stamp. But the **deploy** re-stamp (`deploy/local-models-sync.sh` → `python -m
-jbrain.llm.llama_swap_config`) regenerates `llama-swap.yaml` from the **base catalog** and passes
-no overrides — so, left alone, every update silently reset a model to its catalog-default window.
-That bit hard once: Nemotron 3.5 Lightning (32k base, raised to 500k) was reset to 32k on a deploy,
-and since the agent's own persona + 39 tool schemas is ~33k tokens, **every** chat turn then
-overflowed ("this model ran out of context") even on a bare "Hi". The app now **reconciles the
-saved windows/slots back into `llama-swap.yaml` on boot**, before the WarmKeeper primes — idempotent
-(a no-op when the config already matches, so a plain restart keeps its warm model) and best-effort
-(a missing weight or down gateway never blocks startup). Only when the served config actually
-changed does it evict the affected resident models so they reload at the corrected `-c`.
+(`app.settings → llm_local_context_windows`) and stamped into the gateway's `-c`. The **deploy**
+re-stamp (`deploy/local-models-sync.sh` → `python -m jbrain.llm.llama_swap_config`) used to
+regenerate `llama-swap.yaml` from the **base catalog** with no overrides — so every update silently
+reset a raised window to its catalog default. That bit twice: Nemotron 3.5 Lightning (32k base,
+raised to 500k) reset to 32k, and Qwen3.8-27B-Q4 (32k base, raised to 128k) reset to 32k while the
+meter still showed 128k — the model then overflowed ("this model ran out of context") at a
+displayed ~25%, because the agent's persona + ~39 tool schemas is already ~33k tokens. Now
+`llama_swap_config._main` **loads the saved windows/slots from the settings store (`_saved_overrides`)
+and applies them itself**, so the deploy re-stamp is correct at write time — it no longer depends on
+the api restarting (a model-only sync's `up -d` often doesn't restart it). `reconcile_gateway_windows_on_boot`
+remains as a **backstop**: idempotent (a no-op when the config already matches, so a plain restart
+keeps its warm model), best-effort (a missing weight or down gateway never blocks startup), and it
+evicts the affected resident models to reload at the corrected `-c` only when the served config
+actually changed.
 
 **Optional: a dedicated interactive slot (Settings → LLM → On-box models).** A single llama-server
 KV slot holds the primed jerv prefix well enough for ordinary traffic (small background/title
