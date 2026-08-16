@@ -190,7 +190,7 @@ describe("VitalsScreen", () => {
     opsTurnDetail.mockResolvedValue({ steps: [], output: null });
     render(<VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />);
 
-    expect(await screen.findByText(/has not returned a first token/)).toBeInTheDocument();
+    expect(await screen.findByText(/no live handle/)).toBeInTheDocument();
   });
 
   it("marks output read from the transcript rather than implying it is live", async () => {
@@ -297,6 +297,49 @@ describe("VitalsScreen", () => {
 
     // The size reported is the REAL one, not the clipped length.
     expect(screen.getByText(/Clipped for display/)).toHaveTextContent("504k chars");
+  });
+
+  it("does not let a settled turn's stale response land under another turn", async () => {
+    // Tapping a child row changes runId WITHOUT unmounting. The settled-turn path used
+    // to return before setting `cancelled`, so the previous turn's in-flight fetch
+    // could resolve last and render its output under the new turn's header.
+    let resolveFirst: (v: unknown) => void = () => {};
+    opsTurnDetail.mockImplementationOnce(
+      () =>
+        new Promise((res) => {
+          resolveFirst = res;
+        }),
+    );
+    // The roster must hold BOTH, or `selected` is null and no detail renders at all.
+    opsTurns.mockResolvedValue(
+      roster([turn({ status: "done" }), turn({ id: "kid", status: "done" })]),
+    );
+    const { rerender, container } = render(
+      <VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />,
+    );
+    await waitFor(() => expect(opsTurnDetail).toHaveBeenCalledWith("run_parent"));
+
+    opsTurnDetail.mockResolvedValue({
+      steps: [],
+      output: { live: false, answer: "the CHILD's answer", reasoning: "", steps: [] },
+      prompt: null,
+    });
+    rerender(<VitalsScreen selectedTurnId="kid" onSelectTurn={vi.fn()} />);
+    await waitFor(() =>
+      expect(container.querySelector(".vitals-raw pre")?.textContent).toContain("CHILD"),
+    );
+
+    // The first turn's response arrives late — it must not replace what is on screen.
+    resolveFirst({
+      steps: [],
+      output: { live: false, answer: "the PARENT's answer", reasoning: "", steps: [] },
+      prompt: null,
+    });
+    await act(async () => {});
+
+    const shown = container.querySelector(".vitals-raw pre")?.textContent ?? "";
+    expect(shown).not.toContain("PARENT");
+    expect(shown).toContain("CHILD");
   });
 
   it("stops polling the roster when unmounted", async () => {

@@ -486,7 +486,9 @@ function TurnTrailAndOutput({ runId, running }: { runId: string; running: boolea
       <section className="card vitals-raw">
         {empty ? (
           <p className="vitals-raw-empty">
-            no output yet — the turn is running, but the model has not returned a first token
+            {running
+              ? "not visible yet — this turn has no live handle, so its output appears once it settles"
+              : "this turn produced no output"}
           </p>
         ) : (
           <pre>
@@ -593,11 +595,14 @@ function useTurnDetail(runId: string, running: boolean): TurnDetailPayload | nul
       }
     };
     void load();
-    if (!running) return;
-    const timer = setInterval(() => void load(), DETAIL_POLL_MS);
+    // A settled turn's output cannot change, so it is fetched once — but the cleanup
+    // still has to run. Returning early left `cancelled` unset, so tapping a child row
+    // (which changes runId WITHOUT unmounting) could let the previous turn's in-flight
+    // response resolve last and render under the new turn's header.
+    const timer = running ? setInterval(() => void load(), DETAIL_POLL_MS) : null;
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer !== null) clearInterval(timer);
     };
   }, [runId, running, foreground]);
 

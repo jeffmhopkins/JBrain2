@@ -632,8 +632,19 @@ async def turn_detail(run_id: str, request: Request, principal: PrincipalDep) ->
     acc = getattr(live, "acc", None) if live is not None else None
     if live is not None and acc is not None and not live.done:
         snapshot = cast(dict[str, Any], acc.render_snapshot())
+        # run_steps rows are written on completion, so the trail would end at the last
+        # finished step and never show the one actually running. The live accumulator
+        # knows about that one, so its tail past the persisted count is appended —
+        # keeping cost for the finished steps and truth for the in-flight one.
+        snapshot_steps = _steps_from_snapshot(
+            cast(list[dict[str, Any]], snapshot.get("tools") or [])
+        )
+        trail = steps + [
+            TurnStepOut(**{**vars(s), "idx": len(steps) + i})
+            for i, s in enumerate(snapshot_steps[len(steps) :])
+        ]
         return TurnDetailOut(
-            steps=steps,
+            steps=trail,
             prompt=prompt,
             output=TurnOutputOut(
                 live=True,
@@ -643,9 +654,14 @@ async def turn_detail(run_id: str, request: Request, principal: PrincipalDep) ->
             ),
         )
 
-    # No live handle: a sub-agent, a workflow run, or a turn that has settled. Its own
-    # session's last assistant turn is the closest honest thing to "its output".
-    session_id = detail.session_id if detail else None
+    # No live handle. The transcript's last assistant turn is only THIS run's output if
+    # this run has finished — a /chat turn registers its live handle several awaits
+    # after its row exists, so a roster row opened in that window would otherwise show
+    # the PREVIOUS exchange's answer under this turn's header, badged as if it were its
+    # own. A running turn we cannot see is reported as no output rather than as someone
+    # else's; the screen words that by the run's status.
+    settled = detail is not None and detail.status != "running"
+    session_id = detail.session_id if detail is not None and settled else None
     if session_id:
         turns = await _transcript(request).load(ctx, session_id)
         answers = [t for t in turns if t.role == "assistant"]

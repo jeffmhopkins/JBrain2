@@ -35,6 +35,11 @@ MAX_RUNS = 24
 # answers "what was it actually asked".
 MAX_CHARS = 200_000
 
+# How many runs keep their ROUND COUNT. Far above MAX_RUNS: the count is one integer,
+# and it has to survive its own prompt being evicted or a still-running turn would
+# start renumbering its calls from one.
+MAX_ROUND_COUNTS = 512
+
 
 @dataclass(frozen=True, slots=True)
 class CapturedPrompt:
@@ -58,14 +63,19 @@ class _Store:
     API's single event loop."""
 
     by_run: OrderedDict[str, CapturedPrompt] = field(default_factory=OrderedDict)
-    rounds: dict[str, int] = field(default_factory=dict)
+    rounds: OrderedDict[str, int] = field(default_factory=OrderedDict)
 
     def record(self, run_id: str, prompt: CapturedPrompt) -> None:
         self.by_run.pop(run_id, None)
         self.by_run[run_id] = prompt
         while len(self.by_run) > MAX_RUNS:
-            evicted, _ = self.by_run.popitem(last=False)
-            self.rounds.pop(evicted, None)
+            self.by_run.popitem(last=False)
+        # Round counts OUTLIVE their prompt. Evicting them together made a long turn
+        # whose prompt was pushed out by newer runs come back reporting "round 1" on
+        # its twelfth call. Bounded separately, and far larger because an int per run
+        # costs almost nothing next to a prompt.
+        while len(self.rounds) > MAX_ROUND_COUNTS:
+            self.rounds.pop(next(iter(self.rounds)))
 
     def get(self, run_id: str) -> CapturedPrompt | None:
         return self.by_run.get(run_id)

@@ -20,7 +20,6 @@ a reload; the surface says so rather than implying the gap is a quiet box.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from collections import deque
 from collections.abc import Callable
@@ -76,15 +75,3 @@ async def sample_loop(
             ring.record(time.time(), None)
             log.warning("vitals.sample_failed", exc_info=True)
         await asyncio.sleep(interval)
-
-
-@contextlib.asynccontextmanager
-async def running_sampler(ring: VitalsRing):  # noqa: ANN201
-    """Run `sample_loop` for the duration of the app's lifespan."""
-    task = asyncio.create_task(sample_loop(ring))
-    try:
-        yield task
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task

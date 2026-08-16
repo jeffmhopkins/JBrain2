@@ -76,3 +76,21 @@ def test_a_run_without_an_id_records_nothing() -> None:
 def test_unknown_run_has_no_prompt() -> None:
     # Predates a restart, evicted, or never reached a model call — the surface says so.
     assert prompt_for("run_never_seen") is None
+
+
+def test_a_round_count_outlives_its_own_prompt() -> None:
+    """A long turn whose prompt is pushed out by newer runs must not come back
+    reporting "round 1" on its twelfth call."""
+    record_prompt("run_long", system="s", messages=messages("m"), tools=[])
+    for i in range(MAX_RUNS + 2):
+        record_prompt(f"run_filler_{i}", system="s", messages=messages("m"), tools=[])
+    assert prompt_for("run_long") is None  # evicted, as expected
+
+    record_prompt("run_long", system="s", messages=messages("m"), tools=[])
+
+    kept = prompt_for("run_long")
+    assert kept is not None
+    assert kept.round_index == 2
+    forget("run_long")
+    for i in range(MAX_RUNS + 2):
+        forget(f"run_filler_{i}")

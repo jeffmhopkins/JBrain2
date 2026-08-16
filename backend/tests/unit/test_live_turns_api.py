@@ -284,12 +284,13 @@ def test_returns_the_step_trail(
     assert steps[1]["error"] == "timeout"
 
 
-def test_falls_back_to_the_transcript_when_there_is_no_live_handle(
+def test_falls_back_to_the_transcript_for_a_settled_sub_agent(
     client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
 ) -> None:
     """A sub-agent never registers a live handle, so without this a fan's children would
-    all read as silent."""
-    reader.detail = detail([])
+    read as silent even after they finish."""
+    settled = detail([])
+    reader.detail = RunDetail(**{**vars(settled), "status": "done"})
     transcript.turns = [
         StoredTurn("user", "sweep the spec sheets"),
         StoredTurn("assistant", "MXZ-SM36: rated 36,000 BTU.", reasoning="extracting capacity"),
@@ -301,6 +302,35 @@ def test_falls_back_to_the_transcript_when_there_is_no_live_handle(
     assert output["live"] is False
     assert output["answer"] == "MXZ-SM36: rated 36,000 BTU."
     assert output["reasoning"] == "extracting capacity"
+
+
+def test_never_shows_another_turn_s_answer_as_this_one_s(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
+) -> None:
+    """A /chat turn's run row exists for several awaits before its live handle does.
+    Reading the session transcript in that window would show the PREVIOUS exchange's
+    answer under this turn's header, badged as if it were its own."""
+    reader.detail = detail([])  # status="running", and no live handle registered yet
+    transcript.turns = [StoredTurn("assistant", "the answer to the LAST question")]
+    login(client, repo)
+
+    output = client.get("/api/ops/turns/run_parent").json()["output"]
+
+    assert output is None
+
+
+def test_reads_the_transcript_once_the_run_has_settled(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
+) -> None:
+    settled = detail([])
+    reader.detail = RunDetail(**{**vars(settled), "status": "done"})
+    transcript.turns = [StoredTurn("assistant", "MXZ-SM36: rated 36,000 BTU.")]
+    login(client, repo)
+
+    output = client.get("/api/ops/turns/run_parent").json()["output"]
+
+    assert output["live"] is False
+    assert output["answer"] == "MXZ-SM36: rated 36,000 BTU."
 
 
 def test_prefers_the_live_accumulator_over_the_transcript(
