@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-08-09
+> **Status:** Living · **Last verified:** 2026-08-16
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -15,6 +15,12 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on:
+  reclaim schema tokens (trim the five fattest sidecars; inject config-derived enums at
+  registry load) and spend a capped slice on a cross-session **scratchpad** (owner-only
+  table, 3 KB, DATA-framed injection, PWA-editable), plus the identity-paragraph fix that
+  stopped the on-box model trusting its own prompt. Records five deliberate rejections
+  (Python sandbox, skills-in-memory, per-persona sidecars, `anyOf`, catalog W2/W3).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
