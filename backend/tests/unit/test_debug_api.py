@@ -1017,3 +1017,40 @@ def test_tool_probe_rejects_raw_schema_without_name(debug_client: tuple[TestClie
 def test_tool_probe_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.post("/api/debug/tool-probe", json={"user_text": "x"}).status_code == 401
+
+
+def test_client_vitals_reads_back_what_the_browser_reported(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The one read that separates "the box never sent a frame" from "the browser never
+    received one" — states that need different fixes and look identical from here."""
+    client, key = debug_client
+    client.app.state.client_vitals = {  # type: ignore[attr-defined]
+        "at": "2026-08-16T17:41:00Z",
+        "frames": 0,
+        "sinceLastFrameMs": -1,
+        "readyState": 1,
+    }
+
+    body = client.get("/api/debug/client-vitals", headers=_auth(key)).json()
+
+    assert body["reported"] is True
+    assert body["frames"] == 0
+    assert body["readyState"] == 1  # socket claims OPEN while no frame ever arrived
+
+
+def test_client_vitals_says_nothing_reported_rather_than_implying_a_fault(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """No report means nobody has opened the vitals detail since this process started — not
+    that the meter is broken."""
+    client, key = debug_client
+
+    body = client.get("/api/debug/client-vitals", headers=_auth(key)).json()
+
+    assert body == {"reported": False}
+
+
+def test_client_vitals_requires_a_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _key = debug_client
+    assert client.get("/api/debug/client-vitals").status_code == 401

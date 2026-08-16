@@ -94,6 +94,43 @@ let published: GpuBusy = UNKNOWN;
 let reprobe: ReturnType<typeof setTimeout> | null = null;
 let silence: ReturnType<typeof setTimeout> | null = null;
 
+/** What the stream has actually been doing, for the vitals screen's diagnostic row and
+ *  the beacon behind it.
+ *
+ *  This exists because the top bar showed no reading while the detail screen — reading the
+ *  server's ring over plain fetches — showed 97%, and no amount of server-side logging
+ *  could distinguish "frames are not being sent", "frames are sent but never arrive", and
+ *  "frames arrive but the meter drops them". Those need different fixes, and a connection
+ *  the BROWSER declines to open leaves no trace on the box at all. So the browser reports
+ *  what it saw. */
+const diag = {
+  opens: 0,
+  frames: 0,
+  errors: 0,
+  reopensAfterClose: 0,
+  reopensAfterSilence: 0,
+  lastFrameAt: 0,
+  lastErrorAt: 0,
+  openFailed: "",
+};
+
+/** A snapshot of the stream's own health. `sinceLastFrameMs` is the number that matters:
+ *  the route sends one a second, so anything above a few thousand means the meter is blind
+ *  however healthy the socket claims to be. */
+export function vitalsDiagnostics(): Record<string, unknown> {
+  return {
+    ...diag,
+    access,
+    listeners: listeners.size,
+    hasSource: source !== null,
+    // 0 CONNECTING, 1 OPEN, 2 CLOSED, -1 when there is no stream to ask.
+    readyState: source?.readyState ?? -1,
+    sinceLastFrameMs: diag.lastFrameAt === 0 ? -1 : Date.now() - diag.lastFrameAt,
+    published: published.state,
+    foreground: isForeground(),
+  };
+}
+
 function publish(busy: GpuBusy): void {
   published = busy;
   for (const listener of listeners) listener(busy);
@@ -160,17 +197,21 @@ function openStream(): void {
   let stream: EventSource;
   try {
     stream = api.opsVitalsStream();
-  } catch {
+  } catch (error) {
     // No EventSource in this runtime. This runs inside a React effect, so throwing
     // would unmount the whole top bar over a gauge — leave the reading unknown and
     // let everything else render.
+    diag.openFailed = String(error).slice(0, 200);
     publish(UNKNOWN);
     return;
   }
   source = stream;
+  diag.opens += 1;
   armSilenceWatchdog(stream);
   stream.onmessage = (event: MessageEvent<string>) => {
     armSilenceWatchdog(stream); // a frame arrived: the stream is alive, restart the clock
+    diag.frames += 1;
+    diag.lastFrameAt = Date.now();
     try {
       const frame = JSON.parse(event.data) as { gpu_busy_percent?: unknown };
       const busy = fromFrame(frame.gpu_busy_percent);
@@ -183,6 +224,8 @@ function openStream(): void {
   // Drop to `unknown`, NOT `absent`: the reading has stopped being current, but nothing
   // has said the gauge went away.
   stream.onerror = () => {
+    diag.errors += 1;
+    diag.lastErrorAt = Date.now();
     publish(UNKNOWN);
     // EventSource retries a DROPPED connection by itself, but a FATAL one — the box
     // answering 502 mid-deploy, a proxy closing with the wrong content type — leaves it
@@ -191,7 +234,10 @@ function openStream(): void {
     // of the session: a deploy blanked the top bar until the app was reloaded, while the
     // detail screen kept showing numbers because it reads the server's ring over plain
     // fetches. Treat CLOSED as "reopen it myself".
-    if (stream.readyState === SOURCE_CLOSED) reopenLater(stream);
+    if (stream.readyState === SOURCE_CLOSED) {
+      diag.reopensAfterClose += 1;
+      reopenLater(stream);
+    }
   };
 }
 
@@ -203,6 +249,7 @@ function armSilenceWatchdog(stream: EventSource): void {
     silence = null;
     if (source !== stream) return;
     publish(UNKNOWN); // stale is not a reading — say so before trying again
+    diag.reopensAfterSilence += 1;
     reopenLater(stream);
   }, SILENCE_MS);
 }

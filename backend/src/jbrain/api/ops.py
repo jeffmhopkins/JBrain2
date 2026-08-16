@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from jbrain import ops_metrics
 from jbrain.agent.prompt_capture import prompt_for
@@ -732,6 +732,29 @@ async def vitals_history(request: Request, seconds: int = _MAX_HISTORY_SECONDS) 
     return VitalsHistoryOut(
         samples=[VitalsSampleOut(**cast(dict[str, Any], s)) for s in ring.since(window)]
     )
+
+
+class ClientVitalsReport(BaseModel):
+    """What the BROWSER saw of the vitals stream.
+
+    Reported by the client because the box cannot see any of it. A connection the browser
+    declines to open — because it has hit its per-origin cap, say — leaves no trace here at
+    all, which is exactly the state that had the top bar blank while the box was serving
+    97% perfectly well. Free-form and bounded: this is a diagnostic, not an API, and it must
+    never fail a request over an unexpected key."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+@router.post("/client-vitals", status_code=204)
+async def report_client_vitals(body: ClientVitalsReport, request: Request) -> None:
+    """Record the browser's view of its own vitals stream. Owner-only (the router's dep),
+    last-report-wins, in memory — it answers "what is the meter doing right now", and a
+    restart losing it costs nothing."""
+    request.app.state.client_vitals = {
+        "at": datetime.now(tz=UTC).isoformat(),
+        **body.model_dump(),
+    }
 
 
 @router.get("/vitals/stream")

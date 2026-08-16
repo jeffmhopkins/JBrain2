@@ -78,3 +78,44 @@ describe("parseChatStream", () => {
     expect(events).toEqual([{ type: "text_delta", text: "ok" }]);
   });
 });
+
+describe("parseChatStream teardown", () => {
+  function trackedStream(): { stream: ReadableStream<Uint8Array>; cancelled: () => boolean } {
+    let cancelled = false;
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"type":"text","text":"hi"}\n\n'));
+        // Deliberately never closed: this models a turn still streaming when the
+        // consumer walks away.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    return { stream, cancelled: () => cancelled };
+  }
+
+  it("cancels the body when the consumer stops early", async () => {
+    // releaseLock() alone detaches the reader but leaves the connection open. A turn that
+    // is Stopped or whose consumer unmounts would leak a socket per turn, and browsers cap
+    // them per origin — starving the least important stream on the page, the vitals meter.
+    const { stream, cancelled } = trackedStream();
+
+    for await (const _event of parseChatStream(stream)) break;
+
+    expect(cancelled()).toBe(true);
+  });
+
+  it("still yields events before the teardown", async () => {
+    const { stream } = trackedStream();
+    const seen: string[] = [];
+
+    for await (const event of parseChatStream(stream)) {
+      seen.push(event.type);
+      break;
+    }
+
+    expect(seen).toEqual(["text"]);
+  });
+});

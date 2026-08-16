@@ -828,6 +828,21 @@ async def gateway_logs(
     return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
 
 
+@router.get("/client-vitals")
+async def client_vitals(request: Request, _p: DebugDep) -> dict[str, object]:
+    """The browser's own account of the top-bar vitals stream, as last reported.
+
+    The one read that can tell a stream the box never sent from a stream the browser never
+    received. `sinceLastFrameMs` is the number that matters: the route emits one frame a
+    second, so anything above a few thousand means the meter is blind however healthy the
+    socket claims to be. `{"reported": false}` means no client has opened the vitals detail
+    since this process started — not that the meter is broken."""
+    report = getattr(request.app.state, "client_vitals", None)
+    if report is None:
+        return {"reported": False}
+    return {"reported": True, **report}
+
+
 @router.get("/host/metrics")
 async def host_metrics(request: Request, settings: SettingsDep, _p: DebugDep) -> dict[str, object]:
     """The host's live hardware telemetry, proxied from the supervisor (the only container

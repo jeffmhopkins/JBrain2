@@ -2899,6 +2899,13 @@ export const api = {
     return (await response.json()) as LiveTurns;
   },
 
+  /** Report what the BROWSER saw of the vitals stream, so it can be read back through the
+   *  debug token. Best-effort by contract — a diagnostic that breaks the screen it is
+   *  diagnosing is worse than no diagnostic. */
+  async opsReportClientVitals(report: Record<string, unknown>): Promise<void> {
+    await request("/api/ops/client-vitals", jsonInit("POST", report));
+  },
+
   /** The GPU load already recorded server-side, so the detail graph opens with a past
    *  instead of filling from empty after a reload. */
   async opsVitalsHistory(seconds: number): Promise<VitalsHistorySample[]> {
