@@ -4159,6 +4159,46 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json({ gpu_busy_percent: 64 });
   }
 
+  // One turn's trail + raw output for the vitals detail's level 2.
+  if (path.startsWith("/api/ops/turns/")) {
+    return json({
+      steps: [
+        {
+          idx: 0,
+          kind: "notes.search",
+          name: '"heat pump" · 11 hits',
+          ok: true,
+          cost_tokens: 400,
+          error: null,
+        },
+        {
+          idx: 1,
+          kind: "notes.read",
+          name: "3 notes · 2.1k tokens",
+          ok: true,
+          cost_tokens: 2100,
+          error: null,
+        },
+        {
+          idx: 2,
+          kind: "web.fetch",
+          name: "acca.org/manual-j",
+          ok: null,
+          cost_tokens: 0,
+          error: null,
+        },
+      ],
+      output: {
+        live: true,
+        reasoning:
+          "Two sources disagree on the sizing rule. The 20 BTU/sq-ft heuristic gives 34k BTU for 1,700 sq-ft; the Manual J the notes reference lands nearer 26k because the 2019 envelope work is not in the heuristic.",
+        answer:
+          "Short version: the heuristic is oversizing you. Your April 2019 note records R-21 walls and the attic taken to R-49, and the window replacement on the north face closes the last big leak.",
+        steps: [],
+      },
+    });
+  }
+
   // The vitals detail roster: a parent turn with a two-child research fan, plus a
   // scheduled workflow run, so the surface can be worked on without a live box.
   if (path === "/api/ops/turns") {

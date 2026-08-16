@@ -376,6 +376,10 @@ class RunDetail:
     cost_tokens: int
     stop_reason: str | None
     progress_note: str | None
+    # The run's own chat session, when it has one (agent + subagent runs). The vitals
+    # detail reads it to recover a settled or sub-agent turn's output, which has no
+    # in-process live handle to read from.
+    session_id: str | None
     steps: list[RunStepView]
 
 
@@ -647,6 +651,7 @@ class RunLogReader:
                 cost_tokens=run.cost_tokens,
                 stop_reason=run.stop_reason,
                 progress_note=run.progress_note,
+                session_id=str(run.session_id) if run.session_id else None,
                 steps=[
                     RunStepView(
                         idx=s.idx,

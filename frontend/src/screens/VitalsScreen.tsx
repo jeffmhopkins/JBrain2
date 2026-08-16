@@ -13,7 +13,12 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { type LiveTurn, type LiveTurns, api } from "../api/client";
+import {
+  type LiveTurn,
+  type LiveTurns,
+  type TurnDetail as TurnDetailPayload,
+  api,
+} from "../api/client";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
 import { type VitalsSample, vitalsHistory } from "../hostVitals";
 import { useForeground } from "../visibility";
@@ -32,6 +37,10 @@ type RangeKey = (typeof RANGES)[number]["key"];
  *  turns starting and settling, not with the clock. */
 const ROSTER_POLL_MS = 3000;
 
+/** How often level 2 refetches a RUNNING turn, so a streaming answer grows on screen.
+ *  A settled turn is fetched once — its output cannot change. */
+const DETAIL_POLL_MS = 2000;
+
 /** Columns across the plot. Every range renders the same number of columns, so the
  *  shape stays comparable as the window widens — only the seconds each column covers
  *  changes. */
@@ -39,6 +48,14 @@ const COLUMNS = 60;
 
 /** GPU load that reads as pinned. Matches the top bar's band. */
 const HOT_PERCENT = 85;
+
+/** Full scale for the token trace. The two channels share the plot but not a y-scale,
+ *  so each is comparable against ITSELF over time and never against the other. */
+const TPS_FULL_SCALE = 140;
+
+/** Plot geometry, in the SVG's own units. */
+const PLOT_TOP = 2;
+const PLOT_BOTTOM = 56;
 
 const KIND_LABEL: Record<string, string> = {
   agent: "agent",
@@ -63,7 +80,12 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
   return (
     <>
       <main className="screen-body vitals-detail">
-        <VitalsPlot range={range} onRange={setRange} />
+        <VitalsPlot
+          range={range}
+          onRange={setRange}
+          gpuNow={roster?.gpu_busy_percent ?? null}
+          turnCount={roster?.turns.length ?? 0}
+        />
         <Roster roster={roster} onSelect={onSelectTurn} />
       </main>
       {selected !== null && (
@@ -80,19 +102,39 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
 
 // ---- level 1: the plot ----------------------------------------------------
 
-function VitalsPlot({ range, onRange }: { range: RangeKey; onRange: (r: RangeKey) => void }) {
+function VitalsPlot({
+  range,
+  onRange,
+  gpuNow,
+  turnCount,
+}: {
+  range: RangeKey;
+  onRange: (r: RangeKey) => void;
+  gpuNow: number | null;
+  turnCount: number;
+}) {
   const seconds = RANGES.find((r) => r.key === range)?.seconds ?? 60;
   const samples = useTickingHistory(seconds);
-  const columns = bucket(samples, seconds, COLUMNS);
+  const columns = bucket(samples, seconds, COLUMNS, (s) => s.gpu);
+  const rateColumns = bucket(samples, seconds, COLUMNS, (s) => s.tps);
   const latest = samples[samples.length - 1]?.gpu ?? null;
+  const latestRate = samples[samples.length - 1]?.tps ?? null;
 
   return (
     <section className="card vitals-plot-card">
       <div className="vitals-plot-head">
         <span className="vitals-plot-label">GPU busy</span>
-        <span className="vitals-plot-figure">
-          {latest === null ? "—" : Math.round(latest)}
-          <span className="u">%</span>
+        <span className="vitals-plot-figures">
+          {latestRate !== null && (
+            <span className="vitals-plot-figure rate">
+              {Math.round(latestRate)}
+              <span className="u">t/s</span>
+            </span>
+          )}
+          <span className="vitals-plot-figure">
+            {latest === null ? "—" : Math.round(latest)}
+            <span className="u">%</span>
+          </span>
         </span>
       </div>
       <svg
@@ -118,8 +160,13 @@ function VitalsPlot({ range, onRange }: { range: RangeKey; onRange: (r: RangeKey
             />
           ),
         )}
+        <path className="vitals-plot-trace" d={ratePath(rateColumns)} />
         <line className="vitals-plot-rail" x1="0" y1="59.5" x2={COLUMNS * 4} y2="59.5" />
       </svg>
+      <div className="vitals-axis">
+        <span>−{range}</span>
+        <span>now</span>
+      </div>
       {/* biome-ignore lint/a11y/useSemanticElements: a segmented range picker, not a form group — a fieldset/legend would announce it as one. */}
       <div className="vitals-ranges" role="group" aria-label="Range">
         {RANGES.map((r) => (
@@ -134,6 +181,12 @@ function VitalsPlot({ range, onRange }: { range: RangeKey; onRange: (r: RangeKey
           </button>
         ))}
       </div>
+      {gpuNow !== null && gpuNow >= HOT_PERCENT && turnCount > 0 && (
+        <p className="vitals-honesty">
+          GPU busy counts <b>everything the box does</b> — an image render or a model load pins it
+          just as an agent turn does. A high reading is not proof these turns are what is using it.
+        </p>
+      )}
       <p className="vitals-note">
         {range === "1m"
           ? "One-second samples."
@@ -364,9 +417,118 @@ function TurnDetail({
             </p>
           </>
         )}
+
+        {/* Trail then raw output, last so the output can run as long as it likes. */}
+        <TurnTrailAndOutput runId={turn.id} running={turn.status === "running"} />
       </main>
     </div>
   );
+}
+
+/** A turn's step trail and its raw output. Polled while the turn runs so a streaming
+ *  answer grows on screen; fetched once for a settled one. Separate from the roster
+ *  fetch because it is per-turn and only wanted while level 2 is open. */
+function TurnTrailAndOutput({ runId, running }: { runId: string; running: boolean }) {
+  const detail = useTurnDetail(runId, running);
+  if (detail === null) return <p className="vitals-quiet">reading the turn…</p>;
+
+  const output = detail.output;
+  const empty = output === null || (output.answer === "" && output.reasoning === "");
+  return (
+    <>
+      {detail.steps.length > 0 && (
+        <>
+          <div className="vitals-sec-head">
+            Steps <span className="count">{detail.steps.length}</span>
+          </div>
+          <section className="card vitals-trail">
+            {detail.steps.map((step) => (
+              <div
+                key={`${step.idx}-${step.name}`}
+                className={`vitals-step${step.ok === null ? " now" : ""}${
+                  step.ok === false ? " bad" : ""
+                }`}
+              >
+                <span className="i">{step.idx + 1}</span>
+                <span className="t">
+                  <b>{step.kind}</b> {step.name}
+                </span>
+                <span className="d">
+                  {step.ok === null
+                    ? "live"
+                    : step.error !== null
+                      ? "failed"
+                      : formatTokens(step.cost_tokens)}
+                </span>
+              </div>
+            ))}
+          </section>
+        </>
+      )}
+
+      <div className="vitals-sec-head">
+        Raw output
+        {output?.live === true && <span className="count live">streaming</span>}
+      </div>
+      <section className="card vitals-raw">
+        {empty ? (
+          <p className="vitals-raw-empty">
+            no output yet — the turn is running, but the model has not returned a first token
+          </p>
+        ) : (
+          <pre>
+            {output !== null && output.reasoning !== "" && (
+              <>
+                <span className="marker">» reasoning</span>
+                {`\n${output.reasoning}\n\n`}
+              </>
+            )}
+            {output !== null && output.answer !== "" && (
+              <>
+                <span className="marker">» answer</span>
+                {`\n${output.answer}`}
+              </>
+            )}
+          </pre>
+        )}
+        {output !== null && !output.live && !empty && (
+          <p className="vitals-note">
+            Read from the stored transcript — this turn has no live handle (a sub-agent, or one that
+            has already settled).
+          </p>
+        )}
+      </section>
+    </>
+  );
+}
+
+/** The per-turn detail, refetched while the turn is still running. */
+function useTurnDetail(runId: string, running: boolean): TurnDetailPayload | null {
+  const foreground = useForeground();
+  const [detail, setDetail] = useState<TurnDetailPayload | null>(null);
+
+  useEffect(() => {
+    setDetail(null); // a different turn: never show the previous one's output
+    if (!foreground) return;
+    let cancelled = false;
+    const load = async (): Promise<void> => {
+      try {
+        const next = await api.opsTurnDetail(runId);
+        if (!cancelled) setDetail(next);
+      } catch {
+        // A failed poll leaves what is on screen; the next tick retries.
+      }
+    };
+    void load();
+    if (!running) return;
+    const timer = setInterval(() => void load(), DETAIL_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [runId, running, foreground]);
+
+  return detail;
 }
 
 function Field({ k, v, mono = false }: { k: string; v: string; mono?: boolean }) {
@@ -426,19 +588,44 @@ function useTickingHistory(seconds: number): VitalsSample[] {
  *  Peak, not mean, and deliberately: this gauge is read to find the moment the box was
  *  pinned, and averaging a 15-minute window flattens a 10-second spike into nothing —
  *  hiding exactly what the screen was opened to see. */
-export function bucket(samples: VitalsSample[], seconds: number, count: number): (number | null)[] {
+export function bucket(
+  samples: VitalsSample[],
+  seconds: number,
+  count: number,
+  channel: (s: VitalsSample) => number | null = (s) => s.gpu,
+): (number | null)[] {
   if (samples.length === 0) return new Array<number | null>(count).fill(null);
   const end = Date.now();
   const start = end - seconds * 1000;
   const width = (seconds * 1000) / count;
   const columns = new Array<number | null>(count).fill(null);
   for (const sample of samples) {
-    if (sample.gpu === null || sample.at < start) continue;
+    const value = channel(sample);
+    if (value === null || sample.at < start) continue;
     const slot = Math.min(count - 1, Math.floor((sample.at - start) / width));
     const held = columns[slot];
-    columns[slot] = held === null || held === undefined ? sample.gpu : Math.max(held, sample.gpu);
+    columns[slot] = held === null || held === undefined ? value : Math.max(held, value);
   }
   return columns;
+}
+
+/** The token trace over the same axis, with a break wherever nothing was generated —
+ *  a gap is the honest mark for a tool call, which a line through zero is not. */
+export function ratePath(columns: (number | null)[]): string {
+  let path = "";
+  let open = false;
+  columns.forEach((value, i) => {
+    if (value === null) {
+      open = false;
+      return;
+    }
+    const clamped = Math.max(0, Math.min(value, TPS_FULL_SCALE));
+    const x = (i * 4 + 1.3).toFixed(2);
+    const y = (PLOT_BOTTOM - (clamped / TPS_FULL_SCALE) * (PLOT_BOTTOM - PLOT_TOP)).toFixed(2);
+    path += `${open ? "L" : "M"}${x} ${y} `;
+    open = true;
+  });
+  return path.trim();
 }
 
 /** Elapsed, ticking locally so a turn's age advances between roster polls. */

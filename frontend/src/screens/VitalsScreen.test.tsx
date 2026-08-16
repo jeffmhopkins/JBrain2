@@ -5,13 +5,17 @@ import type { LiveTurn, LiveTurns } from "../api/client";
 import { VitalsScreen, bucket, formatElapsed } from "./VitalsScreen";
 
 const opsTurns = vi.hoisted(() => vi.fn());
-const history = vi.hoisted(() => ({ samples: [] as { at: number; gpu: number | null }[] }));
+const history = vi.hoisted(() => ({
+  samples: [] as { at: number; gpu: number | null; tps: number | null }[],
+}));
 
 vi.mock("../api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/client")>()),
-  api: { opsTurns },
+  api: { opsTurns, opsTurnDetail },
 }));
 vi.mock("../hostVitals", () => ({ vitalsHistory: () => history.samples }));
+
+const opsTurnDetail = vi.hoisted(() => vi.fn());
 
 function turn(over: Partial<LiveTurn> = {}): LiveTurn {
   return {
@@ -51,6 +55,7 @@ describe("VitalsScreen", () => {
   beforeEach(() => {
     history.samples = [];
     opsTurns.mockReset().mockResolvedValue(roster([turn()]));
+    opsTurnDetail.mockReset().mockResolvedValue({ steps: [], output: null });
   });
   afterEach(() => vi.useRealTimers());
 
@@ -134,6 +139,90 @@ describe("VitalsScreen", () => {
     expect(await screen.findByText("none")).toBeInTheDocument();
   });
 
+  it("shows the step trail and the streaming raw output", async () => {
+    opsTurnDetail.mockResolvedValue({
+      steps: [
+        {
+          idx: 0,
+          kind: "notes.search",
+          name: '"heat pump" · 11 hits',
+          ok: true,
+          cost_tokens: 400,
+          error: null,
+        },
+        {
+          idx: 1,
+          kind: "web.fetch",
+          name: "acca.org/manual-j",
+          ok: null,
+          cost_tokens: 0,
+          error: null,
+        },
+      ],
+      output: {
+        live: true,
+        answer: "Short version: the heuristic is oversizing you.",
+        reasoning: "Two sources disagree on the sizing rule.",
+        steps: [],
+      },
+    });
+    render(<VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("acca.org/manual-j")).toBeInTheDocument();
+    // A step still in flight reads as live, not as failed.
+    expect(screen.getByText("live")).toBeInTheDocument();
+    expect(screen.getByText("streaming")).toBeInTheDocument();
+    expect(screen.getByText(/the heuristic is oversizing you/)).toBeInTheDocument();
+    expect(screen.getByText(/Two sources disagree/)).toBeInTheDocument();
+  });
+
+  it("says a turn has produced nothing yet rather than showing a blank box", async () => {
+    opsTurnDetail.mockResolvedValue({ steps: [], output: null });
+    render(<VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText(/has not returned a first token/)).toBeInTheDocument();
+  });
+
+  it("marks output read from the transcript rather than implying it is live", async () => {
+    // A sub-agent has no live handle, so its output comes from the stored transcript.
+    // Labelling that as streaming would be a lie.
+    opsTurnDetail.mockResolvedValue({
+      steps: [],
+      output: { live: false, answer: "MXZ-SM36: rated 36,000 BTU.", reasoning: "", steps: [] },
+    });
+    render(<VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText(/Read from the stored transcript/)).toBeInTheDocument();
+    expect(screen.queryByText("streaming")).toBeNull();
+  });
+
+  it("stops polling a settled turn's output", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    opsTurns.mockResolvedValue(roster([turn({ status: "error" })]));
+    render(<VitalsScreen selectedTurnId="run_parent" onSelectTurn={vi.fn()} />);
+    await waitFor(() => expect(opsTurnDetail).toHaveBeenCalled());
+    const calls = opsTurnDetail.mock.calls.length;
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    // A settled turn's output cannot change, so one fetch is the whole job.
+    expect(opsTurnDetail.mock.calls.length).toBe(calls);
+  });
+
+  it("plots the token rate as its own channel on the same axis", () => {
+    const now = Date.now();
+    const samples = [
+      { at: now - 500, gpu: 90, tps: 48 },
+      { at: now - 400, gpu: 91, tps: null },
+    ];
+
+    expect(bucket(samples, 1, 2, (x) => x.tps)).toContain(48);
+    // The GPU channel is unaffected by a gap in the other one.
+    expect(bucket(samples, 1, 2, (x) => x.gpu)).toContain(91);
+  });
+
   it("stops polling the roster when unmounted", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { unmount } = render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
@@ -155,9 +244,9 @@ describe("bucket", () => {
     // the screen was opened to find.
     const now = Date.now();
     const samples = [
-      { at: now - 900, gpu: 4 },
-      { at: now - 800, gpu: 97 },
-      { at: now - 700, gpu: 6 },
+      { at: now - 900, gpu: 4, tps: null },
+      { at: now - 800, gpu: 97, tps: null },
+      { at: now - 700, gpu: 6, tps: null },
     ];
 
     const columns = bucket(samples, 1, 1);
@@ -173,7 +262,7 @@ describe("bucket", () => {
 
   it("ignores samples older than the window", () => {
     const now = Date.now();
-    const columns = bucket([{ at: now - 600_000, gpu: 88 }], 60, 2);
+    const columns = bucket([{ at: now - 600_000, gpu: 88, tps: null }], 60, 2);
 
     expect(columns).toEqual([null, null]);
   });
