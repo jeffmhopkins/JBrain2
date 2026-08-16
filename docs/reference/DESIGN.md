@@ -188,6 +188,14 @@ resampled once a second:
   missed frames replaces the stream. The server also asks proxies not to buffer
   (`Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`); the watchdog is the
   backstop for one that ignores the ask.
+- **The meter reports on itself** [decided]. The stream's own health — frames seen, opens,
+  errors, reopens, `readyState`, time since the last frame — is on the detail surface
+  behind a collapsed row, and beaconed to the box so it can be read through the debug
+  token. It is there because the failure is invisible from the server: the top bar sat
+  blank while the box served 97% quite happily, and *frames not sent*, *sent but not
+  arriving*, and *arriving but dropped* need different fixes yet look identical from the
+  box — a connection the browser declines to open leaves no trace there at all. Collapsed,
+  because it is a diagnostic and not part of the reading.
 - **The chart and the GPU figure share one grid row** [decided]. They are the pair
   the eye reads together, and laying them out as two independently-centred columns
   put the chart's middle 11px above the figure's — the reserved t/s slot pushed the

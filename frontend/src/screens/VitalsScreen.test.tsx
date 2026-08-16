@@ -11,16 +11,18 @@ const history = vi.hoisted(() => ({
 
 vi.mock("../api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/client")>()),
-  api: { opsTurns, opsTurnDetail, opsVitalsHistory },
+  api: { opsTurns, opsTurnDetail, opsVitalsHistory, opsReportClientVitals },
 }));
 vi.mock("../hostVitals", () => ({
   vitalsHistory: () => history.samples,
   seedVitalsHistory: seedSpy,
+  vitalsDiagnostics: () => ({ frames: 0, sinceLastFrameMs: -1 }),
 }));
 
 const opsTurnDetail = vi.hoisted(() => vi.fn());
 const opsVitalsHistory = vi.hoisted(() => vi.fn());
 const seedSpy = vi.hoisted(() => vi.fn());
+const opsReportClientVitals = vi.hoisted(() => vi.fn(async () => {}));
 
 function turn(over: Partial<LiveTurn> = {}): LiveTurn {
   return {
@@ -497,5 +499,28 @@ describe("formatElapsed", () => {
     expect(formatElapsed(42_000)).toBe("42s");
     expect(formatElapsed(252_000)).toBe("4m 12s");
     expect(formatElapsed(7_500_000)).toBe("2h 05m");
+  });
+});
+
+describe("stream health", () => {
+  it("says the meter is blind when no frame has ever arrived", async () => {
+    // The failure this exists for: the top bar blank while the box serves 97% happily. A
+    // connection the browser declines to open leaves no server-side trace, so the browser
+    // has to be the one that says so.
+    opsTurns.mockResolvedValue(roster([]));
+    opsVitalsHistory.mockResolvedValue([]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("no frames")).toBeInTheDocument();
+  });
+
+  it("reports what the browser saw back to the box", async () => {
+    // So it can be read through the debug token rather than needing someone to be holding
+    // the phone when it happens.
+    opsTurns.mockResolvedValue(roster([]));
+    opsVitalsHistory.mockResolvedValue([]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    await waitFor(() => expect(opsReportClientVitals).toHaveBeenCalled());
   });
 });

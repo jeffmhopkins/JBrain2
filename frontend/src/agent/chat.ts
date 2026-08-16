@@ -27,6 +27,21 @@ export async function* parseChatStream(
       }
     }
   } finally {
+    // CANCEL, not just releaseLock. Releasing the lock detaches the reader but leaves the
+    // body — and therefore the HTTP connection — open. On the normal path the loop drains
+    // to `done` and the connection closes anyway, but a turn that is Stopped, aborted, or
+    // whose consumer unmounts mid-stream discards this generator, and that connection was
+    // never torn down. Leaked sockets accumulate per turn and browsers cap them per
+    // origin, so the least important stream on the page — the 1 Hz vitals meter — is the
+    // one that stops being able to reconnect.
+    //
+    // Cancelling an already-finished body is a no-op, and a cancel that rejects (the body
+    // is already errored) must not mask the real reason we are unwinding.
+    try {
+      await reader.cancel();
+    } catch {
+      // already closed or errored — nothing left to release
+    }
     reader.releaseLock();
   }
 }
