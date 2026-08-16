@@ -127,9 +127,30 @@ export interface TurnOutput {
   steps: TurnStep[];
 }
 
+/** The assembled prompt a run last sent to the model. Kept in memory server-side for
+ *  the life of the process, so it is absent for a run that predates a restart, was
+ *  evicted by a newer one, or never reached a model call. */
+export interface CapturedPrompt {
+  system: string;
+  messages: { role: string; content: string }[];
+  tools: string[];
+  round_index: number;
+  truncated: boolean;
+  system_chars: number;
+  message_chars: number;
+}
+
 export interface TurnDetail {
   steps: TurnStep[];
   output: TurnOutput | null;
+  prompt: CapturedPrompt | null;
+}
+
+/** One second of recorded GPU load. `gpu` is null where the gauge could not be read —
+ *  a gap in the plot, never a zero. */
+export interface VitalsHistorySample {
+  at_ms: number;
+  gpu: number | null;
 }
 
 export interface LiveTurns {
@@ -2867,6 +2888,13 @@ export const api = {
   async opsTurns(): Promise<LiveTurns> {
     const response = await request("/api/ops/turns");
     return (await response.json()) as LiveTurns;
+  },
+
+  /** The GPU load already recorded server-side, so the detail graph opens with a past
+   *  instead of filling from empty after a reload. */
+  async opsVitalsHistory(seconds: number): Promise<VitalsHistorySample[]> {
+    const response = await request(`/api/ops/vitals/history?seconds=${seconds}`);
+    return ((await response.json()) as { samples: VitalsHistorySample[] }).samples;
   },
 
   /** One turn's step trail and raw output, for the vitals detail's level 2. Polled

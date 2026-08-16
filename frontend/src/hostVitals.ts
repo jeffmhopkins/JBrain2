@@ -87,6 +87,36 @@ function remember(busy: GpuBusy, at: number): void {
   if (history.length > HISTORY_SAMPLES) history.splice(0, history.length - HISTORY_SAMPLES);
 }
 
+/** Seed the ring with history recorded server-side, so the detail graph opens with a
+ *  past instead of filling from empty after a reload.
+ *
+ *  Only samples OLDER than what this session already holds are taken: the live stream
+ *  is the authority for anything it has seen, and its samples carry the token rate,
+ *  which the server never sees (that is measured in the browser off the chat stream). */
+export function seedVitalsHistory(seeds: { at_ms: number; gpu: number | null }[]): void {
+  const now = Date.now();
+  // Seeds are stamped by the SERVER's clock and bucketed against the browser's. A box
+  // running ahead would otherwise place a several-seconds-old peak in the newest
+  // column and draw it as the current reading — against the plot's own honesty rule.
+  const usable = seeds.filter((s) => s.at_ms <= now);
+  if (usable.length === 0) return;
+
+  // Merge by second rather than only prepending what predates the ring. Backgrounding
+  // closes the stream but keeps the samples already held, so the gap the server DID
+  // record sits in the MIDDLE of this session's history — the exact case the ring was
+  // added for, and one an "older than the earliest" rule filters out entirely.
+  const held = new Map(history.map((sample) => [Math.floor(sample.at / 1000), sample]));
+  for (const seed of usable) {
+    const second = Math.floor(seed.at_ms / 1000);
+    // A sample this session saw wins: it carries the token rate, which the server
+    // never sees, and its timestamp is on the clock the plot buckets against.
+    if (!held.has(second)) held.set(second, { at: seed.at_ms, gpu: seed.gpu, tps: null });
+  }
+  const merged = [...held.values()].sort((a, b) => a.at - b.at);
+  history.length = 0;
+  history.push(...merged.slice(-HISTORY_SAMPLES));
+}
+
 /** The samples inside the trailing `seconds`, oldest first. */
 export function vitalsHistory(seconds: number): VitalsSample[] {
   const cutoff = Date.now() - seconds * 1000;

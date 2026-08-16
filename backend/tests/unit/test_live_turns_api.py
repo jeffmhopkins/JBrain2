@@ -7,12 +7,14 @@ shape, and the owner-only gate.
 """
 
 import asyncio
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
+from jbrain.agent.prompt_capture import forget, record_prompt
 from jbrain.agent.runlog import LiveTurnRow, RunDetail, RunStepView
 from jbrain.auth import service
 from jbrain.config import Settings
@@ -282,12 +284,13 @@ def test_returns_the_step_trail(
     assert steps[1]["error"] == "timeout"
 
 
-def test_falls_back_to_the_transcript_when_there_is_no_live_handle(
+def test_falls_back_to_the_transcript_for_a_settled_sub_agent(
     client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
 ) -> None:
     """A sub-agent never registers a live handle, so without this a fan's children would
-    all read as silent."""
-    reader.detail = detail([])
+    read as silent even after they finish."""
+    settled = detail([])
+    reader.detail = RunDetail(**{**vars(settled), "status": "done"})
     transcript.turns = [
         StoredTurn("user", "sweep the spec sheets"),
         StoredTurn("assistant", "MXZ-SM36: rated 36,000 BTU.", reasoning="extracting capacity"),
@@ -299,6 +302,35 @@ def test_falls_back_to_the_transcript_when_there_is_no_live_handle(
     assert output["live"] is False
     assert output["answer"] == "MXZ-SM36: rated 36,000 BTU."
     assert output["reasoning"] == "extracting capacity"
+
+
+def test_never_shows_another_turn_s_answer_as_this_one_s(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
+) -> None:
+    """A /chat turn's run row exists for several awaits before its live handle does.
+    Reading the session transcript in that window would show the PREVIOUS exchange's
+    answer under this turn's header, badged as if it were its own."""
+    reader.detail = detail([])  # status="running", and no live handle registered yet
+    transcript.turns = [StoredTurn("assistant", "the answer to the LAST question")]
+    login(client, repo)
+
+    output = client.get("/api/ops/turns/run_parent").json()["output"]
+
+    assert output is None
+
+
+def test_reads_the_transcript_once_the_run_has_settled(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader, transcript: FakeTranscript
+) -> None:
+    settled = detail([])
+    reader.detail = RunDetail(**{**vars(settled), "status": "done"})
+    transcript.turns = [StoredTurn("assistant", "MXZ-SM36: rated 36,000 BTU.")]
+    login(client, repo)
+
+    output = client.get("/api/ops/turns/run_parent").json()["output"]
+
+    assert output["live"] is False
+    assert output["answer"] == "MXZ-SM36: rated 36,000 BTU."
 
 
 def test_prefers_the_live_accumulator_over_the_transcript(
@@ -339,3 +371,63 @@ def test_reports_no_output_for_a_turn_that_has_produced_none(
     login(client, repo)
 
     assert client.get("/api/ops/turns/run_parent").json()["output"] is None
+
+
+def test_shows_the_prompt_the_model_actually_received(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """The one thing the surface previously could not show, because it was assembled
+    per call and thrown away."""
+    reader.detail = detail([])
+    record_prompt(
+        "run_parent",
+        system="you are jerv",
+        messages=[{"role": "user", "content": "size the heat pump"}],
+        tools=["web.fetch"],
+    )
+    login(client, repo)
+
+    try:
+        prompt = client.get("/api/ops/turns/run_parent").json()["prompt"]
+    finally:
+        forget("run_parent")
+
+    assert prompt["system"] == "you are jerv"
+    assert prompt["messages"][0]["content"] == "size the heat pump"
+    assert prompt["tools"] == ["web.fetch"]
+    assert prompt["round_index"] == 1
+
+
+def test_a_run_whose_prompt_was_never_captured_reports_none(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    """It predates a restart, was evicted, or never reached a model call — the surface
+    says nothing rather than inventing one."""
+    reader.detail = detail([])
+    login(client, repo)
+
+    assert client.get("/api/ops/turns/run_never_prompted").json()["prompt"] is None
+
+
+# --- GET /ops/vitals/history — the graph's past ------------------------------
+
+
+def test_vitals_history_requires_owner(client: TestClient) -> None:
+    assert client.get("/api/ops/vitals/history").status_code == 401
+
+
+def test_serves_the_recorded_history(client: TestClient, repo: FakeAuthRepo) -> None:
+    ring = client.app.state.vitals_ring  # type: ignore[attr-defined]
+    ring.record(time.time(), 61.0)
+    login(client, repo)
+
+    samples = client.get("/api/ops/vitals/history?seconds=600").json()["samples"]
+
+    assert samples[-1]["gpu"] == 61.0
+
+
+def test_history_window_is_clamped_to_the_ring(client: TestClient, repo: FakeAuthRepo) -> None:
+    # A wider request is answered with what exists rather than rejected.
+    login(client, repo)
+
+    assert client.get("/api/ops/vitals/history?seconds=99999").status_code == 200

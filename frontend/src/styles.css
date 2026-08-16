@@ -23768,3 +23768,56 @@ button.task-band:active {
   line-height: 1.6;
   color: var(--text-3);
 }
+
+/* ---- level 2: the prompt actually sent ---- */
+
+.vitals-prompt {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Collapsed by default — this is the largest thing on the screen, and is wanted only
+   when a turn is behaving oddly. */
+.vitals-prompt-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 12px 14px;
+  min-height: 44px;
+  font: inherit;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  text-align: left;
+}
+
+.vitals-prompt-meta {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.vitals-prompt pre {
+  margin: 0;
+  padding: 0 14px 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.vitals-prompt .marker {
+  color: var(--text-3);
+}
+
+.vitals-prompt .vitals-note {
+  padding: 0 14px 8px;
+  margin-top: 0;
+}

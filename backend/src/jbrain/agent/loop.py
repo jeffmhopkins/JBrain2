@@ -39,6 +39,7 @@ from jbrain.agent.contracts import (
     ViewPayload,
     WebSource,
 )
+from jbrain.agent.prompt_capture import record_prompt
 from jbrain.agent.reflexion import (
     MAX_RETRIES,
     PASS_SCORE,
@@ -487,6 +488,24 @@ def _buffered_critique_worthy(turn: "_BufferedTurn") -> bool:
         mutated=turn.mutated,
         touched_sensitive=_touched_sensitive(turn.sources, turn.entities),
     )
+
+
+def _prompt_message(message: LlmMessage) -> dict[str, Any]:
+    """One conversation message as plain {role, content}, for the prompt capture.
+
+    The typed messages carry their text in different places — a tool-result message
+    holds a sequence of results — so this flattens them into what a reader wants to
+    see, which is the text the model was given."""
+    if isinstance(message, UserMessage):
+        return {"role": "user", "content": message.text}
+    if isinstance(message, AssistantMessage):
+        calls = "".join(f"\n[tool call] {c.name}" for c in message.tool_calls)
+        return {"role": "assistant", "content": f"{message.text}{calls}"}
+    joined = "\n\n".join(
+        f"[{'error' if r.is_error else 'result'} {r.tool_call_id}]\n{r.content}"
+        for r in message.results
+    )
+    return {"role": "tool", "content": joined}
 
 
 class AgentLoop:
@@ -995,6 +1014,17 @@ class AgentLoop:
             # Start the clock now so the first tick waits a full interval — a step that
             # finishes fast just rides its exact end-of-step UsageEvent, no estimate noise.
             last_meter = time.monotonic()
+            # Keep what is about to be sent, so the vitals detail can show the prompt
+            # the model actually received rather than saying it was never recorded.
+            # In-process and bounded (agent/prompt_capture.py) — an assembled prompt is
+            # a verbatim copy of everything the turn retrieved, so it is deliberately
+            # not written to a table that backups would then carry.
+            record_prompt(
+                run_id,
+                system=system_prompt,
+                messages=[_prompt_message(m) for m in messages],
+                tools=[t.name for t in tools],
+            )
             async for part in self._router.converse_stream(
                 self._task,
                 system=system_prompt,

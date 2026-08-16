@@ -14,13 +14,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  type CapturedPrompt,
   type LiveTurn,
   type LiveTurns,
   type TurnDetail as TurnDetailPayload,
   api,
 } from "../api/client";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
-import { type VitalsSample, vitalsHistory } from "../hostVitals";
+import { type VitalsSample, seedVitalsHistory, vitalsHistory } from "../hostVitals";
 import { useForeground } from "../visibility";
 
 /** The windows the mock offers, in seconds. */
@@ -74,6 +75,7 @@ interface VitalsScreenProps {
 
 export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps) {
   const [range, setRange] = useState<RangeKey>("1m");
+  useSeededHistory();
   const roster = useLiveTurns();
   const selected = roster?.turns.find((t) => t.id === selectedTurnId) ?? null;
 
@@ -411,10 +413,6 @@ function TurnDetail({
                 {call.user_message_truncated === true && <span className="vitals-quiet"> …</span>}
               </p>
             </section>
-            <p className="vitals-note">
-              The prompt actually sent to the model is assembled per call and not stored, so it is
-              not shown.
-            </p>
           </>
         )}
 
@@ -466,6 +464,21 @@ function TurnTrailAndOutput({ runId, running }: { runId: string; running: boolea
         </>
       )}
 
+      {detail.prompt != null ? (
+        <PromptCard prompt={detail.prompt} />
+      ) : (
+        <>
+          <div className="vitals-sec-head">Prompt sent</div>
+          <section className="card">
+            <p className="vitals-quiet">
+              Not recorded for this turn. Prompts are kept in the server's memory for the life of
+              the process, so a run from before a restart — or an older one since evicted — has
+              none.
+            </p>
+          </section>
+        </>
+      )}
+
       <div className="vitals-sec-head">
         Raw output
         {output?.live === true && <span className="count live">streaming</span>}
@@ -473,7 +486,9 @@ function TurnTrailAndOutput({ runId, running }: { runId: string; running: boolea
       <section className="card vitals-raw">
         {empty ? (
           <p className="vitals-raw-empty">
-            no output yet — the turn is running, but the model has not returned a first token
+            {running
+              ? "not visible yet — this turn has no live handle, so its output appears once it settles"
+              : "this turn produced no output"}
           </p>
         ) : (
           <pre>
@@ -502,6 +517,66 @@ function TurnTrailAndOutput({ runId, running }: { runId: string; running: boolea
   );
 }
 
+/** The assembled prompt the model actually received. Collapsed by default: it is the
+ *  largest thing on the screen and is wanted only when a turn is behaving oddly. */
+function PromptCard({ prompt }: { prompt: CapturedPrompt }) {
+  const [open, setOpen] = useState(false);
+  const total = prompt.system_chars + prompt.message_chars;
+
+  return (
+    <>
+      <div className="vitals-sec-head">
+        Prompt sent <span className="count">round {prompt.round_index}</span>
+      </div>
+      <section className="card vitals-prompt">
+        <button
+          type="button"
+          className="vitals-prompt-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span>
+            {open ? "Hide" : "Show"} the {formatChars(total)} actually sent
+          </span>
+          <span className="vitals-prompt-meta">
+            {prompt.messages.length} messages · {prompt.tools.length} tools
+          </span>
+        </button>
+        {open && (
+          <>
+            {prompt.truncated && (
+              <p className="vitals-note">
+                Clipped for display — the turn sent {formatChars(total)}, of which the head is
+                shown.
+              </p>
+            )}
+            <p className="vitals-note">
+              Verbatim, as the model received it. Held in memory only, so it does not survive a
+              restart.
+            </p>
+            <pre>
+              <span className="marker">» system</span>
+              {`\n${prompt.system}\n\n`}
+              {prompt.messages.map((m, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: a prompt's messages are an ordered transcript, not a keyed set.
+                <span key={`m-${i}`}>
+                  <span className="marker">{`» ${m.role}`}</span>
+                  {`\n${m.content}\n\n`}
+                </span>
+              ))}
+            </pre>
+          </>
+        )}
+      </section>
+    </>
+  );
+}
+
+export function formatChars(n: number): string {
+  if (n < 1000) return `${n} chars`;
+  return `${Math.round(n / 1000).toLocaleString("en-US")}k chars`;
+}
+
 /** The per-turn detail, refetched while the turn is still running. */
 function useTurnDetail(runId: string, running: boolean): TurnDetailPayload | null {
   const foreground = useForeground();
@@ -520,11 +595,14 @@ function useTurnDetail(runId: string, running: boolean): TurnDetailPayload | nul
       }
     };
     void load();
-    if (!running) return;
-    const timer = setInterval(() => void load(), DETAIL_POLL_MS);
+    // A settled turn's output cannot change, so it is fetched once — but the cleanup
+    // still has to run. Returning early left `cancelled` unset, so tapping a child row
+    // (which changes runId WITHOUT unmounting) could let the previous turn's in-flight
+    // response resolve last and render under the new turn's header.
+    const timer = running ? setInterval(() => void load(), DETAIL_POLL_MS) : null;
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer !== null) clearInterval(timer);
     };
   }, [runId, running, foreground]);
 
@@ -541,6 +619,25 @@ function Field({ k, v, mono = false }: { k: string; v: string; mono?: boolean })
 }
 
 // ---- data + helpers -------------------------------------------------------
+
+/** Pull the server's recorded GPU history into the shared ring, once, when the surface
+ *  opens — so the graph has a past on a device that has only just loaded the app. */
+function useSeededHistory(): void {
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const samples = await api.opsVitalsHistory(900);
+        if (!cancelled) seedVitalsHistory(samples);
+      } catch {
+        // No history is survivable — the graph fills from the live stream as before.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+}
 
 /** The roster, refetched while the surface is open and the app is in the foreground. */
 function useLiveTurns(): LiveTurns | null {
