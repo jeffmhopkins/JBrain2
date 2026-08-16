@@ -128,6 +128,7 @@ from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
 from jbrain.gmail import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
+from jbrain.htmlrender import HtmlRenderClient
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
 from jbrain.image_gen.liveness import ImageGenLiveness
@@ -495,6 +496,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # app.state so the ingest cross-validation, the jerv `ocr` tool, and the jcode `ocr`
         # bridge all reach the one pinned instance. Empty url ⇒ degrade to VLM-only OCR.
         app.state.rapidocr = RapidOcrClient(settings.rapidocr_url)
+        # The HTML -> PNG renderer (docs/plans/AGENT_CANVAS_PLAN.md §3b): shared on
+        # app.state so the canvas `html` op — and any later tool wanting a flowchart,
+        # table, or report card — reaches the one pinned, egress-free instance rather
+        # than shipping model-authored markup to the PWA. Empty url ⇒ the html lane
+        # reports unavailable and the shape ops keep working.
+        app.state.htmlrender = HtmlRenderClient(settings.htmlrender_url)
         # A YouTube URL through web_fetch reads as a lightweight title+channel+description+
         # captions view (jbrain.web.youtube) — no media download or GPU, unlike analyze_video.
         # Bound to the tested yt-dlp resolver + caption fetcher; the blocking resolve runs off

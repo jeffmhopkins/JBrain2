@@ -84,13 +84,38 @@ def sniff_image_media_type(data: bytes) -> str | None:
     return None
 
 
+# EXIF orientation values that transpose the axes (a 90°/270° rotation, with or
+# without a mirror). 1-4 are identity/flips, which leave width and height alone.
+_EXIF_ORIENTATION = 0x0112
+_TRANSPOSING_ORIENTATIONS = frozenset({5, 6, 7, 8})
+
+
 def image_dimensions(data: bytes) -> tuple[int, int]:
-    """(width, height) read from the image HEADER — no full decode, so a decompression
-    bomb is rejected on its declared size, not by allocating it. Raises UndecodableImage
-    for non-image bytes and ImageTooLarge past the pixel cap."""
+    """(width, height) AS DISPLAYED, read from the image HEADER — no full decode, so a
+    decompression bomb is rejected on its declared size, not by allocating it. Raises
+    UndecodableImage for non-image bytes and ImageTooLarge past the pixel cap.
+
+    EXIF orientation is honoured, which matters beyond tidiness: `downscale_for_vision`
+    calls `exif_transpose` before handing an image to a vision model, so a portrait
+    phone photo reaches the model rotated. Reporting the raw header dimensions here
+    would mean grounding coordinates get mapped against axes the model never saw, and
+    every box lands transposed 90° (AGENT_CANVAS_PLAN §5.2). Browsers honour EXIF too,
+    so the swapped dimensions are also what the chat card actually renders.
+
+    The tag is read from the header rather than by calling `exif_transpose`, which
+    would full-decode and defeat the bomb guard above. Swapping axes cannot change the
+    pixel area, so the cap check is unaffected by the order."""
     try:
         with Image.open(io.BytesIO(data)) as img:
             width, height = int(img.width), int(img.height)
+            try:
+                orientation = img.getexif().get(_EXIF_ORIENTATION)
+            except Exception:  # noqa: BLE001 - malformed EXIF is not a broken image
+                orientation = None
+        if orientation in _TRANSPOSING_ORIENTATIONS:
+            width, height = height, width
+    except UndecodableImage:
+        raise
     except Exception as exc:  # noqa: BLE001 - any PIL failure means "not a usable image"
         raise UndecodableImage("that wasn't a readable image") from exc
     if width <= 0 or height <= 0:

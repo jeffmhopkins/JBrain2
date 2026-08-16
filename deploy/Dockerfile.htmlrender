@@ -1,0 +1,32 @@
+# The `htmlrender` sidecar: HTML + CSS in, PNG out — the box's general-purpose
+# "render something visual to an image" service (docs/plans/AGENT_CANVAS_PLAN.md §3b).
+# The canvas tools are its first caller, not its owner: any future tool that wants a
+# flowchart, a table, or a report card renders through here rather than shipping
+# model-authored markup to the PWA, which DESIGN.md's closed view registry forbids.
+#
+# Internal-only AND egress-free: compose puts it on a network declared `internal: true`,
+# so the container has no route off the box. It never receives owner images — callers
+# render a transparent overlay and composite it themselves, inside the firewall.
+#
+# The official Playwright image is used rather than `pip install playwright` on slim
+# because Chromium's runtime library set (~80 apt packages) is exactly what that image
+# exists to pin; assembling it by hand is how a browser sidecar silently rots.
+FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
+
+# Only Chromium is needed; the base image ships all three engines, so drop the other
+# two to claw back ~500 MB on a box that is already holding 30 GB of model weights.
+RUN rm -rf /ms-playwright/firefox-* /ms-playwright/webkit-* || true
+
+RUN pip install --no-cache-dir \
+      "fastapi==0.115.6" \
+      "uvicorn==0.34.0"
+
+WORKDIR /app
+COPY deploy/htmlrender/server.py ./server.py
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
