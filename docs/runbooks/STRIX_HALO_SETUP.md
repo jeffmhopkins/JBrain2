@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-16
+> **Status:** Living · **Last verified:** 2026-08-17
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -173,8 +173,12 @@ backstop for the rest.
 
 **The interactive model is kept resident AND primed across restarts (`jbrain.llm.warm_keeper`).**
 The slow bit of a first chat turn isn't the weight-load — it's the **prompt prefill**: the
-model reading the whole persona + tool schemas before it emits token one (tens of seconds on
-a 120B). The gateway runs `--cache-reuse`, so a turn can reuse a matching leading prefix
+model reading the whole persona + tool schemas before it emits token one. **Measured
+2026-08-17 on gpt-oss-120b: 56s for jerv's 22,704-token prefix, ~416 tok/s prompt
+processing** (three cold runs within 0.6s of each other; a warm `--cache-reuse` hit on the
+same payload returns in ~1.0s, and a 280-token control in 1.5s, so ~54.6s of that is the
+tool block itself). That 55s gap is what everything below exists to keep off the owner's
+first message. The gateway runs `--cache-reuse`, so a turn can reuse a matching leading prefix
 instead of re-prefilling it — but only if that prefix was primed first, and nothing did that
 after a restart (residency's restore only undoes *same-process* evictions; its keep-hot set is
 empty on a fresh boot, and an on-demand load is bare). The **WarmKeeper** fills the gap: a

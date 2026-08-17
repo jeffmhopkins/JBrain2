@@ -408,5 +408,32 @@
   "#3/#4 asked the model to plot data it did not have \u2014 a gather step first was correct.",
   "#9 said 'here', making a current_location read a legitimate first step.",
   "Pattern: when a probe contains a deictic ('here', 'my', 'that'), the resolving tool is a valid answer and must be in `expect`. Three of sixteen cases had this bug on first writing."
- ]
+ ],
+ "prefill_timing_2026_08_17": {
+  "method": "/api/debug/tool-probe, max_tokens=1, 44-tool payload. A UNIQUE `system` string per call defeats --cache-reuse (it matches on leading prefix), giving a genuine cold prefill; repeating one system string gives the warm case.",
+  "cold_runs_s": [
+   55.82,
+   56.12,
+   56.42
+  ],
+  "warm_runs_s": [
+   1.28,
+   0.87
+  ],
+  "tiny_control_280_tokens_s": [
+   1.52,
+   1.52
+  ],
+  "prefill_cost_s": 54.6,
+  "prompt_processing_tok_per_s": 416,
+  "input_tokens": 22704,
+  "kv_for_prefix_gb": 0.78,
+  "disk_restore_estimate_s": {
+   "1 GB/s": 0.78,
+   "2 GB/s": 0.39,
+   "3.5 GB/s": 0.22,
+   "5 GB/s": 0.16
+  },
+  "note": "Disk-restore figures are CALCULATED from the catalog's kv_gb_per_128k=4.5 and assumed NVMe bandwidth \u2014 not measured. The 56s prefill IS measured. WarmKeeper already pays this cost in the background, so the owner-visible win is the ~55s race window after each boot/update/gateway restart, not steady-state latency."
+ }
 }
