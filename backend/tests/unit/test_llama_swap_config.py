@@ -89,7 +89,7 @@ def test_render_clamps_a_speculative_model_to_one_slot(tmp_path: Path) -> None:
     _lay_down(tmp_path)
     manifest = [dict(m) for m in _manifest()]
     manifest[0]["extra_server_args"] = ("--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
-    text = llama_swap_config.render(manifest, str(tmp_path), slots={manifest[0]["id"]: 2})
+    text = llama_swap_config.render(manifest, str(tmp_path), slots={"qwen3-vl-30b": 2})
     speculative_block = text.split("  gpt-oss-120b:")[0]
     assert "-np 1" in speculative_block and "-np 2" not in speculative_block
     assert "-c 32768" in speculative_block  # NOT 65536 — the override never applied
