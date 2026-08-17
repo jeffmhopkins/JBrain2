@@ -1,6 +1,6 @@
 ---
 name: deepest_research
-version: 1
+version: 2
 permission: web
 cost_class: expensive
 params:
@@ -31,6 +31,17 @@ once. Progress ticks and the finished report arrive asynchronously in THIS chat 
 wait on it or call it again. Only one deepest run may be in flight at a time; if one is
 already going, this reports that rather than starting a second.
 
-For anything a bounded run can handle, use `deep_research` (or `deep_research` with
-`mode: deepest` for a heavier in-turn run) instead — this is the escalation for the rare
-question that truly earns an hour of research.
+Pick the rung by how long the owner should wait, not by how interesting the question is:
+
+- `deep_research` (standard) — the default. One gather pass, one gap round. Minutes, in-turn.
+  Use it unless you can name a specific reason it won't cover the question.
+- `deep_research` with `mode: deepest` — same turn, but the gap round keeps looping until the
+  findings stop changing. Use it when the question has MANY separable angles (roughly six or
+  more) or the first pass would obviously leave gaps. Still in-turn: the owner waits.
+- `deepest_research` (this tool) — background, up to three hours, two agent tiers. Use it ONLY
+  when the question is one the owner is willing to walk away from and read later, and when
+  even a looping in-turn run would plainly run short. If they are waiting on the answer in
+  this conversation, it is the wrong rung — an ack is all they get back now.
+
+When it's a close call between the last two, take the in-turn one: a heavier `deep_research`
+that answers now beats a background run the owner has to come back for.

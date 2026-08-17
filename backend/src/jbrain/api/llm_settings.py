@@ -8,6 +8,7 @@ implicit pre-P7; the store's RLS enforces it regardless.
 """
 
 import contextlib
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -620,7 +621,12 @@ def _require_uninstallable(settings: Settings, model_id: str) -> local_catalog.L
     return model
 
 
-def _try_regenerate(settings: Settings, windows: dict[str, int], slots: dict[str, int]) -> None:
+def _try_regenerate(
+    settings: Settings,
+    windows: dict[str, int],
+    slots: dict[str, int],
+    extra: dict[str, list[str]] | None = None,
+) -> None:
     """Re-stamp llama-swap.yaml with the current per-model windows AND slot counts so the
     gateway (run with --watch-config) reloads at the configured `-c`/`-np`. Every model is a
     non-swapping group member regardless of staging (the app is the sole evictor), so this is
@@ -629,7 +635,9 @@ def _try_regenerate(settings: Settings, windows: dict[str, int], slots: dict[str
     regen failure only delays the gateway catching up, it must never fail the edit."""
     try:
         manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
-        llama_swap_config.write(settings.local_models_dir, manifest, windows=windows, slots=slots)
+        llama_swap_config.write(
+            settings.local_models_dir, manifest, windows=windows, slots=slots, extra_args=extra
+        )
     except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
         log.warning("llm_settings.gateway_config_regen_failed", error=str(exc))
 
@@ -852,15 +860,32 @@ async def set_local_context_window(
     Persists the override (so the meter updates at once), re-stamps the gateway
     config, and unloads the model if resident so its next request reloads at the
     new `-c` — a running process can't resize its KV cache live."""
+    return await set_local_context_window_value(
+        model_id, body.context_window, settings, store, ctx_for(principal), gateway
+    )
+
+
+async def set_local_context_window_value(
+    model_id: str,
+    window: int | None,
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+) -> LlmSettingsOut:
+    """The window edit itself, shared by the owner screen and the debug console — so the two
+    surfaces cannot drift on validation, regeneration or eviction."""
     model = _require_provisioned(settings, model_id)
     ceiling = model.max_context_window
-    if body.context_window is not None and not (1 <= body.context_window <= ceiling):
+    if window is not None and not (1 <= window <= ceiling):
         raise HTTPException(status_code=422, detail=f"context window must be 1..{ceiling}")
-    ctx = ctx_for(principal)
-    windows = await store.set_llm_local_context_window(
-        ctx, model_id=model_id, window=body.context_window
+    windows = await store.set_llm_local_context_window(ctx, model_id=model_id, window=window)
+    _try_regenerate(
+        settings,
+        windows,
+        await store.llm_local_parallel_slots(ctx),
+        await store.llm_local_extra_args(ctx),
     )
-    _try_regenerate(settings, windows, await store.llm_local_parallel_slots(ctx))
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1227,6 +1252,154 @@ async def gateway_unload(
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway unload failed: {exc}") from exc
     return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)
+
+
+# The llama-server flags an operator may set remotely. An ALLOWLIST, not a filter: llama-server
+# REFUSES TO START on an unknown flag, and the flag lands in that model's launch command, so an
+# unrestricted argv would let one API call make a model permanently unloadable — on a box with no
+# terminal to fix it from. Each entry is a flag we have a reason to want to try live:
+#   --swa-full        keep full history on sliding-window layers (a precondition for KV-slot
+#                     restore doing anything on gpt-oss; roughly doubles that model's KV)
+#   --slot-save-path  where llama-server reads/writes KV-slot state files
+#   -b / -ub          logical / physical prompt batch — the prompt-processing throughput knobs
+#   --spec-type            which speculative-decoding mode to serve with (e.g. draft-mtp)
+#   --spec-draft-n-max     how many tokens a draft proposes per round
+#   --spec-draft-n-min     the floor below which a draft is discarded
+#   --spec-draft-p-min     confidence gate that stops a draft early; llama.cpp's own default is
+#                          0.00 (ungated), so the useful value is one nobody can guess in advance
+# The speculative four are here because their right values are EMPIRICAL and hardware-specific:
+# published Strix Halo numbers disagree on n-max, and p-min's payoff depends on generation
+# length. Without them a single tuning iteration costs a catalog edit, a release and an
+# Ops → Update — which is how a knob ends up never being tuned at all. Turning speculation on
+# also pins the model to one slot, and the config generator derives that from the flags it is
+# about to write (`llama_swap_config._is_speculative`), so an operator flag gets the same clamp
+# a catalog flag does. A bad VALUE here can stop a model loading, same as a bad `-ub`; clearing
+# is the same call with no args and does not require the model to be loadable.
+# Flags taking a value are allowed to carry one; the value itself is NOT interpreted here.
+EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
+    {
+        "--swa-full",
+        "--slot-save-path",
+        "-b",
+        "-ub",
+        "--spec-type",
+        "--spec-draft-n-max",
+        "--spec-draft-n-min",
+        "--spec-draft-p-min",
+    }
+)
+
+
+def _validate_extra_args(args: list[str]) -> list[str]:
+    """Reject anything not on EXTRA_ARG_FLAGS. Values are accepted positionally (a token
+    following a flag that takes one), so `--slot-save-path /tmp/kv/` passes while a bare
+    `/tmp/kv/` or an unknown `--foo` is refused. 422 rather than a silent drop — a caller that
+    thinks it set a flag and did not would misread every measurement that follows."""
+    cleaned: list[str] = []
+    expect_value = False
+    for raw in args:
+        token = raw.strip()
+        if not token:
+            continue
+        if expect_value and not token.startswith("-"):
+            cleaned.append(token)
+            expect_value = False
+            continue
+        if token not in EXTRA_ARG_FLAGS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"flag {token!r} is not settable; allowed: {sorted(EXTRA_ARG_FLAGS)}",
+            )
+        cleaned.append(token)
+        expect_value = token != "--swa-full"  # the only boolean flag on the list
+    return cleaned
+
+
+async def set_local_extra_args(
+    model_id: str,
+    args: list[str],
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+) -> LlmSettingsOut:
+    """Set (or clear, with an empty list) one model's extra llama-server flags, re-stamp the
+    gateway config, and unload the model so its next request relaunches with them.
+
+    Same shape as the context-window and slot setters — persist, regenerate, evict — because a
+    running llama-server cannot change its launch flags any more than it can resize its KV."""
+    model = _require_provisioned(settings, model_id)
+    validated = _validate_extra_args(args)
+    extra = await store.set_llm_local_extra_args(ctx, model_id=model_id, args=validated)
+    _try_regenerate(
+        settings,
+        await store.llm_local_context_windows(ctx),
+        await store.llm_local_parallel_slots(ctx),
+        extra,
+    )
+    await _unload_if_loaded(settings, gateway, model)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+async def gateway_props(
+    model_id: str, settings: Settings, gateway: LocalGatewayClient
+) -> dict[str, object]:
+    """llama-server's `/props` for one model — build identity, real `n_ctx`, slot count."""
+    model = _require_provisioned(settings, model_id)
+    try:
+        return await gateway.props(model.served_model)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway props failed: {exc}") from exc
+
+
+async def gateway_slot_action(
+    model_id: str,
+    slot_id: int,
+    action: str,
+    filename: str | None,
+    settings: Settings,
+    gateway: LocalGatewayClient,
+) -> dict[str, object]:
+    """Save / restore / erase one KV slot. 422 on an unknown action so a typo can't read as a
+    no-op success; 502 when llama-server rejects (including the 501 it returns when the server
+    was started without `--slot-save-path`)."""
+    if action not in ("save", "restore", "erase"):
+        raise HTTPException(status_code=422, detail="action must be save, restore or erase")
+    model = _require_provisioned(settings, model_id)
+    try:
+        return await gateway.slot_action(model.served_model, slot_id, action, filename=filename)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway slot {action} failed: {exc}") from exc
+
+
+async def gateway_prime(
+    model_id: str,
+    settings: Settings,
+    gateway: LocalGatewayClient,
+    *,
+    registry: ToolRegistry | None = None,
+    liveness: HiddenToolsProbe | None = None,
+) -> dict[str, object]:
+    """Prime one model with the real jerv prefix and TIME it — the measurement instrument for
+    prefill experiments. `elapsed_ms` is the number that matters: a cold prefill and a
+    post-restore prefill differ by ~50x, which is the only reliable way to tell whether a KV
+    restore actually took effect (a restore returns 200 either way)."""
+    model = _require_provisioned(settings, model_id)
+    warm_system: str | None = AGENTS["jerv"].prompt
+    warm_tools: list[dict[str, object]] | None = None
+    if registry is not None:
+        warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
+    started = time.monotonic()
+    try:
+        await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway prime failed: {exc}") from exc
+    return {
+        "model": model.served_model,
+        "elapsed_ms": round((time.monotonic() - started) * 1000),
+        "tool_count": len(warm_tools or []),
+        "system_chars": len(warm_system or ""),
+    }
 
 
 @router.put("/settings/llm")

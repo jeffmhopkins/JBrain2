@@ -182,6 +182,36 @@ def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
     assert "-c 131072" not in text
 
 
+def test_render_appends_operator_extra_args_after_the_catalog_flags(tmp_path: Path) -> None:
+    """An operator's remote flag override lands in the model's cmd, AFTER its catalog flags —
+    so it can only add to the launch line, never reorder or displace what the catalog set."""
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(
+        _manifest(),
+        str(tmp_path),
+        extra_args={"gpt-oss-120b": ["--swa-full", "--slot-save-path", "/tmp/kv/"]},
+    )
+    line = next(ln for ln in text.splitlines() if "--swa-full" in ln)
+    assert "--slot-save-path /tmp/kv/" in line
+    # Only the targeted model is affected — a bad flag can never take the whole gateway down.
+    assert sum("--swa-full" in ln for ln in text.splitlines()) == 1
+
+
+def test_main_applies_saved_extra_args_so_an_update_keeps_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deploy re-stamp must carry the saved FLAG overrides too. Without this an
+    Ops → Update silently drops a flag the operator set remotely, and the box comes back
+    behaving differently than the settings say it does."""
+    _lay_down(tmp_path)
+    monkeypatch.setattr(
+        llama_swap_config, "_saved_overrides", lambda: ({}, {}, {"gpt-oss-120b": ["--swa-full"]})
+    )
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    assert "--swa-full" in (tmp_path / "llama-swap.yaml").read_text()
+
+
 def test_main_applies_the_operators_saved_overrides_not_just_catalog_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -190,7 +220,7 @@ def test_main_applies_the_operators_saved_overrides_not_just_catalog_defaults(
     # the operator saw as "ran out of context" at 25%). _saved_overrides reads them from the
     # settings store; here we stand in for that read.
     _lay_down(tmp_path)
-    saved = ({"gpt-oss-120b": 65536}, {})
+    saved = ({"gpt-oss-120b": 65536}, {}, {})
     monkeypatch.setattr(llama_swap_config, "_saved_overrides", lambda: saved)
     monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
     assert llama_swap_config._main([str(tmp_path)]) == 0
@@ -368,3 +398,52 @@ def test_check_cli_prints_the_incomplete_ids(tmp_path: Path, capsys: Any, monkey
     monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
     assert llama_swap_config._main(["--check", str(tmp_path)]) == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+def test_every_model_gets_a_slot_save_path_and_only_swa_models_get_swa_full(
+    tmp_path: Path,
+) -> None:
+    """`--slot-save-path` is unconditional (the named volume guarantees the dir exists, and a
+    missing one would stop llama-server booting), while `--swa-full` is per-model: it is the
+    precondition for a KV restore doing anything on a sliding-window model, and pure cost
+    elsewhere."""
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    cmds = [ln for ln in text.splitlines() if "llama-server" in ln]
+    assert cmds and all("--slot-save-path /kv/" in ln for ln in cmds)
+    # Only the model the catalog flags carries --swa-full.
+    flagged = [ln for ln in cmds if "--swa-full" in ln]
+    assert len(flagged) == sum(1 for m in _manifest() if m.get("kv_full_history"))
+
+
+def test_an_operator_set_spec_flag_gets_the_same_single_slot_clamp(tmp_path: Path) -> None:
+    # Speculation can be turned on two ways: the catalog's static flags, or an operator trying
+    # `--spec-type` live through the extra-args route (no release needed). Both constrain
+    # llama-server to one sequence, so the clamp must read the flags actually going onto the
+    # command line — not just the catalog's. Otherwise a remote experiment would quietly run
+    # multi-slot and measure acceptance that the real serving mode would never produce.
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(
+        _manifest(),
+        str(tmp_path),
+        slots={"gpt-oss-120b": 2},
+        extra_args={"gpt-oss-120b": ["--spec-type", "draft-mtp"]},
+    )
+    gpt_oss_cmd = next(ln for ln in text.splitlines() if "/gpt-oss-120b/" in ln)
+    assert "--spec-type draft-mtp" in gpt_oss_cmd
+    assert "-np 1" in gpt_oss_cmd and "-np 2" not in gpt_oss_cmd
+    assert "-c 131072" in gpt_oss_cmd  # the window is NOT doubled for a slot never allocated
+
+
+def test_operator_extra_args_land_after_the_catalog_flags(tmp_path: Path) -> None:
+    # Order matters: llama-server takes the LAST occurrence of a repeated flag, so appending the
+    # operator's args after the catalog's is what lets a live experiment override a catalog
+    # value (raising the MTP entry's pinned --spec-draft-n-max without a release).
+    _lay_down(tmp_path)
+    manifest = [dict(m) for m in _manifest()]
+    manifest[1]["extra_server_args"] = ("--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
+    text = llama_swap_config.render(
+        manifest, str(tmp_path), extra_args={"gpt-oss-120b": ["--spec-draft-n-max", "5"]}
+    )
+    cmd = next(ln for ln in text.splitlines() if "/gpt-oss-120b/" in ln)
+    assert cmd.index("--spec-draft-n-max 3") < cmd.index("--spec-draft-n-max 5")

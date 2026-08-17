@@ -23,7 +23,7 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -983,72 +983,6 @@ async def gateway_logs(
     return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
 
 
-class GatewayPropsOut(BaseModel):
-    """The serving facts llama-server only ever prints in its startup banner."""
-
-    served_model: str
-    # The llama.cpp build actually running. The gateway floats on a rolling tag, so this
-    # is how an operator with no terminal tells which build a measurement came from.
-    build_info: str | None
-    # What `-np` resolved to. `-np auto` picks a multi-slot default on current builds,
-    # which silently defeats a single-slot serving mode (MTP) — this is the check.
-    total_slots: int | None
-    n_ctx: int | None
-    n_batch: int | None
-    n_ubatch: int | None
-    modalities: dict[str, Any]
-    # The template is tens of KB and would swamp the response; its size is the useful
-    # signal (present at all / changed across a build), so report the length only.
-    chat_template_chars: int
-    # Everything else verbatim, minus the template, so a new llama.cpp field is readable
-    # here the day it lands without a code change.
-    props: dict[str, Any]
-
-
-@router.get("/llm/gateway-props/{served_model}")
-async def gateway_props(served_model: str, request: Request, _p: DebugDep) -> GatewayPropsOut:
-    """Read llama-server's `/props` for one LOADED model through the gateway.
-
-    Answers what `/llm/gateway-logs` structurally cannot: llama-server prints its build,
-    the context it allocated, its batch sizes, and the slot count `-np auto` resolved to
-    exactly once, at startup — and that banner is neither forwarded by llama-swap nor
-    retained in its ring buffer once the access log fills it. Without this an operator who
-    cannot open a shell (CLAUDE.md #10) has no way to confirm which build served a
-    measurement, or whether a serving flag took effect. 502 when the model isn't loaded or
-    the gateway is unreachable."""
-    request.state.debug_detail = served_model
-    try:
-        raw = await _gateway(request).props(served_model)
-    except LocalGatewayError as exc:
-        raise HTTPException(status_code=502, detail=f"gateway props unavailable: {exc}") from exc
-    rest = {k: v for k, v in raw.items() if k != "chat_template"}
-    # llama-server nests the served context/batch sizes under the generation defaults; a
-    # build that moves or drops one leaves the field None rather than failing the read.
-    gen = raw.get("default_generation_settings")
-    gen = gen if isinstance(gen, dict) else {}
-    return GatewayPropsOut(
-        served_model=served_model,
-        build_info=_opt_str(raw.get("build_info")),
-        total_slots=_opt_int(raw.get("total_slots")),
-        n_ctx=_opt_int(gen.get("n_ctx") if "n_ctx" in gen else raw.get("n_ctx")),
-        n_batch=_opt_int(gen.get("n_batch") if "n_batch" in gen else raw.get("n_batch")),
-        n_ubatch=_opt_int(gen.get("n_ubatch") if "n_ubatch" in gen else raw.get("n_ubatch")),
-        modalities=raw.get("modalities") if isinstance(raw.get("modalities"), dict) else {},
-        chat_template_chars=len(str(raw.get("chat_template") or "")),
-        props=rest,
-    )
-
-
-def _opt_int(value: object) -> int | None:
-    """An int when the gateway gave one, else None — a build that renames or drops a field
-    leaves a gap in the report instead of 500-ing the whole read."""
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _opt_str(value: object) -> str | None:
-    return value if isinstance(value, str) else None
-
-
 @router.get("/client-vitals")
 async def client_vitals(request: Request, _p: DebugDep) -> dict[str, object]:
     """The browser's own account of the top-bar vitals stream, as last reported.
@@ -1239,3 +1173,111 @@ async def unload_model(
 ) -> LoadedModelsOut:
     request.state.debug_detail = model_id
     return await llm_settings.gateway_unload(model_id, settings, _gateway(request))
+
+
+# --- Launch-flag experiments (remote, no terminal) ---------------------------------
+# The owner runs this box remotely and cannot edit a catalog entry or a compose file
+# (CLAUDE.md #10). These four endpoints exist so a llama-server LAUNCH FLAG can be tried,
+# measured, and reverted entirely over the debug API — the loop that previously needed a
+# code change, a release, and an Ops → Update per iteration.
+
+
+class ExtraArgsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Empty/None clears the override — the recovery path when a flag broke the launch, and
+    # the reason this is a settable list rather than a boolean per experiment.
+    args: list[str] = Field(default_factory=list)
+
+
+@router.put("/llm/local-models/{model_id}/extra-args")
+async def set_extra_args(
+    model_id: str, body: ExtraArgsIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> LlmSettingsOut:
+    """Set (or clear) EXTRA llama-server flags for one model, then re-stamp the gateway config
+    and unload it so the next request relaunches with them.
+
+    Only flags on `llm_settings.EXTRA_ARG_FLAGS` are accepted. That allowlist is the whole
+    safety story: llama-server REFUSES TO START on an unknown flag, so an unrestricted argv
+    here would let one call make a model permanently unloadable. Scoped per model, so a bad
+    value can only affect the model it was set on, and clearing it is the same call with an
+    empty list."""
+    request.state.debug_detail = f"{model_id}: {' '.join(body.args) or '(clear)'}"
+    return await llm_settings.set_local_extra_args(
+        model_id, body.args, settings, _store(request), _OWNER_CTX, _gateway(request)
+    )
+
+
+class ContextWindowIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # null clears the override back to the model's catalog default.
+    context_window: int | None = None
+
+
+@router.put("/llm/local-models/{model_id}/context-window")
+async def set_context_window(
+    model_id: str, body: ContextWindowIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> LlmSettingsOut:
+    """Set one model's served context window (llama-server `-c`), the PWA control mirrored here.
+
+    It belongs on this surface because window and KV are the same decision: `--swa-full` doubles
+    a model's KV, and halving the window pays for it exactly. Without this an assistant can turn
+    the flag on remotely but not the knob that makes it affordable."""
+    request.state.debug_detail = f"{model_id}: {body.context_window}"
+    return await llm_settings.set_local_context_window_value(
+        model_id, body.context_window, settings, _store(request), _OWNER_CTX, _gateway(request)
+    )
+
+
+@router.get("/llm/local-models/{model_id}/props")
+async def model_props(
+    model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """llama-server's `/props` for one model: `build_info` (the only build identity available
+    over HTTP — and this box rebuilds llama.cpp on master by default, so it changes), the real
+    `n_ctx`, and `total_slots`. Loads the model on demand if it isn't resident."""
+    request.state.debug_detail = model_id
+    return await llm_settings.gateway_props(model_id, settings, _gateway(request))
+
+
+@router.post("/llm/local-models/{model_id}/slots/{slot_id}")
+async def slot_action(
+    model_id: str,
+    slot_id: int,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    action: str,
+    filename: str | None = None,
+) -> dict[str, object]:
+    """Save / restore / erase one KV slot (`action=save|restore|erase`).
+
+    Read the caveat on `LocalGatewayClient.slot_action` before trusting a 200: on a
+    sliding-window model a restore can succeed and then be discarded, and only the gateway log
+    (`GET /logs/local-llm`) says so. Pair every restore with `POST …/prime` and compare the
+    elapsed time against a known-cold prefill — that is the measurement that settles it."""
+    request.state.debug_detail = f"{model_id} slot {slot_id} {action}"
+    return await llm_settings.gateway_slot_action(
+        model_id, slot_id, action, filename, settings, _gateway(request)
+    )
+
+
+@router.post("/llm/local-models/{model_id}/prime")
+async def prime_model(
+    model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """Run the REAL jerv prime against one model and time it — the instrument for every
+    prefill experiment. Returns `elapsed_ms`, `input_tokens` and the tool count, so a cold
+    prefill and a post-restore prefill are comparable numbers rather than a stopwatch guess.
+
+    It primes through the same path `WarmKeeper` uses, so what it measures is what a real turn
+    would pay, not a hand-built approximation that would drift from it."""
+    request.state.debug_detail = model_id
+    return await llm_settings.gateway_prime(
+        model_id,
+        settings,
+        _gateway(request),
+        registry=getattr(request.app.state, "agent_registry", None),
+        liveness=getattr(request.app.state, "image_liveness", None),
+    )

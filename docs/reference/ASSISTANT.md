@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-08-15
+> **Status:** Living · **Last verified:** 2026-08-17
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -426,7 +426,11 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   shared SSRF-guarded `WebFetcher` and returning each hit with a STATIC, citable detail URL
   (a `WebSource` that folds into deep-research's `[^n]` registry). It dispatches to a pinned
   per-portal resolver under `jbrain.web.portals` by `(jurisdiction, kind)` (or an explicit
-  `key`); v1 ships **`fl_business`** (FL Sunbiz corporation search, `JBRAIN_SUNBIZ_URL`).
+  `key`); the shipped adapters are **`fl_business`** (FL Sunbiz corporation search,
+  `JBRAIN_SUNBIZ_URL`) and **`fl_license`** (FL DFS licensee lookup). Those pairs are named
+  in the tool's own `jurisdiction` description, so the model can pick one without first
+  making a discovery call — the runtime "available pairs" steering message only ever
+  appeared *after* a call that omitted them, which is too late to be guidance.
   It **complements** `public_records`: that fans the NATIONAL keyless registries, while
   `portal_search` reaches a specific STATE portal's own search — so use `portal_search` for a
   state business registry or state license lookup, `public_records` for the national ones.
@@ -617,6 +621,23 @@ agent that explicitly allowlists it (`jerv`). The allowlist is enforced **at
 dispatch**, not just visibility: a tool the agent wasn't granted is refused even if
 the model names it (a slip or an injection), so the boundary is structural, not a
 prompt suggestion.
+
+**An allowlist is also a prompt, so it must not carry dead entries.** Every name in a
+persona's allowlist spends context on that persona's every turn, and the model reads it as
+an offer. Two rules follow. (1) *A tool whose every call from this persona would refuse
+does not belong in its allowlist.* `decompose_research` is the case that motivated the rule:
+it is a task-agent affordance that refuses at depth 0, and it sat in `JERV_TOOLS` purely so
+the parent⊆child clamp could pass it down. It now lives in `DEEPEST_RUN_TOOLS`
+(`JERV_TOOLS | {decompose_research}`) — the ceiling `build_deepest_run_context` seeds — which
+is the only path that ever spawns the `research_deep` agent that calls it, so the clamp still
+works and no interactive turn is offered a guaranteed refusal. (2) *A tool's prose may only
+steer to tools its holders actually hold.* `render_bars` and `render_chart` are one grant, not
+two: bars' own description sends the model to `render_chart` for a time series, so granting
+one without the other pointed jerv at a tool it could not call and left it with no way to plot
+a trend. Both plot only numbers the model passes (their handlers never touch the session), so
+both are safe for a KB-blind persona; the GROUNDED `chart_measurements` stays out. Where prose
+must mention a tool a reader may not hold, it is phrased conditionally ("if it is in your tool
+list") rather than as a bare cross-reference.
 
 **The web exception to #9, and why it's bounded.** `jerv`'s `web_search`/`web_fetch`
 run **directly**, not as staged egress Proposals — the deliberate, owner-approved

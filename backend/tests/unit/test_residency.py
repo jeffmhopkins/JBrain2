@@ -10,7 +10,7 @@ from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
 from tests.unit.fakes import FakeLocalGateway
 
 # Footprints at default windows (weights + KV) used by these tests, from the catalog:
-#   gpt-oss-120b        = 59.0 + 4.5            = 63.5
+#   gpt-oss-120b        = 59.0 + 4.5*2          = 68.0  (kv_full_history: --swa-full)
 #   qwen3-vl-30b-a3b    = 32.0 + 6.0*32768/128k = 33.5
 #   qwen3-coder-next    = 49.6 + 5.0*262144/128k = 59.6
 #   qwen3.5-4b          =  4.3 + 1.2*32768/128k =  4.6
@@ -27,6 +27,7 @@ def _coord(
     fraction_loader: object = None,
     hold_loader: object = None,
     slots_loader: object = None,
+    on_prefix_lost: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -39,6 +40,7 @@ def _coord(
         fraction_loader=fraction_loader,  # type: ignore[arg-type]
         hold_loader=hold_loader,  # type: ignore[arg-type]
         slots_loader=slots_loader,  # type: ignore[arg-type]
+        on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
     )
 
 
@@ -49,7 +51,7 @@ def _coord(
 async def test_ensure_room_evicts_the_big_model_and_keeps_the_tiny_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # gpt-oss (63.5) + the tiny model resident, used=66; loading the coder (59.6) would blow
+    # gpt-oss (68.0) + the tiny model resident, used=66; loading the coder (59.6) would blow
     # the 25% floor (ceiling 96 of 128). Evict the FEWEST to fit: drop gpt-oss alone (frees
     # enough), keep the tiny model — never evict the tiny one when a big one suffices.
     gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.5-0.8b"})
@@ -176,7 +178,7 @@ async def test_hold_skips_the_opportunistic_restore(monkeypatch: pytest.MonkeyPa
 async def test_fraction_loader_override_lowers_the_floor_and_co_resides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # gpt-oss (63.5) resident; loading qwen3-vl (33.5) → used 97. At the 0.25 config default
+    # gpt-oss (68.0) resident; loading qwen3-vl (33.5) → used 97. At the 0.25 config default
     # the ceiling is 96, so it would evict gpt-oss — but the operator's live 0.15 override
     # (ceiling 108.8) lets the two co-reside. This is exactly the "adjust the floor instead of
     # a lower quant" case the settings card enables.
@@ -305,7 +307,7 @@ def test_note_evicted_is_a_noop_when_disabled() -> None:
 async def test_plan_load_reports_the_eviction_without_touching_the_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # gpt-oss (63.5) resident, used=90; loading the coder (59.6) would blow the 96 ceiling —
+    # gpt-oss (68.0) resident, used=90; loading the coder (59.6) would blow the 96 ceiling —
     # the plan says evict gpt-oss, projects the landing point, and unloads NOTHING.
     gw = FakeLocalGateway(running={"gpt-oss-120b"})
     coord = _coord(gw, monkeypatch, total=128.0, used=90.0)
@@ -314,7 +316,7 @@ async def test_plan_load_reports_the_eviction_without_touching_the_box(
     assert plan.victims == ("gpt-oss-120b",)
     assert plan.fits is False and plan.over is False and plan.already_resident is False
     assert plan.resident_gb == 90.0
-    assert round(plan.projected_gb, 1) == round(90.0 - 63.5 + 59.6, 1)  # 86.1
+    assert round(plan.projected_gb, 1) == round(90.0 - 68.0 + 59.6, 1)  # 81.6
     assert plan.ceiling_gb == 96.0
     assert gw.unloaded == []  # dry-run — nothing evicted
 
@@ -323,19 +325,20 @@ async def test_plan_load_reports_the_eviction_without_touching_the_box(
 async def test_a_second_slot_doubles_the_kv_in_the_eviction_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A dedicated interactive slot doubles gpt-oss's KV (its footprint jumps from 63.5 to 68.0).
+    # A dedicated interactive slot doubles gpt-oss's KV again (68.0 -> 77.0: 59 weights plus
+    # two slots of full-history KV).
     # Sized so the single-slot load fits under the 96 ceiling but the two-slot load does NOT —
     # proving the doubled KV reaches the eviction budget (else the operator's opt-in would
-    # silently overcommit the box).
+    # silently overcommit the box). used=25: 25+68.0=93 fits, 25+77.0=102 does not.
     async def two_slots() -> dict[str, int]:
         return {"gpt-oss-120b": 2}
 
     gw = FakeLocalGateway(running={"qwen3.5-4b"})  # a tiny model resident, evictable
     # Single slot (default loader): fits, no eviction.
-    fits = await _coord(gw, monkeypatch, total=128.0, used=30.0).plan_load("gpt-oss-120b")
+    fits = await _coord(gw, monkeypatch, total=128.0, used=25.0).plan_load("gpt-oss-120b")
     assert fits is not None and fits.victims == () and fits.fits is True
-    # Two slots: the extra 4.5 GB KV tips it over the ceiling → must evict the tiny model.
-    over = await _coord(gw, monkeypatch, total=128.0, used=30.0, slots_loader=two_slots).plan_load(
+    # Two slots: the extra 9.0 GB KV tips it over the ceiling → must evict the tiny model.
+    over = await _coord(gw, monkeypatch, total=128.0, used=25.0, slots_loader=two_slots).plan_load(
         "gpt-oss-120b"
     )
     assert over is not None and over.victims == ("qwen3.5-4b",)
@@ -694,3 +697,49 @@ async def test_box_lock_degrades_to_unlocked_when_acquire_fails(
     await coord.ensure_room("qwen3-coder-next")
     assert gw.unloaded == ["gpt-oss-120b"]  # still evicted, unlocked
     assert gw.loaded == ["qwen3-coder-next"]  # and still loaded
+
+
+# --- the prefix-lost hook ----------------------------------------------------
+# Residency is the only component that knows a model's primed KV just went away. The keeper
+# cannot infer it: an evict + restore inside one tick interval leaves `running()` unchanged.
+
+
+async def test_note_evicted_reports_the_dropped_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    lost: list[str] = []
+    coord = _coord(FakeLocalGateway(), monkeypatch, total=128, used=10, on_prefix_lost=lost.append)
+    coord.note_evicted(["gpt-oss-120b"])
+    assert lost == ["gpt-oss-120b"]
+
+
+async def test_unknown_served_name_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unrecognised name is not tracked for restore, so it has no prime to invalidate."""
+    lost: list[str] = []
+    coord = _coord(FakeLocalGateway(), monkeypatch, total=128, used=10, on_prefix_lost=lost.append)
+    coord.note_evicted(["not-a-catalog-model"])
+    assert lost == []
+
+
+async def test_a_raising_hook_never_breaks_an_eviction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hook is a notification. A listener that throws must not turn a successful eviction
+    into a failed one — residency's job does not depend on anyone listening."""
+
+    def boom(_served: str) -> None:
+        raise RuntimeError("listener exploded")
+
+    coord = _coord(FakeLocalGateway(), monkeypatch, total=128, used=10, on_prefix_lost=boom)
+    coord.note_evicted(["gpt-oss-120b"])  # must not raise
+    assert "gpt-oss-120b" in coord._displaced
+
+
+async def test_disabled_box_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    lost: list[str] = []
+    coord = _coord(
+        FakeLocalGateway(),
+        monkeypatch,
+        total=128,
+        used=10,
+        enabled=False,
+        on_prefix_lost=lost.append,
+    )
+    coord.note_evicted(["gpt-oss-120b"])
+    assert lost == []

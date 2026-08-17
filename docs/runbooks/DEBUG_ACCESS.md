@@ -50,6 +50,39 @@ PWA (owner) ──mint──▶ capability token  ──hand off──▶  assis
   auth), so it clears on the next turn once the token lapses, is suspended, or is
   revoked. Diagnostics-only: the trace carries no owner text.
 
+## Launch-flag experiments (no terminal)
+
+Four routes exist so a llama-server **launch flag** can be tried, measured and reverted from the
+console, instead of needing a catalog edit, a release and an Ops → Update per iteration:
+
+- `PUT /api/debug/llm/local-models/{id}/extra-args` — set or clear extra flags for one model
+  (re-stamps the gateway config and unloads it, so the next request relaunches with them).
+  Only flags on `llm_settings.EXTRA_ARG_FLAGS` are accepted: llama-server **refuses to start**
+  on an unknown flag, so an unrestricted argv here could make a model permanently unloadable
+  from a box with no shell. Clearing is the same call with `{"args": []}` — and clearing does
+  not need the model to be loadable, so a bad *value* is always recoverable. The list covers
+  `--swa-full`, `--slot-save-path`, `-b`/`-ub`, and the four speculative-decoding knobs
+  (`--spec-type`, `--spec-draft-n-max`, `--spec-draft-n-min`, `--spec-draft-p-min`) — those
+  because their right values are empirical and hardware-specific, so without a live path a
+  single tuning iteration would cost a catalog edit, a release and an Ops → Update. Setting
+  `--spec-type` here also pins the model to one slot: the config generator derives that from
+  the flags it is about to write, so an operator flag gets the same clamp a catalog flag does.
+- `PUT /api/debug/llm/local-models/{id}/context-window` — the served `-c`. On this surface
+  because window and KV are one decision: `--swa-full` doubles a model's KV and halving the
+  window pays for it exactly.
+- `GET /api/debug/llm/local-models/{id}/props` — `build_info` (the only build identity available
+  over HTTP, and this box rebuilds llama.cpp on master by default), real `n_ctx`, `total_slots`.
+- `POST /api/debug/llm/local-models/{id}/slots/{n}?action=save|restore|erase` — llama-server's
+  KV-slot state files. Requires the model to have been launched with `--slot-save-path`.
+- `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
+  `elapsed_ms`, the measurement instrument for any prefill experiment.
+
+> **A 200 from `restore` does not mean the prefill was skipped.** On a sliding-window model
+> (gpt-oss) llama-server can accept a restore and then discard it, logging `forcing full prompt
+> re-processing`. Always pair a restore with `POST …/prime` and compare `elapsed_ms` against a
+> known-cold prefill, and read `GET /api/debug/logs/local-llm`. The timing and the log are the
+> honest signals; the HTTP status is not.
+
 ## Auth model
 
 The token is a `capability_token` **principal** — the third, previously-dormant
@@ -87,7 +120,6 @@ Two gates protect the surface, both fail-closed:
 | `POST /fetch` `tier=tavily` | Force **ONLY the hosted Tavily Extract tier** (`scripts/debug-connect.sh tavily <url>`). A 400 distinguishes *the tier unwired* (no `JBRAIN_TAVILY_URL`) from *disabled / keyless / a genuine miss* (bad key or Tavily error) — so after a deploy the owner can confirm the Tavily key works against a real walled URL with a handed-over token, no PWA needed. Shares the `web.fetch` scope. |
 | `GET /client-vitals` | What the **browser** last reported about the top-bar vitals stream: frames seen, opens, errors, reopen counts, `readyState`, and `sinceLastFrameMs`. The one read that separates *the box never sent a frame* from *the browser never received one* — states that need different fixes and are indistinguishable from the box, because a connection the browser declines to open (its per-origin cap, say) leaves no server-side trace at all. `sinceLastFrameMs` is the number that matters: the route emits one a second, so anything above a few thousand means the meter is blind however healthy the socket claims to be. `{"reported": false}` means nobody has opened the vitals detail since this process started, **not** that the meter is broken. Populated by the PWA beaconing every 15s while that screen is open. |
 | `GET /logs/{service}` | Tail a container's logs, proxied to the supervisor (the single owner of docker access), mirroring the owner ops surface. |
-| `GET /llm/gateway-props/{served_model}` | The inference engine's **own account of how it is serving** one LOADED model, read from llama-server's `/props` through llama-swap's upstream route: the llama.cpp **build** actually running, the **context** it allocated, its **batch/ubatch** sizes, `modalities` (is the vision projector live?), and the **slot count `-np auto` resolved to**. These are printed exactly once, in llama-server's startup banner — which llama-swap does not forward, and which its ~100 KB ring buffer loses to the access log within minutes. So `gateway-logs` structurally cannot answer them, and on a box with no terminal this is the only way to tell *which build produced a measurement* or *whether a serving flag took effect* rather than being silently ignored. The huge `chat_template` is replaced by its length; everything else passes through, so a new llama.cpp field is readable the day it lands. 502 when the model isn't loaded or the gateway is unreachable. |
 | `GET /llm/gateway-logs` | Tail the model gateway's **own** stdout (the llama-swap wrapper + the upstream llama-server, interleaved) — the inference engine's slot lifecycle, where a slot is acquired on a request and **released** when its generation ends. The read that answers whether a Stop/disconnect halts decoding or the engine runs on. 502 if the gateway is unreachable. |
 | `GET /host/metrics` | The host's live hardware telemetry, proxied from the supervisor (the only container that reads `/sys`): GPU busy %, APU package power, load average, memory/swap/disk, fan RPM, per-container memory — plus **`gpu_mem`** (amdgpu GTT/VRAM used, the iGPU's slice of unified RAM that no process RSS shows), a **`mem_breakdown`** of key `/proc/meminfo` lines, and cumulative **`net`** / **`disk_io`** byte counters. The console's one physical read — pair it with a turn to watch the GPU gauge across a Stop, or read `gpu_mem.gtt_used_bytes` with no model loaded to spot device memory a teardown failed to release. |
 | `GET /host` | Live host memory/swap/disk/load + **per-container RSS** and **raw per-process RSS** (both biggest first), proxied from the supervisor. Attributes the unified-memory total down to individual processes — the per-process list (via `docker top`) tells the 120B's `llama-server` from the vision model's, since the `local-llm` container runs a separate process per loaded model. Answers "what is using the box's RAM" the read-only meter can only total. (For the iGPU/GTT share the process list can't show, read `gpu_mem` on `/host/metrics`.) |

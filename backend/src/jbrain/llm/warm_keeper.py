@@ -32,17 +32,29 @@ logged and retried on the next tick, never raised into boot or a turn.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 from collections.abc import Awaitable, Callable, Collection
 
 import structlog
 
-from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_inputs
+from jbrain.agent.priming import (
+    HiddenToolsProbe,
+    jerv_prime_fingerprint,
+    jerv_prime_inputs,
+    jerv_slot_filename,
+)
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.local_gateway import LocalGatewayClient
+from jbrain.llm.openai_compat import openai_tools
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.types import UserMessage
+from jbrain.llm.types import LlmTool, UserMessage
 
 log = structlog.get_logger()
+
+# The slot the jerv prefix is restored into and saved from. With `-np 2` llama-server routes
+# by longest matching prefix and the interactive prefix lands in slot 1 (verified on the box);
+# slot 0 stays empty for background traffic. A wrong guess costs a miss, never a wrong answer.
+_INTERACTIVE_SLOT = 1
 
 # The task the prime routes as — the interactive chat turn (jerv). Priming as this exact task
 # is what makes the primed prefix (model, effort, tools) match a real turn's, so the reuse lands.
@@ -80,6 +92,17 @@ class WarmKeeper:
         self._interval_ready = interval_ready
         self._interval_wait = interval_wait
 
+    def note_prefix_lost(self, served_model: str) -> None:
+        """Forget the primed memo for `served_model` — registered with the residency
+        coordinator, which calls it on an eviction or a bare restore-load.
+
+        The memo alone is not enough: it is only invalidated when a tick OBSERVES the model
+        missing from the gateway, so an evict+restore that both complete between ticks leaves
+        it stale and the next jerv turn pays a cold prefill in the foreground. This is the
+        edge-triggered half of that invalidation."""
+        if self._primed is not None and self._primed[0] == served_model:
+            self._primed = None
+
     async def reconcile_once(self) -> bool:
         """Bring the target model to resident+primed if it isn't already. Returns True when
         SETTLED (nothing to keep warm, or resident and primed with the current tool set), False
@@ -100,10 +123,22 @@ class WarmKeeper:
             running = set()
         if served not in running:
             self._primed = None  # evicted (or never loaded) → the cache no longer holds our prime
-        system, tools, hidden = await jerv_prime_inputs(self._registry, self._liveness)
+        # Pass the SERVED model: the canvas pair is model-gated, and `jerv_prime_inputs`
+        # with no model hides it — so on a canvas-capable model the keeper would prime a
+        # prefix WITHOUT tools a real turn sends, the reuse would miss from the tools block
+        # onward, and the memo below would record that miss as success. The manual Load path
+        # already passes it (api/llm_settings.gateway_load); this closes the gap.
+        system, tools, hidden = await jerv_prime_inputs(self._registry, self._liveness, served)
         want = (served, hidden)
         if served in running and self._primed == want:
             return True  # already primed with the current tool set — leave any live conversation be
+        # Try the disk cache FIRST. A hit turns the prefill below into a no-op: measured on
+        # the box, a real turn's prefix restores in ~0.3s and the prime that follows returns in
+        # ~0.2s, against 70-110s cold. The prime still runs either way — it is what makes this
+        # safe, because a restore that silently did nothing (the SWA failure mode, and any
+        # stale-but-loadable file) is simply a slow prime, never a wrong answer. We never trust
+        # the restore's own 200; we let the prefill be the proof.
+        restored = await self._try_restore(served, system, tools)
         # Prime down the real turn path: resolves agent.turn's model+effort, admits through
         # residency (loading the model if needed), and prefills the exact persona+tools prefix a
         # real turn reuses. max_tokens=1 — we want the prefill in cache, not the output.
@@ -119,8 +154,69 @@ class WarmKeeper:
             log.info("warm_keeper.prime_failed", model=served, error=str(exc))
             return False
         self._primed = want
-        log.info("warm_keeper.primed", model=served, tool_count=len(tools), hidden=sorted(hidden))
+        log.info(
+            "warm_keeper.primed",
+            model=served,
+            tool_count=len(tools),
+            hidden=sorted(hidden),
+            restored=restored,
+        )
+        if not restored:
+            # Only write when we actually paid for the prefill. Saving after a restore would
+            # rewrite a byte-identical file every tick for nothing.
+            await self._try_save(served, system, tools)
         return True
+
+    async def _slot_filename(
+        self, served_model: str, system: str, tools: list[LlmTool]
+    ) -> str | None:
+        """The state file this exact prefix, build and day would use — or None when the gateway
+        cannot tell us what it is running. Best-effort: no props, no fingerprint, no restore
+        (and so a normal cold prime), which is the correct way to fail."""
+        try:
+            props = await self._gateway.props(served_model)
+        except Exception:  # noqa: BLE001 — a props hiccup must not break the reconcile
+            return None
+        gen = props.get("default_generation_settings")
+        fingerprint = jerv_prime_fingerprint(
+            system,
+            openai_tools(tools),
+            build_info=str(props.get("build_info", "")),
+            chat_template=str(props.get("chat_template", "")),
+            n_ctx=(gen or {}).get("n_ctx") if isinstance(gen, dict) else None,
+            n_slots=props.get("total_slots"),
+            today_utc=dt.datetime.now(dt.UTC).strftime("%Y-%m-%d"),
+        )
+        return jerv_slot_filename(served_model, fingerprint)
+
+    async def _try_restore(self, served_model: str, system: str, tools: list[LlmTool]) -> bool:
+        """Load this prefix's saved KV into the interactive slot. True only means the bytes
+        loaded — the prime that follows is what establishes they were USEFUL."""
+        name = await self._slot_filename(served_model, system, tools)
+        if name is None:
+            return False
+        try:
+            result = await self._gateway.slot_action(
+                served_model, _INTERACTIVE_SLOT, "restore", filename=name
+            )
+        except Exception:  # noqa: BLE001 — a miss is the common case on a fresh box, not an error
+            return False
+        log.info("warm_keeper.slot_restored", model=served_model, tokens=result.get("n_restored"))
+        return True
+
+    async def _try_save(self, served_model: str, system: str, tools: list[LlmTool]) -> None:
+        """Persist the just-primed slot so the next cold start skips the prefill."""
+        name = await self._slot_filename(served_model, system, tools)
+        if name is None:
+            return
+        try:
+            result = await self._gateway.slot_action(
+                served_model, _INTERACTIVE_SLOT, "save", filename=name
+            )
+        except Exception:  # noqa: BLE001 — no --slot-save-path, no disk, no permission: skip
+            log.info("warm_keeper.slot_save_skipped", model=served_model)
+            return
+        log.info("warm_keeper.slot_saved", model=served_model, tokens=result.get("n_saved"))
 
     async def run(self) -> None:
         """The reconcile loop: settle, then sleep — short while still trying to reach a wanted

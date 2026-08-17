@@ -1,0 +1,439 @@
+{
+ "probed": "2026-08-17",
+ "model": "gpt-oss-120b (local)",
+ "endpoint": "/api/debug/tool-probe",
+ "generator": "scripts/prefill-experiment.py",
+ "hot_core": [
+  "web_search",
+  "web_fetch"
+ ],
+ "prefill_mean_input_tokens": {
+  "today": 22694,
+  "b-derived": 11502,
+  "b-authored": 11660,
+  "b-strict": 11747
+ },
+ "final_suite_b_authored": "7/7 (single pass, all cases correct)",
+ "today_suite": "5/7 \u2014 fails #2 (5/5 wrong) and #3 (3/5 right)",
+ "stability_n5": {
+  "#2 FL insurance licence -> portal_search": {
+   "today": {
+    "public_records": 5
+   },
+   "b-derived": {
+    "public_records": 5
+   },
+   "b-authored": {
+    "portal_search": 4,
+    "public_records": 1
+   }
+  },
+  "#3 categorical chart -> render_bars": {
+   "today": {
+    "render_bars": 3,
+    "news_search": 1,
+    "web_search": 1
+   },
+   "b-derived": {
+    "render_bars": 4,
+    "news_search": 1
+   },
+   "b-authored (v1, verb-led)": {
+    "web_search": 5
+   }
+  }
+ },
+ "render_bars_summary_variants_n5": {
+  "A verb-led 'Graph numbers you already have BY CATEGORY'": {
+   "web_search": 3,
+   "render_bars": 2
+  },
+  "B noun-phrase 'as a bar graph' (ADOPTED)": {
+   "render_bars": 4,
+   "render_chart": 1
+  },
+  "C 'Render a categorical breakdown'": {
+   "web_search": 3,
+   "deep_research": 1,
+   "render_bars": 1
+  }
+ },
+ "tool_explain_calls": 0,
+ "notes": [
+  "tool_explain was never called in any mode, including b-strict where every deferred summary ended 'Call tool_explain first.' A mandatory explain step must be handler-enforced.",
+  "char//4 overestimates this tokenizer by ~22%.",
+  "n=1 is noise: `today` itself is only 3/5 on the categorical-chart case. Any gate needs n>=5.",
+  "Summary WORDING is high-leverage and non-obvious: one line, three phrasings, 1/5 vs 2/5 vs 4/5."
+ ],
+ "first_pass_runs": [
+  {
+   "mode": "today",
+   "case": 1,
+   "probe": "what did that SpaceX video I analysed say about the launch date?",
+   "expect": [
+    "external_video",
+    "deep_research",
+    "deep_produce"
+   ],
+   "tests": "library-vs-web routing \u2014 a specific analysed video's transcript is not on the web",
+   "called": [
+    "external_video"
+   ],
+   "in_tok": 22696,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "today",
+   "case": 2,
+   "probe": "look up whether Frank Collige holds a Florida insurance license",
+   "expect": [
+    "portal_search"
+   ],
+   "tests": "state portal vs web_search \u2014 a plain fetch sees only the empty search FORM",
+   "called": [
+    "public_records"
+   ],
+   "in_tok": 22693,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "today",
+   "case": 3,
+   "probe": "plot the number of launches by provider this year",
+   "expect": [
+    "render_bars"
+   ],
+   "tests": "categorical x-axis picks bars, not render_chart (which is time-only)",
+   "called": [
+    "web_search"
+   ],
+   "in_tok": 22691,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "today",
+   "case": 4,
+   "probe": "chart how my daily step count changed over the last three months",
+   "expect": [
+    "render_chart"
+   ],
+   "tests": "dated series picks the line chart \u2014 the pair that used to be split",
+   "called": [],
+   "in_tok": 22694,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "today",
+   "case": 5,
+   "probe": "I attached a voice memo \u2014 what does it say?",
+   "expect": [
+    "transcribe"
+   ],
+   "tests": "words-only picks transcribe, not the frame-sampling analyze_video",
+   "called": [
+    "transcribe"
+   ],
+   "in_tok": 22693,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "today",
+   "case": 6,
+   "probe": "give me a thorough writeup on how stablecoins hold their peg",
+   "expect": [
+    "deep_research"
+   ],
+   "tests": "the deepest ladder \u2014 a bounded run, not the hours-long background one",
+   "called": [
+    "deep_research"
+   ],
+   "in_tok": 22695,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "today",
+   "case": 7,
+   "probe": "what's the article at https://spaceflightnow.com about today?",
+   "expect": [
+    "web_fetch",
+    "news_feed",
+    "web_search"
+   ],
+   "tests": "hot-core control \u2014 this should be unaffected by any deferral",
+   "called": [
+    "web_fetch"
+   ],
+   "in_tok": 22696,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b",
+   "case": 1,
+   "probe": "what did that SpaceX video I analysed say about the launch date?",
+   "expect": [
+    "external_video",
+    "deep_research",
+    "deep_produce"
+   ],
+   "tests": "library-vs-web routing \u2014 a specific analysed video's transcript is not on the web",
+   "called": [
+    "external_video"
+   ],
+   "in_tok": 11504,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b",
+   "case": 2,
+   "probe": "look up whether Frank Collige holds a Florida insurance license",
+   "expect": [
+    "portal_search"
+   ],
+   "tests": "state portal vs web_search \u2014 a plain fetch sees only the empty search FORM",
+   "called": [
+    "public_records"
+   ],
+   "in_tok": 11501,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b",
+   "case": 3,
+   "probe": "plot the number of launches by provider this year",
+   "expect": [
+    "render_bars"
+   ],
+   "tests": "categorical x-axis picks bars, not render_chart (which is time-only)",
+   "called": [
+    "web_search"
+   ],
+   "in_tok": 11499,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b",
+   "case": 4,
+   "probe": "chart how my daily step count changed over the last three months",
+   "expect": [
+    "render_chart"
+   ],
+   "tests": "dated series picks the line chart \u2014 the pair that used to be split",
+   "called": [],
+   "in_tok": 11502,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b",
+   "case": 5,
+   "probe": "I attached a voice memo \u2014 what does it say?",
+   "expect": [
+    "transcribe"
+   ],
+   "tests": "words-only picks transcribe, not the frame-sampling analyze_video",
+   "called": [
+    "transcribe"
+   ],
+   "in_tok": 11501,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b",
+   "case": 6,
+   "probe": "give me a thorough writeup on how stablecoins hold their peg",
+   "expect": [
+    "deep_research"
+   ],
+   "tests": "the deepest ladder \u2014 a bounded run, not the hours-long background one",
+   "called": [
+    "deep_research"
+   ],
+   "in_tok": 11503,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b",
+   "case": 7,
+   "probe": "what's the article at https://spaceflightnow.com about today?",
+   "expect": [
+    "web_fetch",
+    "news_feed",
+    "web_search"
+   ],
+   "tests": "hot-core control \u2014 this should be unaffected by any deferral",
+   "called": [
+    "web_fetch"
+   ],
+   "in_tok": 11504,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b-strict",
+   "case": 1,
+   "probe": "what did that SpaceX video I analysed say about the launch date?",
+   "expect": [
+    "external_video",
+    "deep_research",
+    "deep_produce"
+   ],
+   "tests": "library-vs-web routing \u2014 a specific analysed video's transcript is not on the web",
+   "called": [
+    "external_video"
+   ],
+   "in_tok": 11749,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b-strict",
+   "case": 2,
+   "probe": "look up whether Frank Collige holds a Florida insurance license",
+   "expect": [
+    "portal_search"
+   ],
+   "tests": "state portal vs web_search \u2014 a plain fetch sees only the empty search FORM",
+   "called": [
+    "public_records"
+   ],
+   "in_tok": 11746,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b-strict",
+   "case": 3,
+   "probe": "plot the number of launches by provider this year",
+   "expect": [
+    "render_bars"
+   ],
+   "tests": "categorical x-axis picks bars, not render_chart (which is time-only)",
+   "called": [
+    "web_search"
+   ],
+   "in_tok": 11744,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b-strict",
+   "case": 4,
+   "probe": "chart how my daily step count changed over the last three months",
+   "expect": [
+    "render_chart"
+   ],
+   "tests": "dated series picks the line chart \u2014 the pair that used to be split",
+   "called": [],
+   "in_tok": 11747,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b-strict",
+   "case": 5,
+   "probe": "I attached a voice memo \u2014 what does it say?",
+   "expect": [
+    "transcribe"
+   ],
+   "tests": "words-only picks transcribe, not the frame-sampling analyze_video",
+   "called": [
+    "transcribe"
+   ],
+   "in_tok": 11746,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b-strict",
+   "case": 6,
+   "probe": "give me a thorough writeup on how stablecoins hold their peg",
+   "expect": [
+    "deep_research"
+   ],
+   "tests": "the deepest ladder \u2014 a bounded run, not the hours-long background one",
+   "called": [
+    "deep_research"
+   ],
+   "in_tok": 11748,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b-strict",
+   "case": 7,
+   "probe": "what's the article at https://spaceflightnow.com about today?",
+   "expect": [
+    "web_fetch",
+    "news_feed",
+    "web_search"
+   ],
+   "tests": "hot-core control \u2014 this should be unaffected by any deferral",
+   "called": [
+    "web_fetch"
+   ],
+   "in_tok": 11749,
+   "err": null,
+   "hit": true
+  }
+ ],
+ "widened_fixture_2026_08_17": {
+  "cases": 16,
+  "note": "7 original + 9 added, including two NO-TOOL controls the first fixture lacked",
+  "today": "14/16 \u2014 misses #2 (FL licence -> public_records) and #14 (court records -> web_search)",
+  "b_authored_v2": "14/16 \u2014 misses #13 (science_search -> web_search, noisy: 3/3 correct on repeat) and #14 (same as today)",
+  "prefill": {
+   "today": 22694,
+   "b": 11567
+  },
+  "verdict": "parity on selection at 51% of the prefill; neither mode dominates, and the one case both miss (#14) is a baseline defect, not a mode effect"
+ },
+ "hot_core_bias_test": {
+  "hypothesis": "hot tools' 3.5k-char descriptions out-compete one-line summaries regardless of fit",
+  "result": "REFUTED. Removing the hot core saved ~1,115 tokens (11,566 -> 10,451) and made selection WORSE: science_search 3/3 -> 2/3, weather_history scattered across three answers, and only the court-records case improved. Keeping web_search + web_fetch fully loaded is justified on accuracy, not just on the owner's preference.",
+  "n": 3
+ },
+ "fixture_bugs_found": [
+  "#3/#4 asked the model to plot data it did not have \u2014 a gather step first was correct.",
+  "#9 said 'here', making a current_location read a legitimate first step.",
+  "Pattern: when a probe contains a deictic ('here', 'my', 'that'), the resolving tool is a valid answer and must be in `expect`. Three of sixteen cases had this bug on first writing."
+ ],
+ "prefill_timing_2026_08_17": {
+  "method": "/api/debug/tool-probe, max_tokens=1, 44-tool payload. A UNIQUE `system` string per call defeats --cache-reuse (it matches on leading prefix), giving a genuine cold prefill; repeating one system string gives the warm case.",
+  "cold_runs_s": [
+   55.82,
+   56.12,
+   56.42
+  ],
+  "warm_runs_s": [
+   1.28,
+   0.87
+  ],
+  "tiny_control_280_tokens_s": [
+   1.52,
+   1.52
+  ],
+  "prefill_cost_s": 54.6,
+  "prompt_processing_tok_per_s": 416,
+  "input_tokens": 22704,
+  "kv_for_prefix_gb": 0.78,
+  "disk_restore_estimate_s": {
+   "1 GB/s": 0.78,
+   "2 GB/s": 0.39,
+   "3.5 GB/s": 0.22,
+   "5 GB/s": 0.16
+  },
+  "note": "Disk-restore figures are CALCULATED from the catalog's kv_gb_per_128k=4.5 and assumed NVMe bandwidth \u2014 not measured. The 56s prefill IS measured. WarmKeeper already pays this cost in the background, so the owner-visible win is the ~55s race window after each boot/update/gateway restart, not steady-state latency."
+ }
+}

@@ -47,9 +47,13 @@ def test_context_is_the_only_two_tier_mint_and_has_no_location() -> None:
 def test_context_clamp_ceiling_covers_a_task_agent() -> None:
     """The orchestrator holds what a research_deep task agent must inherit through the
     parent⊆child clamp — decompose_research plus the web tools — else the clamp would
-    strip decompose and the second tier could never spawn."""
+    strip decompose and the second tier could never spawn. This ceiling, NOT jerv's
+    interactive allowlist, is where decompose lives (it refuses at depth 0)."""
+    from jbrain.agent.agents import JERV_TOOLS
+
     ctx = build_deepest_run_context("owner-1", agent_session_id="s1")
     assert "decompose_research" in ctx.agent_tools
+    assert "decompose_research" not in JERV_TOOLS
     assert {"web_search", "web_fetch"} <= ctx.agent_tools
 
 

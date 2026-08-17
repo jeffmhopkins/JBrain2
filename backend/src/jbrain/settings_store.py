@@ -68,6 +68,12 @@ LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
 # dedicated interactive KV slot. Only values > 1 are stored; 1 (single slot) is the default
 # absence. Feeds the regenerated gateway `-np` and the residency KV budget.
 LLM_LOCAL_PARALLEL_SLOTS_KEY = "llm_local_parallel_slots"
+# Per-model EXTRA llama-server flags (catalog id → argv list), appended after the catalog's
+# static `extra_server_args`. The owner runs this box remotely with no terminal, so a launch
+# flag that can only be tried by editing the catalog and shipping a release is a flag that
+# never gets tried; this makes one settable (and clearable) over the API. The API allowlists
+# WHICH flags — an arbitrary argv here can stop llama-server booting.
+LLM_LOCAL_EXTRA_ARGS_KEY = "llm_local_extra_args"
 # The residency free-RAM floor as a FRACTION of physical RAM kept free (0.15 = 15%),
 # a per-owner runtime override of the JBRAIN_LOCAL_LLM_FREE_RAM_FRACTION config default.
 # The evictor reads it live before every load (jbrain.llm.residency), so a change takes
@@ -772,6 +778,46 @@ class SqlSettingsStore:
         else:
             current[model_id] = slots
         await self.upsert(ctx, LLM_LOCAL_PARALLEL_SLOTS_KEY, current)
+        return current
+
+    async def llm_local_extra_args(self, ctx: SessionContext) -> dict[str, list[str]]:
+        """Per-model EXTRA llama-server launch flags, keyed by catalog id, sanitized.
+
+        The owner-settable twin of the catalog's static `extra_server_args`, so a launch
+        flag can be tried on a live box without a code change and a redeploy — the box is
+        operated remotely with no terminal (CLAUDE.md #10), and a flag that needs a PR to
+        try is a flag that never gets tried. Appended AFTER the catalog's own args, so a
+        catalog flag stays authoritative and an override can only add.
+
+        Defensive on read — this becomes argv for the gateway, and a bad flag makes
+        llama-server refuse to start. A non-dict store, a non-list value, or any entry
+        holding a non-string is dropped. The FLAG ALLOWLIST is enforced by the API, not
+        here (the store stays a dumb sanitizer), but a value that isn't shaped like argv
+        never reaches the config."""
+        raw = await self.get(ctx, LLM_LOCAL_EXTRA_ARGS_KEY, {})
+        if not isinstance(raw, dict):
+            return {}
+        clean: dict[str, list[str]] = {}
+        for mid, args in raw.items():
+            if not isinstance(mid, str) or not isinstance(args, list):
+                continue
+            if args and all(isinstance(a, str) for a in args):
+                clean[mid] = list(args)
+        return clean
+
+    async def set_llm_local_extra_args(
+        self, ctx: SessionContext, *, model_id: str, args: list[str] | None
+    ) -> dict[str, list[str]]:
+        """Set (a non-empty argv list) or clear (None or []) one model's extra-flag
+        override; returns the sanitized map. Read-modify-write on the single row. Clearing
+        is the recovery path for a flag that broke the model's launch, and it must stay
+        reachable from the same remote surface that set it."""
+        current = await self.llm_local_extra_args(ctx)
+        if not args:
+            current.pop(model_id, None)
+        else:
+            current[model_id] = list(args)
+        await self.upsert(ctx, LLM_LOCAL_EXTRA_ARGS_KEY, current)
         return current
 
     async def llm_local_free_ram_fraction(self, ctx: SessionContext) -> float | None:

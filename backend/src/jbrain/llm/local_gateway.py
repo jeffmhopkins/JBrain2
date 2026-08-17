@@ -29,7 +29,7 @@ strip that suffix once here.
 from __future__ import annotations
 
 import re
-from typing import Any, Protocol, cast
+from typing import Protocol
 
 import httpx
 import structlog
@@ -94,6 +94,57 @@ class LocalGatewayClient:
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
+
+    async def props(self, served_model: str) -> dict[str, object]:
+        """llama-server's own `/props` for one model — `build_info` (the ONLY build identity
+        available over HTTP), `total_slots`, and the resolved generation settings including the
+        real `n_ctx`. Reached through llama-swap's `/upstream/<model>/…` passthrough, the same
+        escape hatch `running`/`_warm` already use, so an on-demand load is triggered if the
+        model isn't resident. Raises LocalGatewayError on any failure."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 180.0), transport=self._transport
+            ) as client:
+                resp = await client.get(f"{self._root}/upstream/{served_model}/props")
+                resp.raise_for_status()
+                body = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise LocalGatewayError(str(exc)) from exc
+        return body if isinstance(body, dict) else {}
+
+    async def slot_action(
+        self, served_model: str, slot_id: int, action: str, *, filename: str | None = None
+    ) -> dict[str, object]:
+        """Drive llama-server's KV-slot save/restore/erase for one model
+        (`POST /slots/{id}?action=…`), through the same `/upstream/…` passthrough.
+
+        Requires the server to have been started with `--slot-save-path`; without it
+        llama-server answers 501, which surfaces here as LocalGatewayError. `filename` must be
+        a bare basename — llama.cpp concatenates it onto the save path and rejects anything
+        with a separator (or a colon) as an invalid filename.
+
+        IMPORTANT for callers: a 200 from `restore` does NOT mean the next turn will skip its
+        prefill. On a sliding-window model llama-server can accept the restore and then discard
+        it, logging `forcing full prompt re-processing`. The gateway log is the only honest
+        signal; treat this method's success as "the bytes loaded", never as "the prefill is
+        saved" (docs/runbooks/STRIX_HALO_SETUP.md)."""
+        body = {"filename": filename} if filename is not None else {}
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 600.0), transport=self._transport
+            ) as client:
+                # Generous timeout: a save/restore against a busy slot is DEFERRED by
+                # llama-server until the slot frees, not rejected, so the call can block.
+                resp = await client.post(
+                    f"{self._root}/upstream/{served_model}/slots/{slot_id}",
+                    params={"action": action},
+                    json=body,
+                )
+                resp.raise_for_status()
+                parsed = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise LocalGatewayError(str(exc)) from exc
+        return parsed if isinstance(parsed, dict) else {}
 
     async def load(
         self,
@@ -240,35 +291,6 @@ class LocalGatewayClient:
                 return resp.text
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
-
-    async def props(self, served_model: str) -> dict[str, Any]:
-        """llama-server's own `/props` for one LOADED model, proxied through llama-swap's
-        `/upstream/<model>/` route.
-
-        The structured answer to the questions the log cannot give. llama-server prints the
-        facts that decide how it serves — the build it is actually running, the context it
-        actually allocated, the batch sizes in force, and what `-np auto` resolved
-        `total_slots` to — ONCE, in its startup banner. llama-swap does not forward that
-        banner into `/logs`, and even when a build does, the access log floods the ring
-        buffer within minutes. So on a box operated with no terminal (CLAUDE.md #10) this
-        endpoint is the only way to read them, and it is the only way to tell a serving flag
-        we *intended* from one the engine actually applied.
-
-        Raises LocalGatewayError when the model isn't loaded (llama-swap 404s the upstream
-        route) or the gateway can't be reached — the caller asked a direct question, so a
-        miss is surfaced rather than guessed at."""
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, transport=self._transport
-            ) as client:
-                resp = await client.get(f"{self._root}/upstream/{served_model}/props")
-                resp.raise_for_status()
-                payload = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise LocalGatewayError(str(exc)) from exc
-        if not isinstance(payload, dict):
-            raise LocalGatewayError(f"unexpected /props payload: {type(payload).__name__}")
-        return cast("dict[str, Any]", payload)
 
     async def load_progress(self) -> float | None:
         """A real load fraction (0..1) for the model currently coming onto the box, parsed

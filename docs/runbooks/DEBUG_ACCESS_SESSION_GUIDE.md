@@ -158,15 +158,21 @@ scripts/debug-connect.sh logs api --tail 200
 # The model engine's OWN stdout (slot acquired/released) — does a Stop free the GPU?
 # NOTE: this is a ~100 KB ring buffer that llama-swap's access log floods within minutes, and
 # llama-swap does not forward llama-server's stdout into it. Do NOT expect the startup banner
-# here — use gateway-props below for the serving facts.
+# here — use `props` below for the serving facts.
 scripts/debug-connect.sh gateway-logs --tail 200
 
-# How the engine is ACTUALLY serving a loaded model, read from llama-server itself: the
-# llama.cpp build, allocated context, batch/ubatch, live modalities, and what `-np auto`
-# resolved total_slots to. The read that tells a flag we intended from one that took effect —
-# and the only way to know which build a benchmark came from, since the gateway floats on a
-# rolling tag. 502 means the model isn't loaded (`load <id>` first).
-scripts/debug-connect.sh gateway-props qwen3.8-27b-mtp
+# How the engine is ACTUALLY serving a model, read from llama-server itself: the llama.cpp
+# build, the real n_ctx, and what `-np auto` resolved total_slots to. The read that tells a
+# flag we intended from one that took effect — and the only way to know which build a
+# measurement came from, since the gateway floats on a rolling tag. Loads the model if cold.
+scripts/debug-connect.sh props qwen3.8-27b-mtp
+
+# Try a llama-server LAUNCH FLAG live (allowlisted), then measure it and revert — no catalog
+# edit, no release, no Ops → Update per iteration. `prime` is the instrument: it runs the real
+# jerv prime and returns elapsed_ms, so cold vs warm are comparable numbers, not a stopwatch.
+scripts/debug-connect.sh extra-args qwen3.8-27b-mtp --spec-draft-p-min 0.75
+scripts/debug-connect.sh prime qwen3.8-27b-mtp
+scripts/debug-connect.sh extra-args qwen3.8-27b-mtp      # no args = clear, back to the catalog
 
 # Host hardware telemetry: GPU busy %, APU power, load — watch the device across a Stop.
 scripts/debug-connect.sh metrics

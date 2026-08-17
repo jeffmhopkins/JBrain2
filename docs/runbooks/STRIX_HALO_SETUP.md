@@ -173,8 +173,12 @@ backstop for the rest.
 
 **The interactive model is kept resident AND primed across restarts (`jbrain.llm.warm_keeper`).**
 The slow bit of a first chat turn isn't the weight-load — it's the **prompt prefill**: the
-model reading the whole persona + tool schemas before it emits token one (tens of seconds on
-a 120B). The gateway runs `--cache-reuse`, so a turn can reuse a matching leading prefix
+model reading the whole persona + tool schemas before it emits token one. **Measured
+2026-08-17 on gpt-oss-120b: 56s for jerv's 22,704-token prefix, ~416 tok/s prompt
+processing** (three cold runs within 0.6s of each other; a warm `--cache-reuse` hit on the
+same payload returns in ~1.0s, and a 280-token control in 1.5s, so ~54.6s of that is the
+tool block itself). That 55s gap is what everything below exists to keep off the owner's
+first message. The gateway runs `--cache-reuse`, so a turn can reuse a matching leading prefix
 instead of re-prefilling it — but only if that prefix was primed first, and nothing did that
 after a restart (residency's restore only undoes *same-process* evictions; its keep-hot set is
 empty on a fresh boot, and an on-demand load is bare). The **WarmKeeper** fills the gap: a
@@ -183,7 +187,34 @@ local) resident **and primed**. It primes by issuing a throwaway turn down the *
 real turn takes** — `router.converse("agent.turn", …)` with jerv's persona + tools + the
 resolved effort — so the primed KV prefix is byte-identical to what a real turn sends and the
 reuse actually lands. That call also loads the model on demand through residency, so one prime
-both resides and warms it. It only ever *adds* that one model, under the same free-RAM floor
+both resides and warms it. **The primed prefix is persisted to disk and restored on a cold start.** llama-server writes
+its KV slot to `--slot-save-path /kv/` (a named `llm_kv` volume, so it survives the container
+being recreated by an update), and the keeper restores it before priming. Measured on this box
+2026-08-17: restore 0.3s, and the prime after it 0.19s, against 69-113s cold — the prefill is
+skipped, not shortened. The prime still runs in both paths ON PURPOSE: a restore that silently
+did nothing degrades to a slow prime, never a wrong answer.
+
+> **`--swa-full` is mandatory here, not tuning.** gpt-oss is an interleaved sliding-window
+> model, and a restore into a windowed cache reports full success and is then discarded — same
+> token count, same bytes, same 0.3s, and llama-server re-prefills anyway. Measured A/B on the
+> box: **69,373 ms without the flag, 194 ms with it.** The catalog carries it as
+> `kv_full_history=True` on gpt-oss-120b, and `footprint_gb` doubles that model's KV term to
+> match (4.5 → 9.0 GB per 128k) so the memory meter and the eviction budget stay honest. The
+> lever that pays for it is the **context window**: KV scales linearly with `-c`, so serving at
+> 64k costs exactly what 128k did before the flag.
+
+The cache is keyed by FILENAME — a digest of the system prompt, the serialized tool schemas,
+llama.cpp's `build_info`, the chat template, `n_ctx`/`n_slots`, and the UTC date. Anything that
+changes the bytes changes the name, the restore simply misses, and the keeper falls through to a
+normal prefill. The date is in there because the gpt-oss template renders `Current date:` into
+the system header, so a cache goes stale at the CONTAINER's UTC midnight, not the owner's.
+
+It also listens to the residency coordinator: an eviction, or the bare
+reload the end-of-turn restore does, reports the dropped prefix so the keeper re-primes on its
+eager cadence. Without that edge it only noticed a lost prime when a tick happened to *observe*
+the model missing — so an evict and its restore that both landed inside one interval (an image
+render, a code-mode toggle) left the keeper reporting settled while the next chat turn paid the
+full cold prefill in the foreground. It only ever *adds* that one model, under the same free-RAM floor
 and code-mode hold as everything else, and reconciles on an interval so it self-heals after an
 app restart, an update (fresh container), or a standalone gateway (llama-swap) restart.
 
@@ -359,9 +390,30 @@ update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-
 > **Reading what the engine actually did.** llama-server prints its build, allocated context,
 > batch sizes and resolved slot count once at startup, and llama-swap neither forwards that
 > banner nor keeps it (its log is a ~100 KB ring buffer the access log floods within minutes).
-> Use **`scripts/debug-connect.sh gateway-props <served-model>`** instead — it reads those facts
+> Use **`scripts/debug-connect.sh props <model-id>`** instead — it reads those facts
 > from llama-server directly, and is the only no-terminal way to confirm which build served a
 > measurement or whether a serving flag took effect.
+
+### Tuning MTP without a release
+
+Every step below runs from the PWA, the debug console, or an update — no shell (CLAUDE.md #10).
+The flags are on the extra-args allowlist precisely so this loop exists.
+
+| Step | How |
+|---|---|
+| Ship the catalog defaults + download the projector | **Ops → Update** (the sync detects the newly-required file and pulls it) |
+| Confirm the build, real `-c`, and `total_slots` | `debug-connect.sh props qwen3.8-27b-mtp` |
+| Point a task at it | PWA **Settings → LLM**, or `debug-connect.sh llm-set <task> qwen3.8-27b-mtp <effort>` |
+| Try a different draft setting | `debug-connect.sh extra-args qwen3.8-27b-mtp --spec-draft-p-min 0.75` |
+| Measure it | `debug-connect.sh prime qwen3.8-27b-mtp` → `elapsed_ms` |
+| Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-mtp` (no args) |
+| Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` |
+
+Two things deliberately have no remote path. The **`-np` slot count** is owner-authenticated
+(PWA only) — but a speculative model is clamped to one slot in the config generator regardless,
+so a stale override there cannot break it. And **promoting a setting that measures well** still
+takes a catalog edit and a release: the live path is for finding the value, not for keeping it,
+so the box never drifts from what the repo says it serves.
 
 > **When a download fails**, the banner shows the reason (last log line). For the
 > full verbose log — the resolved repo, include globs, and the hf error (404 / auth

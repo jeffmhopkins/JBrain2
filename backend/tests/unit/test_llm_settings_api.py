@@ -7,8 +7,10 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from jbrain.api import llm_settings
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.llm.residency import ResidencyCoordinator
@@ -748,7 +750,8 @@ def test_set_context_window_unloads_a_resident_model() -> None:
 def test_plan_load_previews_the_eviction_without_touching_the_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # gpt-oss (63.5) resident, used=90; staging the coder would blow the 96 ceiling. The
+    # gpt-oss (68.0 — full-history KV) resident, used=90; staging the coder would blow the 96
+    # ceiling. The
     # dry-run names gpt-oss as the victim (with its footprint), projects the landing point,
     # and evicts NOTHING. (qwen3-coder-next is provisioned so it's a valid plan-load target.)
     monkeypatch.setattr(
@@ -765,7 +768,7 @@ def test_plan_load_previews_the_eviction_without_touching_the_box(
     assert body["measured"] is True
     assert body["fits"] is False and body["over"] is False and body["already_resident"] is False
     assert [v["id"] for v in body["victims"]] == ["gpt-oss-120b"]
-    assert body["victims"][0]["gb"] == 63.5
+    assert body["victims"][0]["gb"] == 68.0
     assert body["ceiling_gb"] == 96.0
     assert gw.unloaded == []  # dry-run — nothing evicted
 
@@ -825,7 +828,7 @@ def test_set_available_404_and_409() -> None:
 
 
 def test_plan_load_flags_an_over_box_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A 20 GB box can't hold gpt-oss (63.5): the preview flags over_box so the screen can
+    # A 20 GB box can't hold gpt-oss (68.0): the preview flags over_box so the screen can
     # disable Load.
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (20.0, 2.0)
@@ -853,7 +856,7 @@ def test_load_refuses_an_over_box_model_with_409(monkeypatch: pytest.MonkeyPatch
 
 def test_load_evicts_to_fit_then_warms_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     # Committing the staged load: free_room evicts the same victim the preview showed, then the
-    # target is warmed. gpt-oss (63.5) resident at used=90; loading the coder evicts gpt-oss.
+    # target is warmed. gpt-oss (68.0) resident at used=90; loading the coder evicts gpt-oss.
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )
@@ -1085,3 +1088,37 @@ def test_load_404_and_409() -> None:
     assert c.post("/api/settings/llm/local-models/nope/load").status_code == 404
     c2, _ = _authed_client(_cloud_settings())
     assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/load").status_code == 409
+
+
+def test_extra_arg_allowlist_accepts_flags_with_their_values() -> None:
+    # An ALLOWLIST, not a filter: llama-server refuses to start on an unknown flag, and the flag
+    # lands in that model's launch command — so an unrestricted argv could make a model
+    # permanently unloadable on a box with no terminal. Values ride positionally.
+    assert llm_settings._validate_extra_args(["--spec-draft-p-min", "0.6"]) == [
+        "--spec-draft-p-min",
+        "0.6",
+    ]
+    assert llm_settings._validate_extra_args(["--swa-full"]) == ["--swa-full"]  # boolean, no value
+    assert llm_settings._validate_extra_args([]) == []  # clearing
+
+
+def test_extra_arg_allowlist_covers_the_speculative_tuning_flags() -> None:
+    # The right values for these are EMPIRICAL and hardware-specific (published Strix Halo
+    # numbers disagree on n-max; p-min's payoff depends on generation length), and llama.cpp's
+    # own p-min default is 0.00 — ungated. Without them on the allowlist a single tuning
+    # iteration costs a catalog edit, a release and an Ops → Update, which is how a knob ends up
+    # never tuned at all. Pinned so a future edit can't quietly drop the remote path.
+    for flag in ("--spec-type", "--spec-draft-n-max", "--spec-draft-n-min", "--spec-draft-p-min"):
+        assert flag in llm_settings.EXTRA_ARG_FLAGS
+        assert llm_settings._validate_extra_args([flag, "x"]) == [flag, "x"]
+
+
+def test_extra_arg_allowlist_rejects_an_unknown_flag_loudly() -> None:
+    # 422, never a silent drop: a caller that believes it set a flag and did not would misread
+    # every measurement taken afterwards.
+    with pytest.raises(HTTPException) as exc:
+        llm_settings._validate_extra_args(["--spec-draft-typo", "3"])
+    assert exc.value.status_code == 422
+    # A bare value with no flag in front of it is refused too, not silently swallowed.
+    with pytest.raises(HTTPException):
+        llm_settings._validate_extra_args(["0.6"])
