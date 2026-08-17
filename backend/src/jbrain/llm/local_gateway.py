@@ -96,11 +96,23 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
 
     async def props(self, served_model: str) -> dict[str, object]:
-        """llama-server's own `/props` for one model — `build_info` (the ONLY build identity
-        available over HTTP), `total_slots`, and the resolved generation settings including the
-        real `n_ctx`. Reached through llama-swap's `/upstream/<model>/…` passthrough, the same
-        escape hatch `running`/`_warm` already use, so an on-demand load is triggered if the
-        model isn't resident. Raises LocalGatewayError on any failure."""
+        """llama-server's own `/props` for one RESIDENT model — `build_info` (the ONLY build
+        identity available over HTTP), `total_slots`, and the resolved generation settings
+        including the real `n_ctx`.
+
+        REFUSES a model that isn't already loaded, and that refusal is the point. This reads
+        through llama-swap's `/upstream/<model>/…` passthrough, and that path makes llama-swap
+        LOAD the model on demand — outside `jbrain.llm.residency`, which is the box's sole
+        evictor and the only thing that checks whether a load fits. Calling it on a cold model
+        beside a large resident one froze this host to a power cycle. A read-only diagnostic
+        must never be able to commit gigabytes of device memory, so the caller loads first
+        (through residency) and reads second."""
+        if served_model not in await self.running():
+            raise LocalGatewayError(
+                f"{served_model} is not resident — refusing to read /props, because reaching it "
+                "would make the gateway load the model outside the residency budget. Load it "
+                "first (which evicts to make room), then read."
+            )
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 180.0), transport=self._transport

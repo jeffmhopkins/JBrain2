@@ -420,23 +420,43 @@ The flags are on the extra-args allowlist precisely so this loop exists.
 | Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-mtp` (no args) |
 | Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` — against **`qwen3.8-27b-q4`**, never the MTP entry (see the freeze warning above) |
 
-> ### ⚠️ `props` can load a model, and that load skips the residency budget
+> ### `props` reads, it no longer loads
 >
 > `props` reaches llama-server through llama-swap's `/upstream/<model>/` passthrough, and that
-> path triggers **llama-swap's own on-demand load** — which does NOT go through
-> `jbrain.llm.residency`. On this box the app is the *sole* evictor precisely so nothing loads
-> without the free-RAM budget being checked; this route steps around that, and calling it on a
-> cold model beside a large resident one **froze the host to a power cycle**.
+> path used to trigger **llama-swap's own on-demand load** — outside `jbrain.llm.residency`,
+> which is the box's sole evictor and the only thing that checks whether a load fits. Calling
+> it on a cold model beside a large resident one **froze the host to a power cycle**.
 >
-> Always load explicitly first, in this order, and watch memory between steps:
+> It now refuses a model that isn't already resident, so the order is explicit:
 >
 > ```bash
 > debug-connect.sh unload <the big resident model>   # goes through residency
-> debug-connect.sh load <the model you want>         # goes through residency
-> debug-connect.sh props <that model>                # now a pure read
+> debug-connect.sh load <the model you want>         # goes through residency + the GPU guard
+> debug-connect.sh props <that model>                # a pure read
 > ```
->
-> Treat `props` as safe **only** against a model that is already resident.
+
+### The device-memory guard
+
+The free-RAM budget counts **system RAM**. A model's device buffers are **GTT** — system pages
+the amdgpu driver pins — capped separately by `amdgpu.gttsize`/`ttm.pages_limit`. The two are
+accounted apart and drift, which is how a load with 105 GiB free and a 21 GiB catalog footprint
+still took the host down. `jbrain.llm.gpu_guard` closes that:
+
+- **Pre-flight** — a load is refused when the device pool can't hold it while keeping
+  `MIN_FREE_GTT_GB` (6 GB) back for the host.
+- **Watchdog** — GTT is sampled every second *during* the load; a climb past
+  `RUNAWAY_MULTIPLE` × the predicted footprint, or free GTT hitting the floor, **cancels the
+  load and unloads the model**. This is the part that protects a model nobody has characterized:
+  an estimate can only be wrong in ways we've already seen, and the first load of anything is a
+  guess.
+- **Post-load** — one more sample after the load returns, because a fast load can finish between
+  two samples and an allocation can still be settling.
+- **Measurement** — the real GTT delta is logged (`gpu_guard.measured_footprint`), the number
+  that should eventually replace the catalog estimate.
+
+Readings come from the supervisor's `/metrics` → `gpu_mem`, which reads
+`/sys/class/drm/card*/device/mem_info_*`. A box that can't read them (no amdgpu, supervisor
+down) degrades to the old unguarded behaviour rather than refusing to serve.
 
 Two things deliberately have no remote path. The **`-np` slot count** is owner-authenticated
 (PWA only) — but a speculative model is clamped to one slot in the config generator regardless,

@@ -45,7 +45,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.host_metrics import read_memory_gb
-from jbrain.llm import local_catalog
+from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.llm.local_weights import weights_size_gb
 
@@ -121,6 +121,11 @@ class EvictionPlan:
     # Measured used memory now (GiB), and the projected used after the load + evictions.
     resident_gb: float
     projected_gb: float
+    # The TARGET's own footprint (GiB) — weights + KV, independent of what else is resident.
+    # Distinct from `projected_gb` (the whole box after the load): the device-memory guard
+    # needs the cost of this one model to judge whether its allocation is running away.
+    # 0.0 when already resident (nothing is about to be allocated).
+    target_gb: float
     # The free-RAM floor: used memory must stay at/under this (total * (1 - free_fraction)).
     ceiling_gb: float
     total_gb: float
@@ -155,8 +160,13 @@ class ResidencyCoordinator:
         hold_loader: HoldLoader | None = None,
         box_lock: BoxLock | None = None,
         on_prefix_lost: PrefixLostHook | None = None,
+        gpu_probe: gpu_guard.GpuMemProbe | None = None,
     ) -> None:
         self._gateway = gateway
+        # Reads the iGPU's DEVICE memory (GTT) so a load is budgeted and watched against the
+        # pool it actually allocates from, not just system RAM. None (tests, cloud-only, a box
+        # with no amdgpu) keeps the prior unguarded behaviour — see `_guarded_load`.
+        self._gpu_probe = gpu_probe
         # Inert on a cloud-only box (no local hosting): ensure_room/restore no-op and nothing
         # is ever recorded. Mirrors settings.local_llm_enabled.
         self._enabled = enabled
@@ -317,6 +327,7 @@ class ResidencyCoordinator:
                 victims=(),
                 resident_gb=used,
                 projected_gb=used,
+                target_gb=0.0,  # already resident: nothing more gets allocated
                 ceiling_gb=ceiling,
                 total_gb=total,
                 fits=True,
@@ -324,13 +335,15 @@ class ResidencyCoordinator:
                 over_box=False,
                 already_resident=True,
             )
-        predicted = used + await self._footprint(served_model, windows, slots)
+        target_gb = await self._footprint(served_model, windows, slots)
+        predicted = used + target_gb
         if predicted <= ceiling:  # fits alongside what's resident — evict nothing
             return EvictionPlan(
                 target=served_model,
                 victims=(),
                 resident_gb=used,
                 projected_gb=predicted,
+                target_gb=target_gb,
                 ceiling_gb=ceiling,
                 total_gb=total,
                 fits=True,
@@ -359,6 +372,7 @@ class ResidencyCoordinator:
             victims=tuple(victims),
             resident_gb=used,
             projected_gb=projected,
+            target_gb=target_gb,
             ceiling_gb=ceiling,
             total_gb=total,
             fits=False,
@@ -456,8 +470,49 @@ class ResidencyCoordinator:
                 self._displaced.add(served)  # remember it for the end-of-turn restore
                 self._prefix_lost(served)
         if load_target and not plan.already_resident:
+            await self._guarded_load(served_model, plan.target_gb)
+
+    async def _guarded_load(self, served_model: str, projected_gb: float) -> None:
+        """Load under the DEVICE-memory guard (jbrain.llm.gpu_guard), on top of the free-RAM
+        budget the plan above already applied.
+
+        The two budgets are not the same check, and only counting system RAM let a load take
+        this host down twice. On an APU a model's device buffers are GTT — system pages the
+        amdgpu driver pins — accounted separately from `MemAvailable` and capped separately by
+        `amdgpu.gttsize`. A model can sit comfortably inside the free-RAM floor and still
+        exhaust the device pool; that is what happened, with 105 GiB free and a 21 GiB model.
+
+        The pre-flight refusal catches costs we can predict. The watchdog catches the ones we
+        cannot: the first load of any model is a guess, and here a wrong guess doesn't fail the
+        load, it takes the machine. A `GpuBudgetError` propagates like the over-box refusal —
+        the operator must learn the box declined, rather than silently get no model."""
+        probe = self._gpu_probe
+        if probe is None:  # no probe wired (tests, cloud-only): today's unguarded behaviour
             with contextlib.suppress(LocalGatewayError):
                 await self._gateway.load(served_model)
+            return
+        baseline = await probe.sample()
+        gpu_guard.refuse_if_no_device_room(baseline, projected_gb, served_model)
+
+        async def _load() -> None:
+            with contextlib.suppress(LocalGatewayError):
+                await self._gateway.load(served_model)
+
+        async def _abort() -> None:
+            # Release the half-loaded model's device memory. Best-effort by necessity: a
+            # runaway is exactly the state that can wedge the gateway.
+            await self._gateway.unload(served_model)
+
+        await gpu_guard.guarded_load(
+            _load,
+            probe=probe,
+            projected_gb=projected_gb,
+            target=served_model,
+            abort=_abort,
+        )
+        # What it ACTUALLY cost, logged so the catalog estimate can be corrected from
+        # measurement rather than from the next freeze.
+        await gpu_guard.measure_footprint(probe, baseline, served_model)
 
     @contextlib.asynccontextmanager
     async def _box_locked(self) -> AsyncIterator[None]:
