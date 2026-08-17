@@ -23822,10 +23822,15 @@ button.task-band:active {
   cursor: pointer;
   text-align: left;
 }
+/* `contain`, not `cover`. A crop is usually NOT square — a water bottle cuts to about
+   1:2.9 — and `cover` in a square frame shows only the middle third, so the owner sees a
+   band of label where they asked for a bottle. The crop was right and the thumbnail
+   misrepresented it. Letterboxing against the surface is the honest presentation: the
+   whole cut-out is visible, which is the entire point of exporting it. */
 .tv-imageset-frame img {
   width: 104px;
-  height: 104px;
-  object-fit: cover;
+  height: 132px;
+  object-fit: contain;
   border-radius: 10px;
   display: block;
   border: 1px solid var(--border);

@@ -50,8 +50,16 @@ ALL_OPS = (*DRAW_OPS, *EDIT_OPS)
 MAX_HTML_CHARS = 8000
 
 # Defaults tuned for legibility at phone scale over a photograph, not for subtlety.
+# These are the FLOOR, for a ~1024px sheet; `_scaled_default` grows them with the
+# canvas, because a canvas is often a 4080px phone photo and an absolute 3px stroke on
+# one of those renders as a hairline — observed live on the first real annotation, where
+# the boxes were correct but nearly invisible. Proportions, not absolutes.
 DEFAULT_TEXT_PX = 28.0
 DEFAULT_STROKE_PX = 3.0
+# Fractions of the canvas's LONG edge. 1.2% ≈ 49px of text and 0.25% ≈ 10px of stroke on
+# a 4080px photo; both are no-ops at 1024px, so a blank sheet is byte-identical.
+TEXT_FRACTION = 0.012
+STROKE_FRACTION = 0.0025
 MIN_TEXT_PX = 8.0
 MAX_TEXT_PX = 200.0
 MIN_STROKE_PX = 1.0
@@ -318,8 +326,17 @@ def _build(
     if tone not in TONES:
         notes.append(f"unknown tone {tone!r} — using auto (tones: {', '.join(TONES)})")
         tone = "auto"
-    size = _bounded(_number(raw, "size", DEFAULT_TEXT_PX), MIN_TEXT_PX, MAX_TEXT_PX)
-    stroke = _bounded(_number(raw, "width", DEFAULT_STROKE_PX), MIN_STROKE_PX, MAX_STROKE_PX)
+    long_edge = max(width, height)
+    size = _bounded(
+        _number(raw, "size", _scaled_default(DEFAULT_TEXT_PX, TEXT_FRACTION, long_edge)),
+        MIN_TEXT_PX,
+        MAX_TEXT_PX,
+    )
+    stroke = _bounded(
+        _number(raw, "width", _scaled_default(DEFAULT_STROKE_PX, STROKE_FRACTION, long_edge)),
+        MIN_STROKE_PX,
+        MAX_STROKE_PX,
+    )
 
     if kind == "text":
         if not text:
@@ -440,6 +457,15 @@ def _clamp_axis(value_px: float, extent: int, label: str, notes: list[str]) -> f
 
 def _clamp01(value: float) -> float:
     return min(1.0, max(0.0, value))
+
+
+def _scaled_default(floor: float, fraction: float, long_edge: int) -> float:
+    """A default that grows with the canvas but never shrinks below the small-sheet floor.
+
+    An explicit `size`/`width` from the model always wins — this only decides what an
+    OMITTED one means, which is exactly where an absolute default silently fails: the
+    model asked for a box, got a correct box, and could barely see it."""
+    return max(floor, round(long_edge * fraction))
 
 
 def _bounded(value: float, low: float, high: float) -> float:

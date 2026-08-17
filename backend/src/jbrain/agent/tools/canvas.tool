@@ -1,6 +1,6 @@
 ---
 name: canvas
-version: 1
+version: 2
 permission: web
 cost_class: standard
 # NOTE: no JSON-Schema `enum` anywhere below, and an op is ONE FLAT object rather than a
@@ -83,10 +83,10 @@ params:
         required: [op]
     look:
       type: string
-      description: Optional. A concrete question about the canvas as it stands, e.g. "does the red box contain the water heater?" or "where is the drain valve? give me a pixel box". The canvas is rendered and read back by the on-box vision model, and the answer comes back as text. Use it to AIM before annotating a photo, and once at the end to check. Ask something answerable — never "does this look good?". Three looks per turn.
+      description: Optional. A concrete question about the canvas as it stands, e.g. "does the red box contain the water heater?" or "where is the drain valve?". The canvas is rendered and read back by the on-box vision model. When you ask WHERE something is, the answer includes its box already converted into THIS canvas's pixel coordinates — use those numbers directly in your next ops rather than re-estimating them. Use it to AIM before annotating a photo, and once at the end to check. Ask something answerable — never "does this look good?". Three looks per turn.
   required: []
 examples:
-  - {on_attachment_id: "...", look: "where is the water heater? give me its pixel box as x,y,w,h"}
+  - {on_attachment_id: "...", look: "where is the water heater?"}
   - {canvas_id: "cv1a2b3c", ops: [{op: "label_box", x: 610, y: 300, w: 180, h: 170, text: "water heater", tone: "danger"}, {op: "callout", x: 60, y: 620, x2: 700, y2: 470, text: "drain valve leaking here"}]}
   - {width: 1024, height: 640, ops: [{op: "text", x: 40, y: 60, text: "Backup flow", size: 44}, {op: "rect", x: 60, y: 140, w: 240, h: 110}, {op: "text", x: 90, y: 205, text: "Laptop"}, {op: "arrow", x: 310, y: 195, x2: 470, y2: 195}, {op: "rect", x: 480, y: 140, w: 240, h: 110}, {op: "text", x: 515, y: 205, text: "NAS"}]}
   - {canvas_id: "cv1a2b3c", ops: [{op: "html", x: 60, y: 520, w: 460, h: 130, html: "<div style='background:rgba(207,138,143,.92);border-radius:14px;padding:14px 18px;font:600 22px system-ui;color:#fff'>Drain valve — leaking<div style='font-weight:400;font-size:16px;opacity:.9'>wet since Tuesday · check monthly</div></div>"}]}
@@ -113,7 +113,9 @@ inline every style and never reference an external image, font, script or styles
 
 **You cannot see the canvas.** Pass `look` to have the on-box vision model read it back to
 you — that is how you find *where* a thing is in the owner's photo before you box it, and how
-you check the finished figure. Ask a concrete, checkable question. Draw from what you know
+you check the finished figure. Ask a concrete, checkable question. A "where is X" look comes
+back with the box already in this canvas's pixels; trust those numbers over your own estimate
+of the photo, because they are measured against the exact frame your ops are drawn on. Draw from what you know
 rather than looking after every change; you get three looks and ten calls per turn.
 
 Nothing is shown to the owner until you call **`show_canvas`** — do that once the figure is

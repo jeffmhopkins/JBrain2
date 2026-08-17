@@ -1433,8 +1433,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "canvas.tool": (
             "canvas",
-            1,
-            "48850737baca1c3308ee7fad4a74484f2b12585958421a2c372af62c1b72904d",
+            2,
+            "1ce4623b8822f29c3215aa62c978a199cdd74988c4249e78fc1fca0d474add0a",
         ),
         "crop_regions.tool": (
             "crop_regions",

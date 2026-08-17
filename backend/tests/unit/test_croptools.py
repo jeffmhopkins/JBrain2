@@ -35,7 +35,14 @@ class _Router:
     async def supports_vision(self, task: str, spec_override: str | None = None) -> bool:
         return True
 
-    async def effective_spec(self, task: str, strength: str | None = None):
+    async def effective_spec(
+        self, task: str, strength: str | None = None, spec_override: str | None = None
+    ):
+        # Mirrors the real router: an override is a "provider:model" selector and the
+        # BARE model comes back. A fake that ignored spec_override would have hidden the
+        # bug where the selector was used as a table key.
+        if spec_override:
+            return tuple(spec_override.split(":", 1))  # type: ignore[return-value]
         return "local", self.model
 
     async def complete(self, task: str, **kw: Any):
@@ -358,3 +365,21 @@ async def test_no_ocr_client_configured_falls_back_quietly_to_grounding(monkeypa
     crop, _p = _build(monkeypatch, source=_photo(), router=router)  # built with ocr=None
     out = await crop({"source_attachment_id": "a", "target": "faces"}, _ctx())
     assert out.view.data["crops"][0]["origin"] == "vlm"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_model_override_still_crops(monkeypatch) -> None:
+    # Regression: `vision_read_spec` returns a "provider:model" SELECTOR, while the
+    # grounding table is keyed on the bare served model. Using the selector as the key
+    # refused every crop made from a conversation with a model pick — i.e. every canvas
+    # conversation, since the pick is what arms the tools in the first place.
+    router = _Router(_boxes_json([(100, 100, 300, 300)]))
+    crop, persisted = _build(monkeypatch, source=_photo(), router=router)
+
+    async def _spec(_router, override):
+        return "local:qwen3.8-27b-q4"
+
+    monkeypatch.setattr("jbrain.agent.croptools.vision_read_spec", _spec)
+    out = await crop({"source_attachment_id": "a", "target": "each bottle"}, _ctx())
+    assert "Can't crop with the current vision model" not in out
+    assert len(persisted) == 1

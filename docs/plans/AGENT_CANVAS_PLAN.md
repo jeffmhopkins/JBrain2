@@ -543,7 +543,9 @@ per wave, exactly one PR per wave, CI green before merge.
   `app.state` beside `rapidocr` so any later tool can reach it.
 - `jbrain/draw/compose.py` — the one module in `draw` that touches the network: renders
   each `html` block transparent and composites inside the firewall.
-- `scripts/dev-setup.sh` pre-pulls the Chromium base image (rule 8).
+- `scripts/dev-setup.sh` pre-pulls the Chromium base image (rule 8). The base ships the
+  browsers but **not** the Python driver (§10b), so the Dockerfile pins `playwright` to
+  the image tag and ends with a launch-Chromium build guard.
 
 ### W1 — The renderer, pure and offline
 - `jbrain/draw/scene.py` — scene model, op validation, the fold, partial-apply
@@ -710,6 +712,75 @@ a block edit means regenerating that block's markup rather than moving an elemen
 though the block's *rect* still moves by id, which is why `html` is an op.
 
 ---
+
+## 10b. What the first live annotation taught us (2026-08-17)
+
+The lane works end to end on real hardware: two water bottles on a 4080×3072 phone
+photo, each boxed accurately and labelled. Two defects only a real run could surface,
+both fixed:
+
+**The `look` answered in the wrong units.** The vision model replies in its own
+normalized 0–1000 base; `_look` returned that prose verbatim, so the agent asked for
+pixels and got normalized numbers with nothing saying which. The reasoning trace is
+unambiguous — it read `[508, 222, 119, 454]` against a 4080×3072 photo, judged it
+*"suspicious… relative values or misreadings"*, threw the answer away and eyeballed the
+photo itself. It recovered (it is a vision model on the turn, so it can see the
+attachment) but that is luck, not design, and it wasted the look. `_look` now runs the
+reply through `grounding` and restates every box in the canvas's own pixels. The irony
+worth recording: the conversion module was already written, measured and pinned — the
+look simply never called it.
+
+**Defaults were absolute where they should have been proportional.** 3px stroke and
+28px text are right for a ~1024px sheet and nearly invisible on a 4080px photo rendered
+down to the 2048px cap. Defaults now scale with the canvas long edge (≈10px stroke,
+≈49px text at 4080), with the old values as floors so a blank sheet is byte-identical
+and an explicit `size`/`width` from the model always wins.
+
+**The crop lane works, and taught two more.** "Export each water bottle" cut two correct
+crops (269×771 and 489×1395) and rendered the variant-B card as designed. Two fixes fell
+out. First, `vision_read_spec` returns a `"provider:model"` SELECTOR while the grounding
+table is keyed on the BARE served model — so resolving with the selector refused every
+request from a conversation carrying a model pick, which is every canvas conversation,
+since the pick is what arms the tools. It only escaped notice because the owner had
+switched the global route instead of using a per-conversation override. Second, the
+filmstrip used `object-fit: cover`, and a crop is rarely square — a bottle cuts to about
+1:2.9, so a square frame showed the middle third and the owner saw a band of label where
+they asked for a bottle. The crop was right and the thumbnail misrepresented it; it now
+letterboxes with `contain`. The card also framed itself twice — `ToolView` already wraps
+every registered component in a `.tool-view`, and `ImageSet` added a second, nesting the
+card inside itself. It was the only component in the registry doing so.
+
+**The HTML lane never ran at all — the sidecar was crash-looping.** Every `html` block
+came back as `failed: 1` with `htmlrender.unreachable [Errno -3] Temporary failure in
+name resolution`, which read like a compose/network defect: the `render` network is
+declared `internal: true`, the api joins five networks, and the obvious suspicion was a
+missing attachment. It was none of that. `GET /logs/htmlrender` showed the container
+dying on import with `ModuleNotFoundError: No module named 'playwright'`, restarting
+under `unless-stopped`, and never holding a DNS record — so the api's resolution failure
+was a *symptom three layers downstream of the cause*. The base image is the reason:
+`mcr.microsoft.com/playwright/python` installs the driver into a throwaway virtualenv
+purely to download the browsers into `/ms-playwright`, then **deletes the venv**
+(verified against upstream's `Dockerfile.noble` and by running `python -c "import
+playwright"` in the pulled image). It ships browsers, not a driver. The Dockerfile now
+installs `playwright==1.49.1` itself, pinned to the image tag so the driver asks for the
+browser revision that is actually baked in.
+
+The lesson worth more than the fix: **a sidecar that cannot start is indistinguishable
+from a sidecar that is not addressable**, and the graceful degradation designed in §3b
+(one failed block, canvas intact) worked so well that it hid a totally dead service
+behind a plausible-looking network error. So the Dockerfile now ends with a build-time
+guard — `import server`, then launch and close Chromium — which turns this class of
+failure from a silent runtime crash-loop into a loud build failure on the box, where
+`update-inner.sh` builds the image. Verified by building the fixed image and rendering a
+flexbox + `border-radius` block end to end: exactly the layout PyMuPDF `Story` dropped
+in §3b, correct in 5.7 KB of PNG.
+
+**Not a defect, but the number to watch:** the turn cost. Per ReAct step the model
+re-pays a ~35–39k-token prefill (the tool block dominates), so steps run 1–5 minutes on
+the Q4 twin and the first annotation took roughly eight. The canvas did not cause this —
+jerv was already at 41 tools — but the canvas is where it hurts most, because the loop
+is multi-step by design. This is the strongest argument yet for `TOOL_CATALOG_PLAN`'s
+deferred-tool work, and it belongs in W6's tuning rather than here.
 
 ## 11. Risks
 
