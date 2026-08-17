@@ -59,13 +59,40 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
 def test_render_emits_np_and_scaled_c_for_a_two_slot_model(tmp_path: Path) -> None:
     # A model with a dedicated interactive slot gets `-np 2`, and `-c` is scaled to
     # window*slots so each of the two slots still serves the full window (llama-server
-    # divides -c evenly across -np). The single-slot model is untouched: no -np, plain -c.
+    # divides -c evenly across -np). The single-slot model keeps its plain `-c`.
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path), slots={"gpt-oss-120b": 2})
     assert "-np 2" in text
-    assert text.count("-np") == 1  # only the opted-in model
     assert "-c 262144" in text  # 131072 * 2 for the two-slot model
     assert "-c 32768" in text  # the single-slot model keeps its plain window
+
+
+def test_render_always_emits_np_because_the_llama_server_default_is_not_one(
+    tmp_path: Path,
+) -> None:
+    # `-np` is emitted for EVERY model, including single-slot ones. llama-server's own default
+    # is `auto`, which current builds resolve to a multi-slot value — so omitting the flag does
+    # not mean one slot, it means "whatever this build picked". A serving mode that requires a
+    # single sequence would then be violated silently, which is exactly the failure this guards.
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    assert text.count("-np 1") == 2  # both models in the fixture manifest, explicitly
+
+
+def test_render_clamps_a_speculative_model_to_one_slot(tmp_path: Path) -> None:
+    # llama.cpp's speculative paths serve ONE sequence: MTP takes no second slot, and draft
+    # acceptance collapses as concurrent sequences rise. So a saved `-np` override must NOT
+    # reach a model served with --spec-type — the serving mode wins over the stored setting,
+    # rather than the operator having to know the interaction. `-c` follows the clamped count,
+    # so the window is not silently multiplied for slots the engine will never allocate.
+    _lay_down(tmp_path)
+    manifest = [dict(m) for m in _manifest()]
+    manifest[0]["extra_server_args"] = ("--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
+    text = llama_swap_config.render(manifest, str(tmp_path), slots={manifest[0]["id"]: 2})
+    speculative_block = text.split("  gpt-oss-120b:")[0]
+    assert "-np 1" in speculative_block and "-np 2" not in speculative_block
+    assert "-c 32768" in speculative_block  # NOT 65536 — the override never applied
+    assert "--spec-type draft-mtp" in speculative_block
 
 
 def test_render_scales_c_off_the_overridden_window_not_the_default(tmp_path: Path) -> None:

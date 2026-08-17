@@ -903,6 +903,70 @@ def test_gateway_logs_requires_a_valid_bearer(debug_client: tuple[TestClient, st
     assert client.get("/api/debug/llm/gateway-logs").status_code == 401
 
 
+def test_gateway_props_reports_the_engines_own_serving_facts(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # llama-server prints its build, allocated context, batch sizes and resolved slot count
+    # ONCE at startup — a banner llama-swap does not forward and whose ring buffer the access
+    # log floods within minutes. /props is the structured read of the same facts, and the only
+    # way an operator with no terminal can tell which build served a measurement or whether a
+    # serving flag actually took effect.
+    client, key = debug_client
+    _state(client).local_gateway.props_payload = {
+        "build_info": "b10470-34af94cd",
+        "total_slots": 4,
+        "default_generation_settings": {"n_ctx": 32768, "n_batch": 2048, "n_ubatch": 512},
+        "modalities": {"vision": True, "audio": False},
+        "chat_template": "x" * 40000,
+        "model_path": "/models/qwen3.8-27b-mtp/w.gguf",
+    }
+    body = client.get("/api/debug/llm/gateway-props/qwen3.8-27b-mtp", headers=_auth(key)).json()
+    assert body["served_model"] == "qwen3.8-27b-mtp"
+    assert body["build_info"] == "b10470-34af94cd"
+    # The headline check: `-np auto` resolving above 1 silently defeats a single-slot mode.
+    assert body["total_slots"] == 4
+    assert (body["n_ctx"], body["n_batch"], body["n_ubatch"]) == (32768, 2048, 512)
+    assert body["modalities"] == {"vision": True, "audio": False}
+    # The template is tens of KB and would swamp the response; only its size is reported, and
+    # it must not survive in the passthrough bag either.
+    assert body["chat_template_chars"] == 40000
+    assert "chat_template" not in body["props"]
+    # Everything else passes through, so a new llama.cpp field is readable without a code change.
+    assert body["props"]["model_path"] == "/models/qwen3.8-27b-mtp/w.gguf"
+
+
+def test_gateway_props_tolerates_a_build_that_omits_fields(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # The gateway floats on a rolling llama.cpp tag, so /props fields move between builds. A
+    # renamed or missing field must leave a gap in the report, never 500 the whole read — the
+    # remaining facts are still the point of the call.
+    client, key = debug_client
+    _state(client).local_gateway.props_payload = {"total_slots": "two", "n_ctx": 8192}
+    body = client.get("/api/debug/llm/gateway-props/whatever", headers=_auth(key)).json()
+    assert body["build_info"] is None
+    assert body["total_slots"] is None  # a non-int is a gap, not a crash
+    assert body["n_ctx"] == 8192  # read from the top level when not nested
+    assert body["n_batch"] is None and body["modalities"] == {}
+    assert body["chat_template_chars"] == 0
+
+
+def test_gateway_props_502_when_the_model_is_not_loaded(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # llama-swap 404s the upstream route for a model that isn't resident. The operator asked a
+    # direct question, so surface the miss rather than returning an empty success.
+    client, key = debug_client
+    _state(client).local_gateway.fail_props = True
+    resp = client.get("/api/debug/llm/gateway-props/qwen3.8-27b-mtp", headers=_auth(key))
+    assert resp.status_code == 502
+
+
+def test_gateway_props_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/llm/gateway-props/anything").status_code == 401
+
+
 def test_host_metrics_proxies_supervisor(debug_client: tuple[TestClient, str]) -> None:
     # The one physical read: GPU busy %, APU power, load — proxied from the supervisor so a
     # debug session can watch the device across a Stop.

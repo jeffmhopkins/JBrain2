@@ -983,6 +983,72 @@ async def gateway_logs(
     return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
 
 
+class GatewayPropsOut(BaseModel):
+    """The serving facts llama-server only ever prints in its startup banner."""
+
+    served_model: str
+    # The llama.cpp build actually running. The gateway floats on a rolling tag, so this
+    # is how an operator with no terminal tells which build a measurement came from.
+    build_info: str | None
+    # What `-np` resolved to. `-np auto` picks a multi-slot default on current builds,
+    # which silently defeats a single-slot serving mode (MTP) — this is the check.
+    total_slots: int | None
+    n_ctx: int | None
+    n_batch: int | None
+    n_ubatch: int | None
+    modalities: dict[str, Any]
+    # The template is tens of KB and would swamp the response; its size is the useful
+    # signal (present at all / changed across a build), so report the length only.
+    chat_template_chars: int
+    # Everything else verbatim, minus the template, so a new llama.cpp field is readable
+    # here the day it lands without a code change.
+    props: dict[str, Any]
+
+
+@router.get("/llm/gateway-props/{served_model}")
+async def gateway_props(served_model: str, request: Request, _p: DebugDep) -> GatewayPropsOut:
+    """Read llama-server's `/props` for one LOADED model through the gateway.
+
+    Answers what `/llm/gateway-logs` structurally cannot: llama-server prints its build,
+    the context it allocated, its batch sizes, and the slot count `-np auto` resolved to
+    exactly once, at startup — and that banner is neither forwarded by llama-swap nor
+    retained in its ring buffer once the access log fills it. Without this an operator who
+    cannot open a shell (CLAUDE.md #10) has no way to confirm which build served a
+    measurement, or whether a serving flag took effect. 502 when the model isn't loaded or
+    the gateway is unreachable."""
+    request.state.debug_detail = served_model
+    try:
+        raw = await _gateway(request).props(served_model)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway props unavailable: {exc}") from exc
+    rest = {k: v for k, v in raw.items() if k != "chat_template"}
+    # llama-server nests the served context/batch sizes under the generation defaults; a
+    # build that moves or drops one leaves the field None rather than failing the read.
+    gen = raw.get("default_generation_settings")
+    gen = gen if isinstance(gen, dict) else {}
+    return GatewayPropsOut(
+        served_model=served_model,
+        build_info=_opt_str(raw.get("build_info")),
+        total_slots=_opt_int(raw.get("total_slots")),
+        n_ctx=_opt_int(gen.get("n_ctx") if "n_ctx" in gen else raw.get("n_ctx")),
+        n_batch=_opt_int(gen.get("n_batch") if "n_batch" in gen else raw.get("n_batch")),
+        n_ubatch=_opt_int(gen.get("n_ubatch") if "n_ubatch" in gen else raw.get("n_ubatch")),
+        modalities=raw.get("modalities") if isinstance(raw.get("modalities"), dict) else {},
+        chat_template_chars=len(str(raw.get("chat_template") or "")),
+        props=rest,
+    )
+
+
+def _opt_int(value: object) -> int | None:
+    """An int when the gateway gave one, else None — a build that renames or drops a field
+    leaves a gap in the report instead of 500-ing the whole read."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _opt_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 @router.get("/client-vitals")
 async def client_vitals(request: Request, _p: DebugDep) -> dict[str, object]:
     """The browser's own account of the top-bar vitals stream, as last reported.

@@ -538,7 +538,10 @@ def _local_model_info(
     available = enabled and not unavailable
     override = windows.get(m.id)
     effective_window = override if override is not None else m.context_window
-    n_slots = slots.get(m.id, 1)
+    # What the gateway will REALLY serve: a speculative model is pinned to one slot whatever
+    # override is stored, so the drawer shows the served value rather than a saved one the
+    # engine ignores (and sizes its KV bar off the same number).
+    n_slots = m.effective_slots(slots.get(m.id, 1))
     kv_gb = round(m.kv_gb_per_128k * effective_window / 131072 * n_slots, 2)
     return LocalModelInfo(
         id=m.id,

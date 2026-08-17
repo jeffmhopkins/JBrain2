@@ -681,12 +681,16 @@ class FakeLocalGateway:
         fail_load: bool = False,
         fail_logs: bool = False,
         logs_text: str = "",
+        fail_props: bool = False,
+        props_payload: dict[str, object] | None = None,
     ) -> None:
         self._running = set(running or ())
         self.fail_unload = fail_unload
         self.fail_load = fail_load
         self.fail_logs = fail_logs
         self.logs_text = logs_text
+        self.fail_props = fail_props
+        self.props_payload = props_payload or {}
         self.unloaded: list[str] = []
         self.loaded: list[str] = []
         # The persona system prompt each load() was asked to prime the warm-up with
@@ -729,6 +733,13 @@ class FakeLocalGateway:
         if self.fail_logs:
             raise LocalGatewayError("simulated gateway failure")
         return self.logs_text
+
+    async def props(self, served_model: str) -> dict[str, object]:
+        from jbrain.llm.local_gateway import LocalGatewayError
+
+        if self.fail_props:
+            raise LocalGatewayError("simulated gateway failure")
+        return dict(self.props_payload)
 
 
 class FakeComfyUiGateway:

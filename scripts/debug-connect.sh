@@ -22,6 +22,7 @@
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
+#   scripts/debug-connect.sh gateway-props <served>    # engine's build / n_ctx / batch / slots
 #   scripts/debug-connect.sh metrics                   # host telemetry: GPU busy %, power, load
 #   scripts/debug-connect.sh llm                       # show live routing
 #   scripts/debug-connect.sh llm-set agent.turn local:gpt-oss-120b high
@@ -257,6 +258,11 @@ PY
     tail=200
     [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
     _call GET "/api/debug/llm/gateway-logs?tail=$tail"
+    ;;
+
+  gateway-props | props) # <served_model> — the engine's build/context/batch/slots, from llama-server itself
+    m="${1:?usage: debug-connect.sh gateway-props <served_model>}"
+    _call GET "/api/debug/llm/gateway-props/$m" | _pp
     ;;
 
   metrics | gpu) _call GET /api/debug/host/metrics | _pp ;;  # host telemetry: GPU busy %, power, load

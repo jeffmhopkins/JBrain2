@@ -29,7 +29,7 @@ strip that suffix once here.
 from __future__ import annotations
 
 import re
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 import httpx
 import structlog
@@ -240,6 +240,35 @@ class LocalGatewayClient:
                 return resp.text
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
+
+    async def props(self, served_model: str) -> dict[str, Any]:
+        """llama-server's own `/props` for one LOADED model, proxied through llama-swap's
+        `/upstream/<model>/` route.
+
+        The structured answer to the questions the log cannot give. llama-server prints the
+        facts that decide how it serves — the build it is actually running, the context it
+        actually allocated, the batch sizes in force, and what `-np auto` resolved
+        `total_slots` to — ONCE, in its startup banner. llama-swap does not forward that
+        banner into `/logs`, and even when a build does, the access log floods the ring
+        buffer within minutes. So on a box operated with no terminal (CLAUDE.md #10) this
+        endpoint is the only way to read them, and it is the only way to tell a serving flag
+        we *intended* from one the engine actually applied.
+
+        Raises LocalGatewayError when the model isn't loaded (llama-swap 404s the upstream
+        route) or the gateway can't be reached — the caller asked a direct question, so a
+        miss is surfaced rather than guessed at."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, transport=self._transport
+            ) as client:
+                resp = await client.get(f"{self._root}/upstream/{served_model}/props")
+                resp.raise_for_status()
+                payload = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise LocalGatewayError(str(exc)) from exc
+        if not isinstance(payload, dict):
+            raise LocalGatewayError(f"unexpected /props payload: {type(payload).__name__}")
+        return cast("dict[str, Any]", payload)
 
     async def load_progress(self) -> float | None:
         """A real load fraction (0..1) for the model currently coming onto the box, parsed

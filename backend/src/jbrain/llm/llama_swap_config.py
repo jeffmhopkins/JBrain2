@@ -79,6 +79,13 @@ def resolve_weight(root: str, model_id: str, pattern: str) -> str:
     return rels[0]
 
 
+def _is_speculative(extra_server_args: Sequence[str]) -> bool:
+    """Whether a model's serving flags turn on speculative decoding (`--spec-type <mode>`),
+    which constrains it to a single sequence. Read off the flags rather than a catalog boolean
+    so the constraint can't drift from the thing that causes it."""
+    return any(a == "--spec-type" for a in extra_server_args)
+
+
 def render(
     models: Sequence[Mapping[str, object]],
     root: str,
@@ -105,7 +112,15 @@ def render(
         model_id = str(m["id"])
         gguf = resolve_weight(root, model_id, str(m["gguf_include"]))
         window = windows.get(model_id, int(cast(int, m["context_window"])))
+        extra_args = tuple(str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ()))
         n_slots = max(1, slots.get(model_id, 1))
+        if _is_speculative(extra_args):
+            # llama.cpp's speculative paths serve ONE sequence: MTP takes no second parallel
+            # slot, and draft acceptance collapses as concurrent sequences rise (reported on
+            # this exact gfx1151 SoC). A saved -np override would silently defeat the very
+            # speedup the model was installed for, so the serving mode wins over the setting
+            # rather than the operator having to know the interaction.
+            n_slots = 1
         cmd = [
             "llama-server",
             "--host",
@@ -141,12 +156,14 @@ def render(
             "-ngl",
             "999",
         ]
-        if n_slots > 1:
-            # A dedicated interactive slot beside the background one: llama-server routes each
-            # request to the slot with the longest matching prefix, so jerv turns keep their
-            # primed KV in one slot while title/background traffic uses the other — neither can
-            # evict the other's cache (docs/runbooks/STRIX_HALO_SETUP.md).
-            cmd += ["-np", str(n_slots)]
+        # ALWAYS explicit, even at 1. llama-server's `-np` default is `auto`, which current
+        # builds resolve to a multi-slot value — so omitting the flag does NOT mean one slot,
+        # and a single-slot serving mode would be silently violated. Above 1 this is the
+        # dedicated interactive slot beside the background one: llama-server routes each
+        # request to the slot with the longest matching prefix, so jerv turns keep their primed
+        # KV in one slot while title/background traffic uses the other — neither can evict the
+        # other's cache (docs/runbooks/STRIX_HALO_SETUP.md).
+        cmd += ["-np", str(n_slots)]
         # A thinking model emits its reasoning inline as `<think>…</think>`;
         # `--reasoning-format deepseek` (paired with --jinja above) makes llama.cpp parse
         # those tags out of `content` into the `reasoning_content` channel OpenAI-compatible
@@ -159,8 +176,7 @@ def render(
             cmd += ["--mmproj", f"/models/{model_id}/{resolve_weight(root, model_id, str(mmproj))}"]
         # Model-specific serving flags (e.g. the MTP variant's `--spec-type draft-mtp …`
         # self-speculative-decoding config), appended verbatim after the shared flags.
-        for flag in cast("Sequence[str]", m.get("extra_server_args") or ()):
-            cmd.append(str(flag))
+        cmd += extra_args
         lines.append(f"  {m['served_model']}:")
         lines.append(f"    proxy: http://127.0.0.1:{port}")
         lines.append("    cmd: >")

@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-08-12
+> **Status:** Living · **Last verified:** 2026-08-17
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
@@ -156,7 +156,17 @@ scripts/debug-connect.sh tavily https://example.com/walled-page
 scripts/debug-connect.sh logs api --tail 200
 
 # The model engine's OWN stdout (slot acquired/released) — does a Stop free the GPU?
+# NOTE: this is a ~100 KB ring buffer that llama-swap's access log floods within minutes, and
+# llama-swap does not forward llama-server's stdout into it. Do NOT expect the startup banner
+# here — use gateway-props below for the serving facts.
 scripts/debug-connect.sh gateway-logs --tail 200
+
+# How the engine is ACTUALLY serving a loaded model, read from llama-server itself: the
+# llama.cpp build, allocated context, batch/ubatch, live modalities, and what `-np auto`
+# resolved total_slots to. The read that tells a flag we intended from one that took effect —
+# and the only way to know which build a benchmark came from, since the gateway floats on a
+# rolling tag. 502 means the model isn't loaded (`load <id>` first).
+scripts/debug-connect.sh gateway-props qwen3.8-27b-mtp
 
 # Host hardware telemetry: GPU busy %, APU power, load — watch the device across a Stop.
 scripts/debug-connect.sh metrics
