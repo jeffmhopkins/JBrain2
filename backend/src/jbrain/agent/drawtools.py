@@ -229,9 +229,7 @@ def build_canvas_handlers(
             _provider, model = await router.effective_spec(
                 "agent.vision", "vision", spec_override=spec
             )
-            resolved = to_pixels(
-                boxes, served_model=model, width=scene.width, height=scene.height
-            )
+            resolved = to_pixels(boxes, served_model=model, width=scene.width, height=scene.height)
         except (UnknownGroundingModel, GroundingError) as exc:
             # Say so rather than passing raw numbers off as pixels — the whole failure
             # this fixes was ambiguity about which base a number was in.
