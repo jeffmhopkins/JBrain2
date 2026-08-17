@@ -588,6 +588,27 @@ class FakeSettingsStore:
         self.values["llm_local_parallel_slots"] = current
         return current
 
+    async def llm_local_extra_args(self, ctx: object) -> dict[str, list[str]]:
+        raw = self.values.get("llm_local_extra_args", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            mid: list(args)
+            for mid, args in raw.items()
+            if isinstance(mid, str) and isinstance(args, list) and args
+        }
+
+    async def set_llm_local_extra_args(
+        self, ctx: object, *, model_id: str, args: list[str] | None
+    ) -> dict[str, list[str]]:
+        current = await self.llm_local_extra_args(ctx)
+        if not args:
+            current.pop(model_id, None)
+        else:
+            current[model_id] = list(args)
+        self.values["llm_local_extra_args"] = current
+        return current
+
     async def llm_local_free_ram_fraction(self, ctx: object) -> float | None:
         raw = self.values.get("llm_local_free_ram_fraction")
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):

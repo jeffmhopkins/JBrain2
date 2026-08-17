@@ -748,7 +748,8 @@ def test_set_context_window_unloads_a_resident_model() -> None:
 def test_plan_load_previews_the_eviction_without_touching_the_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # gpt-oss (63.5) resident, used=90; staging the coder would blow the 96 ceiling. The
+    # gpt-oss (68.0 — full-history KV) resident, used=90; staging the coder would blow the 96
+    # ceiling. The
     # dry-run names gpt-oss as the victim (with its footprint), projects the landing point,
     # and evicts NOTHING. (qwen3-coder-next is provisioned so it's a valid plan-load target.)
     monkeypatch.setattr(
@@ -765,7 +766,7 @@ def test_plan_load_previews_the_eviction_without_touching_the_box(
     assert body["measured"] is True
     assert body["fits"] is False and body["over"] is False and body["already_resident"] is False
     assert [v["id"] for v in body["victims"]] == ["gpt-oss-120b"]
-    assert body["victims"][0]["gb"] == 63.5
+    assert body["victims"][0]["gb"] == 68.0
     assert body["ceiling_gb"] == 96.0
     assert gw.unloaded == []  # dry-run — nothing evicted
 
@@ -825,7 +826,7 @@ def test_set_available_404_and_409() -> None:
 
 
 def test_plan_load_flags_an_over_box_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A 20 GB box can't hold gpt-oss (63.5): the preview flags over_box so the screen can
+    # A 20 GB box can't hold gpt-oss (68.0): the preview flags over_box so the screen can
     # disable Load.
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (20.0, 2.0)
@@ -853,7 +854,7 @@ def test_load_refuses_an_over_box_model_with_409(monkeypatch: pytest.MonkeyPatch
 
 def test_load_evicts_to_fit_then_warms_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     # Committing the staged load: free_room evicts the same victim the preview showed, then the
-    # target is warmed. gpt-oss (63.5) resident at used=90; loading the coder evicts gpt-oss.
+    # target is warmed. gpt-oss (68.0) resident at used=90; loading the coder evicts gpt-oss.
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )

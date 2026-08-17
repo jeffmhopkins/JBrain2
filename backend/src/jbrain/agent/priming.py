@@ -20,6 +20,8 @@ gateway warm-up path (`local_gateway`) sends.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -86,3 +88,55 @@ async def jerv_prime_spec(
     uses so the two shapes can't drift."""
     system, tools, _ = await jerv_prime_inputs(registry, liveness, served_model)
     return system, openai_tools(tools)
+
+
+# The KV-slot state file carries NO model identity — llama.cpp validates layer count, KV row
+# size and `n_stream`, and nothing else. A file written by a different build, quant or prompt
+# therefore restores cleanly and is wrong, so the CALLER owns validity. We put the fingerprint
+# in the FILENAME rather than a sidecar: a changed input yields a different name, the restore
+# simply misses, and the keeper falls through to a normal prefill. Self-invalidating, with no
+# metadata file to drift from the bytes it describes.
+def jerv_prime_fingerprint(
+    system: str,
+    tools: list[dict[str, Any]],
+    *,
+    build_info: str,
+    chat_template: str,
+    n_ctx: object,
+    n_slots: object,
+    today_utc: str,
+) -> str:
+    """A short digest of everything that changes the bytes llama-server would prefill.
+
+    Deliberately hashes the CONTENT, not version numbers: `.prompt`/`.tool` versions are
+    hand-authored and a prose edit can land without one being bumped, which would leave a stale
+    cache looking valid. `chat_template` and `build_info` come from the gateway's own `/props`,
+    and cover the case the box makes likely — updates rebuild llama.cpp on master by default,
+    and a template change rewrites the prefix upstream of everything.
+
+    `today_utc` is in here because the gpt-oss template renders `Current date:` into the system
+    header (verified on-box), so a cache is stale at UTC midnight — the CONTAINER's midnight,
+    which is not the owner's.
+    """
+    payload = json.dumps(
+        {
+            "v": 1,  # bump when the SET of inputs changes, else old names look valid to new code
+            "system": system,
+            "tools": tools,
+            "build": build_info,
+            "template": chat_template,
+            "n_ctx": n_ctx,
+            "n_slots": n_slots,
+            "date": today_utc,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def jerv_slot_filename(served_model: str, fingerprint: str) -> str:
+    """The state file's name. Bare basename with no separator or colon — llama.cpp validates
+    it with `fs_validate_filename` and rejects anything else."""
+    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in served_model)
+    return f"jerv-{safe}-{fingerprint}.bin"

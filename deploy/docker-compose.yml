@@ -370,6 +370,14 @@ services:
       - "${RENDER_GID:-render}"
     volumes:
       - ./local-models:/models:ro
+      # llama-server's KV-slot state files (`--slot-save-path /kv/`). A NAMED volume, not a
+      # subdir of the read-only weights mount: it must be writable, must survive this
+      # container being recreated by an update, and must already exist — llama-server refuses
+      # to start when the path is missing, and the flag is in every model's command. Docker
+      # creates a named volume's mountpoint, which satisfies that. Disposable and deliberately
+      # OUT of backups (backup.sh archives blobs only): it is a cache, and a miss just costs a
+      # normal prefill.
+      - llm_kv:/kv
     # Also joins the `jcode` network so the coding sandbox can reach the model
     # endpoint here — and ONLY this — without being on the shared `internal` net.
     networks: [internal, jcode]
@@ -794,3 +802,6 @@ volumes:
   # scratch/deliverables, kept out of backups.
   jlaunch_work:
   jlaunch_artifacts:
+  # Primed-prefix KV state for the local gateway (see the `local-llm` mount). ~1 GB per
+  # distinct prefix; self-invalidating by filename, so stale entries are simply never read.
+  llm_kv:

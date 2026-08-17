@@ -43,6 +43,12 @@ from typing import cast
 # by every build, and the non-swapping group runs models concurrently so they can't
 # share a port. 127.0.0.1: llama-swap and llama-server share the container.
 UPSTREAM_PORT_BASE = 9100
+# Where llama-server reads/writes KV-slot state files, inside the gateway container. A named
+# docker volume (`llm_kv`), NOT a subdirectory of the read-only weights mount: the path must be
+# writable, must survive the container being recreated by an update, and must already exist —
+# llama-server refuses to start when `--slot-save-path` names a missing directory, and that
+# flag sits in every model's command.
+KV_SLOT_DIR = "/kv/"
 
 
 def resolve_weight(root: str, model_id: str, pattern: str) -> str:
@@ -163,6 +169,16 @@ def render(
         mmproj = m.get("mmproj_include")
         if mmproj:
             cmd += ["--mmproj", f"/models/{model_id}/{resolve_weight(root, model_id, str(mmproj))}"]
+        # KV-slot state files live on a dedicated writable volume (docker-compose `llm_kv`),
+        # so the primed prefix survives the model process being unloaded and reloaded. The
+        # trailing slash is load-bearing: llama-server concatenates path + filename. The
+        # directory must EXIST or llama-server refuses to start — the named volume guarantees
+        # that, which is why this is not a bind mount into the read-only weights dir.
+        cmd += ["--slot-save-path", KV_SLOT_DIR]
+        # Full history on the sliding-window layers. Without it a slot restore on an SWA model
+        # succeeds and is then thrown away (see LocalModel.kv_full_history).
+        if m.get("kv_full_history"):
+            cmd.append("--swa-full")
         # Model-specific serving flags (e.g. the MTP variant's `--spec-type draft-mtp …`
         # self-speculative-decoding config), appended verbatim after the shared flags.
         for flag in cast("Sequence[str]", m.get("extra_server_args") or ()):

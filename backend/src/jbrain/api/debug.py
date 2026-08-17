@@ -1208,6 +1208,28 @@ async def set_extra_args(
     )
 
 
+class ContextWindowIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # null clears the override back to the model's catalog default.
+    context_window: int | None = None
+
+
+@router.put("/llm/local-models/{model_id}/context-window")
+async def set_context_window(
+    model_id: str, body: ContextWindowIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> LlmSettingsOut:
+    """Set one model's served context window (llama-server `-c`), the PWA control mirrored here.
+
+    It belongs on this surface because window and KV are the same decision: `--swa-full` doubles
+    a model's KV, and halving the window pays for it exactly. Without this an assistant can turn
+    the flag on remotely but not the knob that makes it affordable."""
+    request.state.debug_detail = f"{model_id}: {body.context_window}"
+    return await llm_settings.set_local_context_window_value(
+        model_id, body.context_window, settings, _store(request), _OWNER_CTX, _gateway(request)
+    )
+
+
 @router.get("/llm/local-models/{model_id}/props")
 async def model_props(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep

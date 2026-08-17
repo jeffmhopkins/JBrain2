@@ -187,7 +187,29 @@ local) resident **and primed**. It primes by issuing a throwaway turn down the *
 real turn takes** — `router.converse("agent.turn", …)` with jerv's persona + tools + the
 resolved effort — so the primed KV prefix is byte-identical to what a real turn sends and the
 reuse actually lands. That call also loads the model on demand through residency, so one prime
-both resides and warms it. It also listens to the residency coordinator: an eviction, or the bare
+both resides and warms it. **The primed prefix is persisted to disk and restored on a cold start.** llama-server writes
+its KV slot to `--slot-save-path /kv/` (a named `llm_kv` volume, so it survives the container
+being recreated by an update), and the keeper restores it before priming. Measured on this box
+2026-08-17: restore 0.3s, and the prime after it 0.19s, against 69-113s cold — the prefill is
+skipped, not shortened. The prime still runs in both paths ON PURPOSE: a restore that silently
+did nothing degrades to a slow prime, never a wrong answer.
+
+> **`--swa-full` is mandatory here, not tuning.** gpt-oss is an interleaved sliding-window
+> model, and a restore into a windowed cache reports full success and is then discarded — same
+> token count, same bytes, same 0.3s, and llama-server re-prefills anyway. Measured A/B on the
+> box: **69,373 ms without the flag, 194 ms with it.** The catalog carries it as
+> `kv_full_history=True` on gpt-oss-120b, and `footprint_gb` doubles that model's KV term to
+> match (4.5 → 9.0 GB per 128k) so the memory meter and the eviction budget stay honest. The
+> lever that pays for it is the **context window**: KV scales linearly with `-c`, so serving at
+> 64k costs exactly what 128k did before the flag.
+
+The cache is keyed by FILENAME — a digest of the system prompt, the serialized tool schemas,
+llama.cpp's `build_info`, the chat template, `n_ctx`/`n_slots`, and the UTC date. Anything that
+changes the bytes changes the name, the restore simply misses, and the keeper falls through to a
+normal prefill. The date is in there because the gpt-oss template renders `Current date:` into
+the system header, so a cache goes stale at the CONTAINER's UTC midnight, not the owner's.
+
+It also listens to the residency coordinator: an eviction, or the bare
 reload the end-of-turn restore does, reports the dropped prefix so the keeper re-primes on its
 eager cadence. Without that edge it only noticed a lost prime when a tick happened to *observe*
 the model missing — so an evict and its restore that both landed inside one interval (an image

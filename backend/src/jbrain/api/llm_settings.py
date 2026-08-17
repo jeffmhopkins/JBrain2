@@ -857,15 +857,32 @@ async def set_local_context_window(
     Persists the override (so the meter updates at once), re-stamps the gateway
     config, and unloads the model if resident so its next request reloads at the
     new `-c` — a running process can't resize its KV cache live."""
+    return await set_local_context_window_value(
+        model_id, body.context_window, settings, store, ctx_for(principal), gateway
+    )
+
+
+async def set_local_context_window_value(
+    model_id: str,
+    window: int | None,
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+) -> LlmSettingsOut:
+    """The window edit itself, shared by the owner screen and the debug console — so the two
+    surfaces cannot drift on validation, regeneration or eviction."""
     model = _require_provisioned(settings, model_id)
     ceiling = model.max_context_window
-    if body.context_window is not None and not (1 <= body.context_window <= ceiling):
+    if window is not None and not (1 <= window <= ceiling):
         raise HTTPException(status_code=422, detail=f"context window must be 1..{ceiling}")
-    ctx = ctx_for(principal)
-    windows = await store.set_llm_local_context_window(
-        ctx, model_id=model_id, window=body.context_window
+    windows = await store.set_llm_local_context_window(ctx, model_id=model_id, window=window)
+    _try_regenerate(
+        settings,
+        windows,
+        await store.llm_local_parallel_slots(ctx),
+        await store.llm_local_extra_args(ctx),
     )
-    _try_regenerate(settings, windows, await store.llm_local_parallel_slots(ctx))
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
