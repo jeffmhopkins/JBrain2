@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-08-16
+> **Status:** Living · **Last verified:** 2026-08-17
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -16,7 +16,7 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 ## Contents
 
 - `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on
-  (41 tools ≈ 26.5k tokens of schema per turn, nothing carried across sessions). W1 fixes the
+  (44 tools ≈ 28.7k tokens of schema per turn, nothing carried across sessions). W1 fixes the
   identity paragraph that made the on-box model discount its own prompt; W2 adds a
   cross-session **scratchpad** on a generalized `app.agent_scratchpad` table (the archivist's
   memory migrates into it) split by **write authority** — the agent writes only dated

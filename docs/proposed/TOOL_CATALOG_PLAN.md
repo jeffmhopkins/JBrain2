@@ -1,6 +1,6 @@
 # Tool Catalog — a scalable tool surface for a growing tool count
 
-> **Status:** In progress (W1 shipped) · **Last verified:** 2026-08-16 ·
+> **Status:** In progress (W1 shipped) · **Last verified:** 2026-08-17 ·
 > **Waves:** W0a◻️ W0b◻️ W1✅ W2◻️ W3◻️
 > **W1 (umbrellas) is shipped** — the four action/source families collapsed with no capability
 > change and no measurable tool-selection regression on the live gpt-oss-120b (validated first via
@@ -39,6 +39,13 @@ sidecars in review):
 - Two costs grow with the count: **window occupancy** (crowding out working context on long
   deep-research/plan turns) and — the one that bites first — **tool-selection accuracy** (a
   model picks the wrong or misses a tool as the list lengthens and descriptions blur).
+
+**The figures above are the pre-W1 baseline, kept as the record of why this plan exists.**
+Current count (2026-08-17): W1's umbrellas took jerv 48 → 37, and growth has since put it at
+**44 tools ≈ 111.0k chars of description+params (~27.7k tokens; ~28.7k serialized with the
+examples `as_llm_tool` appends)** — the canvas trio being the most recent addition. That is the
+plan's own thesis on display: a one-off consolidation buys headroom, not a ceiling. Re-measure
+before W0b rather than quoting either number.
 
 **On caching (corrected after review):** there is **no Anthropic prompt caching wired up in this
 repo** — zero `cache_control` breakpoints anywhere in `backend/` (the adapter sends
@@ -168,6 +175,11 @@ each capability fully documented in one guide:
 
   Two corrections from that plan's adversarial review, both binding on W0b:
 
+  - **The fattest five are a moving target — re-measure at the start of the wave.** As of
+    2026-08-17 they are `web_fetch` 7,206 · `canvas` 6,723 · `deep_research` 6,703 ·
+    `spawn_subagent` 6,438 · `deep_produce` 5,896 (desc+params chars) = **29.7% of jerv's
+    111.0k**. `canvas` landed in second place days after this scope was written and displaced
+    `analyze_stream`; sixteen sidecars now exceed 2.5k. Trim by measurement, not by the list.
   - **Target ~15–20%, not 20–30%, on the five fattest.** A paragraph-level read found most of
     the bulk is load-bearing: `web_fetch`'s anti-URL-fabrication rule and its "a search FORM is
     not evidence of absence" paragraph (both written after production failures), its

@@ -1,18 +1,20 @@
 # jerv Context Budget — spend less on tool schemas, spend some on durable memory
 
-> **Status:** Proposed · **Last verified:** 2026-08-16 · **Waves:** W1◻️ W2◻️ W3◻️
+> **Status:** Proposed · **Last verified:** 2026-08-17 · **Waves:** W1◻️ W2◻️ W3◻️
 
-jerv carries **41 tool sidecars ≈ 26.5k tokens of serialized schema on every turn** (25k of
+jerv carries **44 tool sidecars ≈ 28.7k tokens of serialized schema on every turn** (27.7k of
 description + params, plus the examples `as_llm_tool` appends), before its 413-line persona
 prompt and the conversation — and carries **nothing** across sessions except what happens to
 be searchable in the video/report libraries. That is the budget backwards: the persona spends
 heavily on a mostly-static tool menu and nothing on the standing context that would make each
 turn land better.
 
-*(41/26.5k is the fully-wired ceiling and matches the owner's stock stack. Eleven of the 41
-are config-gated by handler absence — the image/whisper/OCR family — so a box without ComfyUI,
-whisper, and RapidOCR carries 30 tools ≈ 19.2k. The ceiling is the right number to plan
-against here; it is not a floor.)*
+*(44/28.7k is the fully-wired ceiling and matches the owner's stock stack. Fourteen of the 44
+are config- or model-gated by handler absence — the image/whisper/OCR family plus the canvas
+trio — so a box without ComfyUI, whisper, RapidOCR, and a grounding-capable vision model
+carries 30 tools ≈ 19.2k. The ceiling is the right number to plan against here; it is not a
+floor. The count grows: it was 41 when this plan was drafted and 48 before the W1 umbrellas,
+which is the standing argument for the trim.)*
 
 This plan **reclaims** schema tokens (W3, and the trim now homed in `TOOL_CATALOG_PLAN` W0b)
 and **spends a small, capped slice** of them on a cross-session scratchpad (W2), plus fixes
@@ -54,7 +56,9 @@ categorical bars, ≤6 series**; `charttools.py:115` hardcodes `x_kind: "time"`,
 reads a bare number as epoch-ms, and points are sorted and connected — so **non-date x-axis,
 scatter, correlation, histogram, and pie are impossible by construction**, and
 `chart_measurements`/`read_labs` are permanently out of jerv's reach (empty read scopes). The
-hole was smaller than the model said and is now partly fixed. See §5 row 1.
+hole was smaller than the model said and is now partly fixed. See §5 row 1 — where the
+`htmlrender` service that landed with `AGENT_CANVAS_PLAN` W1b changes what closing the rest of
+it would cost.
 
 ## 2. The load-bearing constraint: sanction, not framing
 
@@ -271,7 +275,7 @@ conclusion via evidence that did not survive contact with the code; the evidence
 
 | Rejected | Why |
 |---|---|
-| **Python + file-execution sandbox** | Rejected on **cost**, not on absence of a gap — the first draft's "the chart hole never existed" was wrong (§1): scatter, non-date x-axis, correlation, and >6 series are impossible by construction, and the number-invention failure class is documented, recurring, and unfixed after three prompt versions (`DEEP_RESEARCH_SCRATCHPAD_PLAN.md:46-49,147-150`) in the exact model that `render_chart` invites to plot "a count you tallied." The cost argument stands on its own and is untouched: #2 makes an exec tool a by-construction hole in the storage abstraction, and #10 makes its failure modes undebuggable without a terminal. **Honest trigger:** revisit when a *recurring* owner task needs a plot shape the chart tools cannot draw, or when a mechanical arithmetic backstop is chosen over the prompt-discipline lineage that currently owns number-invention. |
+| **Python + file-execution sandbox** | Rejected on **cost**, not on absence of a gap — the first draft's "the chart hole never existed" was wrong (§1): scatter, non-date x-axis, correlation, and >6 series are impossible by construction, and the number-invention failure class is documented, recurring, and unfixed after three prompt versions (`DEEP_RESEARCH_SCRATCHPAD_PLAN.md:46-49,147-150`) in the exact model that `render_chart` invites to plot "a count you tallied." The cost argument stands on its own: #2 makes an exec tool a by-construction hole in the storage abstraction, and #10 makes its failure modes undebuggable without a terminal. **The rejection got stronger while this plan was in review.** `AGENT_CANVAS_PLAN` W1b shipped `htmlrender` — a general HTML+CSS→PNG sidecar on an `internal: true` network, explicitly "the sanctioned path for any tool wanting rich visual output," which never sees owner images. That is a route to *every* missing plot shape with no storage-abstraction hole and no terminal dependency, and its reasoning is this plan's §2 in another key ("the model gets a language it is fluent in, and the PWA only ever receives an image — pixels cannot execute"). So the plot-shape half of the Python case is now servable by an existing sanctioned path. **Revised trigger:** the only surviving argument is the *deterministic-arithmetic* one — revisit if a mechanical backstop is ever chosen over the prompt-discipline lineage that owns number-invention today. A missing chart shape is now an `htmlrender`-backed tool, not a reason for an interpreter. |
 | **Skills/plugins authored into the scratchpad** | Procedures need to be inspectable, testable, diffable — the inverse of a memory blob, in a codebase that version-pins and digest-guards model-facing prose. The one real tension: `Corrections` *is* procedural content. Under §2 it is owner-written, which bounds it; the plan should still say what stops it becoming a skills layer by accretion. |
 | **Per-persona sidecar variants** (e.g. hiding `deep_produce`'s EMR params from jerv) | The security half is right and verified: `deep_research.py:1685-1689` fails closed unless health-scoped **owner**, and jerv's scopes are empty. But the first draft's disposal — "trim it in W3 instead" — **is not possible**: curator holds `deep_produce` via `extra_tools` and needs those params, and the sidecar is shared, so removing them breaks curator. Hiding them from jerv only *is* a per-persona variant. Corrected position: the ~384 tokens of always-refusing prose are an **accepted cost** until the catalog work makes per-persona description assembly cheap. Noted as an inconsistency with §1's own discipline, and accepted knowingly rather than waved away. |
 | **`anyOf` schema for "question required unless preset"** | Right answer, wrong evidence. The first draft claimed `TOOL_CATALOG_PLAN` "records that gpt-oss-120b fills flat fields reliably and little beyond." It records the opposite-leaning *concern* (a discriminated param is "harder for a weak local model to fill", filed under risks) and its only measurement reports W1's umbrellas shipping with "no measurable tool-selection regression." Shipped sidecars already carry three-level nesting and enums successfully. The real reason is narrow and specific: the `analyze_stream` GBNF segfault class (§3.2), and `deep_research` is a six-property, five-optional object — near-identical shape. **Not "closed"** — reopen if the grammar-builder crash is ever fixed upstream. |
@@ -297,9 +301,11 @@ the registry, and a *dismissal* of one is equally a lead.
    time on those grounds.
 3. **PWA surface shape** — Settings pane vs a chat-adjacent card. Under §2 this is the sanction
    mechanism, so the choice is about how visible the owner's write action is, not cosmetics.
-4. **Scope of `TOOL_CATALOG_PLAN` W0b** — nine tools exceed 2.5k, not the three the first draft
-   named; two of the unnamed (`render_bars`, `render_chart`) were just rewritten, so re-trimming
-   them is churn to price. Decided in that document.
+4. **Scope of `TOOL_CATALOG_PLAN` W0b** — **sixteen** tools now exceed 2.5k, not the three the
+   first draft named, and the fattest five have changed: `canvas` (6,723) landed straight into
+   second place, displacing `analyze_stream`. Two of the unnamed (`render_bars`,
+   `render_chart`) were rewritten this week, so re-trimming them is churn to price. Decided in
+   that document.
 5. **What stops `Corrections` becoming a skills layer by accretion** (§5 row 2).
 
 ## 8. Review record
