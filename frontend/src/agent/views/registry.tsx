@@ -3870,7 +3870,11 @@ function ImageSet({ data }: ViewProps): ReactNode {
     sourceKind === "attachment" ? chatAttachmentUrl(sourceId) : generatedImageUrl(sourceId);
 
   return (
-    <div className="tool-view tv-imageset">
+    // No `tool-view` class here: ToolView already wraps every registered component in
+    // one, and adding a second nested the card inside itself — an extra border and
+    // radius around content that already had them. Every other component in this
+    // registry leaves the frame to ToolView; this one now does too.
+    <div className="tv-imageset">
       <div className="tv-imageset-head">
         <span className="tv-imageset-title">
           {crops.length} {label}

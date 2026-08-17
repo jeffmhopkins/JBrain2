@@ -744,7 +744,9 @@ switched the global route instead of using a per-conversation override. Second, 
 filmstrip used `object-fit: cover`, and a crop is rarely square — a bottle cuts to about
 1:2.9, so a square frame showed the middle third and the owner saw a band of label where
 they asked for a bottle. The crop was right and the thumbnail misrepresented it; it now
-letterboxes with `contain`.
+letterboxes with `contain`. The card also framed itself twice — `ToolView` already wraps
+every registered component in a `.tool-view`, and `ImageSet` added a second, nesting the
+card inside itself. It was the only component in the registry doing so.
 
 **Not a defect, but the number to watch:** the turn cost. Per ReAct step the model
 re-pays a ~35–39k-token prefill (the tool block dominates), so steps run 1–5 minutes on
