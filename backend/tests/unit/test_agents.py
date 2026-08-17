@@ -152,7 +152,8 @@ def test_jerv_is_not_offered_the_task_agent_decompose_tool() -> None:
     # else it could not have inherited before.
     assert JERV_TOOLS | {DECOMPOSE_TOOL} == DEEPEST_RUN_TOOLS
     # The task-agent persona still holds it, so the clamp has something to intersect.
-    assert DECOMPOSE_TOOL in AGENTS["research_deep"].tools
+    deep_tools = AGENTS["research_deep"].tools
+    assert deep_tools is not None and DECOMPOSE_TOOL in deep_tools
 
 
 def test_jerv_holds_both_ungrounded_chart_tools() -> None:
