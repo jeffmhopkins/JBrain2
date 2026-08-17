@@ -734,6 +734,18 @@ down to the 2048px cap. Defaults now scale with the canvas long edge (≈10px st
 ≈49px text at 4080), with the old values as floors so a blank sheet is byte-identical
 and an explicit `size`/`width` from the model always wins.
 
+**The crop lane works, and taught two more.** "Export each water bottle" cut two correct
+crops (269×771 and 489×1395) and rendered the variant-B card as designed. Two fixes fell
+out. First, `vision_read_spec` returns a `"provider:model"` SELECTOR while the grounding
+table is keyed on the BARE served model — so resolving with the selector refused every
+request from a conversation carrying a model pick, which is every canvas conversation,
+since the pick is what arms the tools. It only escaped notice because the owner had
+switched the global route instead of using a per-conversation override. Second, the
+filmstrip used `object-fit: cover`, and a crop is rarely square — a bottle cuts to about
+1:2.9, so a square frame showed the middle third and the owner saw a band of label where
+they asked for a bottle. The crop was right and the thumbnail misrepresented it; it now
+letterboxes with `contain`.
+
 **Not a defect, but the number to watch:** the turn cost. Per ReAct step the model
 re-pays a ~35–39k-token prefill (the tool block dominates), so steps run 1–5 minutes on
 the Q4 twin and the first annotation took roughly eight. The canvas did not cause this —

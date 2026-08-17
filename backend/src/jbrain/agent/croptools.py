@@ -228,7 +228,14 @@ def build_crop_handlers(
     ) -> list[tuple] | str:
         try:
             spec = await vision_read_spec(router, ctx.model_override)
-            provider, model = await router.effective_spec("agent.vision", "vision")
+            # Resolve THROUGH the override: `spec` is a "provider:model" selector while
+            # the grounding table is keyed on the BARE served model, so using `spec`
+            # directly refuses every request made from a conversation with a model pick
+            # — which is every canvas conversation, since the pick is what arms the
+            # tools. effective_spec folds the override in and returns the bare name.
+            _provider, model = await router.effective_spec(
+                "agent.vision", "vision", spec_override=spec
+            )
             result = await router.complete(
                 "agent.vision",
                 system=_GROUND_SYSTEM,
@@ -241,10 +248,10 @@ def build_crop_handlers(
             return f"Couldn't look at that image: {exc}"
         raw_boxes, _points = parse_grounding(result.text)
         try:
-            pixels = to_pixels(raw_boxes, served_model=spec or model, width=width, height=height)
+            pixels = to_pixels(raw_boxes, served_model=model, width=width, height=height)
         except UnknownGroundingModel as exc:
             # Refuse rather than guess: a wrong coordinate base crops confidently wrong.
-            log.warning("crop.unqualified_model", model=spec or model)
+            log.warning("crop.unqualified_model", model=model)
             return f"Can't crop with the current vision model: {exc}"
         except GroundingError as exc:
             return f"That model's box coordinates couldn't be read: {exc}"

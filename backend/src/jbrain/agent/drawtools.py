@@ -224,12 +224,13 @@ def build_canvas_handlers(
         if not boxes:
             return ""
         try:
-            _provider, model = await router.effective_spec("agent.vision", "vision")
+            # Through the override — `spec` is "provider:model", the table is keyed on
+            # the bare served model (see the same note in croptools).
+            _provider, model = await router.effective_spec(
+                "agent.vision", "vision", spec_override=spec
+            )
             resolved = to_pixels(
-                boxes,
-                served_model=spec or model,
-                width=scene.width,
-                height=scene.height,
+                boxes, served_model=model, width=scene.width, height=scene.height
             )
         except (UnknownGroundingModel, GroundingError) as exc:
             # Say so rather than passing raw numbers off as pixels — the whole failure

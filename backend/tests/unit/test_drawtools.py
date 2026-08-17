@@ -110,7 +110,14 @@ class _Router:
     async def supports_vision(self, task: str, spec_override: str | None = None) -> bool:
         return True
 
-    async def effective_spec(self, task: str, strength: str | None = None):
+    async def effective_spec(
+        self, task: str, strength: str | None = None, spec_override: str | None = None
+    ):
+        # Mirrors the real router: an override is a "provider:model" selector and the
+        # BARE model comes back. A fake that ignored spec_override would have hidden the
+        # bug where the selector was used as a table key.
+        if spec_override:
+            return tuple(spec_override.split(":", 1))  # type: ignore[return-value]
         return "local", self.model
 
     async def complete(self, task: str, **kw: Any):
