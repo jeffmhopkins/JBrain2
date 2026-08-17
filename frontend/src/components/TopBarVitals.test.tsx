@@ -208,4 +208,31 @@ describe("TopBarVitals", () => {
     expect(() => ticks(5)).not.toThrow();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("scales the token trace to the window's own peak, not a fixed ceiling", async () => {
+    // It was pinned at 140 tok/s, so a turn cruising at 20 — a normal rate for a big local
+    // model — drew a 14%-high squiggle flat against the baseline, indistinguishable from
+    // nothing happening. The number beside it carries magnitude; the trace carries SHAPE.
+    rate.value = 20;
+    const { container, rerender } = render(<TopBarVitals syncStatus="synced" />);
+    ticks(2);
+    rate.value = 10;
+    rerender(<TopBarVitals syncStatus="synced" />);
+    ticks(2);
+    rate.value = 20;
+    rerender(<TopBarVitals syncStatus="synced" />);
+    ticks(2);
+
+    const trace = container.querySelector(".vitals-trace");
+    const ys = [...(trace?.getAttribute("d") ?? "").matchAll(/[ML][\d.]+ ([\d.]+)/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(ys.length).toBeGreaterThanOrEqual(3);
+    const top = Math.min(...ys);
+    const bottom = Math.max(...ys);
+    // A 20/s peak must reach the top of the box, and the 10/s dip must sit near the middle
+    // rather than all three flattening into the bottom sliver.
+    expect(top).toBeLessThan(2.5);
+    expect(bottom - top).toBeGreaterThan(5);
+  });
 });
