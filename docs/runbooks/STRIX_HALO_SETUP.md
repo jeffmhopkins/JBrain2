@@ -380,11 +380,22 @@ Three things to know:
   raising `--spec-draft-n-max` (pinned at `3`, llama.cpp's default and the Strix Halo consensus),
   because ungated, the cost of a wasted draft scales with n-max.
 
-**Vision is ON here, and unconfirmed.** The projector was dropped when llama.cpp MTP could not
-run beside `--mmproj`; upstream reports that fixed. The split was expensive — the same weights
-on disk twice, and every vision turn meant giving up speculative decoding entirely — so the
-projector is back, to be confirmed on-box. If a build regresses, drop the projector, not the
-entry. The gateway tracks llama.cpp master (see "Tracking newest llama.cpp" below), so after an
+> ### ⚠️ Vision + MTP hard-freezes this box. Measured, twice.
+>
+> The projector was briefly re-enabled on this entry (upstream reported the MTP-beside-`--mmproj`
+> crash fixed in b9240+). Loading it took the **host** down to a power cycle — not the gateway,
+> the machine — and did it **twice**. The second time there was **105 GiB free and a 21 GiB model
+> to load**, so memory pressure was not the cause.
+>
+> The mechanism is llama.cpp **#27146**: an mmproj/mtmd model balloons **GTT** allocation on an
+> AMD iGPU under Vulkan, and **GTT allocations are invisible to cgroups and `/proc/meminfo`**.
+> That is the important part for this box: `jbrain.llm.residency` budgets against
+> `mem_available`, so it **cannot see this class of allocation coming and cannot protect against
+> it**. A memory estimate is the wrong guard here — the projector simply stays off.
+>
+> Use `qwen3.8-27b-q4` when you need vision. The cost is real (the same Q4_K_M weights sit on
+> disk twice, and a vision turn means giving up speculative decoding) and it is the right trade
+> against a machine that stops answering. The gateway tracks llama.cpp master (see "Tracking newest llama.cpp" below), so after an
 update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-q4`.
 
 > **Reading what the engine actually did.** llama-server prints its build, allocated context,
@@ -402,12 +413,30 @@ The flags are on the extra-args allowlist precisely so this loop exists.
 | Step | How |
 |---|---|
 | Ship the catalog defaults + download the projector | **Ops → Update** (the sync detects the newly-required file and pulls it) |
-| Confirm the build, real `-c`, and `total_slots` | `debug-connect.sh props qwen3.8-27b-mtp` |
+| Confirm the build, real `-c`, and `total_slots` | `debug-connect.sh props <id>` — **on an ALREADY-RESIDENT model** (see the warning below) |
 | Point a task at it | PWA **Settings → LLM**, or `debug-connect.sh llm-set <task> qwen3.8-27b-mtp <effort>` |
 | Try a different draft setting | `debug-connect.sh extra-args qwen3.8-27b-mtp --spec-draft-p-min 0.75` |
 | Measure it | `debug-connect.sh prime qwen3.8-27b-mtp` → `elapsed_ms` |
 | Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-mtp` (no args) |
-| Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` |
+| Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` — against **`qwen3.8-27b-q4`**, never the MTP entry (see the freeze warning above) |
+
+> ### ⚠️ `props` can load a model, and that load skips the residency budget
+>
+> `props` reaches llama-server through llama-swap's `/upstream/<model>/` passthrough, and that
+> path triggers **llama-swap's own on-demand load** — which does NOT go through
+> `jbrain.llm.residency`. On this box the app is the *sole* evictor precisely so nothing loads
+> without the free-RAM budget being checked; this route steps around that, and calling it on a
+> cold model beside a large resident one **froze the host to a power cycle**.
+>
+> Always load explicitly first, in this order, and watch memory between steps:
+>
+> ```bash
+> debug-connect.sh unload <the big resident model>   # goes through residency
+> debug-connect.sh load <the model you want>         # goes through residency
+> debug-connect.sh props <that model>                # now a pure read
+> ```
+>
+> Treat `props` as safe **only** against a model that is already resident.
 
 Two things deliberately have no remote path. The **`-np` slot count** is owner-authenticated
 (PWA only) — but a speculative model is clamped to one slot in the config generator regardless,
