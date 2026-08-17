@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import llm_settings
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
+from jbrain.llm import local_catalog
 from jbrain.llm.residency import ResidencyCoordinator
 from jbrain.llm.router import TASK_DEFAULTS
 from jbrain.main import create_app
@@ -640,6 +641,24 @@ def test_drawer_reports_parallel_slots_default_of_one() -> None:
     c, _ = _authed_client(_local_settings())
     by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
     assert all(m["parallel_slots"] == 1 for m in by_id.values())
+
+
+def test_the_meter_reports_the_same_kv_the_eviction_budget_uses() -> None:
+    """The meter must not re-derive the KV formula. It did, and the two silently diverged the
+    moment `--swa-full` landed: footprint_gb doubled gpt-oss's KV and the meter did not, so the
+    number the owner reads under-reported that model by 9 GB while the budget was right. A
+    meter that disagrees with the budget is worse than no meter — it is the one an operator
+    plans a load against."""
+    c, _ = _authed_client(_local_settings())
+    by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    expected = round(
+        local_catalog.footprint_gb(model, model.context_window, disk_gb=0.0, slots=1), 2
+    )
+    assert by_id["gpt-oss-120b"]["kv_gb"] == expected
+    # And it is genuinely the doubled figure, not a coincidence of the formulas agreeing.
+    assert expected == round(model.kv_gb_per_128k * model.context_window / 131072 * 2, 2)
 
 
 def test_set_parallel_slots_round_trips_and_doubles_the_kv_estimate() -> None:

@@ -224,7 +224,9 @@ class LocalModelInfo(BaseModel):
     context_window_override: int | None
     # Estimated KV-cache size (GB) at the EFFECTIVE window (override or default) AND slot
     # count — the context portion of the model's memory-bar segment. An estimate, not a
-    # measurement (see local_catalog.kv_gb_per_128k); a second slot doubles it.
+    # measurement (see local_catalog.kv_gb_per_128k); a second slot doubles it, and so does
+    # `--swa-full` on a sliding-window model. Always derived from local_catalog.footprint_gb
+    # so this can never drift from the number the eviction budget uses.
     kv_gb: float
     # llama-server `-np` slot count: 1 (single slot, the default) or 2 (a dedicated
     # interactive keep-warm slot beside the background one, so the jerv prefix isn't evicted
@@ -543,7 +545,12 @@ def _local_model_info(
     # override is stored, so the drawer shows the served value rather than a saved one the
     # engine ignores (and sizes its KV bar off the same number).
     n_slots = m.effective_slots(slots.get(m.id, 1))
-    kv_gb = round(m.kv_gb_per_128k * effective_window / 131072 * n_slots, 2)
+    # Derive from footprint_gb rather than re-deriving the KV formula here. The two drifted
+    # the moment `kv_full_history` landed: footprint_gb doubled gpt-oss's KV for `--swa-full`
+    # and this line did not, so the eviction budget was right while the meter the owner reads
+    # under-reported that model by 9 GB — the exact dishonesty the doubling exists to prevent.
+    # `disk_gb=0` strips the weights term, leaving the KV this field is meant to report.
+    kv_gb = round(local_catalog.footprint_gb(m, effective_window, disk_gb=0.0, slots=n_slots), 2)
     return LocalModelInfo(
         id=m.id,
         label=m.label,
