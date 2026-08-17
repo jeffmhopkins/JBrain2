@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-15
+> **Status:** Living · **Last verified:** 2026-08-16
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -456,14 +456,19 @@ included — until a power cycle. The log signature is a burst of *missed kernel
 messages* ending mid `Mem-Info`/slab dump, and Postgres recovering with "database
 system was not properly shut down" on the next boot.
 
-Update-time recreation is handled for you: `jbrain update` (and the PWA update)
-**stops the `local-llm` gateway before the rebuild/recreate and restarts it after**
-(`deploy/update-inner.sh`), so the resident set never collides with the container
-churn. The host OS hardening is **applied automatically** by
-`deploy/oom-hardening.sh` — run from `scripts/local-llm-setup.sh` (install and every
-`jbrain enable-local-models`) **and** from the host `jbrain update` path when local hosting
-is on, so an existing box gets hardened on its next update with no manual step. The steps
-below are what it does and how to verify:
+Update-time allocation is handled for you, and the handling is structural rather than
+best-effort — see "An update never competes with itself for memory" below for the
+sequence. The short version: an update quiesces the stack, hardens *before* the heavy
+phase, drops the page cache, and refuses a model load it cannot afford.
+
+The host OS hardening is **applied automatically** by `deploy/oom-hardening.sh` — run
+from `scripts/local-llm-setup.sh` (install and every `jbrain enable-local-models`) **and**
+from the host `jbrain update` path when local hosting is on, so an existing box gets
+hardened on its next update with no manual step. A **PWA** update cannot run that script
+(earlyoom needs `apt`, the persistent file needs `/etc/sysctl.d`), but it does apply the
+reclaim-headroom knobs in step 2 for the current boot through a privileged one-shot — the
+`vm.*` knobs are not namespaced, so a container writes the same values the host would. The
+steps below are what the hardening does and how to verify:
 
 1. **earlyoom** — kill the biggest hog on memory pressure *before* the kernel stalls.
    Installed and configured by the setup script; verify (or reapply by hand):
@@ -544,9 +549,11 @@ runs it as a detached one-shot and `jbrain update` runs it directly with
 exactly the way that matters: the host copy never rebuilt the gateway on the floating
 llama.cpp tag or loaded a model to smoke-test it, and the containerized copy never
 re-applied the OOM hardening — so the PWA path did the memory-heavy work *without* the
-protection against precisely that, and hard-locked the box. Steps that need the real host
-(mDNS, on-box image models, OOM hardening) are gated on that flag inside the one script
-rather than living in a second one.
+protection against precisely that, and hard-locked the box. Steps that genuinely need the
+real host (mDNS via systemd/avahi, on-box image models, `earlyoom` via `apt`) are gated on
+that flag inside the one script rather than living in a second one — and the list is kept
+as short as it can honestly be: the reclaim sysctls left it once a privileged one-shot
+turned out to reach them.
 
 **Before any of the churn, the gateway is emptied and removed.** An update asks it to
 release every loaded model (`jbrain.cli local-llm-unload`), then removes the container
@@ -557,6 +564,84 @@ merely-stopped container is one stray `up -d` away from reloading the weights mi
 `local-models-sync.sh` honours `JBRAIN_SKIP_GATEWAY_START` for the same reason: its own
 restart used to land squarely in that window. The gateway comes back once, deliberately,
 after the rebuild.
+
+### An update never competes with itself for memory
+Emptying the gateway was not enough on its own. Updates kept hard-locking the box, and the
+kernel trace named the culprit exactly: `llama-server` failing an **order:0** allocation —
+a single 4 KB page — inside `amdgpu_ttm_tt_populate` during a GEM buffer create, with
+`__GFP_RETRY_MAYFAIL` in the flags. That flag tells the kernel to reclaim hard and then
+*fail* rather than invoke the OOM killer, which is why nothing was killed, nothing showed
+up in the app's metrics, and the host simply froze in reclaim. earlyoom and the sysctls
+above were already in place when it happened, so hardening alone does not cover this.
+
+The fix is that `deploy/update-inner.sh` stops doing several memory-heavy things at once.
+Its phase order is deliberate:
+
+1. Backup, source refresh, `.env` backfills — stack up, cheap.
+2. **Quiesce.** Empty and remove the gateway, then stop every service except the control
+   plane (`db`, `api`, `supervisor`, `proxy`, `cloudflared`). Those stay up so the PWA can
+   still stream the update log — going fully dark would free about a gigabyte and cost you
+   any way to tell a slow build from a wedged one.
+3. Reclaim hardening and the image build — against the quiesced stack.
+4. **Pause the `api` too**, rebuild the gateway on the floating tag, **drop the page
+   cache**, then run the smoke test — which loads the **smallest installed model** (~1 GB
+   with a tiny Qwen present) and probes that same model, so this phase does not allocate
+   tens of gigabytes at all.
+5. Empty the gateway again, migrate, recreate the stack, restore everything the quiesce
+   stopped.
+6. Model syncs, gateway restart, prune.
+
+**The smoke test does not load a big model.** It used to run its tool probe against
+gpt-oss-120b, because the regression it guards against was a *harmony* tool-grammar
+segfault and harmony is gpt-oss. But loading ~59 GB is precisely what the kernel traces
+caught freezing this box mid-update — and a frozen box never reaches the rollback the smoke
+test exists to trigger. So the probe now runs against the model already loaded in step 1,
+and gpt-oss is probed **only when something else has already made it resident**, where it
+costs nothing.
+
+> **This is a deliberate coverage trade, not a free win.** Harmony has its own chat template
+> and its own grammar path in llama.cpp, so a harmony-specific regression can now ship
+> unnoticed. The asymmetry is the argument: a missed harmony regression breaks gpt-oss tool
+> turns, which you can route around from Settings in seconds, while the load that would have
+> caught it can hard-lock a box you operate remotely with no terminal. If you ever want the
+> old behaviour back, the probe target is `smoketest.TOOL_PROBE_MODEL_ID`.
+
+**Why the `api` is paused for step 4 anyway.** It is deliberately kept up through the build
+so you can watch the log — but it runs the keep-warm prime, which retries every five seconds
+and loads the chat model the instant the gateway answers. That is ~60 GB allocated mid-update
+by a process nobody asked to do it, and now that the smoke test is cheap it is the *largest*
+allocation this phase could make. So the PWA goes dark for the gateway rebuild and smoke
+test — minutes, and only on an update where the gateway image actually changed — and comes
+back with the full log intact.
+
+**Recovering a quiesce that never finished.** The `EXIT` trap restores the stopped services
+on an ordinary failure or a caught signal, but it cannot cover a `SIGKILL` (the supervisor's
+stale-one-shot reaper uses one) or a power cut — and every service is `restart:
+unless-stopped`, which by definition does *not* restart something explicitly stopped. So the
+quiesced set is also written to `.jbrain-quiesced` in the install dir before the first stop,
+and the **next update restores anything left in it before doing anything else**. That matters
+most for `comfyui` and the mqtt pair: no `up -d` in the update names them, so without the file
+nothing would ever bring them back.
+
+Two details matter more than they look. The **page-cache drop** comes immediately before
+the load because `MemAvailable` counts reclaimable cache as free — and reclaiming it under
+pressure is the very thing that livelocks this box, so after a build that just wrote tens
+of GB of layers the number reads fine and cannot be realised in time. Dropping first turns
+the reading into real free pages; if the drop doesn't move the number, the update log says
+so rather than letting the check quietly measure cache. And the smoke test then **refuses a
+load it cannot afford**: it checks `MemAvailable` against the model's resident cost (weights
+**plus KV cache**) and `smoketest.LOAD_HEADROOM_GB`, and if short it reports the shortfall
+and fails. With a tiny model installed that check now passes trivially — it stays because it
+is the guard for a box whose *smallest* installed model is a big one — which routes into the existing rollback, so a box without the room keeps the
+pinned, known-good base instead of betting the host on a verification step. In the update log
+that reads as `NOT ENOUGH MEMORY to load … REFUSED`. A model the gateway already holds is
+never charged for, since loading it allocates nothing.
+
+That headroom is **the app's own floor, not a smaller one invented for the update**: 20 GB,
+matching the ~19.5 GB that `LOCAL_LLM_FREE_RAM_FRACTION` (0.15) keeps free on this 130 GB
+box for every ordinary turn. The update path is the one that has actually frozen this
+hardware; it would be indefensible for it to be the loosest load path on the machine. A unit
+test pins the two together.
 
 **Every one-off `compose run` in an update is bounded.** The toggle read gets 120s and the
 smoke test 600s, and a timeout is treated as a FAILURE — so a hung smoke test rolls the
