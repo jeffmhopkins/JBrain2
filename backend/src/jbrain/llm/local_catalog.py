@@ -92,6 +92,19 @@ class LocalModel:
     # portion of each model's segment, scaled linearly by the configured window.
     # gpt-oss is low (alternating sliding-window attention); dense models are higher.
     kv_gb_per_128k: float = 0.0
+    # Serve this model with `--swa-full` — full history on its sliding-window layers.
+    #
+    # Only meaningful for an interleaved-SWA model (gpt-oss). It is the PRECONDITION for
+    # KV-slot restore doing anything: measured on the box 2026-08-17, a restore into a
+    # windowed cache returns 200 with every token accounted for and llama-server then
+    # re-prefills anyway (69,373 ms), while the same restore with this flag skips the
+    # prefill entirely (194 ms). The failure without it is silent — same token count, same
+    # bytes, same latency on the restore call — so this is not a tuning knob.
+    #
+    # It roughly DOUBLES the model's KV, which `footprint_gb` accounts for: every layer now
+    # keeps full history instead of a 128-token window. Leave False for a dense model, where
+    # it buys nothing and costs nothing (llama.cpp warns and ignores it).
+    kv_full_history: bool = False
     # The vendor's RECOMMENDED sampling for this model (docs/reference/MODEL_PROMPTING.md).
     # The router applies it to every call so the model runs at its card's values instead of
     # llama.cpp's engine defaults (temp 0.8 / top_p 0.95 / top_k 40 / min_p 0.1 — which match
@@ -247,6 +260,9 @@ CATALOG: tuple[LocalModel, ...] = (
         # 128k fits the box's unified memory beside the MXFP4 weights.
         context_window=131072,
         kv_gb_per_128k=4.5,
+        # The interactive persona lives here, so it is the one model whose cold prefill the
+        # owner actually waits on — and the only one where a KV-slot restore pays for itself.
+        kv_full_history=True,
     ),
     LocalModel(
         id="nemotron-3-super-120b",
@@ -739,6 +755,11 @@ def footprint_gb(
     keeping the model loaded. The residency budget compares it against live free RAM."""
     weights = disk_gb if disk_gb is not None else model.size_gb
     kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * max(1, slots)
+    # `--swa-full` gives the sliding-window layers a full-size cache, so the KV term roughly
+    # doubles. Counted here or the meter and the eviction budget would both under-report the
+    # model by several GB — on a box that has hard-locked under memory pressure.
+    if model.kv_full_history:
+        kv *= 2
     return round(weights + kv, 2)
 
 

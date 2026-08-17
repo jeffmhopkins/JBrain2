@@ -311,3 +311,19 @@ def test_write_is_atomic_and_round_trips(tmp_path: Path) -> None:
     assert "-c 16384" in text
     # No leftover temp file from the atomic rename.
     assert not (tmp_path / "llama-swap.yaml.tmp").exists()
+
+
+def test_every_model_gets_a_slot_save_path_and_only_swa_models_get_swa_full(
+    tmp_path: Path,
+) -> None:
+    """`--slot-save-path` is unconditional (the named volume guarantees the dir exists, and a
+    missing one would stop llama-server booting), while `--swa-full` is per-model: it is the
+    precondition for a KV restore doing anything on a sliding-window model, and pure cost
+    elsewhere."""
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    cmds = [ln for ln in text.splitlines() if "llama-server" in ln]
+    assert cmds and all("--slot-save-path /kv/" in ln for ln in cmds)
+    # Only the model the catalog flags carries --swa-full.
+    flagged = [ln for ln in cmds if "--swa-full" in ln]
+    assert len(flagged) == sum(1 for m in _manifest() if m.get("kv_full_history"))

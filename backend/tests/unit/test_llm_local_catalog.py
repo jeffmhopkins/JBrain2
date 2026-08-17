@@ -1,7 +1,10 @@
 """The local-model catalog and how it drives the opt-in settings choices."""
 
+import dataclasses
 import json
 from typing import Any
+
+import pytest
 
 from jbrain.config import Settings
 from jbrain.llm import local_catalog
@@ -388,18 +391,22 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
     gpt = local_catalog.get("gpt-oss-120b")
     vl = local_catalog.get("qwen3-vl-30b")
     assert gpt is not None and vl is not None
-    # gpt-oss at its native 128k window: weights 59 + KV 4.5 (the 128k reference) = 63.5.
-    assert local_catalog.footprint_gb(gpt, 131072) == 63.5
+    # gpt-oss at its native 128k window: weights 59 + KV 4.5 (the 128k reference), DOUBLED to
+    # 9.0 because it serves with `--swa-full` — full history on its sliding-window layers, the
+    # precondition for KV-slot restore. 59 + 9 = 68.0.
+    assert local_catalog.footprint_gb(gpt, 131072) == 68.0
     # KV scales linearly with the window: vl at 32k = 32 + 6*(32768/131072) = 33.5.
     assert local_catalog.footprint_gb(vl, 32768) == 33.5
     # Half the window → half the KV term (16k = 32 + 0.75).
     assert local_catalog.footprint_gb(vl, 16384) == 32.75
     # A measured on-disk size overrides the nominal weights estimate.
     assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 33.4
-    # A second slot doubles ONLY the KV term (weights are shared): gpt-oss at 128k with 2
-    # slots = 59 + 2*4.5 = 68.0. slots<=1 leaves it unchanged.
-    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 68.0
-    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 63.5
+    # A second slot doubles ONLY the KV term (weights are shared), and it compounds with
+    # full-history: gpt-oss at 128k with 2 slots = 59 + 2*(2*4.5) = 77.0. This is the number
+    # the owner trades against — halving the window brings it back to 68.0.
+    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 77.0
+    assert local_catalog.footprint_gb(gpt, 65536, slots=2) == 68.0
+    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 68.0
 
 
 def test_get_by_served_maps_served_name_to_catalog_entry() -> None:
@@ -446,3 +453,25 @@ def test_enabled_but_empty_selection_falls_back_to_generic_local() -> None:
     choices = provider_choices(_settings(local_llm_enabled=True, local_llm_model="my-model"))
     by_id = {c.id: c for c in choices}
     assert by_id["local"].spec == "local:my-model"
+
+
+def test_full_history_doubles_the_kv_term_so_the_budget_stays_honest() -> None:
+    """`--swa-full` gives the windowed layers a full-size cache. If `footprint_gb` did not
+    count that, the settings meter and the eviction budget would both under-report the model
+    by several GB — on a box that has hard-locked under memory pressure."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None and model.kv_full_history is True
+    plain = dataclasses.replace(model, kv_full_history=False)
+    delta = local_catalog.footprint_gb(model, 131072) - local_catalog.footprint_gb(plain, 131072)
+    assert delta == pytest.approx(4.5, abs=0.01)  # exactly one extra kv_gb_per_128k
+
+
+def test_halving_the_window_pays_for_full_history() -> None:
+    """The knob that makes the flag affordable: KV scales linearly with `-c`, so serving at
+    half the window costs the same RAM it did before the flag."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    plain = dataclasses.replace(model, kv_full_history=False)
+    assert local_catalog.footprint_gb(model, 65536) == pytest.approx(
+        local_catalog.footprint_gb(plain, 131072), abs=0.01
+    )

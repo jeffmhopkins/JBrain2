@@ -60,6 +60,9 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   Only flags on `llm_settings.EXTRA_ARG_FLAGS` are accepted: llama-server **refuses to start**
   on an unknown flag, so an unrestricted argv here could make a model permanently unloadable
   from a box with no shell. Clearing is the same call with `{"args": []}`.
+- `PUT /api/debug/llm/local-models/{id}/context-window` — the served `-c`. On this surface
+  because window and KV are one decision: `--swa-full` doubles a model's KV and halving the
+  window pays for it exactly.
 - `GET /api/debug/llm/local-models/{id}/props` — `build_info` (the only build identity available
   over HTTP, and this box rebuilds llama.cpp on master by default), real `n_ctx`, `total_slots`.
 - `POST /api/debug/llm/local-models/{id}/slots/{n}?action=save|restore|erase` — llama-server's
