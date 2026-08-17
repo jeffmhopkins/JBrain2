@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-08-09
+> **Status:** Living · **Last verified:** 2026-08-17
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -15,6 +15,17 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `JERV_CONTEXT_BUDGET_PLAN.md` — rebalance what a jerv turn spends its context on
+  (44 tools ≈ 28.7k tokens of schema per turn, nothing carried across sessions). W1 fixes the
+  identity paragraph that made the on-box model discount its own prompt; W2 adds a
+  cross-session **scratchpad** on a generalized `app.agent_scratchpad` table (the archivist's
+  memory migrates into it) split by **write authority** — the agent writes only dated
+  `Threads`/`Watch`, injected inside the `briefs.py` untrusted-data sentinel, while
+  `Preferences`/`Corrections` are owner-written from the PWA and carry sanctioned-instruction
+  framing; W3 puts config-derived lists into the tool schemas at `schemas_for` time. The
+  description trim lives in `TOOL_CATALOG_PLAN` W0b, which W2 must land after. **Revised after
+  a four-lens adversarial review** (§8); records five deliberate rejections with corrected
+  evidence (Python sandbox, skills-in-memory, per-persona sidecars, `anyOf`, catalog W2/W3).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual

@@ -23,7 +23,7 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -1173,3 +1173,89 @@ async def unload_model(
 ) -> LoadedModelsOut:
     request.state.debug_detail = model_id
     return await llm_settings.gateway_unload(model_id, settings, _gateway(request))
+
+
+# --- Launch-flag experiments (remote, no terminal) ---------------------------------
+# The owner runs this box remotely and cannot edit a catalog entry or a compose file
+# (CLAUDE.md #10). These four endpoints exist so a llama-server LAUNCH FLAG can be tried,
+# measured, and reverted entirely over the debug API — the loop that previously needed a
+# code change, a release, and an Ops → Update per iteration.
+
+
+class ExtraArgsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Empty/None clears the override — the recovery path when a flag broke the launch, and
+    # the reason this is a settable list rather than a boolean per experiment.
+    args: list[str] = Field(default_factory=list)
+
+
+@router.put("/llm/local-models/{model_id}/extra-args")
+async def set_extra_args(
+    model_id: str, body: ExtraArgsIn, request: Request, settings: SettingsDep, _p: DebugDep
+) -> LlmSettingsOut:
+    """Set (or clear) EXTRA llama-server flags for one model, then re-stamp the gateway config
+    and unload it so the next request relaunches with them.
+
+    Only flags on `llm_settings.EXTRA_ARG_FLAGS` are accepted. That allowlist is the whole
+    safety story: llama-server REFUSES TO START on an unknown flag, so an unrestricted argv
+    here would let one call make a model permanently unloadable. Scoped per model, so a bad
+    value can only affect the model it was set on, and clearing it is the same call with an
+    empty list."""
+    request.state.debug_detail = f"{model_id}: {' '.join(body.args) or '(clear)'}"
+    return await llm_settings.set_local_extra_args(
+        model_id, body.args, settings, _store(request), _OWNER_CTX, _gateway(request)
+    )
+
+
+@router.get("/llm/local-models/{model_id}/props")
+async def model_props(
+    model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """llama-server's `/props` for one model: `build_info` (the only build identity available
+    over HTTP — and this box rebuilds llama.cpp on master by default, so it changes), the real
+    `n_ctx`, and `total_slots`. Loads the model on demand if it isn't resident."""
+    request.state.debug_detail = model_id
+    return await llm_settings.gateway_props(model_id, settings, _gateway(request))
+
+
+@router.post("/llm/local-models/{model_id}/slots/{slot_id}")
+async def slot_action(
+    model_id: str,
+    slot_id: int,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    action: str,
+    filename: str | None = None,
+) -> dict[str, object]:
+    """Save / restore / erase one KV slot (`action=save|restore|erase`).
+
+    Read the caveat on `LocalGatewayClient.slot_action` before trusting a 200: on a
+    sliding-window model a restore can succeed and then be discarded, and only the gateway log
+    (`GET /logs/local-llm`) says so. Pair every restore with `POST …/prime` and compare the
+    elapsed time against a known-cold prefill — that is the measurement that settles it."""
+    request.state.debug_detail = f"{model_id} slot {slot_id} {action}"
+    return await llm_settings.gateway_slot_action(
+        model_id, slot_id, action, filename, settings, _gateway(request)
+    )
+
+
+@router.post("/llm/local-models/{model_id}/prime")
+async def prime_model(
+    model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """Run the REAL jerv prime against one model and time it — the instrument for every
+    prefill experiment. Returns `elapsed_ms`, `input_tokens` and the tool count, so a cold
+    prefill and a post-restore prefill are comparable numbers rather than a stopwatch guess.
+
+    It primes through the same path `WarmKeeper` uses, so what it measures is what a real turn
+    would pay, not a hand-built approximation that would drift from it."""
+    request.state.debug_detail = model_id
+    return await llm_settings.gateway_prime(
+        model_id,
+        settings,
+        _gateway(request),
+        registry=getattr(request.app.state, "agent_registry", None),
+        liveness=getattr(request.app.state, "image_liveness", None),
+    )

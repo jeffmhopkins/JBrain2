@@ -1,7 +1,7 @@
 import asyncio
 import datetime as dt
 import functools
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -235,6 +235,19 @@ API_ACTION_SPECS = (
 )
 
 
+def _prefix_lost_notifier(app: FastAPI) -> Callable[[str], None]:
+    """Bridge residency → WarmKeeper without an import cycle or a construction-order
+    constraint: residency reports a served name whose primed KV it just dropped, and the
+    keeper forgets its memo so the next tick re-primes on the eager cadence."""
+
+    def notify(served_model: str) -> None:
+        keeper = getattr(app.state, "warm_keeper", None)
+        if keeper is not None:
+            keeper.note_prefix_lost(served_model)
+
+    return notify
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
 
@@ -398,6 +411,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Serialize evict+load against the worker process (which runs its own coordinator
             # over the same box) so a deferred worker load can't co-load past the floor here.
             box_lock=pg_box_lock(maker),
+            # Tell the WarmKeeper when an eviction or a bare restore-load drops a model's
+            # primed prefix. LATE-BOUND on purpose: the keeper is constructed further down
+            # this same startup, so the lambda resolves it at call time and degrades to a
+            # no-op on a build with no agent wired.
+            on_prefix_lost=_prefix_lost_notifier(app),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
         # serving at a time on the box, so a live grok `/model` switch (or a parallel agent)

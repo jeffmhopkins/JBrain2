@@ -94,6 +94,10 @@ FractionLoader = Callable[[], Awaitable[float | None]]
 # load so toggling code mode takes effect with no restart; a read failure degrades to empty
 # (not held), never blocking a load on a housekeeping hiccup.
 HoldLoader = Callable[[], Awaitable[frozenset[str]]]
+# Notified with a served name when this coordinator drops that model's primed KV prefix
+# (an eviction, or a bare reload on restore). Synchronous and best-effort — see
+# `ResidencyCoordinator._prefix_lost`.
+PrefixLostHook = Callable[[str], None]
 
 
 class ResidencyError(Exception):
@@ -150,6 +154,7 @@ class ResidencyCoordinator:
         fraction_loader: FractionLoader | None = None,
         hold_loader: HoldLoader | None = None,
         box_lock: BoxLock | None = None,
+        on_prefix_lost: PrefixLostHook | None = None,
     ) -> None:
         self._gateway = gateway
         # Inert on a cloud-only box (no local hosting): ensure_room/restore no-op and nothing
@@ -183,6 +188,28 @@ class ResidencyCoordinator:
         # flight is dropped (the running one already restores the whole set), which coalesces a
         # multi-image turn's repeated displacements into a single end-of-turn restore.
         self._tasks: set[asyncio.Task[None]] = set()
+        # Called with a served name whenever this coordinator does something that DROPS that
+        # model's primed KV prefix — an eviction, or a bare reload during restore. WarmKeeper
+        # registers it to clear its "already primed" memo.
+        #
+        # Without this the keeper only notices a lost prime when it happens to OBSERVE the
+        # model missing from `running()` on a tick. An evict and its end-of-turn restore that
+        # both land inside one 60s interval — an image render, a code-mode toggle — are
+        # invisible to it: the memo stays set, the keeper reports settled, and the owner's next
+        # jerv message pays the full cold prefill IN THE FOREGROUND. This hook is the missing
+        # edge, and it is a callback rather than a direct call so residency keeps knowing
+        # nothing about personas or priming.
+        self._on_prefix_lost = on_prefix_lost
+
+    def _prefix_lost(self, served_model: str) -> None:
+        """Signal that `served_model`'s primed prefix is gone. Best-effort and synchronous —
+        a listener that raises must never break an eviction."""
+        if self._on_prefix_lost is None:
+            return
+        try:
+            self._on_prefix_lost(served_model)
+        except Exception:  # noqa: BLE001 — a notification hiccup is not an eviction failure
+            log.warning("residency.prefix_lost_hook_failed", model=served_model, exc_info=True)
 
     def note_evicted(self, served_names: Iterable[str]) -> None:
         """Record models an external displacement (a code session, an image render) unloaded,
@@ -194,6 +221,7 @@ class ResidencyCoordinator:
         for name in served_names:
             if local_catalog.get_by_served(name) is not None:
                 self._displaced.add(name)
+                self._prefix_lost(name)
 
     def schedule_restore(self) -> None:
         """Fire-and-forget restore of the displaced set. Non-blocking so it overlaps the next
@@ -426,6 +454,7 @@ class ResidencyCoordinator:
             with contextlib.suppress(LocalGatewayError):
                 await self._gateway.unload(served)
                 self._displaced.add(served)  # remember it for the end-of-turn restore
+                self._prefix_lost(served)
         if load_target and not plan.already_resident:
             with contextlib.suppress(LocalGatewayError):
                 await self._gateway.load(served_model)
@@ -472,6 +501,7 @@ class ResidencyCoordinator:
         for served in plan.victims:
             with contextlib.suppress(LocalGatewayError):
                 await self._gateway.unload(served)
+                self._prefix_lost(served)
 
     async def _restore(self) -> None:
         """Reload the displaced set that isn't already resident, as far as the budget allows
@@ -515,7 +545,11 @@ class ResidencyCoordinator:
             if used + fp > ceiling:
                 continue  # no room without evicting a resident model — leave it for later
             with contextlib.suppress(LocalGatewayError):
+                # A BARE load: weights back and the inference path warm, but no persona/tools
+                # prefill — so the model is resident and UNPRIMED. Say so, or the keeper's memo
+                # (set before the eviction) makes it skip the re-prime the model now needs.
                 await self._gateway.load(served)
+                self._prefix_lost(served)
                 used += fp  # bound the pass so several missing members don't over-commit
             # Attempted (loaded, or the gateway refused) → no longer pending. A transient miss
             # is re-displaced when it's next evicted, so we never spin retrying a since-removed

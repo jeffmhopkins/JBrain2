@@ -138,6 +138,37 @@ async def test_reprimes_after_the_model_is_evicted() -> None:
     assert len(r.converses) == 2
 
 
+async def test_note_prefix_lost_forces_a_reprime_the_running_check_would_miss() -> None:
+    """The bug this closes: an evict and its end-of-turn restore that BOTH complete between
+    ticks leave the model running and the memo set, so the keeper reports settled and the
+    owner's next jerv turn pays a cold prefill in the FOREGROUND. Residency now reports the
+    dropped prefix edge-wise, which is the only signal available when the level never changes."""
+    gw = _FakeGateway(running={"gpt-oss-120b"})
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=gw)
+    assert await keeper.reconcile_once() is True
+    assert len(r.converses) == 1
+    # Evicted and restored between ticks: still resident, so `running` looks unchanged.
+    assert await keeper.reconcile_once() is True
+    assert len(r.converses) == 1  # ...and without the hook it would stay stale here
+
+    keeper.note_prefix_lost("gpt-oss-120b")
+    assert await keeper.reconcile_once() is True
+    assert len(r.converses) == 2
+
+
+async def test_note_prefix_lost_ignores_a_different_model() -> None:
+    """A coder or vision model losing its prefix says nothing about jerv's — clearing the memo
+    then would cost a needless 56s re-prime on every unrelated eviction."""
+    gw = _FakeGateway(running={"gpt-oss-120b"})
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=gw)
+    assert await keeper.reconcile_once() is True
+    keeper.note_prefix_lost("qwen3-coder-next")
+    assert await keeper.reconcile_once() is True
+    assert len(r.converses) == 1
+
+
 async def test_retries_soon_when_the_prime_fails() -> None:
     r = _FakeRouter("gpt-oss-120b")
     r.fail = True

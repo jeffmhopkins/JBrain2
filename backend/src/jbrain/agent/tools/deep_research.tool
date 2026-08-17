@@ -1,6 +1,6 @@
 ---
 name: deep_research
-version: 11
+version: 12
 permission: web
 cost_class: expensive
 params:
@@ -9,8 +9,9 @@ params:
     question:
       type: string
       description: >-
-        The research question to investigate in depth. Write it as a complete,
-        self-contained question — the tool plans its own sub-questions from it and
+        The research question to investigate in depth. REQUIRED unless you pass a `preset`
+        (which derives its own question) — a call with neither is refused. Write it as a
+        complete, self-contained question — the tool plans its own sub-questions from it and
         dispatches research sub-agents, so include whatever scope and context
         matter (what you want compared, over what timeframe, from whose perspective).
     breadth:

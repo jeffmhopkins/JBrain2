@@ -1,6 +1,6 @@
 ---
 name: decompose_research
-version: 1
+version: 2
 permission: web
 cost_class: expensive
 params:
@@ -35,5 +35,4 @@ your own. Use this ONLY for a genuinely compound sub-question with separable, su
 parts — for a focused question, research it yourself; delegation is not free.
 
 You may call this at most ONCE per run: read your sub agents' findings and write your
-unified summary rather than decomposing again. It is available only to a task agent
-inside a deepest-research run; it does nothing in an ordinary turn.
+unified summary rather than decomposing again.

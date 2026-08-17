@@ -1,6 +1,6 @@
 # Owner debug console (assistant access for live prompt iteration)
 
-> **Status:** Living · **Last verified:** 2026-08-12
+> **Status:** Living · **Last verified:** 2026-08-17
 
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read
@@ -49,6 +49,29 @@ PWA (owner) ──mint──▶ capability token  ──hand off──▶  assis
   /logs/tts-stt`). It follows token liveness (the same active-set predicate as
   auth), so it clears on the next turn once the token lapses, is suspended, or is
   revoked. Diagnostics-only: the trace carries no owner text.
+
+## Launch-flag experiments (no terminal)
+
+Four routes exist so a llama-server **launch flag** can be tried, measured and reverted from the
+console, instead of needing a catalog edit, a release and an Ops → Update per iteration:
+
+- `PUT /api/debug/llm/local-models/{id}/extra-args` — set or clear extra flags for one model
+  (re-stamps the gateway config and unloads it, so the next request relaunches with them).
+  Only flags on `llm_settings.EXTRA_ARG_FLAGS` are accepted: llama-server **refuses to start**
+  on an unknown flag, so an unrestricted argv here could make a model permanently unloadable
+  from a box with no shell. Clearing is the same call with `{"args": []}`.
+- `GET /api/debug/llm/local-models/{id}/props` — `build_info` (the only build identity available
+  over HTTP, and this box rebuilds llama.cpp on master by default), real `n_ctx`, `total_slots`.
+- `POST /api/debug/llm/local-models/{id}/slots/{n}?action=save|restore|erase` — llama-server's
+  KV-slot state files. Requires the model to have been launched with `--slot-save-path`.
+- `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
+  `elapsed_ms`, the measurement instrument for any prefill experiment.
+
+> **A 200 from `restore` does not mean the prefill was skipped.** On a sliding-window model
+> (gpt-oss) llama-server can accept a restore and then discard it, logging `forcing full prompt
+> re-processing`. Always pair a restore with `POST …/prime` and compare `elapsed_ms` against a
+> known-cold prefill, and read `GET /api/debug/logs/local-llm`. The timing and the log are the
+> honest signals; the HTTP status is not.
 
 ## Auth model
 

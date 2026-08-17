@@ -1,6 +1,6 @@
 ---
 name: render_bars
-version: 4
+version: 5
 permission: read
 params:
   type: object
@@ -48,13 +48,14 @@ the most X" — counts per month, notes by tag, visits by place, a this-vs-last 
 owner says "plot / graph / chart / visualize this data", use this or `render_chart`, never
 `generate_image` (that draws a picture, not a data plot). Prefer `render_bars` over `render_chart`
 when the x-axis is a set of categories rather than a time line; for a value trending over dates (one
-or several lines) use `render_chart`.
+or several lines) use `render_chart` — the time-series twin, which you hold alongside this one.
 
 It renders exactly the numbers you pass, so this is a **general** artifact for figures you
 assembled yourself — a tally you counted, a public breakdown you looked up. Those numbers must come
 from something you actually read this turn; say where in your reply. The bar card the owner sees
 shows every category and value, so do NOT list the bars back in prose — give the takeaway (the
-ranking, the standout) and say where the numbers came from. Do NOT use it to re-plot the owner's
-recorded measurements or lab results — those have grounded, cited tools (`chart_measurements`,
-`read_labs`) that trace each value to a note. If there aren't at least two categories (or two series),
-no graph is drawn and the tool says so rather than inventing one.
+ranking, the standout) and say where the numbers came from. Never use it to re-plot the owner's
+recorded measurements or lab results: if the grounded chart/lab tools are in your tool list, use
+those instead (they trace each value to a note); if they are not, you cannot read those records at
+all — say so rather than plotting numbers from somewhere else. If there aren't at least two
+categories (or two series), no graph is drawn and the tool says so rather than inventing one.

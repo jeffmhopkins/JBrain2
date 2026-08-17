@@ -80,6 +80,17 @@ class WarmKeeper:
         self._interval_ready = interval_ready
         self._interval_wait = interval_wait
 
+    def note_prefix_lost(self, served_model: str) -> None:
+        """Forget the primed memo for `served_model` — registered with the residency
+        coordinator, which calls it on an eviction or a bare restore-load.
+
+        The memo alone is not enough: it is only invalidated when a tick OBSERVES the model
+        missing from the gateway, so an evict+restore that both complete between ticks leaves
+        it stale and the next jerv turn pays a cold prefill in the foreground. This is the
+        edge-triggered half of that invalidation."""
+        if self._primed is not None and self._primed[0] == served_model:
+            self._primed = None
+
     async def reconcile_once(self) -> bool:
         """Bring the target model to resident+primed if it isn't already. Returns True when
         SETTLED (nothing to keep warm, or resident and primed with the current tool set), False
@@ -100,7 +111,12 @@ class WarmKeeper:
             running = set()
         if served not in running:
             self._primed = None  # evicted (or never loaded) → the cache no longer holds our prime
-        system, tools, hidden = await jerv_prime_inputs(self._registry, self._liveness)
+        # Pass the SERVED model: the canvas pair is model-gated, and `jerv_prime_inputs`
+        # with no model hides it — so on a canvas-capable model the keeper would prime a
+        # prefix WITHOUT tools a real turn sends, the reuse would miss from the tools block
+        # onward, and the memo below would record that miss as success. The manual Load path
+        # already passes it (api/llm_settings.gateway_load); this closes the gap.
+        system, tools, hidden = await jerv_prime_inputs(self._registry, self._liveness, served)
         want = (served, hidden)
         if served in running and self._primed == want:
             return True  # already primed with the current tool set — leave any live conversation be

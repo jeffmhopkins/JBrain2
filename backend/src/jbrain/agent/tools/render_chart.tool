@@ -1,6 +1,6 @@
 ---
 name: render_chart
-version: 2
+version: 3
 permission: read
 params:
   type: object
@@ -67,7 +67,8 @@ says "plot / graph / chart / visualize this data", use one of these chart tools;
 
 Use `render_chart` only for **general** figures you assembled yourself — a count you tallied, a
 public series you looked up, a projection. It renders exactly the numbers you pass, so those numbers
-must come from something you actually read this turn; state where they came from in your reply. Do
-NOT use it to re-plot the owner's recorded measurements or lab results — those have grounded, cited
-tools (`chart_measurements` for a tracked measurement, `read_labs` with trend:true for a lab
-analyte) that plot straight from the record so each point traces to a note.
+must come from something you actually read this turn; state where they came from in your reply.
+Never use it to re-plot the owner's recorded measurements or lab results: if the grounded chart/lab
+tools are in your tool list, use those instead (they plot straight from the record, so each point
+traces to a note); if they are not, you cannot read those records at all — say so rather than
+plotting numbers from somewhere else.
