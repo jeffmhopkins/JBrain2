@@ -565,3 +565,38 @@ def test_the_roster_gauge_goes_quiet_when_the_sampler_does(
     client.app.state.vitals_ring.record(time.time() - 3600, 99.0)  # type: ignore[attr-defined]
 
     assert client.get("/api/ops/turns").json()["gpu_busy_percent"] is None
+
+
+# --- the browser's own account of the stream ---------------------------------
+
+
+def test_client_vitals_round_trip(client: TestClient, repo: FakeAuthRepo) -> None:
+    """The box cannot see any of this. A connection the browser declines to open leaves no
+    server-side trace, which is the state that had the top bar blank while the box was
+    serving 97% quite happily — so the browser reports what it saw and the debug console
+    reads it back."""
+    login(client, repo)
+
+    assert (
+        client.post("/api/ops/client-vitals", json={"frames": 0, "readyState": 1}).status_code
+        == 204
+    )
+
+    stored = client.app.state.client_vitals  # type: ignore[attr-defined]
+    assert stored["frames"] == 0
+    assert stored["readyState"] == 1
+    assert "at" in stored  # stamped server-side, so a wrong device clock cannot mislead
+
+
+def test_client_vitals_accepts_unknown_keys(client: TestClient, repo: FakeAuthRepo) -> None:
+    """A diagnostic must never 422 because a newer client learned to report one more
+    thing — the report is evidence, not an API."""
+    login(client, repo)
+
+    response = client.post("/api/ops/client-vitals", json={"somethingNew": "x"})
+
+    assert response.status_code == 204
+
+
+def test_client_vitals_requires_owner(client: TestClient) -> None:
+    assert client.post("/api/ops/client-vitals", json={}).status_code == 401

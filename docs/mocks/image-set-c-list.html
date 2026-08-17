@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>image_set — C · labelled list</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --amber-tint:rgba(201,163,106,.13);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:400 16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px 16px}
+  .wrap{max-width:520px;margin:0 auto}
+  .note{color:var(--text-3);font-size:12px;margin-bottom:16px}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px}
+  .tv-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+  .tv-title{font-size:14px;font-weight:500}
+  .tv-sub{font-size:12px;color:var(--text-2)}
+  /* C: a vertical list — thumbnail + label + provenance. The only variant with room
+     for a real label per crop, and the only one that degrades gracefully when a crop
+     is very wide or very tall (a grid cell would crop it twice). */
+  .row{display:flex;align-items:center;gap:12px;padding:8px;border-radius:12px;cursor:pointer}
+  .row + .row{margin-top:2px}
+  .row:hover{background:var(--surface-2)}
+  .row:focus-visible{outline:2px solid var(--steel);outline-offset:-2px}
+  .row img{width:56px;height:56px;object-fit:cover;border-radius:10px;display:block;
+           border:1px solid var(--border);background:var(--surface-2);flex:0 0 56px}
+  .meta{min-width:0}
+  .label{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sub{font-size:12px;color:var(--text-2)}
+  .tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;margin-left:6px}
+  .tag.det{background:var(--steel-tint);color:var(--steel)}
+  .tag.vlm{background:var(--amber-tint);color:var(--amber)}
+  .foot{margin-top:10px;font-size:12px;color:var(--text-2)}
+  .chip{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--steel-tint);
+        color:var(--steel);font-size:11px;margin-left:6px}
+</style></head>
+<body><div class="wrap">
+  <p class="note">image_set — variant C · labelled list. Most room for a per-crop label and
+  for showing WHERE the box came from (detector vs model guess) — the provenance the
+  plan stamps on every element. Handles non-square crops without double-cropping.</p>
+
+  <div class="bubble">
+    <div class="tv-head">
+      <div class="tv-title">6 faces<span class="chip">from IMG_4471.jpg</span></div>
+      <div class="tv-sub">tap to enlarge</div>
+    </div>
+    <div id="list"></div>
+    <div class="foot">Cropped from the photo you sent. Long-press any one to save it.</div>
+  </div>
+</div>
+<script>
+  const items = [
+    ["Person 1","#7FA7C9","#26343F","det","1210×1180 · detector"],
+    ["Person 2","#8FBC9A","#243128","det","980×1010 · detector"],
+    ["Person 3","#C9A36A","#3A2F1E","det","1120×1090 · detector"],
+    ["Person 4","#CF8A8F","#3A2528","det","900×930 · detector"],
+    ["Person 5","#A493C9","#2B2438","vlm","1040×1100 · model guess"],
+    ["Person 6","#6FB6B1","#1F3230","vlm","870×910 · model guess"],
+  ];
+  const face = (a,b) => "data:image/svg+xml;utf8," + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'>
+      <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+      <stop offset='0' stop-color='${a}'/><stop offset='1' stop-color='${b}'/></linearGradient></defs>
+      <rect width='300' height='300' fill='url(#g)'/>
+      <circle cx='150' cy='120' r='58' fill='rgba(255,255,255,.18)'/>
+      <ellipse cx='150' cy='250' rx='95' ry='68' fill='rgba(255,255,255,.14)'/></svg>`);
+  document.getElementById("list").innerHTML = items.map(([l,a,b,kind,sub]) =>
+    `<div class="row" tabindex="0"><img alt="${l}" src="${face(a,b)}">
+      <div class="meta"><div class="label">${l}<span class="tag ${kind}">${kind === "det" ? "detected" : "guessed"}</span></div>
+      <div class="sub">${sub}</div></div></div>`
+  ).join("");
+</script>
+</body></html>

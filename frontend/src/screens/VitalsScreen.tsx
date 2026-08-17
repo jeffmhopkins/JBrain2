@@ -22,7 +22,12 @@ import {
 } from "../api/client";
 import { type PlotSeries, TimeSeriesPlot } from "../components/TimeSeriesPlot";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/icons";
-import { type VitalsSample, seedVitalsHistory, vitalsHistory } from "../hostVitals";
+import {
+  type VitalsSample,
+  seedVitalsHistory,
+  vitalsDiagnostics,
+  vitalsHistory,
+} from "../hostVitals";
 import { useForeground } from "../visibility";
 
 /** The windows the mock offers, in seconds. */
@@ -45,6 +50,11 @@ type RangeKey = (typeof RANGES)[number]["key"];
  *  Affordable because it is tightly bounded: owner-only, only while this screen is open,
  *  and only in the foreground (`useForeground`). Backgrounding stops it entirely. */
 const TICK_MS = 1000;
+
+/** How often the browser's view of the stream is reported to the box. Slow on purpose: it
+ *  is read back after the fact through the debug token, not watched live, and it must not
+ *  add a request a second to a box that may already be unwell. */
+const BEACON_MS = 15_000;
 
 /** GPU load that reads as pinned. Matches the top bar's band. */
 const HOT_PERCENT = 85;
@@ -84,6 +94,7 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
           turnCount={roster?.turns.length ?? 0}
         />
         <Roster roster={roster} range={range} onSelect={onSelectTurn} />
+        <StreamHealth />
       </main>
       {selected !== null && (
         <TurnDetail
@@ -168,6 +179,69 @@ function VitalsPlot({
         </p>
       )}
       <p className="vitals-note">One-second samples — every reading the box recorded.</p>
+    </section>
+  );
+}
+
+/** What the vitals stream itself has been doing.
+ *
+ *  Here because the meter failing is invisible from the box: the top bar sat blank while
+ *  the server served 97% quite happily, and a connection the browser declines to open
+ *  leaves no server-side trace at all. Three states need different fixes — frames not
+ *  sent, sent but not arriving, arriving but dropped — and only the browser can tell them
+ *  apart. Collapsed by default; it is a diagnostic, not part of the reading.
+ *
+ *  Also beaconed to the box (best-effort) so it can be read back through the debug token
+ *  rather than requiring someone to be holding the phone. */
+function StreamHealth() {
+  const [open, setOpen] = useState(false);
+  const [snapshot, setSnapshot] = useState<Record<string, unknown>>(() => vitalsDiagnostics());
+
+  useEffect(() => {
+    const tick = (): void => setSnapshot(vitalsDiagnostics());
+    tick();
+    const timer = setInterval(tick, TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Slower than the display: this is for reading back later, not for watching live, and it
+  // must not add a request per second to a box that may already be struggling.
+  useEffect(() => {
+    const beacon = (): void => {
+      void api.opsReportClientVitals(vitalsDiagnostics()).catch(() => {
+        // A diagnostic that breaks the screen it is diagnosing is worse than none.
+      });
+    };
+    beacon();
+    const timer = setInterval(beacon, BEACON_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  const since = snapshot.sinceLastFrameMs;
+  const blind = typeof since === "number" && (since < 0 || since > 5000);
+
+  return (
+    <section className="card vitals-prompt">
+      <button
+        type="button"
+        className="vitals-prompt-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>{open ? "Hide" : "Show"} stream health</span>
+        <span className="vitals-prompt-meta">
+          {blind ? "no frames" : `${String(snapshot.frames)} frames`}
+        </span>
+      </button>
+      {open && (
+        <>
+          <p className="vitals-note">
+            The route sends a frame every second, so <b>sinceLastFrameMs</b> above a few thousand
+            means the meter is blind however healthy the socket claims to be.
+          </p>
+          <pre>{JSON.stringify(snapshot, null, 2)}</pre>
+        </>
+      )}
     </section>
   );
 }

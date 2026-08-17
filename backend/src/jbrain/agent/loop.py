@@ -148,6 +148,13 @@ STEPS_BY_EFFORT: dict[str, int] = {"high": 60, "medium": 50}
 # consecutive-error cap is untouched and these ceilings still stop a genuinely wedged run. An
 # UNsupervised turn — a scheduled background task, or a plan continuation that fired while no
 # client was watching — keeps the ordinary effort-sized budget below.
+# The canvas ceilings (AGENT_CANVAS_PLAN §6.2, owner-ratified §10.4). Defined here, not
+# in `drawtools`, because that module imports this one — and applied on EVERY path
+# rather than per-persona, since the reason they exist (a supervised turn has no
+# effective step cap) is true wherever the tool can be called.
+CANVAS_CALL_BUDGET = 10
+CANVAS_LOOK_BUDGET = 3
+
 SUPERVISED_MAX_STEPS = 500
 SUPERVISED_MAX_COST_TOKENS = 2_000_000
 
@@ -305,6 +312,12 @@ class ToolContext:
     # the frozen field is the reference, `used` is not frozen.
     search_budget: "ToolCallBudget | None" = None
     fetch_budget: "ToolCallBudget | None" = None
+    # The canvas ceilings (AGENT_CANVAS_PLAN §6.2, owner-ratified §10.4): 10 canvas calls
+    # and 3 vision `look`s per turn. Needed as an ENGINE cap because a /chat turn is
+    # supervised — SUPERVISED_MAX_STEPS is 500 — so a model fiddling with a figure would
+    # otherwise iterate until the step cap, paying a full vision round each look.
+    canvas_call_budget: "ToolCallBudget | None" = None
+    canvas_look_budget: "ToolCallBudget | None" = None
 
 
 @dataclass(frozen=True)
@@ -702,6 +715,8 @@ class AgentLoop:
             run_id=run_id,
             search_budget=ToolCallBudget(limit=search_budget) if search_budget else None,
             fetch_budget=ToolCallBudget(limit=fetch_budget) if fetch_budget else None,
+            canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
+            canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
         )
         # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
         # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.
@@ -976,6 +991,8 @@ class AgentLoop:
                 (step, total, preview, label)
             ),
             emit_event=live_q.put_nowait,
+            canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
+            canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
         )
         cost = 0
         consecutive_errors = 0
@@ -1418,6 +1435,8 @@ class AgentLoop:
             agent_tools=allowed,
             tree=tree,
             run_id=run_id,
+            canvas_call_budget=ToolCallBudget(limit=CANVAS_CALL_BUDGET),
+            canvas_look_budget=ToolCallBudget(limit=CANVAS_LOOK_BUDGET),
         )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []

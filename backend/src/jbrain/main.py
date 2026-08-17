@@ -18,7 +18,9 @@ from jbrain.agent.brainevents import (
     build_value_emitter,
 )
 from jbrain.agent.continuation import PlanContinuationRunner, run_plan_continuation_loop
+from jbrain.agent.croptools import build_crop_handlers
 from jbrain.agent.deepest_tool import DeepestHandle
+from jbrain.agent.drawtools import build_canvas_handlers
 from jbrain.agent.externaltools import build_external_handlers
 from jbrain.agent.fetchtools import build_fetch_image_handlers
 from jbrain.agent.gmailtools import build_gmail_handlers
@@ -128,6 +130,7 @@ from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
 from jbrain.gmail import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
+from jbrain.htmlrender import HtmlRenderClient
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
 from jbrain.image_gen.liveness import ImageGenLiveness
@@ -495,6 +498,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # app.state so the ingest cross-validation, the jerv `ocr` tool, and the jcode `ocr`
         # bridge all reach the one pinned instance. Empty url ⇒ degrade to VLM-only OCR.
         app.state.rapidocr = RapidOcrClient(settings.rapidocr_url)
+        # The HTML -> PNG renderer (docs/plans/AGENT_CANVAS_PLAN.md §3b): shared on
+        # app.state so the canvas `html` op — and any later tool wanting a flowchart,
+        # table, or report card — reaches the one pinned, egress-free instance rather
+        # than shipping model-authored markup to the PWA. Empty url ⇒ the html lane
+        # reports unavailable and the shape ops keep working.
+        app.state.htmlrender = HtmlRenderClient(settings.htmlrender_url)
         # A YouTube URL through web_fetch reads as a lightweight title+channel+description+
         # captions view (jbrain.web.youtube) — no media download or GPU, unlike analyze_video.
         # Bound to the tested yt-dlp resolver + caption fetcher; the blocking resolve runs off
@@ -830,6 +839,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ocr_handlers = build_ocr_handlers(
             app.state.rapidocr, app.state.blob_store, app.state.turn_attachments
         )
+        # jerv's canvas (docs/plans/AGENT_CANVAS_PLAN.md): mark up the owner's photo,
+        # or sketch on a blank sheet, through a retained scene the model edits by id.
+        # The `html` op renders through the egress-free htmlrender sidecar; with no
+        # sidecar configured the shape ops still work and the block reports why.
+        canvas_handlers = build_canvas_handlers(
+            maker,
+            app.state.blob_store,
+            app.state.tool_artifacts,
+            app.state.generated_image_repo,
+            app.state.turn_attachments,
+            app.state.llm_router,
+            app.state.htmlrender,
+        )
+        # jerv's crop lane (AGENT_CANVAS_PLAN W4): cut N regions out of one image and
+        # return them as one image_set card. Model-gated with the canvas pair — it
+        # grounds regions with the vision model, so an unqualified coordinate base
+        # would cut confidently wrong crops.
+        crop_handlers = build_crop_handlers(
+            maker,
+            app.state.blob_store,
+            app.state.generated_image_repo,
+            app.state.turn_attachments,
+            app.state.llm_router,
+            app.state.rapidocr,
+        )
         deepest_handle = DeepestHandle()
         app.state.agent_registry = build_registry(
             app.state.search_service,
@@ -872,6 +906,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fetch_image_handlers=fetch_image_handlers,
             compare_handlers=compare_handlers,
             ocr_handlers=ocr_handlers,
+            canvas_handlers=canvas_handlers,
+            crop_handlers=crop_handlers,
             gmail_handlers=gmail_handlers,
             external_handlers=build_external_handlers(
                 maker,

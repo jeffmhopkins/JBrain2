@@ -16,8 +16,24 @@ tool-carrying turn, not that quality is unchanged:
   1. Load the smallest installed tool-capable model. A build that can't parse an
      architecture (the Nemotron-3.5 / hybrid-Mamba failure mode) crashes
      llama-server at load, which surfaces as a `LocalGatewayError` here.
-  2. If gpt-oss is installed, run one tool-carrying probe against it — the exact
-     surface the past regression broke.
+  2. Run one tool-carrying probe against THAT SAME model — already resident, so
+     the probe allocates nothing.
+
+**Why the probe no longer targets gpt-oss.** It used to, because the regression
+this exists to catch was a harmony tool-grammar segfault, and harmony is gpt-oss.
+But gpt-oss-120b is ~59 GB, and loading it is precisely what the kernel traces
+caught freezing this box mid-update — a freeze that takes the machine down to a
+power cycle and, incidentally, prevents the rollback this test exists to trigger.
+A safety net that can kill the patient is the wrong net. So the probe runs against
+the model already in memory, and gpt-oss is probed ONLY when something else has
+already made it resident, where it is free.
+
+That is a real, deliberate loss of coverage: harmony has its own chat template and
+its own grammar path in llama.cpp, so a harmony-specific regression can now ship
+unnoticed. The trade is asymmetric and that is the whole argument — a missed
+harmony regression breaks gpt-oss tool turns, which the owner can route around
+from the PWA in seconds, while the load that would have caught it can hard-lock a
+box they operate remotely with no terminal.
 
 It talks to the gateway's readiness surface (`LocalGatewayClient` — model load +
 a discarded probe generation), NOT the LLM adapter: these are readiness probes,
@@ -27,16 +43,117 @@ adapter (see `local_gateway.py`).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 from jbrain.llm import local_catalog
 from jbrain.llm.local_gateway import LocalGatewayError
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 # gpt-oss is the served model whose tool-call path a rolling llama.cpp build
-# regressed before (a harmony grammar segfault over the tool union). Probe it with
-# a tool ONLY when it is installed; other boxes skip straight to the load check.
+# regressed before (a harmony grammar segfault over the tool union). It is still
+# worth probing when it happens to be resident already — but never worth LOADING
+# ~59 GB for, which is what the module docstring above is about.
 TOOL_PROBE_MODEL_ID = "gpt-oss-120b"
+
+# Kernel telemetry, not stored data: read directly rather than through the storage
+# abstraction, the same way vitals sampling reads the amdgpu sysfs attributes.
+MEMINFO_PATH = Path("/proc/meminfo")
+
+# Free RAM a load needs BEYOND the model's own resident cost, in GB.
+#
+# On a unified-memory box (Strix Halo) a model's device buffers are pinned out of
+# system RAM through the amdgpu GTT, and the driver asks for them with
+# __GFP_RETRY_MAYFAIL — which tells the kernel to reclaim hard and then FAIL the
+# allocation rather than invoke the OOM killer. So an over-tight load kills nothing,
+# logs nothing to the app, and instead livelocks the box in reclaim: a hard freeze
+# down to the USB keyboard, needing a power cycle. That happened repeatedly during
+# updates, and the kernel trace named it precisely — llama-server failing an order:0
+# (single 4 KB page) allocation inside amdgpu_ttm_tt_populate.
+#
+# So this test refuses a load it cannot afford. Rather than bet the host on a
+# verification step, a box without the room keeps the pinned, known-good base — the
+# same outcome as a failed smoke test, which is the conservative one.
+#
+# The number is the app's OWN steady-state floor, not a smaller one invented here. Every
+# ordinary turn loads through `jbrain.llm.residency`, which keeps
+# `local_llm_free_ram_fraction` (0.15) of RAM free — ~19.5 GB on this 130 GB box. It would
+# be indefensible for the update path, the one that has actually frozen the hardware, to
+# be the single loosest load path on the machine. A test pins the two together.
+LOAD_HEADROOM_GB = 20.0
+
+
+def mem_available_gb(meminfo_path: Path = MEMINFO_PATH) -> float | None:
+    """Host MemAvailable in GB, or None when it can't be read.
+
+    /proc/meminfo is not namespaced, so this is the HOST's number even from inside
+    the api container the update runs this in.
+    """
+    try:
+        text = meminfo_path.read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if not line.startswith("MemAvailable:"):
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].isdigit():
+            return int(parts[1]) / (1024 * 1024)
+    return None
+
+
+def _resident_cost_gb(model: local_catalog.LocalModel) -> float:
+    """What holding `model` actually costs in unified memory, not just its weights.
+
+    Weights alone understate it: the KV cache is a real, non-swappable allocation
+    (`local_catalog.footprint_gb`), and on a 60 GB model it is several more GB. Counted
+    at the catalog's 128k reference window with one slot — the same headline number the
+    settings memory meter shows. A box serving a wider window or a second slot pays more
+    than this, which is part of what LOAD_HEADROOM_GB is absorbing.
+    """
+    return model.size_gb + model.kv_gb_per_128k
+
+
+async def _room_for(
+    model: local_catalog.LocalModel,
+    gateway: SmokeGateway,
+    meminfo: Path,
+    messages: list[str],
+) -> bool:
+    """True when this model can be loaded without leaving the box on the edge.
+
+    A model the gateway ALREADY holds is free: gating it would refuse a load that
+    allocates nothing. That is not a corner case — it is the common one. The keep-warm
+    prime in the running api loads the chat model on its own, and on a box whose only
+    tool-capable model is gpt-oss the smoke test's own first step loads the very model
+    the tool probe then wants, so a weights-only check would refuse every update forever.
+    """
+    try:
+        resident = await gateway.running()
+    except Exception:  # noqa: BLE001 — an unreadable roster must gate, not crash
+        resident = set()
+    if model.served_model in resident:
+        messages.append(f"{model.id} already resident — no allocation to gate")
+        return True
+
+    available_gb = mem_available_gb(meminfo)
+    # An unknown MemAvailable proceeds with a note rather than blocking: on any real
+    # deployment /proc/meminfo is readable, so "unknown" means an environment odd enough
+    # that refusing every load would be the wrong default.
+    if available_gb is None:
+        return True
+    cost = _resident_cost_gb(model)
+    if available_gb >= cost + LOAD_HEADROOM_GB:
+        return True
+    messages.append(
+        f"NOT ENOUGH MEMORY to load {model.id} safely — {available_gb:.0f} GB available, "
+        f"{cost + LOAD_HEADROOM_GB:.0f} GB needed ({cost:.0f} GB resident + "
+        f"{LOAD_HEADROOM_GB:.0f} GB headroom). REFUSED — the build was not tested, and "
+        f"the gateway is being kept on its pinned base."
+    )
+    return False
 
 
 class SmokeGateway(Protocol):
@@ -47,9 +164,14 @@ class SmokeGateway(Protocol):
 
     async def tool_probe(self, served_model: str) -> None: ...
 
+    async def running(self) -> set[str]: ...
+
 
 async def run_smoketest(
-    local_models: Sequence[str], gateway: SmokeGateway
+    local_models: Sequence[str],
+    gateway: SmokeGateway,
+    *,
+    meminfo_path: Path | None = None,
 ) -> tuple[bool, list[str]]:
     """Smoke-test the gateway's current build against the installed model set.
 
@@ -58,17 +180,31 @@ async def run_smoketest(
     the update path's signal to roll back to the pinned base. ``messages`` is a short
     human-readable trace for the update log. Never raises — a gateway failure is a
     smoke FAILURE (return False), not an exception, so the caller's rollback always runs.
+
+    ``meminfo_path`` is injectable for tests only; None reads the real host. The
+    free-memory reading is only as honest as the caller made it — the update drops the
+    page cache first, because MemAvailable counts reclaimable cache as free and
+    reclaiming it is the very thing that livelocks this hardware.
     """
     messages: list[str] = []
+    meminfo = meminfo_path if meminfo_path is not None else MEMINFO_PATH
 
     installed = [m for m in local_catalog.selected(local_models) if m.supports_tools]
     if not installed:
         messages.append("no installed tool-capable models to smoke-test — treating as pass")
         return True, messages
 
+    available = mem_available_gb(meminfo)
+    if available is None:
+        messages.append("MemAvailable unreadable — proceeding without the headroom check")
+    else:
+        messages.append(f"{available:.0f} GB available before the load")
+
     # Cheapest possible load: a build that can't run at all fails here without paying
     # to read tens of GB of a large model's weights.
     smallest = min(installed, key=lambda m: m.size_gb)
+    if not await _room_for(smallest, gateway, meminfo, messages):
+        return False, messages
     try:
         await gateway.load(smallest.served_model)
         messages.append(f"load OK — {smallest.id} ({smallest.served_model})")
@@ -76,13 +212,37 @@ async def run_smoketest(
         messages.append(f"load FAILED — {smallest.id} ({smallest.served_model}): {exc}")
         return False, messages
 
+    # The tool-carrying turn, against the model that is ALREADY loaded — the whole point
+    # of reusing it is that this step allocates nothing.
+    try:
+        await gateway.tool_probe(smallest.served_model)
+        messages.append(f"tool-call probe OK — {smallest.id}")
+    except LocalGatewayError as exc:
+        messages.append(f"tool-call probe FAILED — {smallest.id}: {exc}")
+        return False, messages
+
+    # Harmony coverage, but only when it is free. During an update the gateway has just
+    # been emptied, so this normally reports the skip and moves on; it earns its keep when
+    # the smoke test runs against a gateway that is already serving.
     probe = local_catalog.get(TOOL_PROBE_MODEL_ID)
-    if probe is not None and TOOL_PROBE_MODEL_ID in set(local_models):
+    # `is not smallest`: on a gpt-oss-only box it IS the model just probed, and probing the
+    # same model twice proves nothing twice.
+    if probe is not None and probe is not smallest and TOOL_PROBE_MODEL_ID in set(local_models):
         try:
-            await gateway.tool_probe(probe.served_model)
-            messages.append(f"tool-call probe OK — {probe.id}")
-        except LocalGatewayError as exc:
-            messages.append(f"tool-call probe FAILED — {probe.id}: {exc}")
-            return False, messages
+            resident = await gateway.running()
+        except Exception:  # noqa: BLE001 — an unreadable roster just means "skip the bonus"
+            resident = set()
+        if probe.served_model not in resident:
+            messages.append(
+                f"{probe.id} not resident — skipping its harmony tool probe rather than "
+                f"loading {probe.size_gb:.0f} GB to run it"
+            )
+        else:
+            try:
+                await gateway.tool_probe(probe.served_model)
+                messages.append(f"tool-call probe OK — {probe.id} (was already resident)")
+            except LocalGatewayError as exc:
+                messages.append(f"tool-call probe FAILED — {probe.id}: {exc}")
+                return False, messages
 
     return True, messages

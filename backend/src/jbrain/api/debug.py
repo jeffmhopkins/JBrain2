@@ -28,6 +28,15 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.chat_images import ImageTooLarge, UndecodableImage, image_dimensions
+from jbrain.agent.grounding import (
+    Convention,
+    UnknownGroundingModel,
+    convention_for,
+    infer_convention,
+    parse_grounding,
+    to_pixels,
+)
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api import llm_settings
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
@@ -45,6 +54,7 @@ from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, UserMessage
+from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.settings_store import SqlSettingsStore
@@ -478,6 +488,151 @@ async def _run_vision(
     )
 
 
+# --- Grounding probe (AGENT_CANVAS_PLAN W0) ---------------------------------
+# Measures WHICH coordinate base the served vision model actually emits, because
+# nothing upstream documents it for this checkpoint: the Qwen3-VL cookbook divides
+# by 1000, the Qwen3-VL docs site describes a 0-1 range, and the Qwen3.8 model card
+# says nothing at all. Guessing is not safe — a wrong base yields a confident box
+# around the wrong thing — so this route renders the SAME model reply under BOTH
+# bases and lets the owner see which one lands on the object. Exposed as an API,
+# never a script, because the owner runs this box with no terminal (CLAUDE.md #10).
+
+_GROUNDING_SYSTEM = (
+    "You locate things in images. Reply with ONLY a JSON array, no prose, no code "
+    'fence. Each element: {"bbox_2d": [x1, y1, x2, y2], "label": "<what it is>"}. '
+    "Corners, not width/height. If the thing is not present, reply []."
+)
+
+
+class GroundingProbeRequest(BaseModel):
+    attachment_id: uuid.UUID
+    # What to locate, in the owner's words — "the water heater", "each face".
+    target: str = Field(min_length=1)
+    system: str = ""
+    # Off by default: the point of the probe is to see what the model natively emits
+    # at the resolution the chat path actually sends (which does NOT downscale).
+    downscale: bool = False
+    max_tokens: int = Field(default=1024, ge=1, le=32768)
+
+
+class GroundingBoxOut(BaseModel):
+    label: str
+    raw: list[float]
+    # The same box resolved under each candidate base, in original-image pixels.
+    # Whichever one frames the object is the model's real convention.
+    as_norm_1000: list[int]
+    as_norm_1: list[int]
+
+
+class GroundingProbeOut(BaseModel):
+    provider: str
+    model: str
+    filename: str
+    # EXIF-corrected, i.e. the axes the model actually saw. See chat_images.
+    width: int
+    height: int
+    inferred: str
+    pinned: str | None
+    box_count: int
+    boxes: list[GroundingBoxOut]
+    text: str
+
+
+@router.post("/grounding")
+async def grounding_probe(
+    body: GroundingProbeRequest, request: Request, _p: DebugDep
+) -> GroundingProbeOut:
+    """Ask the served vision model to locate `target` and report the boxes under both
+    candidate coordinate bases. The base whose pixels frame the object is the one to
+    pin in `agent/grounding.py`. See the module note above."""
+    request.state.debug_detail = f"{body.target} {body.attachment_id}"
+    async with scoped_session(_maker(request), _OWNER_CTX) as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        # Either table: a note attachment (`app.attachments`, what /vision reads) OR a
+        # CHAT upload (`app.turn_attachments`). The canvas annotates chat uploads, so a
+        # probe that only saw note attachments answered "attachment not found" for
+        # exactly the images this feature exists to mark up.
+        found = (
+            await session.execute(select(Attachment).where(Attachment.id == body.attachment_id))
+        ).scalar_one_or_none()
+        if found is None:
+            found = (
+                await session.execute(
+                    select(TurnAttachment).where(TurnAttachment.id == body.attachment_id)
+                )
+            ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(
+                status_code=404,
+                detail="no attachment with that id in app.attachments or app.turn_attachments",
+            )
+    att = found
+    raw = await _blobs(request).get(att.sha256)
+    if body.downscale:
+        data, media_type = downscale_for_vision(raw, att.media_type)
+    else:
+        data, media_type = raw, att.media_type
+    try:
+        width, height = image_dimensions(data)
+    except (UndecodableImage, ImageTooLarge) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    router_ = _llm_router(request)
+    try:
+        provider, model = await router_.effective_spec("agent.vision", "vision")
+        result = await router_.complete(
+            "agent.vision",
+            system=body.system or _GROUNDING_SYSTEM,
+            user_text=f"Locate {body.target}. Reply with the JSON array only.",
+            images=[LlmImage(media_type=media_type, data=base64.b64encode(data).decode("ascii"))],
+            max_tokens=body.max_tokens,
+            strength="vision",
+        )
+    except LlmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    boxes, _points = parse_grounding(result.text)
+    flat = [v for b in boxes for v in (b.x1, b.y1, b.x2, b.y2)]
+    inferred = infer_convention(flat) if flat else None
+    try:
+        pinned: str | None = str(convention_for(model))
+    except UnknownGroundingModel:
+        pinned = None
+
+    def _px(convention: Convention) -> list[list[int]]:
+        resolved = to_pixels(
+            boxes, served_model=model, width=width, height=height, convention=convention
+        )
+        return [[b.x1, b.y1, b.x2, b.y2] for b in resolved]
+
+    thousandths, unit = _px(Convention.NORM_1000), _px(Convention.NORM_1)
+    log.info(
+        "debug.grounding",
+        provider=provider,
+        model=model,
+        boxes=len(boxes),
+        inferred=str(inferred) if inferred else None,
+    )
+    return GroundingProbeOut(
+        provider=provider,
+        model=model,
+        filename=att.filename,
+        width=width,
+        height=height,
+        inferred=str(inferred) if inferred else "none",
+        pinned=pinned,
+        box_count=len(boxes),
+        boxes=[
+            GroundingBoxOut(
+                label=b.label,
+                raw=[b.x1, b.y1, b.x2, b.y2],
+                as_norm_1000=thousandths[i],
+                as_norm_1=unit[i],
+            )
+            for i, b in enumerate(boxes)
+        ],
+        text=result.text,
+    )
+
+
 @router.post("/vision")
 async def vision(body: VisionRequest, request: Request, _p: DebugDep) -> VisionOut:
     """Run one vision task (OCR or caption) over an on-box attachment, optionally
@@ -826,6 +981,21 @@ async def gateway_logs(
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway logs unavailable: {exc}") from exc
     return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
+
+
+@router.get("/client-vitals")
+async def client_vitals(request: Request, _p: DebugDep) -> dict[str, object]:
+    """The browser's own account of the top-bar vitals stream, as last reported.
+
+    The one read that can tell a stream the box never sent from a stream the browser never
+    received. `sinceLastFrameMs` is the number that matters: the route emits one frame a
+    second, so anything above a few thousand means the meter is blind however healthy the
+    socket claims to be. `{"reported": false}` means no client has opened the vitals detail
+    since this process started — not that the meter is broken."""
+    report = getattr(request.app.state, "client_vitals", None)
+    if report is None:
+        return {"reported": False}
+    return {"reported": True, **report}
 
 
 @router.get("/host/metrics")

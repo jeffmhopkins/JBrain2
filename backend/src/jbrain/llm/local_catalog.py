@@ -351,6 +351,12 @@ CATALOG: tuple[LocalModel, ...] = (
         # a `mmproj*F16.gguf` glob would also match this repo's `mmproj-BF16.gguf` (it ends in
         # `F16.gguf` too), so the exact name pulls only the F16 one and skips the BF16 beside it.
         mmproj_include="mmproj-F16.gguf",
+        # Grounding (box-a-thing-in-my-photo) is unreliable when the projector is fed
+        # too few visual tokens: llama.cpp sizes the image budget from the model
+        # metadata and a modest photo can land well under what Qwen-VL needs to
+        # localize. Floor it. Without this the model still answers confidently — it
+        # just answers with the wrong box (AGENT_CANVAS_PLAN §5.4).
+        extra_server_args=("--image-min-tokens", "1024"),
         quant="Q8_0",
         # GiB on disk (the catalog's unit): the single Q8_0 weight (~27.0 GiB from HF's 29
         # decimal-GB listing) plus the ~0.86 GiB F16 projector. ESTIMATE until measured on-box;
@@ -387,6 +393,8 @@ CATALOG: tuple[LocalModel, ...] = (
         # Same F16 projector as the Q8 twin (kept full precision even at Q4 weights). Exact
         # name, not `mmproj*F16.gguf`, so it doesn't also pull the `mmproj-BF16.gguf` beside it.
         mmproj_include="mmproj-F16.gguf",
+        # Same grounding floor as the Q8 twin — see the note there.
+        extra_server_args=("--image-min-tokens", "1024"),
         quant="Q4_K_M",
         # GiB on disk: the Q4_K_M weight (~15.9 GiB from HF's 17.1 decimal-GB listing) plus the
         # ~0.86 GiB F16 projector. ESTIMATE until measured on-box.

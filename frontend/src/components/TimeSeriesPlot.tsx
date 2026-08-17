@@ -50,8 +50,17 @@ function xAt(i: number, n: number): number {
   return n > 1 ? (i / (n - 1)) * W : W / 2;
 }
 
+/** Reserved inside the viewBox so a value AT either end of the scale still draws a whole
+ *  stroke. Without it a series sitting at its floor — a token rate of exactly zero, the
+ *  commonest case — lands on y = H, half the stroke falls outside the box and is clipped,
+ *  and a real zero becomes indistinguishable from no data at all. That is the one thing
+ *  these plots must never blur: a gap means "we were not told", a floor means "it was
+ *  zero". A value at the top was clipped the same way. */
+const EDGE_PAD = 1;
+
 function yAt(v: number, min: number, max: number): number {
-  return H - ((v - min) / (max - min || 1)) * H;
+  const span = max - min || 1;
+  return H - EDGE_PAD - ((v - min) / span) * (H - 2 * EDGE_PAD);
 }
 
 function linePath(values: (number | null)[], min: number, max: number): string {
@@ -82,7 +91,8 @@ function areaPath(values: (number | null)[], min: number, max: number): string {
     const last = run[run.length - 1];
     if (first !== undefined && last !== undefined) {
       const points = run.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join(" L");
-      d += `M${first[0].toFixed(2)} ${H} L${points} L${last[0].toFixed(2)} ${H} Z `;
+      const floor = (H - EDGE_PAD).toFixed(2);
+      d += `M${first[0].toFixed(2)} ${floor} L${points} L${last[0].toFixed(2)} ${floor} Z `;
     }
     run = [];
   };

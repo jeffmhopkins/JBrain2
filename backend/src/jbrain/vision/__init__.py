@@ -4,6 +4,20 @@ Currently the RapidOCR sidecar client — a deterministic CPU OCR engine that cr
 the VLM text extraction and backs the direct `ocr` tools (jerv + the jcode sandbox).
 """
 
-from jbrain.vision.rapidocr import OcrResult, OcrServiceError, RapidOcrClient
+from jbrain.vision.rapidocr import (
+    FaceBox,
+    FaceDetectUnavailable,
+    OcrResult,
+    OcrServiceError,
+    RapidOcrClient,
+    detect_faces,
+)
 
-__all__ = ["OcrResult", "OcrServiceError", "RapidOcrClient"]
+__all__ = [
+    "FaceBox",
+    "FaceDetectUnavailable",
+    "OcrResult",
+    "OcrServiceError",
+    "RapidOcrClient",
+    "detect_faces",
+]

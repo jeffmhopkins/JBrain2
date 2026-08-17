@@ -40,6 +40,44 @@ async def _rotate() -> None:
         await engine.dispose()
 
 
+async def _local_llm_unload() -> int:
+    """Unload every model the gateway currently holds, then report what is left.
+
+    Called before an update stops the gateway. Stopping the container alone relies on the
+    kernel reclaiming tens of gigabytes of unified memory as the process dies, at exactly
+    the moment the update is about to allocate for a build and a stack recreate — and on
+    this box that race once spiked into a reclaim livelock that hard-locked the host,
+    keyboard included. Asking the gateway to release its models first makes the memory go
+    away in a controlled way, before anything else needs it.
+
+    Best-effort by contract: a gateway that is already down, unreachable, or holding
+    nothing is a success, not a failure. It must never abort an update."""
+    from jbrain.llm.local_gateway import LocalGatewayClient
+
+    settings = get_settings()
+    if not settings.local_llm_enabled:
+        print("[unload] local hosting off — nothing to unload")
+        return 0
+    gateway = LocalGatewayClient(settings.local_llm_url)
+    try:
+        loaded = await gateway.running()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[unload] gateway unreachable ({exc}) — nothing to unload")
+        return 0
+    if not loaded:
+        print("[unload] gateway holds no models")
+        return 0
+    for served in sorted(loaded):
+        try:
+            await gateway.unload(served)
+            print(f"[unload] released {served}")
+        except Exception as exc:  # noqa: BLE001
+            # Report and keep going: releasing three of four models is still most of the
+            # memory, and the container stop that follows is the backstop for the rest.
+            print(f"[unload] could not release {served}: {exc}")
+    return 0
+
+
 async def _print_auto_update() -> int:
     """Exit 0 when the gateway auto-update + smoke test is ON, 1 when the owner has turned
     it off from the PWA. An exit code, not stdout, so the update script reads it with a
@@ -175,6 +213,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_activate.add_argument("model_id", help="catalog id of the installed model to activate")
     sub.add_parser(
+        "local-llm-unload",
+        help="release every model the on-box gateway holds (run before an update stops it)",
+    )
+    sub.add_parser(
         "local-llm-auto-update",
         help="exit 0 if the owner has the gateway auto-update + smoke test on, else 1",
     )
@@ -202,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "local-activate":
         asyncio.run(_local_activate(args.model_id))
         return 0
+    if args.command == "local-llm-unload":
+        return asyncio.run(_local_llm_unload())
     if args.command == "local-llm-auto-update":
         return asyncio.run(_print_auto_update())
     if args.command == "local-llm-smoketest":

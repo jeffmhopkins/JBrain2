@@ -103,6 +103,10 @@ HARNESS_IMAGE="timescale/timescaledb-ha:pg17"  # prod Postgres image, also used 
 SEARXNG_IMAGE="${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}"  # jerv web search (stock stack service)
 MQTT_IMAGE="${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}"  # opt-in JBrain360 broker (`mqtt` profile); pin by digest for deploy
 BYPARR_IMAGE="${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr:latest}"  # bot-challenge solver (stock stack service)
+# Base image for the locally-built `htmlrender` sidecar (HTML -> PNG). Pre-pulled because
+# it carries Chromium plus its ~80 runtime apt packages, so a cold build on first
+# `jbrain up` is a long, surprising wait.
+HTMLRENDER_BASE_IMAGE="${HTMLRENDER_BASE_IMAGE:-mcr.microsoft.com/playwright/python:v1.49.1-noble}"
 
 if ! docker info >/dev/null 2>&1; then
   if command -v dockerd >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
@@ -144,6 +148,15 @@ if docker info >/dev/null 2>&1; then
     log "pre-pulling $BYPARR_IMAGE (bot-challenge solver)"
     for _ in 1 2 3; do docker pull "$BYPARR_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
       || log "WARNING: could not pre-pull $BYPARR_IMAGE — it will pull when the stack starts"
+  fi
+  # Pre-pull the htmlrender base (Chromium + its runtime deps) so building the locally-
+  # built sidecar isn't a multi-minute cold pull on first `jbrain up`; best-effort. CI
+  # never starts the service (the client is tested against a MockTransport), so this is
+  # local/dev only.
+  if ! docker image inspect "$HTMLRENDER_BASE_IMAGE" >/dev/null 2>&1; then
+    log "pre-pulling $HTMLRENDER_BASE_IMAGE (htmlrender sidecar base)"
+    for _ in 1 2 3; do docker pull "$HTMLRENDER_BASE_IMAGE" >/dev/null 2>&1 && break; sleep 10; done \
+      || log "WARNING: could not pre-pull $HTMLRENDER_BASE_IMAGE — it will pull on first build"
   fi
 else
   log "WARNING: no docker daemon — testcontainers integration tests and the LLM" \

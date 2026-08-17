@@ -61,7 +61,11 @@ def test_oneshot_script_parses_under_posix_sh(name: str) -> None:
 # bind source is missing, Docker mounts an empty dir over /etc/searxng/settings.yml,
 # SearXNG drops to its HTML-only defaults, and /search?format=json answers 403, so
 # jerv reports web search as unavailable.
-DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES = ["install.sh", "update-inner.sh", "jbrain"]
+# `jbrain` is deliberately NOT here: its update case delegates to update-inner.sh
+# rather than laying these down itself. Listing it would re-assert the duplication
+# that let the two update paths drift apart — see
+# test_the_host_cli_delegates_to_the_one_update_script.
+DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES = ["install.sh", "update-inner.sh"]
 
 
 @pytest.mark.parametrize("name", DEPLOY_SCRIPTS_THAT_LAY_DOWN_FILES)
@@ -99,7 +103,10 @@ def test_script_ensures_searxng_secret(name: str) -> None:
 # Both update paths must keep the opt-in code-mode sandbox (jcode) turnkey: once the
 # operator has enabled it (a one-time scripts/jcode-setup.sh), the PWA update and the
 # host `jbrain update` keep it built/current with no CLI.
-JCODE_TURNKEY_SCRIPTS = ["update-inner.sh", "jbrain"]
+# `jbrain` delegates its update to update-inner.sh, so the shared script is the only
+# place this can be asserted — listing both would re-pin the duplication that let
+# them drift.
+JCODE_TURNKEY_SCRIPTS = ["update-inner.sh"]
 
 
 @pytest.mark.parametrize("name", JCODE_TURNKEY_SCRIPTS)
@@ -122,7 +129,8 @@ def test_update_keeps_jcode_turnkey_when_enabled(name: str) -> None:
 # profile-gated. Every path that provisions the stack must backfill its api<->jlaunch
 # bearer (the fail-closed control server won't start without it), and NONE may hide it
 # behind a JLAUNCH_ENABLED gate or a `--profile jlaunch`.
-JLAUNCH_PROVISION_SCRIPTS = ["install.sh", "update-inner.sh", "jbrain"]
+# Same: the host CLI delegates, so update-inner.sh carries this for both callers.
+JLAUNCH_PROVISION_SCRIPTS = ["install.sh", "update-inner.sh"]
 
 
 @pytest.mark.parametrize("name", JLAUNCH_PROVISION_SCRIPTS)
@@ -182,10 +190,9 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     def idx(needle: str) -> int | None:
         return next((i for i, ln in enumerate(lines) if needle in ln), None)
 
-    stop = idx("stop local-llm")
-    build = idx("compose $JCODE_PROFILE build")
-    up = idx("compose $JCODE_PROFILE up -d")
-    restart = idx("up -d local-llm")
+    stop = idx("rm -sf local-llm")
+    build = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    up = idx("compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
     assert "LOCAL_LLM_ENABLED=true" in text, (
         "the gateway stop/restart must be gated on LOCAL_LLM_ENABLED so a stock "
         "cloud stack (no local-llm) is never touched"
@@ -193,8 +200,16 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     assert stop is not None, "update must stop the local-llm gateway to free memory"
     assert build is not None and up is not None
     assert stop < build, "the gateway must be stopped before the rebuild/recreate"
-    assert restart is not None, "update must restart the gateway after the stack is up"
-    assert restart > up, "the gateway restart must follow the stack `up -d`"
+    # The gateway comes back INSIDE the quiesced window now (the smoke test needs
+    # it), so "restart after `up -d`" is no longer the invariant. What must still
+    # hold is that an enabled gateway is running when the update finishes — including
+    # when auto-update is off and nothing in the quiesced window ever rebuilt it.
+    restarts = [i for i, ln in enumerate(lines) if "up -d local-llm" in ln]
+    assert restarts, "update must restart the gateway"
+    assert restarts[-1] > up, (
+        "the LAST gateway start must follow the stack `up -d`, so an auto-update-off "
+        "box still ends with its gateway running"
+    )
 
 
 def test_update_gateway_auto_update_is_default_on_smoke_tested_and_rolls_back() -> None:
@@ -495,3 +510,483 @@ def test_update_persists_the_build_stamp_into_env() -> None:
     # Rewrite-in-place, never append-a-duplicate: two lines for one key would leave the
     # winner decided by file ordering.
     assert 'grep -q "^${_key}=" .env' in text
+
+
+# --- one update, two callers -------------------------------------------------
+
+
+def test_the_host_cli_delegates_to_the_one_update_script() -> None:
+    """`jbrain update` must CALL update-inner.sh, not reimplement it.
+
+    They were two copies and they drifted: the host one never rebuilt the gateway
+    on the floating llama.cpp tag or smoke-tested it, the containerized one never
+    re-applied the OOM hardening. So the PWA path did the memory-heavy work without
+    the protection against exactly that, and hard-locked the box repeatedly. This
+    test is what stops them diverging again."""
+    text = (DEPLOY / "jbrain").read_text()
+    case = text[text.index("  update)") : text.index("  enable-lan)")]
+
+    assert "update-inner.sh" in case, "the host CLI must delegate to the shared script"
+    assert "JBRAIN_HOST_UPDATE=1" in case, "host-only steps are gated on this flag"
+    # No reimplementation: the moment this case grows its own build/migrate/recreate,
+    # the
+    # two paths have started drifting again.
+    for step in ("docker compose build", "docker compose run", "docker compose up"):
+        assert step not in case, f"host update must not reimplement `{step}`"
+
+
+def test_host_only_steps_are_gated_not_duplicated() -> None:
+    """The callers differ in CAPABILITY, not intent — mDNS, on-box image models
+    and OOM hardening need systemd/sysctls/apt, which the updater container has no
+    route to. They live in the shared script behind a flag, not a second copy."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert 'HOST_UPDATE="${JBRAIN_HOST_UPDATE:-}"' in text
+    for host_only in ("lan-setup.sh", "comfyui-setup.sh", "oom-hardening.sh"):
+        assert host_only in text, f"{host_only} must live in the shared script"
+    assert text.count('[ -n "$HOST_UPDATE" ]') >= 3, "each host-only step must be gated"
+
+
+def test_update_releases_models_and_removes_the_gateway_before_building() -> None:
+    """Stopping the container alone leaves the kernel to reclaim tens of gigabytes
+    exactly as the build starts allocating — the race that hard-locked this box,
+    keyboard included. The models are released first, the container is REMOVED (not
+    just stopped) so nothing can bring it back mid-update, and the script waits for
+    it to actually be gone."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+    lines = text.splitlines()
+
+    def idx(needle: str) -> int:
+        return next(
+            i
+            for i, ln in enumerate(lines)
+            if needle in ln and not ln.lstrip().startswith("#")
+        )
+
+    unload = idx("jbrain.cli local-llm-unload")
+    remove = idx("rm -sf local-llm")
+    build = idx("docker compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+
+    assert unload < remove < build, (
+        "release models, then remove the gateway, then build"
+    )
+    # `stop` is not enough: a stopped container is one stray `up -d` away from
+    # reloading.
+    assert "rm -sf local-llm" in text
+    assert "ps -q local-llm" in text, "must wait for the gateway to actually be gone"
+
+
+def test_nothing_restarts_the_gateway_mid_update() -> None:
+    """local-models-sync's own `up -d` landed squarely in the build/recreate
+    window — the one window this whole dance exists to keep clear."""
+    update = (DEPLOY / "update-inner.sh").read_text()
+    sync = (DEPLOY / "local-models-sync.sh").read_text()
+
+    assert "JBRAIN_SKIP_GATEWAY_START=1" in update
+    assert "export JBRAIN_SKIP_GATEWAY_START" in update
+    assert 'if [ -n "${JBRAIN_SKIP_GATEWAY_START:-}" ]; then' in sync, (
+        "the sync must honour the flag, not start the gateway during an update"
+    )
+
+
+# --- the one-off compose runs are bounded ------------------------------------
+
+
+def test_the_smoke_test_and_toggle_read_are_bounded() -> None:
+    """These are the calls that have actually wedged this box.
+
+    An update stalled twice at `jbrain-api-run-... Created` — a container compose
+    created
+    and never started — and `set -e` plus an unbounded wait means the update stops there
+    forever with the stack half recreated. The gateway client's own httpx timeouts
+    cannot
+    help when the process never starts, so the bound has to be outside it.
+    """
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert "run_bounded()" in text
+
+    # Join shell line-continuations first: both calls are wrapped, so the CLI name and
+    # the
+    # runner that bounds it sit on different physical lines.
+    joined = text.replace("\\\n", " ")
+    for call in ("local-llm-smoketest", "local-llm-auto-update"):
+        line = next(
+            ln
+            for ln in joined.splitlines()
+            if call in ln and not ln.lstrip().startswith("#")
+        )
+        assert "run_bounded" in line, f"{call} must run under the ceiling"
+    assert "SMOKE_TIMEOUT_S=" in text and "TOGGLE_TIMEOUT_S=" in text
+
+
+def test_a_timeout_reads_as_failure_not_success() -> None:
+    """A hung smoke test must take the SAME path as a failed one — roll the gateway
+    back to
+    the pinned base — rather than stopping the update dead or, worse, being mistaken
+    for a
+    pass and keeping an unverified build."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    # Captured in the `else`: after a completed `if ...; fi`, `$?` is the status of the
+    # IF
+    # STATEMENT, which is 0 when the condition merely failed. Reading it below the `fi`
+    # turns every failure into a success — it did exactly that when first written.
+    assert "else\n" in text
+    body = text[text.index("run_bounded()") : text.index("run_bounded()") + 1200]
+    assert body.index("else") < body.index("_rc=$?"), (
+        "the status must be captured inside the else, not after the fi"
+    )
+    # busybox has historically exited 143 rather than GNU's 124.
+    assert '"$_rc" -eq 124' in text and '"$_rc" -eq 143' in text
+
+
+def test_a_killed_run_cleans_up_its_orphaned_container() -> None:
+    """`timeout` kills `docker compose run`, but the container is the DAEMON's child
+    — so
+    --rm never fires and it is left behind, one per attempt."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert 'docker ps -aq --filter "name=jbrain-api-run-"' in text
+    assert "docker rm -f" in text
+
+
+# --- the update does not compete with itself for memory ----------------------
+#
+# This box hard-locked, repeatedly, part-way through a PWA update. The kernel trace was
+# unambiguous: llama-server failing an order:0 (single 4 KB page) allocation inside
+# amdgpu_ttm_tt_populate, with __GFP_RETRY_MAYFAIL — the kernel reclaims hard and then
+# FAILS rather than OOM-killing, so nothing died, nothing was logged, and the host
+# livelocked in reclaim down to the USB keyboard. earlyoom and the reclaim sysctls were
+# already applied at the time, so hardening alone does not cover this. The fix is
+# structural: the update stops doing several memory-heavy things at once.
+
+
+def _update_lines() -> list[str]:
+    return (DEPLOY / "update-inner.sh").read_text().splitlines()
+
+
+def _cmd_idx(lines: list[str], needle: str) -> int | None:
+    """Index of the first COMMAND (not comment) containing `needle`."""
+    return next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if needle in ln and not ln.lstrip().startswith("#")
+        ),
+        None,
+    )
+
+
+def _call_idx(lines: list[str], name: str) -> int | None:
+    """Index of the TOP-LEVEL call of a shell function — a bare, unindented `name`.
+
+    Unindented matters: the same call also appears indented inside the signal handler,
+    and matching that instead would compare the handler's position to the phase order.
+    """
+    return next((i for i, ln in enumerate(lines) if ln.rstrip("\n") == name), None)
+
+
+def test_update_quiesces_the_stack_around_the_build_and_the_model_load() -> None:
+    lines = _update_lines()
+
+    quiesce = _call_idx(lines, "quiesce_stack")
+    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+    unquiesce = _call_idx(lines, "unquiesce_stack")
+
+    assert quiesce is not None, "the update must quiesce the stack for the heavy phase"
+    assert build is not None and smoke is not None and up is not None
+    assert quiesce < build < smoke < up, (
+        "order must be: quiesce -> build -> model load -> recreate. The model load is "
+        "what froze the box; it belongs at the emptiest moment, not on top of a "
+        "freshly-recreated stack."
+    )
+    assert unquiesce is not None and unquiesce > up, (
+        "profile-gated services stopped by the quiesce must be put back after "
+        "`up -d` — it does not name them, so they would stay down for good"
+    )
+
+
+def test_the_quiesce_keeps_the_control_plane_so_the_pwa_can_watch() -> None:
+    """Going fully dark would free about a gigabyte and cost the owner any way to
+    tell a slow build from a wedged one — on the operation that has repeatedly
+    frozen the box."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    line = next(ln for ln in text.splitlines() if ln.startswith("QUIESCE_KEEP="))
+    kept = line.split("=", 1)[1].strip().strip('"').split()
+    for service in ("db", "api", "supervisor", "proxy"):
+        assert service in kept, f"{service} must stay up through a quiesce"
+
+
+def test_a_dead_updater_does_not_leave_the_box_half_stopped() -> None:
+    """Without the trap, an updater killed mid-quiesce leaves the box silently missing
+    its worker, embedder and speech services until somebody happens to notice."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert "trap unquiesce_stack EXIT" in text, (
+        "the un-quiesce must run on abnormal exit, not only on the happy path"
+    )
+
+
+def _use_idx(lines: list[str], name: str) -> int | None:
+    """Index of the first USE of a shell function — never its `name() {` definition.
+
+    Matching the definition instead is worse than useless: the definition necessarily
+    precedes everything, so an ordering assertion against it can never fail, and the
+    call site could be deleted outright with the test still green. This one did exactly
+    that before a reviewer caught it.
+    """
+    return next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if name in ln
+            and not ln.lstrip().startswith("#")
+            and not ln.strip().startswith(f"{name}()")
+        ),
+        None,
+    )
+
+
+def test_the_page_cache_is_dropped_before_the_model_load() -> None:
+    """MemAvailable counts reclaimable page cache as free, and reclaiming it under
+    pressure is exactly what livelocks this hardware. After a build that just wrote tens
+    of GB of layers, the number reads fine and cannot be realised in time — so the gate
+    would be measuring optimism. Dropping first makes the reading honest."""
+    lines = _update_lines()
+
+    drop = _use_idx(lines, "drop_page_cache")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    assert drop is not None, "the update must drop the page cache before a load"
+    assert smoke is not None and drop <= smoke, "drop the cache BEFORE the load"
+    assert "drop_caches" in "\n".join(lines)
+
+
+def test_a_failed_cache_drop_is_reported_not_assumed() -> None:
+    """Both drop paths are best-effort and silenced, so an unconditional "page cache
+    dropped" would claim something that did not happen — and the headroom gate below
+    would then be counting cache it cannot reclaim. The before/after numbers are the
+    only evidence either way."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    for probe in ('_before="$(mem_available_gb)"', '_after="$(mem_available_gb)"'):
+        assert probe in text, "sample memory on both sides of the drop"
+    assert '[ "$_after" = "$_before" ]' in text, "compare the two, don't assume"
+
+
+def test_the_api_is_paused_for_the_model_load() -> None:
+    """The api is kept up through the build so the PWA can watch — but it runs the
+    keep-warm prime, which retries every 5s and loads the chat model the moment the
+    gateway answers. That is a second ~60 GB allocation racing the smoke test's, and it
+    would defeat the headroom gate outright: the gate samples free memory once, then
+    allocates on top of whatever the prime took."""
+    lines = _update_lines()
+
+    pause = _use_idx(lines, "pause_api")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    build = _cmd_idx(lines, "build --pull local-llm")
+
+    assert pause is not None and smoke is not None and build is not None
+    assert pause < build < smoke, "pause the api before anything can load a model"
+    assert 'QUIESCED="$QUIESCED api"' in "\n".join(lines), (
+        "the paused api must join the restore set, so the trap covers it too"
+    )
+
+
+def test_the_gateway_is_emptied_before_the_rollback_rebuild() -> None:
+    """The rollback is the one branch nobody exercises, and it was the worst one. A
+    smoke
+    test fails at the TOOL PROBE — with both models loaded — and a timeout leaves a load
+    still running, so the gateway can be holding ~90 GB. `up -d` on a changed image
+    force-recreates it, and with no stop_grace_period that is SIGKILL in 10s: the kernel
+    reclaims all of it at once while the rebuild allocates. That is verbatim the
+    collision
+    the pre-build unload exists to prevent."""
+    lines = _update_lines()
+
+    rollback_msg = _cmd_idx(lines, "rolled back to its pinned base")
+    assert rollback_msg is not None
+    rebuild = next(
+        i
+        for i, ln in enumerate(lines)
+        if "build local-llm" in ln
+        and "--pull" not in ln
+        and not ln.lstrip().startswith("#")
+    )
+    release = next(
+        (
+            i
+            for i in range(rollback_msg, rebuild)
+            if lines[i].strip() == "release_models"
+        ),
+        None,
+    )
+    assert release is not None, (
+        "empty the gateway before recreating it on the pinned base"
+    )
+
+
+def test_a_killed_quiesce_is_recoverable_without_a_terminal() -> None:
+    """The EXIT trap cannot cover the kills that actually happen here: the supervisor
+    reaps a hung one-shot with remove(force=True) (SIGKILL) and a power cut runs
+    nothing.
+    Every service is `restart: unless-stopped`, which by definition does NOT restart
+    something explicitly stopped — so without a durable record the box comes back
+    missing
+    its worker, embedder and speech services, and `comfyui`/`mqtt` (which no `up -d`
+    names) would stay down forever. The owner has no terminal to fix that with."""
+    lines = _update_lines()
+    text = "\n".join(lines)
+
+    assert "QUIESCE_STATE=" in text, "the quiesced set must be recorded on disk"
+    write = _cmd_idx(lines, '> "$QUIESCE_STATE"')
+    stop = _cmd_idx(lines, 'stop -t 30 "$_svc"')
+    assert write is not None and stop is not None and write < stop, (
+        "record the set BEFORE stopping, so a kill between the two still leaves a trail"
+    )
+    heal = _use_idx(lines, "restore_stale_quiesce")
+    quiesce = _call_idx(lines, "quiesce_stack")
+    assert heal is not None and quiesce is not None and heal < quiesce, (
+        "heal a previous update's quiesce before taking this update's census, or the "
+        "still-stopped services are invisible to it"
+    )
+
+
+def test_a_signal_trap_exits_instead_of_resuming() -> None:
+    """A POSIX signal trap RESUMES at the next statement. A handler that only restores
+    the stack would therefore un-quiesce and then carry straight on into the build and
+    the ~60 GB load with everything resident — the pre-fix condition, and with QUIESCED
+    now empty it could never re-quiesce. It would also exit 0, so the PWA would report a
+    signalled update as a success."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    assert "trap on_signal INT TERM" in text, "signals need a handler that exits"
+    start = text.index("on_signal() {")
+    handler = text[start : text.index("trap unquiesce_stack EXIT")]
+    assert "exit" in handler, "the signal handler must exit, not fall through"
+
+
+def test_the_quiesce_stops_services_one_at_a_time() -> None:
+    """`docker compose stop a b c` validates every name against the CURRENT compose file
+    and refuses the whole command if one is unknown. The set here comes from Docker's
+    labels, so a container left by a renamed service (server-brain, whisper) puts an
+    unknown name in the list — the batch fails, `|| true` swallows it, and the log still
+    says "quiesced" over a stack that never stopped. That silently restores the exact
+    pre-fix behaviour, on the class of update most likely to be big."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    quiesce = text[text.index("quiesce_stack() {") : text.index("unquiesce_stack() {")]
+    assert 'stop -t 30 "$_svc"' in quiesce, "stop per service, not one batched command"
+    assert "stop -t 30 $QUIESCED" not in quiesce, (
+        "a batched stop can be vetoed by one name"
+    )
+
+
+def test_a_service_that_does_not_come_back_is_reported() -> None:
+    """This function is the only thing between a failed update and a box silently
+    missing
+    its worker, embedder and speech services — and the owner reads this log because they
+    have no terminal. Swallowing the failure defeats the purpose."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+
+    restore = text[text.index("unquiesce_stack() {") :]
+    restore = restore[: restore.index("\n}")]
+    assert "WARNING" in restore, "a restore that fails must say so in the update log"
+
+
+def test_migrations_run_next_to_the_recreate_not_before_the_gateway_work() -> None:
+    """The api is deliberately kept up, so migrating early leaves the OLD image serving
+    the owner's PWA against a NEW schema for the whole gateway rebuild + smoke test.
+    That
+    was defensible at seconds; the window now contains an unconditional multi-GB base
+    image pull on a rolling tag."""
+    lines = _update_lines()
+
+    migrate = _cmd_idx(lines, "run --rm migrate")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+
+    assert migrate is not None and smoke is not None and up is not None
+    assert smoke < migrate < up, (
+        "migrate after the gateway work, immediately before `up -d`"
+    )
+
+
+def test_the_floating_gateway_pull_is_bounded() -> None:
+    """It is an unconditional multi-GB registry pull on a rolling tag, and it runs with
+    the stack quiesced — so a stall here is a stall of the whole box, not one
+    service."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+    joined = text.replace("\\\n", " ")
+
+    line = next(
+        ln
+        for ln in joined.splitlines()
+        if "build --pull local-llm" in ln and not ln.lstrip().startswith("#")
+    )
+    assert "run_bounded" in line, "the floating pull must run under a ceiling"
+    assert "PULL_TIMEOUT_S=" in text
+
+
+def test_the_gateway_is_emptied_again_before_the_stack_is_recreated() -> None:
+    """The tool probe loads gpt-oss (~60 GB of pinned unified memory). Recreating a
+    dozen containers on top of that is the same collision the pre-build unload
+    prevents, just arriving from the other end."""
+    lines = _update_lines()
+
+    # `release_models` is the shared helper; the raw CLI call lives only in its body.
+    unloads = [i for i, ln in enumerate(lines) if ln.strip() == "release_models"]
+    pre_build = _cmd_idx(lines, "jbrain.cli local-llm-unload")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+    up = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE up -d")
+
+    assert pre_build is not None, "there must be an unload before the build"
+    assert smoke is not None and up is not None
+    assert any(smoke < i < up for i in unloads), (
+        "the models the smoke test loaded must be released before the recreate"
+    )
+
+
+def test_reclaim_hardening_runs_before_the_memory_heavy_phase_on_both_paths() -> None:
+    """Hardening applied after the thing it protects against has already run is
+    decoration — it sat below the build and the model load, which is where the
+    freeze happened. And the containerized (PWA) caller is the one that rebuilds the
+    gateway and loads a model, so it must not be the path with no protection: the
+    vm.* knobs are not namespaced, so a privileged one-shot applies the same values
+    the host would."""
+    lines = _update_lines()
+    text = "\n".join(lines)
+
+    harden = _cmd_idx(lines, "oom-hardening.sh")
+    knobs = _cmd_idx(lines, "host_kernel_write vm/min_free_kbytes")
+    build = _cmd_idx(lines, "compose $JCODE_PROFILE $TUNNEL_PROFILE build")
+    smoke = _cmd_idx(lines, "jbrain.cli local-llm-smoketest")
+
+    assert harden is not None and knobs is not None and build is not None
+    assert harden < build and knobs < build, "harden before the build, not after it"
+    assert smoke is not None and knobs < smoke
+    assert "--privileged" in text, "the container path needs a privileged one-shot"
+
+
+def test_container_applied_sysctls_match_the_host_hardening_script() -> None:
+    """Two places write the same kernel knobs — the host script (persistent, in
+    /etc/sysctl.d) and the update's per-boot fallback for the containerized caller.
+    If they drift, a PWA-updated box is tuned differently from a terminal-updated
+    one — the exact class of bug that made these two scripts one in the first
+    place."""
+    import re
+
+    hardening = (DEPLOY / "oom-hardening.sh").read_text()
+    update = (DEPLOY / "update-inner.sh").read_text()
+
+    for knob in ("min_free_kbytes", "watermark_scale_factor", "swappiness"):
+        host = re.search(rf"^vm\.{knob}\s*=\s*(\d+)", hardening, re.M)
+        container = re.search(rf"host_kernel_write vm/{knob} (\d+)", update)
+        assert host is not None, f"oom-hardening.sh must set vm.{knob}"
+        assert container is not None, f"the update must apply vm/{knob} in-container"
+        assert host.group(1) == container.group(1), (
+            f"vm.{knob} differs: host {host.group(1)} vs container {container.group(1)}"
+        )
