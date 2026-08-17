@@ -79,6 +79,35 @@ def resolve_weight(root: str, model_id: str, pattern: str) -> str:
     return rels[0]
 
 
+def unresolved_ids(root: str, models: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+    """Catalog ids whose REQUIRED weight files don't all resolve under `root`, in manifest
+    order — the set a provisioning run still has to download.
+
+    Why the provisioning scripts must not use a bare `*.gguf` presence check instead: a model's
+    required file set is a property of the CATALOG, and it changes between releases. When an
+    entry gains a file it didn't need before — a vision projector added to a variant that was
+    text-only — a directory holding the previous release's weights still matches `*.gguf` and
+    reads as complete, so the download is skipped. `render` then resolves every glob for the
+    WHOLE roster in one pass and raises on the one that's missing, which takes every other
+    model's config down with it: the deploy re-stamp aborts, and the boot reconcile
+    (`api.llm_settings.reconcile_gateway_config`, which swallows render failures so a bad glob
+    can never block startup) silently applies nothing. Resolving exactly the globs `render`
+    will is the only check that cannot drift from what the config generator demands."""
+    missing: list[str] = []
+    for m in models:
+        model_id = str(m["id"])
+        globs = [str(m["gguf_include"])]
+        if m.get("mmproj_include"):
+            globs.append(str(m["mmproj_include"]))
+        for pattern in globs:
+            try:
+                resolve_weight(root, model_id, pattern)
+            except FileNotFoundError:
+                missing.append(model_id)
+                break
+    return tuple(missing)
+
+
 def _is_speculative(extra_server_args: Sequence[str]) -> bool:
     """Whether a model's serving flags turn on speculative decoding (`--spec-type <mode>`),
     which constrains it to a single sequence. Read off the flags rather than a catalog boolean
@@ -264,9 +293,23 @@ def _saved_overrides() -> tuple[dict[str, int], dict[str, int]]:
 def _main(argv: list[str]) -> int:
     """CLI for the deploy re-stamp (`deploy/local-models-sync.sh`) and scripts/local-llm-setup.sh:
     `... <models_dir>` reads the MANIFEST env (catalog JSON) and writes the config, applying the
-    operator's saved context-window / slot overrides so an update never resets a raised `-c`."""
+    operator's saved context-window / slot overrides so an update never resets a raised `-c`.
+
+    `--check <models_dir>` instead PRINTS the ids whose required weights are incomplete (one per
+    line, empty when all resolve) and exits 0 — the provisioning scripts' download filter. It
+    reads the same globs the write path will, so a model that needs a NEWLY-required file is
+    re-downloaded rather than passing a `*.gguf` presence check and failing the re-stamp."""
+    if argv[:1] == ["--check"]:
+        if len(argv) != 2:
+            print("usage: ... --check <models_dir>", file=sys.stderr)
+            return 2
+        for model_id in unresolved_ids(argv[1], json.loads(os.environ["MANIFEST"])):
+            print(model_id)
+        return 0
     if len(argv) != 1:
-        print("usage: python -m jbrain.llm.llama_swap_config <models_dir>", file=sys.stderr)
+        print(
+            "usage: python -m jbrain.llm.llama_swap_config [--check] <models_dir>", file=sys.stderr
+        )
         return 2
     root = argv[0]
     models = json.loads(os.environ["MANIFEST"])

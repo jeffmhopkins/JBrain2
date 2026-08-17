@@ -4,6 +4,7 @@ override), the co-resident (non-swapping) group, and atomic write."""
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -308,3 +309,62 @@ def test_write_is_atomic_and_round_trips(tmp_path: Path) -> None:
     assert "-c 16384" in text
     # No leftover temp file from the atomic rename.
     assert not (tmp_path / "llama-swap.yaml.tmp").exists()
+
+
+def test_unresolved_ids_is_empty_when_every_required_file_is_present(tmp_path: Path) -> None:
+    _lay_down(tmp_path)
+    assert llama_swap_config.unresolved_ids(str(tmp_path), _manifest()) == ()
+
+
+def test_unresolved_ids_catches_a_model_that_gained_a_required_file(tmp_path: Path) -> None:
+    # THE regression this exists for. A model's required file set is a catalog property that
+    # changes between releases: an entry that shipped text-only gains a vision projector. Its
+    # directory still holds last release's weights, so a `*.gguf` presence check reads it as
+    # complete and the provisioning run skips the download — and then `render`, which resolves
+    # every glob for the WHOLE roster in one pass, raises on the missing projector and takes
+    # every other model's config down with it. The deploy re-stamp aborts; the boot reconcile
+    # swallows render failures (so a bad glob can't block startup) and silently applies nothing.
+    _lay_down(tmp_path)
+    (tmp_path / "gpt-oss-120b" / "mmproj-F16.gguf").unlink(missing_ok=True)
+    manifest = [dict(m) for m in _manifest()]
+    manifest[1]["mmproj_include"] = "mmproj-F16.gguf"  # newly required, not on disk
+    assert llama_swap_config.unresolved_ids(str(tmp_path), manifest) == ("gpt-oss-120b",)
+    # And the check agrees with reality: render really does fail for the whole roster here.
+    with pytest.raises(FileNotFoundError):
+        llama_swap_config.render(manifest, str(tmp_path))
+    # Once the projector lands, both agree the other way — no stale "incomplete" verdict.
+    (tmp_path / "gpt-oss-120b" / "mmproj-F16.gguf").write_bytes(b"\0")
+    assert llama_swap_config.unresolved_ids(str(tmp_path), manifest) == ()
+    assert "--mmproj /models/gpt-oss-120b/mmproj-F16.gguf" in llama_swap_config.render(
+        manifest, str(tmp_path)
+    )
+
+
+def test_unresolved_ids_catches_missing_weights_and_incomplete_shards(tmp_path: Path) -> None:
+    # The two older failure modes the `*.gguf` check did catch must keep working: a model with
+    # no weights at all, and a sharded model missing part of its set (present-but-INCOMPLETE).
+    _lay_down(tmp_path)
+    (tmp_path / "nothing-here").mkdir()
+    manifest = [dict(m) for m in _manifest()]
+    manifest.append({**manifest[0], "id": "nothing-here", "served_model": "nothing-here"})
+    assert "nothing-here" in llama_swap_config.unresolved_ids(str(tmp_path), manifest)
+    # A shard set claiming 2 parts but holding 1 resolves as incomplete, not as "present".
+    shard_dir = tmp_path / "sharded"
+    shard_dir.mkdir()
+    (shard_dir / "model-Q4_K_M-00001-of-00002.gguf").write_bytes(b"\0")
+    manifest.append({**manifest[0], "id": "sharded", "served_model": "sharded"})
+    assert "sharded" in llama_swap_config.unresolved_ids(str(tmp_path), manifest)
+
+
+def test_check_cli_prints_the_incomplete_ids(tmp_path: Path, capsys: Any, monkeypatch: Any) -> None:
+    # The provisioning scripts' download filter runs through this CLI, so its contract — ids one
+    # per line on stdout, exit 0, empty when everything resolves — is what the shell parses.
+    _lay_down(tmp_path)
+    manifest = [dict(m) for m in _manifest()]
+    manifest[1]["mmproj_include"] = "mmproj-F16.gguf"
+    monkeypatch.setenv("MANIFEST", json.dumps(manifest))
+    assert llama_swap_config._main(["--check", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.split() == ["gpt-oss-120b"]
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    assert llama_swap_config._main(["--check", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.strip() == ""
