@@ -100,12 +100,18 @@ class _Images:
 
 
 class _Router:
-    def __init__(self, text: str = "the box is around the heater") -> None:
+    def __init__(
+        self, text: str = "the box is around the heater", model: str = "qwen3.8-27b"
+    ) -> None:
         self.text = text
+        self.model = model
         self.calls: list[dict] = []
 
     async def supports_vision(self, task: str, spec_override: str | None = None) -> bool:
         return True
+
+    async def effective_spec(self, task: str, strength: str | None = None):
+        return "local", self.model
 
     async def complete(self, task: str, **kw: Any):
         self.calls.append({"task": task, **kw})
@@ -394,3 +400,56 @@ async def test_show_canvas_says_the_canvas_stays_editable(monkeypatch) -> None:
     canvas_id = first.split()[1]
     out = await handlers["show_canvas"]({"canvas_id": canvas_id}, _ctx())
     assert "stays editable" in out and canvas_id in out
+
+
+# --- look must answer in THIS canvas's pixels -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_look_restates_boxes_in_canvas_pixels(monkeypatch) -> None:
+    # Regression for a bug seen on the live box: the vision model answers in its own
+    # normalized 0-1000 base, the agent asked for pixels, and nothing said which it got.
+    # The agent read [508, 222, 119, 454] against a 4080x3072 photo, correctly judged it
+    # "suspicious", threw it away and eyeballed the photo instead — losing the whole
+    # point of aiming. The look now converts before handing the numbers over.
+    router = _Router(
+        'The bottle is centre-left. [{"bbox_2d": [508, 222, 619, 454], "label": "bottle"}]'
+    )
+    handlers, _b, _a, _p = _build(monkeypatch, source=_photo(4080, 3072), router=router)
+    out = await handlers["canvas"](
+        {"on_attachment_id": "att-1", "look": "where is the water bottle?"},
+        _ctx(canvas_look_budget=ToolCallBudget(limit=LOOK_BUDGET)),
+    )
+    assert "In THIS canvas's pixels (4080x3072)" in out
+    # 508/1000*4080 = 2072.6 -> 2073 ; 222/1000*3072 = 682 ; the box is 453x713 px.
+    assert "bottle x=2073 y=682 w=453 h=713" in out
+    assert "Use these numbers directly in your ops" in out
+
+
+@pytest.mark.asyncio
+async def test_a_look_with_no_boxes_just_answers(monkeypatch) -> None:
+    # A yes/no check ("does the box contain it?") has no coordinates to restate, and
+    # must not grow a confusing empty conversion line.
+    router = _Router("Yes, the red box contains the water heater.")
+    handlers, _b, _a, _p = _build(monkeypatch, source=_photo(), router=router)
+    out = await handlers["canvas"](
+        {"on_attachment_id": "att-1", "look": "does the box contain it?"},
+        _ctx(canvas_look_budget=ToolCallBudget(limit=LOOK_BUDGET)),
+    )
+    assert "Yes, the red box contains" in out
+    assert "In THIS canvas's pixels" not in out
+
+
+@pytest.mark.asyncio
+async def test_an_unqualified_vision_model_says_so_instead_of_passing_raw_numbers(
+    monkeypatch,
+) -> None:
+    # Passing unconverted numbers off as pixels is exactly the failure being fixed.
+    router = _Router('[{"bbox_2d": [100, 100, 300, 300], "label": "x"}]', model="unmeasured-vl")
+    handlers, _b, _a, _p = _build(monkeypatch, source=_photo(), router=router)
+    out = await handlers["canvas"](
+        {"on_attachment_id": "att-1", "look": "where is it?"},
+        _ctx(canvas_look_budget=ToolCallBudget(limit=LOOK_BUDGET)),
+    )
+    assert "could not convert those coordinates to pixels" in out
+    assert "In THIS canvas's pixels" not in out

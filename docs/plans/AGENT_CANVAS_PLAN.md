@@ -711,6 +711,36 @@ though the block's *rect* still moves by id, which is why `html` is an op.
 
 ---
 
+## 10b. What the first live annotation taught us (2026-08-17)
+
+The lane works end to end on real hardware: two water bottles on a 4080×3072 phone
+photo, each boxed accurately and labelled. Two defects only a real run could surface,
+both fixed:
+
+**The `look` answered in the wrong units.** The vision model replies in its own
+normalized 0–1000 base; `_look` returned that prose verbatim, so the agent asked for
+pixels and got normalized numbers with nothing saying which. The reasoning trace is
+unambiguous — it read `[508, 222, 119, 454]` against a 4080×3072 photo, judged it
+*"suspicious… relative values or misreadings"*, threw the answer away and eyeballed the
+photo itself. It recovered (it is a vision model on the turn, so it can see the
+attachment) but that is luck, not design, and it wasted the look. `_look` now runs the
+reply through `grounding` and restates every box in the canvas's own pixels. The irony
+worth recording: the conversion module was already written, measured and pinned — the
+look simply never called it.
+
+**Defaults were absolute where they should have been proportional.** 3px stroke and
+28px text are right for a ~1024px sheet and nearly invisible on a 4080px photo rendered
+down to the 2048px cap. Defaults now scale with the canvas long edge (≈10px stroke,
+≈49px text at 4080), with the old values as floors so a blank sheet is byte-identical
+and an explicit `size`/`width` from the model always wins.
+
+**Not a defect, but the number to watch:** the turn cost. Per ReAct step the model
+re-pays a ~35–39k-token prefill (the tool block dominates), so steps run 1–5 minutes on
+the Q4 twin and the first annotation took roughly eight. The canvas did not cause this —
+jerv was already at 41 tools — but the canvas is where it hurts most, because the loop
+is multi-step by design. This is the strongest argument yet for `TOOL_CATALOG_PLAN`'s
+deferred-tool work, and it belongs in W6's tuning rather than here.
+
 ## 11. Risks
 
 1. **W0 finds the convention isn't what any doc says.** Most likely outcome is `0–1000`

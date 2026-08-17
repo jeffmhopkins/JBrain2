@@ -289,3 +289,37 @@ def test_summary_is_in_pixels_so_it_feeds_the_next_op() -> None:
 
 def test_summary_of_an_empty_canvas() -> None:
     assert _scene().summary() == "no marks yet"
+
+
+# --- defaults scale with the canvas ----------------------------------------
+
+
+def test_defaults_scale_up_on_a_large_photo() -> None:
+    # Observed live: the first real annotation put correct boxes on a 4080px phone
+    # photo, but a 3px stroke on a 4080px canvas renders as a hairline — the boxes were
+    # right and nearly invisible. Defaults are proportions now, not absolutes.
+    scene, _ = _apply(
+        [{"op": "label_box", "x": 10, "y": 10, "w": 200, "h": 200, "text": "bottle"}],
+        _scene(4080, 3072),
+    )
+    assert scene.elements[0].stroke == 10
+    assert scene.elements[0].size == 49
+
+
+def test_a_small_sheet_is_unchanged() -> None:
+    # The scaling must be a no-op at the size the floors were tuned for, so an existing
+    # blank-canvas figure renders byte-identically.
+    scene, _ = _apply([{"op": "rect", "x": 10, "y": 10, "w": 50, "h": 50}], _scene(1024, 768))
+    assert (scene.elements[0].stroke, scene.elements[0].size) == (
+        DEFAULT_STROKE_PX,
+        DEFAULT_TEXT_PX,
+    )
+
+
+def test_an_explicit_size_always_wins() -> None:
+    # Scaling decides what an OMITTED value means; it must never override the model.
+    scene, _ = _apply(
+        [{"op": "text", "x": 10, "y": 10, "text": "x", "size": 20, "width": 2}],
+        _scene(4080, 3072),
+    )
+    assert (scene.elements[0].size, scene.elements[0].stroke) == (20, 2)
