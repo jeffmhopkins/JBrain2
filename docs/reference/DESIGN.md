@@ -196,6 +196,14 @@ resampled once a second:
   arriving*, and *arriving but dropped* need different fixes yet look identical from the
   box — a connection the browser declines to open leaves no trace there at all. Collapsed,
   because it is a diagnostic and not part of the reading.
+- **Every retry clears its own handle** [decided]. The pending-retry handle is not just a
+  timer — the reopen path reads it as *an attempt is already scheduled, don't add
+  another*. So a callback that fired without clearing it did not merely leak a handle: it
+  left the slot occupied forever, and from that moment the silence watchdog could tear a
+  dead stream down but never bring one back. The meter stayed blind for the rest of the
+  session with no reconnects reaching the box at all. One failed probe was enough to arm
+  it, and a probe fails on every deploy, when the route is briefly gone. All retries now
+  go through one helper that nulls the handle before running the attempt.
 - **The chart and the GPU figure share one grid row** [decided]. They are the pair
   the eye reads together, and laying them out as two independently-centred columns
   put the chart's middle 11px above the figure's — the reserved t/s slot pushed the
@@ -284,6 +292,12 @@ Three things this surface is careful about:
   seconds makes a sample's slot a property of the sample, so the window scrolls by exactly
   one slot per tick instead of re-partitioning. With every sample drawn, mean-vs-peak
   stops being a question.
+- **A value at the floor still draws a line** [decided]. The plot reserves a stroke's
+  width inside its own box at both ends, because a series sitting exactly at its scale
+  minimum — a token rate of zero, the commonest case — landed on the viewBox edge with
+  half its stroke clipped away, and a real zero became indistinguishable from no data.
+  That is the one distinction these plots exist to keep: a **gap** means "we were not
+  told", a **floor** means "it was zero". Nulls still draw nothing at all.
 - **The GPU area is shaded, the token rate is not** [decided]. Shading reads as "how much
   of the available capacity was used", which is only true when the baseline is a real
   zero — so it is opt-in (`PlotLine.fill`) and paired with the pinned 0–100 scale. The

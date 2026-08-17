@@ -95,3 +95,50 @@ describe("TimeSeriesPlot", () => {
     expect(container.querySelectorAll(".plot-swatch").length).toBe(2);
   });
 });
+
+describe("a series sitting at its floor", () => {
+  it("draws a visible line for an all-zero series rather than clipping it away", () => {
+    // A token rate of exactly zero is the commonest case, and it used to land on the
+    // viewBox edge with half its stroke outside — so a real zero looked identical to no
+    // data. Gap means "we were not told"; floor means "it was zero".
+    const { container } = render(
+      <TimeSeriesPlot
+        series={[
+          {
+            label: "tokens/sec",
+            lines: [{ color: "steel", values: [0, 0, 0] }],
+            fmt: (v) => `${v}/s`,
+          },
+        ]}
+      />,
+    );
+
+    const path = container.querySelector(".plot-svg path");
+    expect(path).not.toBeNull();
+    const d = path?.getAttribute("d") ?? "";
+    // Every y must sit strictly inside the 32-unit box, not on its boundary.
+    const ys = [...d.matchAll(/[ML]\s*[\d.]+\s+([\d.]+)/g)].map((m) => Number(m[1]));
+    expect(ys.length).toBeGreaterThan(0);
+    for (const y of ys) {
+      expect(y).toBeLessThan(32);
+      expect(y).toBeGreaterThan(0);
+    }
+  });
+
+  it("still omits a series that is genuinely all gaps", () => {
+    // The distinction this whole change is about: nulls draw nothing at all.
+    const { container } = render(
+      <TimeSeriesPlot
+        series={[
+          {
+            label: "tokens/sec",
+            lines: [{ color: "steel", values: [null, null] }],
+            fmt: (v) => `${v}/s`,
+          },
+        ]}
+      />,
+    );
+
+    expect(container.querySelector(".plot-svg")).toBeNull();
+  });
+});
