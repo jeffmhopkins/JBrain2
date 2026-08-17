@@ -10,6 +10,7 @@ oversized canvas is bounded.
 from __future__ import annotations
 
 import io
+from typing import cast
 
 import pymupdf
 import pytest
@@ -35,8 +36,17 @@ def _open(png: bytes) -> Image.Image:
     return Image.open(io.BytesIO(png))
 
 
+def _counted(img: Image.Image) -> list[tuple[int, tuple[int, int, int]]]:
+    """(count, rgb) pairs. `getcolors` returns None past `maxcolors`; the cap here is
+    2^24, i.e. every possible RGB, so None means the call itself failed — assert rather
+    than silently treating it as "no colours"."""
+    counts = img.convert("RGB").getcolors(maxcolors=1 << 24)
+    assert counts is not None
+    return [(n, cast("tuple[int, int, int]", c)) for n, c in counts]
+
+
 def _colours(png: bytes) -> set[tuple[int, int, int]]:
-    return {c for _n, c in _open(png).convert("RGB").getcolors(maxcolors=1 << 24)}
+    return {c for _n, c in _counted(_open(png))}
 
 
 # --- the basics -------------------------------------------------------------
@@ -87,9 +97,7 @@ def _dark_pixels(png: bytes, threshold: int = 200) -> int:
     """Count near-black pixels. Darkness alone can't distinguish a backing plate from
     glyph ink — both are dark — so the discriminator is AREA: a plate behind "hello"
     is thousands of pixels, the glyph strokes are a few hundred."""
-    return sum(
-        n for n, c in _open(png).convert("RGB").getcolors(maxcolors=1 << 24) if sum(c) < threshold
-    )
+    return sum(n for n, c in _counted(_open(png)) if sum(c) < threshold)
 
 
 def test_text_on_a_blank_sheet_has_no_backing_plate() -> None:
@@ -133,7 +141,7 @@ def test_photo_background_is_composited() -> None:
         ),
         _photo(colour=(200, 30, 30)),
     )
-    r, g, b = _open(png).convert("RGB").getpixel((150, 100))
+    r, g, b = cast("tuple[int, int, int]", _open(png).convert("RGB").getpixel((150, 100)))
     assert r > 150 and g < 80 and b < 80
 
 
@@ -212,4 +220,4 @@ def test_a_label_box_at_the_top_edge_keeps_its_caption_on_canvas() -> None:
     )
     png = render_png(scene)
     top_band = _open(png).convert("RGB").crop((0, 0, 300, 100))
-    assert len({c for _n, c in top_band.getcolors(maxcolors=1 << 24)}) > 1
+    assert len({c for _n, c in _counted(top_band)}) > 1

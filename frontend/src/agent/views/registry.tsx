@@ -3879,13 +3879,16 @@ function ImageSet({ data }: ViewProps): ReactNode {
       </div>
       <div className="tv-imageset-source">
         <img src={sourceSrc} alt={`source for ${label}`} loading="lazy" />
-        {crops.map((crop, index) => {
+        {crops.map((crop) => {
           const box = Array.isArray(crop.box) ? (crop.box as number[]) : null;
           if (!box || box.length !== 4 || box.some((v) => typeof v !== "number")) return null;
           const [x1, y1, x2, y2] = box as [number, number, number, number];
+          // Keyed by the crop's own image id — the region and its thumbnail are the
+          // same element, so a positional key would reorder wrongly on a re-render.
+          const boxKey = typeof crop.image_id === "string" ? crop.image_id : `${x1},${y1}`;
           return (
             <span
-              key={`box-${index}`}
+              key={`box-${boxKey}`}
               className="tv-imageset-box"
               style={{
                 left: `${x1 * 100}%`,
@@ -3924,7 +3927,6 @@ function ImageSet({ data }: ViewProps): ReactNode {
     </div>
   );
 }
-
 
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,

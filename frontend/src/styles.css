@@ -23777,8 +23777,14 @@ button.task-band:active {
   gap: 8px;
   margin-bottom: 10px;
 }
-.tv-imageset-title { font-size: 14px; font-weight: 500; }
-.tv-imageset-sub { font-size: 12px; color: var(--text-2); }
+.tv-imageset-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+.tv-imageset-sub {
+  font-size: 12px;
+  color: var(--text-2);
+}
 .tv-imageset-source {
   position: relative;
   border-radius: 12px;
@@ -23787,7 +23793,10 @@ button.task-band:active {
   background: var(--surface-2);
   margin-bottom: 10px;
 }
-.tv-imageset-source img { width: 100%; display: block; }
+.tv-imageset-source img {
+  width: 100%;
+  display: block;
+}
 /* The region marker. A dark outer ring under the accent keeps it legible over an
    arbitrary photograph — the same reason the canvas renderer haloes its strokes. */
 .tv-imageset-box {
@@ -23832,5 +23841,12 @@ button.task-band:active {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tv-imageset-frame:focus-visible img { outline: 2px solid var(--steel); outline-offset: 2px; }
-.tv-imageset-foot { margin-top: 10px; font-size: 12px; color: var(--text-2); }
+.tv-imageset-frame:focus-visible img {
+  outline: 2px solid var(--steel);
+  outline-offset: 2px;
+}
+.tv-imageset-foot {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-2);
+}

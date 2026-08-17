@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from PIL import Image
@@ -153,8 +153,14 @@ def _build(monkeypatch: pytest.MonkeyPatch, *, source: bytes | str | None = None
     monkeypatch.setattr("jbrain.agent.drawtools.persist_chat_image", _fake_persist)
     monkeypatch.setattr("jbrain.agent.drawtools.chat_image_view", lambda row: None)
 
+    # The collaborators are fakes on purpose: this suite tests the handler's own
+    # contract, not theirs. `cast` at the seam keeps the fakes small (the house pattern
+    # — see test_priming.py) rather than forcing each to implement a whole protocol.
     handlers = build_canvas_handlers(
-        None, blobs, artifacts, images, None, router or _Router(), _Html()
+        *cast(
+            Any,
+            (None, blobs, artifacts, images, None, router or _Router(), _Html()),
+        )
     )
     return handlers, blobs, artifacts, persisted
 

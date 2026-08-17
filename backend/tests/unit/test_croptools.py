@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from PIL import Image
@@ -78,7 +78,8 @@ def _build(monkeypatch, *, source: bytes | str = b"", router: _Router | None = N
 
     monkeypatch.setattr("jbrain.agent.croptools.resolve_source", _fake_resolve)
     monkeypatch.setattr("jbrain.agent.croptools.persist_chat_image", _fake_persist)
-    handlers = build_crop_handlers(None, None, None, None, router or _Router())
+    # Fakes at the seam — see the note in test_drawtools.
+    handlers = build_crop_handlers(*cast(Any, (None, None, None, None, router or _Router())))
     return handlers["crop_regions"], persisted
 
 
@@ -301,7 +302,7 @@ async def test_face_targets_use_the_deterministic_detector(monkeypatch, target: 
 
     monkeypatch.setattr("jbrain.agent.croptools.detect_faces", _fake_detect)
     crop, persisted = _build(monkeypatch, source=_photo(), router=router)
-    handlers = build_crop_handlers(None, None, None, None, router, ocr)
+    handlers = build_crop_handlers(*cast(Any, (None, None, None, None, router, ocr)))
     out = await handlers["crop_regions"]({"source_attachment_id": "a", "target": target}, _ctx())
 
     assert ocr.calls == 1
@@ -323,7 +324,7 @@ async def test_a_non_face_target_still_uses_grounding(monkeypatch) -> None:
 
     monkeypatch.setattr("jbrain.agent.croptools.detect_faces", _fake_detect)
     _crop, _p = _build(monkeypatch, source=_photo(), router=router)
-    handlers = build_crop_handlers(None, None, None, None, router, ocr)
+    handlers = build_crop_handlers(*cast(Any, (None, None, None, None, router, ocr)))
     out = await handlers["crop_regions"](
         {"source_attachment_id": "a", "target": "every product label"}, _ctx()
     )
@@ -343,7 +344,7 @@ async def test_an_unavailable_detector_falls_back_and_SAYS_it_fell_back(monkeypa
 
     monkeypatch.setattr("jbrain.agent.croptools.detect_faces", _fake_detect)
     _crop, _p = _build(monkeypatch, source=_photo(), router=router)
-    handlers = build_crop_handlers(None, None, None, None, router, _Ocr())
+    handlers = build_crop_handlers(*cast(Any, (None, None, None, None, router, _Ocr())))
     out = await handlers["crop_regions"]({"source_attachment_id": "a", "target": "faces"}, _ctx())
 
     assert "face detector was unavailable" in out

@@ -9,6 +9,7 @@ so every box lands wrong with no error anywhere.
 from __future__ import annotations
 
 from collections.abc import Collection
+from typing import Any, cast
 
 import pytest
 
@@ -79,7 +80,7 @@ def test_a_persona_without_the_canvas_hides_nothing() -> None:
 @pytest.mark.asyncio
 async def test_resolves_through_the_router() -> None:
     router = _Router("qwen3.8-27b")
-    assert await canvas_hidden_tools(router, None, JERV_LIKE) == frozenset()
+    assert await canvas_hidden_tools(cast(Any, router), None, JERV_LIKE) == frozenset()
 
 
 @pytest.mark.asyncio
@@ -87,14 +88,14 @@ async def test_an_override_onto_a_text_model_hides_it() -> None:
     # The owner steering the conversation onto the fast MTP twin must not leave the
     # model drawing blind.
     router = _Router("qwen3.8-27b")
-    hidden = await canvas_hidden_tools(router, "qwen3.8-27b-mtp", JERV_LIKE)
+    hidden = await canvas_hidden_tools(cast(Any, router), "qwen3.8-27b-mtp", JERV_LIKE)
     assert hidden == GATED
 
 
 @pytest.mark.asyncio
 async def test_a_routing_failure_hides_rather_than_guesses() -> None:
     # Fail closed: an unknown route must not become "draw anyway".
-    assert await canvas_hidden_tools(_Router("x", boom=True), None, JERV_LIKE) == (GATED)
+    assert await canvas_hidden_tools(cast(Any, _Router("x", boom=True)), None, JERV_LIKE) == (GATED)
 
 
 @pytest.mark.asyncio

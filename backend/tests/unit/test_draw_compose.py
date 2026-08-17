@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+from typing import cast
 
 import httpx
 import pytest
@@ -62,8 +63,10 @@ async def test_html_block_is_composited_at_its_rect() -> None:
     png, notes = await compose_png(_scene_with_html(), _photo(), _client(handler))
     assert notes == []
     img = Image.open(io.BytesIO(png)).convert("RGB")
-    assert img.getpixel((140, 230))[0] > 200  # inside the block: red overlay
-    assert img.getpixel((350, 280))[1] > 100  # outside it: the green photo
+    inside = cast("tuple[int, int, int]", img.getpixel((140, 230)))
+    outside = cast("tuple[int, int, int]", img.getpixel((350, 280)))
+    assert inside[0] > 200  # inside the block: the red overlay
+    assert outside[1] > 100  # outside it: the green photo
 
 
 @pytest.mark.asyncio
