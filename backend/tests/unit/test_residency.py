@@ -27,6 +27,7 @@ def _coord(
     fraction_loader: object = None,
     hold_loader: object = None,
     slots_loader: object = None,
+    on_prefix_lost: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -39,6 +40,7 @@ def _coord(
         fraction_loader=fraction_loader,  # type: ignore[arg-type]
         hold_loader=hold_loader,  # type: ignore[arg-type]
         slots_loader=slots_loader,  # type: ignore[arg-type]
+        on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
     )
 
 
@@ -694,3 +696,49 @@ async def test_box_lock_degrades_to_unlocked_when_acquire_fails(
     await coord.ensure_room("qwen3-coder-next")
     assert gw.unloaded == ["gpt-oss-120b"]  # still evicted, unlocked
     assert gw.loaded == ["qwen3-coder-next"]  # and still loaded
+
+
+# --- the prefix-lost hook ----------------------------------------------------
+# Residency is the only component that knows a model's primed KV just went away. The keeper
+# cannot infer it: an evict + restore inside one tick interval leaves `running()` unchanged.
+
+
+async def test_note_evicted_reports_the_dropped_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    lost: list[str] = []
+    coord = _coord(FakeLocalGateway(), monkeypatch, total=128, used=10, on_prefix_lost=lost.append)
+    coord.note_evicted(["gpt-oss-120b"])
+    assert lost == ["gpt-oss-120b"]
+
+
+async def test_unknown_served_name_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unrecognised name is not tracked for restore, so it has no prime to invalidate."""
+    lost: list[str] = []
+    coord = _coord(FakeLocalGateway(), monkeypatch, total=128, used=10, on_prefix_lost=lost.append)
+    coord.note_evicted(["not-a-catalog-model"])
+    assert lost == []
+
+
+async def test_a_raising_hook_never_breaks_an_eviction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hook is a notification. A listener that throws must not turn a successful eviction
+    into a failed one — residency's job does not depend on anyone listening."""
+
+    def boom(_served: str) -> None:
+        raise RuntimeError("listener exploded")
+
+    coord = _coord(FakeLocalGateway(), monkeypatch, total=128, used=10, on_prefix_lost=boom)
+    coord.note_evicted(["gpt-oss-120b"])  # must not raise
+    assert "gpt-oss-120b" in coord._displaced
+
+
+async def test_disabled_box_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    lost: list[str] = []
+    coord = _coord(
+        FakeLocalGateway(),
+        monkeypatch,
+        total=128,
+        used=10,
+        enabled=False,
+        on_prefix_lost=lost.append,
+    )
+    coord.note_evicted(["gpt-oss-120b"])
+    assert lost == []

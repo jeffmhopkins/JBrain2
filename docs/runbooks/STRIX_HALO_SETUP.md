@@ -187,7 +187,12 @@ local) resident **and primed**. It primes by issuing a throwaway turn down the *
 real turn takes** — `router.converse("agent.turn", …)` with jerv's persona + tools + the
 resolved effort — so the primed KV prefix is byte-identical to what a real turn sends and the
 reuse actually lands. That call also loads the model on demand through residency, so one prime
-both resides and warms it. It only ever *adds* that one model, under the same free-RAM floor
+both resides and warms it. It also listens to the residency coordinator: an eviction, or the bare
+reload the end-of-turn restore does, reports the dropped prefix so the keeper re-primes on its
+eager cadence. Without that edge it only noticed a lost prime when a tick happened to *observe*
+the model missing — so an evict and its restore that both landed inside one interval (an image
+render, a code-mode toggle) left the keeper reporting settled while the next chat turn paid the
+full cold prefill in the foreground. It only ever *adds* that one model, under the same free-RAM floor
 and code-mode hold as everything else, and reconciles on an interval so it self-heals after an
 app restart, an update (fresh container), or a standalone gateway (llama-swap) restart.
 

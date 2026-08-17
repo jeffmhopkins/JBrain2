@@ -154,6 +154,36 @@ def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
     assert "-c 131072" not in text
 
 
+def test_render_appends_operator_extra_args_after_the_catalog_flags(tmp_path: Path) -> None:
+    """An operator's remote flag override lands in the model's cmd, AFTER its catalog flags —
+    so it can only add to the launch line, never reorder or displace what the catalog set."""
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(
+        _manifest(),
+        str(tmp_path),
+        extra_args={"gpt-oss-120b": ["--swa-full", "--slot-save-path", "/tmp/kv/"]},
+    )
+    line = next(ln for ln in text.splitlines() if "--swa-full" in ln)
+    assert "--slot-save-path /tmp/kv/" in line
+    # Only the targeted model is affected — a bad flag can never take the whole gateway down.
+    assert sum("--swa-full" in ln for ln in text.splitlines()) == 1
+
+
+def test_main_applies_saved_extra_args_so_an_update_keeps_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deploy re-stamp must carry the saved FLAG overrides too. Without this an
+    Ops → Update silently drops a flag the operator set remotely, and the box comes back
+    behaving differently than the settings say it does."""
+    _lay_down(tmp_path)
+    monkeypatch.setattr(
+        llama_swap_config, "_saved_overrides", lambda: ({}, {}, {"gpt-oss-120b": ["--swa-full"]})
+    )
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    assert "--swa-full" in (tmp_path / "llama-swap.yaml").read_text()
+
+
 def test_main_applies_the_operators_saved_overrides_not_just_catalog_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -162,7 +192,7 @@ def test_main_applies_the_operators_saved_overrides_not_just_catalog_defaults(
     # the operator saw as "ran out of context" at 25%). _saved_overrides reads them from the
     # settings store; here we stand in for that read.
     _lay_down(tmp_path)
-    saved = ({"gpt-oss-120b": 65536}, {})
+    saved = ({"gpt-oss-120b": 65536}, {}, {})
     monkeypatch.setattr(llama_swap_config, "_saved_overrides", lambda: saved)
     monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
     assert llama_swap_config._main([str(tmp_path)]) == 0
