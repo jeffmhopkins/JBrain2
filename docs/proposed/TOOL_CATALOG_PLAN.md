@@ -164,15 +164,20 @@ each capability fully documented in one guide:
   waves read. Blocked on the §5 decision (`ToolSpec` is `extra="forbid"` and both fields fold
   into `ToolFile.digest`, so this is a real decision, not a free add).
 
-  **Measured 2026-08-17: `summary` is a PREREQUISITE for mode (b), not a nice-to-have.**
-  `scripts/prefill-experiment.py` probed the live box with mechanically-derived summaries (the
-  first sentence, truncated) — i.e. what a missing `summary` field looks like. Six of seven
-  cases were identical to today, but the categorical-chart case dropped from `render_bars` 3/3
-  to 2/3, flipping once to `web_search`, because the derived summary cuts off at "…one bar pe…"
-  — before the "Use this for plot / graph / chart this by Y" trigger words. A summary must
-  carry **when to reach for the tool**, not what it is; a description that opens by defining
-  itself produces a useless first sentence. Raw runs:
-  `scratchpad/prefill-probe-results.json`.
+  **Measured 2026-08-17 — `summary` earns its place, on better evidence than first claimed.**
+  `scripts/prefill-experiment.py` probed the live box in three builds: full descriptions,
+  mechanically-derived summaries (what a MISSING `summary` looks like), and authored
+  when-to-use summaries. The FL-license case picks `public_records` — the wrong source, which
+  covers medical NPI licences, not insurance — **5/5 with the full 2.5k-char description** and
+  5/5 with a derived summary, but picks `portal_search` correctly under the authored one. So a
+  short, aimed summary routed BETTER than the full description: most of a long description is
+  not doing routing work, which is the premise this whole plan rests on.
+  A summary must carry **when to reach for the tool**, not what it is.
+  *(An earlier pass claimed derived summaries caused a 3/3 → 2/3 regression on the
+  categorical-chart case and that `summary` was therefore a hard prerequisite. It did not
+  replicate — the next run reversed it — so that case is just unstable under mode (b). Repeat a
+  case before believing a difference; the suite runner is single-shot per case.)*
+  Raw runs: `scratchpad/prefill-probe-results.json`.
 - **W0b — trim.** Trim the fattest descriptions to essentials. **Not "no-change":** the trims
   touch model-facing content, so digests change and CI requires a `version:` bump plus a
   pin-hash update in `tests/unit/test_agent_readtools.py` for every sidecar touched — broad

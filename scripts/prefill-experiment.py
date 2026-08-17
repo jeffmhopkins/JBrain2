@@ -35,16 +35,22 @@ raw runs in `scratchpad/prefill-probe-results.json`:
     b                      11,502      50.7%
     b-strict               11,747      51.8%
 
-Mode (b) halves the prefill. It is NOT free: on the corrected chart case (#3, numbers supplied
-inline) `today` picks `render_bars` 3/3 while `b` picks it only 2/3, flipping to `web_search`
-once. That is precisely the predicted failure — the mechanically-derived summary truncates at
-"…one bar pe…", before the "Use this for plot / graph / chart this by Y" trigger words that
-teach WHEN to reach for it. The other six cases were identical across all three modes.
+Mode (b) halves the prefill with no selection change on six of seven cases.
 
-**So an authored `summary:` per sidecar (catalog W0a) is a PREREQUISITE for mode (b), not an
-independent wave.** The crude fallback in this script is what a missing summary looks like, and
-it costs selection accuracy on exactly the tools whose descriptions open by explaining what they
-are rather than when to use them.
+**A retracted conclusion, kept here because the mistake is instructive.** A first pass measured
+the corrected chart case (#3) at `render_bars` 3/3 under `today` and 2/3 under the derived
+summaries, and concluded that authored summaries were a hard prerequisite. It did not replicate:
+the next run had `b-derived` at 3/3 and the AUTHORED build at 2/3 — the reverse. Case #3 is
+simply unstable under mode (b), and an n=3 comparison cannot tell an unstable case from a
+summary-quality effect. Do not read a 3-sample difference off this harness as a finding; the
+`--suite` runner is single-shot per case by design, so repeat a case before believing it.
+
+What DID replicate, and is the more interesting result: the FL-license case (#2) chooses
+`public_records` — the wrong tool, since that source covers medical NPI licences, not insurance
+— 5/5 under `today` AND 5/5 under derived summaries, but picks `portal_search` correctly under
+the AUTHORED summary. A short, aimed summary routed BETTER than 2.5k chars of full description.
+That is the case for authored summaries: not that deferral breaks routing, but that most of a
+long description is not doing routing work at all.
 
 Three more results to carry forward. (1) `char // 4` OVERESTIMATES this
 tokenizer by ~22% (27,748 predicted vs 22,694 measured), so the `--report` figures are a
@@ -111,6 +117,57 @@ EXPLAIN_TOOL = {
 }
 
 
+# Authored when-to-use summaries, kept HERE rather than in the sidecars so the wording can be
+# iterated against the probe without 40+ `version:` bumps and pin-hash updates on every pass.
+# Once a set proves out, it migrates into a `summary:` sidecar field (catalog W0a) and this map
+# empties. The rule they follow — learned from the 3/3 -> 2/3 regression the derived summaries
+# caused — is LEAD WITH WHEN, NOT WHAT: the trigger phrasing an owner would actually type comes
+# first, because a description that opens by defining itself yields a summary that cannot route.
+AUTHORED = {
+    "analyze_image": "Answer a question about what an image SHOWS (attached, generated, or fetched), using the local vision model.",
+    "analyze_video": "Understand an attached video — what it shows AND says. Use when the visuals matter; for words only, transcribe is far cheaper.",
+    "canvas": "Draw on a photo or a blank sheet: 'put a red box around this', 'point at the X', annotate, sketch a diagram.",
+    "check_channel": "Find a YouTube channel's new uploads not yet in the library. For 'check the channels', 'anything new from X'.",
+    "compare_images": "Answer a question comparing two or more images side by side: 'what changed', 'which is better', 'spot the difference'.",
+    "crop_regions": "Cut parts out of one image, each returned as its own saveable picture: 'crop out every label', 'export each face'.",
+    "current_location": "Where the owner is right now — for 'where am I' or anything 'near me'. Returns a city name by default.",
+    "current_time": "A fresh date/time reading, or the time in another zone. Today's date is already in your context each turn.",
+    "deep_produce": "Research a topic and get a PLAN, TABLE, BRIEF, DIFFERENTIAL or TIMELINE — when the useful output is not a prose report.",
+    "deep_research": "Research an open, multi-source question and get a cited report: 'research X', 'do a deep dive', 'write me a report on'.",
+    "deepest_research": "Escalation only — an hours-long BACKGROUND run that returns an acknowledgement now, not a report. Prefer deep_research.",
+    "edit_image": "Change an existing image: 'make it night', 'remove the car', 'same but in blue'.",
+    "external_video": "Search or read the owner's analysed-YouTube library: 'what did that video say', 'what do my videos say about X'.",
+    "fetch_image": "Fetch a web image's bytes so you can SEE it — web_fetch strips images, so this comes first for any picture on the web.",
+    "generate_image": "Make a brand-new picture from a description: 'draw me', 'generate an image of'. Never for plotting data.",
+    "grab_frame": "Take a still from a video (URL or attachment) at a timestamp: 'screenshot it at 4:20', 'what's on screen when'.",
+    "grokipedia": "Search and read xAI's Grokipedia — articles, sections, citations. Background reference, not current news.",
+    "hurricane": "Check for an active tropical cyclone near a place: 'is anything coming', 'is there a hurricane'.",
+    "news_feed": "Today's articles from curated per-topic feeds (space, ai_tech, national, economy, world, local) — the daily brief's source.",
+    "news_search": "Search recent NEWS for dated article leads: 'what happened with X', 'latest on Y'. Prefer over web_search for current events.",
+    "ocr": "Read the LITERAL text out of an attached image or PDF, deterministically — error screenshots, receipts, scanned documents.",
+    "portal_search": "Query a STATE government portal by name — a state business registry or a state LICENSE lookup: 'is X registered', 'does X hold a license'.",
+    "public_records": "Look up a PERSON in free NATIONAL registries — aliases, court records, medical-provider (NPI) licenses, federal actions.",
+    "query_server_metrics": "How the box itself is doing — CPU, memory, disk, GPU, fans: 'how's the server', 'is it running hot'.",
+    "read_artifact": "Re-read or continue a page you already fetched this chat, from cache — for paging a long transcript across turns.",
+    "read_plan": "Read this conversation's plan and where you are in it. Call it before working a step.",
+    "remove_external_video": "Stage the removal of one library video for the owner's approval: 'delete that video'.",
+    "remove_research_report": "Stage the removal of one saved report for the owner's approval: 'delete that report'.",
+    "render_bars": "Graph numbers you already have BY CATEGORY — 'plot/graph/chart this by X', 'how many per Y', 'compare X across Y'. Bars, not a time line.",
+    "render_chart": "Graph numbers you already have OVER TIME — 'plot/graph/chart this trend' when the x-axis is dates. Lines, not categories.",
+    "research_report": "Search or re-read the owner's saved deep-research reports: 'what did that report say', or to build on an earlier run.",
+    "science_search": "Search scholarly literature — arXiv, PubMed, Scholar — for paper leads: 'what does the research say', 'any studies on'.",
+    "show_canvas": "Show the owner the canvas you drew. Until you call this, they have seen nothing.",
+    "show_external_video": "Show the owner a library video as its analysis card: 'show me that video' — not for reading what it said.",
+    "show_research_report": "Show the owner a saved report as its rich card: 'show me that report' — not for reading it yourself.",
+    "spawn_subagent": "Fan a task out to web-sandboxed sub-agents and compose their summaries yourself — for breadth you'd otherwise search serially.",
+    "transcribe": "Get the WORDS of an attached audio or video clip. Much cheaper and faster than analyze_video when the visuals don't matter.",
+    "weather": "Current conditions or the 7-day forecast for a place: 'what's the weather', 'will it rain'.",
+    "weather_history": "PAST weather for a place and date range, with the heat index computed: 'how hot was it last July'.",
+    "write_plan": "Write or re-status this conversation's plan — ONLY when the owner asks for one. You may never approve a plan yourself.",
+    "write_plan_result": "Record a finished plan step: appends your synthesis AND ticks the box. Call it after every step.",
+}
+
+
 # The discriminating probe set. A generic prompt ("what's the weather") proves nothing — every
 # mode gets it right. Each case below is a routing decision that the DEFERRED prose is what
 # currently teaches, so a mode-(b) regression should show up here first. `expect` is the tool
@@ -166,11 +223,21 @@ SUITE = [
 ]
 
 
+def derive(toolfile, cap: int = 130) -> str:
+    """The crude first-sentence fallback — i.e. exactly what a MISSING summary looks like. Kept
+    as its own mode so the authored-vs-derived delta stays measurable on every re-probe."""
+    flat = " ".join(toolfile.description.split())
+    cut = flat.find(". ")
+    if 0 < cut < cap:
+        return flat[: cut + 1]
+    return flat[:cap].rstrip() + ("…" if len(flat) > cap else "")
+
+
 def summarize(toolfile, cap: int = 130) -> str:
     """The always-on one-liner. Prefers an authored `summary:` sidecar field when one exists
     (forward-compatible with catalog W0a); otherwise falls back to the description's first
     sentence, trimmed. The fallback is deliberately crude — see the module note."""
-    authored = getattr(toolfile.spec, "summary", None)
+    authored = getattr(toolfile.spec, "summary", None) or AUTHORED.get(toolfile.spec.name)
     if isinstance(authored, str) and authored.strip():
         return authored.strip()
     flat = " ".join(toolfile.description.split())
@@ -192,7 +259,7 @@ def build(mode: str, hot: frozenset[str]) -> list[dict]:
         if full:
             desc = tf.description
         else:
-            desc = summarize(tf)
+            desc = derive(tf) if mode == "b-derived" else summarize(tf)
             if mode == "b-strict":
                 desc += STRICT_SUFFIX
         out.append({"name": name, "description": desc, "input_schema": tf.spec.params})
@@ -213,7 +280,7 @@ def report(hot: frozenset[str]) -> None:
     print(f"hot core: {', '.join(sorted(hot))}")
     print(f"constraint carriers (always full): {', '.join(sorted(CONSTRAINT_CARRIERS))}\n")
     print(f"{'mode':10s} {'tools':>6s} {'chars':>9s} {'~tokens':>9s} {'vs today':>9s}")
-    for mode in ("today", "b", "b-strict"):
+    for mode in ("today", "b-derived", "b", "b-strict"):
         tools = build(mode, hot)
         chars, tok = cost(tools)
         print(f"{mode:10s} {len(tools):6d} {chars:9,d} {tok:9,d} {100 * chars / base_chars:8.0f}%")
@@ -232,7 +299,7 @@ def report(hot: frozenset[str]) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=("today", "b", "b-strict"), default="b")
+    ap.add_argument("--mode", choices=("today", "b", "b-derived", "b-strict"), default="b")
     ap.add_argument("--hot", default=",".join(DEFAULT_HOT), help="comma-separated hot-core tool names")
     ap.add_argument("--probe", help="user_text for a /api/debug/tool-probe body written to stdout")
     ap.add_argument("--report", action="store_true", help="print the token accounting and exit")
