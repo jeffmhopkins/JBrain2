@@ -242,4 +242,90 @@ describe("useGpuBusy", () => {
     await waitFor(() => expect(opsVitalsStream).toHaveBeenCalledTimes(2));
     expect(opsVitals).toHaveBeenCalledTimes(1); // access already known
   });
+
+  // --- coming back from the background ---------------------------------------
+  //
+  // Reported symptom: a PWA left open for a while shows dashes in the top bar, the vitals
+  // card shows live numbers, and only restarting the app fixes it. `visibilitychange` was
+  // the ONLY resume trigger, and an iOS standalone PWA often delivers just `pageshow` on a
+  // background/foreground round trip — so nothing ever asked the dead stream to reconnect.
+
+  it("reconnects on pageshow, with no visibility event at all", async () => {
+    const { useGpuBusy } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40 });
+    renderHook(() => useGpuBusy());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    // The socket dies silently while the app is suspended: no error event, readyState still
+    // claims OPEN. This is the state iOS leaves an EventSource in, and the exact state a
+    // readyState check waves through.
+    vi.setSystemTime(Date.now() + 60_000);
+    window.dispatchEvent(new Event("pageshow"));
+
+    await waitFor(() => expect(FakeSource.open).toHaveLength(2));
+  });
+
+  it("recycles a socket that claims to be OPEN but has stopped delivering", async () => {
+    const { useGpuBusy } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40 });
+    renderHook(() => useGpuBusy());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+    FakeSource.open[0]?.send(91);
+
+    // Frames stop, but nothing errors. Recovery must NOT depend on the silence watchdog:
+    // that is a setTimeout, and a backgrounded app's timers are frozen with it — asleep at
+    // precisely the moment the socket dies.
+    vi.setSystemTime(Date.now() + 30_000);
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => expect(FakeSource.open).toHaveLength(2));
+  });
+
+  it("leaves a healthy stream alone however many resume events arrive", async () => {
+    const { useGpuBusy } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40 });
+    renderHook(() => useGpuBusy());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+    FakeSource.open[0]?.send(91);
+
+    // Several of these fire for one real resume, so the check has to be idempotent —
+    // otherwise "recover faster" becomes "reconnect in a loop".
+    window.dispatchEvent(new Event("pageshow"));
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("online"));
+
+    expect(FakeSource.open).toHaveLength(1);
+  });
+
+  it("a newly mounted reader revives a stream that had gone dead", async () => {
+    // Opening the vitals card showed live numbers (it polls) while the top bar behind it
+    // stayed on dashes: nothing about mounting a second reader questioned the shared stream.
+    const { useGpuBusy } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40 });
+    const first = renderHook(() => useGpuBusy());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    vi.setSystemTime(Date.now() + 60_000);
+    renderHook(() => useGpuBusy());
+
+    await waitFor(() => expect(FakeSource.open).toHaveLength(2));
+    FakeSource.open[1]?.send(77);
+    expect(first.result.current.percent).toBe(77);
+  });
+
+  it("does not reconnect while the app is still in the background", async () => {
+    const { useGpuBusy } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40 });
+    renderHook(() => useGpuBusy());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    visibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    // A phone in a pocket fires `online` on every network flap. Holding a socket open to
+    // read a gauge nobody is looking at is the thing visibility gating exists to prevent.
+    window.dispatchEvent(new Event("online"));
+    window.dispatchEvent(new Event("focus"));
+
+    expect(FakeSource.open).toHaveLength(1);
+  });
 });

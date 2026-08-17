@@ -33,6 +33,20 @@ const REPROBE_MS = 30_000;
  *  answering again, and the meter should not stay blank for half a minute after it. */
 const REOPEN_MS = 5_000;
 
+/** Everything that can mean "the app is back".
+ *
+ *  `visibilitychange` alone is not enough, and that is the bug this list fixes. In an iOS
+ *  standalone PWA a background/foreground round trip frequently delivers only `pageshow`
+ *  (the page is restored from the page cache) — no visibility event at all — and a resumed
+ *  app often comes back on a different network, where `online` is the only signal. Missing
+ *  the resume is not cosmetic: the socket is already dead by then, so the top bar sat on
+ *  dashes until the whole app was restarted, while the detail screen — plain fetches — kept
+ *  showing numbers. That is exactly the reported symptom.
+ *
+ *  These are deliberately additive to `visibilitychange`, not a replacement: several of them
+ *  fire for the same resume, and `ensureLive` is idempotent precisely so that is harmless. */
+const RESUME_EVENTS = ["pageshow", "focus", "online"] as const;
+
 /** `EventSource.CLOSED`, as a literal. The constant is read off a stream instance that
  *  is a test double as often as a real EventSource, and the global does not exist in
  *  every runtime this module is imported into. */
@@ -92,6 +106,12 @@ let source: EventSource | null = null;
 let access: Access = "unknown";
 let published: GpuBusy = UNKNOWN;
 let reprobe: ReturnType<typeof setTimeout> | null = null;
+/** A probe is awaiting the server. Guards against a SECOND attempt starting while the
+ *  first is still in flight — which is what happens when two readers mount together (the
+ *  TopBar and the vitals card), since each one now asks for a health check. Without this
+ *  they raced into two probes and, from there, two streams: the exact duplication the whole
+ *  module-scoped-singleton design exists to prevent. */
+let probing = false;
 let silence: ReturnType<typeof setTimeout> | null = null;
 
 /** What the stream has actually been doing, for the vitals screen's diagnostic row and
@@ -112,6 +132,9 @@ const diag = {
   lastFrameAt: 0,
   lastErrorAt: 0,
   openFailed: "",
+  /** When the current stream was opened. Lets "has delivered nothing yet" be told apart
+   *  from "opened a minute ago and has delivered nothing", which is a dead stream. */
+  openedAt: 0,
 };
 
 /** A snapshot of the stream's own health. `sinceLastFrameMs` is the number that matters:
@@ -207,6 +230,7 @@ function openStream(): void {
   }
   source = stream;
   diag.opens += 1;
+  diag.openedAt = Date.now();
   armSilenceWatchdog(stream);
   stream.onmessage = (event: MessageEvent<string>) => {
     armSilenceWatchdog(stream); // a frame arrived: the stream is alive, restart the clock
@@ -270,6 +294,7 @@ function reopenLater(stream: EventSource): void {
 }
 
 async function probe(): Promise<void> {
+  probing = true;
   try {
     const vitals = await api.opsVitals();
     if (listeners.size === 0 || !isForeground()) return; // gave up while awaiting
@@ -285,6 +310,8 @@ async function probe(): Promise<void> {
       return;
     }
     armRetry(() => void probe(), REPROBE_MS);
+  } finally {
+    probing = false;
   }
 }
 
@@ -306,8 +333,40 @@ function armRetry(attempt: () => void, delay: number): void {
   }, delay);
 }
 
+/** Is the stream demonstrably DELIVERING? Deliberately not "does the socket claim to be
+ *  open" — that is the question that has been wrong every single time this meter has gone
+ *  blind. A suspended app's EventSource comes back reporting OPEN with nothing behind it. */
+function streamIsLive(): boolean {
+  if (source === null) return false;
+  const last = diag.lastFrameAt === 0 ? diag.openedAt : diag.lastFrameAt;
+  return Date.now() - last < SILENCE_MS;
+}
+
+/** Make sure a reading is actually flowing, recycling the stream if it isn't.
+ *
+ *  This is the recovery path that does not depend on a timer, which matters because the
+ *  silence watchdog is a `setTimeout` and a backgrounded app's timers are frozen with it —
+ *  so the one mechanism meant to catch a dead-but-OPEN socket is asleep at precisely the
+ *  moment the socket dies. Safe to call as often as we like: it returns immediately when
+ *  frames are arriving. */
+function ensureLive(): void {
+  if (!isForeground() || access === "denied") return;
+  if (streamIsLive()) return;
+  if (source !== null) {
+    source.close();
+    source = null;
+  }
+  // Drop any pending slow retry: we know NOW that the stream is dead and the app is in
+  // front of the owner, so waiting out a 30s re-probe timer is just dashes on screen.
+  if (reprobe !== null) {
+    clearTimeout(reprobe);
+    reprobe = null;
+  }
+  start();
+}
+
 function start(): void {
-  if (!isForeground() || access === "denied" || source !== null) return;
+  if (!isForeground() || access === "denied" || source !== null || probing) return;
   if (access === "allowed") openStream();
   else void probe();
 }
@@ -327,7 +386,7 @@ function stop(): void {
 }
 
 function onVisibilityChange(): void {
-  if (isForeground()) start();
+  if (isForeground()) ensureLive();
   else stop();
 }
 
@@ -337,14 +396,21 @@ export function subscribeGpuBusy(listener: Listener): () => void {
   listeners.add(listener);
   if (listeners.size === 1) {
     document.addEventListener("visibilitychange", onVisibilityChange);
+    for (const event of RESUME_EVENTS) window.addEventListener(event, ensureLive);
     start();
   } else {
     listener(published); // a late joiner gets the current reading, not a blank
+    // …and then a health check, because a NEW READER APPEARING is itself evidence the app
+    // is in use. Opening the vitals card used to show live numbers (it polls) while the top
+    // bar behind it stayed on dashes, since nothing about mounting a second reader ever
+    // questioned the shared stream. Mounting one is now a reason to re-check it.
+    ensureLive();
   }
   return () => {
     listeners.delete(listener);
     if (listeners.size === 0) {
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      for (const event of RESUME_EVENTS) window.removeEventListener(event, ensureLive);
       stop();
     }
   };

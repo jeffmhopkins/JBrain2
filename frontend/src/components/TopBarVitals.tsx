@@ -26,9 +26,16 @@ const BAR_W = 2.6;
 /** Plot bounds: the baseline rule sits just under BOTTOM, which is the sync channel. */
 const TOP = 1.4;
 const BOTTOM = 16.6;
-/** Full scale for the token trace. The two channels share a box but not a scale, so
- *  each is comparable against ITSELF over time and never against the other. */
-const TPS_FULL_SCALE = 140;
+/** Floor under the token trace's auto-scale, so a lone slow sample doesn't fill the box.
+ *
+ *  The trace scales to the WINDOW's own peak, not a fixed ceiling. It used to be pinned at
+ *  140 tok/s, which meant a turn cruising at 20 — a perfectly normal rate for a big local
+ *  model — drew a 14%-high squiggle flat against the baseline, indistinguishable from
+ *  nothing happening. The two channels still share a box but not a scale, so each is read
+ *  against ITSELF over time and never against the other; the number beside the trace is
+ *  what conveys magnitude, and the trace conveys SHAPE. Same reasoning as the auto-fitted
+ *  Ops sparklines (TimeSeriesPlot). */
+const TPS_MIN_SCALE = 10;
 /** GPU load that reads as "pinned" and turns the column amber. */
 const HOT_PERCENT = 85;
 
@@ -151,6 +158,7 @@ export function TopBarVitals({ syncStatus, onOpen }: VitalsProps) {
 /** The token trace, with a break wherever the turn wasn't producing — a gap is the
  *  honest mark for "nothing was generated then", which a line through zero is not. */
 function tracePath(history: (number | null)[]): string {
+  const scale = tpsScale(history);
   let path = "";
   let open = false;
   history.forEach((value, i) => {
@@ -158,7 +166,7 @@ function tracePath(history: (number | null)[]): string {
       open = false;
       return;
     }
-    const [x, y] = tracePoint(value, i);
+    const [x, y] = tracePoint(value, i, scale);
     path += `${open ? "L" : "M"}${x} ${y} `;
     open = true;
   });
@@ -169,13 +177,22 @@ function tracePath(history: (number | null)[]): string {
 function traceHead(history: (number | null)[]) {
   const latest = history[history.length - 1];
   if (latest === null || latest === undefined) return null;
-  const [x, y] = tracePoint(latest, history.length - 1);
+  const [x, y] = tracePoint(latest, history.length - 1, tpsScale(history));
   return <circle className="vitals-trace-head" cx={x} cy={y} r="1.15" />;
 }
 
-function tracePoint(value: number, index: number): [string, string] {
-  const clamped = Math.max(0, Math.min(value, TPS_FULL_SCALE));
-  const y = BOTTOM - (clamped / TPS_FULL_SCALE) * (BOTTOM - TOP);
+/** The trace's ceiling: the tallest sample in the window, floored at TPS_MIN_SCALE. */
+function tpsScale(history: (number | null)[]): number {
+  let peak = TPS_MIN_SCALE;
+  for (const value of history) {
+    if (value !== null && value > peak) peak = value;
+  }
+  return peak;
+}
+
+function tracePoint(value: number, index: number, scale: number): [string, string] {
+  const clamped = Math.max(0, Math.min(value, scale));
+  const y = BOTTOM - (clamped / scale) * (BOTTOM - TOP);
   return [(index * PITCH + 0.2 + BAR_W / 2).toFixed(2), y.toFixed(2)];
 }
 

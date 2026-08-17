@@ -140,9 +140,13 @@ function VitalsPlot({
     },
     {
       label: "tokens/sec",
-      // Unpinned: a token rate has no ceiling to draw against, so it fits its own window
-      // like every other Ops series — and so it is NOT shaded (see PlotLine.fill).
-      lines: [{ color: "var(--steel)", values: tps }],
+      // Zero-based, topped by the window's own peak. A token rate has no fixed ceiling to
+      // draw against, but its FLOOR is a real zero — so fitting min to the window's
+      // minimum (the default) drew a run cruising at 18–20/s as a dramatic mountain
+      // range, and a shaded area would have started part-way up a quantity that isn't
+      // there. Pinning the floor makes both honest, which is what lets it be shaded.
+      scale: { min: 0, max: Math.max(...tps.map((v) => v ?? 0), 1) },
+      lines: [{ color: "var(--steel)", values: tps, fill: true }],
       fmt: (v) => `${Math.round(v)}/s`,
     },
   ];
