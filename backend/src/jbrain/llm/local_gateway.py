@@ -135,11 +135,23 @@ class LocalGatewayClient:
         a bare basename — llama.cpp concatenates it onto the save path and rejects anything
         with a separator (or a colon) as an invalid filename.
 
+        REFUSES a model that isn't already resident, for the same reason `props` does: this also
+        reaches llama-server through the `/upstream/` passthrough, so calling it on a cold model
+        would make llama-swap load that model OUTSIDE the residency budget — the path that froze
+        this host. `props` was guarded when that was found; this shares the passthrough and
+        needed the same guard.
+
         IMPORTANT for callers: a 200 from `restore` does NOT mean the next turn will skip its
         prefill. On a sliding-window model llama-server can accept the restore and then discard
         it, logging `forcing full prompt re-processing`. The gateway log is the only honest
         signal; treat this method's success as "the bytes loaded", never as "the prefill is
         saved" (docs/runbooks/STRIX_HALO_SETUP.md)."""
+        if served_model not in await self.running():
+            raise LocalGatewayError(
+                f"{served_model} is not resident — refusing a slot {action}, because reaching it "
+                "would make the gateway load the model outside the residency budget. Load it "
+                "first (which evicts to make room), then act on its slots."
+            )
         body = {"filename": filename} if filename is not None else {}
         try:
             async with httpx.AsyncClient(

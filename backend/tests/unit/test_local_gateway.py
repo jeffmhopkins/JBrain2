@@ -234,3 +234,33 @@ def test_parse_load_progress_tolerates_floats_and_ignores_out_of_range() -> None
     # A bogus >100 percent on a load line is rejected, leaving no signal.
     assert _parse_load_progress("load tensors 250%") is None
     assert _parse_load_progress("") is None
+
+
+async def test_slot_action_refuses_a_model_that_is_not_resident() -> None:
+    """The same guard `props` carries, for the same reason: `slot_action` reaches llama-server
+    through the `/upstream/` passthrough, so calling it on a cold model would make llama-swap
+    load that model outside the residency budget — the path that froze this host. The refusal
+    must happen BEFORE any upstream request is issued."""
+    touched: list[str] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        touched.append(req.url.path)
+        if req.url.path == "/running":
+            return httpx.Response(200, json={"running": [{"model": "other"}]})
+        raise AssertionError(f"must not reach upstream: {req.url.path}")
+
+    with pytest.raises(LocalGatewayError, match="not resident"):
+        await _client(handle).slot_action("gpt-oss-120b", 1, "restore", filename="x.bin")
+    assert touched == ["/running"]  # nothing proxied
+
+
+async def test_slot_action_proceeds_for_a_resident_model() -> None:
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/running":
+            return httpx.Response(200, json={"running": [{"model": "gpt-oss-120b"}]})
+        assert req.url.path == "/upstream/gpt-oss-120b/slots/1"
+        assert req.url.params["action"] == "save"
+        return httpx.Response(200, json={"id_slot": 1, "n_saved": 27476})
+
+    result = await _client(handle).slot_action("gpt-oss-120b", 1, "save", filename="x.bin")
+    assert result["n_saved"] == 27476
