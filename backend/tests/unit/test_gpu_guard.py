@@ -292,7 +292,7 @@ async def test_supervisor_probe_reads_metrics() -> None:
         }
     }
     client = _FakeClient(_FakeResp(body))
-    got = await gpu_guard.SupervisorGpuMemProbe(client, token="t").sample()
+    got = await gpu_guard.SupervisorGpuMemProbe(lambda: client, token="t").sample()
     assert got is not None and got.gtt_used_gb == pytest.approx(10.0, abs=0.01)
     assert client.calls == ["/metrics"]
 
@@ -300,7 +300,8 @@ async def test_supervisor_probe_reads_metrics() -> None:
 async def test_supervisor_probe_degrades_when_unreachable() -> None:
     # An unreachable supervisor must read as "unknown", which leaves loads working exactly
     # as they do today — not as a refusal, and not as a fabricated zero.
-    assert await gpu_guard.SupervisorGpuMemProbe(_FakeClient(boom=True)).sample() is None
+    boom = _FakeClient(boom=True)
+    assert await gpu_guard.SupervisorGpuMemProbe(lambda: boom).sample() is None
 
 
 async def test_watchdog_catches_an_allocation_that_lands_as_the_load_returns() -> None:
@@ -323,3 +324,18 @@ async def test_watchdog_catches_an_allocation_that_lands_as_the_load_returns() -
         )
     assert "finished loading" in str(exc.value)
     assert aborted == ["unloaded"], "a model that overshot after loading must be released"
+
+
+async def test_supervisor_probe_tolerates_a_client_that_does_not_exist_yet() -> None:
+    # The residency coordinator is built early in startup, BEFORE app.state.supervisor_client
+    # exists — so the probe takes a factory and resolves it per call. Binding the client
+    # eagerly broke every API test in the suite with "'State' object has no attribute
+    # 'supervisor_client'"; this pins the late binding so that cannot come back.
+    resolved: list[object | None] = [None]
+    probe = gpu_guard.SupervisorGpuMemProbe(lambda: resolved[0])
+    assert await probe.sample() is None  # not wired yet: unmeasurable, not an error
+
+    body = {"gpu_mem": {"gtt_used_bytes": int(4.0 * _GB), "gtt_total_bytes": int(120.0 * _GB)}}
+    resolved[0] = _FakeClient(_FakeResp(body))  # …the client appears later in startup
+    got = await probe.sample()
+    assert got is not None and got.gtt_used_gb == pytest.approx(4.0, abs=0.01)

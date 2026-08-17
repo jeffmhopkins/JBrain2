@@ -102,16 +102,25 @@ class SupervisorGpuMemProbe:
     The supervisor already collects these counters for the Ops screen — the values were
     being measured, shipped over the wire and DRAWN FOR THE OWNER while the code that
     decides whether a load is safe never looked at them. This closes that gap rather than
-    adding new plumbing."""
+    adding new plumbing.
 
-    def __init__(self, client: object, token: str = "") -> None:
-        self._client = client
+    Takes a client FACTORY, not a client. The residency coordinator is constructed early in
+    startup, before `app.state.supervisor_client` exists, so resolving the client eagerly
+    binds an attribute that isn't there yet — the same late-binding the `on_prefix_lost` hook
+    needs, for the same reason. A factory that returns None (not wired yet, or not wired at
+    all) degrades to an unmeasurable pool rather than raising."""
+
+    def __init__(self, client_factory: Callable[[], object | None], token: str = "") -> None:
+        self._client_factory = client_factory
         self._token = token
 
     async def sample(self) -> GpuMem | None:
+        client = self._client_factory()
+        if client is None:
+            return None
         try:
             headers = {"Authorization": f"Bearer {self._token}"} if self._token else None
-            resp = await self._client.get("/metrics", headers=headers)  # type: ignore[attr-defined]
+            resp = await client.get("/metrics", headers=headers)  # type: ignore[attr-defined]
             resp.raise_for_status()
             body = resp.json()
         except Exception as exc:  # noqa: BLE001 — an unreadable probe degrades, never blocks

@@ -421,8 +421,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # let a load whose real device cost far exceeded its catalog estimate freeze this
             # host — twice, with ~105 GiB free. The supervisor already reads these counters
             # for the Ops screen; this points the load decision at them.
+            # LATE-BOUND, like on_prefix_lost above: the supervisor client is created further
+            # down this same startup, so the lambda resolves it at call time and degrades to
+            # an unmeasurable pool (unguarded loads, today's behaviour) if it never appears.
             gpu_probe=gpu_guard.SupervisorGpuMemProbe(
-                app.state.supervisor_client, settings.supervisor_token
+                lambda: getattr(app.state, "supervisor_client", None), settings.supervisor_token
             ),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
