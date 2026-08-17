@@ -237,28 +237,31 @@ def test_qwen38_27b_q4_is_the_interactive_twin() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
-def test_qwen38_27b_mtp_is_a_self_speculative_variant_of_the_q4_twin() -> None:
+def test_qwen38_27b_mtp_is_a_text_only_self_speculative_variant() -> None:
     # The MTP (multi-token-prediction) serving variant of Qwen3.8-27B: same unsloth Q4_K_M weights
     # (which already carry the MTP head) served with --spec-type draft-mtp for ~1.8-2.4x faster
     # decode, driven by extra_server_args — NOT a separate MTP repo or draft file.
     m = local_catalog.get("qwen3.8-27b-mtp")
     q4 = local_catalog.get("qwen3.8-27b-q4")
     assert m is not None and q4 is not None
-    # Vision is ON: the projector was dropped only because llama.cpp MTP could not run beside
-    # --mmproj, and that is reported fixed upstream. The split cost a duplicate copy of the same
-    # weights AND made every vision turn mean giving up speculative decoding entirely.
-    assert m.tiers == ("vision", "high")
-    assert m.supports_vision is True
-    assert m.mmproj_include == q4.mmproj_include == "mmproj-F16.gguf"
+    # TEXT-ONLY, and this is a MEASURED constraint. Adding the projector here hard-froze the box
+    # to a power cycle, twice — the second time with 105 GiB free and a 21 GiB model, so memory
+    # was not the limit. llama.cpp #27146: mmproj balloons GTT on an AMD iGPU under Vulkan, and
+    # GTT is invisible to cgroups and /proc/meminfo, so the residency budget cannot see it coming.
+    # A memory estimate therefore CANNOT gate this — the projector has to stay off.
+    assert m.tiers == ("high",)
+    assert m.supports_vision is False
+    assert m.mmproj_include is None
+    # And no vision-only flags leak onto a text-only command.
+    assert "--image-min-tokens" not in m.extra_server_args
     assert m.supports_tools
     # Same weights + repo as the q4 twin (MTP is embedded in unsloth's GGUF, no separate repo).
     assert m.hf_repo == q4.hf_repo == "unsloth/Qwen3.8-27B-GGUF"
     assert m.quant == "Q4_K_M" and "Q4_K_M" in m.gguf_include
-    # Distinct served name so it installs beside the q4 twin; same footprint now it carries the
-    # same projector — the difference between them is purely how they are served.
+    # Distinct served name (installs beside the q4 twin), lighter by exactly the projector.
     assert m.spec == "local:qwen3.8-27b-mtp"
     assert m.served_model != q4.served_model
-    assert m.size_gb == q4.size_gb == 16.8
+    assert m.size_gb == 15.9 and m.size_gb < q4.size_gb
     # Self-speculation off the model's own baked-in MTP head — no separate draft model, which is
     # the point on unified memory: a drafter would read its own weights over the SAME bus the
     # target is already bandwidth-bound on.
@@ -272,8 +275,6 @@ def test_qwen38_27b_mtp_is_a_self_speculative_variant_of_the_q4_twin() -> None:
     # documented acceptance-killer that lets MTP decay back to baseline on long generations —
     # so it MUST be set explicitly, and set before n-max is raised.
     assert args[args.index("--spec-draft-p-min") + 1] == "0.6"
-    # Vision grounding needs the same visual-token floor as the twins now the projector is back.
-    assert args[args.index("--image-min-tokens") + 1] == "1024"
     # Still a hybrid reasoner (same model), so it keeps the deepseek reasoning format + gating.
     assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
     assert m.served_model in local_catalog.REASONING_SERVED_MODELS

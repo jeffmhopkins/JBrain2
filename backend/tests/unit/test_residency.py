@@ -743,3 +743,67 @@ async def test_disabled_box_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> 
     )
     coord.note_evicted(["gpt-oss-120b"])
     assert lost == []
+
+
+async def test_a_runaway_load_is_aborted_before_it_takes_the_box() -> None:
+    """End-to-end through the coordinator: the device guard is actually reached on the load
+    path, and a runaway is aborted rather than completing.
+
+    This is the wiring test for the failure that froze this host twice. The free-RAM budget
+    passed (plenty of system RAM, nothing to evict) and the load still had to be stopped,
+    because the cost that mattered was device (GTT) memory the RAM budget never sees. If a
+    refactor ever routes the load around `_guarded_load`, this goes red."""
+    from jbrain.llm import gpu_guard
+
+    class _RunawayProbe:
+        def __init__(self) -> None:
+            self._used = 2.0
+
+        async def sample(self) -> gpu_guard.GpuMem | None:
+            self._used += 40.0  # climbs far past any sane footprint
+            return gpu_guard.GpuMem(
+                gtt_used_gb=self._used, gtt_total_gb=120.0, vram_used_gb=0.0, vram_total_gb=2.0
+            )
+
+    class _SlowGateway(FakeLocalGateway):
+        """A load that takes real time, like a 16 GiB model does — so the in-flight
+        watchdog gets to sample while the allocation climbs."""
+
+        async def load(self, served_model: str, **kw: object) -> None:
+            await asyncio.sleep(0.2)
+            await super().load(served_model, **kw)  # type: ignore[arg-type]
+
+    gw = _SlowGateway(running=set())
+    coord = ResidencyCoordinator(
+        gw, enabled=True, free_ram_fraction=0.05, gpu_probe=_RunawayProbe(), box_lock=None
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await coord._guarded_load("qwen3.8-27b-mtp", projected_gb=21.0)
+    # The half-loaded model was released, not left pinning device memory.
+    assert "qwen3.8-27b-mtp" in gw.unloaded
+
+
+async def test_a_healthy_load_still_goes_through_untouched() -> None:
+    """The guard must be invisible in the normal case. A guard that trips on healthy loads
+    gets switched off, and then it protects nothing."""
+    from jbrain.llm import gpu_guard
+
+    class _SteadyProbe:
+        async def sample(self) -> gpu_guard.GpuMem | None:
+            return gpu_guard.GpuMem(
+                gtt_used_gb=10.0, gtt_total_gb=120.0, vram_used_gb=0.0, vram_total_gb=2.0
+            )
+
+    gw = FakeLocalGateway(running=set())
+    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
+    assert gw.loaded == ["qwen3.8-27b-q4"] and gw.unloaded == []
+
+
+async def test_without_a_probe_the_load_path_is_unchanged() -> None:
+    """A box that can't measure device memory (no amdgpu, supervisor down, every existing
+    test) must keep working exactly as before — degrade, never block."""
+    gw = FakeLocalGateway(running=set())
+    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=None, box_lock=None)
+    await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
+    assert gw.loaded == ["qwen3.8-27b-q4"]

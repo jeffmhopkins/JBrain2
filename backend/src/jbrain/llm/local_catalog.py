@@ -479,14 +479,16 @@ CATALOG: tuple[LocalModel, ...] = (
         # Same model + sampling as the Q4 twin — MTP changes only HOW it's served, not the model.
         sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
         sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
-        # Carries vision UNDER TEST. This entry shipped text-only because llama.cpp's MTP path
-        # could not run beside `--mmproj` — that crash is reported fixed upstream (b9240+), and
-        # the split is expensive here: the same Q4_K_M weights sit on disk TWICE, and every
-        # vision turn means dropping MTP entirely (which is exactly how this box ended up serving
-        # no speculative decoding at all). So the projector is back on, to be confirmed on-box.
-        # If a build regresses, drop mmproj_include + the vision tier rather than the entry.
-        tiers=("vision", "high"),
-        supports_vision=True,
+        # TEXT-ONLY, and this is now a MEASURED constraint, not a cautious one. The projector was
+        # briefly re-enabled here on community reports that llama.cpp had fixed MTP-beside-mmproj
+        # (b9240+). Loading it HARD-FROZE this box — twice, taking the host down to a power cycle,
+        # the second time with 105 GiB of free RAM and only a 21 GiB model to load. Memory was not
+        # the constraint; llama.cpp #27146 is: an mmproj/mtmd model balloons GTT on an AMD iGPU
+        # under Vulkan, and GTT allocations are INVISIBLE to cgroups and /proc/meminfo. So the
+        # residency budget cannot see this coming and cannot protect against it — which is exactly
+        # why the projector must stay off here rather than be gated by a memory estimate.
+        tiers=("high",),
+        supports_vision=False,
         supports_tools=True,
         recommended=False,
         # Same Q4_K_M weights as qwen3.8-27b-q4 — unsloth's GGUF already ships the MTP head
@@ -497,27 +499,30 @@ CATALOG: tuple[LocalModel, ...] = (
         # serving mode you want.)
         hf_repo="unsloth/Qwen3.8-27B-GGUF",
         gguf_include="*Q4_K_M*.gguf",
-        # Same F16 projector as the q4 twin, exact-named so it doesn't also pull the BF16 one.
-        mmproj_include="mmproj-F16.gguf",
+        # NO projector — see the text-only note above. Re-enabling this froze the host twice.
+        mmproj_include=None,
         quant="Q4_K_M",
-        # The Q4_K_M weight (~15.9 GiB) plus the ~0.86 GiB F16 projector, matching the q4 twin.
-        size_gb=16.8,
+        # Just the Q4_K_M weight (~15.9 GiB), no projector — a hair lighter than the q4 twin.
+        size_gb=15.9,
         note="Dense 27B hybrid reasoner served with MTP (multi-token prediction / self-"
         "speculative decoding) for ~1.8-2.4x faster generation — the same unsloth Q4_K_M weights "
         "as qwen3.8-27b-q4, which already carry the MTP head; the --spec-type draft-mtp flags "
         "turn it on. It speeds DECODE only (prompt processing is a touch slower), and the gain "
         "needs a few hundred output tokens to pay for itself, so a short tool call sees little. "
         "Runs SINGLE-SLOT: llama.cpp's MTP path takes no second parallel slot, so this entry can "
-        "never hold the interactive keep-warm slot (the gateway clamps -np to 1 for it). Vision "
-        "is ON here but NOT yet confirmed on this box — the projector was dropped when MTP and "
-        "--mmproj could not coexist, which upstream reports fixed; if a build regresses, drop "
-        "the projector rather than the entry. The gateway tracks llama.cpp master, so verify it "
-        "loads and generates after an update; on a bad build fall back to qwen3.8-27b-q4.",
+        "never hold the interactive keep-warm slot (the gateway clamps -np to 1 for it). "
+        "TEXT-ONLY — adding the vision projector hard-froze this box to a power cycle, twice, "
+        "with memory to spare (llama.cpp #27146: mmproj balloons GTT on an AMD iGPU, and GTT is "
+        "invisible to the memory accounting the residency budget uses). Use qwen3.8-27b-q4 when "
+        "you need vision. ⚠️ MTP ITSELF IS STILL UNVERIFIED ON THIS BOX: this entry has never "
+        "completed a load here. Bring it up with a SMALL context window and nothing else "
+        "resident, and watch the host — a bad load takes the whole machine down, not just the "
+        "gateway.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
-        # Same grounding floor as the twins once the projector is in play.
+        # No --image-min-tokens: that is a vision-grounding floor, and this entry serves no vision.
         # Self-speculation off the model's own MTP head — no separate draft model, which is what
         # makes it the right choice on unified memory: a separate drafter would read its own
         # weights across the SAME bus the target is already bandwidth-bound on.
@@ -530,8 +535,6 @@ CATALOG: tuple[LocalModel, ...] = (
         #     baseline on long generations, and gating is specifically a bandwidth-starved-machine
         #     win. Set it BEFORE raising n-max: ungated, the cost of a wasted draft scales with it.
         extra_server_args=(
-            "--image-min-tokens",
-            "1024",
             "--spec-type",
             "draft-mtp",
             "--spec-draft-n-max",

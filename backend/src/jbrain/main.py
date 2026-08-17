@@ -143,7 +143,7 @@ from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
-from jbrain.llm import build_router
+from jbrain.llm import build_router, gpu_guard
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import ResidencyCoordinator, pg_box_lock
 from jbrain.llm.warm_keeper import WarmKeeper
@@ -416,6 +416,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # this same startup, so the lambda resolves it at call time and degrades to a
             # no-op on a build with no agent wired.
             on_prefix_lost=_prefix_lost_notifier(app),
+            # Budget and WATCH a load against the iGPU's device pool (GTT), not just system
+            # RAM. The two are accounted separately on an APU, and counting only system RAM
+            # let a load whose real device cost far exceeded its catalog estimate freeze this
+            # host — twice, with ~105 GiB free. The supervisor already reads these counters
+            # for the Ops screen; this points the load decision at them.
+            # LATE-BOUND, like on_prefix_lost above: the supervisor client is created further
+            # down this same startup, so the lambda resolves it at call time and degrades to
+            # an unmeasurable pool (unguarded loads, today's behaviour) if it never appears.
+            gpu_probe=gpu_guard.SupervisorGpuMemProbe(
+                lambda: getattr(app.state, "supervisor_client", None), settings.supervisor_token
+            ),
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
         # serving at a time on the box, so a live grok `/model` switch (or a parallel agent)
