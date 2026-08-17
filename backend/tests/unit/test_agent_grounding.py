@@ -25,12 +25,34 @@ from jbrain.agent.grounding import (
 QWEN = "qwen3.8-27b"
 
 
+def _divisor_for(convention: Convention, values: list[float]) -> float:
+    from jbrain.agent.grounding import _divisor
+
+    return _divisor(convention, values)
+
+
 # --- the convention table ---------------------------------------------------
 
 
-def test_qualified_models_resolve() -> None:
-    assert convention_for("qwen3.8-27b") is Convention.AUTO
-    assert convention_for("qwen3.8-27b-q4") is Convention.AUTO
+def test_qualified_models_resolve_to_the_measured_base() -> None:
+    # Measured on the box 2026-08-17 (AGENT_CANVAS_PLAN W0), not assumed: three targets
+    # on one 4080x3072 photo all came back in the 0-1000 base.
+    assert convention_for("qwen3.8-27b") is Convention.NORM_1000
+    assert convention_for("qwen3.8-27b-q4") is Convention.NORM_1000
+
+
+def test_the_measured_reply_lands_where_the_probe_put_it() -> None:
+    # A real reply from the probe run: the dog's nose on a 4080x3072 photo. Read in the
+    # WRONG base the same numbers collapse to a zero-width box clamped at the frame
+    # edge, which is why the measurement was unambiguous — this pins both halves.
+    raw = [RawBox(189, 642, 378, 862, label="dog's nose")]
+    (box,) = to_pixels(raw, served_model=QWEN, width=4080, height=3072)
+    assert (box.x1, box.y1, box.x2, box.y2) == (771, 1972, 1542, 2648)
+
+    (wrong,) = to_pixels(
+        raw, served_model=QWEN, width=4080, height=3072, convention=Convention.NORM_1
+    )
+    assert wrong.width == 0  # clamped flat against the right edge
 
 
 def test_unknown_model_refuses_rather_than_guessing() -> None:
@@ -77,8 +99,19 @@ def test_norm_1000_to_fractions() -> None:
 
 
 def test_norm_1_passes_through() -> None:
+    # Explicit rather than via a model entry: every qualified model is now MEASURED as
+    # 0-1000, so the 0-1 base only reaches this code through an AUTO model or a forced
+    # convention. Keeping the case is still right — the base exists upstream.
     boxes = [RawBox(0.31, 0.5, 0.44, 0.62)]
-    assert to_fractions(boxes, served_model=QWEN) == [FractionBox(0.31, 0.5, 0.44, 0.62)]
+    assert to_fractions(boxes, served_model=QWEN, convention=Convention.NORM_1) == [
+        FractionBox(0.31, 0.5, 0.44, 0.62)
+    ]
+
+
+def test_an_unmeasured_model_still_infers_per_response() -> None:
+    # AUTO is the honest interim state for a model nobody has probed yet.
+    assert _divisor_for(Convention.AUTO, [0.31, 0.62]) == 1.0
+    assert _divisor_for(Convention.AUTO, [310.0, 620.0]) == 1000.0
 
 
 def test_inverted_corners_are_ordered_not_rejected() -> None:
