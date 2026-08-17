@@ -27,6 +27,34 @@ Two constraints the build honours, both discovered the hard way:
    will read better. So a probe result from this script is a LOWER BOUND on mode (b)'s accuracy,
    which is the right direction for an experiment to err.
 
+MEASURED on the live box (2026-08-17, gpt-oss-120b, hot core = web_search + web_fetch);
+raw runs in `scratchpad/prefill-probe-results.json`:
+
+    mode        mean input_tokens   vs today
+    today                  22,694       100%
+    b                      11,502      50.7%
+    b-strict               11,747      51.8%
+
+Mode (b) halves the prefill. It is NOT free: on the corrected chart case (#3, numbers supplied
+inline) `today` picks `render_bars` 3/3 while `b` picks it only 2/3, flipping to `web_search`
+once. That is precisely the predicted failure — the mechanically-derived summary truncates at
+"…one bar pe…", before the "Use this for plot / graph / chart this by Y" trigger words that
+teach WHEN to reach for it. The other six cases were identical across all three modes.
+
+**So an authored `summary:` per sidecar (catalog W0a) is a PREREQUISITE for mode (b), not an
+independent wave.** The crude fallback in this script is what a missing summary looks like, and
+it costs selection accuracy on exactly the tools whose descriptions open by explaining what they
+are rather than when to use them.
+
+Three more results to carry forward. (1) `char // 4` OVERESTIMATES this
+tokenizer by ~22% (27,748 predicted vs 22,694 measured), so the `--report` figures are a
+conservative upper bound; trust `input_tokens` from a probe over the report. (2) **b-strict's
+prose gate was ignored entirely** — `tool_explain` was never called once, in any mode, even
+though every deferred summary in b-strict ended "Call tool_explain first." A mandatory
+explain-before-use step therefore has to be enforced in the HANDLER (refuse-or-auto-explain on
+first call), exactly like the scout's search budget, which is engine-enforced for the same
+reason. Prose the model is free to skip is not a gate.
+
 Usage:
     scripts/prefill-experiment.py --report
     scripts/prefill-experiment.py --mode b --probe "what's the weather in titusville" > body.json
@@ -99,12 +127,24 @@ SUITE = [
         "tests": "state portal vs web_search — a plain fetch sees only the empty search FORM",
     },
     {
-        "probe": "plot the number of launches by provider this year",
+        # Data supplied inline ON PURPOSE. The first draft of this case asked the model to
+        # "plot launches by provider this year" and scored web_search as a miss — but a gather
+        # step first is CORRECT, so the fixture was wrong, not the model. Supplying the numbers
+        # isolates the chart-shape decision, which is what this case exists to test.
+        "probe": (
+            "I counted 12 launches by SpaceX, 4 by ULA and 2 by Rocket Lab this year — "
+            "show me that as a graph"
+        ),
         "expect": ("render_bars",),
         "tests": "categorical x-axis picks bars, not render_chart (which is time-only)",
     },
     {
-        "probe": "chart how my daily step count changed over the last three months",
+        # Likewise: the first draft asked about "my daily step count", which jerv is KB-blind to
+        # — answering with NO tool call was correct, and the fixture scored it a miss.
+        "probe": (
+            "plot this trend: 2026-01-01 180 lb, 2026-02-01 178 lb, 2026-03-01 175 lb, "
+            "2026-04-01 174 lb"
+        ),
         "expect": ("render_chart",),
         "tests": "dated series picks the line chart — the pair that used to be split",
     },

@@ -1,0 +1,330 @@
+{
+ "probed": "2026-08-17",
+ "model": "gpt-oss-120b (local)",
+ "endpoint": "/api/debug/tool-probe",
+ "generator": "scripts/prefill-experiment.py",
+ "note": "mean input_tokens: today 22,694 / b 11,502 / b-strict 11,747. All three modes chose an identical tool on all 7 cases. tool_explain was never called, including in b-strict where every deferred summary ended 'Call tool_explain first.' FOLLOW-UP: suite cases #3/#4 were bad fixtures (they required a gather step first, so the model was right and the fixture wrong) and were rewritten to supply the data inline. Re-probed: #4 passes in both modes; #3 passes 3/3 under `today` but only 2/3 under `b`, flipping once to web_search \u2014 the mechanical summary truncates before the when-to-use trigger words. Authored summaries (catalog W0a) are therefore a prerequisite for mode (b).",
+ "runs": [
+  {
+   "mode": "today",
+   "case": 1,
+   "probe": "what did that SpaceX video I analysed say about the launch date?",
+   "expect": [
+    "external_video",
+    "deep_research",
+    "deep_produce"
+   ],
+   "tests": "library-vs-web routing \u2014 a specific analysed video's transcript is not on the web",
+   "called": [
+    "external_video"
+   ],
+   "in_tok": 22696,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "today",
+   "case": 2,
+   "probe": "look up whether Frank Collige holds a Florida insurance license",
+   "expect": [
+    "portal_search"
+   ],
+   "tests": "state portal vs web_search \u2014 a plain fetch sees only the empty search FORM",
+   "called": [
+    "public_records"
+   ],
+   "in_tok": 22693,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "today",
+   "case": 3,
+   "probe": "plot the number of launches by provider this year",
+   "expect": [
+    "render_bars"
+   ],
+   "tests": "categorical x-axis picks bars, not render_chart (which is time-only)",
+   "called": [
+    "web_search"
+   ],
+   "in_tok": 22691,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "today",
+   "case": 4,
+   "probe": "chart how my daily step count changed over the last three months",
+   "expect": [
+    "render_chart"
+   ],
+   "tests": "dated series picks the line chart \u2014 the pair that used to be split",
+   "called": [],
+   "in_tok": 22694,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "today",
+   "case": 5,
+   "probe": "I attached a voice memo \u2014 what does it say?",
+   "expect": [
+    "transcribe"
+   ],
+   "tests": "words-only picks transcribe, not the frame-sampling analyze_video",
+   "called": [
+    "transcribe"
+   ],
+   "in_tok": 22693,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "today",
+   "case": 6,
+   "probe": "give me a thorough writeup on how stablecoins hold their peg",
+   "expect": [
+    "deep_research"
+   ],
+   "tests": "the deepest ladder \u2014 a bounded run, not the hours-long background one",
+   "called": [
+    "deep_research"
+   ],
+   "in_tok": 22695,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "today",
+   "case": 7,
+   "probe": "what's the article at https://spaceflightnow.com about today?",
+   "expect": [
+    "web_fetch",
+    "news_feed",
+    "web_search"
+   ],
+   "tests": "hot-core control \u2014 this should be unaffected by any deferral",
+   "called": [
+    "web_fetch"
+   ],
+   "in_tok": 22696,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b",
+   "case": 1,
+   "probe": "what did that SpaceX video I analysed say about the launch date?",
+   "expect": [
+    "external_video",
+    "deep_research",
+    "deep_produce"
+   ],
+   "tests": "library-vs-web routing \u2014 a specific analysed video's transcript is not on the web",
+   "called": [
+    "external_video"
+   ],
+   "in_tok": 11504,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b",
+   "case": 2,
+   "probe": "look up whether Frank Collige holds a Florida insurance license",
+   "expect": [
+    "portal_search"
+   ],
+   "tests": "state portal vs web_search \u2014 a plain fetch sees only the empty search FORM",
+   "called": [
+    "public_records"
+   ],
+   "in_tok": 11501,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b",
+   "case": 3,
+   "probe": "plot the number of launches by provider this year",
+   "expect": [
+    "render_bars"
+   ],
+   "tests": "categorical x-axis picks bars, not render_chart (which is time-only)",
+   "called": [
+    "web_search"
+   ],
+   "in_tok": 11499,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b",
+   "case": 4,
+   "probe": "chart how my daily step count changed over the last three months",
+   "expect": [
+    "render_chart"
+   ],
+   "tests": "dated series picks the line chart \u2014 the pair that used to be split",
+   "called": [],
+   "in_tok": 11502,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b",
+   "case": 5,
+   "probe": "I attached a voice memo \u2014 what does it say?",
+   "expect": [
+    "transcribe"
+   ],
+   "tests": "words-only picks transcribe, not the frame-sampling analyze_video",
+   "called": [
+    "transcribe"
+   ],
+   "in_tok": 11501,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b",
+   "case": 6,
+   "probe": "give me a thorough writeup on how stablecoins hold their peg",
+   "expect": [
+    "deep_research"
+   ],
+   "tests": "the deepest ladder \u2014 a bounded run, not the hours-long background one",
+   "called": [
+    "deep_research"
+   ],
+   "in_tok": 11503,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b",
+   "case": 7,
+   "probe": "what's the article at https://spaceflightnow.com about today?",
+   "expect": [
+    "web_fetch",
+    "news_feed",
+    "web_search"
+   ],
+   "tests": "hot-core control \u2014 this should be unaffected by any deferral",
+   "called": [
+    "web_fetch"
+   ],
+   "in_tok": 11504,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b-strict",
+   "case": 1,
+   "probe": "what did that SpaceX video I analysed say about the launch date?",
+   "expect": [
+    "external_video",
+    "deep_research",
+    "deep_produce"
+   ],
+   "tests": "library-vs-web routing \u2014 a specific analysed video's transcript is not on the web",
+   "called": [
+    "external_video"
+   ],
+   "in_tok": 11749,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b-strict",
+   "case": 2,
+   "probe": "look up whether Frank Collige holds a Florida insurance license",
+   "expect": [
+    "portal_search"
+   ],
+   "tests": "state portal vs web_search \u2014 a plain fetch sees only the empty search FORM",
+   "called": [
+    "public_records"
+   ],
+   "in_tok": 11746,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b-strict",
+   "case": 3,
+   "probe": "plot the number of launches by provider this year",
+   "expect": [
+    "render_bars"
+   ],
+   "tests": "categorical x-axis picks bars, not render_chart (which is time-only)",
+   "called": [
+    "web_search"
+   ],
+   "in_tok": 11744,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b-strict",
+   "case": 4,
+   "probe": "chart how my daily step count changed over the last three months",
+   "expect": [
+    "render_chart"
+   ],
+   "tests": "dated series picks the line chart \u2014 the pair that used to be split",
+   "called": [],
+   "in_tok": 11747,
+   "err": null,
+   "hit": false
+  },
+  {
+   "mode": "b-strict",
+   "case": 5,
+   "probe": "I attached a voice memo \u2014 what does it say?",
+   "expect": [
+    "transcribe"
+   ],
+   "tests": "words-only picks transcribe, not the frame-sampling analyze_video",
+   "called": [
+    "transcribe"
+   ],
+   "in_tok": 11746,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b-strict",
+   "case": 6,
+   "probe": "give me a thorough writeup on how stablecoins hold their peg",
+   "expect": [
+    "deep_research"
+   ],
+   "tests": "the deepest ladder \u2014 a bounded run, not the hours-long background one",
+   "called": [
+    "deep_research"
+   ],
+   "in_tok": 11748,
+   "err": null,
+   "hit": true
+  },
+  {
+   "mode": "b-strict",
+   "case": 7,
+   "probe": "what's the article at https://spaceflightnow.com about today?",
+   "expect": [
+    "web_fetch",
+    "news_feed",
+    "web_search"
+   ],
+   "tests": "hot-core control \u2014 this should be unaffected by any deferral",
+   "called": [
+    "web_fetch"
+   ],
+   "in_tok": 11749,
+   "err": null,
+   "hit": true
+  }
+ ]
+}

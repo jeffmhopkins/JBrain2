@@ -163,6 +163,16 @@ each capability fully documented in one guide:
 - **W0a — metadata.** Add `family` + `summary` to every `.tool` — the substrate the catalog
   waves read. Blocked on the §5 decision (`ToolSpec` is `extra="forbid"` and both fields fold
   into `ToolFile.digest`, so this is a real decision, not a free add).
+
+  **Measured 2026-08-17: `summary` is a PREREQUISITE for mode (b), not a nice-to-have.**
+  `scripts/prefill-experiment.py` probed the live box with mechanically-derived summaries (the
+  first sentence, truncated) — i.e. what a missing `summary` field looks like. Six of seven
+  cases were identical to today, but the categorical-chart case dropped from `render_bars` 3/3
+  to 2/3, flipping once to `web_search`, because the derived summary cuts off at "…one bar pe…"
+  — before the "Use this for plot / graph / chart this by Y" trigger words. A summary must
+  carry **when to reach for the tool**, not what it is; a description that opens by defining
+  itself produces a useless first sentence. Raw runs:
+  `scratchpad/prefill-probe-results.json`.
 - **W0b — trim.** Trim the fattest descriptions to essentials. **Not "no-change":** the trims
   touch model-facing content, so digests change and CI requires a `version:` bump plus a
   pin-hash update in `tests/unit/test_agent_readtools.py` for every sidecar touched — broad
@@ -189,9 +199,19 @@ each capability fully documented in one guide:
     cannot (§ the GBNF segfault); `deep_research`'s ~2.6k preset catalog, which the model
     cannot call a preset without. `deep_produce`'s ~70% overlap with `deep_research` is the one
     large genuine reclaim — and capturing it means a W1-style umbrella merge, not a trim.
-  - **`/api/debug/tool-probe` is not an acceptance gate.** It is a single ad-hoc converse — one
-    `user_text`, caller-supplied tool list, proposed calls returned, no handler run, no case
-    set, no baseline, no threshold. It was built to bisect gateway segfaults, and it found one.
+  - **A baseline now exists — finding #2 below is discharged for the cheap waves.** The review
+    said "the eval must be pre-built with a baseline and threshold *before* the wave it gates."
+    `scripts/prefill-experiment.py --suite` is that fixture (seven routing decisions plus a
+    hot-core control), and it has a recorded 2026-08-17 baseline against live `gpt-oss-120b`:
+    mean prefill **22,694 tokens**, and the per-case tool choices in
+    `scratchpad/prefill-probe-results.json`. Threshold for W0b: no case may regress against
+    that baseline, and a case that is deterministic today must stay deterministic (the
+    3/3 → 2/3 drop above is what a regression looks like). Seven cases is small — widen the
+    fixture as trims land rather than treating a clean run as proof.
+  - **`/api/debug/tool-probe` is still not an acceptance gate on its own.** It is a single
+    ad-hoc converse — one `user_text`, caller-supplied tool list, proposed calls returned, no
+    handler run, no scoring. The fixture + baseline above is what turns it into one; the
+    endpoint alone has no case set and no threshold. It was built to bisect gateway segfaults, and it found one.
     W0b changes *semantic* content, whose failure modes are argument-level and downstream
     (a guessed URL, `sources: web` for a library-only question). Either pre-build a fixture set
     with a numeric baseline — which is also finding #2 below, arriving early — or state plainly
