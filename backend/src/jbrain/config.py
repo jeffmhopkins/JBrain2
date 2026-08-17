@@ -238,6 +238,15 @@ class Settings(BaseSettings):
     # VLM-only OCR (the cross-check is skipped and the `ocr` tools report unavailable). The
     # base URL is pinned here, never model-supplied.
     rapidocr_url: str = "http://rapidocr:8000"
+    # The `htmlrender` sidecar (deploy/htmlrender): HTML + CSS in, PNG out — the box's
+    # general-purpose "render something visual to an image" service, first used by the
+    # canvas tools and intended for any later tool wanting a flowchart/table/report card.
+    # It renders MODEL-AUTHORED markup, which is only safe because the result is pixels
+    # (never DOM the PWA executes) and because the container is egress-free by compose
+    # topology. Part of the stock stack, so this default points at the running service;
+    # empty disables the HTML lane (the canvas `html` op reports unavailable and the
+    # shape-op lane keeps working). The base URL is pinned here, never model-supplied.
+    htmlrender_url: str = "http://htmlrender:8000"
     # The neural wall display (deploy/wall) draws a reach-out tendril when jerv runs a web
     # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —
     # best-effort, no owner data, failures ignored. Empty disables the emit (no web tendrils).

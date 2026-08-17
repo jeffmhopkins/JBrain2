@@ -714,7 +714,9 @@ function GeneratedImage({ data }: ViewProps): ReactNode {
         ? "fetched from web"
         : provenance === "compare"
           ? "side-by-side comparison"
-          : "";
+          : provenance === "canvas"
+            ? "drawn on the canvas"
+            : "";
   const meta = originLabel
     ? `${width} × ${height} · ${originLabel}`
     : `${width} × ${height}${seed !== null ? ` · seed ${seed}` : ""}${model ? ` · ${model}` : ""}`;
@@ -3840,6 +3842,91 @@ function PlanCard({ data, onPlanChanged }: ViewProps): ReactNode {
   );
   return <PlanBody st={st} />;
 }
+/** `image_set` — N crops cut from ONE source image (`crop_regions`,
+ * docs/plans/AGENT_CANVAS_PLAN.md W4). GUI gate settled: **B — source photo +
+ * filmstrip** (binding mock `docs/mocks/image-set-b-filmstrip.html`; A grid and C
+ * labelled list retained as the record).
+ *
+ * B won on one property the other two lack: the source stays visible with each crop's
+ * region boxed on it, so "where did this come from?" needs no tap. That matters here
+ * specifically because finding regions in an image fails SILENTLY — it misses instances
+ * and mis-places boxes without erroring — and a wrong crop is only obvious beside the
+ * region it claims to be.
+ *
+ * Data-only like every registered view: the payload carries ids and fractional boxes,
+ * and this component builds every URL (invariant #9). ONE view per tool call, because
+ * persistence keeps only the last view per call — N separate cards would collapse to a
+ * single one when the owner reopens the chat. */
+function ImageSet({ data }: ViewProps): ReactNode {
+  const sourceKind = typeof data.source_kind === "string" ? data.source_kind : "";
+  const sourceId = typeof data.source_id === "string" ? data.source_id : "";
+  const label = typeof data.label === "string" ? data.label : "regions";
+  const truncated = data.truncated === true;
+  const crops = Array.isArray(data.crops) ? (data.crops as Record<string, unknown>[]) : [];
+  const [open, setOpen] = useState<string | null>(null);
+  if (!sourceId || crops.length === 0) return null;
+
+  const sourceSrc =
+    sourceKind === "attachment" ? chatAttachmentUrl(sourceId) : generatedImageUrl(sourceId);
+
+  return (
+    <div className="tool-view tv-imageset">
+      <div className="tv-imageset-head">
+        <span className="tv-imageset-title">
+          {crops.length} {label}
+        </span>
+        <span className="tv-imageset-sub">tap to enlarge</span>
+      </div>
+      <div className="tv-imageset-source">
+        <img src={sourceSrc} alt={`source for ${label}`} loading="lazy" />
+        {crops.map((crop) => {
+          const box = Array.isArray(crop.box) ? (crop.box as number[]) : null;
+          if (!box || box.length !== 4 || box.some((v) => typeof v !== "number")) return null;
+          const [x1, y1, x2, y2] = box as [number, number, number, number];
+          // Keyed by the crop's own image id — the region and its thumbnail are the
+          // same element, so a positional key would reorder wrongly on a re-render.
+          const boxKey = typeof crop.image_id === "string" ? crop.image_id : `${x1},${y1}`;
+          return (
+            <span
+              key={`box-${boxKey}`}
+              className="tv-imageset-box"
+              style={{
+                left: `${x1 * 100}%`,
+                top: `${y1 * 100}%`,
+                width: `${(x2 - x1) * 100}%`,
+                height: `${(y2 - y1) * 100}%`,
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="tv-imageset-strip">
+        {crops.map((crop, index) => {
+          const imageId = typeof crop.image_id === "string" ? crop.image_id : "";
+          if (!imageId) return null;
+          const cropLabel = typeof crop.label === "string" ? crop.label : `crop ${index + 1}`;
+          return (
+            <button
+              type="button"
+              key={imageId}
+              className="tv-imageset-frame"
+              onClick={() => setOpen(imageId)}
+            >
+              <img src={generatedImageUrl(imageId)} alt={cropLabel} loading="lazy" />
+              <span>{cropLabel}</span>
+            </button>
+          );
+        })}
+      </div>
+      {truncated ? (
+        <div className="tv-imageset-foot">Only the first {crops.length} were cut.</div>
+      ) : null}
+      {open ? (
+        <Lightbox src={generatedImageUrl(open)} alt={label} onClose={() => setOpen(null)} />
+      ) : null}
+    </div>
+  );
+}
 
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
@@ -3863,6 +3950,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   lab_chart: ChartCard,
   bar_chart: BarChartCard,
   plan_card: PlanCard,
+  image_set: ImageSet,
 };
 
 export function isKnownView(name: string): boolean {

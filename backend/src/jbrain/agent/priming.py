@@ -21,12 +21,15 @@ gateway warm-up path (`local_gateway`) sends.
 from __future__ import annotations
 
 from collections.abc import Collection
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    pass
 
 import structlog
 
 from jbrain.agent.agents import AGENTS
-from jbrain.agent.readtools import IMAGE_TOOL_NAMES
+from jbrain.agent.readtools import IMAGE_TOOL_NAMES, canvas_hidden_for_model
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.openai_compat import openai_tools
 from jbrain.llm.types import LlmTool
@@ -46,7 +49,9 @@ class HiddenToolsProbe(Protocol):
 
 
 async def jerv_prime_inputs(
-    registry: ToolRegistry, liveness: HiddenToolsProbe | None
+    registry: ToolRegistry,
+    liveness: HiddenToolsProbe | None,
+    served_model: str | None = None,
 ) -> tuple[str, list[LlmTool], frozenset[str]]:
     """The (system prompt, tool objects, hidden set) a warm-up primes jerv's turn-one prefix
     with. Mirrors `api.agent`'s turn assembly: an empty read scope (jerv reads no knowledge
@@ -61,15 +66,23 @@ async def jerv_prime_inputs(
             hidden = frozenset(await liveness.hidden_tools())
         except Exception:  # noqa: BLE001 — liveness is best-effort; a probe error hides nothing
             log.warning("priming.hidden_tools_probe_failed", exc_info=True)
+    # The canvas pair is model-gated (readtools.canvas_hidden_for_model), and this prefix
+    # must match the turn's tool block exactly or the KV prefix it primed is useless from
+    # the tools block onward. The warm path knows WHICH model it is loading, so the gate
+    # is answered exactly rather than guessed; `hidden` is returned so the keeper
+    # re-primes if the answer ever flips.
+    hidden |= canvas_hidden_for_model(served_model, profile.tools or frozenset())
     tools = registry.schemas_for((), profile.tools, profile.extra_tools, hidden)
     return profile.prompt, tools, hidden
 
 
 async def jerv_prime_spec(
-    registry: ToolRegistry, liveness: HiddenToolsProbe | None
+    registry: ToolRegistry,
+    liveness: HiddenToolsProbe | None,
+    served_model: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """The (system prompt, OpenAI tools JSON) the gateway warm-up path sends. The JSON form
     of `jerv_prime_inputs`, serialized through the same `openai_tools` a real turn's payload
     uses so the two shapes can't drift."""
-    system, tools, _ = await jerv_prime_inputs(registry, liveness)
+    system, tools, _ = await jerv_prime_inputs(registry, liveness, served_model)
     return system, openai_tools(tools)

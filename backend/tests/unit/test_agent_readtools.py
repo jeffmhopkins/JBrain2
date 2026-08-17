@@ -1233,8 +1233,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "generate_image.tool": (
             "generate_image",
-            7,
-            "4f7eca6de02755a147a218bfdcb987bfd6561d321f876e8204014594901f6b67",
+            8,
+            "8926e8126e048334630a9b66371469324b86d5b2e6a7ba32d74588655adeb384",
         ),
         "edit_image.tool": (
             "edit_image",
@@ -1430,6 +1430,21 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "write_plan_result",
             2,
             "faacc3283d5a575dbdebc51208425ee156058715009853f09e5b8c3767c09486",
+        ),
+        "canvas.tool": (
+            "canvas",
+            1,
+            "48850737baca1c3308ee7fad4a74484f2b12585958421a2c372af62c1b72904d",
+        ),
+        "crop_regions.tool": (
+            "crop_regions",
+            1,
+            "3f159ee1ae9963ca0afe985ebd5f81685311137846973bc2116d0e4f60bcd64d",
+        ),
+        "show_canvas.tool": (
+            "show_canvas",
+            1,
+            "e1c2de7c69dcc6538b13df6832345525282ae3b2cec08351525a1581bf40cd81",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

@@ -1,6 +1,6 @@
 ---
 name: generate_image
-version: 7
+version: 8
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -47,3 +47,8 @@ This makes a PICTURE — a photo, illustration, or artwork from your imagination
 plotting data: to plot / graph / chart / visualize numbers (a trend, a breakdown, a comparison), use
 `render_chart` (a line/area time-series) or `render_bars` (a bar graph), never this tool. "Plot
 these", "graph that", "make a chart" mean a data plot, not a generated image.
+
+It is also NOT for marking up an image the owner already has: to put a box, arrow, label, or
+note ON TOP of their photo or screenshot — or to sketch a labelled diagram — use `canvas`,
+which lays exact marks at pixel coordinates and leaves the original pixels untouched. This
+tool would recreate the picture rather than annotate it.
