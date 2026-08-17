@@ -387,5 +387,26 @@
    "err": null,
    "hit": true
   }
+ ],
+ "widened_fixture_2026_08_17": {
+  "cases": 16,
+  "note": "7 original + 9 added, including two NO-TOOL controls the first fixture lacked",
+  "today": "14/16 \u2014 misses #2 (FL licence -> public_records) and #14 (court records -> web_search)",
+  "b_authored_v2": "14/16 \u2014 misses #13 (science_search -> web_search, noisy: 3/3 correct on repeat) and #14 (same as today)",
+  "prefill": {
+   "today": 22694,
+   "b": 11567
+  },
+  "verdict": "parity on selection at 51% of the prefill; neither mode dominates, and the one case both miss (#14) is a baseline defect, not a mode effect"
+ },
+ "hot_core_bias_test": {
+  "hypothesis": "hot tools' 3.5k-char descriptions out-compete one-line summaries regardless of fit",
+  "result": "REFUTED. Removing the hot core saved ~1,115 tokens (11,566 -> 10,451) and made selection WORSE: science_search 3/3 -> 2/3, weather_history scattered across three answers, and only the court-records case improved. Keeping web_search + web_fetch fully loaded is justified on accuracy, not just on the owner's preference.",
+  "n": 3
+ },
+ "fixture_bugs_found": [
+  "#3/#4 asked the model to plot data it did not have \u2014 a gather step first was correct.",
+  "#9 said 'here', making a current_location read a legitimate first step.",
+  "Pattern: when a probe contains a deictic ('here', 'my', 'that'), the resolving tool is a valid answer and must be in `expect`. Three of sixteen cases had this bug on first writing."
  ]
 }

@@ -30,40 +30,47 @@ Two constraints the build honours, both discovered the hard way:
 MEASURED on the live box (2026-08-17, gpt-oss-120b, hot core = web_search + web_fetch). Raw
 numbers in `scratchpad/prefill-probe-results.json`.
 
-    mode                    mean input_tokens   vs today   suite
-    today                              22,694       100%   5/7
-    b-derived (no summary)             11,502      50.7%   —
-    b (authored, tuned)                11,660      51.4%   7/7
-    b-strict                           11,747      51.8%   —
+    mode                 mean input_tokens   vs today   16-case fixture
+    today                           22,694       100%   14/16
+    b (authored v2)                 11,567      51.0%   14/16
+    b, no hot core                  10,451      46.1%   worse (see below)
+    b-strict                        11,747      51.8%   —
 
-**Mode (b) with tuned summaries is both half the prefill and BETTER at selection than the full
-descriptions.** `today` gets the FL-insurance-licence case wrong 5/5 (it picks `public_records`,
-which covers medical NPI licences) and the categorical-chart case right only 3/5. The tuned
-build gets 4/5 and 4/5 on those, 7/7 on a full pass. Most of a long description is not doing
-routing work — which is the premise this plan rests on, now measured rather than asserted.
+**Selection parity at half the prefill.** Neither mode dominates: `today` misses the FL-licence
+case (it picks `public_records`, which covers medical NPI licences) and the court-records case;
+mode (b) misses the court-records case and one noisy science-search case. The single case both
+miss is a baseline defect, not a mode effect. On a narrower 7-case fixture mode (b) scored 7/7
+against today's 5/7 — that gap did not survive widening, which is the expected direction for a
+fixture written alongside the thing it measures.
 
-Four results to carry forward.
+Five results to carry forward.
 
-(1) **n=1 is noise, including on the baseline.** `today` itself is only 3/5 on the chart case.
-An earlier pass read a 3-sample difference as a regression and was wrong; it did not replicate.
-The `--suite` runner is single-shot per case by design, so repeat any case n>=5 before believing
-a difference. Any acceptance gate needs the same.
+(1) **n=1 is noise, and the baseline is not exempt.** `today` scores 3/5 on the categorical-chart
+case across repeats. An early pass read a 3-sample difference as a regression; it reversed on the
+next run. Repeat any case n>=5 before believing a difference — this runner is single-shot by design.
 
-(2) **Summary WORDING is high-leverage and not intuitive.** One line, three phrasings, probed
-n=5 on the same prompt: a verb-led "Graph numbers you already have BY CATEGORY…" scored 2/5, a
-"Render a categorical breakdown…" version 1/5, and "Show numbers you already have as a bar
-graph…" 4/5. The winner puts the NOUN PHRASE the owner would actually type ("as a graph") where
-the request will match it. Author to the phrasing the request arrives in, not the vocabulary the
-codebase uses — and probe each line rather than trusting a style rule, this one included.
+(2) **Summary WORDING is high-leverage and counter-intuitive.** One line, three phrasings, n=5 on
+the same prompt: "Render a categorical breakdown…" 1/5, "Graph numbers you already have BY
+CATEGORY…" 2/5, "Show numbers you already have as a bar graph…" 4/5. The winner carries the noun
+phrase the owner would type ("as a graph") where the request will match it. Author to the phrasing
+the request arrives in, not the vocabulary the codebase uses — and probe each line rather than
+trusting a style rule, this one included. A first authored pass made `render_bars` WORSE than
+having no summary at all (0/5 vs the derived fallback's 4/5).
 
-(3) **The b-strict prose gate does not work.** `tool_explain` was never called once, in any mode,
-even though every deferred summary in b-strict ended "Call tool_explain first." A mandatory
-explain-before-use step has to be enforced in the HANDLER (refuse-or-auto-explain on first
-call), exactly like the scout's search budget, which is engine-enforced for the same reason.
-Prose the model is free to skip is not a gate, and the 245 tokens it costs buy nothing alone.
+(3) **The hot core is justified on accuracy, not just preference.** Dropping it saves a further
+~1,115 tokens and makes selection worse (`science_search` 3/3 -> 2/3, `weather_history` scattered
+across three answers). The hypothesis that a hot tool's long description out-competes a one-line
+summary regardless of fit was tested and REFUTED.
 
-(4) `char // 4` overestimates this tokenizer by ~22%, so `--report` is a conservative upper
-bound; trust a probe's `input_tokens` over it.
+(4) **The b-strict prose gate does not work.** `tool_explain` was never called once, in any mode,
+though every deferred summary in b-strict ended "Call tool_explain first." A mandatory
+explain-before-use step must be enforced in the HANDLER (refuse-or-auto-explain on first call),
+like the scout's search budget. Prose the model may skip is not a gate.
+
+(5) **Watch the fixture as hard as the result.** Three of sixteen cases were wrong on first
+writing, all the same way: when a probe contains a deictic ("here", "my", "that"), the tool that
+RESOLVES it is a legitimate first step and belongs in `expect`. A fixture bug reads exactly like a
+model failure.
 
 Usage:
     scripts/prefill-experiment.py --report
@@ -128,34 +135,43 @@ EXPLAIN_TOOL = {
 # caused — is LEAD WITH WHEN, NOT WHAT: the trigger phrasing an owner would actually type comes
 # first, because a description that opens by defining itself yields a summary that cannot route.
 AUTHORED = {
-    "analyze_image": "Answer a question about what an image SHOWS (attached, generated, or fetched), using the local vision model.",
-    "analyze_video": "Understand an attached video — what it shows AND says. Use when the visuals matter; for words only, transcribe is far cheaper.",
-    "canvas": "Draw on a photo or a blank sheet: 'put a red box around this', 'point at the X', annotate, sketch a diagram.",
-    "check_channel": "Find a YouTube channel's new uploads not yet in the library. For 'check the channels', 'anything new from X'.",
-    "compare_images": "Answer a question comparing two or more images side by side: 'what changed', 'which is better', 'spot the difference'.",
-    "crop_regions": "Cut parts out of one image, each returned as its own saveable picture: 'crop out every label', 'export each face'.",
-    "current_location": "Where the owner is right now — for 'where am I' or anything 'near me'. Returns a city name by default.",
-    "current_time": "A fresh date/time reading, or the time in another zone. Today's date is already in your context each turn.",
-    "deep_produce": "Research a topic and get a PLAN, TABLE, BRIEF, DIFFERENTIAL or TIMELINE — when the useful output is not a prose report.",
-    "deep_research": "Research an open, multi-source question and get a cited report: 'research X', 'do a deep dive', 'write me a report on'.",
-    "deepest_research": "Escalation only — an hours-long BACKGROUND run that returns an acknowledgement now, not a report. Prefer deep_research.",
-    "edit_image": "Change an existing image: 'make it night', 'remove the car', 'same but in blue'.",
-    "external_video": "Search or read the owner's analysed-YouTube library: 'what did that video say', 'what do my videos say about X'.",
-    "fetch_image": "Fetch a web image's bytes so you can SEE it — web_fetch strips images, so this comes first for any picture on the web.",
-    "generate_image": "Make a brand-new picture from a description: 'draw me', 'generate an image of'. Never for plotting data.",
-    "grab_frame": "Take a still from a video (URL or attachment) at a timestamp: 'screenshot it at 4:20', 'what's on screen when'.",
-    "grokipedia": "Search and read xAI's Grokipedia — articles, sections, citations. Background reference, not current news.",
-    "hurricane": "Check for an active tropical cyclone near a place: 'is anything coming', 'is there a hurricane'.",
-    "news_feed": "Today's articles from curated per-topic feeds (space, ai_tech, national, economy, world, local) — the daily brief's source.",
-    "news_search": "Search recent NEWS for dated article leads: 'what happened with X', 'latest on Y'. Prefer over web_search for current events.",
-    "ocr": "Read the LITERAL text out of an attached image or PDF, deterministically — error screenshots, receipts, scanned documents.",
-    "portal_search": "Query a STATE government portal by name — a state business registry or a state LICENSE lookup: 'is X registered', 'does X hold a license'.",
-    "public_records": "Look up a PERSON in free NATIONAL registries — aliases, court records, medical-provider (NPI) licenses, federal actions.",
-    "query_server_metrics": "How the box itself is doing — CPU, memory, disk, GPU, fans: 'how's the server', 'is it running hot'.",
-    "read_artifact": "Re-read or continue a page you already fetched this chat, from cache — for paging a long transcript across turns.",
-    "read_plan": "Read this conversation's plan and where you are in it. Call it before working a step.",
-    "remove_external_video": "Stage the removal of one library video for the owner's approval: 'delete that video'.",
-    "remove_research_report": "Stage the removal of one saved report for the owner's approval: 'delete that report'.",
+    # v2. Every line rewritten after the render_bars variant test (see below): lead with the
+    # NOUN PHRASE the owner would actually type, quote the literal phrasings the request will
+    # arrive in, avoid codebase vocabulary ("render", "artifact", "categorical breakdown") and
+    # avoid ALL-CAPS emphasis — the caps variant scored worse than the plain one.
+    # web_search / web_fetch are normally HOT (full description). These entries exist so the
+    # no-hot-core build can be probed — the test of whether a hot tool's 3.5k chars of prose
+    # out-competes a one-line summary regardless of which tool actually fits.
+    "web_search": "Search the web — the general lookup when nothing more specific fits. For current news use news_search; for papers, science_search.",
+    "web_fetch": "Open a specific URL and read what that page says. Never guess or build a URL yourself, and a search FORM you could not submit is not evidence a record is absent.",
+    "analyze_image": "Look at a picture and answer a question about it — 'what's in this photo', 'what does this screenshot show'.",
+    "analyze_video": "Watch an attached video and say what it shows and what is said. For the words only, transcribe is far faster.",
+    "canvas": "Mark up a photo or draw a figure — 'put a red box around this', 'circle the X', 'draw me a diagram'.",
+    "check_channel": "Check a YouTube channel for new uploads not analysed yet — 'anything new from X', 'check the channels'.",
+    "compare_images": "Put two or more pictures side by side and answer a question — 'what changed', 'which one is better'.",
+    "crop_regions": "Cut pieces out of a picture, each returned as its own image — 'crop out every label', 'pull that part out'.",
+    "current_location": "Where the owner is right now — 'where am I', 'what's near me'. Gives a city name unless asked for more.",
+    "current_time": "The time right now, or the time somewhere else — 'what time is it in Tokyo'. Today's date is already in your context.",
+    "deep_produce": "A researched plan, comparison table, brief, differential or timeline — 'make me a plan for X', 'compare these in a table'.",
+    "deep_research": "A deep, cited write-up on an open question — 'research X', 'do a deep dive on', 'write me a report about'.",
+    "deepest_research": "An hours-long background research run that answers later, not now. Rare — deep_research handles almost everything.",
+    "edit_image": "Change a picture you already have — 'make it night', 'remove the car', 'same but in blue'.",
+    "external_video": "Look in the owner's analysed YouTube videos — 'what did that video say', 'what do my videos say about X'.",
+    "fetch_image": "Get a picture off the web so you can actually look at it. Needed before analyze_image on anything online.",
+    "generate_image": "Make a new picture from a description — 'draw me a', 'generate an image of'. Never for plotting data.",
+    "grab_frame": "Take a screenshot of a video at one moment — 'what's on screen at 4:20', 'grab that frame'.",
+    "grokipedia": "Look a topic up in Grokipedia, xAI's encyclopedia — background on a subject, not current news.",
+    "hurricane": "Check whether a hurricane or tropical storm is near a place — 'is anything coming', 'is there a storm'.",
+    "news_feed": "Today's headlines from trusted feeds by topic — space, ai_tech, national, economy, world, local.",
+    "news_search": "Search the news — 'what happened with X', 'latest on Y'. Better than web_search for anything current.",
+    "ocr": "Read the exact text off an attached picture or PDF — a screenshot of an error, a receipt, a scanned page.",
+    "portal_search": "Search a state government website by name — 'is X registered in Florida', 'does X hold a Florida license'.",
+    "public_records": "Look a person up in free national records — other names they have used, court cases, medical licences, federal actions.",
+    "query_server_metrics": "How the server is doing — 'how's the box', 'is it running hot' — CPU, memory, disk, GPU, fans.",
+    "read_artifact": "Re-read a page you already fetched this chat, or keep reading a long one from where you stopped.",
+    "read_plan": "Read this conversation's plan and which step you are on. Check it before working a step.",
+    "remove_external_video": "Ask the owner to confirm deleting one video from their library — 'delete that video'.",
+    "remove_research_report": "Ask the owner to confirm deleting one saved report — 'delete that report'.",
     # Wording matters more than content here, and this line is the proof. Three variants were
     # probed n=5 on "I counted 12 launches by SpaceX, 4 by ULA and 2 by Rocket Lab — show me
     # that as a graph": a verb-led version ("Graph numbers you already have BY CATEGORY…") got
@@ -163,18 +179,18 @@ AUTHORED = {
     # puts the NOUN PHRASE "a bar graph" where the owner's own words are — 4/5. Match the
     # phrasing the request will arrive in, not the vocabulary the codebase uses.
     "render_bars": "Show numbers you already have as a bar graph — one bar per category. For 'show me that as a graph', 'how many per Y', 'compare X across Y' when the x-axis is categories, not dates.",
-    "render_chart": "Graph numbers you already have OVER TIME — 'plot/graph/chart this trend' when the x-axis is dates. Lines, not categories.",
-    "research_report": "Search or re-read the owner's saved deep-research reports: 'what did that report say', or to build on an earlier run.",
-    "science_search": "Search scholarly literature — arXiv, PubMed, Scholar — for paper leads: 'what does the research say', 'any studies on'.",
-    "show_canvas": "Show the owner the canvas you drew. Until you call this, they have seen nothing.",
-    "show_external_video": "Show the owner a library video as its analysis card: 'show me that video' — not for reading what it said.",
-    "show_research_report": "Show the owner a saved report as its rich card: 'show me that report' — not for reading it yourself.",
-    "spawn_subagent": "Fan a task out to web-sandboxed sub-agents and compose their summaries yourself — for breadth you'd otherwise search serially.",
-    "transcribe": "Get the WORDS of an attached audio or video clip. Much cheaper and faster than analyze_video when the visuals don't matter.",
-    "weather": "Current conditions or the 7-day forecast for a place: 'what's the weather', 'will it rain'.",
-    "weather_history": "PAST weather for a place and date range, with the heat index computed: 'how hot was it last July'.",
-    "write_plan": "Write or re-status this conversation's plan — ONLY when the owner asks for one. You may never approve a plan yourself.",
-    "write_plan_result": "Record a finished plan step: appends your synthesis AND ticks the box. Call it after every step.",
+    "render_chart": "Show numbers you already have as a line chart over time — 'plot this trend', 'graph this over the months', when the x-axis is dates.",
+    "research_report": "Look in the owner's saved research reports — 'what did that report say', or to build on an earlier one.",
+    "science_search": "Search papers and studies — 'what does the research say', 'any studies on X'.",
+    "show_canvas": "Show the owner the figure you drew. Until you call this, they have seen nothing.",
+    "show_external_video": "Play one library video for the owner with its timeline — 'show me that video'.",
+    "show_research_report": "Show the owner a saved report as a card — 'show me that report'.",
+    "spawn_subagent": "Send several sandboxed helpers to research parts of a question at once, then write the answer from what they find.",
+    "transcribe": "Get the words out of an attached voice memo or video — 'what does this say', 'transcribe this'.",
+    "weather": "The weather for a place — 'what's it like out', 'will it rain', or the week ahead.",
+    "weather_history": "What the weather was on a past date or range — 'how hot was it here last July'.",
+    "write_plan": "Write or update this conversation's plan — only when the owner asks for one. You can never approve it yourself.",
+    "write_plan_result": "Record what a plan step found; this also ticks the step off. Call it after every step.",
 }
 
 
@@ -229,6 +245,59 @@ SUITE = [
         "probe": "what's the article at https://spaceflightnow.com about today?",
         "expect": ("web_fetch", "news_feed", "web_search"),
         "tests": "hot-core control — this should be unaffected by any deferral",
+    },
+    # --- widened 2026-08-17. A seven-case fixture flatters whatever it was built alongside;
+    # these cover tools the first pass never exercised, and add the case class it was missing
+    # entirely: requests where the RIGHT answer is no tool at all. A surface that over-calls is
+    # as broken as one that mis-routes, and only these cases can catch it.
+    {
+        "probe": "is it going to rain in Titusville tomorrow?",
+        "expect": ("weather",),
+        "tests": "forecast picks weather, not a web search",
+    },
+    {
+        # "here" makes a current_location read a legitimate FIRST step, exactly as in the storm
+        # case below — the first version of this expectation omitted it and scored a reasonable
+        # plan as a miss. Third fixture bug of this kind: when a probe contains a deictic
+        # ("here", "my", "that"), the resolving tool is a valid answer.
+        "probe": "how hot did it get here last July?",
+        "expect": ("weather_history", "current_location"),
+        "tests": "PAST weather is a different tool from the forecast",
+    },
+    {
+        "probe": "is there a storm headed our way?",
+        "expect": ("hurricane", "weather", "current_location"),
+        "tests": "tropical-cyclone lookup, or a location read first",
+    },
+    {
+        "probe": "I attached a screenshot of an error — what exactly does it say?",
+        "expect": ("ocr",),
+        "tests": "LITERAL text picks the deterministic OCR, not the vision model",
+    },
+    {
+        "probe": "how's the box doing? is it running hot?",
+        "expect": ("query_server_metrics",),
+        "tests": "host telemetry, not a web search about servers",
+    },
+    {
+        "probe": "are there any studies on creatine and cognition?",
+        "expect": ("science_search",),
+        "tests": "scholarly literature picks science_search over web_search",
+    },
+    {
+        "probe": "has anyone ever sued Acme Holdings LLC?",
+        "expect": ("public_records", "portal_search"),
+        "tests": "court records are the NATIONAL registry, the twin of the state-portal case",
+    },
+    {
+        "probe": "thanks, that's exactly what I needed",
+        "expect": ("(none)",),
+        "tests": "NO-TOOL control — a surface that over-calls is as broken as one that mis-routes",
+    },
+    {
+        "probe": "what's the capital of France?",
+        "expect": ("(none)",),
+        "tests": "NO-TOOL control — general knowledge needs no search",
     },
 ]
 
