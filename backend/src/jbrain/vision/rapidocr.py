@@ -74,3 +74,77 @@ class RapidOcrClient:
             mean_score=float(body.get("mean_score") or 0.0),
             lines=tuple(raw_lines) if isinstance(raw_lines, list) else (),
         )
+
+
+@dataclass(frozen=True)
+class FaceBox:
+    """One detected face in ORIGINAL-image pixels, corners not extents."""
+
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    score: float
+
+
+class FaceDetectUnavailable(OcrServiceError):
+    """The sidecar has no face model (or none is configured). Distinct from a general
+    failure because the caller's right response is to fall back to model grounding AND
+    say it fell back — never to silently return fewer faces."""
+
+
+async def detect_faces(
+    client: RapidOcrClient, data: bytes, *, min_score: float = 0.6
+) -> tuple[FaceBox, ...]:
+    """Deterministic face boxes via the sidecar's YuNet (AGENT_CANVAS_PLAN W5).
+
+    Worth the extra hop because the alternative — asking a vision model to box every
+    face — fails in one direction and fails quietly: it misses people in a crowd and
+    reports no error. An empty tuple here is a real "no faces", not a shrug."""
+    # Kept a module function rather than a method so the OCR client stays a single-purpose
+    # object; the sidecar just happens to host both, because opencv is already in it.
+    base = client._base_url  # noqa: SLF001 - same module, one pinned base URL
+    if not base:
+        raise FaceDetectUnavailable("face detection is not configured on this instance")
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=client._transport) as http:  # noqa: SLF001
+            resp = await http.post(
+                f"{base}/detect/faces",
+                content=data,
+                params={"min_score": min_score},
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            if resp.status_code == 400:
+                raise FaceDetectUnavailable(_detail(resp))
+            resp.raise_for_status()
+            body = resp.json()
+    except FaceDetectUnavailable:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning("rapidocr.faces_failed", error=repr(exc))
+        raise FaceDetectUnavailable("the face detector is unavailable right now") from exc
+    rows = body.get("faces") if isinstance(body, dict) else None
+    if not isinstance(rows, list):
+        raise FaceDetectUnavailable("the face detector returned a malformed response")
+    out: list[FaceBox] = []
+    for row in rows:
+        box = row.get("box") if isinstance(row, dict) else None
+        if not (isinstance(box, list) and len(box) == 4):
+            continue
+        try:
+            x1, y1, x2, y2 = (int(v) for v in box)
+        except (TypeError, ValueError):
+            continue
+        if x2 > x1 and y2 > y1:
+            out.append(FaceBox(x1, y1, x2, y2, float(row.get("score") or 0.0)))
+    return tuple(out)
+
+
+def _detail(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        return "face detection failed"
+    if isinstance(body, dict) and isinstance(body.get("error"), str):
+        return body["error"]
+    return "face detection failed"

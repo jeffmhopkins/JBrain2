@@ -273,3 +273,87 @@ async def test_each_crop_carries_where_its_box_came_from(monkeypatch) -> None:
         {"source_attachment_id": "a", "boxes": [{"x": 10, "y": 10, "w": 100, "h": 100}]}, _ctx()
     )
     assert explicit.view.data["crops"][0]["origin"] == "owner"  # type: ignore[attr-defined]
+
+
+# --- faces go to the detector, and a fallback is stated ---------------------
+
+
+class _Ocr:
+    """Stands in for the RapidOcrClient the face detector rides on."""
+
+    def __init__(self, faces=(), boom: str = "") -> None:
+        self.faces = faces
+        self.boom = boom
+        self.calls = 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["each face", "every person", "everyone in the photo"])
+async def test_face_targets_use_the_deterministic_detector(monkeypatch, target: str) -> None:
+    from jbrain.vision import FaceBox
+
+    router = _Router(_boxes_json([(0, 0, 100, 100)]))  # would be used if we fell back
+    ocr = _Ocr(faces=(FaceBox(10, 10, 120, 130, 0.99), FaceBox(200, 40, 300, 160, 0.95)))
+
+    async def _fake_detect(client, data, *, min_score=0.6):
+        client.calls += 1
+        return client.faces
+
+    monkeypatch.setattr("jbrain.agent.croptools.detect_faces", _fake_detect)
+    crop, persisted = _build(monkeypatch, source=_photo(), router=router)
+    handlers = build_crop_handlers(None, None, None, None, router, ocr)
+    out = await handlers["crop_regions"]({"source_attachment_id": "a", "target": target}, _ctx())
+
+    assert ocr.calls == 1
+    assert router.calls == []  # the vision model was never asked
+    assert out.view.data["crops"][0]["origin"] == "detector"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_non_face_target_still_uses_grounding(monkeypatch) -> None:
+    # Routing "every product label" to a face detector would return faces for a
+    # question about labels — so the match is deliberately narrow.
+    from jbrain.vision import FaceBox
+
+    router = _Router(_boxes_json([(100, 100, 300, 300)]))
+    ocr = _Ocr(faces=(FaceBox(1, 1, 2, 2, 0.9),))
+
+    async def _fake_detect(client, data, *, min_score=0.6):  # pragma: no cover - must not run
+        raise AssertionError("a label target must not hit the face detector")
+
+    monkeypatch.setattr("jbrain.agent.croptools.detect_faces", _fake_detect)
+    _crop, _p = _build(monkeypatch, source=_photo(), router=router)
+    handlers = build_crop_handlers(None, None, None, None, router, ocr)
+    out = await handlers["crop_regions"](
+        {"source_attachment_id": "a", "target": "every product label"}, _ctx()
+    )
+    assert out.view.data["crops"][0]["origin"] == "vlm"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_detector_falls_back_and_SAYS_it_fell_back(monkeypatch) -> None:
+    # The whole point of the detector is that the model undercounts silently. Degrading
+    # to the model without saying so would reintroduce exactly that failure.
+    from jbrain.vision import FaceDetectUnavailable
+
+    router = _Router(_boxes_json([(100, 100, 300, 300)]))
+
+    async def _fake_detect(client, data, *, min_score=0.6):
+        raise FaceDetectUnavailable("no YuNet model on this box")
+
+    monkeypatch.setattr("jbrain.agent.croptools.detect_faces", _fake_detect)
+    _crop, _p = _build(monkeypatch, source=_photo(), router=router)
+    handlers = build_crop_handlers(None, None, None, None, router, _Ocr())
+    out = await handlers["crop_regions"]({"source_attachment_id": "a", "target": "faces"}, _ctx())
+
+    assert "face detector was unavailable" in out
+    assert "can miss people" in out
+    assert out.view.data["crops"][0]["origin"] == "vlm"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_no_ocr_client_configured_falls_back_quietly_to_grounding(monkeypatch) -> None:
+    router = _Router(_boxes_json([(100, 100, 300, 300)]))
+    crop, _p = _build(monkeypatch, source=_photo(), router=router)  # built with ocr=None
+    out = await crop({"source_attachment_id": "a", "target": "faces"}, _ctx())
+    assert out.view.data["crops"][0]["origin"] == "vlm"  # type: ignore[attr-defined]

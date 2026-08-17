@@ -862,6 +862,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.generated_image_repo,
             app.state.turn_attachments,
             app.state.llm_router,
+            app.state.rapidocr,
         )
         deepest_handle = DeepestHandle()
         app.state.agent_registry = build_registry(

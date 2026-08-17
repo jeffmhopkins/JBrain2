@@ -1,6 +1,6 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-16 · **Waves:** W0✅ W1✅ W1b✅ W2✅ W3✅ W4✅ W5◻️ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-08-16 · **Waves:** W0✅ W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
 
 > **W0–W3 landed on-branch.** W0's *code* is complete (the `--image-min-tokens`
 > floor, `agent/grounding.py`, the EXIF fix, `POST /api/debug/grounding`); its
@@ -588,10 +588,20 @@ per wave, exactly one PR per wave, CI green before merge.
   when W4's backend is ready — see §11.4.
 
 ### W5 — Faces via YuNet
-- `/detect/faces` route on the rapidocr sidecar using `cv2.FaceDetectorYN`
-  (`deploy/rapidocr/server.py`; opencv already pinned at `Dockerfile.rapidocr:22`).
-- `crop_regions` routes face targets to it; the result states the count found.
-- Zero new backend dependencies, zero new containers.
+- `/detect/faces` on the rapidocr sidecar via `cv2.FaceDetectorYN`, lazy-loaded and
+  idle-unloaded on the same schedule as the OCR engine.
+- `crop_regions` routes face-shaped targets to it; anything else still grounds through
+  the vision model, because a face detector asked for "product labels" would return
+  faces.
+- **Correction to the scoping memo:** the YuNet ONNX is **not** bundled in the opencv
+  wheel — only the `FaceDetectorYN` API is. The ~230KB model is fetched at image build
+  time and pinned by sha256. Note the URL: the file lives in Git LFS, so the ordinary
+  `raw.githubusercontent` path returns a **131-byte LFS pointer** that loads as a
+  confusing runtime error; the checksum turns that into a loud build failure instead.
+- If the model is absent the route fails cleanly, `crop_regions` falls back to vision
+  grounding **and says so in the result** — degrading quietly would reintroduce exactly
+  the silent undercount the detector exists to prevent.
+- Still zero new backend dependencies and zero new containers.
 
 ### W6 — On-box validation and tuning
 - L1 end-to-end on real owner photos; L2 (blank canvas) exercised and honestly

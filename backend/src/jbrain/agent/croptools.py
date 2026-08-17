@@ -47,6 +47,7 @@ from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.errors import LlmError
 from jbrain.models.images import GeneratedImageRepo
 from jbrain.storage import BlobStore
+from jbrain.vision import FaceDetectUnavailable, RapidOcrClient, detect_faces
 
 log = structlog.get_logger()
 
@@ -74,6 +75,7 @@ def build_crop_handlers(
     images: GeneratedImageRepo,
     attachments: TurnAttachmentRepo,
     router: LlmRouter,
+    ocr: RapidOcrClient | None = None,
 ) -> dict[str, ToolHandler]:
     async def crop_regions_tool(arguments: dict, ctx: ToolContext) -> str:
         attachment_id = str(arguments.get("source_attachment_id", "")).strip()
@@ -109,6 +111,24 @@ def build_crop_handlers(
         if isinstance(boxes_in, list):
             regions, note = _explicit_boxes(boxes_in, width, height)
             origin = "owner"
+        elif _wants_faces(target) and ocr is not None:
+            # Faces route to the deterministic detector, not the vision model: VLM
+            # grounding misses people in a crowd and reports no error (§6.5). If the
+            # detector is unavailable we fall back — and SAY we fell back, because a
+            # quietly-degraded count is the failure this whole lane guards against.
+            detected = await _faces(ocr, data)
+            if isinstance(detected, tuple):
+                regions, note, origin = detected[0], "", "detector"
+            else:
+                found = await _ground(ctx, data, target, width, height)
+                if isinstance(found, str):
+                    return found
+                regions = found
+                note = (
+                    f"The face detector was unavailable ({detected}), so these boxes are"
+                    " the vision model's guess — it can miss people in a crowd."
+                )
+                origin = "vlm"
         else:
             found = await _ground(ctx, data, target, width, height)
             if isinstance(found, str):
@@ -231,6 +251,34 @@ def build_crop_handlers(
         return [(b, b.label) for b in pixels]
 
     return {"crop_regions": crop_regions_tool}
+
+
+# Matching on the word is deliberate and narrow: "face" is the one target with an on-box
+# detector, and routing anything else to it would silently return face boxes for a
+# question about product labels.
+_FACE_WORDS = ("face", "faces", "person", "people", "everyone", "headshot")
+
+
+def _wants_faces(target: str) -> bool:
+    words = {w.strip(".,!?").lower() for w in target.split()}
+    return bool(words & set(_FACE_WORDS))
+
+
+async def _faces(ocr: RapidOcrClient, data: bytes) -> tuple[list[tuple], str] | str:
+    """Detector boxes, or a reason string the caller reports while falling back."""
+    from jbrain.agent.grounding import PixelBox
+
+    try:
+        found = await detect_faces(ocr, data)
+    except FaceDetectUnavailable as exc:
+        return str(exc)
+    return (
+        [
+            (PixelBox(f.x1, f.y1, f.x2, f.y2, label=f"face {i + 1}"), f"face {i + 1}")
+            for i, f in enumerate(found)
+        ],
+        "",
+    )
 
 
 def _explicit_boxes(raw: list, width: int, height: int) -> tuple[list[tuple], str]:
