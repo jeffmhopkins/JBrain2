@@ -1,12 +1,17 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-16 · **Waves:** W0✅ W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-08-17 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
 
-> **W0–W3 landed on-branch.** W0's *code* is complete (the `--image-min-tokens`
-> floor, `agent/grounding.py`, the EXIF fix, `POST /api/debug/grounding`); its
-> **measurement is still owed** — the coordinate base is pinned as `AUTO` (inferred per
-> response) until the probe is run on the box and the result recorded here. W1b added a
-> capability the plan did not originally scope: a general-purpose HTML→PNG renderer
+> **W0's measurement is DONE (2026-08-17).** Probed on the live box against
+> `qwen3.8-27b-q4`: the base is **`norm_1000`**, now pinned in `agent/grounding.py` for
+> both twins. Three targets on one 4080×3072 photo (large, medium, small) all agreed,
+> the boxes nested correctly (a nose box inside its head box), and read as 0–1 the same
+> reply collapses to a zero-width box clamped at the frame edge — so the two bases are
+> nowhere near each other and the reading is not a judgement call. Grounding quality
+> looks genuinely usable: the small target returned a proportionate 771×676 box rather
+> than a shrug.
+>
+> W1b added a capability the plan did not originally scope: a general-purpose HTML→PNG renderer
 > (§3b), which is now the sanctioned path for any tool wanting rich visual output.
 > W2/W3 shipped the `canvas` + `show_canvas` pair, the model gate, and the engine
 > ceilings. W4 shipped `crop_regions` and the `image_set` card after the owner cleared
@@ -526,8 +531,9 @@ per wave, exactly one PR per wave, CI green before merge.
 - `agent/grounding.py` — pure, served-model-keyed, refuses on unknown (§5.1).
 - A fixture set of images with known boxes + a **debug-API route** to run the probe
   (`POST /api/debug/grounding`), **not a shell script** — CLAUDE.md rule 10.
-- **Exit:** the convention (`0–1` vs `0–1000`) is measured on the live box, pinned in
-  `grounding.py`, and the hit rate recorded in the PR.
+- **Exit (met 2026-08-17):** measured on the live box, pinned in `grounding.py`.
+  Result: `norm_1000` on `qwen3.8-27b-q4`; the Q8 twin inherits it (same weights, repo
+  and projector — quantization does not change the output convention).
 
 ### W1b — The `htmlrender` service *(§3b; runs with W1)*
 - `deploy/Dockerfile.htmlrender` + `deploy/htmlrender/server.py` (Playwright/Chromium,

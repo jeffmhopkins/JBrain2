@@ -54,6 +54,7 @@ from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, UserMessage
+from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.settings_store import SqlSettingsStore
@@ -547,11 +548,25 @@ async def grounding_probe(
     request.state.debug_detail = f"{body.target} {body.attachment_id}"
     async with scoped_session(_maker(request), _OWNER_CTX) as session:
         await session.execute(text("SET TRANSACTION READ ONLY"))
-        att = (
+        # Either table: a note attachment (`app.attachments`, what /vision reads) OR a
+        # CHAT upload (`app.turn_attachments`). The canvas annotates chat uploads, so a
+        # probe that only saw note attachments answered "attachment not found" for
+        # exactly the images this feature exists to mark up.
+        found = (
             await session.execute(select(Attachment).where(Attachment.id == body.attachment_id))
         ).scalar_one_or_none()
-        if att is None:
-            raise HTTPException(status_code=404, detail="attachment not found")
+        if found is None:
+            found = (
+                await session.execute(
+                    select(TurnAttachment).where(TurnAttachment.id == body.attachment_id)
+                )
+            ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(
+                status_code=404,
+                detail="no attachment with that id in app.attachments or app.turn_attachments",
+            )
+    att = found
     raw = await _blobs(request).get(att.sha256)
     if body.downscale:
         data, media_type = downscale_for_vision(raw, att.media_type)

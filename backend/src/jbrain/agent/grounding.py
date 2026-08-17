@@ -30,10 +30,9 @@ from enum import StrEnum
 # (`LocalModel.served_model`), not the catalog id, because that is what the router
 # resolves and what the gateway actually loads.
 #
-# AUTO is not a cop-out: the two candidate bases are trivially separable in practice
-# (see `infer_convention`), and it is the honest state until the W0 probe measures
-# this checkpoint on the owner's box. Pin the measured value here afterwards — the
-# probe reports which base it inferred precisely so this table can be made explicit.
+# AUTO remains available for a model that has not been probed yet: the two candidate
+# bases are trivially separable in practice (see `infer_convention`). It is the honest
+# interim state, not a destination — a model earns an explicit entry by being measured.
 
 
 class Convention(StrEnum):
@@ -45,10 +44,18 @@ class Convention(StrEnum):
 
 
 _CONVENTIONS: dict[str, Convention] = {
-    # The two Qwen3.8 vision twins: same weights, same repo, same projector, so one
-    # probe qualifies both. AUTO until W0 runs on-box (AGENT_CANVAS_PLAN §10.3).
-    "qwen3.8-27b": Convention.AUTO,
-    "qwen3.8-27b-q4": Convention.AUTO,
+    # MEASURED on the owner's box 2026-08-17 via POST /api/debug/grounding against
+    # `qwen3.8-27b-q4` (AGENT_CANVAS_PLAN W0). Three targets on one 4080x3072 photo —
+    # a large one, a small one, and a mid-sized one — all came back in the 0-1000 base,
+    # e.g. the dog's nose as [189, 642, 378, 862]. Read as 0-1 the same reply collapses
+    # to a zero-width box clamped at the frame edge, so the two bases are not close: the
+    # measurement is unambiguous rather than a judgement call.
+    #
+    # The Q8 twin is pinned on the SAME evidence — identical weights, repo and projector
+    # (local_catalog), differing only in quantization, which does not change the output
+    # convention. If that ever stops being true it is a re-probe, not a code change.
+    "qwen3.8-27b": Convention.NORM_1000,
+    "qwen3.8-27b-q4": Convention.NORM_1000,
 }
 
 # `bbox_2d` is [x1, y1, x2, y2] — CORNERS, not [x, y, w, h]. A silent w/h misread
