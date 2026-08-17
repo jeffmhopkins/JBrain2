@@ -164,7 +164,19 @@ each capability fully documented in one guide:
   waves read. Blocked on the §5 decision (`ToolSpec` is `extra="forbid"` and both fields fold
   into `ToolFile.digest`, so this is a real decision, not a free add).
 
-  **Measured 2026-08-17 — `summary` earns its place, on better evidence than first claimed.**
+  **Measured 2026-08-17 — mode (b) with tuned summaries beats full descriptions at half the
+  prefill.** Final: `today` 22,694 tokens and **5/7** on the fixture; mode (b) with authored
+  summaries **11,660 tokens (51%) and 7/7**. `today` fails the FL-licence case 5/5 and gets the
+  categorical-chart case right only 3/5, so the full descriptions are not a ceiling to protect —
+  they are the thing being beaten. Two caveats that bind W0a/W0b both: **n=1 is noise** (the
+  baseline itself is 3/5 on one case, and an earlier 3-sample "regression" did not replicate), so
+  every gate needs n≥5; and **summary wording is high-leverage and counter-intuitive** — one line
+  probed in three phrasings scored 1/5, 2/5 and 4/5, the winner being the one that used the noun
+  phrase an owner would type ("as a graph") rather than the codebase's vocabulary ("categorical
+  breakdown"). Authoring 44 summaries is therefore real work with a per-line feedback loop, not a
+  mechanical pass. Details below.
+
+  **`summary` earns its place, on better evidence than first claimed.**
   `scripts/prefill-experiment.py` probed the live box in three builds: full descriptions,
   mechanically-derived summaries (what a MISSING `summary` looks like), and authored
   when-to-use summaries. The FL-license case picks `public_records` — the wrong source, which

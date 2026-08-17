@@ -27,39 +27,43 @@ Two constraints the build honours, both discovered the hard way:
    will read better. So a probe result from this script is a LOWER BOUND on mode (b)'s accuracy,
    which is the right direction for an experiment to err.
 
-MEASURED on the live box (2026-08-17, gpt-oss-120b, hot core = web_search + web_fetch);
-raw runs in `scratchpad/prefill-probe-results.json`:
+MEASURED on the live box (2026-08-17, gpt-oss-120b, hot core = web_search + web_fetch). Raw
+numbers in `scratchpad/prefill-probe-results.json`.
 
-    mode        mean input_tokens   vs today
-    today                  22,694       100%
-    b                      11,502      50.7%
-    b-strict               11,747      51.8%
+    mode                    mean input_tokens   vs today   suite
+    today                              22,694       100%   5/7
+    b-derived (no summary)             11,502      50.7%   —
+    b (authored, tuned)                11,660      51.4%   7/7
+    b-strict                           11,747      51.8%   —
 
-Mode (b) halves the prefill with no selection change on six of seven cases.
+**Mode (b) with tuned summaries is both half the prefill and BETTER at selection than the full
+descriptions.** `today` gets the FL-insurance-licence case wrong 5/5 (it picks `public_records`,
+which covers medical NPI licences) and the categorical-chart case right only 3/5. The tuned
+build gets 4/5 and 4/5 on those, 7/7 on a full pass. Most of a long description is not doing
+routing work — which is the premise this plan rests on, now measured rather than asserted.
 
-**A retracted conclusion, kept here because the mistake is instructive.** A first pass measured
-the corrected chart case (#3) at `render_bars` 3/3 under `today` and 2/3 under the derived
-summaries, and concluded that authored summaries were a hard prerequisite. It did not replicate:
-the next run had `b-derived` at 3/3 and the AUTHORED build at 2/3 — the reverse. Case #3 is
-simply unstable under mode (b), and an n=3 comparison cannot tell an unstable case from a
-summary-quality effect. Do not read a 3-sample difference off this harness as a finding; the
-`--suite` runner is single-shot per case by design, so repeat a case before believing it.
+Four results to carry forward.
 
-What DID replicate, and is the more interesting result: the FL-license case (#2) chooses
-`public_records` — the wrong tool, since that source covers medical NPI licences, not insurance
-— 5/5 under `today` AND 5/5 under derived summaries, but picks `portal_search` correctly under
-the AUTHORED summary. A short, aimed summary routed BETTER than 2.5k chars of full description.
-That is the case for authored summaries: not that deferral breaks routing, but that most of a
-long description is not doing routing work at all.
+(1) **n=1 is noise, including on the baseline.** `today` itself is only 3/5 on the chart case.
+An earlier pass read a 3-sample difference as a regression and was wrong; it did not replicate.
+The `--suite` runner is single-shot per case by design, so repeat any case n>=5 before believing
+a difference. Any acceptance gate needs the same.
 
-Three more results to carry forward. (1) `char // 4` OVERESTIMATES this
-tokenizer by ~22% (27,748 predicted vs 22,694 measured), so the `--report` figures are a
-conservative upper bound; trust `input_tokens` from a probe over the report. (2) **b-strict's
-prose gate was ignored entirely** — `tool_explain` was never called once, in any mode, even
-though every deferred summary in b-strict ended "Call tool_explain first." A mandatory
-explain-before-use step therefore has to be enforced in the HANDLER (refuse-or-auto-explain on
-first call), exactly like the scout's search budget, which is engine-enforced for the same
-reason. Prose the model is free to skip is not a gate.
+(2) **Summary WORDING is high-leverage and not intuitive.** One line, three phrasings, probed
+n=5 on the same prompt: a verb-led "Graph numbers you already have BY CATEGORY…" scored 2/5, a
+"Render a categorical breakdown…" version 1/5, and "Show numbers you already have as a bar
+graph…" 4/5. The winner puts the NOUN PHRASE the owner would actually type ("as a graph") where
+the request will match it. Author to the phrasing the request arrives in, not the vocabulary the
+codebase uses — and probe each line rather than trusting a style rule, this one included.
+
+(3) **The b-strict prose gate does not work.** `tool_explain` was never called once, in any mode,
+even though every deferred summary in b-strict ended "Call tool_explain first." A mandatory
+explain-before-use step has to be enforced in the HANDLER (refuse-or-auto-explain on first
+call), exactly like the scout's search budget, which is engine-enforced for the same reason.
+Prose the model is free to skip is not a gate, and the 245 tokens it costs buy nothing alone.
+
+(4) `char // 4` overestimates this tokenizer by ~22%, so `--report` is a conservative upper
+bound; trust a probe's `input_tokens` over it.
 
 Usage:
     scripts/prefill-experiment.py --report
@@ -152,7 +156,13 @@ AUTHORED = {
     "read_plan": "Read this conversation's plan and where you are in it. Call it before working a step.",
     "remove_external_video": "Stage the removal of one library video for the owner's approval: 'delete that video'.",
     "remove_research_report": "Stage the removal of one saved report for the owner's approval: 'delete that report'.",
-    "render_bars": "Graph numbers you already have BY CATEGORY — 'plot/graph/chart this by X', 'how many per Y', 'compare X across Y'. Bars, not a time line.",
+    # Wording matters more than content here, and this line is the proof. Three variants were
+    # probed n=5 on "I counted 12 launches by SpaceX, 4 by ULA and 2 by Rocket Lab — show me
+    # that as a graph": a verb-led version ("Graph numbers you already have BY CATEGORY…") got
+    # render_bars 2/5, a "Render a categorical breakdown…" version 1/5, and this one — which
+    # puts the NOUN PHRASE "a bar graph" where the owner's own words are — 4/5. Match the
+    # phrasing the request will arrive in, not the vocabulary the codebase uses.
+    "render_bars": "Show numbers you already have as a bar graph — one bar per category. For 'show me that as a graph', 'how many per Y', 'compare X across Y' when the x-axis is categories, not dates.",
     "render_chart": "Graph numbers you already have OVER TIME — 'plot/graph/chart this trend' when the x-axis is dates. Lines, not categories.",
     "research_report": "Search or re-read the owner's saved deep-research reports: 'what did that report say', or to build on an earlier run.",
     "science_search": "Search scholarly literature — arXiv, PubMed, Scholar — for paper leads: 'what does the research say', 'any studies on'.",
