@@ -27,7 +27,8 @@
 #   3. QUIESCE: stop everything but the control plane (db/api/supervisor/proxy/cloudflared)
 #   4. reclaim hardening, image build              — quiesced
 #   5. pause the api too, rebuild the gateway, drop caches, smoke test, empty it again
-#      — the ~60 GB model load happens here, with as little else resident as it ever gets
+#      — the smoke test loads the SMALLEST installed model (~1 GB) and probes that same
+#      model, so this phase no longer allocates tens of gigabytes at all
 #   6. migrate, recreate the stack, restore everything the quiesce stopped
 #   7. model syncs, gateway restart, prune         — stack up
 #
@@ -290,11 +291,11 @@ unquiesce_stack() {
 #
 # The api is deliberately kept up through the build so the PWA can stream this log — but it
 # runs the keep-warm prime (jbrain.llm.warm_keeper), which retries every 5s and loads the
-# CHAT model the instant the gateway answers. That is a second ~60 GB allocation racing the
-# smoke test's, and it goes through the residency budget while the smoke test does not, so
-# neither serializes against the other. It would defeat the headroom gate outright: the gate
-# samples free memory once, then allocates on top of whatever the prime took. Appended to
-# QUIESCED so the ordinary restore path and the EXIT trap both cover it.
+# CHAT model the instant the gateway answers. On this box that is ~60 GB, allocated in the
+# middle of an update, by a process nobody asked to do it. The smoke test itself no longer
+# loads anything that big, so the prime is now the LARGEST allocation the phase could make —
+# which is exactly why it still has to be stopped. Appended to QUIESCED so the ordinary
+# restore path and the EXIT trap both cover it.
 pause_api() {
   echo "[update] pausing api for the model load (its keep-warm prime would race it)"
   docker compose stop -t 30 api >/dev/null 2>&1 || echo "[update] could not pause api"
@@ -571,10 +572,12 @@ docker compose $JCODE_PROFILE $TUNNEL_PROFILE build
 # into the GPU at all, and it used to be reachable only by editing .env on the host.
 #
 # This block runs while the stack is QUIESCED and before the recreate, not after it as it
-# once did. The tool probe loads gpt-oss (~60 GB of weights on this box) and that load is
-# what the kernel trace caught freezing the host — so it happens at the emptiest moment of
-# the whole update, not on top of a freshly-recreated stack and a page cache still full of
-# the layers the build just wrote.
+# once did. The smoke test itself is now cheap — it loads the smallest installed model and
+# runs the tool probe against that same model, rather than loading gpt-oss (~59 GB) for the
+# probe, because THAT load is what the kernel traces caught freezing the host. Doing it here
+# anyway is the belt to that braces: the gateway rebuild still pulls and writes multi-GB
+# layers, and the keep-warm prime would still load a big model the moment the gateway
+# answers (which is what pause_api below is for).
 AUTO_UPDATE_ON=1
 if grep -q '^LOCAL_LLM_AUTO_UPDATE=false' .env; then
   AUTO_UPDATE_ON=''
@@ -636,9 +639,10 @@ if [ -n "$LOCAL_LLM_RUNNING" ] && [ -n "$AUTO_UPDATE_ON" ]; then
   fi
 fi
 
-# Release whatever the smoke test loaded before the stack comes back. gpt-oss is ~60 GB
-# of pinned unified memory, and recreating a dozen containers on top of that is the same
-# collision the pre-build unload exists to prevent, just arriving from the other end. The
+# Release whatever is loaded before the stack comes back. The smoke test's own model is
+# small now, but this also catches anything the gateway picked up on its own, and the rule
+# stands either way: recreating a dozen containers on top of pinned unified memory is the
+# same collision the pre-build unload exists to prevent, arriving from the other end. The
 # gateway keeps running, holding nothing — it reloads on demand.
 # Gated on AUTO_UPDATE_ON as well: with auto-update off nothing above ever started the
 # gateway (it is still removed at this point), so this would spend a compose run on an

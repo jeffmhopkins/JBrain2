@@ -65,15 +65,18 @@ class _FakeGateway:
         self.probed.append(served_model)
 
 
-async def test_loads_smallest_installed_tool_capable_model_then_probes_gpt_oss() -> None:
+async def test_loads_the_smallest_model_and_probes_that_same_model() -> None:
     gw = _FakeGateway()
     ok, messages = await smoketest.run_smoketest(["gpt-oss-120b", "qwen3.5-0.8b", "qwen3.5-4b"], gw)
     assert ok
     # Smallest installed tool-capable model is qwen3.5-0.8b (~0.9 GiB) — the cheapest
     # possible load, so a broken build fails without reading a big model's weights.
     assert gw.loaded == ["qwen3.5-0.8b"]
-    # gpt-oss installed → the tool-call regression guard runs against its served name.
-    assert gw.probed == ["gpt-oss-120b"]
+    # The probe reuses it. gpt-oss is installed but NOT resident, so it is deliberately
+    # not loaded for the sake of a probe: ~59 GB is what froze this box mid-update, and a
+    # rollback net that can take the machine down is worse than the regression it guards.
+    assert gw.probed == ["qwen3.5-0.8b"]
+    assert any("not resident" in m and "gpt-oss-120b" in m for m in messages)
 
 
 async def test_load_failure_fails_the_smoke_and_skips_the_probe() -> None:
@@ -85,8 +88,8 @@ async def test_load_failure_fails_the_smoke_and_skips_the_probe() -> None:
 
 
 async def test_tool_probe_failure_fails_the_smoke() -> None:
-    # The load succeeds but the tool-carrying turn crashes (the past gpt-oss regression):
-    # still a rollback signal.
+    # The load succeeds but the tool-carrying turn crashes (the class of regression this
+    # exists for): still a rollback signal.
     gw = _FakeGateway(fail_probe=True)
     ok, messages = await smoketest.run_smoketest(["gpt-oss-120b", "qwen3.5-0.8b"], gw)
     assert not ok
@@ -94,12 +97,14 @@ async def test_tool_probe_failure_fails_the_smoke() -> None:
     assert any("tool-call probe FAILED" in m for m in messages)
 
 
-async def test_no_gpt_oss_installed_skips_the_tool_probe() -> None:
+async def test_the_tool_probe_runs_without_gpt_oss_installed() -> None:
+    # It used to be skipped entirely on a box with no gpt-oss, which left those boxes with
+    # no tool-call coverage at all. Probing the loaded model covers every box.
     gw = _FakeGateway()
     ok, _ = await smoketest.run_smoketest(["qwen3.5-4b", "qwen3.5-0.8b"], gw)
     assert ok
     assert gw.loaded == ["qwen3.5-0.8b"]
-    assert gw.probed == []  # no gpt-oss → no tool probe
+    assert gw.probed == ["qwen3.5-0.8b"]
 
 
 async def test_no_installed_tool_capable_models_is_a_pass_noop() -> None:
@@ -144,20 +149,33 @@ async def test_refuses_the_load_when_the_box_has_no_headroom(tmp_path) -> None:
     assert any("NOT ENOUGH MEMORY" in m for m in messages)
 
 
-async def test_refuses_the_expensive_tool_probe_while_allowing_the_cheap_load(
+async def test_the_whole_smoke_test_fits_in_a_box_far_too_small_for_gpt_oss(
     tmp_path,
 ) -> None:
-    # The load picks the SMALLEST model (1.4 GB resident) but the probe loads gpt-oss-120b
-    # (63.5 GB) — it is the probe, not the cheap load, that the kernel trace caught
-    # freezing the box. 40 GB clears the first and must not clear the second.
+    # 40 GB is nowhere near gpt-oss's 63.5 GB resident cost, and the smoke test must not
+    # care: it loads 1.4 GB and probes what it loaded. This is the shape the change buys —
+    # the update's peak allocation stops depending on the biggest model installed.
     gw = _FakeGateway()
     ok, messages = await smoketest.run_smoketest(
         ["gpt-oss-120b", "qwen3.5-0.8b"], gw, meminfo_path=_meminfo(tmp_path, 40)
     )
-    assert not ok
-    assert gw.loaded == ["qwen3.5-0.8b"], "the cheap load fits and must still run"
-    assert gw.probed == [], "the 63.5 GB probe must be refused"
-    assert any("NOT ENOUGH MEMORY" in m and "gpt-oss-120b" in m for m in messages)
+    assert ok, f"a 40 GB box must still be able to vet a build: {messages}"
+    assert gw.loaded == ["qwen3.5-0.8b"] and gw.probed == ["qwen3.5-0.8b"]
+    assert not any("NOT ENOUGH MEMORY" in m for m in messages)
+
+
+async def test_gpt_oss_is_probed_when_something_else_already_loaded_it(tmp_path) -> None:
+    # The harmony grammar path is still the one with a regression on record, so it is
+    # probed when that costs nothing — a gateway already serving it, rather than an update
+    # that just emptied it.
+    gw = _FakeGateway(resident={"gpt-oss-120b"})
+    ok, messages = await smoketest.run_smoketest(
+        ["gpt-oss-120b", "qwen3.5-0.8b"], gw, meminfo_path=_meminfo(tmp_path, 40)
+    )
+    assert ok
+    assert gw.probed == ["qwen3.5-0.8b", "gpt-oss-120b"]
+    assert gw.loaded == ["qwen3.5-0.8b"], "resident means resident — do not reload it"
+    assert any("already resident" in m for m in messages)
 
 
 async def test_a_box_with_room_runs_the_whole_smoke_test(tmp_path) -> None:
@@ -166,7 +184,7 @@ async def test_a_box_with_room_runs_the_whole_smoke_test(tmp_path) -> None:
         ["gpt-oss-120b", "qwen3.5-0.8b"], gw, meminfo_path=_meminfo(tmp_path, 110)
     )
     assert ok
-    assert gw.loaded == ["qwen3.5-0.8b"] and gw.probed == ["gpt-oss-120b"]
+    assert gw.loaded == ["qwen3.5-0.8b"] and gw.probed == ["qwen3.5-0.8b"]
     assert any("110 GB available" in m for m in messages)
 
 
@@ -199,15 +217,14 @@ async def test_an_already_resident_model_is_never_gated(tmp_path) -> None:
     already loaded. The keep-warm prime in the running api creates the same situation.
     """
     gw = _FakeGateway()
-    # 70 GB clears gpt-oss's first load (63.5 + 20 = 83.5 would NOT) only because the
-    # probe sees it as resident; make the point sharply by giving it just enough for the
-    # first load and nowhere near enough for a second.
+    # A gpt-oss-only box: the smallest installed model IS gpt-oss, so step 1 loads it and
+    # the probe then reuses it. 90 GB clears the one load (63.5 + 20 = 83.5); charging for
+    # it a second time would need 147 GB and refuse every update forever.
     ok, messages = await smoketest.run_smoketest(
         ["gpt-oss-120b"], gw, meminfo_path=_meminfo(tmp_path, 90)
     )
     assert ok, f"gpt-oss-only box must be able to pass: {messages}"
     assert gw.loaded == ["gpt-oss-120b"] and gw.probed == ["gpt-oss-120b"]
-    assert any("already resident" in m for m in messages)
 
 
 async def test_an_unreadable_roster_gates_rather_than_crashing(tmp_path) -> None:

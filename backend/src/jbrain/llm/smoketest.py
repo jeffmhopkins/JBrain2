@@ -16,12 +16,24 @@ tool-carrying turn, not that quality is unchanged:
   1. Load the smallest installed tool-capable model. A build that can't parse an
      architecture (the Nemotron-3.5 / hybrid-Mamba failure mode) crashes
      llama-server at load, which surfaces as a `LocalGatewayError` here.
-  2. If gpt-oss is installed, run one tool-carrying probe against it — the exact
-     surface the past regression broke.
+  2. Run one tool-carrying probe against THAT SAME model — already resident, so
+     the probe allocates nothing.
 
-Both steps are gated on the box having ROOM for the weights (see
-`LOAD_HEADROOM_GB`): step 2 loads gpt-oss-120b, ~60 GB on the reference box, and
-a load with no headroom is what hard-froze this hardware.
+**Why the probe no longer targets gpt-oss.** It used to, because the regression
+this exists to catch was a harmony tool-grammar segfault, and harmony is gpt-oss.
+But gpt-oss-120b is ~59 GB, and loading it is precisely what the kernel traces
+caught freezing this box mid-update — a freeze that takes the machine down to a
+power cycle and, incidentally, prevents the rollback this test exists to trigger.
+A safety net that can kill the patient is the wrong net. So the probe runs against
+the model already in memory, and gpt-oss is probed ONLY when something else has
+already made it resident, where it is free.
+
+That is a real, deliberate loss of coverage: harmony has its own chat template and
+its own grammar path in llama.cpp, so a harmony-specific regression can now ship
+unnoticed. The trade is asymmetric and that is the whole argument — a missed
+harmony regression breaks gpt-oss tool turns, which the owner can route around
+from the PWA in seconds, while the load that would have caught it can hard-lock a
+box they operate remotely with no terminal.
 
 It talks to the gateway's readiness surface (`LocalGatewayClient` — model load +
 a discarded probe generation), NOT the LLM adapter: these are readiness probes,
@@ -41,8 +53,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 # gpt-oss is the served model whose tool-call path a rolling llama.cpp build
-# regressed before (a harmony grammar segfault over the tool union). Probe it with
-# a tool ONLY when it is installed; other boxes skip straight to the load check.
+# regressed before (a harmony grammar segfault over the tool union). It is still
+# worth probing when it happens to be resident already — but never worth LOADING
+# ~59 GB for, which is what the module docstring above is about.
 TOOL_PROBE_MODEL_ID = "gpt-oss-120b"
 
 # Kernel telemetry, not stored data: read directly rather than through the storage
@@ -199,19 +212,37 @@ async def run_smoketest(
         messages.append(f"load FAILED — {smallest.id} ({smallest.served_model}): {exc}")
         return False, messages
 
+    # The tool-carrying turn, against the model that is ALREADY loaded — the whole point
+    # of reusing it is that this step allocates nothing.
+    try:
+        await gateway.tool_probe(smallest.served_model)
+        messages.append(f"tool-call probe OK — {smallest.id}")
+    except LocalGatewayError as exc:
+        messages.append(f"tool-call probe FAILED — {smallest.id}: {exc}")
+        return False, messages
+
+    # Harmony coverage, but only when it is free. During an update the gateway has just
+    # been emptied, so this normally reports the skip and moves on; it earns its keep when
+    # the smoke test runs against a gateway that is already serving.
     probe = local_catalog.get(TOOL_PROBE_MODEL_ID)
-    if probe is not None and TOOL_PROBE_MODEL_ID in set(local_models):
-        # The expensive one — gpt-oss-120b is ~60 GB, and it is THIS load, not the cheap
-        # one above, that the kernel trace caught freezing the box. `_room_for` re-reads
-        # MemAvailable rather than reusing the number above, because the first load just
-        # took its own weights out of the total.
-        if not await _room_for(probe, gateway, meminfo, messages):
-            return False, messages
+    # `is not smallest`: on a gpt-oss-only box it IS the model just probed, and probing the
+    # same model twice proves nothing twice.
+    if probe is not None and probe is not smallest and TOOL_PROBE_MODEL_ID in set(local_models):
         try:
-            await gateway.tool_probe(probe.served_model)
-            messages.append(f"tool-call probe OK — {probe.id}")
-        except LocalGatewayError as exc:
-            messages.append(f"tool-call probe FAILED — {probe.id}: {exc}")
-            return False, messages
+            resident = await gateway.running()
+        except Exception:  # noqa: BLE001 — an unreadable roster just means "skip the bonus"
+            resident = set()
+        if probe.served_model not in resident:
+            messages.append(
+                f"{probe.id} not resident — skipping its harmony tool probe rather than "
+                f"loading {probe.size_gb:.0f} GB to run it"
+            )
+        else:
+            try:
+                await gateway.tool_probe(probe.served_model)
+                messages.append(f"tool-call probe OK — {probe.id} (was already resident)")
+            except LocalGatewayError as exc:
+                messages.append(f"tool-call probe FAILED — {probe.id}: {exc}")
+                return False, messages
 
     return True, messages

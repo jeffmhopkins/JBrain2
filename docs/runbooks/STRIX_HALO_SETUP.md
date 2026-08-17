@@ -584,21 +584,35 @@ Its phase order is deliberate:
    any way to tell a slow build from a wedged one.
 3. Reclaim hardening and the image build — against the quiesced stack.
 4. **Pause the `api` too**, rebuild the gateway on the floating tag, **drop the page
-   cache**, then run the smoke test. The tool probe loads gpt-oss-120b (~59 GB), so it
-   happens with as little else resident as the box ever gets.
+   cache**, then run the smoke test — which loads the **smallest installed model** (~1 GB
+   with a tiny Qwen present) and probes that same model, so this phase does not allocate
+   tens of gigabytes at all.
 5. Empty the gateway again, migrate, recreate the stack, restore everything the quiesce
    stopped.
 6. Model syncs, gateway restart, prune.
 
-**Why the `api` is paused for step 4 specifically.** It is deliberately kept up through the
-build so you can watch the log — but it runs the keep-warm prime, which retries every five
-seconds and loads the chat model the instant the gateway answers. That is a second ~60 GB
-allocation racing the smoke test's, and the two do not serialize against each other (the
-prime goes through the residency budget; the smoke test's readiness probe does not). It
-would defeat the memory check below outright, since the check samples free memory once and
-then allocates on top of whatever the prime took. So the PWA goes dark for the gateway
-rebuild and smoke test — minutes, and only on an update where the gateway image actually
-changed — and comes back with the full log intact.
+**The smoke test does not load a big model.** It used to run its tool probe against
+gpt-oss-120b, because the regression it guards against was a *harmony* tool-grammar
+segfault and harmony is gpt-oss. But loading ~59 GB is precisely what the kernel traces
+caught freezing this box mid-update — and a frozen box never reaches the rollback the smoke
+test exists to trigger. So the probe now runs against the model already loaded in step 1,
+and gpt-oss is probed **only when something else has already made it resident**, where it
+costs nothing.
+
+> **This is a deliberate coverage trade, not a free win.** Harmony has its own chat template
+> and its own grammar path in llama.cpp, so a harmony-specific regression can now ship
+> unnoticed. The asymmetry is the argument: a missed harmony regression breaks gpt-oss tool
+> turns, which you can route around from Settings in seconds, while the load that would have
+> caught it can hard-lock a box you operate remotely with no terminal. If you ever want the
+> old behaviour back, the probe target is `smoketest.TOOL_PROBE_MODEL_ID`.
+
+**Why the `api` is paused for step 4 anyway.** It is deliberately kept up through the build
+so you can watch the log — but it runs the keep-warm prime, which retries every five seconds
+and loads the chat model the instant the gateway answers. That is ~60 GB allocated mid-update
+by a process nobody asked to do it, and now that the smoke test is cheap it is the *largest*
+allocation this phase could make. So the PWA goes dark for the gateway rebuild and smoke
+test — minutes, and only on an update where the gateway image actually changed — and comes
+back with the full log intact.
 
 **Recovering a quiesce that never finished.** The `EXIT` trap restores the stopped services
 on an ordinary failure or a caught signal, but it cannot cover a `SIGKILL` (the supervisor's
@@ -617,7 +631,8 @@ the reading into real free pages; if the drop doesn't move the number, the updat
 so rather than letting the check quietly measure cache. And the smoke test then **refuses a
 load it cannot afford**: it checks `MemAvailable` against the model's resident cost (weights
 **plus KV cache**) and `smoketest.LOAD_HEADROOM_GB`, and if short it reports the shortfall
-and fails — which routes into the existing rollback, so a box without the room keeps the
+and fails. With a tiny model installed that check now passes trivially — it stays because it
+is the guard for a box whose *smallest* installed model is a big one — which routes into the existing rollback, so a box without the room keeps the
 pinned, known-good base instead of betting the host on a verification step. In the update log
 that reads as `NOT ENOUGH MEMORY to load … REFUSED`. A model the gateway already holds is
 never charged for, since loading it allocates nothing.
