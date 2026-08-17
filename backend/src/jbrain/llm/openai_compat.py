@@ -196,9 +196,14 @@ class OpenAiCompatClient:
         # non-reasoning local model never reaches here with a level set. Translation is
         # per model family:
         #   - A Qwen HYBRID reasoner toggles thinking through its chat template, NOT a
-        #     `reasoning_effort` level (which its template ignores). So map the level
+        #     top-level `reasoning_effort` (which its template ignores). So map the level
         #     onto that toggle — "none" → enable_thinking=false (a real "reasoning off"),
-        #     any other level → thinking on — and don't send `reasoning_effort`.
+        #     any other level → thinking on.
+        #   - A NEWER hybrid (Qwen3.8 onward) reads a `reasoning_effort` level from that same
+        #     chat-template kwargs bag, and falls back to the card's own default when given
+        #     none — `xhigh` for Qwen3.8, which spends thousands of reasoning tokens on trivial
+        #     prompts. So when the model publishes a level map, send the mapped level too. The
+        #     toggle still leads: "none" turns thinking off and no level is sent.
         #   - xAI Grok and the harmony/GLM local reasoners take the effort verbatim
         #     (they understand "none").
         if reasoning_effort is None or self.provider not in ("xai", "local"):
@@ -209,6 +214,9 @@ class OpenAiCompatClient:
         if model is not None and model.hybrid_thinking:
             kwargs = cast(dict[str, Any], payload.setdefault("chat_template_kwargs", {}))
             kwargs["enable_thinking"] = reasoning_effort != "none"
+            mapped = model.thinking_effort_map.get(reasoning_effort)
+            if mapped:
+                kwargs["reasoning_effort"] = mapped
             return
         payload["reasoning_effort"] = reasoning_effort
 

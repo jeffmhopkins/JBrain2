@@ -59,7 +59,14 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   (re-stamps the gateway config and unloads it, so the next request relaunches with them).
   Only flags on `llm_settings.EXTRA_ARG_FLAGS` are accepted: llama-server **refuses to start**
   on an unknown flag, so an unrestricted argv here could make a model permanently unloadable
-  from a box with no shell. Clearing is the same call with `{"args": []}`.
+  from a box with no shell. Clearing is the same call with `{"args": []}` — and clearing does
+  not need the model to be loadable, so a bad *value* is always recoverable. The list covers
+  `--swa-full`, `--slot-save-path`, `-b`/`-ub`, and the four speculative-decoding knobs
+  (`--spec-type`, `--spec-draft-n-max`, `--spec-draft-n-min`, `--spec-draft-p-min`) — those
+  because their right values are empirical and hardware-specific, so without a live path a
+  single tuning iteration would cost a catalog edit, a release and an Ops → Update. Setting
+  `--spec-type` here also pins the model to one slot: the config generator derives that from
+  the flags it is about to write, so an operator flag gets the same clamp a catalog flag does.
 - `PUT /api/debug/llm/local-models/{id}/context-window` — the served `-c`. On this surface
   because window and KV are one decision: `--swa-full` doubles a model's KV and halving the
   window pays for it exactly.

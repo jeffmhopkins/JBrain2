@@ -22,6 +22,11 @@
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
+#   scripts/debug-connect.sh props <model_id>          # engine's own build / n_ctx / total_slots
+#   scripts/debug-connect.sh extra-args <id> --swa-full  # try launch flags live; no args clears
+#   scripts/debug-connect.sh ctx <id> 65536            # the served -c
+#   scripts/debug-connect.sh prime <id>                # real jerv prime, returns elapsed_ms
+#   scripts/debug-connect.sh slot <id> 0 save|restore|erase  # llama-server KV-slot state files
 #   scripts/debug-connect.sh metrics                   # host telemetry: GPU busy %, power, load
 #   scripts/debug-connect.sh llm                       # show live routing
 #   scripts/debug-connect.sh llm-set agent.turn local:gpt-oss-120b high
@@ -32,7 +37,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
-  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -258,6 +263,43 @@ PY
     [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
     _call GET "/api/debug/llm/gateway-logs?tail=$tail"
     ;;
+
+  props) # <model_id> — the engine's OWN build / n_ctx / total_slots (loads the model if cold)
+    m="${1:?usage: debug-connect.sh props <model_id>}"
+    _call GET "/api/debug/llm/local-models/$m/props" | _pp
+    ;;
+
+  extra-args) # <model_id> [flag ...] — try llama-server launch flags live; no args CLEARS them
+    m="${1:?usage: debug-connect.sh extra-args <model_id> [flag ...]}"; shift
+    body="$(ARGS="$*" python3 -c 'import json,os,shlex
+print(json.dumps({"args": shlex.split(os.environ["ARGS"])}))')"
+    _call PUT "/api/debug/llm/local-models/$m/extra-args" "$body" | _pp
+    ;;
+
+  ctx) # <model_id> <tokens> — the served -c, re-stamped and applied on the model's next load
+    m="${1:?usage: debug-connect.sh ctx <model_id> <tokens>}"
+    n="${2:?usage: debug-connect.sh ctx <model_id> <tokens>}"
+    _call PUT "/api/debug/llm/local-models/$m/context-window" "{\"context_window\": $n}" | _pp
+    ;;
+
+  prime) # <model_id> — run the real jerv prime and return elapsed_ms: the measurement instrument
+    m="${1:?usage: debug-connect.sh prime <model_id>}"
+    _call POST "/api/debug/llm/local-models/$m/prime" '{}' | _pp
+    ;;
+
+  slot) # <model_id> <slot> <save|restore|erase> [filename] — llama-server KV-slot state files
+    m="${1:?usage: debug-connect.sh slot <model_id> <slot> <action> [filename]}"
+    s="${2:?usage: debug-connect.sh slot <model_id> <slot> <action> [filename]}"
+    a="${3:?usage: debug-connect.sh slot <model_id> <slot> <action> [filename]}"
+    q="action=$a"; [ -n "${4:-}" ] && q="$q&filename=$4"
+    _call POST "/api/debug/llm/local-models/$m/slots/$s?$q" '{}' | _pp
+    ;;
+
+  # NB: the `-np` parallel-slot count has NO command here on purpose. Its route
+  # (`PUT /api/settings/llm/local-models/{id}/parallel-slots`) is owner-authenticated, not a
+  # capability-token route, so a debug token cannot set it — it is a PWA action (Settings →
+  # LLM → On-box models). A speculative model is clamped to one slot in the config generator
+  # regardless, so a stale override there cannot break it.
 
   metrics | gpu) _call GET /api/debug/host/metrics | _pp ;;  # host telemetry: GPU busy %, power, load
 

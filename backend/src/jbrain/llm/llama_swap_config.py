@@ -85,6 +85,42 @@ def resolve_weight(root: str, model_id: str, pattern: str) -> str:
     return rels[0]
 
 
+def unresolved_ids(root: str, models: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+    """Catalog ids whose REQUIRED weight files don't all resolve under `root`, in manifest
+    order — the set a provisioning run still has to download.
+
+    Why the provisioning scripts must not use a bare `*.gguf` presence check instead: a model's
+    required file set is a property of the CATALOG, and it changes between releases. When an
+    entry gains a file it didn't need before — a vision projector added to a variant that was
+    text-only — a directory holding the previous release's weights still matches `*.gguf` and
+    reads as complete, so the download is skipped. `render` then resolves every glob for the
+    WHOLE roster in one pass and raises on the one that's missing, which takes every other
+    model's config down with it: the deploy re-stamp aborts, and the boot reconcile
+    (`api.llm_settings.reconcile_gateway_config`, which swallows render failures so a bad glob
+    can never block startup) silently applies nothing. Resolving exactly the globs `render`
+    will is the only check that cannot drift from what the config generator demands."""
+    missing: list[str] = []
+    for m in models:
+        model_id = str(m["id"])
+        globs = [str(m["gguf_include"])]
+        if m.get("mmproj_include"):
+            globs.append(str(m["mmproj_include"]))
+        for pattern in globs:
+            try:
+                resolve_weight(root, model_id, pattern)
+            except FileNotFoundError:
+                missing.append(model_id)
+                break
+    return tuple(missing)
+
+
+def _is_speculative(extra_server_args: Sequence[str]) -> bool:
+    """Whether a model's serving flags turn on speculative decoding (`--spec-type <mode>`),
+    which constrains it to a single sequence. Read off the flags rather than a catalog boolean
+    so the constraint can't drift from the thing that causes it."""
+    return any(a == "--spec-type" for a in extra_server_args)
+
+
 def render(
     models: Sequence[Mapping[str, object]],
     root: str,
@@ -117,7 +153,21 @@ def render(
         model_id = str(m["id"])
         gguf = resolve_weight(root, model_id, str(m["gguf_include"]))
         window = windows.get(model_id, int(cast(int, m["context_window"])))
+        catalog_args = tuple(
+            str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ())
+        )
+        operator_args = tuple(str(a) for a in extra_args.get(model_id, ()))
         n_slots = max(1, slots.get(model_id, 1))
+        # Either source can turn speculation on: the catalog's static flags, or an operator
+        # trying `--spec-type` remotely via the extra-args route. Both must pin the model to
+        # one slot, so the test reads the flags actually going on the command line.
+        if _is_speculative(catalog_args + operator_args):
+            # llama.cpp's speculative paths serve ONE sequence: MTP takes no second parallel
+            # slot, and draft acceptance collapses as concurrent sequences rise (reported on
+            # this exact gfx1151 SoC). A saved -np override would silently defeat the very
+            # speedup the model was installed for, so the serving mode wins over the setting
+            # rather than the operator having to know the interaction.
+            n_slots = 1
         cmd = [
             "llama-server",
             "--host",
@@ -153,12 +203,14 @@ def render(
             "-ngl",
             "999",
         ]
-        if n_slots > 1:
-            # A dedicated interactive slot beside the background one: llama-server routes each
-            # request to the slot with the longest matching prefix, so jerv turns keep their
-            # primed KV in one slot while title/background traffic uses the other — neither can
-            # evict the other's cache (docs/runbooks/STRIX_HALO_SETUP.md).
-            cmd += ["-np", str(n_slots)]
+        # ALWAYS explicit, even at 1. llama-server's `-np` default is `auto`, which current
+        # builds resolve to a multi-slot value — so omitting the flag does NOT mean one slot,
+        # and a single-slot serving mode would be silently violated. Above 1 this is the
+        # dedicated interactive slot beside the background one: llama-server routes each
+        # request to the slot with the longest matching prefix, so jerv turns keep their primed
+        # KV in one slot while title/background traffic uses the other — neither can evict the
+        # other's cache (docs/runbooks/STRIX_HALO_SETUP.md).
+        cmd += ["-np", str(n_slots)]
         # A thinking model emits its reasoning inline as `<think>…</think>`;
         # `--reasoning-format deepseek` (paired with --jinja above) makes llama.cpp parse
         # those tags out of `content` into the `reasoning_content` channel OpenAI-compatible
@@ -181,11 +233,9 @@ def render(
             cmd.append("--swa-full")
         # Model-specific serving flags (e.g. the MTP variant's `--spec-type draft-mtp …`
         # self-speculative-decoding config), appended verbatim after the shared flags.
-        for flag in cast("Sequence[str]", m.get("extra_server_args") or ()):
-            cmd.append(str(flag))
+        cmd += catalog_args
         # Operator overrides last, so they append to (never reorder) the catalog's own flags.
-        for flag in extra_args.get(model_id, ()):
-            cmd.append(str(flag))
+        cmd += operator_args
         lines.append(f"  {m['served_model']}:")
         lines.append(f"    proxy: http://127.0.0.1:{port}")
         lines.append("    cmd: >")
@@ -275,9 +325,23 @@ def _saved_overrides() -> tuple[dict[str, int], dict[str, int], dict[str, list[s
 def _main(argv: list[str]) -> int:
     """CLI for the deploy re-stamp (`deploy/local-models-sync.sh`) and scripts/local-llm-setup.sh:
     `... <models_dir>` reads the MANIFEST env (catalog JSON) and writes the config, applying the
-    operator's saved context-window / slot overrides so an update never resets a raised `-c`."""
+    operator's saved context-window / slot overrides so an update never resets a raised `-c`.
+
+    `--check <models_dir>` instead PRINTS the ids whose required weights are incomplete (one per
+    line, empty when all resolve) and exits 0 — the provisioning scripts' download filter. It
+    reads the same globs the write path will, so a model that needs a NEWLY-required file is
+    re-downloaded rather than passing a `*.gguf` presence check and failing the re-stamp."""
+    if argv[:1] == ["--check"]:
+        if len(argv) != 2:
+            print("usage: ... --check <models_dir>", file=sys.stderr)
+            return 2
+        for model_id in unresolved_ids(argv[1], json.loads(os.environ["MANIFEST"])):
+            print(model_id)
+        return 0
     if len(argv) != 1:
-        print("usage: python -m jbrain.llm.llama_swap_config <models_dir>", file=sys.stderr)
+        print(
+            "usage: python -m jbrain.llm.llama_swap_config [--check] <models_dir>", file=sys.stderr
+        )
         return 2
     root = argv[0]
     models = json.loads(os.environ["MANIFEST"])

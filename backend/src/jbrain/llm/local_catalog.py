@@ -31,6 +31,22 @@ from jbrain.llm.types import Sampling
 # setup script generates.
 LOCAL_PROVIDER = "local"
 
+# Qwen3.8's chat template accepts a `reasoning_effort` level (low / medium / xhigh) ON TOP OF
+# the `enable_thinking` toggle its predecessors had, and applies `xhigh` when given none. Our
+# four settings levels map onto its three: "none" is the toggle (thinking off, so it never
+# appears here) and the rest step up. Shared by the Qwen3.8 twins so they can't drift apart.
+QWEN38_EFFORT_LEVELS: dict[str, str] = {"low": "low", "medium": "medium", "high": "xhigh"}
+
+# Qwen3.8-27B is NOT a plain dense transformer: its config declares `full_attention_interval:
+# 4`, so of 64 layers only 16 are full attention and the other 48 are Gated DeltaNet (linear
+# attention), which carries a constant state rather than a growing KV cache. Only that quarter
+# of the layers grows with context, so the KV term is roughly a quarter of what the parameter
+# count suggests — the same reason the Mamba-2 hybrids above sit far below a true dense model.
+# Kept deliberately ABOVE a strict one-quarter of the old 6.0 estimate: this figure guards a
+# residency budget on a box that hard-freezes when it runs out, so it errs high until measured
+# on-box (the gateway's /props + host metrics are the way to pin it).
+_QWEN38_KV_GB_PER_128K = 2.0
+
 
 @dataclass(frozen=True)
 class LocalModel:
@@ -70,6 +86,16 @@ class LocalModel:
     # any other level → thinking on. False for harmony/grok/GLM (they take the effort
     # verbatim) and for always-on `<think>` checkpoints (which have no off switch).
     hybrid_thinking: bool = False
+    # For a hybrid whose chat template ALSO understands a `reasoning_effort` level (Qwen3.8
+    # onward): the map from OUR routed level to the level its template accepts. The toggle
+    # alone is not enough for these — with thinking on and no level, the template applies the
+    # card's own default, which for Qwen3.8 is `xhigh`, and a trivial prompt then burns
+    # thousands of reasoning tokens (measured on-box: the same prompt took 37.9s / 439 output
+    # tokens with no level against 13.8s / 161 with thinking off, and the long run's answer
+    # was the SHORTER of the two). Empty (the default) preserves the toggle-only behaviour
+    # that is still correct for the Qwen3.5/3.6-era hybrids, whose templates ignore the field.
+    # Keys are our levels; "none" never appears — it turns thinking off via the toggle.
+    thinking_effort_map: dict[str, str] = field(default_factory=dict)
     # Extra `llama-server` flags appended verbatim to the gateway command
     # (jbrain.llm.llama_swap_config). Carries the MTP self-speculative-decoding flags
     # (`--spec-type draft-mtp …`) for the MTP variant; empty for every model whose
@@ -120,6 +146,23 @@ class LocalModel:
     @property
     def spec(self) -> str:
         return f"{LOCAL_PROVIDER}:{self.served_model}"
+
+    @property
+    def is_speculative(self) -> bool:
+        """Served with speculative decoding (`--spec-type <mode>` in its serving flags).
+        Read off the flags rather than a separate boolean so the fact and its cause can't
+        drift apart; `llama_swap_config._is_speculative` is the same test on the manifest
+        dicts the config generator sees."""
+        return "--spec-type" in self.extra_server_args
+
+    def effective_slots(self, requested: int) -> int:
+        """The `-np` this model will ACTUALLY serve with, given a requested slot count.
+        llama.cpp's speculative paths run one sequence — MTP takes no second slot, and draft
+        acceptance collapses as concurrent sequences rise — so a speculative model is pinned
+        to 1 whatever the operator saved. Everything that reasons about slots (the gateway
+        command, the residency budget, the settings drawer) goes through here, so a stale
+        override can't make one of them disagree with what the engine does."""
+        return 1 if self.is_speculative else max(1, requested)
 
     @property
     def max_context_window(self) -> int:
@@ -388,10 +431,11 @@ CATALOG: tuple[LocalModel, ...] = (
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
+        thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         # Native 262k (YaRN-extensible to ~1M upstream); serves the conservative gateway
         # default with the native window as the picker's ceiling.
         native_context_window=262144,
-        kv_gb_per_128k=6.0,
+        kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
     ),
     LocalModel(
         id="qwen3.8-27b-q4",
@@ -424,20 +468,25 @@ CATALOG: tuple[LocalModel, ...] = (
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
+        thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         native_context_window=262144,
-        kv_gb_per_128k=6.0,
+        kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
     ),
     LocalModel(
         id="qwen3.8-27b-mtp",
-        label="Qwen3.8 27B · MTP (faster text, no vision)",
+        label="Qwen3.8 27B · MTP (faster generation)",
         served_model="qwen3.8-27b-mtp",
         # Same model + sampling as the Q4 twin — MTP changes only HOW it's served, not the model.
         sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
         sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
-        # TEXT-ONLY: llama.cpp's MTP path can't run alongside the vision projector (`--mmproj`),
-        # so this variant drops the "vision" tier and serves text/reasoning only.
-        tiers=("high",),
-        supports_vision=False,
+        # Carries vision UNDER TEST. This entry shipped text-only because llama.cpp's MTP path
+        # could not run beside `--mmproj` — that crash is reported fixed upstream (b9240+), and
+        # the split is expensive here: the same Q4_K_M weights sit on disk TWICE, and every
+        # vision turn means dropping MTP entirely (which is exactly how this box ended up serving
+        # no speculative decoding at all). So the projector is back on, to be confirmed on-box.
+        # If a build regresses, drop mmproj_include + the vision tier rather than the entry.
+        tiers=("vision", "high"),
+        supports_vision=True,
         supports_tools=True,
         recommended=False,
         # Same Q4_K_M weights as qwen3.8-27b-q4 — unsloth's GGUF already ships the MTP head
@@ -448,31 +497,50 @@ CATALOG: tuple[LocalModel, ...] = (
         # serving mode you want.)
         hf_repo="unsloth/Qwen3.8-27B-GGUF",
         gguf_include="*Q4_K_M*.gguf",
-        # No projector — MTP is text-only (see the tiers note), and skipping `--mmproj` also
-        # dodges the RADV mmproj instability. So NO mmproj_include.
-        mmproj_include=None,
+        # Same F16 projector as the q4 twin, exact-named so it doesn't also pull the BF16 one.
+        mmproj_include="mmproj-F16.gguf",
         quant="Q4_K_M",
-        # Just the Q4_K_M weight (~15.9 GiB), no projector — a hair lighter than the q4 twin.
-        size_gb=15.9,
+        # The Q4_K_M weight (~15.9 GiB) plus the ~0.86 GiB F16 projector, matching the q4 twin.
+        size_gb=16.8,
         note="Dense 27B hybrid reasoner served with MTP (multi-token prediction / self-"
-        "speculative decoding) for ~1.4-2x faster TEXT generation — the same unsloth Q4_K_M "
-        "weights as qwen3.8-27b-q4, which already carry the MTP head; the --spec-type draft-mtp "
-        "flags turn it on. TEXT-ONLY: llama.cpp MTP can't serve the vision projector or a second "
-        "parallel slot, so this variant drops vision and must run single-slot (-np 1). It only "
-        "helps DECODE (prompt processing is a touch slower). Opt-in for a fast text/reasoning "
-        "driver when you don't need Qwen3.8's vision. CAVEAT: MTP on the Vulkan/RADV gateway is "
-        "build-fragile (it crashed on gfx1151 at llama.cpp's MTP launch and still has open Vulkan "
-        "MTP bugs) — since the gateway tracks llama.cpp master, verify it loads + generates after "
-        "an update; if a build regresses, uninstall this entry and use qwen3.8-27b-q4.",
+        "speculative decoding) for ~1.8-2.4x faster generation — the same unsloth Q4_K_M weights "
+        "as qwen3.8-27b-q4, which already carry the MTP head; the --spec-type draft-mtp flags "
+        "turn it on. It speeds DECODE only (prompt processing is a touch slower), and the gain "
+        "needs a few hundred output tokens to pay for itself, so a short tool call sees little. "
+        "Runs SINGLE-SLOT: llama.cpp's MTP path takes no second parallel slot, so this entry can "
+        "never hold the interactive keep-warm slot (the gateway clamps -np to 1 for it). Vision "
+        "is ON here but NOT yet confirmed on this box — the projector was dropped when MTP and "
+        "--mmproj could not coexist, which upstream reports fixed; if a build regresses, drop "
+        "the projector rather than the entry. The gateway tracks llama.cpp master, so verify it "
+        "loads and generates after an update; on a bad build fall back to qwen3.8-27b-q4.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
-        # Self-speculation off the model's own MTP head — no separate draft model. n-max 2 is the
-        # AMD/bandwidth-bound sweet spot (acceptance falls as it rises; llama.cpp's own default
-        # is 3). --spec-type/-n-max ride extra_server_args, appended verbatim to the gateway cmd.
-        extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "2"),
+        thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
+        # Same grounding floor as the twins once the projector is in play.
+        # Self-speculation off the model's own MTP head — no separate draft model, which is what
+        # makes it the right choice on unified memory: a separate drafter would read its own
+        # weights across the SAME bus the target is already bandwidth-bound on.
+        #   --spec-draft-n-max 3: llama.cpp's own default, and what every published Strix Halo
+        #     measurement uses. The 2 this carried came from recipes tuned on 24 GB discrete
+        #     cards, whose constraint is the opposite of this box's.
+        #   --spec-draft-p-min 0.6: stops a draft at the first low-confidence position instead of
+        #     always spending the full n-max on a round that will be rejected. The flag's default
+        #     is 0.00 (ungated) — a documented acceptance-killer that lets MTP decay back to
+        #     baseline on long generations, and gating is specifically a bandwidth-starved-machine
+        #     win. Set it BEFORE raising n-max: ungated, the cost of a wasted draft scales with it.
+        extra_server_args=(
+            "--image-min-tokens",
+            "1024",
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-n-max",
+            "3",
+            "--spec-draft-p-min",
+            "0.6",
+        ),
         native_context_window=262144,
-        kv_gb_per_128k=6.0,
+        kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
     ),
     LocalModel(
         id="qwen3-coder-next",
@@ -752,9 +820,13 @@ def footprint_gb(
     slot holds its own `window`-sized cache, so a second slot (the interactive
     keep-warm slot) doubles the KV cost while the weights are shared. On a Strix Halo
     box the iGPU draws from unified system RAM, so this one number is the whole cost of
-    keeping the model loaded. The residency budget compares it against live free RAM."""
+    keeping the model loaded. The residency budget compares it against live free RAM.
+
+    `slots` goes through `effective_slots`, so a speculative model costs one slot's KV even
+    with a larger override saved — matching what the gateway will really serve rather than
+    reserving for slots the engine won't allocate."""
     weights = disk_gb if disk_gb is not None else model.size_gb
-    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * max(1, slots)
+    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
     # `--swa-full` gives the sliding-window layers a full-size cache, so the KV term roughly
     # doubles. Counted here or the meter and the eviction budget would both under-report the
     # model by several GB — on a box that has hard-locked under memory pressure.

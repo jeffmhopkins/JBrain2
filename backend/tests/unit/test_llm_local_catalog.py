@@ -237,30 +237,43 @@ def test_qwen38_27b_q4_is_the_interactive_twin() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
-def test_qwen38_27b_mtp_is_a_text_only_self_speculative_variant() -> None:
+def test_qwen38_27b_mtp_is_a_self_speculative_variant_of_the_q4_twin() -> None:
     # The MTP (multi-token-prediction) serving variant of Qwen3.8-27B: same unsloth Q4_K_M weights
-    # (which already carry the MTP head) served with --spec-type draft-mtp for ~1.4-2x faster
-    # decode. TEXT-ONLY — llama.cpp MTP can't run the vision projector, so no "vision" tier and
-    # no mmproj — and driven by extra_server_args, NOT a separate MTP repo or draft file.
+    # (which already carry the MTP head) served with --spec-type draft-mtp for ~1.8-2.4x faster
+    # decode, driven by extra_server_args — NOT a separate MTP repo or draft file.
     m = local_catalog.get("qwen3.8-27b-mtp")
     q4 = local_catalog.get("qwen3.8-27b-q4")
     assert m is not None and q4 is not None
-    # Text-only high tier: not vision-capable, no projector.
-    assert m.tiers == ("high",)
-    assert m.supports_vision is False
-    assert m.mmproj_include is None
+    # Vision is ON: the projector was dropped only because llama.cpp MTP could not run beside
+    # --mmproj, and that is reported fixed upstream. The split cost a duplicate copy of the same
+    # weights AND made every vision turn mean giving up speculative decoding entirely.
+    assert m.tiers == ("vision", "high")
+    assert m.supports_vision is True
+    assert m.mmproj_include == q4.mmproj_include == "mmproj-F16.gguf"
     assert m.supports_tools
     # Same weights + repo as the q4 twin (MTP is embedded in unsloth's GGUF, no separate repo).
     assert m.hf_repo == q4.hf_repo == "unsloth/Qwen3.8-27B-GGUF"
     assert m.quant == "Q4_K_M" and "Q4_K_M" in m.gguf_include
-    # Distinct served name (installs beside the q4 twin), slightly lighter (no projector).
+    # Distinct served name so it installs beside the q4 twin; same footprint now it carries the
+    # same projector — the difference between them is purely how they are served.
     assert m.spec == "local:qwen3.8-27b-mtp"
     assert m.served_model != q4.served_model
-    assert m.size_gb == 15.9 and m.size_gb < q4.size_gb
-    # The MTP flags ride extra_server_args (appended verbatim to the gateway command). No
-    # --model-draft: self-speculation off the model's own baked-in MTP head.
-    assert m.extra_server_args == ("--spec-type", "draft-mtp", "--spec-draft-n-max", "2")
+    assert m.size_gb == q4.size_gb == 16.8
+    # Self-speculation off the model's own baked-in MTP head — no separate draft model, which is
+    # the point on unified memory: a drafter would read its own weights over the SAME bus the
+    # target is already bandwidth-bound on.
     assert "--model-draft" not in m.extra_server_args
+    assert m.is_speculative
+    args = m.extra_server_args
+    assert args[args.index("--spec-type") + 1] == "draft-mtp"
+    # n-max 3 is llama.cpp's own default and what every published Strix Halo measurement uses.
+    assert args[args.index("--spec-draft-n-max") + 1] == "3"
+    # p-min gates a draft on the drafter's confidence. Its flag default is 0.00 — ungated, a
+    # documented acceptance-killer that lets MTP decay back to baseline on long generations —
+    # so it MUST be set explicitly, and set before n-max is raised.
+    assert args[args.index("--spec-draft-p-min") + 1] == "0.6"
+    # Vision grounding needs the same visual-token floor as the twins now the projector is back.
+    assert args[args.index("--image-min-tokens") + 1] == "1024"
     # Still a hybrid reasoner (same model), so it keeps the deepseek reasoning format + gating.
     assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
     assert m.served_model in local_catalog.REASONING_SERVED_MODELS
@@ -453,6 +466,62 @@ def test_enabled_but_empty_selection_falls_back_to_generic_local() -> None:
     choices = provider_choices(_settings(local_llm_enabled=True, local_llm_model="my-model"))
     by_id = {c.id: c for c in choices}
     assert by_id["local"].spec == "local:my-model"
+
+
+def test_qwen38_hybrids_publish_an_effort_level_map_and_older_hybrids_do_not() -> None:
+    # Qwen3.8's chat template reads a `reasoning_effort` level ON TOP OF the enable_thinking
+    # toggle its predecessors had, and applies the card's own default (`xhigh`) when given
+    # none — which spends thousands of reasoning tokens on a trivial prompt. So the Qwen3.8
+    # entries carry a level map; the 3.5/3.6-era hybrids, whose templates genuinely ignore the
+    # field, must NOT (sending one there would be noise on the wire).
+    mapped = {m.id for m in local_catalog.CATALOG if m.thinking_effort_map}
+    assert mapped == {"qwen3.8-27b", "qwen3.8-27b-q4", "qwen3.8-27b-mtp"}
+    for model_id in mapped:
+        model = local_catalog.get(model_id)
+        assert model is not None
+        # Our four settings levels onto the card's three: "none" is absent because it is the
+        # toggle (thinking off), and "high" means the card's top level, which it spells xhigh.
+        assert model.thinking_effort_map == {"low": "low", "medium": "medium", "high": "xhigh"}
+        assert "none" not in model.thinking_effort_map
+    # A level map is only meaningful for a hybrid — every model carrying one must gate on it.
+    assert all(local_catalog.get(i).hybrid_thinking for i in mapped)  # type: ignore[union-attr]
+
+
+def test_speculative_models_are_pinned_to_a_single_slot() -> None:
+    # llama.cpp's speculative paths serve ONE sequence, so a stored -np override must not reach
+    # them. effective_slots is the single place that decides, so the gateway command, the
+    # residency budget and the settings drawer cannot disagree about what is really served.
+    mtp = local_catalog.get("qwen3.8-27b-mtp")
+    q4 = local_catalog.get("qwen3.8-27b-q4")
+    assert mtp is not None and q4 is not None
+    assert mtp.is_speculative and not q4.is_speculative
+    assert mtp.effective_slots(4) == 1
+    assert q4.effective_slots(2) == 2  # a non-speculative model keeps its override
+    assert q4.effective_slots(0) == 1  # ...floored at one
+
+
+def test_footprint_ignores_a_slot_override_on_a_speculative_model() -> None:
+    # The residency budget must reserve for the slots the engine will ACTUALLY allocate. A
+    # speculative model pinned to one slot costs one slot's KV even with 2 saved — reserving
+    # for the second would starve co-residence on a box that is already memory-tight.
+    mtp = local_catalog.get("qwen3.8-27b-mtp")
+    assert mtp is not None
+    assert local_catalog.footprint_gb(mtp, 131072, slots=2) == local_catalog.footprint_gb(
+        mtp, 131072, slots=1
+    )
+
+
+def test_qwen38_kv_estimate_reflects_its_hybrid_attention() -> None:
+    # Qwen3.8-27B declares full_attention_interval 4: only 16 of its 64 layers are full
+    # attention, the rest are Gated DeltaNet carrying a constant state. So its KV grows far
+    # slower than the parameter count suggests, and the old dense-shaped 6.0 over-reserved
+    # memory on a box that hard-freezes when it runs out. Pinned so a regression is loud.
+    for model_id in ("qwen3.8-27b", "qwen3.8-27b-q4", "qwen3.8-27b-mtp"):
+        model = local_catalog.get(model_id)
+        assert model is not None
+        assert model.kv_gb_per_128k == 2.0
+        # Still above the Mamba-2 hybrids' floor: this is a guardrail, not a measurement.
+        assert model.kv_gb_per_128k < 6.0
 
 
 def test_full_history_doubles_the_kv_term_so_the_budget_stays_honest() -> None:

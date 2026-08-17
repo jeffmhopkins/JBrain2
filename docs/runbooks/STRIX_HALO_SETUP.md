@@ -356,17 +356,64 @@ headroom matters more than the last bit of transcription accuracy. First-time ho
 kernel params) still needs Phases 1–6 on the box; the PWA path only *adds/removes
 models* on an already-enabled stack.
 
-**MTP (faster text) variant — `Qwen3.8 27B · MTP`.** A catalog entry that serves the same
+**MTP (faster generation) variant — `Qwen3.8 27B · MTP`.** A catalog entry that serves the same
 Qwen3.8-27B Q4_K_M weights as the interactive twin but with llama.cpp multi-token prediction
-(`--spec-type draft-mtp`) for ~1.4–2× faster **decode** — self-speculation off the MTP head
-that unsloth's GGUF already bakes in (no separate draft model). Two hard limits come from
-llama.cpp's MTP path, both reflected in the entry: it is **text-only** (MTP can't run the
-vision projector, so this variant has no vision) and **single-slot** (`-np 1`, so it can't take
-the interactive keep-warm second slot). It speeds decode only — prompt processing is a touch
-slower. **Caveat:** MTP on the Vulkan/RADV gateway is build-fragile (it crashed on this exact
-gfx1151 arch at llama.cpp's MTP launch and still has open Vulkan MTP bugs), and the gateway
-tracks llama.cpp master (see "Tracking newest llama.cpp" below) — so after an update, confirm
-it loads and generates; if a build regresses, uninstall it and fall back to `qwen3.8-27b-q4`.
+(`--spec-type draft-mtp`) — self-speculation off the MTP head that unsloth's GGUF already bakes
+in. Published Strix Halo measurements put it at **1.8–2.4× decode** on a dense 27B.
+
+**Why self-speculation and not a draft model.** Every published "use a small drafter" recipe
+assumes a discrete GPU. Here the drafter and the target share ONE memory bus, so a separate
+drafter reads its own weights across the exact resource the target is already bandwidth-bound
+on. Measured on this hardware class, MTP beats a separate-drafter method (DFlash) by 30–67%
+*despite* DFlash being the better algorithm on paper. Prefer serving modes that add no weights.
+
+Three things to know:
+- **Single-slot.** llama.cpp's speculative path serves one sequence, and draft acceptance
+  collapses as concurrent sequences rise (reported on this exact gfx1151 SoC). The gateway
+  **clamps `-np` to 1** for any `--spec-type` model, so a saved slot override cannot break it —
+  which also means this entry can never hold the interactive keep-warm second slot.
+- **Decode only, and it needs length.** Prompt processing is a touch slower, and the gain needs
+  a few hundred output tokens to pay for its overhead — a short tool call sees little or none.
+- **`--spec-draft-p-min` is not optional.** The flag's own default is `0.00` (ungated), a
+  documented acceptance-killer that lets MTP decay back to baseline on long generations. The
+  entry pins `0.6`. Gating is specifically a bandwidth-starved-machine win; set it *before*
+  raising `--spec-draft-n-max` (pinned at `3`, llama.cpp's default and the Strix Halo consensus),
+  because ungated, the cost of a wasted draft scales with n-max.
+
+**Vision is ON here, and unconfirmed.** The projector was dropped when llama.cpp MTP could not
+run beside `--mmproj`; upstream reports that fixed. The split was expensive — the same weights
+on disk twice, and every vision turn meant giving up speculative decoding entirely — so the
+projector is back, to be confirmed on-box. If a build regresses, drop the projector, not the
+entry. The gateway tracks llama.cpp master (see "Tracking newest llama.cpp" below), so after an
+update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-q4`.
+
+> **Reading what the engine actually did.** llama-server prints its build, allocated context,
+> batch sizes and resolved slot count once at startup, and llama-swap neither forwards that
+> banner nor keeps it (its log is a ~100 KB ring buffer the access log floods within minutes).
+> Use **`scripts/debug-connect.sh props <model-id>`** instead — it reads those facts
+> from llama-server directly, and is the only no-terminal way to confirm which build served a
+> measurement or whether a serving flag took effect.
+
+### Tuning MTP without a release
+
+Every step below runs from the PWA, the debug console, or an update — no shell (CLAUDE.md #10).
+The flags are on the extra-args allowlist precisely so this loop exists.
+
+| Step | How |
+|---|---|
+| Ship the catalog defaults + download the projector | **Ops → Update** (the sync detects the newly-required file and pulls it) |
+| Confirm the build, real `-c`, and `total_slots` | `debug-connect.sh props qwen3.8-27b-mtp` |
+| Point a task at it | PWA **Settings → LLM**, or `debug-connect.sh llm-set <task> qwen3.8-27b-mtp <effort>` |
+| Try a different draft setting | `debug-connect.sh extra-args qwen3.8-27b-mtp --spec-draft-p-min 0.75` |
+| Measure it | `debug-connect.sh prime qwen3.8-27b-mtp` → `elapsed_ms` |
+| Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-mtp` (no args) |
+| Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` |
+
+Two things deliberately have no remote path. The **`-np` slot count** is owner-authenticated
+(PWA only) — but a speculative model is clamped to one slot in the config generator regardless,
+so a stale override there cannot break it. And **promoting a setting that measures well** still
+takes a catalog edit and a release: the live path is for finding the value, not for keeping it,
+so the box never drifts from what the repo says it serves.
 
 > **When a download fails**, the banner shows the reason (last log line). For the
 > full verbose log — the resolved repo, include globs, and the hf error (404 / auth

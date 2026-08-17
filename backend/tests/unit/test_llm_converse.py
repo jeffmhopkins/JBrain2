@@ -176,7 +176,8 @@ async def test_hybrid_qwen_maps_none_to_enable_thinking_false() -> None:
 
 
 async def test_hybrid_qwen_maps_a_level_to_enable_thinking_true() -> None:
-    # Any non-"none" level leaves thinking on (a hybrid has no granular effort).
+    # A 3.5/3.6-era hybrid has no granular effort: any non-"none" level just leaves thinking
+    # on, and no reasoning_effort is sent (that template genuinely ignores it).
     captured, client = _capturing_client()
     await client.converse(
         model="qwen3.5-4b",
@@ -186,6 +187,47 @@ async def test_hybrid_qwen_maps_a_level_to_enable_thinking_true() -> None:
     )
     assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": True}
     assert "reasoning_effort" not in captured["payload"]
+
+
+async def test_qwen38_hybrid_also_sends_a_mapped_effort_level() -> None:
+    # Qwen3.8's template reads a `reasoning_effort` level from the SAME chat-template kwargs
+    # bag, and applies the card's `xhigh` default when given none — which is why a trivial
+    # prompt was measured spending 439 output tokens / 37.9s on this box against 161 / 13.8s
+    # with thinking off. So a level map must put the mapped level on the wire beside the
+    # toggle. It stays a template kwarg: the top-level field is still ignored.
+    captured, client = _capturing_client()
+    await client.converse(
+        model="qwen3.8-27b-q4",
+        system="s",
+        messages=[UserMessage(text="u")],
+        reasoning_effort="low",
+    )
+    assert captured["payload"]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_effort": "low",
+    }
+    assert "reasoning_effort" not in captured["payload"]
+
+
+async def test_qwen38_hybrid_maps_our_top_level_onto_the_cards_xhigh() -> None:
+    # Our four settings levels don't match the card's three. "high" is the card's top level,
+    # which it spells `xhigh` — sending "high" verbatim would land on no known level and fall
+    # back to the default, silently undoing the fix.
+    captured, client = _capturing_client()
+    await client.complete(
+        model="qwen3.8-27b-mtp", system="s", user_text="u", reasoning_effort="high"
+    )
+    assert captured["payload"]["chat_template_kwargs"]["reasoning_effort"] == "xhigh"
+
+
+async def test_qwen38_hybrid_sends_no_level_when_thinking_is_off() -> None:
+    # "none" is the toggle, not a level: thinking off means no effort to express, and sending
+    # one alongside enable_thinking=false would be contradictory.
+    captured, client = _capturing_client()
+    await client.complete(
+        model="qwen3.8-27b-q4", system="s", user_text="u", reasoning_effort="none"
+    )
+    assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 async def test_harmony_local_reasoner_sends_effort_verbatim() -> None:

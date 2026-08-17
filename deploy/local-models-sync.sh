@@ -106,51 +106,57 @@ if [ -z "$ids" ] && [ ! -s "$remove_file" ]; then say "no models to sync"; exit 
 # the "no models to sync" exit above already relies on — so skipping the sync's own restart is safe.
 requested_ids="$(printf '%s\n' "$requested" | grep -v '^[[:space:]]*$' | sort -u || true)"
 current_ids="$(printf '%s\n' "$current" | grep -v '^[[:space:]]*$' | sort -u || true)"
+
+# The FULL roster's manifest, built once and reused by the completeness check below, the
+# download filter, and the llama-swap re-stamp — so all three agree on what each model needs.
+manifest=''
+if [ -n "$ids" ]; then
+  # shellcheck disable=SC2086  # $ids is a deliberately word-split id list.
+  manifest="$(catalog -m jbrain.llm.local_catalog $ids)"
+  [ -n "$manifest" ] || { say "empty manifest — aborting sync"; exit 1; }
+fi
+
+# Ids whose REQUIRED weights are incomplete, resolving the same globs the config re-stamp
+# will (`llama_swap_config --check`), NOT a bare `*.gguf` presence check. A model's required
+# file set is a catalog property that changes: when an entry gains a file it didn't need before
+# (a vision projector added to a text-only variant) the old weights still match `*.gguf` and
+# look complete, so the download is skipped — and the re-stamp, which resolves every glob for
+# the whole roster at once, then fails for EVERY model. Cheap (no hf hash, just globs).
+incomplete_ids() {
+  [ -n "$manifest" ] || return 0
+  MANIFEST="$manifest" docker compose run --rm --no-deps -T -e MANIFEST \
+    api python -m jbrain.llm.llama_swap_config --check /data/local-models 2>/dev/null || true
+}
+
 if [ -z "$requested_ids" ] && [ ! -s "$remove_file" ] && [ "$union" = "$current_ids" ]; then
-  missing=''
-  for id in $ids; do
-    # A `*.gguf` under the model dir means its weights landed; `ls` (no hash) keeps this cheap.
-    ls "$PWD"/local-models/"$id"/*.gguf >/dev/null 2>&1 || missing="$missing $id"
-  done
+  missing="$(incomplete_ids | tr '\n' ' ' | sed 's/ *$//')"
   if [ -z "$missing" ]; then
     say "roster unchanged and weights present — skipping re-download ($ids)"
     exit 0
   fi
-  say "roster unchanged but weights missing for:$missing — running full sync"
+  say "roster unchanged but weights incomplete for: $missing — running full sync"
 fi
 
 say "syncing models: ${ids:-<none>}"
 
 if [ -n "$ids" ]; then
-  # 4. Manifest for the FULL roster — this drives the llama-swap re-stamp below, which
-  #    must describe every served model (present or freshly pulled), not just the ones
-  #    downloaded this round.
-  # shellcheck disable=SC2086  # $ids is a deliberately word-split id list.
-  manifest="$(catalog -m jbrain.llm.local_catalog $ids)"
-  [ -n "$manifest" ] || { say "empty manifest — aborting sync"; exit 1; }
-
-  # 4b. Download ONLY the models whose weights are missing on disk. `hf download` re-hashes
-  #     every file it is handed even when the bytes are already present (~2 min/model), so
-  #     pulling the whole roster re-verifies models that never changed — the dominant cost
-  #     when provisioning onto a box that already holds most of the set (adding one model to
-  #     a ten-model roster re-verified all ten). Filter to the missing ones with the same
-  #     cheap `ls *.gguf` presence check the routine-update fast-path above uses (NOT an hf
-  #     hash): a genuinely missing or interrupted weight still falls through to a full,
-  #     self-healing pull. The trade — a present-but-corrupt weight is not re-hashed — matches
-  #     that fast-path's, and is backstopped: the re-stamp below runs resolve_weight over the
-  #     WHOLE roster, so a present-but-INCOMPLETE weight (missing shards) still fails loudly
-  #     there rather than being served, and an already-downloaded model stays wired in.
-  download_ids=''
+  # 4. Download ONLY the models whose required weights are incomplete. `hf download` re-hashes
+  #    every file it is handed even when the bytes are already present (~2 min/model), so
+  #    pulling the whole roster re-verifies models that never changed — the dominant cost
+  #    when provisioning onto a box that already holds most of the set (adding one model to
+  #    a ten-model roster re-verified all ten). The filter resolves each model's catalog globs
+  #    (`llama_swap_config --check`, no hf hash), so it agrees BY CONSTRUCTION with what the
+  #    re-stamp below demands: a genuinely missing, interrupted, or newly-REQUIRED file (a
+  #    projector added to a variant that shipped without one) falls through to a full,
+  #    self-healing pull instead of passing a `*.gguf` glance and failing the re-stamp for the
+  #    whole roster. The remaining trade — a present-but-corrupt file is not re-hashed — is
+  #    backstopped by that same re-stamp, which fails loudly rather than serving a bad weight.
+  #    The manifest was built above the fast path and is reused here unchanged.
+  download_ids="$(incomplete_ids | tr '\n' ' ' | sed 's/ *$//')"
   present_ids=''
   for id in $ids; do
-    # A `*.gguf` under the model dir means its weights landed; `ls` (no hash) keeps this cheap.
-    if ls "$PWD"/local-models/"$id"/*.gguf >/dev/null 2>&1; then
-      present_ids="${present_ids} ${id}"
-    else
-      download_ids="${download_ids} ${id}"
-    fi
+    case " $download_ids " in *" $id "*) ;; *) present_ids="${present_ids} ${id}" ;; esac
   done
-  download_ids="${download_ids# }"
   present_ids="${present_ids# }"
   [ -n "$present_ids" ] && say "weights present — skipping re-verify for: ${present_ids}"
 

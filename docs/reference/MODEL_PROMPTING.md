@@ -1,6 +1,26 @@
 # Model prompting reference — gpt-oss-120b & Qwen3-VL-30B
 
-> **Status:** Living · **Last verified:** 2026-08-15
+> **Status:** Living · **Last verified:** 2026-08-17
+
+> **Applied (2026-08-17):** Qwen3.8 now gets a REASONING EFFORT LEVEL, not just a thinking
+> on/off toggle. Its chat template reads `reasoning_effort` (`low` / `medium` / `xhigh`) out of
+> the same `chat_template_kwargs` bag as `enable_thinking`, and applies the card's own default —
+> **`xhigh`** — when given none. The adapter previously sent only the toggle (correct for the
+> Qwen3.5/3.6-era templates, which genuinely ignore the field), so every thinking call ran at
+> `xhigh`. Measured on-box, same prompt and model: **439 output tokens / 37.9 s** with no level
+> against **161 / 13.8 s** with thinking off — 2.75× the wall clock, and the long run's answer
+> was the *shorter* of the two. Decode rate was identical (~11.6 t/s), so the whole difference
+> was tokens generated, not speed. Fix: `LocalModel.thinking_effort_map` carries the per-model
+> level map (`low→low`, `medium→medium`, `high→xhigh`; `"none"` stays the toggle), and
+> `openai_compat._apply_reasoning` sends the mapped level beside the toggle. Older hybrids carry
+> no map and are unchanged.
+
+> **Applied (2026-08-17):** corrected the Qwen3.8 KV estimate, `kv_gb_per_128k` 6.0 → **2.0**.
+> Qwen3.8-27B is not a plain dense transformer: its config declares `full_attention_interval: 4`,
+> so only **16 of its 64 layers** are full attention and the other 48 are Gated DeltaNet carrying
+> a constant state. The dense-shaped 6.0 over-reserved unified memory on a box that hard-freezes
+> when it runs out. Still deliberately above a strict quarter — this is a residency guardrail,
+> not a measurement.
 
 > **Applied (2026-08-15):** RETIRED the `qwen3.6-27b` / `qwen3.6-27b-q4` pair from the
 > catalog — superseded by the `qwen3.8-27b` twins below. Their ids sit in
@@ -343,6 +363,22 @@ top_k 40 / min_p 0.1. Hybrid rows show non-thinking → thinking.
 | nemotron-3.5-lightning-30b | 1.0 | 0.95 | 0 | 0 | – | NVIDIA card (unified) |
 | llama-4-scout-int4 | 0.6 | 0.9 | 0 | 0.01 | – | Meta config + Unsloth min_p |
 | llama-3.3-70b | 0.6 | 0.9 | 0 | 0 | – | Meta generation_config |
+
+### How a thinking level reaches each reasoner
+
+Three different wire shapes, and sending the wrong one is silent — the model just runs at a
+default nobody chose.
+
+| Family | What goes on the wire | Set by |
+|---|---|---|
+| harmony (gpt-oss), GLM, xAI Grok | top-level `reasoning_effort`, verbatim (they understand `"none"`) | router level |
+| Qwen3.5 / 3.6 hybrids, Nemotron hybrids | `chat_template_kwargs.enable_thinking` only — their templates ignore an effort field | `hybrid_thinking` |
+| **Qwen3.8 hybrids** | `enable_thinking` **and** `chat_template_kwargs.reasoning_effort` | `hybrid_thinking` + `thinking_effort_map` |
+
+Our four settings levels map onto Qwen3.8's three: `none` is the toggle (thinking off, no level
+sent), then `low→low`, `medium→medium`, `high→xhigh`. **Send no level and the template applies
+`xhigh`**, which is why the map is not optional — see the 2026-08-17 note at the top for the
+measured cost. A model with no `thinking_effort_map` keeps the toggle-only path.
 
 Cloud: `xai:grok-4.3` → temp 0.7 / top_p 0.95 (documented default; penalties dropped —
 Grok 4.x are reasoning models). `anthropic:claude-sonnet-4-6` → nothing set, so

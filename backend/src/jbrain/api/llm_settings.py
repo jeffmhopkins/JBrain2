@@ -539,7 +539,10 @@ def _local_model_info(
     available = enabled and not unavailable
     override = windows.get(m.id)
     effective_window = override if override is not None else m.context_window
-    n_slots = slots.get(m.id, 1)
+    # What the gateway will REALLY serve: a speculative model is pinned to one slot whatever
+    # override is stored, so the drawer shows the served value rather than a saved one the
+    # engine ignores (and sizes its KV bar off the same number).
+    n_slots = m.effective_slots(slots.get(m.id, 1))
     kv_gb = round(m.kv_gb_per_128k * effective_window / 131072 * n_slots, 2)
     return LocalModelInfo(
         id=m.id,
@@ -1259,8 +1262,32 @@ async def gateway_unload(
 #                     restore doing anything on gpt-oss; roughly doubles that model's KV)
 #   --slot-save-path  where llama-server reads/writes KV-slot state files
 #   -b / -ub          logical / physical prompt batch — the prompt-processing throughput knobs
+#   --spec-type            which speculative-decoding mode to serve with (e.g. draft-mtp)
+#   --spec-draft-n-max     how many tokens a draft proposes per round
+#   --spec-draft-n-min     the floor below which a draft is discarded
+#   --spec-draft-p-min     confidence gate that stops a draft early; llama.cpp's own default is
+#                          0.00 (ungated), so the useful value is one nobody can guess in advance
+# The speculative four are here because their right values are EMPIRICAL and hardware-specific:
+# published Strix Halo numbers disagree on n-max, and p-min's payoff depends on generation
+# length. Without them a single tuning iteration costs a catalog edit, a release and an
+# Ops → Update — which is how a knob ends up never being tuned at all. Turning speculation on
+# also pins the model to one slot, and the config generator derives that from the flags it is
+# about to write (`llama_swap_config._is_speculative`), so an operator flag gets the same clamp
+# a catalog flag does. A bad VALUE here can stop a model loading, same as a bad `-ub`; clearing
+# is the same call with no args and does not require the model to be loadable.
 # Flags taking a value are allowed to carry one; the value itself is NOT interpreted here.
-EXTRA_ARG_FLAGS: frozenset[str] = frozenset({"--swa-full", "--slot-save-path", "-b", "-ub"})
+EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
+    {
+        "--swa-full",
+        "--slot-save-path",
+        "-b",
+        "-ub",
+        "--spec-type",
+        "--spec-draft-n-max",
+        "--spec-draft-n-min",
+        "--spec-draft-p-min",
+    }
+)
 
 
 def _validate_extra_args(args: list[str]) -> list[str]:

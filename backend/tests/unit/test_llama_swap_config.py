@@ -4,6 +4,7 @@ override), the co-resident (non-swapping) group, and atomic write."""
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -59,13 +60,40 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
 def test_render_emits_np_and_scaled_c_for_a_two_slot_model(tmp_path: Path) -> None:
     # A model with a dedicated interactive slot gets `-np 2`, and `-c` is scaled to
     # window*slots so each of the two slots still serves the full window (llama-server
-    # divides -c evenly across -np). The single-slot model is untouched: no -np, plain -c.
+    # divides -c evenly across -np). The single-slot model keeps its plain `-c`.
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path), slots={"gpt-oss-120b": 2})
     assert "-np 2" in text
-    assert text.count("-np") == 1  # only the opted-in model
     assert "-c 262144" in text  # 131072 * 2 for the two-slot model
     assert "-c 32768" in text  # the single-slot model keeps its plain window
+
+
+def test_render_always_emits_np_because_the_llama_server_default_is_not_one(
+    tmp_path: Path,
+) -> None:
+    # `-np` is emitted for EVERY model, including single-slot ones. llama-server's own default
+    # is `auto`, which current builds resolve to a multi-slot value — so omitting the flag does
+    # not mean one slot, it means "whatever this build picked". A serving mode that requires a
+    # single sequence would then be violated silently, which is exactly the failure this guards.
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    assert text.count("-np 1") == 2  # both models in the fixture manifest, explicitly
+
+
+def test_render_clamps_a_speculative_model_to_one_slot(tmp_path: Path) -> None:
+    # llama.cpp's speculative paths serve ONE sequence: MTP takes no second slot, and draft
+    # acceptance collapses as concurrent sequences rise. So a saved `-np` override must NOT
+    # reach a model served with --spec-type — the serving mode wins over the stored setting,
+    # rather than the operator having to know the interaction. `-c` follows the clamped count,
+    # so the window is not silently multiplied for slots the engine will never allocate.
+    _lay_down(tmp_path)
+    manifest = [dict(m) for m in _manifest()]
+    manifest[0]["extra_server_args"] = ("--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
+    text = llama_swap_config.render(manifest, str(tmp_path), slots={"qwen3-vl-30b": 2})
+    speculative_block = text.split("  gpt-oss-120b:")[0]
+    assert "-np 1" in speculative_block and "-np 2" not in speculative_block
+    assert "-c 32768" in speculative_block  # NOT 65536 — the override never applied
+    assert "--spec-type draft-mtp" in speculative_block
 
 
 def test_render_scales_c_off_the_overridden_window_not_the_default(tmp_path: Path) -> None:
@@ -313,6 +341,65 @@ def test_write_is_atomic_and_round_trips(tmp_path: Path) -> None:
     assert not (tmp_path / "llama-swap.yaml.tmp").exists()
 
 
+def test_unresolved_ids_is_empty_when_every_required_file_is_present(tmp_path: Path) -> None:
+    _lay_down(tmp_path)
+    assert llama_swap_config.unresolved_ids(str(tmp_path), _manifest()) == ()
+
+
+def test_unresolved_ids_catches_a_model_that_gained_a_required_file(tmp_path: Path) -> None:
+    # THE regression this exists for. A model's required file set is a catalog property that
+    # changes between releases: an entry that shipped text-only gains a vision projector. Its
+    # directory still holds last release's weights, so a `*.gguf` presence check reads it as
+    # complete and the provisioning run skips the download — and then `render`, which resolves
+    # every glob for the WHOLE roster in one pass, raises on the missing projector and takes
+    # every other model's config down with it. The deploy re-stamp aborts; the boot reconcile
+    # swallows render failures (so a bad glob can't block startup) and silently applies nothing.
+    _lay_down(tmp_path)
+    (tmp_path / "gpt-oss-120b" / "mmproj-F16.gguf").unlink(missing_ok=True)
+    manifest = [dict(m) for m in _manifest()]
+    manifest[1]["mmproj_include"] = "mmproj-F16.gguf"  # newly required, not on disk
+    assert llama_swap_config.unresolved_ids(str(tmp_path), manifest) == ("gpt-oss-120b",)
+    # And the check agrees with reality: render really does fail for the whole roster here.
+    with pytest.raises(FileNotFoundError):
+        llama_swap_config.render(manifest, str(tmp_path))
+    # Once the projector lands, both agree the other way — no stale "incomplete" verdict.
+    (tmp_path / "gpt-oss-120b" / "mmproj-F16.gguf").write_bytes(b"\0")
+    assert llama_swap_config.unresolved_ids(str(tmp_path), manifest) == ()
+    assert "--mmproj /models/gpt-oss-120b/mmproj-F16.gguf" in llama_swap_config.render(
+        manifest, str(tmp_path)
+    )
+
+
+def test_unresolved_ids_catches_missing_weights_and_incomplete_shards(tmp_path: Path) -> None:
+    # The two older failure modes the `*.gguf` check did catch must keep working: a model with
+    # no weights at all, and a sharded model missing part of its set (present-but-INCOMPLETE).
+    _lay_down(tmp_path)
+    (tmp_path / "nothing-here").mkdir()
+    manifest = [dict(m) for m in _manifest()]
+    manifest.append({**manifest[0], "id": "nothing-here", "served_model": "nothing-here"})
+    assert "nothing-here" in llama_swap_config.unresolved_ids(str(tmp_path), manifest)
+    # A shard set claiming 2 parts but holding 1 resolves as incomplete, not as "present".
+    shard_dir = tmp_path / "sharded"
+    shard_dir.mkdir()
+    (shard_dir / "model-Q4_K_M-00001-of-00002.gguf").write_bytes(b"\0")
+    manifest.append({**manifest[0], "id": "sharded", "served_model": "sharded"})
+    assert "sharded" in llama_swap_config.unresolved_ids(str(tmp_path), manifest)
+
+
+def test_check_cli_prints_the_incomplete_ids(tmp_path: Path, capsys: Any, monkeypatch: Any) -> None:
+    # The provisioning scripts' download filter runs through this CLI, so its contract — ids one
+    # per line on stdout, exit 0, empty when everything resolves — is what the shell parses.
+    _lay_down(tmp_path)
+    manifest = [dict(m) for m in _manifest()]
+    manifest[1]["mmproj_include"] = "mmproj-F16.gguf"
+    monkeypatch.setenv("MANIFEST", json.dumps(manifest))
+    assert llama_swap_config._main(["--check", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.split() == ["gpt-oss-120b"]
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    assert llama_swap_config._main(["--check", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.strip() == ""
+
+
 def test_every_model_gets_a_slot_save_path_and_only_swa_models_get_swa_full(
     tmp_path: Path,
 ) -> None:
@@ -327,3 +414,36 @@ def test_every_model_gets_a_slot_save_path_and_only_swa_models_get_swa_full(
     # Only the model the catalog flags carries --swa-full.
     flagged = [ln for ln in cmds if "--swa-full" in ln]
     assert len(flagged) == sum(1 for m in _manifest() if m.get("kv_full_history"))
+
+
+def test_an_operator_set_spec_flag_gets_the_same_single_slot_clamp(tmp_path: Path) -> None:
+    # Speculation can be turned on two ways: the catalog's static flags, or an operator trying
+    # `--spec-type` live through the extra-args route (no release needed). Both constrain
+    # llama-server to one sequence, so the clamp must read the flags actually going onto the
+    # command line — not just the catalog's. Otherwise a remote experiment would quietly run
+    # multi-slot and measure acceptance that the real serving mode would never produce.
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(
+        _manifest(),
+        str(tmp_path),
+        slots={"gpt-oss-120b": 2},
+        extra_args={"gpt-oss-120b": ["--spec-type", "draft-mtp"]},
+    )
+    gpt_oss_cmd = next(ln for ln in text.splitlines() if "/gpt-oss-120b/" in ln)
+    assert "--spec-type draft-mtp" in gpt_oss_cmd
+    assert "-np 1" in gpt_oss_cmd and "-np 2" not in gpt_oss_cmd
+    assert "-c 131072" in gpt_oss_cmd  # the window is NOT doubled for a slot never allocated
+
+
+def test_operator_extra_args_land_after_the_catalog_flags(tmp_path: Path) -> None:
+    # Order matters: llama-server takes the LAST occurrence of a repeated flag, so appending the
+    # operator's args after the catalog's is what lets a live experiment override a catalog
+    # value (raising the MTP entry's pinned --spec-draft-n-max without a release).
+    _lay_down(tmp_path)
+    manifest = [dict(m) for m in _manifest()]
+    manifest[1]["extra_server_args"] = ("--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
+    text = llama_swap_config.render(
+        manifest, str(tmp_path), extra_args={"gpt-oss-120b": ["--spec-draft-n-max", "5"]}
+    )
+    cmd = next(ln for ln in text.splitlines() if "/gpt-oss-120b/" in ln)
+    assert cmd.index("--spec-draft-n-max 3") < cmd.index("--spec-draft-n-max 5")
