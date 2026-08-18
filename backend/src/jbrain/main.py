@@ -382,9 +382,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # must not block startup (the reservation simply isn't cleared, no worse than today).
         with suppress(Exception):
             await settings_store.set_code_mode_hold_names(SYSTEM_CTX, [])
+        # Budget and WATCH every load against the iGPU's device pool (GTT), not just system
+        # RAM. The two are accounted separately on an APU, and counting only system RAM let
+        # loads whose real device cost far exceeded their catalog estimate freeze this host —
+        # three times, once with ~105 GiB of system RAM free. The supervisor already reads
+        # these counters for the Ops screen; this points the load decision at them.
+        # LATE-BOUND, like on_prefix_lost below: the supervisor client is created further down
+        # this same startup, so the lambda resolves it at call time and degrades to an
+        # unmeasurable pool (unguarded loads, today's behaviour) if it never appears.
+        gpu_probe = gpu_guard.SupervisorGpuMemProbe(
+            lambda: getattr(app.state, "supervisor_client", None), settings.supervisor_token
+        )
         # Admin client for the local-model gateway (runtime loaded-state + unload).
         # Best-effort; the settings screen tolerates it being unreachable.
-        app.state.local_gateway = LocalGatewayClient(settings.local_llm_url)
+        # The probe goes on the GATEWAY, not just the residency coordinator: `load()` is the
+        # one chokepoint every caller passes through, so a guard there is one no caller can
+        # skip — which is precisely how the three freezes got past the coordinator's guard.
+        app.state.local_gateway = LocalGatewayClient(settings.local_llm_url, gpu_probe=gpu_probe)
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
         # the free-RAM floor before each local load (passed to build_router below as its
         # residency, so every local completion admits through this same instance),
@@ -408,6 +422,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # models or co-loads past physical RAM. Read per load (SYSTEM_CTX), identically
             # wired in the worker.
             hold_loader=lambda: settings_store.code_mode_hold_names(SYSTEM_CTX),
+            # The operator's end-of-turn restore switch (Settings → LLM). Read per restore,
+            # so flipping it takes effect on the next turn with no restart.
+            auto_restore_loader=lambda: settings_store.llm_local_auto_restore(SYSTEM_CTX),
             # Serialize evict+load against the worker process (which runs its own coordinator
             # over the same box) so a deferred worker load can't co-load past the floor here.
             box_lock=pg_box_lock(maker),
@@ -416,17 +433,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # this same startup, so the lambda resolves it at call time and degrades to a
             # no-op on a build with no agent wired.
             on_prefix_lost=_prefix_lost_notifier(app),
-            # Budget and WATCH a load against the iGPU's device pool (GTT), not just system
-            # RAM. The two are accounted separately on an APU, and counting only system RAM
-            # let a load whose real device cost far exceeded its catalog estimate freeze this
-            # host — twice, with ~105 GiB free. The supervisor already reads these counters
-            # for the Ops screen; this points the load decision at them.
-            # LATE-BOUND, like on_prefix_lost above: the supervisor client is created further
-            # down this same startup, so the lambda resolves it at call time and degrades to
-            # an unmeasurable pool (unguarded loads, today's behaviour) if it never appears.
-            gpu_probe=gpu_guard.SupervisorGpuMemProbe(
-                lambda: getattr(app.state, "supervisor_client", None), settings.supervisor_token
-            ),
+            # Same probe the gateway guards with, here for the post-load MEASUREMENT: what a
+            # load actually cost in device memory, logged beside what the catalog predicted,
+            # so those numbers get corrected from data rather than from the next freeze.
+            gpu_probe=gpu_probe,
         )
         # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
         # serving at a time on the box, so a live grok `/model` switch (or a parallel agent)

@@ -88,6 +88,14 @@ LLM_LOCAL_FREE_RAM_FRACTION_KEY = "llm_local_free_ram_fraction"
 # takes effect with no restart. A list of catalog ids; non-string and duplicate entries are
 # dropped on read (first-seen order preserved).
 LLM_LOCAL_UNAVAILABLE_KEY = "llm_local_unavailable"
+# Whether the evictor may put back models a transient displacement (image render, code
+# session, a big one-off) removed, once the turn that displaced them ends. ON by default —
+# it is what keeps the box drifting back to its steady state instead of cold-loading on the
+# next turn. The operator switch exists because a restore is a MODEL LOAD the owner did not
+# ask for at that moment: while diagnosing the box, or while deliberately holding it near
+# empty, "nothing loads unless I say so" has to be reachable from the PWA. A load that does
+# happen is guarded either way (jbrain.llm.gpu_guard); this is about surprise, not safety.
+LLM_LOCAL_AUTO_RESTORE_KEY = "llm_local_auto_restore"
 # Catalog ids the operator has asked to PROVISION (download + enable) from the PWA,
 # but that aren't on the box yet — the install queue. The update one-shot reads this
 # (owner-scoped, via jbrain.cli) and provisions the union of it, the current
@@ -842,6 +850,17 @@ class SqlSettingsStore:
             return None
         clean = float(fraction)
         await self.upsert(ctx, LLM_LOCAL_FREE_RAM_FRACTION_KEY, clean)
+        return clean
+
+    async def llm_local_auto_restore(self, ctx: SessionContext) -> bool:
+        """Whether the evictor may restore displaced models at end of turn. Defaults to True
+        (the long-standing behaviour) — only an explicit stored `False` turns it off, so a
+        garbled value can never silently leave the box refusing to restore."""
+        return await self.get(ctx, LLM_LOCAL_AUTO_RESTORE_KEY, True) is not False
+
+    async def set_llm_local_auto_restore(self, ctx: SessionContext, enabled: bool) -> bool:
+        clean = bool(enabled)
+        await self.upsert(ctx, LLM_LOCAL_AUTO_RESTORE_KEY, clean)
         return clean
 
     async def llm_local_unavailable(self, ctx: SessionContext) -> list[str]:

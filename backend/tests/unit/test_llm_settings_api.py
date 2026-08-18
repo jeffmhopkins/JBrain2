@@ -189,6 +189,22 @@ def test_free_ram_fraction_defaults_to_config_and_round_trips(
     assert cleared.json()["free_ram"] == {"fraction": 0.15, "default": 0.15, "override": None}
 
 
+def test_auto_restore_defaults_on_and_round_trips(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    """The owner has no terminal, so the end-of-turn restore has to be switchable over the
+    API the PWA calls. On by default (the long-standing behaviour); only an explicit off
+    stops the box putting displaced models back."""
+    c, _ = client
+    assert c.get("/api/settings/llm").json()["auto_restore"] is True
+    off = c.put("/api/settings/llm/auto-restore", json={"enabled": False})
+    assert off.status_code == 200
+    assert off.json()["auto_restore"] is False
+    assert c.get("/api/settings/llm").json()["auto_restore"] is False
+    back = c.put("/api/settings/llm/auto-restore", json={"enabled": True})
+    assert back.json()["auto_restore"] is True
+
+
 def test_free_ram_fraction_rejects_out_of_band_values(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:
@@ -657,8 +673,11 @@ def test_the_meter_reports_the_same_kv_the_eviction_budget_uses() -> None:
         local_catalog.footprint_gb(model, model.context_window, disk_gb=0.0, slots=1), 2
     )
     assert by_id["gpt-oss-120b"]["kv_gb"] == expected
-    # And it is genuinely the doubled figure, not a coincidence of the formulas agreeing.
-    assert expected == round(model.kv_gb_per_128k * model.context_window / 131072 * 2, 2)
+    # And it is genuinely the doubled KV figure plus the flat runtime term, not a coincidence
+    # of the formulas agreeing. (`disk_gb=0.0` above zeroes the weights, so what is left is the
+    # `--swa-full` doubled KV and the compute/output/state overhead every entry carries.)
+    kv_doubled = model.kv_gb_per_128k * model.context_window / 131072 * 2
+    assert expected == round(kv_doubled + local_catalog.RUNTIME_OVERHEAD_GB, 2)
 
 
 def test_set_parallel_slots_round_trips_and_doubles_the_kv_estimate() -> None:
@@ -668,7 +687,11 @@ def test_set_parallel_slots_round_trips_and_doubles_the_kv_estimate() -> None:
     assert resp.status_code == 200, resp.text
     m = {x["id"]: x for x in resp.json()["local_models"]}["gpt-oss-120b"]
     assert m["parallel_slots"] == 2
-    assert m["kv_gb"] == round(base["kv_gb"] * 2, 2)  # the meter reflects the doubled KV
+    # The meter reflects the doubled KV — and ONLY the KV. A second slot holds its own cache,
+    # but the weights and the flat runtime term (compute/output buffers, recurrent state) are
+    # shared, so the figure is not a plain doubling of the whole footprint.
+    runtime = local_catalog.RUNTIME_OVERHEAD_GB
+    assert m["kv_gb"] == round((base["kv_gb"] - runtime) * 2 + runtime, 2)
     assert store.values["llm_local_parallel_slots"] == {"gpt-oss-120b": 2}
     # Clearing (1 or null) reverts to a single slot and drops the override row.
     resp = c.put("/api/settings/llm/local-models/gpt-oss-120b/parallel-slots", json={"slots": 1})
@@ -769,7 +792,7 @@ def test_set_context_window_unloads_a_resident_model() -> None:
 def test_plan_load_previews_the_eviction_without_touching_the_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # gpt-oss (68.0 — full-history KV) resident, used=90; staging the coder would blow the 96
+    # gpt-oss (68.55 — full-history KV + the flat runtime term) resident, used=90; staging the
     # ceiling. The
     # dry-run names gpt-oss as the victim (with its footprint), projects the landing point,
     # and evicts NOTHING. (qwen3-coder-next is provisioned so it's a valid plan-load target.)
@@ -787,7 +810,7 @@ def test_plan_load_previews_the_eviction_without_touching_the_box(
     assert body["measured"] is True
     assert body["fits"] is False and body["over"] is False and body["already_resident"] is False
     assert [v["id"] for v in body["victims"]] == ["gpt-oss-120b"]
-    assert body["victims"][0]["gb"] == 68.0
+    assert body["victims"][0]["gb"] == 68.5
     assert body["ceiling_gb"] == 96.0
     assert gw.unloaded == []  # dry-run — nothing evicted
 
@@ -847,7 +870,7 @@ def test_set_available_404_and_409() -> None:
 
 
 def test_plan_load_flags_an_over_box_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A 20 GB box can't hold gpt-oss (68.0): the preview flags over_box so the screen can
+    # A 20 GB box can't hold gpt-oss (68.55): the preview flags over_box so the screen can
     # disable Load.
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (20.0, 2.0)
@@ -875,7 +898,7 @@ def test_load_refuses_an_over_box_model_with_409(monkeypatch: pytest.MonkeyPatch
 
 def test_load_evicts_to_fit_then_warms_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     # Committing the staged load: free_room evicts the same victim the preview showed, then the
-    # target is warmed. gpt-oss (68.0) resident at used=90; loading the coder evicts gpt-oss.
+    # target is warmed. gpt-oss (68.55) resident at used=90; loading the coder evicts gpt-oss.
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 90.0)
     )

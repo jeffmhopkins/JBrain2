@@ -344,6 +344,11 @@ class LlmSettingsOut(BaseModel):
     # value + config default. Always present; the screen renders its card only when hosting
     # is on (it's meaningless without a box to budget).
     free_ram: FreeRamInfo
+    # The end-of-turn RESTORE switch. True (the default) = after a displacement, the box puts
+    # the displaced models back once the turn ends. False = it stops, and models come back
+    # only when a turn actually needs one. The owner's "nothing loads unless I ask" control
+    # while diagnosing the box, reachable from the PWA because the owner has no terminal.
+    auto_restore: bool = True
     # Code mode's model selector (the dropdown card). Always present; `enabled`
     # gates whether the screen renders it.
     jcode: JcodeModelInfo
@@ -415,6 +420,7 @@ async def _snapshot(
     windows = await store.llm_local_context_windows(ctx)
     slots = await store.llm_local_parallel_slots(ctx)
     free_ram_override = await store.llm_local_free_ram_fraction(ctx)
+    auto_restore = await store.llm_local_auto_restore(ctx)
     unavailable = set(await store.llm_local_unavailable(ctx))
     requested = set(await store.llm_local_provision_requested(ctx))
     removing = set(await store.llm_local_remove_requested(ctx))
@@ -458,6 +464,7 @@ async def _snapshot(
             default=settings.local_llm_free_ram_fraction,
             override=free_ram_override,
         ),
+        auto_restore=auto_restore,
         jcode=await _jcode_info(settings, store, ctx),
     )
 
@@ -974,6 +981,36 @@ async def set_free_ram_fraction(
         )
     ctx = ctx_for(principal)
     await store.set_llm_local_free_ram_fraction(ctx, body.fraction)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+class AutoRestoreIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+@router.put("/settings/llm/auto-restore")
+async def set_auto_restore(
+    body: AutoRestoreIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Turn the end-of-turn restore on or off.
+
+    ON (the default) is the long-standing behaviour: when a displacement (an image render, a
+    code session, a big one-off) evicts models, the box puts them back once the turn ends, so
+    it drifts to a steady state instead of cold-loading on the next turn. OFF stops that, and
+    a model comes back only when a turn actually needs it.
+
+    This is a SURPRISE control, not a safety one: every load — restore included — goes through
+    the device-memory guard (jbrain.llm.gpu_guard) regardless. What it buys is a box that does
+    nothing on its own while the owner is diagnosing it. Read live by the evictor in the api
+    process, so it applies to the next turn with no restart."""
+    ctx = ctx_for(principal)
+    await store.set_llm_local_auto_restore(ctx, body.enabled)
     return await _snapshot(settings, store, ctx, gateway)
 
 

@@ -624,6 +624,14 @@ class FakeSettingsStore:
         self.values["llm_local_free_ram_fraction"] = float(fraction)
         return float(fraction)
 
+    async def llm_local_auto_restore(self, ctx: object) -> bool:
+        return self.values.get("llm_local_auto_restore", True) is not False
+
+    async def set_llm_local_auto_restore(self, ctx: object, enabled: bool) -> bool:
+        clean = bool(enabled)
+        self.values["llm_local_auto_restore"] = clean
+        return clean
+
     async def llm_local_unavailable(self, ctx: object) -> list[str]:
         raw = self.values.get("llm_local_unavailable", [])
         if not isinstance(raw, list):

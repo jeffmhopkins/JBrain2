@@ -412,20 +412,23 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
     assert gpt is not None and vl is not None
     # gpt-oss at its native 128k window: weights 59 + KV 4.5 (the 128k reference), DOUBLED to
     # 9.0 because it serves with `--swa-full` — full history on its sliding-window layers, the
-    # precondition for KV-slot restore. 59 + 9 = 68.0.
-    assert local_catalog.footprint_gb(gpt, 131072) == 68.0
-    # KV scales linearly with the window: vl at 32k = 32 + 6*(32768/131072) = 33.5.
-    assert local_catalog.footprint_gb(vl, 32768) == 33.5
-    # Half the window → half the KV term (16k = 32 + 0.75).
-    assert local_catalog.footprint_gb(vl, 16384) == 32.75
-    # A measured on-disk size overrides the nominal weights estimate.
-    assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 33.4
+    # precondition for KV-slot restore — plus the 0.55 runtime term every entry carries.
+    assert local_catalog.footprint_gb(gpt, 131072) == 68.55
+    # KV still scales linearly with the window. vl also carries a projector, so its resident
+    # figure includes the CLIP attention buffer (see vision_attn_buffer_gb): 32 + 6*(32768/
+    # 131072) + 0.55 + 16.0 = 50.05.
+    assert local_catalog.footprint_gb(vl, 32768) == 50.05
+    # Half the window → half the KV term; the vision and runtime terms do not scale with it.
+    assert local_catalog.footprint_gb(vl, 16384) == 49.3
+    # A measured on-disk size overrides the nominal weights estimate — and only that term;
+    # KV, runtime and vision are unaffected (31.9 + 1.5 + 0.55 + 16.0).
+    assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 49.95
     # A second slot doubles ONLY the KV term (weights are shared), and it compounds with
-    # full-history: gpt-oss at 128k with 2 slots = 59 + 2*(2*4.5) = 77.0. This is the number
+    # full-history: gpt-oss at 128k with 2 slots = 59 + 2*(2*4.5) + 0.55 runtime = 77.55. The number
     # the owner trades against — halving the window brings it back to 68.0.
-    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 77.0
-    assert local_catalog.footprint_gb(gpt, 65536, slots=2) == 68.0
-    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 68.0
+    assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 77.55
+    assert local_catalog.footprint_gb(gpt, 65536, slots=2) == 68.55
+    assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 68.55
 
 
 def test_get_by_served_maps_served_name_to_catalog_entry() -> None:
@@ -525,9 +528,15 @@ def test_qwen38_kv_estimate_reflects_its_hybrid_attention() -> None:
     for model_id in ("qwen3.8-27b", "qwen3.8-27b-q4", "qwen3.8-27b-mtp"):
         model = local_catalog.get(model_id)
         assert model is not None
-        assert model.kv_gb_per_128k == 2.0
-        # Still above the Mamba-2 hybrids' floor: this is a guardrail, not a measurement.
-        assert model.kv_gb_per_128k < 6.0
+        # DERIVED from the model's own shape, not estimated: 2 (K+V) x 4 kv_heads x 256
+        # head_dim x 2 bytes (f16, llama.cpp's default — the gateway passes no --cache-type-*)
+        # x 16 attention layers = 64 KiB/token, which is 8.0 GiB per 128k.
+        assert model.kv_gb_per_128k == 8.0
+        # This read 2.0 for a while, which is the q4_0 figure (18 KiB/token) for a cache type
+        # this box does not serve — so the budget under-counted every Qwen3.8 entry by 1.5 GiB
+        # at 32k and would have been 6 GiB light at a full window. If the serving flags ever
+        # gain a KV quant, this must move with them (q8_0 = 4.25, q4_0 = 2.25).
+        assert model.kv_gb_per_128k != 2.0
 
 
 def test_full_history_doubles_the_kv_term_so_the_budget_stays_honest() -> None:

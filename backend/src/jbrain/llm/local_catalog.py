@@ -40,12 +40,86 @@ QWEN38_EFFORT_LEVELS: dict[str, str] = {"low": "low", "medium": "medium", "high"
 # Qwen3.8-27B is NOT a plain dense transformer: its config declares `full_attention_interval:
 # 4`, so of 64 layers only 16 are full attention and the other 48 are Gated DeltaNet (linear
 # attention), which carries a constant state rather than a growing KV cache. Only that quarter
-# of the layers grows with context, so the KV term is roughly a quarter of what the parameter
-# count suggests — the same reason the Mamba-2 hybrids above sit far below a true dense model.
-# Kept deliberately ABOVE a strict one-quarter of the old 6.0 estimate: this figure guards a
-# residency budget on a box that hard-freezes when it runs out, so it errs high until measured
-# on-box (the gateway's /props + host metrics are the way to pin it).
-_QWEN38_KV_GB_PER_128K = 2.0
+# of the layers grows with context.
+#
+# DERIVED, not estimated. Per token, per attention layer, KV is
+# `2 (K and V) x n_kv_heads x head_dim x bytes_per_element`; for this model that is
+# 2 x 4 x 256 x 2 (f16) = 4 KiB, and x16 attention layers = 64 KiB/token -> 8.0 GiB per 128k.
+#
+# The f16 is not a choice, it is the DEFAULT we inherit: the gateway passes no
+# `--cache-type-k`/`--cache-type-v`, so llama.cpp uses GGML_TYPE_F16. This figure previously
+# read 2.0, which is the q4_0 number (18 KiB/token) for a cache type we do not serve — so the
+# budget under-counted the model we actually run by 1.5 GiB at 32k, and would have been 6 GiB
+# light at a full 128k window. If the serving flags ever gain a KV quant, this must move with
+# them: q8_0 is 34 KiB/token (4.25) and q4_0 is 18 KiB/token (2.25).
+_QWEN38_KV_GB_PER_128K = 8.0
+
+# Everything a load pins that is neither weights nor KV, for this model family:
+#   ~0.14 GiB  Gated DeltaNet recurrent state across the 48 linear-attention layers (f32,
+#              constant — it does not grow with context)
+#   ~0.40 GiB  compute + output buffers at the served `-ub`
+#   ~0.96 GiB  the MTP draft context, on speculative entries only (see MTP_OVERHEAD_GB)
+# The first two apply to every entry and were simply missing: weights + KV alone predicted
+# 16.4 GiB for the MTP entry against ~19.5 GiB measured on-box, and this is half of that gap.
+RUNTIME_OVERHEAD_GB = 0.55
+
+# `--spec-type draft-mtp` builds a SECOND llama_context against the same model — no duplicated
+# weights. For `qwen35` that context takes the plain-KV branch with a filter selecting only the
+# single nextn block, so it allocates ONE attention layer's KV (~128 MiB at f16/32k) and zero
+# recurrent state, plus its own compute/output buffers and sampler chains. The hybrid shape
+# makes MTP cheaper here, not dearer.
+#
+# ~1 GiB at our configuration (32k context, --spec-draft-n-max 3). It scales with context and
+# with n-max, so a much larger window or draft depth needs this revisited rather than reused.
+MTP_OVERHEAD_GB = 1.0
+
+_KV_REFERENCE_TOKENS = 131072
+
+# The CLIP/mtmd vision encoder's attention buffer — the real cost behind llama.cpp #27146, and
+# NOT what this code previously claimed it was.
+#
+# What it actually is: with flash attention off in the CLIP graph, `clip_graph::build_attn`
+# materialises the full attention matrix as F32 `[n_patches, n_patches, n_head]`. So it grows
+# with the SQUARE of the image token count, and has nothing to do with the projector file's
+# size. A fixed-resolution projector (Gemma) costs a few hundred MiB; only a dynamic-resolution
+# one at a high token ceiling reaches double-digit GB.
+#
+# Two corrections to what this module used to assert, both of which matter:
+#   - It is NOT a load-time cost. Load warms up at a capped 46x46 = 2116 tokens; the large
+#     allocation lands on the first FULL-RESOLUTION image encode, which can be much later.
+#   - It is NOT transient. `ggml_gallocr_reserve_n_impl` only ever grows the buffer — there is
+#     no shrink path — and it is freed at model unload. A smaller subsequent image releases
+#     nothing. So it is a RESIDENT high-water mark, and belongs in footprint_gb too.
+#
+# The old flat 33.0 came from back-solving one freeze against a bug report that is (a) a
+# different GPU (gfx1150 / 32 GB, not this box), and (b) a `total-vm` figure — virtual address
+# space, with `anon-rss: 4 kB` — not resident memory. It was not a measurement of anything.
+_CLIP_ATTN_HEADS = 16
+_CLIP_MERGE = 2
+# llama.cpp's default ceiling for the Qwen3-VL projector family (`set_limit_image_tokens(8,
+# 4096)`). We pass `--image-min-tokens 1024`, which is the FLOOR; nothing caps the ceiling, so
+# this is the worst case we are actually exposed to. Pinning `--image-max-tokens` would cut
+# this quadratically (1024 -> ~1 GiB) at some cost to grounding accuracy on small text.
+_VISION_MAX_IMAGE_TOKENS = 4096
+# What llama.cpp actually warms the projector at during LOAD: `set_warmup_n_tokens(46 * 46)`.
+# The gap between this and the ceiling above is the whole reason the balloon shows up long
+# after a load reported success.
+_VISION_WARMUP_IMAGE_TOKENS = 46 * 46
+
+
+def vision_attn_buffer_gb(max_image_tokens: int = _VISION_MAX_IMAGE_TOKENS) -> float:
+    """Resident GB the CLIP attention buffer reaches at `max_image_tokens`, flash attention OFF.
+
+    Quadratic: `n_patches = max_image_tokens * n_merge**2`, and the buffer is
+    `n_patches**2 * n_head * 4` bytes (F32). Softmax runs in-place on it, so it is 1x that
+    tensor, not 2x.
+
+    ⚠️ ASSUMES CLIP FLASH ATTENTION IS OFF, which is the conservative branch and is UNVERIFIED
+    on this box. With it on the same shape measures ~250 MiB — a ~60x difference, and the
+    single highest-value thing to check here. llama-server prints the answer at startup:
+    `warmup: flash attention is enabled|disabled`."""
+    n_patches = max_image_tokens * _CLIP_MERGE**2
+    return round(n_patches**2 * _CLIP_ATTN_HEADS * 4 / 1024**3, 2)
 
 
 @dataclass(frozen=True)
@@ -813,8 +887,8 @@ def get_by_served(served_model: str) -> LocalModel | None:
 
 
 # The context length KV estimates are normalized to: kv_gb_per_128k is the KV cache at
-# 131072 tokens, and KV scales linearly with the served window.
-_KV_REFERENCE_TOKENS = 131072
+# 131072 tokens, and KV scales linearly with the served window. (Defined near the top, beside
+# the runtime-overhead and vision terms, because load_footprint_gb needs them.)
 
 
 def footprint_gb(
@@ -840,7 +914,48 @@ def footprint_gb(
     # model by several GB — on a box that has hard-locked under memory pressure.
     if model.kv_full_history:
         kv *= 2
-    return round(weights + kv, 2)
+    return round(weights + kv + _runtime_overhead_gb(model) + _vision_resident_gb(model), 2)
+
+
+def _runtime_overhead_gb(model: LocalModel) -> float:
+    """Everything a resident model pins that is neither weights nor KV: the recurrent state of
+    any linear-attention layers, compute and output buffers, and the MTP draft context on a
+    speculative entry. Small individually, but omitting all of them is what made the MTP
+    entry's estimate 3 GiB light against the measurement."""
+    return RUNTIME_OVERHEAD_GB + (MTP_OVERHEAD_GB if model.is_speculative else 0.0)
+
+
+def _vision_resident_gb(model: LocalModel) -> float:
+    """The CLIP attention buffer a vision model reaches once it has encoded a full-resolution
+    image, and then holds until unload (there is no shrink path — see vision_attn_buffer_gb).
+
+    In `footprint_gb` rather than only in the load estimate because it is PERSISTENT: the
+    earlier code had this backwards, reserving it for the load and hiding it from the eviction
+    budget, which is the arrangement that lets a box drift into trouble after the load
+    succeeded. Nothing for a text-only entry."""
+    return vision_attn_buffer_gb() if model.mmproj_include else 0.0
+
+
+def load_footprint_gb(model: LocalModel) -> float:
+    """Device memory to have free before loading `model`, in GiB.
+
+    Weights + KV at its default window + runtime overhead, and for a vision model the CLIP
+    attention buffer at its LOAD-TIME warmup size rather than its eventual peak. llama.cpp
+    warms the projector at a capped 46x46 = 2116 image tokens (`set_warmup_n_tokens`), and the
+    full-resolution buffer only materialises on the first real image — which may be much later,
+    or never. Reserving the peak here would refuse loads that are genuinely safe; the peak is
+    the eviction budget's problem (`footprint_gb`), which is where it now lives.
+
+    Kept distinct from `footprint_gb` because the two answer different questions, but note the
+    difference is now much smaller than the old code assumed — and pointed the other way."""
+    total = (
+        model.size_gb
+        + model.kv_gb_per_128k * model.context_window / _KV_REFERENCE_TOKENS
+        + _runtime_overhead_gb(model)
+    )
+    if model.mmproj_include:
+        total += vision_attn_buffer_gb(_VISION_WARMUP_IMAGE_TOKENS)
+    return round(total, 2)
 
 
 def recommended_ids() -> tuple[str, ...]:

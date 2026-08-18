@@ -2112,6 +2112,18 @@ button.vitals:focus-visible {
   font-size: var(--fs-micro);
   color: var(--text-3);
 }
+/* The end-of-turn restore switch, sharing the free-RAM row's layout. Sized to the touch
+   target the design system asks of every control on a phone-first screen. */
+.onbox-autorestore-toggle {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.onbox-autorestore-toggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 /* The image-VRAM key swatch in the meter caption (violet, matching the segment). */
 .onbox-mem-key {
   display: inline-flex;

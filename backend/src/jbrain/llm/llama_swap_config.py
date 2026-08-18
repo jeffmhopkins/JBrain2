@@ -212,9 +212,12 @@ def render(
             # Physical batch. NOT llama-server's default of 512: llama.cpp #27237 reports the
             # qwen35 hybrid (Gated DeltaNet) emitting GARBAGE OUTPUT at ubatch 512 on Vulkan
             # while 1024 and 4096 are clean — and this deployment serves exactly that arch on
-            # exactly that backend. 1024 also trims the big-vocab graph reserve (#23527), which
-            # sizes a worst-case logits buffer off `n_ubatch × n_vocab` and costs ~3 GiB at
-            # Qwen3.8's 248k vocab.
+            # exactly that backend. That is the WHOLE justification. An earlier version of this
+            # comment also credited 1024 with trimming the big-vocab graph reserve (#23527) by
+            # ~3 GiB, which was wrong twice over: on an unfixed build a LARGER ubatch grows that
+            # buffer rather than shrinking it, and the issue is fixed anyway (PR #24086 clamps
+            # the reserve to `n_outputs_max`), so ubatch does not touch it on any build we run.
+            # At Qwen3.8's 248k vocab the reserve now costs ~11 MiB, not gigabytes.
             "-ub",
             "1024",
             # Per-slot context checkpoints, down from llama-server's default of 32. On a HYBRID

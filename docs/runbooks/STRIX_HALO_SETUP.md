@@ -380,7 +380,7 @@ Three things to know:
   raising `--spec-draft-n-max` (pinned at `3`, llama.cpp's default and the Strix Halo consensus),
   because ungated, the cost of a wasted draft scales with n-max.
 
-> ### ⚠️ Reading the memory instruments correctly (this cost two power cycles)
+> ### ⚠️ Reading the memory instruments correctly (this cost three power cycles)
 >
 > **`mem_info_gtt_used` is DEVICE-WIDE, not per-process.** It reads
 > `ttm_resource_manager_usage()` and sums every client on the card. Attributing it to one model
@@ -389,13 +389,39 @@ Three things to know:
 > underneath the measurement. For per-model attribution use `/proc/<pid>/fdinfo/<drm-fd>` →
 > **`drm-resident-gtt`**, or `amdgpu_top`'s process view.
 >
-> **What the freeze actually was.** Re-enabling the vision projector on the MTP entry froze the
-> host twice. The cause was memory arithmetic, not an MTP↔vision incompatibility:
-> ~67 GiB (gpt-oss, still resident) + ~19 GiB (this model) + ~33 GiB (the GTT balloon an mmproj
-> triggers on an AMD iGPU under Vulkan — llama.cpp **#27146**) ≈ 119 GiB against a ~124 GiB pool.
-> On an otherwise empty box that sum fits. So vision + MTP may well work here; it has never been
-> tried that way, and the entry is text-only pending that test — not because it is proven
-> impossible.
+> **What the freezes actually were — REWRITTEN, because the first explanation was wrong.**
+> Three power cycles. The story told here for a while was memory arithmetic: a
+> projector-carrying model loaded onto a box whose headroom looked fine because the estimate
+> left out a "~33 GiB GTT balloon". That number came from back-solving one freeze against
+> llama.cpp **#27146** — a report on a **different GPU** (Radeon 890M / gfx1150 / 32 GB, not
+> this box) quoting **`total-vm`**, i.e. virtual address space, with `anon-rss: 4 kB`. It was
+> never a measurement of resident memory, and the arithmetic built on it never added up: with
+> the real load-time cost (~4 GiB of warmup buffer), freeze #2 was ~90 GiB against a ~124 GiB
+> pool, which does not freeze anything.
+>
+> **The mechanism is the host's GTT configuration, not any single model.** Phase 5 sets
+> `ttm.pages_limit=32505856` — **124 GiB, i.e. ~100% of system RAM.** That matters because of
+> how the kernel behaves (all verified in v6.18 source):
+>
+> - GTT pages are allocated `GFP_HIGHUSER` — unmovable, on no LRU, **not reclaimable**.
+> - TTM registers **no shrinker for live BO pages**, only for its free-page cache. The kernel
+>   cannot reclaim a loaded model's GTT no matter how much pressure it is under.
+> - `amdgpu_bo_create()` sets `.gfp_retry_mayfail = true` — *"We opt to avoid OOM on system
+>   pages allocations"*. Per the kernel's own memory-allocation guide, that flag means **the
+>   OOM killer is not called.**
+>
+> So when GTT allocation exhausts RAM, every task enters direct reclaim, finds nothing
+> reclaimable, and cannot escalate to an OOM kill. Nothing dies; the machine simply stops. The
+> one mechanism that prevents this is `ttm.pages_limit`: exceeding `gtt_total` returns a clean
+> `-ENOSPC` **before** the pages are requested. Setting it to 100% of RAM removes that
+> backstop, and on kernel 6.18 nothing caps it for you (the physical-RAM sanity cap first
+> appears in v7.2).
+>
+> **Action:** `ttm.pages_limit` should be about `MemTotal − 16 GiB` (≈ 28311552 pages for this
+> box), not 100%. ⚠️ This is a kernel command-line parameter, so it is currently a HOST step
+> the owner cannot perform — see CLAUDE.md #10. Treat it as a gap to design out: the update
+> path should set and verify it, and Ops should surface the live value so a wrong setting is
+> visible rather than latent.
 >
 > **Expected footprint is the check to apply.** A 15.9 GiB Q4 model at 32k should land near
 > 19–20 GiB (weights + ~2 GiB KV across the 16 attention layers + ~150 MiB recurrent state +
@@ -456,10 +482,68 @@ still took the host down. `jbrain.llm.gpu_guard` closes that:
   guess.
 - **Post-load** — one more sample after the load returns, because a fast load can finish between
   two samples and an allocation can still be settling.
-- **Measurement** — the real GTT delta is logged (`gpu_guard.measured_footprint`). ⚠️ It is
-  currently a DEVICE-WIDE delta, so a model restored concurrently by the residency coordinator
-  is counted into it; it needs moving to per-process `drm-resident-gtt` before it can be
-  trusted or used to replace the catalog estimate.
+- **Measurement** — the real GTT delta is logged (`gpu_guard.measured_footprint`, and
+  `residency.load_measured` beside the prediction). ⚠️ It is currently a DEVICE-WIDE delta, so a
+  model restored concurrently by the residency coordinator is counted into it; it needs moving
+  to per-process `drm-resident-gtt` before it can be trusted or used to replace the catalog
+  estimate.
+
+**Where the guard lives, and why that is the whole point.** It is inside
+`LocalGatewayClient.load` — the single chokepoint every path to committing device memory passes
+through. It used to sit on the residency coordinator, which was **one of six callers**, and all
+three freezes arrived through the other five (the settings screen's deliberate load, the debug
+console's, and the coordinator's own end-of-turn restore). A check a caller can route around is
+not a check. A unit test (`tests/unit/test_llm_load_guard_chokepoint.py`) walks the AST of
+`src/jbrain/` and fails CI if anyone ever constructs a local-model gateway without the probe.
+
+**What the pre-flight reserves.** `local_catalog.load_footprint_gb` — weights + KV + a runtime
+term (recurrent state, compute/output buffers, and the MTP draft context on a speculative
+entry). For a vision model it adds the CLIP attention buffer at its **load-time warmup size**
+only. It does **not** reserve that buffer's peak, because the peak does not exist at load.
+
+**Where the vision cost really is.** The large allocation behind #27146 is the CLIP/mtmd
+encoder's attention matrix — F32 `[n_patches, n_patches, n_head]`, materialised when flash
+attention is off in the CLIP graph. Two properties decide where it belongs in the budget:
+
+- **It is not a load-time cost.** llama.cpp warms the projector at a capped 46×46 = 2116 image
+  tokens (`set_warmup_n_tokens`); the full-resolution buffer appears on the **first real
+  image**, which may be much later or never.
+- **It is not transient.** `ggml_gallocr_reserve_n_impl` only ever grows the buffer — there is
+  no shrink path — and it is freed at model unload. A smaller later image releases nothing.
+
+So it lives in `footprint_gb` (resident, drives eviction), not in the load reservation. It
+scales with the **square** of the image token ceiling: `n_patches = max_image_tokens ×
+n_merge²`, buffer = `n_patches² × n_head × 4` bytes.
+
+| `--image-max-tokens` | buffer (CLIP FA **off**) |
+|---|---|
+| 4096 (llama.cpp's default for this projector family — what we inherit) | **16.0 GiB** |
+| 1024 | 1.0 GiB |
+| 512 | 0.25 GiB |
+
+⚠️ **The catalog assumes CLIP flash attention is OFF, and that is UNVERIFIED on this box.**
+With it on, the same shape measures ~250 MiB — a ~60× difference. Conservative is the right
+default (over-reserving costs a refused load; under-reserving costs a power cycle), but it is
+an assumption, not a fact. llama-server prints the answer at startup: **`warmup: flash
+attention is enabled|disabled`**. Settling it is the single highest-value check here.
+
+Note we pass `--image-min-tokens 1024`, which is the **floor**. Nothing caps the ceiling, so
+4096 is the exposure. Pinning `--image-max-tokens 1024` would cut the buffer quadratically at
+some cost to grounding accuracy on small text.
+
+### Stopping the box loading models on its own
+
+**Settings → LLM → Auto-restore models** (under the memory meter). ON — the default and the
+long-standing behaviour — means that after a displacement (an image render, a code session, a
+big one-off) the box puts the displaced models back once the turn ends, so it settles at its
+steady state rather than cold-loading next turn. OFF means it stops: a model comes back only
+when a turn actually needs one.
+
+Turn it off while diagnosing the box, or while deliberately holding it near empty — a restore is
+a model load nobody asked for at that moment, and it has repeatedly appeared *underneath* a
+measurement and confused it. It is a **surprise** control, not a safety one: every load, restore
+included, goes through the device-memory guard either way. Read live, so the flip applies to the
+next turn with no restart.
 
 ### Is MTP actually drafting?
 
