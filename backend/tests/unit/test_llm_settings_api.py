@@ -1155,6 +1155,26 @@ def test_extra_arg_allowlist_covers_the_speculative_tuning_flags() -> None:
         assert llm_settings._validate_extra_args([flag, "x"]) == [flag, "x"]
 
 
+def test_extra_arg_allowlist_covers_the_image_token_flags() -> None:
+    """The image FLOOR decides whether small text in a photo survives to the model — raise it
+    and OCR on a curved label or a receipt gets legible, at the cost of prefill and KV — and no
+    amount of reading says where that threshold sits for a given camera and subject. It is only
+    observable against real images, so it has to be tunable without a release, exactly like the
+    speculative flags beside it.
+
+    The ceiling is the memory lever: llama.cpp defaults it to 4096 for this projector family
+    and the catalog pins only the floor. It matters much less now that flash attention is
+    confirmed on (the CLIP term is linear in patches, not quadratic), but it is the control if
+    a build ever loses `-fa`."""
+    for flag in ("--image-min-tokens", "--image-max-tokens"):
+        assert flag in llm_settings.EXTRA_ARG_FLAGS
+        assert llm_settings._validate_extra_args([flag, "2048"]) == [flag, "2048"]
+    # Both at once is the realistic call — bracketing the encode from below and above.
+    assert llm_settings._validate_extra_args(
+        ["--image-min-tokens", "2048", "--image-max-tokens", "4096"]
+    ) == ["--image-min-tokens", "2048", "--image-max-tokens", "4096"]
+
+
 def test_extra_arg_allowlist_rejects_an_unknown_flag_loudly() -> None:
     # 422, never a silent drop: a caller that believes it set a flag and did not would misread
     # every measurement taken afterwards.

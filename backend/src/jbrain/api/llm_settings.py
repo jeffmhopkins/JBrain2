@@ -1324,6 +1324,16 @@ async def gateway_unload(
 # about to write (`llama_swap_config._is_speculative`), so an operator flag gets the same clamp
 # a catalog flag does. A bad VALUE here can stop a model loading, same as a bad `-ub`; clearing
 # is the same call with no args and does not require the model to be loadable.
+#   --image-min-tokens     FLOOR on how many tokens an image is encoded to
+#   --image-max-tokens     CEILING on the same (llama.cpp defaults to 4096 for this projector
+#                          family and the catalog pins only the floor, at 1024)
+# The image pair is here for the same reason as the speculative four: the right value is
+# empirical and only observable against real images. The floor is what decides whether small
+# text in a photo survives to the model — raise it and OCR on a curved bottle label or a
+# receipt gets legible, at the cost of prefill and KV — and no amount of reading can say where
+# that threshold sits for a given camera and subject. Pinning the ceiling bounds the CLIP
+# workspace, which matters much less now that flash attention is confirmed on (the term is
+# linear in patches, not quadratic), but it remains the lever if a build ever loses `-fa`.
 # Flags taking a value are allowed to carry one; the value itself is NOT interpreted here.
 EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
     {
@@ -1335,6 +1345,8 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
         "--spec-draft-n-max",
         "--spec-draft-n-min",
         "--spec-draft-p-min",
+        "--image-min-tokens",
+        "--image-max-tokens",
     }
 )
 
