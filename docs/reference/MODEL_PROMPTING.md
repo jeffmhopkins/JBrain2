@@ -1,6 +1,20 @@
 # Model prompting reference — gpt-oss-120b & Qwen3-VL-30B
 
-> **Status:** Living · **Last verified:** 2026-08-17
+> **Status:** Living · **Last verified:** 2026-08-18
+
+> **Applied (2026-08-18):** added `qwen3.8-27b-abliterated` — an ABLITERATED Qwen3.8-27B
+> (Blackfrost, Q4_K_M + F16 projector, ~16.5 GiB) as an opt-in **red-team probe** for exercising
+> the sandbox's controls against a model that will not refuse. Same base weights as the aligned
+> twins, so the card sampling, the hybrid thinking wiring and the MTP serving flags carry over
+> unchanged (verified against the published GGUF header: arch `qwen35`, `block_count` 65,
+> `full_attention_interval` 4, `context_length` 262144, MTP head at `blk.64.nextn.*`). Two
+> deviations that are NOT cosmetic: (1) its chat template hard-codes a "never refuse, no pushback"
+> system prompt emitted **above** the caller's own system message every turn, with no API switch —
+> so it displaces our prompts wherever it is selected, and the vendor's 2.4% residual-refusal score
+> measures the model *plus* that prompt; (2) that template **raises** on a `reasoning_effort`
+> outside (`xhigh`, `medium`, `low`) instead of ignoring it, so `thinking_effort_map` is
+> load-bearing — an unmapped level is a hard template error here, not a silent default. Nothing
+> routes to it; it is never in the recommended set.
 
 > **Applied (2026-08-17):** Qwen3.8 now gets a REASONING EFFORT LEVEL, not just a thinking
 > on/off toggle. Its chat template reads `reasoning_effort` (`low` / `medium` / `xhigh`) out of
@@ -353,6 +367,7 @@ top_k 40 / min_p 0.1. Hybrid rows show non-thinking → thinking.
 |---|---|---|---|---|---|---|
 | qwen3-vl-30b-a3b (+q4) | 0.7 | 0.8 | 20 | 0 | 1.5 | Qwen VL card |
 | qwen3.8-27b (+q4/mtp) | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5→– | Qwen3.8 card |
+| qwen3.8-27b-abliterated | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5→– | Qwen3.8 card (same base) |
 | qwen3-coder-next (+q8) | 1.0 | 0.95 | 40 | 0 | – | Qwen Coder card |
 | qwen3-30b-a3b | 0.7 | 0.8 | 20 | 0 | – | Qwen 30B-A3B (Instruct-2507) |
 | qwen3.5-0.8b | 1.0→1.0 | 1.0→0.95 | 20 | 0 | 2.0→1.5 | Qwen3.5 card (loop-prone) |

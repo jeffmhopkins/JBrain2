@@ -356,6 +356,30 @@ headroom matters more than the last bit of transcription accuracy. First-time ho
 kernel params) still needs Phases 1–6 on the box; the PWA path only *adds/removes
 models* on an already-enabled stack.
 
+**Red-team probe — `Qwen3.8 27B · abliterated`.** An opt-in catalog entry (`qwen3.8-27b-abliterated`,
+Q4_K_M, ~16.5 GB) carrying an *abliterated* build of the same Qwen3.8-27B the aligned twins serve:
+the refusal directions are edited out of the residual stream, so it answers prompts the aligned
+model declines. It is here to **exercise the sandbox's own controls** — checking what the guardrails
+around the model catch when the model itself catches nothing — not to do work. Install and uninstall
+it from the same **On-box models** drawer as anything else; nothing routes to it until you point a
+task at it, and it is never in the recommended set.
+
+Two things to know before you point anything at it:
+- **It ships its own system prompt, and you cannot turn it off.** The chat template baked into the
+  GGUF prepends a "task-execution machine / never refuse, no pushback" block **above** whatever
+  system message JBrain sends, on every turn. There is no API flag to suppress it — it is in the
+  weights file. So (a) selecting this model for a real task silently displaces JBrain's own
+  prompting, and (b) the vendor's 2.4% residual-refusal figure is measured *with* that prompt in
+  place, not for the weights alone. Read any result you get as "model + jailbreak prompt".
+- **Vendor-labelled experimental.** Same serving shape as `qwen3.8-27b-q4` (dense 27B, text +
+  vision, MTP self-speculation, hybrid thinking, 262k native window), so it co-resides beside
+  gpt-oss-120b — but it is a modified research checkpoint, not a released model. If a load
+  misbehaves, fall back to `qwen3.8-27b-q4` and compare.
+
+Its thinking level is not optional here the way it is elsewhere: this template **raises** on a
+level outside `low` / `medium` / `xhigh` rather than ignoring it, and defaults to `xhigh` when sent
+none. The catalog's level map already sends exactly the three it accepts.
+
 **MTP (faster generation) variant — `Qwen3.8 27B · MTP`.** A catalog entry that serves the same
 Qwen3.8-27B Q4_K_M weights as the interactive twin but with llama.cpp multi-token prediction
 (`--spec-type draft-mtp`) — self-speculation off the MTP head that unsloth's GGUF already bakes
@@ -504,7 +528,7 @@ turn automatic reloading OFF first, then unload. Otherwise the keeper wins.
 The floor is a catalog FIELD (`image_min_tokens`), set per model like `context_window` and
 overridable per model in the PWA. `--image-max-tokens` is the ceiling
 (llama.cpp defaults to 4096 for this projector family; the catalog pins only the floor, at
-1024). Both are on the `extra-args` allowlist, so they tune live:
+2048). Both are on the `extra-args` allowlist, so they tune live:
 
 Measured on a bottle label carrying fine print, three reads per floor:
 
@@ -727,7 +751,7 @@ where it silently does not apply to the CLIP graph, puts the quadratic branch ba
 > `speculative.types`, and it is why the question had to be answered by GTT deltas instead.
 > Capturing upstream process output into the gateway log is the fix.
 
-Note we pass `--image-min-tokens 1024`, which is the **floor**. Nothing caps the ceiling, so
+Note we pass `--image-min-tokens` (2048 by default, per model), which is the **floor**. Nothing caps the ceiling, so
 4096 is the exposure. Pinning `--image-max-tokens 1024` would cut the buffer quadratically at
 some cost to grounding accuracy on small text.
 
