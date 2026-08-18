@@ -1241,6 +1241,36 @@ async def model_props(
     return await llm_settings.gateway_props(model_id, settings, _gateway(request))
 
 
+@router.get("/llm/local-models/{model_id}/slots")
+async def model_slots(
+    model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """llama-server's `/slots` for one RESIDENT model — per-slot state, and on a speculative
+    build the `speculative` object that says whether drafting is actually running.
+
+    This exists because `/props`'s `speculative.types` CANNOT answer that: the server builds
+    it from a `task_params` it never populates, so it reads "none" on every build, and an
+    entire investigation here concluded MTP was off from that field. The `--slots` flag the
+    config always passes was added precisely so this endpoint would be available; only the
+    route was missing."""
+    request.state.debug_detail = model_id
+    return await llm_settings.gateway_slots(model_id, settings, _gateway(request))
+
+
+@router.get("/llm/local-models/{model_id}/metrics")
+async def model_metrics(
+    model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
+) -> dict[str, object]:
+    """llama-server's Prometheus `/metrics` for one RESIDENT model, with the speculative
+    counters parsed out (`spec`: drafted, accepted, and the derived accept rate).
+
+    The accept rate is the direct measure of whether MTP is earning its keep and whether
+    `--spec-draft-n-max` is at the right depth. Without this route it could only be inferred
+    from wall-clock timings, which is how the MTP work here spent a long time guessing."""
+    request.state.debug_detail = model_id
+    return await llm_settings.gateway_metrics(model_id, settings, _gateway(request))
+
+
 @router.post("/llm/local-models/{model_id}/slots/{slot_id}")
 async def slot_action(
     model_id: str,

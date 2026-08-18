@@ -415,14 +415,15 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
     # precondition for KV-slot restore — plus the 0.55 runtime term every entry carries.
     assert local_catalog.footprint_gb(gpt, 131072) == 68.55
     # KV still scales linearly with the window. vl also carries a projector, so its resident
-    # figure includes the CLIP attention buffer (see vision_attn_buffer_gb): 32 + 6*(32768/
-    # 131072) + 0.55 + 16.0 = 50.05.
-    assert local_catalog.footprint_gb(vl, 32768) == 50.05
+    # figure includes the CLIP attention workspace (see vision_attn_buffer_gb): 32 + 6*(32768/
+    # 131072) + 0.55 + 0.47 = 34.52. That last term is MEASURED with flash attention on; the
+    # quadratic no-flash-attention branch would put it at 16.0 instead.
+    assert local_catalog.footprint_gb(vl, 32768) == 34.52
     # Half the window → half the KV term; the vision and runtime terms do not scale with it.
-    assert local_catalog.footprint_gb(vl, 16384) == 49.3
+    assert local_catalog.footprint_gb(vl, 16384) == 33.77
     # A measured on-disk size overrides the nominal weights estimate — and only that term;
-    # KV, runtime and vision are unaffected (31.9 + 1.5 + 0.55 + 16.0).
-    assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 49.95
+    # KV, runtime and vision are unaffected (31.9 + 1.5 + 0.55 + 0.47).
+    assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 34.42
     # A second slot doubles ONLY the KV term (weights are shared), and it compounds with
     # full-history: gpt-oss at 128k with 2 slots = 59 + 2*(2*4.5) + 0.55 runtime = 77.55. The number
     # the owner trades against — halving the window brings it back to 68.0.
