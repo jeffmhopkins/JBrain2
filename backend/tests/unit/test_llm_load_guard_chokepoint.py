@@ -194,14 +194,36 @@ def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:
     q4_0 and every runtime term missing. That gap is what made the load guard optimistic about
     the one model the box is meant to run all day, so the text-only arithmetic is pinned here.
 
-    Text-only is also what ships: giving this entry a projector froze the box twice, once with
-    105 GiB free, so memory is not the explanation and an MTP-beside-mmproj interaction has
-    never been ruled out."""
+    The entry now also ships a projector, which that measurement did not include — so the
+    text-only arithmetic is pinned against a stripped copy, and the shipped pair is pinned
+    separately below."""
     mtp = local_catalog.get("qwen3.8-27b-mtp")
     assert mtp is not None
     assert mtp.is_speculative
-    predicted = local_catalog.load_footprint_gb(mtp)
+    text_only = replace(mtp, mmproj_include=None, supports_vision=False, size_gb=15.9)
+    predicted = local_catalog.load_footprint_gb(text_only)
     assert 19.0 <= predicted <= 20.0, predicted
+
+
+def test_vision_plus_mtp_is_budgeted_but_has_never_been_loaded() -> None:
+    """Vision is enabled on the MTP entry to be verified on an EMPTY box. Memory is ruled out
+    as the cause of the two freezes this once produced — the second had ~105 GiB free against a
+    ~21 GiB model, and the ~33 GiB mmproj balloon blamed on llama.cpp #27146 does not happen
+    here (the q4 twin carries the same projector, loads in 26.02 GiB measured, and a full
+    image encode adds 0.11 GiB). What is untested is the PAIR: q4 has no MTP head, so no run
+    has put a projector and the MTP head in one process on this box.
+
+    This pins the PREDICTION so a divergence at load shows up as a failing test rather than as
+    a frozen host — the failure mode that cost this box three power cycles."""
+    mtp = local_catalog.get("qwen3.8-27b-mtp")
+    assert mtp is not None
+    assert mtp.mmproj_include and mtp.supports_vision
+    predicted = local_catalog.load_footprint_gb(mtp)
+    # 19.50 measured text-only, plus the projector weights and its vision workspace.
+    assert 20.5 <= predicted <= 22.0, predicted
+    # Must still co-reside with gpt-oss (69.24 GiB measured) inside the ~124 GiB pool, which is
+    # the only reason the pair is worth having at all.
+    assert predicted + 69.24 < 124.0
 
 
 def test_spec_numbers_are_derived_when_the_build_has_no_draft_counters() -> None:
