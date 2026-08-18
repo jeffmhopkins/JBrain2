@@ -58,7 +58,7 @@ def test_qualified_models_keep_the_canvas(model: str) -> None:
 @pytest.mark.parametrize(
     "model",
     [
-        "qwen3.8-27b-mtp",  # vision projector can't run beside MTP — text-only
+        "gpt-oss-120b",  # text-only: canvas tools are useless without vision
         "gpt-oss-120b",  # text-only
         "qwen3-vl-30b-a3b",  # vision, but its base has not been measured
         "xai:grok-4.3",  # cloud multimodal, different convention
@@ -88,7 +88,7 @@ async def test_an_override_onto_a_text_model_hides_it() -> None:
     # The owner steering the conversation onto the fast MTP twin must not leave the
     # model drawing blind.
     router = _Router("qwen3.8-27b")
-    hidden = await canvas_hidden_tools(cast(Any, router), "qwen3.8-27b-mtp", JERV_LIKE)
+    hidden = await canvas_hidden_tools(cast(Any, router), "gpt-oss-120b", JERV_LIKE)
     assert hidden == GATED
 
 

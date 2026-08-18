@@ -803,7 +803,7 @@ async def test_a_device_refusal_from_the_gateway_reaches_the_caller() -> None:
     gw = _RefusingGateway(running=set())
     coord = ResidencyCoordinator(gw, enabled=True, free_ram_fraction=0.05, box_lock=None)
     with pytest.raises(gpu_guard.GpuBudgetError):
-        await coord._guarded_load("qwen3.8-27b-mtp", projected_gb=21.0)
+        await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
 
 
 async def test_the_load_measurement_is_logged_against_the_prediction() -> None:
@@ -825,8 +825,8 @@ async def test_the_load_measurement_is_logged_against_the_prediction() -> None:
 
     gw = FakeLocalGateway(running=set())
     coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_ClimbingProbe(), box_lock=None)
-    await coord._guarded_load("qwen3.8-27b-mtp", projected_gb=21.0)
-    assert gw.loaded == ["qwen3.8-27b-mtp"] and gw.unloaded == []
+    await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)
+    assert gw.loaded == ["qwen3.8-27b-q4"] and gw.unloaded == []
 
 
 async def test_a_healthy_load_still_goes_through_untouched() -> None:
