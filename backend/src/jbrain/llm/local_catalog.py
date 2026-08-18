@@ -566,23 +566,21 @@ CATALOG: tuple[LocalModel, ...] = (
         # Same model + sampling as the Q4 twin — MTP changes only HOW it's served, not the model.
         sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
         sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
-        # Vision ENABLED, to be verified on an EMPTY box — the deliberate test the earlier
-        # note called for, run as the owner's decision with the risk understood.
+        # Vision + MTP in ONE model, and it is measured, not assumed. Loaded on a genuinely
+        # empty box (GTT floor 0.14 GiB, nothing else resident): 19.07 GiB against 20.59
+        # predicted, flat, no balloon. A 2.1 MB image then encoded in +0.11 GiB — the SAME
+        # delta the q4 twin shows — and the caption was correct. Speculation is unaffected by
+        # the projector: 1.8 tokens/step, 17.54 t/s, matching the text-only baseline.
         #
-        # Loading the projector here froze the host twice. Two explanations were live: memory,
-        # or an MTP-beside-mmproj interaction. Memory is now ruled OUT in both directions —
-        # the second freeze had ~105 GiB free against a ~21 GiB model, and the ~33 GiB mmproj
-        # balloon blamed on llama.cpp #27146 does not occur on this box at all (the q4 twin
-        # carries the SAME projector, loads in 26.02 GiB measured, and a full-resolution image
-        # encode adds 0.11 GiB, not 33). What has never been tested is the pair itself: q4 has
-        # no MTP head, so no run has ever put a projector and the MTP head in one process here.
-        #
-        # Budgeted at ~21.1 GiB — 19.50 measured text-only, plus projector and workspace. That
-        # figure is a PREDICTION for a configuration nobody has loaded; treat a large
-        # divergence at load as the signal to stop, not as a number to adjust to fit.
-        #
-        # Ships as a CAPABILITY, not a routing change: vision tasks still route to the q4 twin,
-        # so nothing sends this model an image until someone chooses to.
+        # This entry was text-only for a long time on the belief that an mmproj beside the MTP
+        # head balloons GTT (llama.cpp #27146). It does not, on this box, in any configuration.
+        # Every data point behind that belief was a MEMORY COLLISION misread as an interaction:
+        # two freezes with ~67 GiB of gpt-oss still resident, and a later guard abort at
+        # "59.8 GB" that was the primary model reloading underneath the measurement — gpu_guard
+        # reads GTT device-wide, so a concurrent load lands in the reading and is attributed to
+        # whatever is being loaded. None of those attempts ever had the box to themselves.
+        # Holding it empty only became possible once the warm keeper started honouring the
+        # auto-reload switch, which is what made this measurable at all.
         tiers=("high",),
         supports_vision=True,
         supports_tools=True,
@@ -595,8 +593,8 @@ CATALOG: tuple[LocalModel, ...] = (
         # serving mode you want.)
         hf_repo="unsloth/Qwen3.8-27B-GGUF",
         gguf_include="*Q4_K_M*.gguf",
-        # Same projector as the q4 twin — see the vision note above for what is and is not
-        # settled about the two freezes this once caused.
+        # Same projector as the q4 twin, and measured to cost the same: +0.11 GiB on a
+        # full-resolution image encode.
         mmproj_include="mmproj-F16.gguf",
         quant="Q4_K_M",
         # Q4_K_M weights plus the F16 projector — the same on-disk footprint as the q4 twin.

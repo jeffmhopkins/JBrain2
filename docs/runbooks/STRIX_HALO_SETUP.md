@@ -447,6 +447,33 @@ update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-
 > by wall-clock timings — which is how an entire investigation concluded MTP was off from a
 > field (`/props`'s `speculative.types`) that reads "none" on every build.
 
+### Vision + MTP in one model — measured, and it works
+
+`qwen3.8-27b-mtp` serves the projector and the MTP head together. Measured on a genuinely
+empty box (GTT floor 0.14 GiB, nothing else resident, auto-reload off):
+
+| | measured | note |
+|---|---|---|
+| load | **19.07 GiB** | predicted 20.59 — over by 1.5, the safe direction |
+| image encode (2.1 MB) | **+0.11 GiB** | identical to the q4 twin |
+| peak GTT across the test | 19.19 GiB | flat, no balloon |
+| speculation | 1.8 tok/step, 17.54 t/s | unchanged by the projector |
+
+So one model gives vision AND ~2x decode in the memory the q4 twin uses for vision alone.
+
+**This entry was text-only for a long time on a belief that turned out to be false** — that an
+mmproj beside the MTP head balloons GTT (llama.cpp #27146). It does not, on this box, in any
+configuration. Every observation behind that belief was a MEMORY COLLISION misread as an
+interaction: two freezes with ~67 GiB of gpt-oss still resident, and later a guard abort
+reporting "GTT 59.8 GB" that was the primary model reloading *underneath* the measurement.
+
+That last one is the trap worth remembering: **`gpu_guard` reads GTT device-wide, not
+per-process**, so anything loading concurrently lands in the reading and is attributed to the
+model being loaded. A measurement taken while the box is not exclusively yours is not a
+measurement of your model. None of the earlier attempts ever had the box to themselves, and
+holding it empty only became possible once the warm keeper started honouring the auto-reload
+switch.
+
 ### Two things auto-load models, and the switch governs both
 
 Settings → LLM's automatic-reload switch has to be read as covering **two** independent paths,

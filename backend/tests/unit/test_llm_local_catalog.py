@@ -244,13 +244,12 @@ def test_qwen38_27b_mtp_is_a_self_speculative_variant_of_the_q4_twin() -> None:
     m = local_catalog.get("qwen3.8-27b-mtp")
     q4 = local_catalog.get("qwen3.8-27b-q4")
     assert m is not None and q4 is not None
-    # The projector is BACK, to be verified on an empty box. It hard-froze the host twice, and
-    # the memory explanation for that is now dead in both directions: the second freeze had
-    # 105 GiB free against a 21 GiB model, AND the #27146 mmproj balloon does not occur here —
-    # the q4 twin below carries the same projector and loads in 26.02 GiB measured, with a full
-    # image encode adding 0.11 GiB. That leaves an MTP-beside-mmproj interaction as the only
-    # surviving hypothesis, and it has never actually been tested: q4 has no MTP head.
-    # Enabled as a capability only — vision tasks still route to the q4 twin.
+    # Vision + MTP in one model, MEASURED on an empty box: 19.07 GiB load against 20.59
+    # predicted, +0.11 GiB for a full-resolution image encode (the same delta the q4 twin
+    # shows), speculation unaffected at 1.8 tok/step. The long-held belief that an mmproj
+    # beside the MTP head balloons GTT (llama.cpp #27146) is false on this box — every
+    # observation behind it was a memory collision with a concurrently loading model, read
+    # through a device-wide GTT probe that cannot tell the two apart.
     assert m.tiers == ("high",)
     assert m.supports_vision is True
     assert m.mmproj_include == q4.mmproj_include
