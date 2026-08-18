@@ -373,6 +373,20 @@ export function LLMSettingsScreen() {
       .finally(() => unmark("free-ram"));
   }
 
+  // Turn the end-of-turn restore on or off. A box-wide knob like the free-RAM floor, so it
+  // gets its own fixed busy id rather than a model id.
+  function setAutoRestore(enabled: boolean) {
+    mark("auto-restore");
+    const seq = ++putSeq.current;
+    api
+      .setAutoRestore(enabled)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark("auto-restore"));
+  }
+
   // Toggle a provisioned model available/unavailable to the router (keeps the weights). A
   // model made unavailable can't be staged, so drop any open preview of it.
   function setAvailable(id: string, on: boolean) {
@@ -637,6 +651,9 @@ export function LLMSettingsScreen() {
         freeRam={settings.free_ram}
         onSetFreeRam={setFreeRam}
         freeRamBusy={busy.has("free-ram")}
+        autoRestore={settings.auto_restore}
+        onSetAutoRestore={setAutoRestore}
+        autoRestoreBusy={busy.has("auto-restore")}
         image={image}
         busy={busy}
         stagedId={stagedId}
@@ -1135,6 +1152,43 @@ function FreeRamControl({
   );
 }
 
+// The end-of-turn restore switch, shown beside the free-RAM floor (hosting on only). ON is
+// the long-standing behaviour: after a displacement (an image render, a code session) the box
+// puts the displaced models back when the turn ends, so it settles at a steady state instead
+// of cold-loading next turn. OFF stops that — nothing loads until a turn needs it, which is
+// what you want while diagnosing the box. It is a SURPRISE control, not a safety one: every
+// load is guarded against device memory either way.
+function AutoRestoreControl({
+  enabled,
+  busy,
+  onChange,
+}: {
+  enabled: boolean;
+  busy: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  return (
+    <div className="onbox-freeram">
+      <label className="onbox-freeram-label" htmlFor="auto-restore-toggle">
+        Auto-restore models
+      </label>
+      <input
+        id="auto-restore-toggle"
+        type="checkbox"
+        className="onbox-autorestore-toggle"
+        checked={enabled}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="onbox-freeram-hint">
+        {enabled
+          ? "displaced models come back when a turn ends"
+          : "off — models load only when a turn needs one"}
+      </span>
+    </div>
+  );
+}
+
 // One card, a shared always-visible unified-memory meter, then two independently
 // collapsible sections (On-box LLMs / Image models). The meter is fed BOTH the LLM
 // (loaded + staged) and the image-VRAM segments since the box shares one RAM pool.
@@ -1153,6 +1207,9 @@ function OnBoxModelsCard({
   freeRam,
   onSetFreeRam,
   freeRamBusy,
+  autoRestore,
+  onSetAutoRestore,
+  autoRestoreBusy,
   image,
   busy,
   stagedId,
@@ -1187,6 +1244,9 @@ function OnBoxModelsCard({
   freeRam: { fraction: number; default: number; override: number | null };
   onSetFreeRam: (fraction: number | null) => void;
   freeRamBusy: boolean;
+  autoRestore: boolean;
+  onSetAutoRestore: (enabled: boolean) => void;
+  autoRestoreBusy: boolean;
   image: ImageSettings | null;
   busy: Set<string>;
   stagedId: string | null;
@@ -1406,7 +1466,14 @@ function OnBoxModelsCard({
           </p>
         )}
         {hostingEnabled && (
-          <FreeRamControl freeRam={freeRam} busy={freeRamBusy} onChange={onSetFreeRam} />
+          <>
+            <FreeRamControl freeRam={freeRam} busy={freeRamBusy} onChange={onSetFreeRam} />
+            <AutoRestoreControl
+              enabled={autoRestore}
+              busy={autoRestoreBusy}
+              onChange={onSetAutoRestore}
+            />
+          </>
         )}
       </div>
 

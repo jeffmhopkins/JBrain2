@@ -34,6 +34,8 @@ from typing import Protocol
 import httpx
 import structlog
 
+from jbrain.llm import gpu_guard, local_catalog
+
 log = structlog.get_logger()
 
 
@@ -65,10 +67,19 @@ class LocalGatewayClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 3.0,
+        gpu_probe: gpu_guard.GpuMemProbe | None = None,
     ):
         self._root = base_url.rstrip("/").removesuffix("/v1")
         self._transport = transport
         self._timeout = timeout
+        # Device-memory probe for the load guard. It lives HERE, on the client, rather than in
+        # the residency coordinator, because `load()` is the single chokepoint every path to
+        # committing GPU memory must pass through. Guarding a wrapper only protects the callers
+        # who remember to use the wrapper: this box froze three times, and every one went
+        # through a load path that skipped the guard (the manual settings load, the debug
+        # console load, and the residency RESTORE — three of the six call sites). A safety
+        # check a caller can decline is not a safety check.
+        self._gpu_probe = gpu_probe
 
     async def running(self) -> set[str]:
         """Served-model names currently loaded, or an empty set on ANY failure
@@ -207,12 +218,40 @@ class LocalGatewayClient:
         (the model is resident regardless — a failed warm-up just leaves that cost on first
         use, the prior behaviour). Generous timeout: a cold 80B reads tens of GB of weights."""
         load_timeout = max(self._timeout, 120.0)
-        try:
-            async with httpx.AsyncClient(timeout=load_timeout, transport=self._transport) as client:
-                resp = await client.get(f"{self._root}/upstream/{served_model}/health")
-                resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise LocalGatewayError(str(exc)) from exc
+        model = local_catalog.get_by_served(served_model)
+        projected_gb = local_catalog.load_footprint_gb(model) if model else 0.0
+
+        async def _do_load() -> None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=load_timeout, transport=self._transport
+                ) as client:
+                    resp = await client.get(f"{self._root}/upstream/{served_model}/health")
+                    resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise LocalGatewayError(str(exc)) from exc
+
+        if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
+            await _do_load()
+            await self._warm(served_model, system=warm_system, tools=warm_tools)
+            return
+
+        # PRE-FLIGHT, then WATCH — for every caller, with no way to opt out. The projection
+        # includes the VISION PROJECTOR BALLOON (`local_catalog.load_footprint_gb`): an
+        # mmproj model pins tens of GB of GTT at load on an AMD iGPU (llama.cpp #27146), and
+        # every freeze this box took was a projector-carrying model whose weights+KV
+        # arithmetic looked comfortable. The watchdog covers the rest, because the first load
+        # of any model is a guess and here a wrong guess costs a power cycle.
+        gpu_guard.refuse_if_no_device_room(
+            await self._gpu_probe.sample(), projected_gb, served_model
+        )
+        await gpu_guard.guarded_load(
+            _do_load,
+            probe=self._gpu_probe,
+            projected_gb=projected_gb,
+            target=served_model,
+            abort=lambda: self.unload(served_model),
+        )
         await self._warm(served_model, system=warm_system, tools=warm_tools)
 
     async def _warm(

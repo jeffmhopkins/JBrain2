@@ -158,6 +158,7 @@ class ResidencyCoordinator:
         free_ram_fraction: float = 0.25,
         fraction_loader: FractionLoader | None = None,
         hold_loader: HoldLoader | None = None,
+        auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
         box_lock: BoxLock | None = None,
         on_prefix_lost: PrefixLostHook | None = None,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
@@ -184,6 +185,13 @@ class ResidencyCoordinator:
         # code mode is off). While held, `ensure_room` refuses to load any other non-resident
         # model, so nothing evicts the coder or co-loads a second large model past physical RAM.
         self._hold_loader = hold_loader
+        # The operator's end-of-turn RESTORE switch (Settings → LLM), read live so a flip
+        # applies with no restart. Off means the box stops putting back what a displacement
+        # took — models come back only when a turn actually needs them. It exists because a
+        # restore is a model load the owner did not ask for at that moment, and while
+        # diagnosing the box "nothing loads unless I say so" has to be reachable from the
+        # PWA. Absent loader → on, the long-standing behaviour.
+        self._auto_restore_loader = auto_restore_loader
         # Cross-process serialization of the evict+load path (pg_box_lock in production).
         # None → single-process behavior: evict only, and let the client trigger the load.
         # Set → hold the lock across evict AND the target load, so the loaded model's memory
@@ -244,6 +252,16 @@ class ResidencyCoordinator:
         task = asyncio.create_task(self._restore())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def _auto_restore(self) -> bool:
+        """The live end-of-turn restore switch. Defaults to ON when no loader is wired or the
+        read fails: a settings-store hiccup must not silently leave the box refusing to drift
+        back to its steady state."""
+        if self._auto_restore_loader is None:
+            return True
+        with contextlib.suppress(Exception):
+            return await self._auto_restore_loader()
+        return True
 
     async def _windows(self) -> Mapping[str, int]:
         """Live per-model context-window overrides (catalog id → tokens); empty when no loader
@@ -473,46 +491,33 @@ class ResidencyCoordinator:
             await self._guarded_load(served_model, plan.target_gb)
 
     async def _guarded_load(self, served_model: str, projected_gb: float) -> None:
-        """Load under the DEVICE-memory guard (jbrain.llm.gpu_guard), on top of the free-RAM
-        budget the plan above already applied.
+        """Load, and log what the load ACTUALLY cost in device memory.
 
-        The two budgets are not the same check, and only counting system RAM let a load take
-        this host down twice. On an APU a model's device buffers are GTT — system pages the
-        amdgpu driver pins — accounted separately from `MemAvailable` and capped separately by
-        `amdgpu.gttsize`. A model can sit comfortably inside the free-RAM floor and still
-        exhaust the device pool; that is what happened, with 105 GiB free and a 21 GiB model.
+        The device-memory guard itself no longer lives here. It moved into
+        `LocalGatewayClient.load`, which is the single chokepoint every path to committing
+        GPU memory passes through — this coordinator was only one of six callers, and the
+        three freezes this box took all came in through callers that never reached this
+        method (the settings screen's deliberate load, the debug console's, and this
+        coordinator's own end-of-turn RESTORE). Guarding the wrapper protected the one
+        caller that used the wrapper; guarding the chokepoint protects all of them, and
+        leaves no way to opt out.
 
-        The pre-flight refusal catches costs we can predict. The watchdog catches the ones we
-        cannot: the first load of any model is a guess, and here a wrong guess doesn't fail the
-        load, it takes the machine. A `GpuBudgetError` propagates like the over-box refusal —
-        the operator must learn the box declined, rather than silently get no model."""
+        `projected_gb` stays a parameter because the measurement below is worth keying to the
+        plan's estimate: the delta between predicted and measured is how the catalog numbers
+        get corrected from data rather than from the next freeze."""
         probe = self._gpu_probe
-        if probe is None:  # no probe wired (tests, cloud-only): today's unguarded behaviour
-            with contextlib.suppress(LocalGatewayError):
-                await self._gateway.load(served_model)
-            return
-        baseline = await probe.sample()
-        gpu_guard.refuse_if_no_device_room(baseline, projected_gb, served_model)
-
-        async def _load() -> None:
-            with contextlib.suppress(LocalGatewayError):
-                await self._gateway.load(served_model)
-
-        async def _abort() -> None:
-            # Release the half-loaded model's device memory. Best-effort by necessity: a
-            # runaway is exactly the state that can wedge the gateway.
-            await self._gateway.unload(served_model)
-
-        await gpu_guard.guarded_load(
-            _load,
-            probe=probe,
-            projected_gb=projected_gb,
-            target=served_model,
-            abort=_abort,
-        )
-        # What it ACTUALLY cost, logged so the catalog estimate can be corrected from
-        # measurement rather than from the next freeze.
-        await gpu_guard.measure_footprint(probe, baseline, served_model)
+        baseline = await probe.sample() if probe is not None else None
+        with contextlib.suppress(LocalGatewayError):
+            await self._gateway.load(served_model)
+        if probe is not None:
+            measured = await gpu_guard.measure_footprint(probe, baseline, served_model)
+            if measured is not None:
+                log.info(
+                    "residency.load_measured",
+                    model=served_model,
+                    predicted_gb=round(projected_gb, 2),
+                    measured_gb=round(measured, 2),
+                )
 
     @contextlib.asynccontextmanager
     async def _box_locked(self) -> AsyncIterator[None]:
@@ -567,6 +572,9 @@ class ResidencyCoordinator:
         never a failed turn."""
         if not self._enabled:
             return
+        if not await self._auto_restore():
+            log.info("residency.restore_disabled", displaced=sorted(self._displaced))
+            return
         # While code mode holds the box, do NOT opportunistically reload displaced members — a
         # restore load bypasses ensure_room's refusal, so this is where a stray model could
         # slip in beside code mode's own. Skip; the members stay displaced and restore once the
@@ -599,7 +607,7 @@ class ResidencyCoordinator:
                 continue
             if used + fp > ceiling:
                 continue  # no room without evicting a resident model — leave it for later
-            with contextlib.suppress(LocalGatewayError):
+            with contextlib.suppress(LocalGatewayError, gpu_guard.GpuBudgetError):
                 # A BARE load: weights back and the inference path warm, but no persona/tools
                 # prefill — so the model is resident and UNPRIMED. Say so, or the keeper's memo
                 # (set before the eviction) makes it skip the re-prime the model now needs.

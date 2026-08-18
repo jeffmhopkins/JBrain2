@@ -1,26 +1,33 @@
 """Watch the iGPU's device memory during a model load, and abort a load that runs away.
 
 Why this exists, concretely: loading a Qwen3.8-27B variant that carried a vision projector
-took this box's HOST down to a power cycle — twice — the second time with 105 GiB of free
+took this box's HOST down to a power cycle — three times — one of them with 105 GiB of free
 system RAM and a model whose catalog footprint was 21 GiB. Memory pressure was not the
 cause and the residency budget was never going to prevent it, because both the budget and
 the estimate it checks are about SYSTEM RAM, and the allocation that killed the box was
 GTT: system pages the amdgpu driver pins on the iGPU's behalf (llama.cpp #27146 — an
 mmproj/mtmd model balloons GTT on an AMD iGPU under Vulkan).
 
-The failure had three parts, and a durable fix needs all three:
+The failure had four parts, and a durable fix needs all four:
 
   1. A load happened without the budget being consulted at all (llama-swap's `/upstream/`
      passthrough loads on demand). Closed at the source — `LocalGatewayClient.props`
      refuses a non-resident model.
-  2. The predicted cost was a CATALOG ESTIMATE, and it was wrong by a lot. `GttBudget`
-     below adds GTT headroom to the pre-flight check, so a load is refused when the device
-     pool is short even though `MemAvailable` looks fine.
+  2. The predicted cost was a CATALOG ESTIMATE, and it was wrong by a lot.
+     `refuse_if_no_device_room` below checks the pre-flight against the DEVICE pool, so a
+     load is refused when GTT is short even though `MemAvailable` looks fine — and the
+     estimate it checks (`local_catalog.load_footprint_gb`) now carries the projector
+     balloon, which is the term every one of the three freezes was missing.
   3. Nothing watched the load while it ran. That is this module's job, and it is the part
      that matters most: an estimate can only be wrong in ways we have already seen, so the
      FIRST load of any new model is always a guess. The watchdog is what makes an unknown
      model safe, and it is the difference between "we tuned the estimate" and "this cannot
      take the box again."
+  4. The check sat on a WRAPPER, not on the path. The residency coordinator guarded its own
+     loads and was one of six callers; the three freezes all arrived through the other five
+     (the settings screen's load, the debug console's, the coordinator's own end-of-turn
+     restore). So the guard now lives inside `LocalGatewayClient.load` — the single
+     chokepoint to committing device memory — and there is no longer an unguarded way in.
 
 The numbers come from the supervisor (`/metrics` → `gpu_mem`), which reads
 `/sys/class/drm/card*/device/mem_info_{gtt,vram}_{used,total}`. The api container does not
@@ -42,6 +49,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+import httpx
 import structlog
 
 log = structlog.get_logger()
@@ -127,6 +135,46 @@ class SupervisorGpuMemProbe:
             log.info("gpu_guard.probe_unavailable", error=str(exc))
             return None
         return parse_gpu_mem(body)
+
+
+class _OwnClientProbe:
+    """A probe that opens its own supervisor connection per sample.
+
+    For processes with no long-lived supervisor client to borrow: the CLI (`jbrain smoketest`
+    loads every installed model during an UPDATE — a load path, therefore a freeze path) and
+    the router's default residency coordinator. A short-lived connection per sample costs one
+    handshake a second during a load, which is nothing next to what it is guarding against.
+    Inert without a token, matching every other supervisor caller."""
+
+    def __init__(self, base_url: str, token: str) -> None:
+        self._base_url = base_url
+        self._token = token
+
+    async def sample(self) -> GpuMem | None:
+        if not (self._base_url and self._token):
+            return None
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=10.0) as client:
+                resp = await client.get(
+                    "/metrics", headers={"Authorization": f"Bearer {self._token}"}
+                )
+                resp.raise_for_status()
+                body = resp.json()
+        except Exception as exc:  # noqa: BLE001 — an unreadable probe degrades, never blocks
+            log.info("gpu_guard.probe_unavailable", error=str(exc))
+            return None
+        return parse_gpu_mem(body)
+
+
+def probe_for(settings: object) -> GpuMemProbe:
+    """The device-memory probe for a process that has no supervisor client of its own.
+
+    Takes the app settings duck-typed rather than by import, so `gpu_guard` stays a leaf of
+    the llm package (the gateway imports it, and the config module imports plenty)."""
+    return _OwnClientProbe(
+        str(getattr(settings, "supervisor_url", "") or ""),
+        str(getattr(settings, "supervisor_token", "") or ""),
+    )
 
 
 def parse_gpu_mem(body: object) -> GpuMem | None:

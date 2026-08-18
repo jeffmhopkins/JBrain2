@@ -78,6 +78,7 @@ function initialSettings(): LlmSettings {
     ],
     host_memory: null,
     free_ram: { fraction: 0.15, default: 0.15, override: null },
+    auto_restore: true,
     jcode: {
       enabled: false,
       model: "",
@@ -111,6 +112,7 @@ function stubLlmFetch(seed?: LlmSettings) {
   const jcodePuts: string[] = [];
   const jcodePlannerPuts: string[] = [];
   const freeRamPuts: (number | null)[] = [];
+  const autoRestorePuts: boolean[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
     // The free-RAM headroom control PUTs the fraction (or null to clear) and gets the
@@ -123,6 +125,16 @@ function stubLlmFetch(seed?: LlmSettings) {
         default: state.free_ram.default,
         override: body.fraction,
       };
+      return new Response(JSON.stringify(state), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    // The end-of-turn restore switch PUTs a bool and gets the full snapshot back.
+    if (path === "/api/settings/llm/auto-restore") {
+      const body = JSON.parse(String(init?.body)) as { enabled: boolean };
+      autoRestorePuts.push(body.enabled);
+      state.auto_restore = body.enabled;
       return new Response(JSON.stringify(state), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -199,7 +211,14 @@ function stubLlmFetch(seed?: LlmSettings) {
     });
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { puts, jcodePuts, jcodePlannerPuts, freeRamPuts, state };
+  return {
+    puts,
+    jcodePuts,
+    jcodePlannerPuts,
+    freeRamPuts,
+    autoRestorePuts,
+    state,
+  };
 }
 
 beforeEach(() => stubLlmFetch());
@@ -245,6 +264,21 @@ describe("LLMSettingsScreen", () => {
     await waitFor(() => expect(freeRamPuts).toEqual([0.25]));
     // The snapshot echo flips it to an override, surfacing the Reset affordance.
     await screen.findByRole("button", { name: "Reset" });
+  });
+
+  it("turns the end-of-turn restore off from the box card (hosting on)", async () => {
+    // The owner has no terminal, so "stop loading models on your own" has to be a control on
+    // this screen — it is the switch they reach for while diagnosing the box.
+    const seed = initialSettings();
+    seed.local_hosting_enabled = true;
+    const { autoRestorePuts } = stubLlmFetch(seed);
+    render(<LLMSettingsScreen />);
+    const toggle = (await screen.findByLabelText("Auto-restore models")) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(autoRestorePuts).toEqual([false]));
+    // The snapshot echo swaps the hint to the off-state wording.
+    await screen.findByText("off — models load only when a turn needs one");
   });
 
   it("shows real system usage on the meter, not just the model footprints", async () => {

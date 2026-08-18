@@ -51,7 +51,7 @@ from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.stream_analysis import ANALYZE_STREAM_URL_SPEC, StreamAnalysisPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
-from jbrain.llm import build_router
+from jbrain.llm import build_router, gpu_guard
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.residency import ResidencyCoordinator, ResidencyError, pg_box_lock
 from jbrain.log_capture import LogScope, configure_logging
@@ -491,9 +491,27 @@ async def run() -> None:
     # Live per-task routing/reasoning overrides apply to worker LLM calls too,
     # so the settings screen governs background analysis without a restart.
     worker_settings_store = SqlSettingsStore(maker)
+    # The host-metrics sampler reads the supervisor (the only container with the
+    # host's /proc + /sys mounted) over the internal network. Gated on a token so
+    # an unconfigured dev worker doesn't spin on 401s; the worker shares the api's
+    # JBRAIN_SUPERVISOR_* env.
+    supervisor_client = (
+        httpx.AsyncClient(base_url=settings.supervisor_url, timeout=30.0)
+        if settings.supervisor_token
+        else None
+    )
     # Admin client for the local-model gateway (loaded-state + unload), shared by the
     # residency coordinator below and the triage precondition further down.
-    llm_gateway = LocalGatewayClient(settings.local_llm_url)
+    # The gpu_probe makes every load through this gateway pass the DEVICE-memory guard
+    # (jbrain.llm.gpu_guard): the worker drives its own model swaps over the same box, so
+    # leaving it unguarded would leave the exact hole the api side just closed. Built above
+    # rather than at its old spot further down because the guard needs it at load time.
+    llm_gateway = LocalGatewayClient(
+        settings.local_llm_url,
+        gpu_probe=gpu_guard.SupervisorGpuMemProbe(
+            lambda: supervisor_client, settings.supervisor_token
+        ),
+    )
     # The box's sole model evictor: llama-swap runs every model in one `swap: false`
     # group (jbrain.llm.llama_swap_config), so it NEVER evicts on its own — an unadmitted
     # local load co-loads the new model beside the resident one and hard-locks the
@@ -521,6 +539,11 @@ async def run() -> None:
         # the same box) so a background job's model swap can't co-load past the free-RAM
         # floor while the api is loading for a chat turn — the cross-process double-load.
         box_lock=pg_box_lock(maker),
+        # For the post-load measurement (predicted vs actual device cost). The guard itself
+        # lives on the gateway above, where no caller can route around it.
+        gpu_probe=gpu_guard.SupervisorGpuMemProbe(
+            lambda: supervisor_client, settings.supervisor_token
+        ),
     )
     router = build_router(
         settings,
@@ -743,15 +766,6 @@ async def run() -> None:
     preconditions: dict[str, Precondition] = {
         "reasoning_model_loaded": model_already_loaded(router, llm_gateway, task="triage.classify"),
     }
-    # The host-metrics sampler reads the supervisor (the only container with the
-    # host's /proc + /sys mounted) over the internal network. Gated on a token so
-    # an unconfigured dev worker doesn't spin on 401s; the worker shares the api's
-    # JBRAIN_SUPERVISOR_* env.
-    supervisor_client = (
-        httpx.AsyncClient(base_url=settings.supervisor_url, timeout=30.0)
-        if settings.supervisor_token
-        else None
-    )
     try:
         # The shadow dispatcher reads its `workflow_dispatch` gate through the same
         # live settings store the LLM router uses, so the operator can silence it

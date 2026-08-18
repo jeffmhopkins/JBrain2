@@ -189,6 +189,22 @@ def test_free_ram_fraction_defaults_to_config_and_round_trips(
     assert cleared.json()["free_ram"] == {"fraction": 0.15, "default": 0.15, "override": None}
 
 
+def test_auto_restore_defaults_on_and_round_trips(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    """The owner has no terminal, so the end-of-turn restore has to be switchable over the
+    API the PWA calls. On by default (the long-standing behaviour); only an explicit off
+    stops the box putting displaced models back."""
+    c, _ = client
+    assert c.get("/api/settings/llm").json()["auto_restore"] is True
+    off = c.put("/api/settings/llm/auto-restore", json={"enabled": False})
+    assert off.status_code == 200
+    assert off.json()["auto_restore"] is False
+    assert c.get("/api/settings/llm").json()["auto_restore"] is False
+    back = c.put("/api/settings/llm/auto-restore", json={"enabled": True})
+    assert back.json()["auto_restore"] is True
+
+
 def test_free_ram_fraction_rejects_out_of_band_values(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:

@@ -47,6 +47,19 @@ QWEN38_EFFORT_LEVELS: dict[str, str] = {"low": "low", "medium": "medium", "high"
 # on-box (the gateway's /props + host metrics are the way to pin it).
 _QWEN38_KV_GB_PER_128K = 2.0
 
+# Device (GTT) memory a VISION PROJECTOR pulls in beyond the model's own weights and KV, on an
+# AMD iGPU under Vulkan. llama.cpp #27146: an mmproj/mtmd model balloons GTT at LOAD — before a
+# single image is processed — by tens of GB. This is not a rounding error on top of the weights,
+# it is the dominant term for any model carrying a projector, and leaving it out of the load
+# budget froze this host three times: each freeze was a projector-carrying model loaded onto a
+# box whose remaining headroom looked fine when you counted only weights + KV.
+#
+# Deliberately a flat, large constant rather than a fraction of model size: the balloon is a
+# driver/allocator behaviour, not something that scales with the checkpoint. It errs high, and
+# erring high here costs a refused load — erring low costs a power cycle.
+_KV_REFERENCE_TOKENS = 131072
+PROJECTOR_GTT_OVERHEAD_GB = 33.0
+
 
 @dataclass(frozen=True)
 class LocalModel:
@@ -813,8 +826,8 @@ def get_by_served(served_model: str) -> LocalModel | None:
 
 
 # The context length KV estimates are normalized to: kv_gb_per_128k is the KV cache at
-# 131072 tokens, and KV scales linearly with the served window.
-_KV_REFERENCE_TOKENS = 131072
+# 131072 tokens, and KV scales linearly with the served window. (Defined near the top, beside
+# PROJECTOR_GTT_OVERHEAD_GB, because load_footprint_gb needs it.)
 
 
 def footprint_gb(
@@ -841,6 +854,20 @@ def footprint_gb(
     if model.kv_full_history:
         kv *= 2
     return round(weights + kv, 2)
+
+
+def load_footprint_gb(model: LocalModel) -> float:
+    """Device memory to RESERVE before loading `model`, in GiB — weights + KV at its default
+    window + the projector balloon when it carries one.
+
+    Distinct from `footprint_gb`, which answers "how much RAM does this hold while resident"
+    for the eviction budget. This one answers "how much must be free for the LOAD to be safe",
+    and the difference is `PROJECTOR_GTT_OVERHEAD_GB`: a transient-but-huge allocation that a
+    resident-footprint estimate has no reason to include and a load guard cannot omit."""
+    total = model.size_gb + model.kv_gb_per_128k * model.context_window / _KV_REFERENCE_TOKENS
+    if model.mmproj_include:
+        total += PROJECTOR_GTT_OVERHEAD_GB
+    return round(total, 2)
 
 
 def recommended_ids() -> tuple[str, ...]:

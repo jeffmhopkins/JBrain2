@@ -791,11 +791,15 @@ def _default_residency(
     operator's live `-c`, not just the catalog default — else it under-counts KV and could
     under-evict. Imported lazily to avoid an import cycle (residency imports back into the
     jbrain.llm package)."""
+    from jbrain.llm import gpu_guard
     from jbrain.llm.local_gateway import LocalGatewayClient
     from jbrain.llm.residency import ResidencyCoordinator
 
     return ResidencyCoordinator(
-        LocalGatewayClient(settings.local_llm_url),
+        # The gpu_probe is what makes this default coordinator's loads pass the device-memory
+        # guard. It goes on the GATEWAY rather than the coordinator because `load()` is the
+        # chokepoint: a guard there covers callers that never touch a coordinator at all.
+        LocalGatewayClient(settings.local_llm_url, gpu_probe=gpu_guard.probe_for(settings)),
         windows_loader=windows_loader,
         models_dir=settings.local_models_dir,
         enabled=settings.local_llm_enabled,

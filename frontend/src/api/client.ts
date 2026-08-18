@@ -738,6 +738,9 @@ export interface LlmSettings {
    * effective value is the config default. Always present; the card shows only when hosting
    * is on. */
   free_ram: { fraction: number; default: number; override: number | null };
+  /** End-of-turn restore: true = the box puts displaced models back once a turn ends;
+   * false = it stops, and a model comes back only when a turn actually needs it. */
+  auto_restore: boolean;
   /** Code mode's model selector. Always present; `enabled` gates the card. */
   jcode: JcodeModelInfo;
 }
@@ -2309,6 +2312,13 @@ export const api = {
       "/api/settings/llm/free-ram-fraction",
       jsonInit("PUT", { fraction }),
     );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Turn the end-of-turn restore on or off. Off means the box stops putting back models a
+   * displacement evicted, so nothing loads until a turn needs it. Returns the snapshot. */
+  async setAutoRestore(enabled: boolean): Promise<LlmSettings> {
+    const response = await request("/api/settings/llm/auto-restore", jsonInit("PUT", { enabled }));
     return (await response.json()) as LlmSettings;
   },
 

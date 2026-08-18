@@ -52,13 +52,14 @@ async def _local_llm_unload() -> int:
 
     Best-effort by contract: a gateway that is already down, unreachable, or holding
     nothing is a success, not a failure. It must never abort an update."""
+    from jbrain.llm import gpu_guard
     from jbrain.llm.local_gateway import LocalGatewayClient
 
     settings = get_settings()
     if not settings.local_llm_enabled:
         print("[unload] local hosting off — nothing to unload")
         return 0
-    gateway = LocalGatewayClient(settings.local_llm_url)
+    gateway = LocalGatewayClient(settings.local_llm_url, gpu_probe=gpu_guard.probe_for(settings))
     try:
         loaded = await gateway.running()
     except Exception as exc:  # noqa: BLE001
@@ -184,6 +185,7 @@ async def _local_llm_smoketest() -> int:
     safe to keep; exit 1 = the update path should roll back to the pinned base. Reads
     the installed set + gateway URL from settings (env-wired in the api container); no
     DB needed, so it runs under `docker compose run --rm --no-deps -T api`."""
+    from jbrain.llm import gpu_guard
     from jbrain.llm.local_gateway import LocalGatewayClient
     from jbrain.llm.smoketest import run_smoketest
 
@@ -191,7 +193,10 @@ async def _local_llm_smoketest() -> int:
     if not settings.local_llm_enabled or not settings.local_models:
         print("[smoketest] local hosting off or no models installed — skipping (pass)")
         return 0
-    gateway = LocalGatewayClient(settings.local_llm_url)
+    # Guarded like every other load path: the smoketest LOADS each installed model, and it
+    # runs unattended during an update, which is the worst possible moment to discover a
+    # model's device footprint the hard way.
+    gateway = LocalGatewayClient(settings.local_llm_url, gpu_probe=gpu_guard.probe_for(settings))
     ok, messages = await run_smoketest(settings.local_models, gateway)
     for message in messages:
         print(f"[smoketest] {message}")

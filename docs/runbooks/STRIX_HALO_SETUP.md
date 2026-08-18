@@ -380,7 +380,7 @@ Three things to know:
   raising `--spec-draft-n-max` (pinned at `3`, llama.cpp's default and the Strix Halo consensus),
   because ungated, the cost of a wasted draft scales with n-max.
 
-> ### ⚠️ Reading the memory instruments correctly (this cost two power cycles)
+> ### ⚠️ Reading the memory instruments correctly (this cost three power cycles)
 >
 > **`mem_info_gtt_used` is DEVICE-WIDE, not per-process.** It reads
 > `ttm_resource_manager_usage()` and sums every client on the card. Attributing it to one model
@@ -389,8 +389,12 @@ Three things to know:
 > underneath the measurement. For per-model attribution use `/proc/<pid>/fdinfo/<drm-fd>` →
 > **`drm-resident-gtt`**, or `amdgpu_top`'s process view.
 >
-> **What the freeze actually was.** Re-enabling the vision projector on the MTP entry froze the
-> host twice. The cause was memory arithmetic, not an MTP↔vision incompatibility:
+> **What the freezes actually were.** Three power cycles, one root cause with three faces.
+> (1) `props` on a cold model triggered llama-swap's on-demand load, outside residency
+> entirely. (2) Re-enabling the vision projector on the MTP entry, and (3) loading the
+> projector-carrying `qwen3.8-27b-q4` onto a box already at 87 GiB — both of those were the
+> same arithmetic error twice: the estimate counted weights + KV and left out the projector
+> balloon. The cause was never an MTP↔vision incompatibility:
 > ~67 GiB (gpt-oss, still resident) + ~19 GiB (this model) + ~33 GiB (the GTT balloon an mmproj
 > triggers on an AMD iGPU under Vulkan — llama.cpp **#27146**) ≈ 119 GiB against a ~124 GiB pool.
 > On an otherwise empty box that sum fits. So vision + MTP may well work here; it has never been
@@ -456,10 +460,39 @@ still took the host down. `jbrain.llm.gpu_guard` closes that:
   guess.
 - **Post-load** — one more sample after the load returns, because a fast load can finish between
   two samples and an allocation can still be settling.
-- **Measurement** — the real GTT delta is logged (`gpu_guard.measured_footprint`). ⚠️ It is
-  currently a DEVICE-WIDE delta, so a model restored concurrently by the residency coordinator
-  is counted into it; it needs moving to per-process `drm-resident-gtt` before it can be
-  trusted or used to replace the catalog estimate.
+- **Measurement** — the real GTT delta is logged (`gpu_guard.measured_footprint`, and
+  `residency.load_measured` beside the prediction). ⚠️ It is currently a DEVICE-WIDE delta, so a
+  model restored concurrently by the residency coordinator is counted into it; it needs moving
+  to per-process `drm-resident-gtt` before it can be trusted or used to replace the catalog
+  estimate.
+
+**Where the guard lives, and why that is the whole point.** It is inside
+`LocalGatewayClient.load` — the single chokepoint every path to committing device memory passes
+through. It used to sit on the residency coordinator, which was **one of six callers**, and all
+three freezes arrived through the other five (the settings screen's deliberate load, the debug
+console's, and the coordinator's own end-of-turn restore). A check a caller can route around is
+not a check. A unit test (`tests/unit/test_llm_load_guard_chokepoint.py`) walks the AST of
+`src/jbrain/` and fails CI if anyone ever constructs a local-model gateway without the probe.
+
+**What the pre-flight reserves.** `local_catalog.load_footprint_gb` — weights + KV **plus
+`PROJECTOR_GTT_OVERHEAD_GB` (33 GB) for any model carrying an mmproj**. That last term is what
+freezes (2) and (3) were both missing. It is deliberately distinct from `footprint_gb`, which
+answers "how much does this hold while resident" for the eviction budget; the load question is
+"how much must be free for this to be safe", and it is a much bigger number.
+
+### Stopping the box loading models on its own
+
+**Settings → LLM → Auto-restore models** (under the memory meter). ON — the default and the
+long-standing behaviour — means that after a displacement (an image render, a code session, a
+big one-off) the box puts the displaced models back once the turn ends, so it settles at its
+steady state rather than cold-loading next turn. OFF means it stops: a model comes back only
+when a turn actually needs one.
+
+Turn it off while diagnosing the box, or while deliberately holding it near empty — a restore is
+a model load nobody asked for at that moment, and it has repeatedly appeared *underneath* a
+measurement and confused it. It is a **surprise** control, not a safety one: every load, restore
+included, goes through the device-memory guard either way. Read live, so the flip applies to the
+next turn with no restart.
 
 ### Is MTP actually drafting?
 

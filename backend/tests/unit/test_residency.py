@@ -28,6 +28,7 @@ def _coord(
     hold_loader: object = None,
     slots_loader: object = None,
     on_prefix_lost: object = None,
+    auto_restore_loader: object = None,
 ) -> ResidencyCoordinator:
     monkeypatch.setattr(
         "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
@@ -41,6 +42,7 @@ def _coord(
         hold_loader=hold_loader,  # type: ignore[arg-type]
         slots_loader=slots_loader,  # type: ignore[arg-type]
         on_prefix_lost=on_prefix_lost,  # type: ignore[arg-type]
+        auto_restore_loader=auto_restore_loader,  # type: ignore[arg-type]
     )
 
 
@@ -745,42 +747,85 @@ async def test_disabled_box_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> 
     assert lost == []
 
 
-async def test_a_runaway_load_is_aborted_before_it_takes_the_box() -> None:
-    """End-to-end through the coordinator: the device guard is actually reached on the load
-    path, and a runaway is aborted rather than completing.
+@pytest.mark.asyncio
+async def test_the_restore_is_skipped_when_the_operator_turned_it_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The owner's "nothing loads unless I ask" switch. A restore is a model load they did
+    not ask for at that moment; with the switch off the displaced set stays displaced and
+    nothing reaches the gateway — on a box with room to spare, so only the switch explains
+    the skip."""
 
-    This is the wiring test for the failure that froze this host twice. The free-RAM budget
-    passed (plenty of system RAM, nothing to evict) and the load still had to be stopped,
-    because the cost that mattered was device (GTT) memory the RAM budget never sees. If a
-    refactor ever routes the load around `_guarded_load`, this goes red."""
+    async def _off() -> bool:
+        return False
+
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=160.0, used=10.0, auto_restore_loader=_off)
+    coord.note_evicted(["gpt-oss-120b"])
+    await coord._restore()  # noqa: SLF001
+    assert gw.loaded == []
+    assert coord._displaced == {"gpt-oss-120b"}  # noqa: SLF001 — still pending, not dropped
+
+
+@pytest.mark.asyncio
+async def test_the_restore_defaults_on_when_the_switch_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A settings-store hiccup must not silently leave the box refusing to drift back to its
+    steady state — the failure mode of a knob nobody knows is stuck."""
+
+    async def _explodes() -> bool:
+        raise RuntimeError("settings store down")
+
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=160.0, used=10.0, auto_restore_loader=_explodes)
+    coord.note_evicted(["gpt-oss-120b"])
+    await coord._restore()  # noqa: SLF001
+    assert gw.loaded == ["gpt-oss-120b"]
+
+
+async def test_a_device_refusal_from_the_gateway_reaches_the_caller() -> None:
+    """A refused load must surface, not be swallowed with the housekeeping errors.
+
+    The device guard itself no longer lives here — it moved into `LocalGatewayClient.load`,
+    the one chokepoint every caller passes through, because this coordinator was only one of
+    six and the three freezes all came in through the other five. What this layer still owes
+    is honesty: `ensure_room` suppresses `LocalGatewayError` (a gateway hiccup is
+    best-effort), and a `GpuBudgetError` must NOT ride along on that suppression. The
+    operator has to learn the box declined, rather than silently get no model."""
     from jbrain.llm import gpu_guard
 
-    class _RunawayProbe:
+    class _RefusingGateway(FakeLocalGateway):
+        async def load(self, served_model: str, **kw: object) -> None:
+            raise gpu_guard.GpuBudgetError("no device room")
+
+    gw = _RefusingGateway(running=set())
+    coord = ResidencyCoordinator(gw, enabled=True, free_ram_fraction=0.05, box_lock=None)
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await coord._guarded_load("qwen3.8-27b-mtp", projected_gb=21.0)
+
+
+async def test_the_load_measurement_is_logged_against_the_prediction() -> None:
+    """What the coordinator keeps after the guard moved out: the post-load measurement. The
+    delta between predicted and measured is how the catalog numbers get corrected from data
+    instead of from the next freeze."""
+    from jbrain.llm import gpu_guard
+
+    class _ClimbingProbe:
         def __init__(self) -> None:
             self._used = 2.0
 
         async def sample(self) -> gpu_guard.GpuMem | None:
-            self._used += 40.0  # climbs far past any sane footprint
-            return gpu_guard.GpuMem(
-                gtt_used_gb=self._used, gtt_total_gb=120.0, vram_used_gb=0.0, vram_total_gb=2.0
+            sample = gpu_guard.GpuMem(
+                gtt_used_gb=self._used, gtt_total_gb=120.0, vram_used_gb=0.0, vram_total_gb=0.0
             )
+            self._used += 19.0
+            return sample
 
-    class _SlowGateway(FakeLocalGateway):
-        """A load that takes real time, like a 16 GiB model does — so the in-flight
-        watchdog gets to sample while the allocation climbs."""
-
-        async def load(self, served_model: str, **kw: object) -> None:
-            await asyncio.sleep(0.2)
-            await super().load(served_model, **kw)  # type: ignore[arg-type]
-
-    gw = _SlowGateway(running=set())
-    coord = ResidencyCoordinator(
-        gw, enabled=True, free_ram_fraction=0.05, gpu_probe=_RunawayProbe(), box_lock=None
-    )
-    with pytest.raises(gpu_guard.GpuBudgetError):
-        await coord._guarded_load("qwen3.8-27b-mtp", projected_gb=21.0)
-    # The half-loaded model was released, not left pinning device memory.
-    assert "qwen3.8-27b-mtp" in gw.unloaded
+    gw = FakeLocalGateway(running=set())
+    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_ClimbingProbe(), box_lock=None)
+    await coord._guarded_load("qwen3.8-27b-mtp", projected_gb=21.0)
+    assert gw.loaded == ["qwen3.8-27b-mtp"] and gw.unloaded == []
 
 
 async def test_a_healthy_load_still_goes_through_untouched() -> None:
