@@ -276,6 +276,105 @@ def test_qwen38_27b_q4_serves_mtp_as_a_mode_not_a_separate_entry() -> None:
     assert q8.is_speculative and q8.quant == "Q8_0"
 
 
+def test_qwen38_27b_abliterated_is_an_opt_in_red_team_probe() -> None:
+    """The abliterated Qwen3.8-27B: a deliberately unaligned checkpoint for exercising the
+    sandbox's own controls. It is a PROBE, so the thing worth pinning is that it can never
+    arrive by default — and that it is a distinct install from the aligned twins rather than
+    something that could shadow them."""
+    m = local_catalog.get("qwen3.8-27b-abliterated")
+    q4 = local_catalog.get("qwen3.8-27b-q4")
+    assert m is not None and q4 is not None
+    # Opt-in twice over: never in the recommended set the install prompt offers, and nothing
+    # in the catalog routes on its own (the router's defaults are all cloud).
+    assert not m.recommended
+    assert m.id not in local_catalog.recommended_ids()
+    # A DISTINCT repo, served name and weights dir from the aligned twins — selecting the
+    # probe can never quietly replace what an aligned entry serves.
+    assert m.hf_repo == "Blackfrost-AI/Qwen3.8-27B-ABLITERATED-GGUF"
+    assert m.hf_repo != q4.hf_repo
+    assert m.spec == "local:qwen3.8-27b-abliterated"
+    assert m.served_model not in {x.served_model for x in local_catalog.CATALOG if x is not m}
+
+
+def test_qwen38_27b_abliterated_includes_match_the_real_repo_filenames() -> None:
+    # The globs feed BOTH `hf download --include` and resolve_weight, so a mismatch pulls
+    # nothing and the install sticks partway ("download incomplete") rather than failing loudly.
+    from fnmatch import fnmatch
+
+    m = local_catalog.get("qwen3.8-27b-abliterated")
+    assert m is not None and m.mmproj_include is not None
+    assert fnmatch("Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf", m.gguf_include)
+    # The repo ships the whole K-quant ladder; the glob must select exactly one rung.
+    for other in ("Q2_K", "Q3_K_M", "Q4_K_S", "Q5_K_M", "Q6_K", "Q8_0"):
+        assert not fnmatch(f"Qwen3.8-27B-ABLITERATED-{other}.gguf", m.gguf_include)
+    # Projector: the EXACT F16 name, because a `mmproj*` glob would also match the Q8_0
+    # projector beside it and the vision tower stays full precision even at Q4 weights.
+    assert m.mmproj_include == "mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf"
+    assert fnmatch("mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf", m.mmproj_include)
+    assert not fnmatch("mmproj-Qwen3.8-27B-ABLITERATED-Q8_0.gguf", m.mmproj_include)
+
+
+def test_qwen38_27b_abliterated_serves_exactly_like_its_aligned_twin() -> None:
+    """Same base model, so the serving shape is not re-derived: architecture, window, KV
+    estimate, MTP flags and the vision floor all have to match the aligned Q4 twin. Verified
+    against the published GGUF header (arch `qwen35`, block_count 65, full_attention_interval
+    4, context_length 262144, MTP head at `blk.64.nextn.*`) before the entry landed."""
+    m = local_catalog.get("qwen3.8-27b-abliterated")
+    q4 = local_catalog.get("qwen3.8-27b-q4")
+    assert m is not None and q4 is not None
+    assert m.tiers == q4.tiers == ("vision", "high")
+    assert m.supports_vision and m.supports_tools
+    assert m.quant == q4.quant == "Q4_K_M"
+    assert m.extra_server_args == q4.extra_server_args
+    assert m.is_speculative and m.effective_slots(4) == 1  # MTP serves one sequence
+    # The grounding floor is a FIELD, not a raw flag, so an operator override replaces it
+    # rather than appending a second --image-min-tokens. Same shipped 2048 as the aligned
+    # twins: abliteration edits refusal directions, it does not touch the vision tower.
+    assert m.image_min_tokens == q4.image_min_tokens == 2048
+    assert "--image-min-tokens" not in m.extra_server_args
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == q4.native_context_window == 262144
+    assert m.kv_gb_per_128k == q4.kv_gb_per_128k == 8.0
+    # Weights + F16 projector, from the repo's real blob sizes (15.66 + 0.86 GiB).
+    assert m.size_gb == 16.5
+
+
+def test_qwen38_27b_abliterated_keeps_the_qwen38_reasoning_wiring() -> None:
+    """The abliteration edits refusal directions, not the reasoning plumbing: the shipped
+    template still reads `enable_thinking` + `reasoning_effort` and still emits <think>.
+
+    The level map matters MORE here than on the aligned twins. This template RAISES on a
+    level outside (xhigh, medium, low) instead of ignoring it, so an unmapped level is a hard
+    template error rather than a silent default — and with no map at all every thinking call
+    would run at the template's own `xhigh`."""
+    m = local_catalog.get("qwen3.8-27b-abliterated")
+    assert m is not None
+    assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    assert m.thinking_effort_map == {"low": "low", "medium": "medium", "high": "xhigh"}
+    # Every level we can send has to be one this template accepts, or the call 500s.
+    assert set(m.thinking_effort_map.values()) <= {"xhigh", "medium", "low"}
+    assert "none" not in m.thinking_effort_map  # thinking off is the toggle, not a level
+    # Same card, same base weights, so the same hybrid sampling split as the aligned twins.
+    q4 = local_catalog.get("qwen3.8-27b-q4")
+    assert q4 is not None
+    assert m.sampling == q4.sampling and m.sampling_thinking == q4.sampling_thinking
+
+
+def test_qwen38_27b_abliterated_note_warns_about_the_embedded_system_prompt() -> None:
+    """Its GGUF chat template hard-codes a 'never refuse, no pushback' system prompt that is
+    emitted ABOVE the caller's own system message on every turn, with no API switch to
+    disable it. That displaces JBrain's prompts wherever the model is selected, and it is
+    itself part of what the vendor's refusal score measures — so the settings drawer, which
+    renders `note` verbatim, has to say so before anyone picks it."""
+    m = local_catalog.get("qwen3.8-27b-abliterated")
+    assert m is not None
+    note = m.note.lower()
+    assert "red-team" in note  # what it is FOR, in the first line the drawer shows
+    assert "chat template" in note and "system message" in note
+    assert "experimental" in note
+
+
 def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
     # --reasoning-format deepseek is pinned ONLY for entries that emit <think> inline: the three
     # Qwen3.8 hybrids, the two small Qwen3.5 hybrids, and the Nemotron hybrids. The harmony/GLM
@@ -284,6 +383,7 @@ def test_reasoning_format_is_wired_only_for_the_think_emitters() -> None:
     assert {x.id for x in local_catalog.CATALOG if x.reasoning_format} == {
         "qwen3.8-27b",
         "qwen3.8-27b-q4",
+        "qwen3.8-27b-abliterated",
         "nemotron-3-super-120b",
         "nemotron-3.5-lightning-30b",
         "qwen3.5-0.8b",
@@ -473,7 +573,7 @@ def test_qwen38_hybrids_publish_an_effort_level_map_and_older_hybrids_do_not() -
     # entries carry a level map; the 3.5/3.6-era hybrids, whose templates genuinely ignore the
     # field, must NOT (sending one there would be noise on the wire).
     mapped = {m.id for m in local_catalog.CATALOG if m.thinking_effort_map}
-    assert mapped == {"qwen3.8-27b", "qwen3.8-27b-q4"}
+    assert mapped == {"qwen3.8-27b", "qwen3.8-27b-q4", "qwen3.8-27b-abliterated"}
     for model_id in mapped:
         model = local_catalog.get(model_id)
         assert model is not None

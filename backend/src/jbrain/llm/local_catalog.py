@@ -97,7 +97,8 @@ _KV_REFERENCE_TOKENS = 131072
 _CLIP_ATTN_HEADS = 16
 _CLIP_MERGE = 2
 # llama.cpp's default ceiling for the Qwen3-VL projector family (`set_limit_image_tokens(8,
-# 4096)`). We pass `--image-min-tokens 1024`, which is the FLOOR; nothing caps the ceiling, so
+# 4096)`). We pass `--image-min-tokens` (the `image_min_tokens` field, 2048 by default), which
+# is the FLOOR; nothing caps the ceiling, so
 # this is the worst case we are actually exposed to. Pinning `--image-max-tokens` would cut
 # this quadratically (1024 -> ~1 GiB) at some cost to grounding accuracy on small text.
 _VISION_MAX_IMAGE_TOKENS = 4096
@@ -593,6 +594,67 @@ CATALOG: tuple[LocalModel, ...] = (
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
+        thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
+        native_context_window=262144,
+        kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+    ),
+    LocalModel(
+        id="qwen3.8-27b-abliterated",
+        label="Qwen3.8 27B · abliterated (red-team probe)",
+        served_model="qwen3.8-27b-abliterated",
+        # Same base weights as the qwen3.8-27b twins, so the same Qwen3.8 card sampling: the
+        # abliteration edits refusal directions out of the residual stream, it does not change
+        # what the card recommends sampling at.
+        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
+        sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
+        tiers=("vision", "high"),
+        supports_vision=True,
+        supports_tools=True,
+        # NEVER recommended, and nothing routes here by default. This is a PROBE, not a worker:
+        # it exists so the owner can red-team the air-gapped sandbox with a model that will not
+        # refuse the prompt under test. Putting it on a real task would put the embedded prompt
+        # below in front of every JBrain system prompt (see the note).
+        recommended=False,
+        hf_repo="Blackfrost-AI/Qwen3.8-27B-ABLITERATED-GGUF",
+        gguf_include="*Q4_K_M*.gguf",
+        # EXACT name, not `mmproj*F16.gguf`: this repo ships a `mmproj-Qwen3.8-27B-ABLITERATED-
+        # Q8_0.gguf` beside the F16 one, and the projector stays full precision even at Q4
+        # weights (fine text degrades first under quantization, as on the other Qwen entries).
+        mmproj_include="mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf",
+        # Identical serving shape to the qwen3.8-27b-q4 twin, and that is VERIFIED rather than
+        # assumed: the published GGUF header parses as arch `qwen35`, `block_count` 65,
+        # `full_attention_interval` 4, `context_length` 262144, and carries the MTP head
+        # (`blk.64.nextn.*`) these flags need. The vendor rebuilt every quant with the head
+        # embedded (2026-08-16) precisely so no separate draft file is required. Pins to one
+        # slot, as any speculative entry does. The image floor is the field below, not a flag
+        # here, so an operator override replaces it rather than landing twice on the command line.
+        extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "3"),
+        # Same shipped floor as the aligned twins — the abliteration edits refusal directions,
+        # it does not touch the vision tower, so the measurement behind 2048 carries over.
+        image_min_tokens=2048,
+        quant="Q4_K_M",
+        # GiB on disk (the catalog's unit), from the repo's real blob sizes rather than a
+        # decimal-GB listing: 15.66 weight + 0.86 F16 projector.
+        size_gb=16.5,
+        note="ABLITERATED Qwen3.8-27B — a deliberately unaligned research checkpoint, here as a "
+        "RED-TEAM PROBE for exercising the sandbox's own controls, not as a worker model. The "
+        "vendor measures 11 residual refusals out of 450 on R1-HARMFUL-BENCH-450 (2.4%). "
+        "Two things to know before selecting it anywhere: (1) its GGUF chat template hard-codes "
+        "a 'task-execution machine / never refuse, no pushback' system prompt that is emitted "
+        "ABOVE the caller's own system message on every turn, with no way to switch it off from "
+        "the API — so it displaces JBrain's prompts and is itself part of what the refusal score "
+        "measures; (2) it is vendor-labelled EXPERIMENTAL. Same base as the qwen3.8-27b twins "
+        "(dense 27B, text + vision, hybrid thinking, ~16.5 GiB at Q4_K_M), so it co-resides "
+        "beside gpt-oss-120b and behaves identically on everything except refusal.",
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
+        # The abliteration kept Qwen3.8's reasoning plumbing intact: the shipped template still
+        # reads `enable_thinking` and `reasoning_effort`, still defaults the level to `xhigh`,
+        # and — unlike the upstream template — RAISES on a level outside (xhigh, medium, low).
+        # Our three mapped values are exactly that set, so the map is load-bearing twice over
+        # here: without it every thinking call runs at xhigh, and a wrong level is a hard error
+        # rather than a silent ignore.
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
