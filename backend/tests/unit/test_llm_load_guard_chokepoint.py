@@ -77,13 +77,16 @@ def _mem(used: float, total: float = 124.0) -> gpu_guard.GpuMem:
 
 @pytest.mark.anyio
 async def test_load_refuses_when_the_device_pool_is_short() -> None:
-    """The freeze, reproduced as a refusal: a box already holding gpt-oss, asked for the
-    projector-carrying q4. Its `load_footprint_gb` includes the projector balloon, so the
-    pre-flight sees ~50 GB against ~30 GB of headroom and declines."""
-    probe = _StubProbe(_mem(87.2))
+    """The pre-flight declines rather than risking the host. Sized off `load_footprint_gb`,
+    which is weights + KV + runtime overhead — deliberately NOT the vision peak, because that
+    buffer does not exist at load time (see test_the_vision_peak_is_budgeted_as_resident)."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    room = local_catalog.load_footprint_gb(model)
+    probe = _StubProbe(_mem(124.0 - room))  # not even the floor left over
     gateway = LocalGatewayClient("http://gw", gpu_probe=probe)
     with pytest.raises(gpu_guard.GpuBudgetError) as exc:
-        await gateway.load("qwen3.8-27b-q4")
+        await gateway.load("gpt-oss-120b")
     assert "refusing to load" in str(exc.value)
 
 
@@ -138,19 +141,35 @@ async def test_a_load_that_balloons_mid_flight_is_aborted_and_unloaded() -> None
     assert any("/unload/qwen3.8-27b-mtp" in path for path in seen), seen
 
 
-def test_load_footprint_carries_the_projector_balloon() -> None:
-    """`footprint_gb` answers 'what does this hold while resident'; `load_footprint_gb`
-    answers 'what must be free for the load to be safe'. The gap is the mmproj balloon
-    (llama.cpp #27146), and omitting it is what every freeze had in common."""
-    with_projector = local_catalog.get("qwen3.8-27b-q4")
-    without = local_catalog.get("qwen3.8-27b-mtp")
-    assert with_projector is not None and without is not None
-    assert with_projector.mmproj_include and not without.mmproj_include
-    assert local_catalog.load_footprint_gb(with_projector) > (
-        with_projector.size_gb + gpu_guard.MIN_FREE_GTT_GB
-    )
-    assert (
-        local_catalog.load_footprint_gb(with_projector) - local_catalog.load_footprint_gb(without)
-        >= local_catalog.PROJECTOR_GTT_OVERHEAD_GB - 10
-    )
-    assert local_catalog.load_footprint_gb(without) < 25.0
+def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> None:
+    """Where the CLIP attention buffer belongs, which the first version of this got backwards.
+
+    It is NOT a load-time cost: llama.cpp warms the projector at a capped 46x46 image tokens,
+    and the full-resolution buffer only appears on the first real image. It IS persistent:
+    `ggml_gallocr_reserve_n_impl` only grows the allocation and it is freed at unload, so a
+    smaller later image releases nothing. Hence resident budget, not load reservation."""
+    vision = local_catalog.get("qwen3.8-27b-q4")
+    text_only = local_catalog.get("qwen3.8-27b-mtp")
+    assert vision is not None and text_only is not None
+    assert vision.mmproj_include and not text_only.mmproj_include
+
+    # The peak lands in the RESIDENT figure, which is what the eviction budget consults.
+    vision_resident = local_catalog.footprint_gb(vision, vision.context_window)
+    assert vision_resident - local_catalog.load_footprint_gb(vision) > 10.0
+
+    # A text-only entry pays neither term, and its two figures agree.
+    assert local_catalog.footprint_gb(
+        text_only, text_only.context_window
+    ) == local_catalog.load_footprint_gb(text_only)
+
+
+def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:
+    """The MTP entry measured ~19.5 GiB on this hardware while the catalog predicted 16.4 —
+    weights and KV alone, with the f16 KV under-counted as q4_0 and every runtime term missing.
+    Pinned here because that gap is what made the load guard optimistic about the one model the
+    box is meant to run all day."""
+    mtp = local_catalog.get("qwen3.8-27b-mtp")
+    assert mtp is not None
+    assert mtp.is_speculative
+    predicted = local_catalog.load_footprint_gb(mtp)
+    assert 19.0 <= predicted <= 20.0, predicted

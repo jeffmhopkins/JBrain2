@@ -389,17 +389,39 @@ Three things to know:
 > underneath the measurement. For per-model attribution use `/proc/<pid>/fdinfo/<drm-fd>` →
 > **`drm-resident-gtt`**, or `amdgpu_top`'s process view.
 >
-> **What the freezes actually were.** Three power cycles, one root cause with three faces.
-> (1) `props` on a cold model triggered llama-swap's on-demand load, outside residency
-> entirely. (2) Re-enabling the vision projector on the MTP entry, and (3) loading the
-> projector-carrying `qwen3.8-27b-q4` onto a box already at 87 GiB — both of those were the
-> same arithmetic error twice: the estimate counted weights + KV and left out the projector
-> balloon. The cause was never an MTP↔vision incompatibility:
-> ~67 GiB (gpt-oss, still resident) + ~19 GiB (this model) + ~33 GiB (the GTT balloon an mmproj
-> triggers on an AMD iGPU under Vulkan — llama.cpp **#27146**) ≈ 119 GiB against a ~124 GiB pool.
-> On an otherwise empty box that sum fits. So vision + MTP may well work here; it has never been
-> tried that way, and the entry is text-only pending that test — not because it is proven
-> impossible.
+> **What the freezes actually were — REWRITTEN, because the first explanation was wrong.**
+> Three power cycles. The story told here for a while was memory arithmetic: a
+> projector-carrying model loaded onto a box whose headroom looked fine because the estimate
+> left out a "~33 GiB GTT balloon". That number came from back-solving one freeze against
+> llama.cpp **#27146** — a report on a **different GPU** (Radeon 890M / gfx1150 / 32 GB, not
+> this box) quoting **`total-vm`**, i.e. virtual address space, with `anon-rss: 4 kB`. It was
+> never a measurement of resident memory, and the arithmetic built on it never added up: with
+> the real load-time cost (~4 GiB of warmup buffer), freeze #2 was ~90 GiB against a ~124 GiB
+> pool, which does not freeze anything.
+>
+> **The mechanism is the host's GTT configuration, not any single model.** Phase 5 sets
+> `ttm.pages_limit=32505856` — **124 GiB, i.e. ~100% of system RAM.** That matters because of
+> how the kernel behaves (all verified in v6.18 source):
+>
+> - GTT pages are allocated `GFP_HIGHUSER` — unmovable, on no LRU, **not reclaimable**.
+> - TTM registers **no shrinker for live BO pages**, only for its free-page cache. The kernel
+>   cannot reclaim a loaded model's GTT no matter how much pressure it is under.
+> - `amdgpu_bo_create()` sets `.gfp_retry_mayfail = true` — *"We opt to avoid OOM on system
+>   pages allocations"*. Per the kernel's own memory-allocation guide, that flag means **the
+>   OOM killer is not called.**
+>
+> So when GTT allocation exhausts RAM, every task enters direct reclaim, finds nothing
+> reclaimable, and cannot escalate to an OOM kill. Nothing dies; the machine simply stops. The
+> one mechanism that prevents this is `ttm.pages_limit`: exceeding `gtt_total` returns a clean
+> `-ENOSPC` **before** the pages are requested. Setting it to 100% of RAM removes that
+> backstop, and on kernel 6.18 nothing caps it for you (the physical-RAM sanity cap first
+> appears in v7.2).
+>
+> **Action:** `ttm.pages_limit` should be about `MemTotal − 16 GiB` (≈ 28311552 pages for this
+> box), not 100%. ⚠️ This is a kernel command-line parameter, so it is currently a HOST step
+> the owner cannot perform — see CLAUDE.md #10. Treat it as a gap to design out: the update
+> path should set and verify it, and Ops should surface the live value so a wrong setting is
+> visible rather than latent.
 >
 > **Expected footprint is the check to apply.** A 15.9 GiB Q4 model at 32k should land near
 > 19–20 GiB (weights + ~2 GiB KV across the 16 attention layers + ~150 MiB recurrent state +
@@ -474,11 +496,40 @@ console's, and the coordinator's own end-of-turn restore). A check a caller can 
 not a check. A unit test (`tests/unit/test_llm_load_guard_chokepoint.py`) walks the AST of
 `src/jbrain/` and fails CI if anyone ever constructs a local-model gateway without the probe.
 
-**What the pre-flight reserves.** `local_catalog.load_footprint_gb` — weights + KV **plus
-`PROJECTOR_GTT_OVERHEAD_GB` (33 GB) for any model carrying an mmproj**. That last term is what
-freezes (2) and (3) were both missing. It is deliberately distinct from `footprint_gb`, which
-answers "how much does this hold while resident" for the eviction budget; the load question is
-"how much must be free for this to be safe", and it is a much bigger number.
+**What the pre-flight reserves.** `local_catalog.load_footprint_gb` — weights + KV + a runtime
+term (recurrent state, compute/output buffers, and the MTP draft context on a speculative
+entry). For a vision model it adds the CLIP attention buffer at its **load-time warmup size**
+only. It does **not** reserve that buffer's peak, because the peak does not exist at load.
+
+**Where the vision cost really is.** The large allocation behind #27146 is the CLIP/mtmd
+encoder's attention matrix — F32 `[n_patches, n_patches, n_head]`, materialised when flash
+attention is off in the CLIP graph. Two properties decide where it belongs in the budget:
+
+- **It is not a load-time cost.** llama.cpp warms the projector at a capped 46×46 = 2116 image
+  tokens (`set_warmup_n_tokens`); the full-resolution buffer appears on the **first real
+  image**, which may be much later or never.
+- **It is not transient.** `ggml_gallocr_reserve_n_impl` only ever grows the buffer — there is
+  no shrink path — and it is freed at model unload. A smaller later image releases nothing.
+
+So it lives in `footprint_gb` (resident, drives eviction), not in the load reservation. It
+scales with the **square** of the image token ceiling: `n_patches = max_image_tokens ×
+n_merge²`, buffer = `n_patches² × n_head × 4` bytes.
+
+| `--image-max-tokens` | buffer (CLIP FA **off**) |
+|---|---|
+| 4096 (llama.cpp's default for this projector family — what we inherit) | **16.0 GiB** |
+| 1024 | 1.0 GiB |
+| 512 | 0.25 GiB |
+
+⚠️ **The catalog assumes CLIP flash attention is OFF, and that is UNVERIFIED on this box.**
+With it on, the same shape measures ~250 MiB — a ~60× difference. Conservative is the right
+default (over-reserving costs a refused load; under-reserving costs a power cycle), but it is
+an assumption, not a fact. llama-server prints the answer at startup: **`warmup: flash
+attention is enabled|disabled`**. Settling it is the single highest-value check here.
+
+Note we pass `--image-min-tokens 1024`, which is the **floor**. Nothing caps the ceiling, so
+4096 is the exposure. Pinning `--image-max-tokens 1024` would cut the buffer quadratically at
+some cost to grounding accuracy on small text.
 
 ### Stopping the box loading models on its own
 

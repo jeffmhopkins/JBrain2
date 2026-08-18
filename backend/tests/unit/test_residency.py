@@ -188,7 +188,7 @@ async def test_fraction_loader_override_lowers_the_floor_and_co_resides(
         return 0.15
 
     gw = FakeLocalGateway(running={"gpt-oss-120b"})
-    coord = _coord(gw, monkeypatch, total=128.0, used=63.5, fraction_loader=loader)
+    coord = _coord(gw, monkeypatch, total=160.0, used=63.5, fraction_loader=loader)
     await coord.ensure_room("qwen3-vl-30b-a3b")
     assert gw.unloaded == []
     assert coord._displaced == set()  # noqa: SLF001
@@ -479,10 +479,11 @@ async def test_ensure_room_takes_the_box_when_it_fits_total_even_if_over_the_flo
 @pytest.mark.asyncio
 async def test_restore_reloads_the_displaced_set(monkeypatch: pytest.MonkeyPatch) -> None:
     # An image render / code session froze vl + gpt-oss (recorded via note_evicted); restore
-    # loads them both back and clears the displaced set. 160 GB box (ceiling 120) so both
-    # footprints (33.5 + 63.5 = 97, from used=10) fit.
+    # loads them both back and clears the displaced set. The box is sized so both footprints
+    # fit under the ceiling — vl now carries its CLIP attention buffer, so this needs more
+    # room than it did when a vision model was costed as weights + KV alone.
     gw = FakeLocalGateway(running=set())
-    coord = _coord(gw, monkeypatch, total=160.0, used=10.0)
+    coord = _coord(gw, monkeypatch, total=200.0, used=10.0)
     coord.note_evicted(["qwen3-vl-30b-a3b", "gpt-oss-120b"])
     await coord._restore()  # noqa: SLF001
     assert set(gw.loaded) == {"qwen3-vl-30b-a3b", "gpt-oss-120b"}
@@ -554,7 +555,7 @@ async def test_schedule_restore_warms_in_the_background(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gw = FakeLocalGateway(running=set())
-    coord = _coord(gw, monkeypatch, total=160.0, used=10.0)  # ceiling 120 — both members fit
+    coord = _coord(gw, monkeypatch, total=200.0, used=10.0)  # ceiling 150 — both members fit
     coord.note_evicted(["qwen3-vl-30b-a3b", "gpt-oss-120b"])
     coord.schedule_restore()
     await asyncio.gather(*list(coord._tasks))  # noqa: SLF001 — drain the fire-and-forget task

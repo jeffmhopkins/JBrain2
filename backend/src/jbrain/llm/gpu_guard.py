@@ -1,23 +1,35 @@
 """Watch the iGPU's device memory during a model load, and abort a load that runs away.
 
-Why this exists, concretely: loading a Qwen3.8-27B variant that carried a vision projector
-took this box's HOST down to a power cycle — three times — one of them with 105 GiB of free
-system RAM and a model whose catalog footprint was 21 GiB. Memory pressure was not the
-cause and the residency budget was never going to prevent it, because both the budget and
-the estimate it checks are about SYSTEM RAM, and the allocation that killed the box was
-GTT: system pages the amdgpu driver pins on the iGPU's behalf (llama.cpp #27146 — an
-mmproj/mtmd model balloons GTT on an AMD iGPU under Vulkan).
+Why this exists: this box's HOST went down to a power cycle three times while loading local
+models — one of them with 105 GiB of free system RAM. A clean OOM kill would have cost a
+process; instead the machine stopped answering.
 
-The failure had four parts, and a durable fix needs all four:
+WHAT ACTUALLY CAUSES THAT, from v6.18 kernel source, because the first explanation written
+here was wrong and it is worth being precise:
+
+  - GTT pages (system pages the amdgpu driver pins for the iGPU) are allocated `GFP_HIGHUSER`
+    — unmovable, on no LRU, NOT reclaimable.
+  - TTM registers no shrinker for live BO pages, only for its free-page cache. The kernel
+    cannot reclaim a loaded model's GTT under any amount of pressure.
+  - `amdgpu_bo_create()` sets `.gfp_retry_mayfail = true` ("We opt to avoid OOM on system
+    pages allocations"), and per the kernel's memory-allocation guide that flag means THE OOM
+    KILLER IS NOT CALLED.
+
+So exhausting RAM through GTT puts every task into direct reclaim with nothing to reclaim and
+no escalation path. Nothing dies. That is the freeze. The host-level guard against it is
+`ttm.pages_limit`, which turns an over-commit into a clean `-ENOSPC` before the pages are
+requested — and this box currently sets it to ~100% of RAM, which disables that boundary. See
+docs/runbooks/STRIX_HALO_SETUP.md; fixing it is a host step, not something this module can do.
+
+What this module CAN do is make the software side incapable of walking into it:
 
   1. A load happened without the budget being consulted at all (llama-swap's `/upstream/`
      passthrough loads on demand). Closed at the source — `LocalGatewayClient.props`
      refuses a non-resident model.
-  2. The predicted cost was a CATALOG ESTIMATE, and it was wrong by a lot.
-     `refuse_if_no_device_room` below checks the pre-flight against the DEVICE pool, so a
-     load is refused when GTT is short even though `MemAvailable` looks fine — and the
-     estimate it checks (`local_catalog.load_footprint_gb`) now carries the projector
-     balloon, which is the term every one of the three freezes was missing.
+  2. The predicted cost was a CATALOG ESTIMATE, and it was wrong. `refuse_if_no_device_room`
+     checks the pre-flight against the DEVICE pool rather than only system RAM. (The estimate
+     itself is fixed in `local_catalog`: the KV term was reading a q4_0 figure for an f16
+     cache, and the runtime terms were missing entirely.)
   3. Nothing watched the load while it ran. That is this module's job, and it is the part
      that matters most: an estimate can only be wrong in ways we have already seen, so the
      FIRST load of any new model is always a guess. The watchdog is what makes an unknown
@@ -28,6 +40,19 @@ The failure had four parts, and a durable fix needs all four:
      (the settings screen's load, the debug console's, the coordinator's own end-of-turn
      restore). So the guard now lives inside `LocalGatewayClient.load` — the single
      chokepoint to committing device memory — and there is no longer an unguarded way in.
+
+⚠️ KNOWN LIMITS OF THIS GUARD, so nobody mistakes it for a proof:
+  - `mem_info_gtt_used` is DEVICE-WIDE, not per-process. Per-model attribution needs
+    `/proc/<pid>/fdinfo/<drm-fd>` → `drm-resident-gtt` (kernel ≥ 6.14), never `drm-total-gtt`
+    (which is keyed by PREFERRED placement, so on this APU a GTT-resident buffer is filed
+    under vram).
+  - GTT does NOT add to `MemAvailable` — GTT pages come from the buddy allocator, so
+    `si_mem_available()` already reflects them 1:1. Subtracting GTT from a RAM figure anywhere
+    would double-reserve by the size of every loaded model. The correct form is
+    `min(gtt_total - gtt_used, MemAvailable - reserve)`.
+  - Sampling GTT once a second is a weaker livelock detector than PSI. `/proc/pressure/memory`
+    with a `full` trigger fires within ~50 ms on precisely the stall-without-OOM state amdgpu
+    creates. Worth moving to; not done here.
 
 The numbers come from the supervisor (`/metrics` → `gpu_mem`), which reads
 `/sys/class/drm/card*/device/mem_info_{gtt,vram}_{used,total}`. The api container does not
