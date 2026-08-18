@@ -114,28 +114,6 @@ def unresolved_ids(root: str, models: Sequence[Mapping[str, object]]) -> tuple[s
     return tuple(missing)
 
 
-def _replace_flag_value(args: Sequence[str], flag: str, value: str) -> tuple[str, ...]:
-    """Substitute one flag's value, or append the pair when the flag isn't present.
-
-    Used so a per-model operator override lands as a single occurrence: a command line
-    carrying the same flag twice is unreadable as a record of what is actually served, which
-    matters on a box whose only window into the engine is that string."""
-    out: list[str] = []
-    i = 0
-    replaced = False
-    while i < len(args):
-        if args[i] == flag and i + 1 < len(args):
-            out.extend([flag, value])
-            replaced = True
-            i += 2
-            continue
-        out.append(args[i])
-        i += 1
-    if not replaced:
-        out.extend([flag, value])
-    return tuple(out)
-
-
 def _is_speculative(extra_server_args: Sequence[str]) -> bool:
     """Whether a model's serving flags turn on speculative decoding (`--spec-type <mode>`),
     which constrains it to a single sequence. Read off the flags rather than a catalog boolean
@@ -180,13 +158,9 @@ def render(
         catalog_args = tuple(
             str(a) for a in cast("Sequence[str]", m.get("extra_server_args") or ())
         )
-        # An operator floor REPLACES the catalog's value rather than being appended after it.
-        # Appending would leave two --image-min-tokens on one command line and lean on
-        # llama.cpp taking the last — true today, undocumented, and impossible to read back
-        # from a command line that says both 1024 and 4096.
-        floor = image_min_tokens.get(model_id)
-        if floor is not None:
-            catalog_args = _replace_flag_value(catalog_args, "--image-min-tokens", str(floor))
+        # The floor is a catalog FIELD, so an operator override simply wins — there is no flag
+        # to rewrite and the command line carries exactly one --image-min-tokens.
+        floor = image_min_tokens.get(model_id, cast("int | None", m.get("image_min_tokens")))
         operator_args = tuple(str(a) for a in extra_args.get(model_id, ()))
         n_slots = max(1, slots.get(model_id, 1))
         # Either source can turn speculation on: the catalog's static flags, or an operator
@@ -293,6 +267,10 @@ def render(
             cmd.append("--swa-full")
         # Model-specific serving flags (e.g. the MTP variant's `--spec-type draft-mtp …`
         # self-speculative-decoding config), appended verbatim after the shared flags.
+        # Emitted from the field so exactly one occurrence reaches the command line, whether
+        # the value came from the catalog or from an operator override.
+        if floor is not None:
+            cmd += ["--image-min-tokens", str(floor)]
         cmd += catalog_args
         # Operator overrides last, so they append to (never reorder) the catalog's own flags.
         cmd += operator_args

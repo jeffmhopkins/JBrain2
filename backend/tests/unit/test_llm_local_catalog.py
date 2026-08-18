@@ -259,9 +259,15 @@ def test_qwen38_27b_q4_serves_mtp_as_a_mode_not_a_separate_entry() -> None:
     assert m.hf_repo == q8.hf_repo == "unsloth/Qwen3.8-27B-GGUF"
     assert m.quant == "Q4_K_M" and "Q4_K_M" in m.gguf_include
 
-    # Vision survives the merge, and the image floor is kept rather than dropped.
+    # Vision survives the merge, and the image floor is kept rather than dropped — now as a
+    # first-class field (like context_window) rather than a raw flag, so an operator override
+    # replaces it instead of being appended after it.
     assert m.supports_vision and m.mmproj_include
-    assert "--image-min-tokens" in m.extra_server_args
+    # 2048, not llama.cpp's lower floor: measured three reads per floor on a label with fine
+    # print, 1024 was usable one time in three (the rest invented company names) while 2048
+    # read the core label every time. Pinned so a change to it is a deliberate one.
+    assert m.image_min_tokens == 2048
+    assert "--image-min-tokens" not in m.extra_server_args
     assert m.tiers == ("vision", "high")
     assert m.supports_tools
 

@@ -492,13 +492,14 @@ def test_an_image_floor_override_replaces_the_catalog_value_rather_than_appendin
 ) -> None:
     """One occurrence on the command line, not two.
 
-    Appending would leave `--image-min-tokens 1024 --image-min-tokens 4096` and lean on
-    llama.cpp taking the last — true today, undocumented, and unreadable as a record of what
-    is actually served, which matters on a box whose only window into the engine is that
-    string."""
+    The floor is a catalog FIELD, so an override replaces it by construction — there is no
+    flag to rewrite. Two of the same flag would work (llama.cpp takes the last) but leave the
+    command line unreadable as a record of what is actually served, which matters on a box
+    whose only window into the engine is that string."""
     _lay_down(tmp_path)
     manifest = _manifest()
-    manifest[0]["extra_server_args"] = ["--image-min-tokens", "1024", "--jinja-extra"]
+    manifest[0]["image_min_tokens"] = 1024
+    manifest[0]["extra_server_args"] = ["--jinja-extra"]
     text = llama_swap_config.render(
         manifest, str(tmp_path), image_min_tokens={str(manifest[0]["id"]): 4096}
     )
@@ -507,14 +508,27 @@ def test_an_image_floor_override_replaces_the_catalog_value_rather_than_appendin
     assert "--image-min-tokens 4096" in line
     # Scoped to the flag: a bare "1024" also matches `-ub 1024` elsewhere on the line.
     assert "--image-min-tokens 1024" not in line
-    assert "--jinja-extra" in line  # the flags around it survive the substitution
+    assert "--jinja-extra" in line  # unrelated catalog flags are untouched
 
 
-def test_an_image_floor_is_appended_when_the_catalog_passes_none(tmp_path: Path) -> None:
-    """A vision entry that ships no floor of its own still takes an operator one."""
+def test_an_image_floor_is_emitted_when_the_catalog_declares_none(tmp_path: Path) -> None:
+    """A vision entry with no floor of its own still takes an operator one."""
     _lay_down(tmp_path)
     manifest = _manifest()
     mid = str(manifest[0]["id"])
     text = llama_swap_config.render(manifest, str(tmp_path), image_min_tokens={mid: 2048})
     line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
     assert "--image-min-tokens 2048" in line
+
+
+def test_the_catalog_floor_is_served_when_no_operator_override_exists(tmp_path: Path) -> None:
+    """The field alone reaches the command line — the reason it is a field and not a flag
+    buried in extra_server_args."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    manifest[0]["image_min_tokens"] = 1024
+    text = llama_swap_config.render(manifest, str(tmp_path))
+    line = next(ln for ln in text.splitlines() if "--image-min-tokens" in ln)
+    assert "--image-min-tokens 1024" in line
+    # A text-only entry never gets the flag: llama.cpp would not read it.
+    assert sum("--image-min-tokens" in ln for ln in text.splitlines()) == 1
