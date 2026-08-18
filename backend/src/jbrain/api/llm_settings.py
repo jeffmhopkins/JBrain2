@@ -238,6 +238,13 @@ class LocalModelInfo(BaseModel):
     # by title/background traffic — docs/runbooks/STRIX_HALO_SETUP.md). Editable only while
     # the model isn't resident; a change doubles the model's KV footprint.
     parallel_slots: int
+    # `--image-min-tokens`: the FLOOR an image is encoded to, and the knob for whether small
+    # text in a photo survives to the model. None on a text-only entry (no projector, so a
+    # floor would do nothing) and on a vision entry left at the catalog value.
+    image_min_tokens: int | None
+    # The catalog's own floor, so the drawer can mark it "(default)" and store null for it
+    # rather than persisting a redundant override row.
+    image_min_tokens_default: int | None
 
 
 class LoadedModelsOut(BaseModel):
@@ -424,6 +431,7 @@ async def _snapshot(
     overrides = await store.llm_task_overrides(ctx)
     windows = await store.llm_local_context_windows(ctx)
     slots = await store.llm_local_parallel_slots(ctx)
+    image_floors = await store.llm_local_image_min_tokens(ctx)
     free_ram_override = await store.llm_local_free_ram_fraction(ctx)
     auto_restore = await store.llm_local_auto_restore(ctx)
     unavailable = set(await store.llm_local_unavailable(ctx))
@@ -455,6 +463,7 @@ async def _snapshot(
                 m.id in loaded,
                 windows,
                 slots,
+                image_floors,
                 m.id in unavailable,
                 m.id in requested,
                 m.id in removing,
@@ -544,6 +553,7 @@ def _local_model_info(
     loaded: bool,
     windows: dict[str, int],
     slots: dict[str, int],
+    image_floors: dict[str, int],
     unavailable: bool,
     requested: bool,
     removing: bool,
@@ -589,7 +599,24 @@ def _local_model_info(
         context_window_override=override,
         kv_gb=kv_gb,
         parallel_slots=n_slots,
+        # Only meaningful with a projector: a floor on a text-only entry would never be read,
+        # so the drawer gets None and renders no control rather than a dead one.
+        image_min_tokens=(
+            (image_floors.get(m.id) or _catalog_image_min_tokens(m)) if m.supports_vision else None
+        ),
+        image_min_tokens_default=_catalog_image_min_tokens(m) if m.supports_vision else None,
     )
+
+
+def _catalog_image_min_tokens(m: local_catalog.LocalModel) -> int | None:
+    """The floor the catalog itself passes, so the drawer can show what is served today rather
+    than an empty control on a model that already has one."""
+    args = list(m.extra_server_args)
+    if "--image-min-tokens" in args:
+        i = args.index("--image-min-tokens")
+        if i + 1 < len(args) and args[i + 1].isdigit():
+            return int(args[i + 1])
+    return None
 
 
 def _require_provisioned(settings: Settings, model_id: str) -> local_catalog.LocalModel:
@@ -645,6 +672,7 @@ def _try_regenerate(
     windows: dict[str, int],
     slots: dict[str, int],
     extra: dict[str, list[str]] | None = None,
+    image_min_tokens: dict[str, int] | None = None,
 ) -> None:
     """Re-stamp llama-swap.yaml with the current per-model windows AND slot counts so the
     gateway (run with --watch-config) reloads at the configured `-c`/`-np`. Every model is a
@@ -655,7 +683,12 @@ def _try_regenerate(
     try:
         manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
         llama_swap_config.write(
-            settings.local_models_dir, manifest, windows=windows, slots=slots, extra_args=extra
+            settings.local_models_dir,
+            manifest,
+            windows=windows,
+            slots=slots,
+            extra_args=extra,
+            image_min_tokens=image_min_tokens,
         )
     except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
         log.warning("llm_settings.gateway_config_regen_failed", error=str(exc))
@@ -904,6 +937,57 @@ async def set_local_context_window_value(
         windows,
         await store.llm_local_parallel_slots(ctx),
         await store.llm_local_extra_args(ctx),
+    )
+    await _unload_if_loaded(settings, gateway, model)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+class ImageMinTokensIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # null clears the override (back to the catalog floor); else 1..IMAGE_TOKENS_MAX.
+    image_min_tokens: int | None = None
+
+
+# llama.cpp's own ceiling for this projector family (`set_limit_image_tokens(8, 4096)`), so a
+# floor above it could never be honoured and would only mislead whoever set it.
+IMAGE_TOKENS_MAX = 4096
+
+
+@router.put("/settings/llm/local-models/{model_id}/image-min-tokens")
+async def set_local_image_min_tokens(
+    model_id: str,
+    body: ImageMinTokensIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Set (or clear, with null) one model's `--image-min-tokens` floor — how much of an image
+    the model actually gets to see.
+
+    This is the knob for small text: a curved bottle label or a receipt comes back garbled at
+    a low floor and legible at a high one, and the right value is only findable against real
+    photos. 409 when hosting is off, 404 for an unprovisioned id, 422 outside 1..4096 or on a
+    model with no projector — a floor on a text-only model would silently do nothing.
+
+    Costs prefill and KV, never weights, so unlike the context window it does not move the
+    residency budget. Unloads the model if resident: the floor is a launch flag, so it takes
+    effect on the next load."""
+    model = _require_provisioned(settings, model_id)
+    if not model.supports_vision:
+        raise HTTPException(status_code=422, detail=f"{model_id} has no vision projector")
+    tokens = body.image_min_tokens
+    if tokens is not None and not (1 <= tokens <= IMAGE_TOKENS_MAX):
+        raise HTTPException(status_code=422, detail=f"image floor must be 1..{IMAGE_TOKENS_MAX}")
+    ctx = ctx_for(principal)
+    floors = await store.set_llm_local_image_min_tokens(ctx, model_id=model_id, tokens=tokens)
+    _try_regenerate(
+        settings,
+        await store.llm_local_context_windows(ctx),
+        await store.llm_local_parallel_slots(ctx),
+        await store.llm_local_extra_args(ctx),
+        floors,
     )
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)

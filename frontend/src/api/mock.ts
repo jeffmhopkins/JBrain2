@@ -451,6 +451,8 @@ const LLM_SETTINGS: LlmSettings = {
       max_context_window: 262144,
       context_window_override: null,
       parallel_slots: 1,
+      image_min_tokens: null,
+      image_min_tokens_default: null,
       kv_gb: 1.5,
     },
     {
@@ -473,6 +475,8 @@ const LLM_SETTINGS: LlmSettings = {
       max_context_window: 131072,
       context_window_override: null,
       parallel_slots: 1,
+      image_min_tokens: null,
+      image_min_tokens_default: null,
       kv_gb: 4.5,
     },
     {
@@ -495,6 +499,8 @@ const LLM_SETTINGS: LlmSettings = {
       max_context_window: 1048576,
       context_window_override: null,
       parallel_slots: 1,
+      image_min_tokens: null,
+      image_min_tokens_default: null,
       kv_gb: 0.8,
     },
     {
@@ -517,6 +523,8 @@ const LLM_SETTINGS: LlmSettings = {
       max_context_window: 262144,
       context_window_override: null,
       parallel_slots: 1,
+      image_min_tokens: null,
+      image_min_tokens_default: null,
       kv_gb: 1.5,
     },
     {
@@ -539,6 +547,8 @@ const LLM_SETTINGS: LlmSettings = {
       max_context_window: 262144,
       context_window_override: null,
       parallel_slots: 1,
+      image_min_tokens: null,
+      image_min_tokens_default: null,
       kv_gb: 1.5,
     },
   ],
@@ -3791,6 +3801,17 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const id = decodeURIComponent(uninstallMatch[1] ?? "");
     const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
     if (model?.enabled) model.remove_queued = method === "POST";
+    return json(LLM_SETTINGS);
+  }
+  const imgMinMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/image-min-tokens$/);
+  if (imgMinMatch && method === "PUT") {
+    const id = decodeURIComponent(imgMinMatch[1] ?? "");
+    const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
+    const { image_min_tokens: floor } = JSON.parse(String(init?.body ?? "{}")) as {
+      image_min_tokens?: number | null;
+    };
+    // Mirror the backend: null clears back to the catalog floor rather than storing a row.
+    if (model) model.image_min_tokens = floor ?? model.image_min_tokens_default;
     return json(LLM_SETTINGS);
   }
   const windowMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/context-window$/);

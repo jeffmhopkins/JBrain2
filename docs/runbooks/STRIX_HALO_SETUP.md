@@ -505,6 +505,14 @@ turn automatic reloading OFF first, then unload. Otherwise the keeper wins.
 (llama.cpp defaults to 4096 for this projector family; the catalog pins only the floor, at
 1024). Both are on the `extra-args` allowlist, so they tune live:
 
+**In the PWA:** Settings → LLM, the **image detail** control on any vision model. It sits
+beside the context window, takes effect on the model's next load, and shows the catalog's own
+floor marked `(default)` so picking that stores no override. Text-only entries have no such
+control — a floor there would never be read.
+
+For a quick sweep without touching saved settings, `extra-args` does the same thing and clears
+in one call:
+
 ```
 debug-connect.sh extra-args qwen3.8-27b-q4 --image-min-tokens 2048
 debug-connect.sh vision <attachment_id> --task vision.ocr --max-tokens 600
