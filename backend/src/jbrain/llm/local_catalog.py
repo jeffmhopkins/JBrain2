@@ -195,10 +195,16 @@ class LocalModel:
     # appended after it — two of the same flag on one command line is unreadable as a record
     # of what is actually served. None on a text-only entry, where llama.cpp never reads it.
     #
-    # Measured on a bottle label with fine print: at 1024 one read in three was usable and the
-    # rest invented company names; at 4096 every read got the full label AND the promotional
-    # small print that lower floors could not resolve at all. Costs prefill and KV, never
-    # weights, so it cannot change whether a model fits.
+    # Measured on a bottle label with fine print, three reads per floor: at 1024 (llama.cpp's
+    # own default is lower still) one read in three was usable and the rest invented company
+    # names; at 2048 all three read the core label; at 4096 all three read the core label AND
+    # promotional small print the lower floors could not resolve at all.
+    #
+    # The shipped default is 2048 — the point where the core label became RELIABLE rather than
+    # lucky. 4096 read strictly more on that image, but it is 4x llama.cpp's own floor and the
+    # evidence is one photo, so the extra prefill is left as an opt-in per model rather than
+    # spent on every image turn. Costs prefill and KV, never weights, so no floor can change
+    # whether a model fits.
     image_min_tokens: int | None = None
     # The context window the gateway serves this model with (llama-server's `-c`)
     # ABSENT an operator override. The single source of truth: scripts/local-llm-setup.sh
@@ -520,7 +526,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # if Q8 behaves differently, and nothing routes here by default, so the first load is
         # the measurement. Pins to one slot, as any speculative model does.
         extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "3"),
-        image_min_tokens=1024,
+        image_min_tokens=2048,
         quant="Q8_0",
         # GiB on disk (the catalog's unit): the single Q8_0 weight (~27.0 GiB from HF's 29
         # decimal-GB listing) plus the ~0.86 GiB F16 projector. ESTIMATE until measured on-box;
@@ -573,7 +579,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # speculative path serves a single sequence and acceptance collapses as concurrent
         # sequences rise, so the serving mode overrides the interactive-slot setting.
         extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "3"),
-        image_min_tokens=1024,
+        image_min_tokens=2048,
         quant="Q4_K_M",
         # GiB on disk: the Q4_K_M weight (~15.9 GiB from HF's 17.1 decimal-GB listing) plus the
         # ~0.86 GiB F16 projector. ESTIMATE until measured on-box.
