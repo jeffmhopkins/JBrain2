@@ -1120,6 +1120,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             liveness=getattr(app.state, "image_liveness", None),
             router=app.state.llm_router,
             hold_loader=lambda: settings_store.code_mode_hold_names(SYSTEM_CTX),
+            # The same operator switch the coordinator reads. The keeper is the OTHER auto-load
+            # path on this box, and without this it reloaded the primary model every 5s no
+            # matter what the setting said — so turning auto-reload off stopped restores while
+            # a 68 GiB model kept coming straight back, which is not what the switch claims.
+            auto_restore_loader=lambda: settings_store.llm_local_auto_restore(SYSTEM_CTX),
         )
         warm_keeper_task = asyncio.create_task(app.state.warm_keeper.run())
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to

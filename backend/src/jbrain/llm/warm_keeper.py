@@ -70,6 +70,7 @@ class WarmKeeper:
         liveness: HiddenToolsProbe | None,
         router: LlmRouter,
         hold_loader: Callable[[], Awaitable[Collection[str]]],
+        auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
         interval_ready: float = 60.0,
         interval_wait: float = 5.0,
     ):
@@ -81,6 +82,14 @@ class WarmKeeper:
         # it — a re-route moves the kept-hot model automatically and the prime path matches a turn.
         self._router = router
         self._hold_loader = hold_loader
+        # The operator's "automatically reload models" switch. The keeper is the SECOND
+        # auto-load path on this box — residency restore is the other — and it used to ignore
+        # this setting entirely, so turning it off stopped restores while the keeper went on
+        # reloading the primary model every interval_wait seconds. An operator who switches
+        # auto-reload off and watches a 68 GiB model reappear within five seconds has been
+        # told something untrue by the UI. It gates LOADING only: a model already resident is
+        # still kept primed, because holding a warm prefix costs nothing and is not a load.
+        self._auto_restore_loader = auto_restore_loader
         # What we last successfully primed: (served_model, hidden-tool-set). None until primed
         # (or after the model is found evicted). Re-prime when this no longer matches the desired.
         self._primed: tuple[str, frozenset[str]] | None = None
@@ -91,6 +100,17 @@ class WarmKeeper:
         # catch a later gateway-only restart or a liveness flip.
         self._interval_ready = interval_ready
         self._interval_wait = interval_wait
+
+    async def _auto_restore_allowed(self) -> bool:
+        """Default OPEN when unwired (no loader) or on a settings read failure: this gate only
+        suppresses a convenience reload, and a box that silently stopped keeping its model warm
+        because a settings query hiccupped would be a worse failure than one extra load."""
+        if self._auto_restore_loader is None:
+            return True
+        try:
+            return await self._auto_restore_loader()
+        except Exception:  # noqa: BLE001 — a settings hiccup must not wedge the keeper
+            return True
 
     def note_prefix_lost(self, served_model: str) -> None:
         """Forget the primed memo for `served_model` — registered with the residency
@@ -123,6 +143,11 @@ class WarmKeeper:
             running = set()
         if served not in running:
             self._primed = None  # evicted (or never loaded) → the cache no longer holds our prime
+            if not await self._auto_restore_allowed():
+                # Off: the operator asked for nothing to be loaded behind their back. SETTLED,
+                # not "retry soon" — returning False here would spin the eager 5s cadence
+                # forever against a switch that is never going to flip on its own.
+                return True
         # Pass the SERVED model: the canvas pair is model-gated, and `jerv_prime_inputs`
         # with no model hides it — so on a canvas-capable model the keeper would prime a
         # prefix WITHOUT tools a real turn sends, the reuse would miss from the tools block
