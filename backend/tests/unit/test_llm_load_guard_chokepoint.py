@@ -194,3 +194,49 @@ def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:
     assert mtp.is_speculative
     predicted = local_catalog.load_footprint_gb(mtp)
     assert 19.0 <= predicted <= 20.0, predicted
+
+
+def test_spec_counters_are_parsed_by_substring_not_exact_name() -> None:
+    """The accept rate is the number that says whether speculation is earning its keep.
+
+    Matched by substring because llama.cpp renames these between builds and this box tracks
+    master; a build that moves a metric should report less, never 500."""
+    from jbrain.llm.local_gateway import parse_spec_counters
+
+    text = "\n".join(
+        [
+            "# HELP llamacpp:n_draft_total drafted",
+            "llamacpp:n_draft_total 400",
+            'llamacpp:n_draft_accepted_total{slot="0"} 260',
+            "llamacpp:n_decode_total 999",  # not a spec counter — must be ignored
+            "malformed_draft_line not_a_number",
+        ]
+    )
+    got = parse_spec_counters(text)
+    assert got["llamacpp:n_draft_total"] == 400.0
+    assert got["llamacpp:n_draft_accepted_total"] == 260.0
+    assert got["accept_rate"] == 0.65
+    assert "llamacpp:n_decode_total" not in got
+    assert "malformed_draft_line" not in got
+
+
+def test_spec_counters_on_a_build_that_exposes_none() -> None:
+    """A non-speculative model, or a build without the counters, is an empty dict — not an
+    error, and no accept_rate invented from a missing half."""
+    from jbrain.llm.local_gateway import parse_spec_counters
+
+    assert parse_spec_counters("llamacpp:n_decode_total 12\n# nothing speculative here") == {}
+    assert "accept_rate" not in parse_spec_counters("llamacpp:n_draft_total 0")
+
+
+@pytest.mark.anyio
+async def test_slots_and_metrics_refuse_a_non_resident_model() -> None:
+    """Same refusal as props, for the same reason: these read through llama-swap's
+    /upstream/ passthrough, which LOADS the model on demand outside the residency budget.
+    A read-only diagnostic must never be able to commit device memory — doing exactly that
+    froze this host to a power cycle."""
+    gateway = LocalGatewayClient("http://gw", transport=_transport())
+    for call in (gateway.slots("qwen3.8-27b-mtp"), gateway.metrics("qwen3.8-27b-mtp")):
+        with pytest.raises(Exception) as exc:  # noqa: PT011 — LocalGatewayError
+            await call
+        assert "not resident" in str(exc.value)

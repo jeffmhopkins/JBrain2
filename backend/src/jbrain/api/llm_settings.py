@@ -28,7 +28,12 @@ from jbrain.db.session import SessionContext
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import llama_swap_config, local_catalog, local_weights
 from jbrain.llm.errors import LlmError
-from jbrain.llm.local_gateway import LocalGateway, LocalGatewayClient, LocalGatewayError
+from jbrain.llm.local_gateway import (
+    LocalGateway,
+    LocalGatewayClient,
+    LocalGatewayError,
+    parse_spec_counters,
+)
 from jbrain.llm.providers import (
     REASONING_DEFAULT,
     REASONING_EFFORTS,
@@ -1394,6 +1399,36 @@ async def gateway_props(
         return await gateway.props(model.served_model)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway props failed: {exc}") from exc
+
+
+async def gateway_slots(
+    model_id: str, settings: Settings, gateway: LocalGatewayClient
+) -> dict[str, object]:
+    """llama-server's `/slots` for one model — the only reliable answer to "is speculation
+    actually drafting?", since `/props`'s `speculative.types` reads "none" on every build."""
+    model = _require_provisioned(settings, model_id)
+    try:
+        return {"slots": await gateway.slots(model.served_model)}
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway slots failed: {exc}") from exc
+
+
+async def gateway_metrics(
+    model_id: str, settings: Settings, gateway: LocalGatewayClient
+) -> dict[str, object]:
+    """llama-server's Prometheus `/metrics` for one model, plus the speculative counters
+    pulled out of it.
+
+    `spec` is the point: drafted vs accepted tokens, and the derived accept rate. That is the
+    measure of whether MTP is earning its keep and whether `--spec-draft-n-max` sits at the
+    right depth — which until now could only be inferred from wall-clock timings. `raw` is
+    kept so a counter this parser doesn't know about is still reachable."""
+    model = _require_provisioned(settings, model_id)
+    try:
+        text = await gateway.metrics(model.served_model)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway metrics failed: {exc}") from exc
+    return {"spec": parse_spec_counters(text), "raw": text}
 
 
 async def gateway_slot_action(

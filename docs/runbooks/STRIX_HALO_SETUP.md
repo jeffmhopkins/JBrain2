@@ -431,10 +431,21 @@ update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-
 
 > **Reading what the engine actually did.** llama-server prints its build, allocated context,
 > batch sizes and resolved slot count once at startup, and llama-swap neither forwards that
-> banner nor keeps it (its log is a ~100 KB ring buffer the access log floods within minutes).
-> Use **`scripts/debug-connect.sh props <model-id>`** instead — it reads those facts
-> from llama-server directly, and is the only no-terminal way to confirm which build served a
-> measurement or whether a serving flag took effect.
+> banner nor keeps it — its log is a ~100 KB ring buffer the access log floods within minutes,
+> and `logs local-llm` is that same stream, so **llama-server's stdout reaches no debug
+> surface at all**. Use the passthrough reads instead, all of which refuse a non-resident
+> model (a diagnostic must never trigger a load — that is what froze the host):
+>
+> | want | command |
+> |---|---|
+> | build id, real `-c`, `total_slots` | `debug-connect.sh props <id>` |
+> | is speculation actually drafting | `debug-connect.sh slots <id>` |
+> | drafted / accepted / accept rate | `debug-connect.sh spec-metrics <id>` |
+>
+> The `--slots` and `--metrics` flags the config always passes exist for the last two. For a
+> long stretch the flags were passed but the ROUTES were missing, so MTP could only be judged
+> by wall-clock timings — which is how an entire investigation concluded MTP was off from a
+> field (`/props`'s `speculative.types`) that reads "none" on every build.
 
 ### Tuning MTP without a release
 
@@ -448,6 +459,8 @@ The flags are on the extra-args allowlist precisely so this loop exists.
 | Point a task at it | PWA **Settings → LLM**, or `debug-connect.sh llm-set <task> qwen3.8-27b-mtp <effort>` |
 | Try a different draft setting | `debug-connect.sh extra-args qwen3.8-27b-mtp --spec-draft-p-min 0.75` |
 | Measure it | `debug-connect.sh prime qwen3.8-27b-mtp` → `elapsed_ms` |
+| **See whether it is drafting** | `debug-connect.sh slots qwen3.8-27b-mtp` → the per-slot `speculative` object |
+| **See the accept rate** | `debug-connect.sh spec-metrics qwen3.8-27b-mtp` → drafted / accepted / `accept_rate` |
 | Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-mtp` (no args) |
 | Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` — against **`qwen3.8-27b-q4`**, never the MTP entry (see the freeze warning above) |
 

@@ -118,22 +118,64 @@ class LocalGatewayClient:
         beside a large resident one froze this host to a power cycle. A read-only diagnostic
         must never be able to commit gigabytes of device memory, so the caller loads first
         (through residency) and reads second."""
+        body = await self._upstream_get(served_model, "props", "/props")
+        return body if isinstance(body, dict) else {}
+
+    async def slots(self, served_model: str) -> list[dict[str, object]]:
+        """llama-server's `/slots` for one RESIDENT model — per-slot state, and on a
+        speculative build the `speculative` object that says whether drafting is actually
+        running. `/props`'s `speculative.types` CANNOT answer that (the server builds it from
+        a `task_params` it never populates, so it reads "none" on every build); this can.
+
+        Needs `--slots`, which jbrain.llm.llama_swap_config always passes. Refuses a
+        non-resident model for the same reason `props` does."""
+        body = await self._upstream_get(served_model, "slots", "/slots")
+        return body if isinstance(body, list) else []
+
+    async def metrics(self, served_model: str) -> str:
+        """llama-server's Prometheus `/metrics` for one RESIDENT model, as raw text.
+
+        Carries the speculative-decoding counters — drafted vs accepted tokens — which are the
+        only direct measure of whether MTP is earning its keep and whether `--spec-draft-n-max`
+        is set to the right depth. Needs `--metrics`, which the config always passes."""
+        return await self._upstream_text(served_model, "metrics", "/metrics")
+
+    async def _require_resident(self, served_model: str, what: str) -> None:
+        """Guard shared by every `/upstream/…` read. Reaching that passthrough makes llama-swap
+        LOAD the model on demand, outside `jbrain.llm.residency` — the box's sole evictor and
+        the only thing that checks whether a load fits. Doing it on a cold model beside a large
+        resident one froze this host to a power cycle, so a diagnostic read is never allowed to
+        commit gigabytes of device memory."""
         if served_model not in await self.running():
             raise LocalGatewayError(
-                f"{served_model} is not resident — refusing to read /props, because reaching it "
-                "would make the gateway load the model outside the residency budget. Load it "
-                "first (which evicts to make room), then read."
+                f"{served_model} is not resident — refusing to read /{what}, because reaching "
+                "it would make the gateway load the model outside the residency budget. Load "
+                "it first (which evicts to make room), then read."
             )
+
+    async def _upstream_get(self, served_model: str, what: str, path: str) -> object:
+        await self._require_resident(served_model, what)
         try:
             async with httpx.AsyncClient(
                 timeout=max(self._timeout, 180.0), transport=self._transport
             ) as client:
-                resp = await client.get(f"{self._root}/upstream/{served_model}/props")
+                resp = await client.get(f"{self._root}/upstream/{served_model}{path}")
                 resp.raise_for_status()
-                body = resp.json()
+                return resp.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise LocalGatewayError(str(exc)) from exc
-        return body if isinstance(body, dict) else {}
+
+    async def _upstream_text(self, served_model: str, what: str, path: str) -> str:
+        await self._require_resident(served_model, what)
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 180.0), transport=self._transport
+            ) as client:
+                resp = await client.get(f"{self._root}/upstream/{served_model}{path}")
+                resp.raise_for_status()
+                return resp.text
+        except httpx.HTTPError as exc:
+            raise LocalGatewayError(str(exc)) from exc
 
     async def slot_action(
         self, served_model: str, slot_id: int, action: str, *, filename: str | None = None
@@ -394,6 +436,35 @@ def _parse_load_progress(text: str) -> float | None:
         if 0.0 <= pct <= 100.0:
             last = pct / 100.0
     return last
+
+
+def parse_spec_counters(metrics_text: str) -> dict[str, float]:
+    """Pull the speculative-decoding counters out of llama-server's Prometheus text.
+
+    Matched by SUBSTRING rather than by exact metric name on purpose: llama.cpp renames these
+    between builds, and this box tracks master. A missing counter means the build does not
+    expose it (or nothing has been drafted yet) — an empty dict, never an error, because a
+    diagnostic that 500s when the shape moves is worse than one that reports less.
+
+    `accept_rate` is derived when both halves are present: it is the number that says whether
+    speculation is earning its keep and whether `--spec-draft-n-max` is at the right depth."""
+    found: dict[str, float] = {}
+    for line in metrics_text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, _, value = line.partition(" ")
+        if not any(k in name for k in ("draft", "spec", "accept")):
+            continue
+        try:
+            found[name.split("{")[0]] = float(value)
+        except ValueError:
+            continue
+    drafted = next((v for k, v in found.items() if "draft" in k and "accept" not in k), None)
+    accepted = next((v for k, v in found.items() if "accept" in k), None)
+    if drafted and accepted is not None:
+        found["accept_rate"] = round(accepted / drafted, 4)
+    return found
 
 
 def _parse_running(payload: object) -> set[str]:
