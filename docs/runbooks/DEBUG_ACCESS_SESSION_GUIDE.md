@@ -164,7 +164,8 @@ scripts/debug-connect.sh gateway-logs --tail 200
 # How the engine is ACTUALLY serving a model, read from llama-server itself: the llama.cpp
 # build, the real n_ctx, and what `-np auto` resolved total_slots to. The read that tells a
 # flag we intended from one that took effect — and the only way to know which build a
-# measurement came from, since the gateway floats on a rolling tag. Loads the model if cold.
+# measurement came from, since the gateway floats on a rolling tag. Resident models only — it
+# refuses a cold one rather than loading it outside the residency budget.
 scripts/debug-connect.sh props qwen3.8-27b-q4
 
 # Try a llama-server LAUNCH FLAG live (allowlisted), then measure it and revert — no catalog

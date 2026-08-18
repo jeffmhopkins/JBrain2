@@ -87,6 +87,62 @@ async def test_reconcile_rewrites_a_base_stamped_config_and_evicts_the_resident_
     assert gw.unloaded == ["gpt-oss-120b"]
 
 
+async def test_reconcile_preserves_an_operator_flag_and_image_floor(tmp_path: Path) -> None:
+    """The boot reconcile must not re-stamp AWAY the override kinds it wasn't told about.
+
+    It rendered `desired` from windows+slots only, so a config carrying an operator launch flag
+    or a raised image floor could never match it: every boot re-stamped both away and then
+    evicted every resident model to "correct" the config it had just made wrong. A launch-flag
+    experiment therefore silently reverted on the next restart — worse than not having the knob,
+    because the flag reads as ineffective rather than absent and any measurement after it lies."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    windows = {"gpt-oss-120b": 65536}
+    extra = {"gpt-oss-120b": ["--ctx-checkpoints", "16"]}
+    floors = {"qwen3-vl-30b": 4096}
+    llama_swap_config.write(
+        str(tmp_path), manifest, windows=windows, extra_args=extra, image_min_tokens=floors
+    )
+    gw = _FakeGateway({"gpt-oss-120b"})
+    changed = await reconcile_gateway_config(
+        str(tmp_path),
+        manifest,
+        windows=windows,
+        slots={},
+        gateway=gw,
+        extra_args=extra,
+        image_min_tokens=floors,
+    )
+    text = (tmp_path / "llama-swap.yaml").read_text()
+    assert "--ctx-checkpoints 16" in text
+    assert "--image-min-tokens 4096" in text
+    # And because it now matches, this is the no-op path: no needless eviction of a warm model.
+    assert changed is False
+    assert gw.unloaded == []
+
+
+async def test_reconcile_restores_a_flag_a_deploy_stamped_away(tmp_path: Path) -> None:
+    """The other direction, and the reason the reconcile exists at all: a deploy re-stamps from
+    the base catalog, so a saved flag is missing from disk and must be put back."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    llama_swap_config.write(str(tmp_path), manifest)  # deploy: base config, no overrides
+    assert "--ctx-checkpoints 16" not in (tmp_path / "llama-swap.yaml").read_text()
+    gw = _FakeGateway(set())
+    changed = await reconcile_gateway_config(
+        str(tmp_path),
+        manifest,
+        windows={},
+        slots={},
+        gateway=gw,
+        extra_args={"gpt-oss-120b": ["--ctx-checkpoints", "16"]},
+        image_min_tokens={"qwen3-vl-30b": 4096},
+    )
+    assert changed is True
+    text = (tmp_path / "llama-swap.yaml").read_text()
+    assert "--ctx-checkpoints 16" in text and "--image-min-tokens 4096" in text
+
+
 async def test_reconcile_is_a_noop_when_the_config_already_matches(tmp_path: Path) -> None:
     _lay_down(tmp_path)
     manifest = _manifest()

@@ -656,6 +656,25 @@ def _require_uninstallable(settings: Settings, model_id: str) -> local_catalog.L
     return model
 
 
+async def _saved_override_maps(
+    store: SqlSettingsStore, ctx: SessionContext
+) -> tuple[dict[str, int], dict[str, int], dict[str, list[str]], dict[str, int]]:
+    """Every per-model override the served config depends on, loaded together.
+
+    A helper rather than four ad-hoc reads because forgetting one is silent and costs a real
+    investigation: a regenerate that omits an override kind re-stamps that flag away, the model
+    reloads without it, and nothing reports the difference. Every one of these maps had at least
+    one call site that dropped it — image floors were reset by the window, slot and flag setters
+    AND by the boot reconcile; extra args were reset by the slot setter and the boot reconcile.
+    Loading them as a set means a NEW override kind is added here once, not in five places."""
+    return (
+        await store.llm_local_context_windows(ctx),
+        await store.llm_local_parallel_slots(ctx),
+        await store.llm_local_extra_args(ctx),
+        await store.llm_local_image_min_tokens(ctx),
+    )
+
+
 def _try_regenerate(
     settings: Settings,
     windows: dict[str, int],
@@ -703,9 +722,12 @@ async def reconcile_gateway_config(
     windows: Mapping[str, int],
     slots: Mapping[str, int],
     gateway: LocalGateway,
+    extra_args: Mapping[str, Sequence[str]] | None = None,
+    image_min_tokens: Mapping[str, int] | None = None,
 ) -> bool:
-    """Re-stamp llama-swap.yaml with the operator's SAVED per-model context-window/slot overrides,
-    and — ONLY if the served config actually changed — evict any resident local model so its next
+    """Re-stamp llama-swap.yaml with the operator's SAVED per-model overrides — context window,
+    `-np` slots, extra launch flags and the image floor — and
+    ONLY if the served config actually changed, evict any resident local model so its next
     request reloads at the corrected `-c`. Returns True when it re-stamped, False on a no-op.
 
     Why this exists: the DEPLOY re-stamp (`deploy/local-models-sync.sh` step 5 →
@@ -716,9 +738,23 @@ async def reconcile_gateway_config(
     The runtime settings path (`_try_regenerate`) DOES apply the overrides; this reconciles them
     back at boot so a deploy self-heals. Idempotent: when the on-disk config already matches the
     saved overrides it is a no-op and nothing is evicted, so a plain restart keeps its warm model.
+    ALL FOUR override kinds have to come in here, not just the window. This rendered with
+    windows+slots only, so `desired` could never match an on-disk config that carried an operator
+    flag or a raised image floor: every boot re-stamped both of them AWAY and then evicted every
+    resident model to "correct" a config that had just been made wrong. A launch-flag experiment
+    therefore silently reverted on the next restart, which is worse than not having the knob —
+    the flag reads as ineffective rather than absent, and the measurement taken after it is a lie.
+
     Best-effort — a render/glob miss or a down gateway is logged, never raised into boot."""
     try:
-        desired = llama_swap_config.render(list(manifest), models_dir, windows=windows, slots=slots)
+        desired = llama_swap_config.render(
+            list(manifest),
+            models_dir,
+            windows=windows,
+            slots=slots,
+            extra_args=extra_args,
+            image_min_tokens=image_min_tokens,
+        )
     except Exception as exc:  # noqa: BLE001 — a missing weight/glob must never fail boot
         log.warning("llm_settings.gateway_reconcile_render_failed", error=str(exc))
         return False
@@ -726,7 +762,14 @@ async def reconcile_gateway_config(
     with contextlib.suppress(OSError):
         if path.read_text() == desired:
             return False  # already correct — the common case; leave any resident model warm
-    llama_swap_config.write(models_dir, list(manifest), windows=windows, slots=slots)
+    llama_swap_config.write(
+        models_dir,
+        list(manifest),
+        windows=windows,
+        slots=slots,
+        extra_args=extra_args,
+        image_min_tokens=image_min_tokens,
+    )
     log.info("llm_settings.gateway_config_reconciled")
     # The served `-c` changed under a possibly-resident gateway (an app restart with the gateway
     # still up, or a deploy race): evict resident local models so their next request reloads at the
@@ -755,14 +798,19 @@ async def reconcile_gateway_windows_on_boot(
     if not settings.local_llm_enabled:
         return False
     try:
-        windows = await store.llm_local_context_windows(ctx)
-        slots = await store.llm_local_parallel_slots(ctx)
+        windows, slots, extra, floors = await _saved_override_maps(store, ctx)
         manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
     except Exception as exc:  # noqa: BLE001 — never fail boot on a reconcile-setup hiccup
         log.warning("llm_settings.gateway_reconcile_load_failed", error=str(exc))
         return False
     return await reconcile_gateway_config(
-        settings.local_models_dir, manifest, windows=windows, slots=slots, gateway=gateway
+        settings.local_models_dir,
+        manifest,
+        windows=windows,
+        slots=slots,
+        gateway=gateway,
+        extra_args=extra,
+        image_min_tokens=floors,
     )
 
 
@@ -921,12 +969,8 @@ async def set_local_context_window_value(
     if window is not None and not (1 <= window <= ceiling):
         raise HTTPException(status_code=422, detail=f"context window must be 1..{ceiling}")
     windows = await store.set_llm_local_context_window(ctx, model_id=model_id, window=window)
-    _try_regenerate(
-        settings,
-        windows,
-        await store.llm_local_parallel_slots(ctx),
-        await store.llm_local_extra_args(ctx),
-    )
+    _, slots, extra, floors = await _saved_override_maps(store, ctx)
+    _try_regenerate(settings, windows, slots, extra, floors)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -971,13 +1015,8 @@ async def set_local_image_min_tokens(
         raise HTTPException(status_code=422, detail=f"image floor must be 1..{IMAGE_TOKENS_MAX}")
     ctx = ctx_for(principal)
     floors = await store.set_llm_local_image_min_tokens(ctx, model_id=model_id, tokens=tokens)
-    _try_regenerate(
-        settings,
-        await store.llm_local_context_windows(ctx),
-        await store.llm_local_parallel_slots(ctx),
-        await store.llm_local_extra_args(ctx),
-        floors,
-    )
+    windows, slots, extra, _ = await _saved_override_maps(store, ctx)
+    _try_regenerate(settings, windows, slots, extra, floors)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1015,7 +1054,8 @@ async def set_local_parallel_slots(
         raise HTTPException(status_code=422, detail=f"slots must be 1..{PARALLEL_SLOTS_MAX}")
     ctx = ctx_for(principal)
     slots = await store.set_llm_local_parallel_slots(ctx, model_id=model_id, slots=body.slots)
-    _try_regenerate(settings, await store.llm_local_context_windows(ctx), slots)
+    windows, _, extra, floors = await _saved_override_maps(store, ctx)
+    _try_regenerate(settings, windows, slots, extra, floors)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1399,7 +1439,7 @@ async def gateway_unload(
 # is the same call with no args and does not require the model to be loadable.
 #   --image-min-tokens     FLOOR on how many tokens an image is encoded to
 #   --image-max-tokens     CEILING on the same (llama.cpp defaults to 4096 for this projector
-#                          family and the catalog pins only the floor, at 1024)
+#                          family and the catalog pins only the floor, at 2048)
 # The image pair is here for the same reason as the speculative four: the right value is
 # empirical and only observable against real images. The floor is what decides whether small
 # text in a photo survives to the model — raise it and OCR on a curved bottle label or a
@@ -1407,6 +1447,25 @@ async def gateway_unload(
 # that threshold sits for a given camera and subject. Pinning the ceiling bounds the CLIP
 # workspace, which matters much less now that flash attention is confirmed on (the term is
 # linear in patches, not quadratic), but it remains the lever if a build ever loses `-fa`.
+#   --ctx-checkpoints  how many per-slot context checkpoints llama-server keeps
+#   --cache-reuse      minimum chunk size worth salvaging from a matching prompt prefix
+# The cache pair is here because the SLOW-PREFILL investigation cannot start without it, and on
+# a HYBRID model our shipped values are the prime suspects. Qwen3.8 runs 48 of its 65 layers as
+# Gated DeltaNet, which carries a recurrent state: that state cannot be KV-shifted or partially
+# rewound, so `--cache-reuse` can only ever salvage the 16 attention layers, and checkpoints are
+# the ONLY mechanism that lets such a model resume mid-sequence at all. We serve
+# `--ctx-checkpoints 2` (down from llama.cpp's 32, to save ~4.7 GiB/slot), which is close to
+# "no restore points" — plausibly why every turn re-prefills. Whether that trade is right is an
+# empirical question about THIS box, and without these two flags answering it costs a catalog
+# edit, a release and an Ops → Update, i.e. it never gets answered.
+#
+# `--ctx-checkpoints` carries a WORSE failure mode than the rest of this list, so raise it in
+# small steps. A checkpoint on a hybrid is a full copy of the recurrent state (~150 MiB for
+# Qwen3.8) and is device-resident, so a large value costs GB per slot — and `footprint_gb` does
+# NOT model checkpoint memory, so the residency budget will not see it coming. On a box that has
+# hard-locked under memory pressure the risk is not "the model fails to load" (the recoverable
+# failure the flags above assume) but the host going down. Clearing is still the same call with
+# no args, which does not require the model to be loadable.
 # Flags taking a value are allowed to carry one; the value itself is NOT interpreted here.
 EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
     {
@@ -1420,22 +1479,57 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
         "--spec-draft-p-min",
         "--image-min-tokens",
         "--image-max-tokens",
+        "--ctx-checkpoints",
+        "--cache-reuse",
     }
 )
+
+
+# The one flag on the list whose bad value is not self-limiting. Everything else fails by not
+# loading — recoverable, because clearing does not need the model to be loadable. A checkpoint on
+# a hybrid is a full copy of the recurrent state (~150 MiB for Qwen3.8), device-resident and per
+# slot, and `footprint_gb` does not model it, so the residency evictor cannot see it coming. At
+# llama.cpp's own default of 32 that is ~4.7 GiB/slot of unbudgeted device memory on a box whose
+# documented failure mode is an unrecoverable host hang under GTT pressure — and `32` is the most
+# likely typo, being the value every llama.cpp doc names. 8 is above any value this investigation
+# needs and well under the cliff.
+_EXTRA_ARG_BOUNDS: dict[str, tuple[int, int]] = {"--ctx-checkpoints": (0, 8)}
 
 
 def _validate_extra_args(args: list[str]) -> list[str]:
     """Reject anything not on EXTRA_ARG_FLAGS. Values are accepted positionally (a token
     following a flag that takes one), so `--slot-save-path /tmp/kv/` passes while a bare
     `/tmp/kv/` or an unknown `--foo` is refused. 422 rather than a silent drop — a caller that
-    thinks it set a flag and did not would misread every measurement that follows."""
+    thinks it set a flag and did not would misread every measurement that follows.
+
+    Values are otherwise NOT interpreted — a bad one costs a model that will not load, which is
+    recoverable from the console. `_EXTRA_ARG_BOUNDS` is the exception, for the flag whose bad
+    value takes the host down instead."""
     cleaned: list[str] = []
     expect_value = False
+    flag = ""
     for raw in args:
         token = raw.strip()
         if not token:
             continue
         if expect_value and not token.startswith("-"):
+            bounds = _EXTRA_ARG_BOUNDS.get(flag)
+            if bounds is not None:
+                low, high = bounds
+                try:
+                    value = int(token)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=422, detail=f"{flag} takes an integer, got {token!r}"
+                    ) from None
+                if not low <= value <= high:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"{flag} must be {low}..{high} — a larger value costs device memory "
+                            "the residency budget does not model, and can hang the box"
+                        ),
+                    )
             cleaned.append(token)
             expect_value = False
             continue
@@ -1445,6 +1539,7 @@ def _validate_extra_args(args: list[str]) -> list[str]:
                 detail=f"flag {token!r} is not settable; allowed: {sorted(EXTRA_ARG_FLAGS)}",
             )
         cleaned.append(token)
+        flag = token
         expect_value = token != "--swa-full"  # the only boolean flag on the list
     return cleaned
 
@@ -1465,12 +1560,8 @@ async def set_local_extra_args(
     model = _require_provisioned(settings, model_id)
     validated = _validate_extra_args(args)
     extra = await store.set_llm_local_extra_args(ctx, model_id=model_id, args=validated)
-    _try_regenerate(
-        settings,
-        await store.llm_local_context_windows(ctx),
-        await store.llm_local_parallel_slots(ctx),
-        extra,
-    )
+    windows, slots, _, floors = await _saved_override_maps(store, ctx)
+    _try_regenerate(settings, windows, slots, extra, floors)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 

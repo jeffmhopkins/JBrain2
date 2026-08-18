@@ -205,11 +205,18 @@ def test_main_applies_saved_extra_args_so_an_update_keeps_them(
     behaving differently than the settings say it does."""
     _lay_down(tmp_path)
     monkeypatch.setattr(
-        llama_swap_config, "_saved_overrides", lambda: ({}, {}, {"gpt-oss-120b": ["--swa-full"]})
+        llama_swap_config,
+        "_saved_overrides",
+        lambda: ({}, {}, {"gpt-oss-120b": ["--swa-full"]}, {"qwen3-vl-30b": 4096}),
     )
     monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
     assert llama_swap_config._main([str(tmp_path)]) == 0
-    assert "--swa-full" in (tmp_path / "llama-swap.yaml").read_text()
+    text = (tmp_path / "llama-swap.yaml").read_text()
+    assert "--swa-full" in text
+    # The IMAGE FLOOR too. It was added to the overrides after this path was written and was
+    # left out of `_saved_overrides`, so every Ops → Update reverted it to the catalog value —
+    # the same silent-reset bug this test exists to prevent, reproduced for a newer knob.
+    assert "--image-min-tokens 4096" in text
 
 
 def test_main_applies_the_operators_saved_overrides_not_just_catalog_defaults(
@@ -220,7 +227,7 @@ def test_main_applies_the_operators_saved_overrides_not_just_catalog_defaults(
     # the operator saw as "ran out of context" at 25%). _saved_overrides reads them from the
     # settings store; here we stand in for that read.
     _lay_down(tmp_path)
-    saved = ({"gpt-oss-120b": 65536}, {}, {})
+    saved = ({"gpt-oss-120b": 65536}, {}, {}, {})
     monkeypatch.setattr(llama_swap_config, "_saved_overrides", lambda: saved)
     monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
     assert llama_swap_config._main([str(tmp_path)]) == 0
@@ -435,10 +442,17 @@ def test_an_operator_set_spec_flag_gets_the_same_single_slot_clamp(tmp_path: Pat
     assert "-c 131072" in gpt_oss_cmd  # the window is NOT doubled for a slot never allocated
 
 
-def test_operator_extra_args_land_after_the_catalog_flags(tmp_path: Path) -> None:
-    # Order matters: llama-server takes the LAST occurrence of a repeated flag, so appending the
-    # operator's args after the catalog's is what lets a live experiment override a catalog
-    # value (raising the MTP entry's pinned --spec-draft-n-max without a release).
+def test_operator_extra_args_replace_the_catalog_flag_they_target(tmp_path: Path) -> None:
+    # An operator override still WINS over a catalog flag — raising the MTP entry's pinned
+    # --spec-draft-n-max without a release is the whole point. What changed is how: the catalog's
+    # copy is now removed rather than left on the line to be outranked.
+    #
+    # This test used to assert the opposite (both occurrences present, operator's last), on the
+    # grounds that llama-server takes the last of a repeated flag. #1152 overruled that reasoning
+    # for `--image-min-tokens` — last-wins is "true today, undocumented, and impossible to read
+    # back from a command line that says both 1024 and 4096" — and the same argument holds for
+    # every other flag, so the rule is now general. The SERVED VALUE is unchanged either way;
+    # only the command line differs, and it is the box's one window into the engine.
     _lay_down(tmp_path)
     manifest = [dict(m) for m in _manifest()]
     manifest[1]["extra_server_args"] = ("--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
@@ -446,7 +460,10 @@ def test_operator_extra_args_land_after_the_catalog_flags(tmp_path: Path) -> Non
         manifest, str(tmp_path), extra_args={"gpt-oss-120b": ["--spec-draft-n-max", "5"]}
     )
     cmd = next(ln for ln in text.splitlines() if "/gpt-oss-120b/" in ln)
-    assert cmd.index("--spec-draft-n-max 3") < cmd.index("--spec-draft-n-max 5")
+    assert cmd.count("--spec-draft-n-max") == 1
+    assert "--spec-draft-n-max 5" in cmd and "--spec-draft-n-max 3" not in cmd
+    # Untargeted catalog flags survive: overriding one knob must not disarm the serving mode.
+    assert "--spec-type draft-mtp" in cmd
 
 
 def test_every_model_is_launched_observable(tmp_path: Path) -> None:
@@ -477,14 +494,91 @@ def test_ubatch_avoids_the_vulkan_batch_512_corruption(tmp_path: Path) -> None:
         assert "-ub 512" not in ln
 
 
-def test_context_checkpoints_are_capped_for_hybrid_models(tmp_path: Path) -> None:
-    # llama-server defaults to 32 context checkpoints PER SLOT. On a hybrid (recurrent) model
-    # each one is a full copy of the SSM state (~150 MiB for Qwen3.8) and is device-resident,
-    # because a recurrent state cannot be partially rewound — so the default spends ~4.7 GiB
-    # per slot on rollback depth nothing here uses (llama.cpp #20145, #23371).
+def test_context_checkpoints_are_pinned_low_as_a_memory_trade(tmp_path: Path) -> None:
+    """We serve 2, not llama-server's 32: each checkpoint is a full copy of the recurrent state
+    on a hybrid (~150 MiB for Qwen3.8) and device-resident, so the default is ~4.7 GiB per slot
+    (llama.cpp #20145, #23371).
+
+    This test used to assert the same value while calling it "rollback depth nothing here uses",
+    which is backwards and is the more damaging half: a green test stating the setting is
+    correct-by-design stops the next slow-prefill investigation before it starts. Because a
+    recurrent state cannot be partially rewound, checkpoints are the ONLY mid-sequence resume
+    path a hybrid has — this is the prefix-reuse budget, and 2 is close to none.
+
+    So what is pinned here is the VALUE and the fact that it is a deliberate trade, not a claim
+    that it is free. `--ctx-checkpoints` is on the extra-args allowlist so the trade can be
+    measured on the box; if a sweep shows a higher value wins, change it here with the number."""
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path))
     assert all("--ctx-checkpoints 2" in ln for ln in text.splitlines() if "llama-server" in ln)
+
+
+def test_an_operator_override_of_a_shared_flag_appears_exactly_once(tmp_path: Path) -> None:
+    """The single-occurrence invariant, generalised past `--image-min-tokens`.
+
+    `-ub` and `--slot-save-path` are hardcoded in the shared command AND settable through
+    `EXTRA_ARG_FLAGS`, so before this an override emitted the flag twice and the served value
+    rested on llama.cpp taking the last one — undocumented, and exactly what #1152 refused to
+    rely on for the image floor. The command line is the box's only window into the engine, so
+    it has to read as a true record of what is served."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    mid = str(manifest[0]["id"])
+    text = llama_swap_config.render(manifest, str(tmp_path), extra_args={mid: ["-ub", "4096"]})
+    line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
+    assert line.count("-ub") == 1
+    assert "-ub 4096" in line
+    assert "-ub 1024" not in line  # the shared default is gone, not merely outranked
+
+
+def test_the_cache_flags_are_overridable_for_the_slow_prefill_investigation(
+    tmp_path: Path,
+) -> None:
+    """`--ctx-checkpoints` and `--cache-reuse` are the two knobs a hybrid's slow-prefill
+    investigation turns on, and both are shipped as hardcoded defaults. An operator sweep has
+    to REPLACE them, not stack a second copy after them."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    mid = str(manifest[0]["id"])
+    text = llama_swap_config.render(
+        manifest,
+        str(tmp_path),
+        extra_args={mid: ["--ctx-checkpoints", "16", "--cache-reuse", "0"]},
+    )
+    line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
+    assert line.count("--ctx-checkpoints") == 1 and "--ctx-checkpoints 16" in line
+    assert line.count("--cache-reuse") == 1 and "--cache-reuse 0" in line
+    assert "--ctx-checkpoints 2" not in line and "--cache-reuse 256" not in line
+
+
+def test_dropping_an_overridden_flag_never_swallows_the_flag_after_it(tmp_path: Path) -> None:
+    """A boolean flag has no value to consume. Overriding one must not eat whatever follows
+    it — `--swa-full` is the only valueless entry on the allowlist, and it is emitted right
+    before other flags on a model that carries it."""
+    got = llama_swap_config._drop_operator_overridden(
+        ["--swa-full", "-ngl", "999", "-c", "32768"], ["--swa-full"]
+    )
+    assert got == ["-ngl", "999", "-c", "32768"]
+    # A valued flag still takes its value with it, and only its own.
+    got2 = llama_swap_config._drop_operator_overridden(["-ub", "1024", "-ngl", "999"], ["-ub"])
+    assert got2 == ["-ngl", "999"]
+    # Nothing set by the operator, nothing dropped.
+    assert llama_swap_config._drop_operator_overridden(["-ub", "1024"], []) == ["-ub", "1024"]
+
+
+def test_an_unrelated_operator_flag_leaves_the_shared_defaults_alone(tmp_path: Path) -> None:
+    """Only what the operator actually set is stripped — a sweep of one knob must not silently
+    drop the tuned defaults beside it."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    mid = str(manifest[0]["id"])
+    text = llama_swap_config.render(
+        manifest, str(tmp_path), extra_args={mid: ["--spec-draft-p-min", "0.75"]}
+    )
+    line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
+    assert "-ub 1024" in line
+    assert "--ctx-checkpoints 2" in line
+    assert "--cache-reuse 256" in line
 
 
 def test_an_image_floor_override_replaces_the_catalog_value_rather_than_appending(

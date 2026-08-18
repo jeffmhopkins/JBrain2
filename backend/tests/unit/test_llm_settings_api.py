@@ -1175,6 +1175,48 @@ def test_extra_arg_allowlist_covers_the_image_token_flags() -> None:
     ) == ["--image-min-tokens", "2048", "--image-max-tokens", "4096"]
 
 
+def test_the_cache_flags_are_settable_for_a_hybrids_slow_prefill() -> None:
+    """`--ctx-checkpoints` and `--cache-reuse` are the two knobs a hybrid's prefill behaviour
+    actually turns on, and both ship as hardcoded defaults tuned for memory rather than latency.
+
+    Qwen3.8 runs 48 of its 65 layers as Gated DeltaNet, whose recurrent state cannot be
+    KV-shifted: `--cache-reuse` reaches only the 16 attention layers, and checkpoints are the
+    ONLY mid-sequence resume path. We serve `--ctx-checkpoints 2` (down from llama.cpp's 32, to
+    save ~4.7 GiB/slot), which is close to none. Whether that trade is right is empirical about
+    this box, and without these flags answering it costs a release."""
+    for flag in ("--ctx-checkpoints", "--cache-reuse"):
+        assert flag in llm_settings.EXTRA_ARG_FLAGS
+    assert llm_settings._validate_extra_args(["--ctx-checkpoints", "8"]) == [
+        "--ctx-checkpoints",
+        "8",
+    ]
+    assert llm_settings._validate_extra_args(["--cache-reuse", "0"]) == ["--cache-reuse", "0"]
+
+
+def test_ctx_checkpoints_is_bounded_because_its_bad_value_hangs_the_box() -> None:
+    """The one flag on the list whose failure is not "the model does not load".
+
+    Everything else fails recoverably — clearing does not require a loadable model. A checkpoint
+    on a hybrid is a full copy of the recurrent state (~150 MiB for Qwen3.8), device-resident and
+    per slot, and `footprint_gb` does not model it, so the residency evictor cannot see it coming.
+    llama.cpp's own default of 32 is the most likely typo (every upstream doc names it) and would
+    be ~4.7 GiB/slot unbudgeted on a box whose documented failure mode is an unrecoverable hang."""
+    with pytest.raises(HTTPException) as exc:
+        llm_settings._validate_extra_args(["--ctx-checkpoints", "32"])
+    assert exc.value.status_code == 422
+    assert "hang" in str(exc.value.detail)
+    with pytest.raises(HTTPException):
+        llm_settings._validate_extra_args(["--ctx-checkpoints", "-1"])
+    with pytest.raises(HTTPException):  # not an integer at all
+        llm_settings._validate_extra_args(["--ctx-checkpoints", "lots"])
+    # The bound is per-flag, not a blanket numeric rule: an unbounded flag still takes any value.
+    assert llm_settings._validate_extra_args(["-ub", "4096"]) == ["-ub", "4096"]
+    assert llm_settings._validate_extra_args(["--cache-reuse", "99999"]) == [
+        "--cache-reuse",
+        "99999",
+    ]
+
+
 def test_extra_arg_allowlist_rejects_an_unknown_flag_loudly() -> None:
     # 422, never a silent drop: a caller that believes it set a flag and did not would misread
     # every measurement taken afterwards.

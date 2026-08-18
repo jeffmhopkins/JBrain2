@@ -1241,7 +1241,9 @@ async def model_props(
 ) -> dict[str, object]:
     """llama-server's `/props` for one model: `build_info` (the only build identity available
     over HTTP — and this box rebuilds llama.cpp on master by default, so it changes), the real
-    `n_ctx`, and `total_slots`. Loads the model on demand if it isn't resident."""
+    `n_ctx`, and `total_slots`. REFUSES a model that is not already resident — reaching it
+    would make the gateway load it outside the residency budget, the path that froze this
+    host. Load it first (which evicts to make room), then read its props."""
     request.state.debug_detail = model_id
     return await llm_settings.gateway_props(model_id, settings, _gateway(request))
 
