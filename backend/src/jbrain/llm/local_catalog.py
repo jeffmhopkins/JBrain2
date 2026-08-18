@@ -61,7 +61,7 @@ _QWEN38_KV_GB_PER_128K = 8.0
 #   ~0.96 GiB  the MTP draft context, on speculative entries only (see MTP_OVERHEAD_GB)
 # The first two apply to every entry and were simply missing: weights + KV alone predicted
 # 16.4 GiB for the MTP entry against ~19.5 GiB measured on-box, and this is half of that gap.
-_RUNTIME_OVERHEAD_GB = 0.55
+RUNTIME_OVERHEAD_GB = 0.55
 
 # `--spec-type draft-mtp` builds a SECOND llama_context against the same model — no duplicated
 # weights. For `qwen35` that context takes the plain-KV branch with a filter selecting only the
@@ -922,7 +922,7 @@ def _runtime_overhead_gb(model: LocalModel) -> float:
     any linear-attention layers, compute and output buffers, and the MTP draft context on a
     speculative entry. Small individually, but omitting all of them is what made the MTP
     entry's estimate 3 GiB light against the measurement."""
-    return _RUNTIME_OVERHEAD_GB + (MTP_OVERHEAD_GB if model.is_speculative else 0.0)
+    return RUNTIME_OVERHEAD_GB + (MTP_OVERHEAD_GB if model.is_speculative else 0.0)
 
 
 def _vision_resident_gb(model: LocalModel) -> float:

@@ -63,7 +63,7 @@ def test_smoketest_exit_code_follows_the_result(monkeypatch: pytest.MonkeyPatch)
         local_llm_url = "http://local-llm:8080/v1"
 
     monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
-    monkeypatch.setattr(gateway_mod, "LocalGatewayClient", lambda url: object())
+    monkeypatch.setattr(gateway_mod, "LocalGatewayClient", lambda url, **_kw: object())
 
     async def _pass(models: object, gw: object) -> tuple[bool, list[str]]:
         return True, ["load OK"]
@@ -139,7 +139,7 @@ def test_unload_releases_every_loaded_model(
     released: list[str] = []
 
     class _Gateway:
-        def __init__(self, _url: str) -> None: ...
+        def __init__(self, _url: str, **_kw: object) -> None: ...
 
         async def running(self) -> set[str]:
             return {"gpt-oss-120b", "qwen3.5-0.8b"}
@@ -166,7 +166,7 @@ def test_unload_never_fails_the_update(
     import jbrain.llm.local_gateway as gateway_mod
 
     class _Unreachable:
-        def __init__(self, _url: str) -> None: ...
+        def __init__(self, _url: str, **_kw: object) -> None: ...
 
         async def running(self) -> set[str]:
             raise ConnectionError("gateway is already down")
@@ -192,7 +192,7 @@ def test_unload_keeps_going_when_one_model_refuses(
     released: list[str] = []
 
     class _Partial:
-        def __init__(self, _url: str) -> None: ...
+        def __init__(self, _url: str, **_kw: object) -> None: ...
 
         async def running(self) -> set[str]:
             return {"a-model", "b-model"}
