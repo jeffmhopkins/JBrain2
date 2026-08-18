@@ -748,6 +748,11 @@ export interface LlmSettings {
   /** End-of-turn restore: true = the box puts displaced models back once a turn ends;
    * false = it stops, and a model comes back only when a turn actually needs it. */
   auto_restore: boolean;
+  /** The client-side ceiling on a local call, in seconds. REPORTED, not settable — it is
+   * env-only. Surfaced because it masquerades as a hung model: a cold prefill at a large
+   * window can exceed it and the turn fails as a client timeout, with nothing saying the
+   * model was still working. */
+  local_llm_timeout_s?: number | null;
   /** Code mode's model selector. Always present; `enabled` gates the card. */
   jcode: JcodeModelInfo;
 }
