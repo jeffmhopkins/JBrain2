@@ -64,7 +64,7 @@ def test_unknown_model_refuses_rather_than_guessing() -> None:
 
 def test_refusal_names_the_probe_route() -> None:
     with pytest.raises(UnknownGroundingModel, match="/api/debug/grounding"):
-        convention_for("qwen3.8-27b-mtp")
+        convention_for("qwen3.8-27b-q4")
 
 
 # --- base inference ---------------------------------------------------------

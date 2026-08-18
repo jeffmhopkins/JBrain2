@@ -585,7 +585,7 @@ async def test_title_job_carries_and_uses_the_per_conversation_model(maker) -> N
         coverage_limited=False,
         truncated=False,
         sources=[],
-        model_spec="local:qwen3.8-27b-mtp",
+        model_spec="local:qwen3.8-27b-q4",
     )
 
     # The per-conversation model rides the title job's payload, not a schema column.
@@ -599,14 +599,14 @@ async def test_title_job_carries_and_uses_the_per_conversation_model(maker) -> N
                 {"r": report_id},
             )
         ).scalar_one()
-    assert spec == "local:qwen3.8-27b-mtp"
+    assert spec == "local:qwen3.8-27b-q4"
 
     # The titler forwards that model to the router as the per-call spec_override.
     router = _FakeTitleRouter("Vanadium Flow-Battery Cost Drivers")
     await ResearchReportTitler(maker, router).title_research_report(  # type: ignore[arg-type]
-        {"report_id": report_id, "model_spec": "local:qwen3.8-27b-mtp"}
+        {"report_id": report_id, "model_spec": "local:qwen3.8-27b-q4"}
     )
-    assert router.calls[0]["spec_override"] == "local:qwen3.8-27b-mtp"
+    assert router.calls[0]["spec_override"] == "local:qwen3.8-27b-q4"
 
     # A report with no pinned model enqueues no model_spec and titles on the default route.
     plain_id = await persist_report(

@@ -502,7 +502,19 @@ CATALOG: tuple[LocalModel, ...] = (
         # metadata and a modest photo can land well under what Qwen-VL needs to
         # localize. Floor it. Without this the model still answers confidently — it
         # just answers with the wrong box (AGENT_CANVAS_PLAN §5.4).
-        extra_server_args=("--image-min-tokens", "1024"),
+        # Same MTP serving mode as the Q4 sibling — the head ships in every quant of unsloth's
+        # GGUF, so the flags apply identically. UNMEASURED at this quant: the 26.39 GiB / 22.41
+        # t/s figures behind the Q4 entry were taken on Q4_K_M. The load guard is the backstop
+        # if Q8 behaves differently, and nothing routes here by default, so the first load is
+        # the measurement. Pins to one slot, as any speculative model does.
+        extra_server_args=(
+            "--image-min-tokens",
+            "1024",
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-n-max",
+            "3",
+        ),
         quant="Q8_0",
         # GiB on disk (the catalog's unit): the single Q8_0 weight (~27.0 GiB from HF's 29
         # decimal-GB listing) plus the ~0.86 GiB F16 projector. ESTIMATE until measured on-box;
@@ -541,7 +553,27 @@ CATALOG: tuple[LocalModel, ...] = (
         # name, not `mmproj*F16.gguf`, so it doesn't also pull the `mmproj-BF16.gguf` beside it.
         mmproj_include="mmproj-F16.gguf",
         # Same grounding floor as the Q8 twin — see the note there.
-        extra_server_args=("--image-min-tokens", "1024"),
+        # MTP (multi-token prediction / self-speculative decoding) is a SERVING MODE of these
+        # same weights, not a different model — unsloth's GGUF already carries the MTP head
+        # (`blk.*.nextn.*`), which llama.cpp ignores without the flag. It used to be a separate
+        # catalog entry, which meant two identical 16.8 GB entries differing only in flags.
+        #
+        # Measured on this box at 128k: 26.39 GiB resident against 26.02 for the same weights
+        # served without it, 2.40 tokens per forward pass, 22.41 t/s against ~11-12 unspecul-
+        # ated. Vision is unaffected — the projector and the MTP head coexist (19.07 GiB at
+        # 32k, +0.11 GiB for a full-resolution image encode, correct captions and OCR).
+        #
+        # NOTE: this pins the model to ONE slot (see llama_swap_config) — llama.cpp's
+        # speculative path serves a single sequence and acceptance collapses as concurrent
+        # sequences rise, so the serving mode overrides the interactive-slot setting.
+        extra_server_args=(
+            "--image-min-tokens",
+            "1024",
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-n-max",
+            "3",
+        ),
         quant="Q4_K_M",
         # GiB on disk: the Q4_K_M weight (~15.9 GiB from HF's 17.1 decimal-GB listing) plus the
         # ~0.86 GiB F16 projector. ESTIMATE until measured on-box.
@@ -556,90 +588,6 @@ CATALOG: tuple[LocalModel, ...] = (
         reasoning_format="deepseek",
         hybrid_thinking=True,
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
-        native_context_window=262144,
-        kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
-    ),
-    LocalModel(
-        id="qwen3.8-27b-mtp",
-        label="Qwen3.8 27B · MTP (faster generation)",
-        served_model="qwen3.8-27b-mtp",
-        # Same model + sampling as the Q4 twin — MTP changes only HOW it's served, not the model.
-        sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
-        sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
-        # Vision + MTP in ONE model, and it is measured, not assumed. Loaded on a genuinely
-        # empty box (GTT floor 0.14 GiB, nothing else resident): 19.07 GiB against 20.59
-        # predicted, flat, no balloon. A 2.1 MB image then encoded in +0.11 GiB — the SAME
-        # delta the q4 twin shows — and the caption was correct. Speculation is unaffected by
-        # the projector: 1.8 tokens/step, 17.54 t/s, matching the text-only baseline.
-        #
-        # This entry was text-only for a long time on the belief that an mmproj beside the MTP
-        # head balloons GTT (llama.cpp #27146). It does not, on this box, in any configuration.
-        # Every data point behind that belief was a MEMORY COLLISION misread as an interaction:
-        # two freezes with ~67 GiB of gpt-oss still resident, and a later guard abort at
-        # "59.8 GB" that was the primary model reloading underneath the measurement — gpu_guard
-        # reads GTT device-wide, so a concurrent load lands in the reading and is attributed to
-        # whatever is being loaded. None of those attempts ever had the box to themselves.
-        # Holding it empty only became possible once the warm keeper started honouring the
-        # auto-reload switch, which is what made this measurable at all.
-        tiers=("high",),
-        supports_vision=True,
-        supports_tools=True,
-        recommended=False,
-        # Same Q4_K_M weights as qwen3.8-27b-q4 — unsloth's GGUF already ships the MTP head
-        # (the `blk.*.nextn.*` / `qwen35.nextn_predict_layers` tensors), which llama.cpp IGNORES
-        # without the flag and USES with `--spec-type draft-mtp`. So no separate MTP repo and no
-        # `--model-draft` file — the speedup is the same weights served differently. (A distinct
-        # served name means a separate ~16 GiB copy on disk from the q4 twin; install whichever
-        # serving mode you want.)
-        hf_repo="unsloth/Qwen3.8-27B-GGUF",
-        gguf_include="*Q4_K_M*.gguf",
-        # Same projector as the q4 twin, and measured to cost the same: +0.11 GiB on a
-        # full-resolution image encode.
-        mmproj_include="mmproj-F16.gguf",
-        quant="Q4_K_M",
-        # Q4_K_M weights plus the F16 projector — the same on-disk footprint as the q4 twin.
-        size_gb=16.8,
-        note="Dense 27B hybrid reasoner served with MTP (multi-token prediction / self-"
-        "speculative decoding) for ~1.8-2.4x faster generation — the same unsloth Q4_K_M weights "
-        "as qwen3.8-27b-q4, which already carry the MTP head; the --spec-type draft-mtp flags "
-        "turn it on. It speeds DECODE only (prompt processing is a touch slower), and the gain "
-        "needs a few hundred output tokens to pay for itself, so a short tool call sees little. "
-        "Runs SINGLE-SLOT: llama.cpp's MTP path takes no second parallel slot, so this entry can "
-        "never hold the interactive keep-warm slot (the gateway clamps -np to 1 for it). "
-        "TEXT-ONLY for now — the vision projector froze this box twice, but the cause was memory "
-        "(another model still resident plus the ~33 GiB GTT balloon an mmproj triggers on an AMD "
-        "iGPU, llama.cpp #27146), NOT an MTP/vision incompatibility. On an empty box the sum "
-        "fits, so the twins may yet collapse into one entry; it has not been tried. Use "
-        "qwen3.8-27b-q4 for vision meanwhile. ⚠️ WHETHER MTP ACTUALLY DRAFTS HERE IS STILL "
-        "UNMEASURED: it loads (llama.cpp hard-fails if the nextn tensors are missing, and this "
-        "GGUF carries them), but drafting can only be seen via /slots[].speculative and the "
-        "/metrics spec counters — `/props`'s `speculative.types` is a dead field that reads "
-        "'none' on every build. Measure before trusting it.",
-        supports_reasoning=True,
-        reasoning_format="deepseek",
-        hybrid_thinking=True,
-        thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
-        # No --image-min-tokens: that is a vision-grounding floor, and this entry serves no vision.
-        # Self-speculation off the model's own MTP head — no separate draft model, which is what
-        # makes it the right choice on unified memory: a separate drafter would read its own
-        # weights across the SAME bus the target is already bandwidth-bound on.
-        #   --spec-draft-n-max 3: llama.cpp's own default, and what every published Strix Halo
-        #     measurement uses. The 2 this carried came from recipes tuned on 24 GB discrete
-        #     cards, whose constraint is the opposite of this box's.
-        #   NO --spec-draft-p-min. It was pinned at 0.6 here on a recommendation whose own words
-        #     were "sweep empirically; do not adopt without testing" — and it was never tested.
-        #     The gate is evaluated BEFORE the first draft token is appended
-        #     (common/speculative.cpp), so any step where the MTP head's top-1 confidence is
-        #     below it drafts NOTHING. Pinned high enough, that yields zero drafts, zero
-        #     acceptance and zero speedup — indistinguishable from speculation being off, which
-        #     is exactly how it was misdiagnosed here. Left at llama.cpp's 0.00 default until a
-        #     measured sweep on this box says otherwise.
-        extra_server_args=(
-            "--spec-type",
-            "draft-mtp",
-            "--spec-draft-n-max",
-            "3",
-        ),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
     ),

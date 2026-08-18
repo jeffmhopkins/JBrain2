@@ -485,7 +485,7 @@ plainly that it may miss people in a crowded photo.
 
 ## 7. Gating to the vision model — nearly free
 
-Canvas tools are useless on a text-only pick. `qwen3.8-27b-mtp` is
+Canvas tools are useless on a text-only pick. `qwen3.8-27b-q4` is
 `supports_vision=False` (`local_catalog.py:407-416` — llama.cpp's MTP path can't run
 alongside `--mmproj`), and `api/agent.py:811-817` silently drops image bytes for a
 text-only model. Without gating, the owner on the fast MTP variant would get blind
@@ -676,7 +676,7 @@ extracts.
 
 **10.3 — the two Qwen3.8 vision twins only.** Same weights, same repo, same projector,
 so **one W0 probe qualifies both**. Everything else is hidden, including
-`qwen3.8-27b-mtp` (text-only) and the `qwen3-vl-30b` entries (not probed; and 30B-A3B's
+the `qwen3-vl-30b` entries (not probed; and 30B-A3B's
 ~3B active parameters are the weakest architecture here). Extending the list is a
 deliberate act requiring that model's own convention check.
 

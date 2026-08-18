@@ -122,7 +122,7 @@ async def test_watchdog_aborts_the_runaway_that_froze_the_box() -> None:
             load,
             probe=probe,
             projected_gb=21.0,
-            target="qwen3.8-27b-mtp",
+            target="qwen3.8-27b-q4",
             abort=abort,
             sample_interval_s=0.01,
         )
