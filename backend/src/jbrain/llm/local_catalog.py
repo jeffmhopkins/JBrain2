@@ -479,14 +479,16 @@ CATALOG: tuple[LocalModel, ...] = (
         # Same model + sampling as the Q4 twin — MTP changes only HOW it's served, not the model.
         sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
         sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
-        # TEXT-ONLY, and this is now a MEASURED constraint, not a cautious one. The projector was
-        # briefly re-enabled here on community reports that llama.cpp had fixed MTP-beside-mmproj
-        # (b9240+). Loading it HARD-FROZE this box — twice, taking the host down to a power cycle,
-        # the second time with 105 GiB of free RAM and only a 21 GiB model to load. Memory was not
-        # the constraint; llama.cpp #27146 is: an mmproj/mtmd model balloons GTT on an AMD iGPU
-        # under Vulkan, and GTT allocations are INVISIBLE to cgroups and /proc/meminfo. So the
-        # residency budget cannot see this coming and cannot protect against it — which is exactly
-        # why the projector must stay off here rather than be gated by a memory estimate.
+        # TEXT-ONLY for now, and deliberately NOT claimed as a proven incompatibility. The
+        # projector was briefly re-enabled here (community reports said llama.cpp fixed
+        # MTP-beside-mmproj in b9240+) and loading it froze the host twice. The cause was
+        # MEMORY, not an MTP/vision interaction: ~67 GiB of gpt-oss was still resident (the
+        # residency restore had put it back), plus ~19 GiB for this model, plus the ~33 GiB GTT
+        # balloon an mmproj triggers on an AMD iGPU under Vulkan (llama.cpp #27146) — ~119 GiB
+        # against a ~124 GiB pool. On an otherwise EMPTY box that sum fits with room to spare,
+        # so vision + MTP may well work here; it has simply never been tried that way. Settle
+        # whether MTP drafts at all first (text-only, cheap), and only then re-test the
+        # projector on an empty box — one variable at a time.
         tiers=("high",),
         supports_vision=False,
         supports_tools=True,
@@ -511,13 +513,15 @@ CATALOG: tuple[LocalModel, ...] = (
         "needs a few hundred output tokens to pay for itself, so a short tool call sees little. "
         "Runs SINGLE-SLOT: llama.cpp's MTP path takes no second parallel slot, so this entry can "
         "never hold the interactive keep-warm slot (the gateway clamps -np to 1 for it). "
-        "TEXT-ONLY — adding the vision projector hard-froze this box to a power cycle, twice, "
-        "with memory to spare (llama.cpp #27146: mmproj balloons GTT on an AMD iGPU, and GTT is "
-        "invisible to the memory accounting the residency budget uses). Use qwen3.8-27b-q4 when "
-        "you need vision. ⚠️ MTP ITSELF IS STILL UNVERIFIED ON THIS BOX: this entry has never "
-        "completed a load here. Bring it up with a SMALL context window and nothing else "
-        "resident, and watch the host — a bad load takes the whole machine down, not just the "
-        "gateway.",
+        "TEXT-ONLY for now — the vision projector froze this box twice, but the cause was memory "
+        "(another model still resident plus the ~33 GiB GTT balloon an mmproj triggers on an AMD "
+        "iGPU, llama.cpp #27146), NOT an MTP/vision incompatibility. On an empty box the sum "
+        "fits, so the twins may yet collapse into one entry; it has not been tried. Use "
+        "qwen3.8-27b-q4 for vision meanwhile. ⚠️ WHETHER MTP ACTUALLY DRAFTS HERE IS STILL "
+        "UNMEASURED: it loads (llama.cpp hard-fails if the nextn tensors are missing, and this "
+        "GGUF carries them), but drafting can only be seen via /slots[].speculative and the "
+        "/metrics spec counters — `/props`'s `speculative.types` is a dead field that reads "
+        "'none' on every build. Measure before trusting it.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
@@ -529,18 +533,19 @@ CATALOG: tuple[LocalModel, ...] = (
         #   --spec-draft-n-max 3: llama.cpp's own default, and what every published Strix Halo
         #     measurement uses. The 2 this carried came from recipes tuned on 24 GB discrete
         #     cards, whose constraint is the opposite of this box's.
-        #   --spec-draft-p-min 0.6: stops a draft at the first low-confidence position instead of
-        #     always spending the full n-max on a round that will be rejected. The flag's default
-        #     is 0.00 (ungated) — a documented acceptance-killer that lets MTP decay back to
-        #     baseline on long generations, and gating is specifically a bandwidth-starved-machine
-        #     win. Set it BEFORE raising n-max: ungated, the cost of a wasted draft scales with it.
+        #   NO --spec-draft-p-min. It was pinned at 0.6 here on a recommendation whose own words
+        #     were "sweep empirically; do not adopt without testing" — and it was never tested.
+        #     The gate is evaluated BEFORE the first draft token is appended
+        #     (common/speculative.cpp), so any step where the MTP head's top-1 confidence is
+        #     below it drafts NOTHING. Pinned high enough, that yields zero drafts, zero
+        #     acceptance and zero speedup — indistinguishable from speculation being off, which
+        #     is exactly how it was misdiagnosed here. Left at llama.cpp's 0.00 default until a
+        #     measured sweep on this box says otherwise.
         extra_server_args=(
             "--spec-type",
             "draft-mtp",
             "--spec-draft-n-max",
             "3",
-            "--spec-draft-p-min",
-            "0.6",
         ),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,

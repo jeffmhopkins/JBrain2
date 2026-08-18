@@ -198,6 +198,32 @@ def render(
             # with W1's cache-stable message layout. A long-standing llama.cpp server flag.
             "--cache-reuse",
             "256",
+            # OBSERVABILITY, and it is not optional here. llama-server exposes whether a model
+            # is actually speculating in exactly two places: `/slots[].speculative` (a real
+            # bool from `can_speculate()`) and the `/metrics` spec-decode counters. Neither
+            # endpoint exists unless these flags are passed. Without them the only readable
+            # signal is `/props`'s `speculative.types`, which is a DEAD FIELD — the server
+            # builds it from a fresh task_params it never populates, so it reads "none" on
+            # every build whether or not speculation is running. This box spent a whole
+            # investigation concluding MTP was off from that field. Never again: if a serving
+            # mode can't be observed, it can't be tuned, and it will be misdiagnosed instead.
+            "--slots",
+            "--metrics",
+            # Physical batch. NOT llama-server's default of 512: llama.cpp #27237 reports the
+            # qwen35 hybrid (Gated DeltaNet) emitting GARBAGE OUTPUT at ubatch 512 on Vulkan
+            # while 1024 and 4096 are clean — and this deployment serves exactly that arch on
+            # exactly that backend. 1024 also trims the big-vocab graph reserve (#23527), which
+            # sizes a worst-case logits buffer off `n_ubatch × n_vocab` and costs ~3 GiB at
+            # Qwen3.8's 248k vocab.
+            "-ub",
+            "1024",
+            # Per-slot context checkpoints, down from llama-server's default of 32. On a HYBRID
+            # (recurrent) model each checkpoint is a full copy of the SSM state — ~150 MiB for
+            # Qwen3.8 — because a recurrent state cannot be partially rewound, and they are
+            # device-resident. 32 of them is ~4.7 GiB per slot spent on rollback depth nothing
+            # here uses (llama.cpp #20145, #23371).
+            "--ctx-checkpoints",
+            "2",
             "-m",
             f"/models/{model_id}/{gguf}",
             "-ngl",
