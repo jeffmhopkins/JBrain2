@@ -439,32 +439,54 @@ def _parse_load_progress(text: str) -> float | None:
 
 
 def parse_spec_counters(metrics_text: str) -> dict[str, float]:
-    """Pull the speculative-decoding counters out of llama-server's Prometheus text.
+    """Derive the speculation numbers from llama-server's Prometheus text.
 
-    Matched by SUBSTRING rather than by exact metric name on purpose: llama.cpp renames these
-    between builds, and this box tracks master. A missing counter means the build does not
-    expose it (or nothing has been drafted yet) — an empty dict, never an error, because a
-    diagnostic that 500s when the shape moves is worse than one that reports less.
+    The build this box runs exposes NO draft/accept counters — the whole metric set is
+    prompt/predict/decode totals — so the acceptance rate cannot be read directly. It can be
+    DERIVED, and the derived form is the better measure anyway:
 
-    `accept_rate` is derived when both halves are present: it is the number that says whether
-    speculation is earning its keep and whether `--spec-draft-n-max` is at the right depth."""
-    found: dict[str, float] = {}
+      tokens_per_step = tokens_predicted_total / n_decode_total
+
+    `n_decode_total` counts llama_decode() calls (forward passes); `tokens_predicted_total`
+    counts tokens actually emitted. Without speculation the ratio is 1.0. Above 1.0 is
+    speculation landing, and on a bandwidth-bound box — where a forward pass costs one full
+    read of the weights — that ratio IS the speedup.
+
+    `tokens_per_second` comes from the cumulative predict-time counter, so it is decode
+    throughput rather than a wall-clock average that would include prompt processing.
+
+    CAUTION: both are process-lifetime totals. To measure one request, read before and after
+    and divide the deltas — a lifetime figure includes warm-up and every prior request.
+    Optimise on `tokens_per_second`, NOT `tokens_per_step`: deeper drafts raise tokens/step
+    while lowering throughput, because verifying a longer draft costs more per pass. Measured
+    here, --spec-draft-n-max 7 reached 2.381 tokens/step and only 8.38 t/s, against 2.454 and
+    20.86 t/s at the default of 3.
+
+    Any genuine draft/accept counters are still passed through for a build that grows them,
+    matched by SUBSTRING because llama.cpp renames metrics and this box tracks master."""
+    v: dict[str, float] = {}
     for line in metrics_text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         name, _, value = line.partition(" ")
-        if not any(k in name for k in ("draft", "spec", "accept")):
-            continue
         try:
-            found[name.split("{")[0]] = float(value)
+            v[name.split("{")[0]] = float(value)
         except ValueError:
             continue
-    drafted = next((v for k, v in found.items() if "draft" in k and "accept" not in k), None)
-    accepted = next((v for k, v in found.items() if "accept" in k), None)
+    out = {k: n for k, n in v.items() if any(t in k for t in ("draft", "spec", "accept"))}
+    decodes = v.get("llamacpp:n_decode_total", 0.0)
+    tokens = v.get("llamacpp:tokens_predicted_total", 0.0)
+    seconds = v.get("llamacpp:tokens_predicted_seconds_total", 0.0)
+    if decodes > 0:
+        out["tokens_per_step"] = round(tokens / decodes, 4)
+    if seconds > 0:
+        out["tokens_per_second"] = round(tokens / seconds, 3)
+    drafted = next((n for k, n in out.items() if "draft" in k and "accept" not in k), None)
+    accepted = next((n for k, n in out.items() if "accept" in k), None)
     if drafted and accepted is not None:
-        found["accept_rate"] = round(accepted / drafted, 4)
-    return found
+        out["accept_rate"] = round(accepted / drafted, 4)
+    return out
 
 
 def _parse_running(payload: object) -> set[str]:

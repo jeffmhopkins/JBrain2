@@ -237,22 +237,25 @@ def test_qwen38_27b_q4_is_the_interactive_twin() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
-def test_qwen38_27b_mtp_is_a_text_only_self_speculative_variant() -> None:
+def test_qwen38_27b_mtp_is_a_self_speculative_variant_of_the_q4_twin() -> None:
     # The MTP (multi-token-prediction) serving variant of Qwen3.8-27B: same unsloth Q4_K_M weights
     # (which already carry the MTP head) served with --spec-type draft-mtp for ~1.8-2.4x faster
     # decode, driven by extra_server_args — NOT a separate MTP repo or draft file.
     m = local_catalog.get("qwen3.8-27b-mtp")
     q4 = local_catalog.get("qwen3.8-27b-q4")
     assert m is not None and q4 is not None
-    # TEXT-ONLY, and this is a MEASURED constraint. Adding the projector here hard-froze the box
-    # to a power cycle, twice — the second time with 105 GiB free and a 21 GiB model, so memory
-    # was not the limit. llama.cpp #27146: mmproj balloons GTT on an AMD iGPU under Vulkan, and
-    # GTT is invisible to cgroups and /proc/meminfo, so the residency budget cannot see it coming.
-    # A memory estimate therefore CANNOT gate this — the projector has to stay off.
+    # The projector is BACK, to be verified on an empty box. It hard-froze the host twice, and
+    # the memory explanation for that is now dead in both directions: the second freeze had
+    # 105 GiB free against a 21 GiB model, AND the #27146 mmproj balloon does not occur here —
+    # the q4 twin below carries the same projector and loads in 26.02 GiB measured, with a full
+    # image encode adding 0.11 GiB. That leaves an MTP-beside-mmproj interaction as the only
+    # surviving hypothesis, and it has never actually been tested: q4 has no MTP head.
+    # Enabled as a capability only — vision tasks still route to the q4 twin.
     assert m.tiers == ("high",)
-    assert m.supports_vision is False
-    assert m.mmproj_include is None
-    # And no vision-only flags leak onto a text-only command.
+    assert m.supports_vision is True
+    assert m.mmproj_include == q4.mmproj_include
+    # The q4 twin's image floor is NOT carried over. The pair is unverified, so the change
+    # stays to the projector alone — one variable, as the earlier note demanded.
     assert "--image-min-tokens" not in m.extra_server_args
     assert m.supports_tools
     # Same weights + repo as the q4 twin (MTP is embedded in unsloth's GGUF, no separate repo).
@@ -261,7 +264,9 @@ def test_qwen38_27b_mtp_is_a_text_only_self_speculative_variant() -> None:
     # Distinct served name (installs beside the q4 twin), lighter by exactly the projector.
     assert m.spec == "local:qwen3.8-27b-mtp"
     assert m.served_model != q4.served_model
-    assert m.size_gb == 15.9 and m.size_gb < q4.size_gb
+    # Same weights AND the same projector as the twin now, so the on-disk size matches it
+    # rather than undercutting it.
+    assert m.size_gb == q4.size_gb
     # Self-speculation off the model's own baked-in MTP head — no separate draft model, which is
     # the point on unified memory: a drafter would read its own weights over the SAME bus the
     # target is already bandwidth-bound on.

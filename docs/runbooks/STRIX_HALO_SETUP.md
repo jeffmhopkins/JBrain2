@@ -440,12 +440,74 @@ update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-
 > |---|---|
 > | build id, real `-c`, `total_slots` | `debug-connect.sh props <id>` |
 > | is speculation actually drafting | `debug-connect.sh slots <id>` |
-> | drafted / accepted / accept rate | `debug-connect.sh spec-metrics <id>` |
+> | tokens per forward pass, decode t/s | `debug-connect.sh spec-metrics <id>` |
 >
 > The `--slots` and `--metrics` flags the config always passes exist for the last two. For a
 > long stretch the flags were passed but the ROUTES were missing, so MTP could only be judged
 > by wall-clock timings — which is how an entire investigation concluded MTP was off from a
 > field (`/props`'s `speculative.types`) that reads "none" on every build.
+
+### What the speculation numbers mean, and what to optimise
+
+This build of llama-server exposes **no draft/accept counters at all** — the metric set is
+prompt/predict/decode totals and nothing else. The acceptance rate cannot be read directly, so
+`spec-metrics` derives it:
+
+`tokens_per_step` = `tokens_predicted_total` / `n_decode_total`. A forward pass on this box
+costs one full read of the weights, so tokens emitted per pass IS the speedup. 1.0 means
+speculation is doing nothing.
+
+Both figures are **process-lifetime totals**. For one request, read before and after and divide
+the deltas — otherwise warm-up and every earlier request are folded in.
+
+**Optimise `tokens_per_second`, never `tokens_per_step`.** They disagree, and following the
+wrong one leads the wrong way. Measured on an uncontended box, 400 output tokens, `pet.thought`:
+
+| `--spec-draft-n-max` | tok/step @ ~30 tok ctx | t/s | tok/step @ ~8.6k ctx | t/s |
+|---|---|---|---|---|
+| 1 | 1.608 | 8.46 | 1.747 | 18.25 |
+| **3 (default)** | 2.157 | 9.98 | 2.454 | **20.86** |
+| 5 | 2.075 | 13.51 | **2.685** | 19.12 |
+| 7 | 1.954 | 5.29 | 2.381 | 8.38 |
+
+Read the long-context columns: those runs all hit the 400-token cap, so they share a
+denominator. The short runs stopped naturally at 192-249 tokens, which smears per-request
+fixed cost and deflates their t/s — do not rank on them.
+
+Three things this settles:
+
+- **n-max 7 is a 60% throughput loss** (8.38 vs 20.86 t/s) and is the one result far outside
+  run-to-run noise. Whatever community reports say about drafting seven tokens ahead, it is
+  wrong for this hardware.
+- **n-max 5 drafts best and is still slower** — 2.685 tokens/step against 3's 2.454, at 19.12
+  t/s against 20.86. Verifying a longer draft costs more per pass than the extra accepted
+  token returns. This is why tokens/step is a trap.
+- **Longer context HELPS acceptance**, at every setting (1.608→1.747, 2.157→2.454,
+  2.075→2.685, 1.954→2.381). More context makes the next token more predictable. The intuition
+  that speculation decays as the window fills is backwards here.
+
+3 and 5 differ by ~9%, which is at the edge of the spread seen between repeat runs at a fixed
+setting (1.81-2.02 tok/step), so treat them as tied and keep the default. Single samples per
+cell; re-measure before acting on any difference this small.
+
+The context effect keeps going, and it does not separate 3 from 5. At ~25k tokens — most of
+the 32k window — both land in the same place:
+
+| `--spec-draft-n-max` | tok/step @ ~25k | t/s |
+|---|---|---|
+| 3 (default) | 3.150 | 20.10 |
+| 5 | 3.226 | 20.35 |
+
+Acceptance rises monotonically with context at every setting tested (2.075 → 2.685 → 3.150 for
+the default, at ~30 / ~8.6k / ~25k), but the two settings stay within 1% of each other at the
+long end. Nothing here argues for moving off the default.
+
+Measure with a WARM prefix. `n_decode_total` counts every `llama_decode()` call, prompt
+processing included, so a cold 25k prefill adds ~20 batches to the denominator and understates
+tokens/step. Send the request once to populate the prefix cache, then measure the second one.
+A cold 25k prefill also takes ~270s at ~92 t/s prompt throughput — long enough that a client
+timeout will report zero tokens against a nonzero decode count, which looks like a generation
+failure and is not one.
 
 ### Tuning MTP without a release
 
@@ -460,7 +522,7 @@ The flags are on the extra-args allowlist precisely so this loop exists.
 | Try a different draft setting | `debug-connect.sh extra-args qwen3.8-27b-mtp --spec-draft-p-min 0.75` |
 | Measure it | `debug-connect.sh prime qwen3.8-27b-mtp` → `elapsed_ms` |
 | **See whether it is drafting** | `debug-connect.sh slots qwen3.8-27b-mtp` → the per-slot `speculative` object |
-| **See the accept rate** | `debug-connect.sh spec-metrics qwen3.8-27b-mtp` → drafted / accepted / `accept_rate` |
+| **See the speedup** | `debug-connect.sh spec-metrics qwen3.8-27b-mtp` → `tokens_per_step`, `tokens_per_second` |
 | Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-mtp` (no args) |
 | Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` — against **`qwen3.8-27b-q4`**, never the MTP entry (see the freeze warning above) |
 

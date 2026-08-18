@@ -566,18 +566,25 @@ CATALOG: tuple[LocalModel, ...] = (
         # Same model + sampling as the Q4 twin — MTP changes only HOW it's served, not the model.
         sampling=Sampling(temperature=0.7, top_p=0.8, top_k=20, min_p=0.0, presence_penalty=1.5),
         sampling_thinking=Sampling(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0),
-        # TEXT-ONLY for now, and deliberately NOT claimed as a proven incompatibility. The
-        # projector was briefly re-enabled here (community reports said llama.cpp fixed
-        # MTP-beside-mmproj in b9240+) and loading it froze the host twice. The cause was
-        # MEMORY, not an MTP/vision interaction: ~67 GiB of gpt-oss was still resident (the
-        # residency restore had put it back), plus ~19 GiB for this model, plus the ~33 GiB GTT
-        # balloon an mmproj triggers on an AMD iGPU under Vulkan (llama.cpp #27146) — ~119 GiB
-        # against a ~124 GiB pool. On an otherwise EMPTY box that sum fits with room to spare,
-        # so vision + MTP may well work here; it has simply never been tried that way. Settle
-        # whether MTP drafts at all first (text-only, cheap), and only then re-test the
-        # projector on an empty box — one variable at a time.
+        # Vision ENABLED, to be verified on an EMPTY box — the deliberate test the earlier
+        # note called for, run as the owner's decision with the risk understood.
+        #
+        # Loading the projector here froze the host twice. Two explanations were live: memory,
+        # or an MTP-beside-mmproj interaction. Memory is now ruled OUT in both directions —
+        # the second freeze had ~105 GiB free against a ~21 GiB model, and the ~33 GiB mmproj
+        # balloon blamed on llama.cpp #27146 does not occur on this box at all (the q4 twin
+        # carries the SAME projector, loads in 26.02 GiB measured, and a full-resolution image
+        # encode adds 0.11 GiB, not 33). What has never been tested is the pair itself: q4 has
+        # no MTP head, so no run has ever put a projector and the MTP head in one process here.
+        #
+        # Budgeted at ~21.1 GiB — 19.50 measured text-only, plus projector and workspace. That
+        # figure is a PREDICTION for a configuration nobody has loaded; treat a large
+        # divergence at load as the signal to stop, not as a number to adjust to fit.
+        #
+        # Ships as a CAPABILITY, not a routing change: vision tasks still route to the q4 twin,
+        # so nothing sends this model an image until someone chooses to.
         tiers=("high",),
-        supports_vision=False,
+        supports_vision=True,
         supports_tools=True,
         recommended=False,
         # Same Q4_K_M weights as qwen3.8-27b-q4 — unsloth's GGUF already ships the MTP head
@@ -588,11 +595,12 @@ CATALOG: tuple[LocalModel, ...] = (
         # serving mode you want.)
         hf_repo="unsloth/Qwen3.8-27B-GGUF",
         gguf_include="*Q4_K_M*.gguf",
-        # NO projector — see the text-only note above. Re-enabling this froze the host twice.
-        mmproj_include=None,
+        # Same projector as the q4 twin — see the vision note above for what is and is not
+        # settled about the two freezes this once caused.
+        mmproj_include="mmproj-F16.gguf",
         quant="Q4_K_M",
-        # Just the Q4_K_M weight (~15.9 GiB), no projector — a hair lighter than the q4 twin.
-        size_gb=15.9,
+        # Q4_K_M weights plus the F16 projector — the same on-disk footprint as the q4 twin.
+        size_gb=16.8,
         note="Dense 27B hybrid reasoner served with MTP (multi-token prediction / self-"
         "speculative decoding) for ~1.8-2.4x faster generation — the same unsloth Q4_K_M weights "
         "as qwen3.8-27b-q4, which already carry the MTP head; the --spec-type draft-mtp flags "
