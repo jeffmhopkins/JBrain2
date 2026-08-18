@@ -501,9 +501,27 @@ turn automatic reloading OFF first, then unload. Otherwise the keeper wins.
 
 ### Tuning how much of an image the model actually sees
 
-`--image-min-tokens` is the FLOOR an image is encoded to, `--image-max-tokens` the ceiling
+The floor is a catalog FIELD (`image_min_tokens`), set per model like `context_window` and
+overridable per model in the PWA. `--image-max-tokens` is the ceiling
 (llama.cpp defaults to 4096 for this projector family; the catalog pins only the floor, at
 1024). Both are on the `extra-args` allowlist, so they tune live:
+
+Measured on a bottle label carrying fine print, three reads per floor:
+
+| floor | result |
+|---|---|
+| 1024 (catalog default) | 1 of 3 usable; the others invented company names (`FANTASY SODA CO.`) |
+| 2048 | 3 of 3 read the core label — volume, units, product name |
+| 4096 | 3 of 3 read the core label AND promotional small print the lower floors could not resolve at all |
+
+Higher was strictly better here: 4096 lost nothing and added real text. The consistency is the
+tell — at 1024 the wrong reads DIVERGED (a different invented company each time), which is what
+confabulation looks like; at 4096 three independent reads AGREED on the same fine print, which is
+what reading looks like. Judge a vision change by whether repeats converge, never by one sample.
+
+One artifact no floor fixes: every read across all three floors dropped a leading letter
+(`ATURALLY FLAVORED`, nine times of nine). Stable misreads are not a resolution problem and
+will not tune away.
 
 **In the PWA:** Settings → LLM, the **image detail** control on any vision model. It sits
 beside the context window, takes effect on the model's next load, and shows the catalog's own

@@ -601,22 +601,11 @@ def _local_model_info(
         parallel_slots=n_slots,
         # Only meaningful with a projector: a floor on a text-only entry would never be read,
         # so the drawer gets None and renders no control rather than a dead one.
-        image_min_tokens=(
-            (image_floors.get(m.id) or _catalog_image_min_tokens(m)) if m.supports_vision else None
-        ),
-        image_min_tokens_default=_catalog_image_min_tokens(m) if m.supports_vision else None,
+        # The override wins; otherwise the catalog's own field. Both None on a text-only entry,
+        # so the drawer renders no control rather than a dead one.
+        image_min_tokens=image_floors.get(m.id) or m.image_min_tokens,
+        image_min_tokens_default=m.image_min_tokens,
     )
-
-
-def _catalog_image_min_tokens(m: local_catalog.LocalModel) -> int | None:
-    """The floor the catalog itself passes, so the drawer can show what is served today rather
-    than an empty control on a model that already has one."""
-    args = list(m.extra_server_args)
-    if "--image-min-tokens" in args:
-        i = args.index("--image-min-tokens")
-        if i + 1 < len(args) and args[i + 1].isdigit():
-            return int(args[i + 1])
-    return None
 
 
 def _require_provisioned(settings: Settings, model_id: str) -> local_catalog.LocalModel:
