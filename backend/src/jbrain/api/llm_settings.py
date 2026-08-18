@@ -364,6 +364,13 @@ class LlmSettingsOut(BaseModel):
     # Code mode's model selector (the dropdown card). Always present; `enabled`
     # gates whether the screen renders it.
     jcode: JcodeModelInfo
+    # The client-side ceiling on a local call, in seconds (`JBRAIN_LOCAL_LLM_TIMEOUT`).
+    # REPORTED, not settable: it is env-only, so an operator cannot change it without a host
+    # step. Surfaced because it is otherwise invisible and it masquerades as a hung model — a
+    # cold prefill at a large window can exceed it, and the turn then fails as a client timeout
+    # with nothing saying the model was still working. An investigator has to be able to rule
+    # that in or out before spending a day on the gateway.
+    local_llm_timeout_s: float | None = None
 
 
 class TaskOverrideIn(BaseModel):
@@ -480,6 +487,7 @@ async def _snapshot(
         ),
         auto_restore=auto_restore,
         jcode=await _jcode_info(settings, store, ctx),
+        local_llm_timeout_s=settings.local_llm_timeout,
     )
 
 
@@ -1466,6 +1474,21 @@ async def gateway_unload(
 # hard-locked under memory pressure the risk is not "the model fails to load" (the recoverable
 # failure the flags above assume) but the host going down. Clearing is still the same call with
 # no args, which does not require the model to be loadable.
+#   -ngl               how many layers are offloaded to the iGPU
+#   -fa                flash attention on/off/auto
+#   --reasoning-format how llama.cpp splits a thinking trace out of `content`
+# The first two are the "is it the GPU?" bisect. When a model emits garbage or dies on this
+# gfx1151 — the exact failure class behind our `-ub 1024` (llama.cpp #27237) — the first move is
+# "does it still happen with fewer layers offloaded, or with flash attention off?", and that move
+# was unavailable. Neither can make a model unloadable: a wrong value costs speed or a CPU
+# fallback. `--reasoning-format` is the remedy for the OTHER common breakage after a llama.cpp
+# rebuild on master — `<think>` tags leaking into `content`, or an empty reasoning channel —
+# which is a one-string fix (`deepseek` vs `auto`) that otherwise costs a release.
+#
+# `--no-mmap` is deliberately NOT here and cannot be: llama.cpp has no positive `--mmap`
+# counterpart, so an allowlist entry could not undo the flag we already pass. An entry would be a
+# silent no-op, which is worse than an absent one. Same for `--jinja`, which is unconditional and
+# would need a `--chat-template-file` (a file on the box) to be worth overriding.
 # Flags taking a value are allowed to carry one; the value itself is NOT interpreted here.
 EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
     {
@@ -1481,6 +1504,9 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
         "--image-max-tokens",
         "--ctx-checkpoints",
         "--cache-reuse",
+        "-ngl",
+        "-fa",
+        "--reasoning-format",
     }
 )
 

@@ -161,7 +161,8 @@ class WarmKeeper:
             running = await self._gateway.running()
         except Exception:  # noqa: BLE001 — running() already swallows, but be defensive
             running = set()
-        if served not in running:
+        cold = served not in running
+        if cold:
             self._primed = None  # evicted (or never loaded) → the cache no longer holds our prime
             if not await self._auto_restore_allowed():
                 # Off: the operator asked for nothing to be loaded behind their back. SETTLED,
@@ -183,6 +184,27 @@ class WarmKeeper:
         # safe, because a restore that silently did nothing (the SWA failure mode, and any
         # stale-but-loadable file) is simply a slow prime, never a wrong answer. We never trust
         # the restore's own 200; we let the prefill be the proof.
+        # Bring the WEIGHTS up before attempting the restore, when the model is cold. A
+        # restore needs slots to restore into, and a cold model has none: `slot_action` and
+        # `props` both refuse a non-resident model (deliberately — reaching them through the
+        # passthrough would make llama-swap load it outside the residency budget, the path that
+        # froze this host). So while the priming completion below was what loaded the model, the
+        # restore above it could only ever fire for an already-resident one — and the cold start
+        # this disk cache exists for was precisely the case it could not serve.
+        #
+        # Explicit load, not a bare one: admission first, through the same coordinator a routed
+        # completion goes through, then `gateway.load`, which carries the GPU pre-flight and the
+        # watchdog. Passing no warm system/tools keeps this to weights + a one-token readiness
+        # probe, so it does NOT prefill the persona — that is the whole point, since prefilling
+        # here would spend the cost the restore is meant to avoid.
+        #
+        # Best-effort: on failure fall through to the prime, which is exactly the old behaviour.
+        if cold:
+            try:
+                await self._router.admit_local_load(served)
+                await self._gateway.load(served)
+            except Exception as exc:  # noqa: BLE001 — no room / gateway down: the prime retries
+                log.info("warm_keeper.preload_failed", model=served, error=str(exc))
         restored = await self._try_restore(served, system, tools)
         # Prime down the real turn path: resolves agent.turn's model+effort, admits through
         # residency (loading the model if needed), and prefills the exact persona+tools prefix a

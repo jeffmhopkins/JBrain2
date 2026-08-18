@@ -69,12 +69,29 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   single tuning iteration would cost a catalog edit, a release and an Ops → Update. Setting
   `--spec-type` here also pins the model to one slot: the config generator derives that from
   the flags it is about to write, so an operator flag gets the same clamp a catalog flag does.
+  Also on the list: `-ngl` and `-fa` (the "is it the GPU?" bisect — fewer offloaded layers or
+  flash attention off, when a model emits garbage or dies on this iGPU) and
+  `--reasoning-format` (for `<think>` leaking into `content`, or an empty reasoning channel,
+  after a llama.cpp rebuild on master). `--no-mmap` is deliberately absent and cannot be added:
+  llama.cpp has no positive `--mmap`, so an entry could not undo the flag we already pass — it
+  would be a silent no-op, which is worse than an absent one.
   **`--ctx-checkpoints` is the one exception to "a bad value is always recoverable"**, so it is
   bounded to `0..8` server-side. A checkpoint on a hybrid is a full copy of the recurrent state
   (~150 MiB for Qwen3.8), device-resident and per slot, and `footprint_gb` does not model it — so
   the residency evictor cannot see it coming. llama.cpp's own default of `32` (the most likely
   typo, since every upstream doc names it) would be ~4.7 GiB/slot of unbudgeted device memory on
   a box whose documented failure mode is an unrecoverable host hang.
+- `POST /api/debug/complete` takes an optional `sampling` object (`{"temperature": 0.1,
+  "min_p": 0.0}`), merged over the model's catalog defaults exactly as a prompt's
+  `config: sampling:` block is. This is the ONLY way to vary sampling from the box: it is
+  catalog-static per model with no settings key and no endpoint, so repetition loops, a model
+  that will not stop, or malformed tool-call blocks could not otherwise be A/B'd against a live
+  model. Per-request and unpersisted — no reload, and nothing outlives the call. A mistyped key
+  is a 422, never a silent drop.
+- `GET /api/debug/llm` reports `local_llm_timeout_s`, the client-side ceiling on a local call.
+  REPORTED, not settable (it is env-only). It is here because it masquerades as a hung model: a
+  cold prefill at a large window can exceed it and the turn fails as a client timeout with
+  nothing saying the model was still working.
 - `PUT /api/debug/llm/local-models/{id}/context-window` — the served `-c`. On this surface
   because window and KV are one decision: `--swa-full` doubles a model's KV and halving the
   window pays for it exactly.

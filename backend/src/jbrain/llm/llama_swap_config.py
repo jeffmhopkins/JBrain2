@@ -39,6 +39,8 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import cast
 
+from jbrain.llm import local_catalog
+
 # Concrete, distinct upstream ports — llama-swap's ${PORT} macro isn't substituted
 # by every build, and the non-swapping group runs models concurrently so they can't
 # share a port. 127.0.0.1: llama-swap and llama-server share the container.
@@ -291,7 +293,7 @@ def render(
             # it
             # here on reasoning alone — measure first (docs/runbooks/STRIX_HALO_SETUP.md).
             "--ctx-checkpoints",
-            "2",
+            str(local_catalog.CTX_CHECKPOINTS),
             "-m",
             f"/models/{model_id}/{gguf}",
             "-ngl",
