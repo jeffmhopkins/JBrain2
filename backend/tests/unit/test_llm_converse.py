@@ -215,7 +215,7 @@ async def test_qwen38_hybrid_maps_our_top_level_onto_the_cards_xhigh() -> None:
     # back to the default, silently undoing the fix.
     captured, client = _capturing_client()
     await client.complete(
-        model="qwen3.8-27b-mtp", system="s", user_text="u", reasoning_effort="high"
+        model="qwen3.8-27b-q4", system="s", user_text="u", reasoning_effort="high"
     )
     assert captured["payload"]["chat_template_kwargs"]["reasoning_effort"] == "xhigh"
 

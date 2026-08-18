@@ -165,14 +165,14 @@ scripts/debug-connect.sh gateway-logs --tail 200
 # build, the real n_ctx, and what `-np auto` resolved total_slots to. The read that tells a
 # flag we intended from one that took effect — and the only way to know which build a
 # measurement came from, since the gateway floats on a rolling tag. Loads the model if cold.
-scripts/debug-connect.sh props qwen3.8-27b-mtp
+scripts/debug-connect.sh props qwen3.8-27b-q4
 
 # Try a llama-server LAUNCH FLAG live (allowlisted), then measure it and revert — no catalog
 # edit, no release, no Ops → Update per iteration. `prime` is the instrument: it runs the real
 # jerv prime and returns elapsed_ms, so cold vs warm are comparable numbers, not a stopwatch.
-scripts/debug-connect.sh extra-args qwen3.8-27b-mtp --spec-draft-p-min 0.75
-scripts/debug-connect.sh prime qwen3.8-27b-mtp
-scripts/debug-connect.sh extra-args qwen3.8-27b-mtp      # no args = clear, back to the catalog
+scripts/debug-connect.sh extra-args qwen3.8-27b-q4 --spec-draft-p-min 0.75
+scripts/debug-connect.sh prime qwen3.8-27b-q4
+scripts/debug-connect.sh extra-args qwen3.8-27b-q4      # no args = clear, back to the catalog
 
 # Host hardware telemetry: GPU busy %, APU power, load — watch the device across a Stop.
 scripts/debug-connect.sh metrics

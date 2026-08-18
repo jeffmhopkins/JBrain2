@@ -63,8 +63,10 @@ def test_unknown_model_refuses_rather_than_guessing() -> None:
 
 
 def test_refusal_names_the_probe_route() -> None:
+    # An UNPROBED model, which is the whole point — the refusal has to point at the route that
+    # would qualify it. qwen3.8-27b-q4 is probed (NORM_1000), so it cannot stand in here.
     with pytest.raises(UnknownGroundingModel, match="/api/debug/grounding"):
-        convention_for("qwen3.8-27b-mtp")
+        convention_for("qwen3-vl-30b-a3b")
 
 
 # --- base inference ---------------------------------------------------------

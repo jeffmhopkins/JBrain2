@@ -265,7 +265,7 @@ class ToolContext:
     scopes: tuple[str, ...]
     timezone: str | None = None
     agent_session_id: str | None = None
-    # The per-conversation model pick (a "provider:model" spec, e.g. local:qwen3.8-27b-mtp)
+    # The per-conversation model pick (a "provider:model" spec, e.g. local:qwen3.8-27b-q4)
     # the omnibox chose for THIS conversation — the same value AgentLoop routes turns onto as
     # `spec_override` — or None for the resolved default. Threaded onto the ctx so a tool that
     # enqueues a background follow-up (deep_research → its `research.title` job) can route that

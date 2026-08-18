@@ -137,9 +137,9 @@ async def test_a_load_that_balloons_mid_flight_is_aborted_and_unloaded() -> None
         "http://gw", transport=_transport(delay_s=5.0, seen=seen), gpu_probe=probe, timeout=30.0
     )
     with pytest.raises(gpu_guard.GpuBudgetError) as exc:
-        await gateway.load("qwen3.8-27b-mtp")
+        await gateway.load("qwen3.8-27b-q4")
     assert "aborted" in str(exc.value)
-    assert any("/unload/qwen3.8-27b-mtp" in path for path in seen), seen
+    assert any("/unload/qwen3.8-27b-q4" in path for path in seen), seen
 
 
 def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> None:
@@ -197,7 +197,7 @@ def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:
     The entry now also ships a projector, which that measurement did not include — so the
     text-only arithmetic is pinned against a stripped copy, and the shipped pair is pinned
     separately below."""
-    mtp = local_catalog.get("qwen3.8-27b-mtp")
+    mtp = local_catalog.get("qwen3.8-27b-q4")
     assert mtp is not None
     assert mtp.is_speculative
     text_only = replace(mtp, mmproj_include=None, supports_vision=False, size_gb=15.9)
@@ -215,7 +215,7 @@ def test_vision_plus_mtp_is_budgeted_but_has_never_been_loaded() -> None:
 
     This pins the PREDICTION so a divergence at load shows up as a failing test rather than as
     a frozen host — the failure mode that cost this box three power cycles."""
-    mtp = local_catalog.get("qwen3.8-27b-mtp")
+    mtp = local_catalog.get("qwen3.8-27b-q4")
     assert mtp is not None
     assert mtp.mmproj_include and mtp.supports_vision
     predicted = local_catalog.load_footprint_gb(mtp)
@@ -280,7 +280,7 @@ async def test_slots_and_metrics_refuse_a_non_resident_model() -> None:
     A read-only diagnostic must never be able to commit device memory — doing exactly that
     froze this host to a power cycle."""
     gateway = LocalGatewayClient("http://gw", transport=_transport())
-    for call in (gateway.slots("qwen3.8-27b-mtp"), gateway.metrics("qwen3.8-27b-mtp")):
+    for call in (gateway.slots("qwen3.8-27b-q4"), gateway.metrics("qwen3.8-27b-q4")):
         with pytest.raises(Exception) as exc:  # noqa: PT011 — LocalGatewayError
             await call
         assert "not resident" in str(exc.value)

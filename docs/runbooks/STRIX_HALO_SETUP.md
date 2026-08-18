@@ -449,7 +449,8 @@ update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-
 
 ### Vision + MTP in one model — measured, and it works
 
-`qwen3.8-27b-mtp` serves the projector and the MTP head together. Measured on a genuinely
+`qwen3.8-27b-q4` serves the projector and the MTP head together (MTP is a serving mode
+of that entry, not a separate model). Measured on a genuinely
 empty box (GTT floor 0.14 GiB, nothing else resident, auto-reload off):
 
 | | measured | note |
@@ -569,12 +570,12 @@ The flags are on the extra-args allowlist precisely so this loop exists.
 |---|---|
 | Ship the catalog defaults + download the projector | **Ops → Update** (the sync detects the newly-required file and pulls it) |
 | Confirm the build, real `-c`, and `total_slots` | `debug-connect.sh props <id>` — **on an ALREADY-RESIDENT model** (see the warning below) |
-| Point a task at it | PWA **Settings → LLM**, or `debug-connect.sh llm-set <task> qwen3.8-27b-mtp <effort>` |
-| Try a different draft setting | `debug-connect.sh extra-args qwen3.8-27b-mtp --spec-draft-p-min 0.75` |
-| Measure it | `debug-connect.sh prime qwen3.8-27b-mtp` → `elapsed_ms` |
-| **See whether it is drafting** | `debug-connect.sh slots qwen3.8-27b-mtp` → the per-slot `speculative` object |
-| **See the speedup** | `debug-connect.sh spec-metrics qwen3.8-27b-mtp` → `tokens_per_step`, `tokens_per_second` |
-| Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-mtp` (no args) |
+| Point a task at it | PWA **Settings → LLM**, or `debug-connect.sh llm-set <task> qwen3.8-27b-q4 <effort>` |
+| Try a different draft setting | `debug-connect.sh extra-args qwen3.8-27b-q4 --spec-draft-p-min 0.75` |
+| Measure it | `debug-connect.sh prime qwen3.8-27b-q4` → `elapsed_ms` |
+| **See whether it is drafting** | `debug-connect.sh slots qwen3.8-27b-q4` → the per-slot `speculative` object |
+| **See the speedup** | `debug-connect.sh spec-metrics qwen3.8-27b-q4` → `tokens_per_step`, `tokens_per_second` |
+| Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-q4` (no args) |
 | Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` — against **`qwen3.8-27b-q4`**, never the MTP entry (see the freeze warning above) |
 
 > ### `props` reads, it no longer loads
