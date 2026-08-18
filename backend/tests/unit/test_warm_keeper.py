@@ -79,6 +79,9 @@ class _FakeRouter:
         self.converses: list[dict[str, object]] = []
         self.fail = False
         self.admitted: list[str] = []
+        # Set for the no-coordinator configuration, where admission is inert and the keeper
+        # has to do the load itself.
+        self.admit_without_loading = False
         # Shared so the prime can be ordered against the load/restore the gateway records.
         self._gateway = gateway
 
@@ -86,7 +89,13 @@ class _FakeRouter:
         return self._served
 
     async def admit_local_load(self, served_model: str) -> None:
+        # The REAL one loads. `ensure_room` takes the slow path for a non-resident target and
+        # calls `gateway.load` itself, so admission and load are one step in production. A fake
+        # that only recorded the call hid a double load in the keeper for exactly one review
+        # cycle; model the behaviour, not the signature.
         self.admitted.append(served_model)
+        if self._gateway is not None and not self.admit_without_loading:
+            await self._gateway.load(served_model)
 
     async def converse(self, task: str, *, system: str, messages, tools=(), max_tokens=4096):
         if self._gateway is not None:
@@ -459,20 +468,24 @@ async def test_a_cold_model_is_loaded_before_the_restore_so_the_disk_cache_can_f
     what loaded the model, and the restore ran before it. So on a cold box the restore never
     even attempted: it failed at `props`, returned None, and every restart paid a full cold
     prefill while the runbook said the prefix was persisted and restored."""
-    gw = _FakeGateway(running=(), saved=("jerv-qwen3.8-27b-q4-deadbeef.bin",))
+    gw = _FakeGateway(running=())  # cold box, no saved state
     router = _FakeRouter("qwen3.8-27b-q4", gateway=gw)
     keeper = _keeper(gateway=gw, router=router)
-    # Pre-seed the state file under whatever name this prefix fingerprints to.
-    gw._saved = set()
     assert await keeper.reconcile_once() is True
     # Weights first, then the slot work, then the prime that reuses it.
     assert gw.events[0] == "load"
     assert gw.events.index("load") < gw.events.index("prime")
     # Admission ran before the load — the keeper must not co-load past the memory budget.
     assert router.admitted == ["qwen3.8-27b-q4"]
-    # And the restore was actually attempted against a resident model rather than skipped.
+    # And the restore was actually ATTEMPTED, which is the whole point: reaching `slot_action`
+    # at all means `_slot_target` got its props, which means the model was resident by then. On
+    # the old ordering props raised on the cold model, `_slot_target` returned None, and no slot
+    # call was ever made — so this list would not contain "restore" at all.
     assert "restore" in gw.events
     assert gw.events.index("restore") > gw.events.index("load")
+    # A slot was computed from the ENGINE's own total_slots (2 in this fixture → the last one),
+    # rather than guessed — which is the other half of why the restore can now land.
+    assert gw.slots and set(gw.slots) == {1}
 
 
 async def test_a_cold_start_restores_a_saved_prefix_instead_of_prefilling_it() -> None:
@@ -495,9 +508,14 @@ async def test_a_cold_start_restores_a_saved_prefix_instead_of_prefilling_it() -
     assert not [a for a, _ in gw2.actions if a == "save"]
 
 
-async def test_a_failed_preload_still_falls_through_to_the_prime() -> None:
-    """Best-effort: if admission or the load fails (no room, gateway down), the keeper must
-    behave exactly as it did before this reordering — prime and let that path report."""
+async def test_a_failed_preload_still_reaches_the_prime_rather_than_short_circuiting() -> None:
+    """Best-effort: a preload failure must not skip the prime, so the outcome is decided by the
+    same path that decided it before this reordering.
+
+    Note what this does NOT claim. In production the usual cause — no room — fails the prime
+    too, because `converse` calls the same `ensure_room`; the reconcile then returns False and
+    retries, as it always did. What is pinned here is only that the keeper still ATTEMPTS the
+    prime, i.e. the preload is not a new early exit."""
 
     class _NoRoomRouter(_FakeRouter):
         async def admit_local_load(self, served_model: str) -> None:
@@ -506,8 +524,6 @@ async def test_a_failed_preload_still_falls_through_to_the_prime() -> None:
     gw = _FakeGateway(running=())
     router = _NoRoomRouter("qwen3.8-27b-q4", gateway=gw)
     keeper = _keeper(gateway=gw, router=router)
-    # The prime is a fake that succeeds, so the reconcile still settles — the point is that a
-    # preload failure is not fatal and does not skip the prime.
-    assert await keeper.reconcile_once() is True
-    assert "prime" in gw.events
+    await keeper.reconcile_once()
+    assert "prime" in gw.events  # the prime was reached
     assert "load" not in gw.events  # admission refused, so no load was attempted

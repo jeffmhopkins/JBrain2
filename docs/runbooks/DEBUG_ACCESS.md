@@ -77,8 +77,9 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   would be a silent no-op, which is worse than an absent one.
   **`--ctx-checkpoints` is the one exception to "a bad value is always recoverable"**, so it is
   bounded to `0..8` server-side. A checkpoint on a hybrid is a full copy of the recurrent state
-  (~150 MiB for Qwen3.8), device-resident and per slot, and `footprint_gb` does not model it — so
-  the residency evictor cannot see it coming. llama.cpp's own default of `32` (the most likely
+  (~150 MiB for Qwen3.8), device-resident and per slot. `footprint_gb` budgets it at the SERVED
+  count (2), not at whatever you set here — so everything above that is unbudgeted and the
+  residency evictor cannot see it coming. llama.cpp's own default of `32` (the most likely
   typo, since every upstream doc names it) would be ~4.7 GiB/slot of unbudgeted device memory on
   a box whose documented failure mode is an unrecoverable host hang.
 - `POST /api/debug/complete` takes an optional `sampling` object (`{"temperature": 0.1,

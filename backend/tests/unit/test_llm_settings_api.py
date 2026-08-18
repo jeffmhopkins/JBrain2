@@ -1198,7 +1198,8 @@ def test_ctx_checkpoints_is_bounded_because_its_bad_value_hangs_the_box() -> Non
 
     Everything else fails recoverably — clearing does not require a loadable model. A checkpoint
     on a hybrid is a full copy of the recurrent state (~150 MiB for Qwen3.8), device-resident and
-    per slot, and `footprint_gb` does not model it, so the residency evictor cannot see it coming.
+    per slot, and `footprint_gb` budgets it only at the SERVED count, not at whatever is set here,
+    so everything above that is unbudgeted and the residency evictor cannot see it coming.
     llama.cpp's own default of 32 is the most likely typo (every upstream doc names it) and would
     be ~4.7 GiB/slot unbudgeted on a box whose documented failure mode is an unrecoverable hang."""
     with pytest.raises(HTTPException) as exc:
@@ -1251,6 +1252,52 @@ def test_no_mmap_stays_off_the_allowlist_because_an_entry_would_be_a_no_op() -> 
     assert "--jinja" not in llm_settings.EXTRA_ARG_FLAGS
     with pytest.raises(HTTPException):
         llm_settings._validate_extra_args(["--no-mmap"])
+
+
+def test_flash_attention_cannot_be_disabled_on_a_vision_model() -> None:
+    """The guard on the one allowlist entry that could hang the box.
+
+    `-fa` is here for the "is it the GPU?" bisect, and on a TEXT-ONLY model turning it off is
+    the cheap experiment it looks like. On a vision model it is not: llama.cpp then materialises
+    the full [n_patches, n_patches] CLIP attention matrix instead of tiling it, so the workspace
+    goes from the ~0.47 GB linear branch `_vision_resident_gb` assumes to ~16 GB — unbudgeted,
+    and landing on the first full-resolution image, long after the load guard passed and the
+    watchdog stopped watching.
+
+    Refused rather than budgeted: threading the served `-fa` through `footprint_gb` is a real
+    change to the memory model, and shipping the flag before that lands would put a host hang
+    one API call away."""
+    vision = local_catalog.get("qwen3.8-27b-q4")
+    text_only = local_catalog.get("gpt-oss-120b")
+    assert vision is not None and vision.mmproj_include
+    assert text_only is not None and not text_only.mmproj_include
+
+    for off in ("0", "off", "false", "OFF"):
+        with pytest.raises(HTTPException) as exc:
+            llm_settings._validate_extra_args(["-fa", off], vision)
+        assert exc.value.status_code == 422
+        assert "quadratic" in str(exc.value.detail)
+
+    # Leaving it ON is fine on a vision model — that is the branch the budget models.
+    assert llm_settings._validate_extra_args(["-fa", "1"], vision) == ["-fa", "1"]
+    # And the bisect stays available where it is safe.
+    assert llm_settings._validate_extra_args(["-fa", "0"], text_only) == ["-fa", "0"]
+    # With no model in hand (a caller that cannot say), nothing is refused — the endpoint always
+    # passes one, so this only affects direct calls.
+    assert llm_settings._validate_extra_args(["-fa", "0"]) == ["-fa", "0"]
+
+
+def test_the_image_ceiling_is_bounded_to_what_the_vision_budget_assumes() -> None:
+    """`_vision_resident_gb` sizes the CLIP workspace at a hardcoded 4096 image tokens. Raising
+    the ceiling past that grows a workspace the budget does not follow, so the cap is the figure
+    the budget already assumes rather than an arbitrary limit."""
+    assert llm_settings._validate_extra_args(["--image-max-tokens", "4096"]) == [
+        "--image-max-tokens",
+        "4096",
+    ]
+    with pytest.raises(HTTPException) as exc:
+        llm_settings._validate_extra_args(["--image-max-tokens", "8192"])
+    assert exc.value.status_code == 422
 
 
 def test_extra_arg_allowlist_rejects_an_unknown_flag_loudly() -> None:

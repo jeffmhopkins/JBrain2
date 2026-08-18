@@ -1514,15 +1514,34 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
 # The one flag on the list whose bad value is not self-limiting. Everything else fails by not
 # loading — recoverable, because clearing does not need the model to be loadable. A checkpoint on
 # a hybrid is a full copy of the recurrent state (~150 MiB for Qwen3.8), device-resident and per
-# slot, and `footprint_gb` does not model it, so the residency evictor cannot see it coming. At
+# slot, and `footprint_gb` budgets it only at the SERVED count (2), not at whatever an operator
+# sets here — so everything above that is unbudgeted and the residency evictor cannot see it. At
 # llama.cpp's own default of 32 that is ~4.7 GiB/slot of unbudgeted device memory on a box whose
 # documented failure mode is an unrecoverable host hang under GTT pressure — and `32` is the most
 # likely typo, being the value every llama.cpp doc names. 8 is above any value this investigation
 # needs and well under the cliff.
-_EXTRA_ARG_BOUNDS: dict[str, tuple[int, int]] = {"--ctx-checkpoints": (0, 8)}
+_EXTRA_ARG_BOUNDS: dict[str, tuple[int, int]] = {
+    "--ctx-checkpoints": (0, 8),
+    # `_vision_resident_gb` sizes the CLIP workspace at a hardcoded 4096 image tokens
+    # (llama.cpp's ceiling for this projector family). Raising the ceiling past that grows the
+    # workspace the budget does not follow, so cap it at the figure the budget assumes.
+    "--image-max-tokens": (1, 4096),
+}
+
+# Values of `-fa` that turn flash attention OFF. Not a style question: with `-fa` on, the CLIP
+# attention workspace is LINEAR in patches (~0.47 GiB at the 4096-token ceiling, measured); with
+# it off llama.cpp materialises the full [n_patches, n_patches] matrix and the same encode
+# reaches ~16 GiB. `_vision_resident_gb` hardcodes the flash-attention branch, so the residency
+# budget would under-reserve by ~15.5 GiB — and the allocation lands on the first
+# full-resolution image, LONG after the load guard passed and after the watchdog stopped
+# watching. That is the unrecoverable host hang, arriving through a flag whose whole purpose is
+# diagnosing a different problem.
+_FLASH_ATTENTION_OFF = {"0", "off", "false", "no", "disabled"}
 
 
-def _validate_extra_args(args: list[str]) -> list[str]:
+def _validate_extra_args(
+    args: list[str], model: local_catalog.LocalModel | None = None
+) -> list[str]:
     """Reject anything not on EXTRA_ARG_FLAGS. Values are accepted positionally (a token
     following a flag that takes one), so `--slot-save-path /tmp/kv/` passes while a bare
     `/tmp/kv/` or an unknown `--foo` is refused. 422 rather than a silent drop — a caller that
@@ -1567,7 +1586,35 @@ def _validate_extra_args(args: list[str]) -> list[str]:
         cleaned.append(token)
         flag = token
         expect_value = token != "--swa-full"  # the only boolean flag on the list
+    _refuse_unbudgeted_vision(cleaned, model)
     return cleaned
+
+
+def _refuse_unbudgeted_vision(args: list[str], model: local_catalog.LocalModel | None) -> None:
+    """Refuse `-fa 0` on a model carrying a vision projector.
+
+    `-fa` is on the allowlist for the "is it the GPU?" bisect, and on a TEXT-ONLY model turning
+    it off is exactly the cheap experiment it looks like. On a vision model it is not: it swaps
+    the CLIP attention workspace from the linear branch the residency budget assumes to the
+    quadratic one, ~0.47 GiB to ~16 GiB, unbudgeted and unguarded (the load already passed; the
+    balloon arrives on the first full-resolution image).
+
+    Refused rather than budgeted because the honest alternative — threading the served `-fa`
+    into `footprint_gb` and `load_footprint_gb` — is a real change to the memory model, and
+    shipping the flag before that lands would put a host hang one API call away."""
+    if model is None or not model.mmproj_include:
+        return
+    for i, token in enumerate(args):
+        if token == "-fa" and i + 1 < len(args) and args[i + 1].lower() in _FLASH_ATTENTION_OFF:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"-fa {args[i + 1]!r} is refused on {model.id}: it carries a vision "
+                    "projector, and disabling flash attention swaps the CLIP workspace to the "
+                    "quadratic branch (~0.47 GB -> ~16 GB) that the residency budget does not "
+                    "model. Use it on a text-only model, or budget it first."
+                ),
+            )
 
 
 async def set_local_extra_args(
@@ -1584,7 +1631,7 @@ async def set_local_extra_args(
     Same shape as the context-window and slot setters — persist, regenerate, evict — because a
     running llama-server cannot change its launch flags any more than it can resize its KV."""
     model = _require_provisioned(settings, model_id)
-    validated = _validate_extra_args(args)
+    validated = _validate_extra_args(args, model)
     extra = await store.set_llm_local_extra_args(ctx, model_id=model_id, args=validated)
     windows, slots, _, floors = await _saved_override_maps(store, ctx)
     _try_regenerate(settings, windows, slots, extra, floors)

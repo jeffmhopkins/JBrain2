@@ -98,7 +98,7 @@ async def test_reconcile_preserves_an_operator_flag_and_image_floor(tmp_path: Pa
     _lay_down(tmp_path)
     manifest = _manifest()
     windows = {"gpt-oss-120b": 65536}
-    extra = {"gpt-oss-120b": ["--ctx-checkpoints", "16"]}
+    extra = {"gpt-oss-120b": ["--ctx-checkpoints", "8"]}  # 16 is now refused by the bound
     floors = {"qwen3-vl-30b": 4096}
     llama_swap_config.write(
         str(tmp_path), manifest, windows=windows, extra_args=extra, image_min_tokens=floors
@@ -114,7 +114,7 @@ async def test_reconcile_preserves_an_operator_flag_and_image_floor(tmp_path: Pa
         image_min_tokens=floors,
     )
     text = (tmp_path / "llama-swap.yaml").read_text()
-    assert "--ctx-checkpoints 16" in text
+    assert "--ctx-checkpoints 8" in text
     assert "--image-min-tokens 4096" in text
     # And because it now matches, this is the no-op path: no needless eviction of a warm model.
     assert changed is False
@@ -127,7 +127,7 @@ async def test_reconcile_restores_a_flag_a_deploy_stamped_away(tmp_path: Path) -
     _lay_down(tmp_path)
     manifest = _manifest()
     llama_swap_config.write(str(tmp_path), manifest)  # deploy: base config, no overrides
-    assert "--ctx-checkpoints 16" not in (tmp_path / "llama-swap.yaml").read_text()
+    assert "--ctx-checkpoints 8" not in (tmp_path / "llama-swap.yaml").read_text()
     gw = _FakeGateway(set())
     changed = await reconcile_gateway_config(
         str(tmp_path),
@@ -135,12 +135,12 @@ async def test_reconcile_restores_a_flag_a_deploy_stamped_away(tmp_path: Path) -
         windows={},
         slots={},
         gateway=gw,
-        extra_args={"gpt-oss-120b": ["--ctx-checkpoints", "16"]},
+        extra_args={"gpt-oss-120b": ["--ctx-checkpoints", "8"]},
         image_min_tokens={"qwen3-vl-30b": 4096},
     )
     assert changed is True
     text = (tmp_path / "llama-swap.yaml").read_text()
-    assert "--ctx-checkpoints 16" in text and "--image-min-tokens 4096" in text
+    assert "--ctx-checkpoints 8" in text and "--image-min-tokens 4096" in text
 
 
 async def test_reconcile_is_a_noop_when_the_config_already_matches(tmp_path: Path) -> None:

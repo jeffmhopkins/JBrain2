@@ -192,17 +192,29 @@ class WarmKeeper:
         # restore above it could only ever fire for an already-resident one — and the cold start
         # this disk cache exists for was precisely the case it could not serve.
         #
-        # Explicit load, not a bare one: admission first, through the same coordinator a routed
-        # completion goes through, then `gateway.load`, which carries the GPU pre-flight and the
-        # watchdog. Passing no warm system/tools keeps this to weights + a one-token readiness
-        # probe, so it does NOT prefill the persona — that is the whole point, since prefilling
-        # here would spend the cost the restore is meant to avoid.
+        # Admission FIRST, through the same coordinator a routed completion goes through — and
+        # in the wired configuration that is already the load: `ensure_room` takes the slow path
+        # for a non-resident target and calls `gateway.load` itself. So we re-read residency
+        # afterwards and only load explicitly if the model is still cold (no coordinator wired).
+        #
+        # Loading unconditionally here was a DOUBLE load. The second one re-runs
+        # `refuse_if_no_device_room` against a post-load sample — the model's own footprint is
+        # already subtracted from free GTT — so it demands roughly twice the footprint plus the
+        # headroom floor and raises on a box that is perfectly healthy. That lands a spurious
+        # "refusing to load rather than risk freezing the host" in the exact log an operator
+        # reads while investigating hard-locks, and in the narrow case where the pre-flight
+        # passes and the watchdog then trips, its abort UNLOADS the model we just loaded.
+        #
+        # Whichever path brings it up, it comes up WITHOUT a warm system/tools, so no persona
+        # prefill happens here — that is the point, since prefilling would spend the cost the
+        # restore exists to avoid.
         #
         # Best-effort: on failure fall through to the prime, which is exactly the old behaviour.
         if cold:
             try:
                 await self._router.admit_local_load(served)
-                await self._gateway.load(served)
+                if served not in await self._gateway.running():
+                    await self._gateway.load(served)
             except Exception as exc:  # noqa: BLE001 — no room / gateway down: the prime retries
                 log.info("warm_keeper.preload_failed", model=served, error=str(exc))
         restored = await self._try_restore(served, system, tools)

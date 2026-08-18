@@ -564,8 +564,32 @@ def test_the_served_checkpoint_count_has_one_source() -> None:
     from jbrain.llm import llama_swap_config
 
     assert local_catalog.CTX_CHECKPOINTS == 2
-    # The generator emits the catalog's value rather than a literal of its own.
-    assert llama_swap_config.local_catalog is local_catalog
+    # An import-identity check would pin nothing — reverting `render` to a literal "2" would
+    # still pass it. Move the constant and the rendered command has to move with it.
+    import tempfile
+    from pathlib import Path
+
+    root = Path(tempfile.mkdtemp())
+    (root / "gpt-oss-120b").mkdir()
+    (root / "gpt-oss-120b" / "w-mxfp4.gguf").write_bytes(b"\0")
+    manifest = [
+        {
+            "id": "gpt-oss-120b",
+            "served_model": "gpt-oss-120b",
+            "gguf_include": "*mxfp4*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+        }
+    ]
+    monkey = dataclasses.replace  # noqa: F841 — readability: this test mutates a module const
+    original = local_catalog.CTX_CHECKPOINTS
+    try:
+        local_catalog.CTX_CHECKPOINTS = 7
+        text = llama_swap_config.render(manifest, str(root))
+        assert "--ctx-checkpoints 7" in text
+    finally:
+        local_catalog.CTX_CHECKPOINTS = original
+    assert "--ctx-checkpoints 2" in llama_swap_config.render(manifest, str(root))
 
 
 def test_get_by_served_maps_served_name_to_catalog_entry() -> None:
