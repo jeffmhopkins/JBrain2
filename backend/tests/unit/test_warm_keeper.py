@@ -92,9 +92,15 @@ def _keeper(
     gateway: object,
     liveness: object = None,
     hold: Collection[str] = (),
+    auto_restore: bool | BaseException = True,
 ) -> WarmKeeper:
     async def hold_loader() -> Collection[str]:
         return hold
+
+    async def auto_restore_loader() -> bool:
+        if isinstance(auto_restore, BaseException):
+            raise auto_restore
+        return auto_restore
 
     return WarmKeeper(
         gateway=cast(LocalGatewayClient, gateway),
@@ -102,6 +108,7 @@ def _keeper(
         liveness=cast("_Liveness | None", liveness),
         router=cast(LlmRouter, router),
         hold_loader=hold_loader,
+        auto_restore_loader=auto_restore_loader,
         interval_ready=0.01,
         interval_wait=0.01,
     )
@@ -324,3 +331,40 @@ async def test_the_fingerprint_moves_with_the_tool_set() -> None:
     keeper2 = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw, liveness=live)
     assert await keeper2.reconcile_once() is True
     assert gw.actions[-1][1] != hidden_name
+
+
+async def test_auto_restore_off_stops_the_keeper_loading_a_model_that_is_gone() -> None:
+    """The keeper is the SECOND auto-load path on this box, and it used to ignore the
+    operator's switch entirely — so turning auto-reload off stopped residency restores while
+    the keeper went on reloading the primary model every interval_wait seconds. On this
+    hardware that meant watching a 68 GiB model reappear within five seconds of unloading it,
+    which is the UI telling the operator something untrue.
+
+    SETTLED, not "retry soon": returning False would spin the eager cadence forever against a
+    switch that will never flip on its own."""
+    r = _FakeRouter("gpt-oss-120b")
+    g = _FakeGateway(running=set())
+    k = _keeper(router=r, gateway=g, auto_restore=False)
+    assert await k.reconcile_once() is True
+    assert r.converses == []  # nothing loaded, nothing primed
+
+
+async def test_auto_restore_off_still_primes_a_model_that_is_already_resident() -> None:
+    """The gate is on LOADING, not on priming. A resident model's warm prefix costs nothing to
+    hold, and dropping it would make every first turn slow for no memory saved."""
+    r = _FakeRouter("gpt-oss-120b")
+    g = _FakeGateway(running={"gpt-oss-120b"})
+    k = _keeper(router=r, gateway=g, auto_restore=False)
+    assert await k.reconcile_once() is True
+    assert len(r.converses) == 1
+
+
+async def test_an_auto_restore_read_failure_leaves_the_keeper_working() -> None:
+    """Defaults OPEN. This gate only suppresses a convenience reload, so a box that quietly
+    stopped keeping its model warm because a settings query hiccupped would be the worse
+    failure of the two."""
+    r = _FakeRouter("gpt-oss-120b")
+    g = _FakeGateway(running=set())
+    k = _keeper(router=r, gateway=g, auto_restore=RuntimeError("settings down"))
+    assert await k.reconcile_once() is True
+    assert len(r.converses) == 1

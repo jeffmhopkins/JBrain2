@@ -447,6 +447,30 @@ update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-
 > by wall-clock timings — which is how an entire investigation concluded MTP was off from a
 > field (`/props`'s `speculative.types`) that reads "none" on every build.
 
+### Two things auto-load models, and the switch governs both
+
+Settings → LLM's automatic-reload switch has to be read as covering **two** independent paths,
+because for a long time it only covered one:
+
+| path | when it fires |
+|---|---|
+| residency restore | end of turn, putting back what a displacement evicted |
+| **WarmKeeper** | every 5s while the primary local model is wanted but not resident |
+
+The keeper used to ignore the setting entirely. Turning auto-reload off stopped restores while
+the keeper went on reloading the router's primary model on its eager cadence — so an operator
+who unloaded a 68 GiB model watched it reappear within five seconds, repeatedly, with the UI
+insisting automatic reloading was off. It also made the box impossible to hold empty, which
+matters because "load one model on an otherwise empty box" is the shape of every memory
+measurement here.
+
+Both now read the same switch. The keeper's gate is on LOADING only: a model that is already
+resident still gets primed, because holding a warm prefix costs no memory and dropping it would
+make the first turn slow for nothing.
+
+To hold the box genuinely empty — for a load measurement, or to test a model in isolation —
+turn automatic reloading OFF first, then unload. Otherwise the keeper wins.
+
 ### What the speculation numbers mean, and what to optimise
 
 This build of llama-server exposes **no draft/accept counters at all** — the metric set is
