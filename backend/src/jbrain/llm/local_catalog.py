@@ -75,6 +75,12 @@ MTP_OVERHEAD_GB = 1.0
 
 _KV_REFERENCE_TOKENS = 131072
 
+# Per-slot context checkpoints the gateway serves (`--ctx-checkpoints`). Lives HERE, not in
+# llama_swap_config, because two things need the same number: the command that sets it and the
+# footprint that must budget for it. It was only in the command, so the memory model did not
+# know checkpoints existed at all.
+CTX_CHECKPOINTS = 2
+
 # The CLIP/mtmd vision encoder's attention buffer — the real cost behind llama.cpp #27146, and
 # NOT what this code previously claimed it was.
 #
@@ -219,6 +225,17 @@ class LocalModel:
     # served default stays small for memory; this opens the door to the full window
     # the weights support, with the drawer's KV-cache estimate as the guardrail.
     native_context_window: int = 0
+    # GiB per context checkpoint, per slot. Non-zero only for a HYBRID (recurrent) model,
+    # where a checkpoint is a full copy of the recurrent state and is device-resident —
+    # ~150 MiB for Qwen3.8 (llama.cpp #20145, #23371). Zero on an attention model, whose
+    # checkpoints are cheap KV bookkeeping rather than a state copy.
+    #
+    # This term was missing entirely, which mattered once `--ctx-checkpoints` became an
+    # operator-settable flag: the residency evictor would co-load a second model against RAM
+    # already spoken for. Deliberately NOT set for the Nemotron Mamba-2 hybrids — their SSM
+    # state has a different shape and nobody has measured it here, and a guessed number in a
+    # budget that governs host stability is worse than a documented zero.
+    checkpoint_gb: float = 0.0
     # Rough KV-cache size (GB) at the model's full 131072-token window — an ESTIMATE
     # (not a measurement) the settings drawer's memory bar uses to size the context
     # portion of each model's segment, scaled linearly by the configured window.
@@ -548,6 +565,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # default with the native window as the picker's ceiling.
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        checkpoint_gb=0.15,
     ),
     LocalModel(
         id="qwen3.8-27b-q4",
@@ -597,6 +615,7 @@ CATALOG: tuple[LocalModel, ...] = (
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        checkpoint_gb=0.15,
     ),
     LocalModel(
         id="qwen3.8-27b-abliterated",
@@ -658,6 +677,7 @@ CATALOG: tuple[LocalModel, ...] = (
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        checkpoint_gb=0.15,
     ),
     LocalModel(
         id="qwen3-coder-next",
@@ -870,8 +890,14 @@ _BY_ID = {m.id: m for m in CATALOG}
 # prunes its weights on the next update — the no-shell path to retiring a model the
 # operator can't `rm` themselves (CLAUDE.md #10). A box that never installed one is
 # unaffected (it stays off the fast-path only while a retired weight lingers).
-# Superseded by qwen3.8-27b / -q4 (its newer-generation twins), so nothing routes here.
-RETIRED_IDS: tuple[str, ...] = ("qwen3.6-27b", "qwen3.6-27b-q4")
+# The 3.6 pair is superseded by qwen3.8-27b / -q4 (its newer-generation twins), so nothing
+# routes there. `qwen3.8-27b-mtp` is a different retirement: MTP turned out to be a serving MODE
+# of the Q4 entry rather than a model, so the duplicate entry was dropped from CATALOG — but it
+# was never listed here, which is not the same thing. Dropping an id from the catalog only hides
+# it from the picker; a box that installed it keeps ~16.8 GB of weights under
+# /models/qwen3.8-27b-mtp/ that nothing will ever serve and the owner cannot `rm` (CLAUDE.md
+# #10). Listing it is what actually reclaims the disk on the next update.
+RETIRED_IDS: tuple[str, ...] = ("qwen3.6-27b", "qwen3.6-27b-q4", "qwen3.8-27b-mtp")
 
 # Served-model names that emit reasoning + honor `reasoning_effort`. The router
 # consults this to decide whether a `local:<served_model>` call may carry an effort
@@ -949,7 +975,14 @@ def footprint_gb(
     # model by several GB — on a box that has hard-locked under memory pressure.
     if model.kv_full_history:
         kv *= 2
-    return round(weights + kv + _runtime_overhead_gb(model) + _vision_resident_gb(model), 2)
+    # Context checkpoints: per slot, device-resident, and on a hybrid a full copy of the
+    # recurrent state each. Budgeted at the SERVED count — an operator override through
+    # `--ctx-checkpoints` is not threaded in here, which is why that flag is bounded to 0..8
+    # in the settings API rather than left open.
+    checkpoints = model.checkpoint_gb * CTX_CHECKPOINTS * model.effective_slots(slots)
+    return round(
+        weights + kv + checkpoints + _runtime_overhead_gb(model) + _vision_resident_gb(model), 2
+    )
 
 
 def _runtime_overhead_gb(model: LocalModel) -> float:

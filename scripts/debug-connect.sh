@@ -266,7 +266,7 @@ PY
     _call GET "/api/debug/llm/gateway-logs?tail=$tail"
     ;;
 
-  props) # <model_id> — the engine's OWN build / n_ctx / total_slots (loads the model if cold)
+  props) # <model_id> — the engine's OWN build / n_ctx / total_slots (RESIDENT models only)
     m="${1:?usage: debug-connect.sh props <model_id>}"
     _call GET "/api/debug/llm/local-models/$m/props" | _pp
     ;;

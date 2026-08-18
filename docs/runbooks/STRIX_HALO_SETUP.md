@@ -203,6 +203,37 @@ did nothing degrades to a slow prime, never a wrong answer.
 > lever that pays for it is the **context window**: KV scales linearly with `-c`, so serving at
 > 64k costs exactly what 128k did before the flag.
 
+> **All of the numbers above are gpt-oss. They do NOT transfer to a hybrid.** Qwen3.8 (`qwen35`)
+> runs 48 of its 65 layers as Gated DeltaNet — linear attention carrying a *recurrent state* —
+> and the Nemotron Lightning/Super entries are Mamba-2 hybrids of the same shape. A recurrent
+> state cannot be KV-shifted or partially rewound, which breaks both halves of the caching this
+> section describes:
+>
+> - **`--cache-reuse` covers the attention layers only.** On `qwen35` that is 16 of 65. The other
+>   48 re-run whatever the prefix match says, so "reuse a matching leading prefix instead of
+>   re-prefilling it" is a property of gpt-oss, not of the gateway.
+> - **`--ctx-checkpoints` is the whole mid-sequence resume budget, and we serve 2.** Where an
+>   attention model resumes anywhere by truncating its KV, a hybrid can only resume from a stored
+>   checkpoint. Down from llama.cpp's 32 to save ~4.7 GiB/slot — a deliberate memory trade, but it
+>   means a divergence almost anywhere costs a re-run from near the start.
+> - **A slot restore can no-op for a second reason.** The documented signature (200, correct
+>   `n_restored`, full re-prefill anyway) has an SWA cause *and* a hybrid cause: if the restored
+>   token sequence is not an exact prefix of the next request, the state must rewind to a
+>   checkpoint. `--swa-full` is the remedy for the first and does nothing for the second — it is
+>   correctly not set on any hybrid.
+>
+> Symptom: **slow prefill on every turn**, on a model the drawer and this runbook both describe
+> as cached. Compounding it, `--reasoning-format deepseek` splits `<think>` into
+> `reasoning_content` and nothing sends it back, so each assistant turn re-renders *without* the
+> thinking tokens that are in the KV — a mid-sequence divergence at the first tool round.
+>
+> None of this is measured on this box yet. `--ctx-checkpoints` and `--cache-reuse` are both on
+> the extra-args allowlist so it can be, and `--ctx-checkpoints` is bounded to `0..8` because its
+> memory cost is per-slot, device-resident and invisible to `footprint_gb`. Start by comparing a
+> multi-turn conversation on `qwen3.8-27b-q4` against gpt-oss-120b, then sweep upward in small
+> steps — and set the task's thinking level to `none` first, which removes the trace divergence
+> and the effort sentence in one move.
+
 The cache is keyed by FILENAME — a digest of the system prompt, the serialized tool schemas,
 llama.cpp's `build_info`, the chat template, `n_ctx`/`n_slots`, and the UTC date. Anything that
 changes the bytes changes the name, the restore simply misses, and the keeper falls through to a
@@ -380,10 +411,12 @@ Its thinking level is not optional here the way it is elsewhere: this template *
 level outside `low` / `medium` / `xhigh` rather than ignoring it, and defaults to `xhigh` when sent
 none. The catalog's level map already sends exactly the three it accepts.
 
-**MTP (faster generation) variant — `Qwen3.8 27B · MTP`.** A catalog entry that serves the same
-Qwen3.8-27B Q4_K_M weights as the interactive twin but with llama.cpp multi-token prediction
-(`--spec-type draft-mtp`) — self-speculation off the MTP head that unsloth's GGUF already bakes
-in. Published Strix Halo measurements put it at **1.8–2.4× decode** on a dense 27B.
+**MTP (faster generation) is a serving MODE, not a separate entry.** There is no
+`Qwen3.8 27B · MTP` to select: that entry was retired (it was a byte-identical duplicate of the
+Q4 twin differing only in flags), and every Qwen3.8 entry — Q8, Q4 and the abliterated probe —
+now serves with llama.cpp multi-token prediction (`--spec-type draft-mtp`), self-speculation off
+the MTP head the GGUF already bakes in. Published Strix Halo measurements put it at **1.8–2.4×
+decode** on a dense 27B; measured here, 22.41 t/s against ~11–12 unspeculated.
 
 **Why self-speculation and not a draft model.** Every published "use a small drafter" recipe
 assumes a discrete GPU. Here the drafter and the target share ONE memory bus, so a separate
@@ -398,11 +431,13 @@ Three things to know:
   which also means this entry can never hold the interactive keep-warm second slot.
 - **Decode only, and it needs length.** Prompt processing is a touch slower, and the gain needs
   a few hundred output tokens to pay for its overhead — a short tool call sees little or none.
-- **`--spec-draft-p-min` is not optional.** The flag's own default is `0.00` (ungated), a
-  documented acceptance-killer that lets MTP decay back to baseline on long generations. The
-  entry pins `0.6`. Gating is specifically a bandwidth-starved-machine win; set it *before*
-  raising `--spec-draft-n-max` (pinned at `3`, llama.cpp's default and the Strix Halo consensus),
-  because ungated, the cost of a wasted draft scales with n-max.
+- **`--spec-draft-p-min` is UNSET, deliberately.** The catalog pins only `--spec-draft-n-max 3`
+  (llama.cpp's default and the Strix Halo consensus). This runbook previously said the entry
+  pinned `p-min 0.6`; it never did after that value was removed, because the source recommending
+  it said in its own words "sweep empirically; do not adopt without testing". So the gate runs at
+  llama.cpp's `0.00` (ungated). Gating is specifically a bandwidth-starved-machine win and is
+  worth sweeping — it is on the extra-args allowlist for exactly that — but treat any acceptance
+  or throughput number taken before the sweep as an UNGATED measurement.
 
 > ### ⚠️ Reading the memory instruments correctly (this cost three power cycles)
 >
@@ -651,7 +686,7 @@ The flags are on the extra-args allowlist precisely so this loop exists.
 | **See whether it is drafting** | `debug-connect.sh slots qwen3.8-27b-q4` → the per-slot `speculative` object |
 | **See the speedup** | `debug-connect.sh spec-metrics qwen3.8-27b-q4` → `tokens_per_step`, `tokens_per_second` |
 | Revert to the catalog | `debug-connect.sh extra-args qwen3.8-27b-q4` (no args) |
-| Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` — against **`qwen3.8-27b-q4`**, never the MTP entry (see the freeze warning above) |
+| Check vision still works | `debug-connect.sh vision <attachment_id> --task vision.caption` against **`qwen3.8-27b-q4`** — vision and MTP coexist, measured (see above); the old "never the MTP entry" caution referred to a retired entry and a belief since disproved |
 
 > ### `props` reads, it no longer loads
 >

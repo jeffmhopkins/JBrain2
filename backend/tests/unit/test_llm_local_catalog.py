@@ -44,7 +44,15 @@ def test_retired_ids_are_gone_from_the_catalog_but_flagged_for_uninstall() -> No
     # The decommissioned Qwen3.6 pair: removed from CATALOG (unselectable, unresolvable) but
     # kept in RETIRED_IDS so the sync force-uninstalls + prunes them from any box still holding
     # them (deploy/local-models-sync.sh reads retired_ids()). Superseded by the qwen3.8 twins.
-    assert local_catalog.retired_ids() == ("qwen3.6-27b", "qwen3.6-27b-q4")
+    assert local_catalog.retired_ids() == (
+        "qwen3.6-27b",
+        "qwen3.6-27b-q4",
+        # Dropped from CATALOG when MTP became a serving mode rather than a model, but never
+        # listed here — so a box that installed it kept ~16.8 GB of weights nothing serves and
+        # the owner cannot delete without a shell. Removing an id from the catalog hides it;
+        # only this list reclaims the disk.
+        "qwen3.8-27b-mtp",
+    )
     catalog_ids = {m.id for m in local_catalog.CATALOG}
     for rid in local_catalog.retired_ids():
         assert rid not in catalog_ids  # dropped from the catalog…
@@ -518,6 +526,70 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
     assert local_catalog.footprint_gb(gpt, 131072, slots=2) == 77.55
     assert local_catalog.footprint_gb(gpt, 65536, slots=2) == 68.55
     assert local_catalog.footprint_gb(gpt, 131072, slots=1) == 68.55
+
+
+def test_footprint_budgets_the_checkpoints_a_hybrid_actually_pins() -> None:
+    """Context checkpoints are device-resident and, on a hybrid, a full copy of the recurrent
+    state each. `footprint_gb` modelled none of them, so the residency evictor would co-load a
+    second model against RAM already spoken for — which matters now that `--ctx-checkpoints` is
+    an operator-settable flag.
+
+    Budgeted at the SERVED count. An operator override is not threaded in here, which is exactly
+    why that flag is bounded rather than left open."""
+    m = local_catalog.get("qwen3.8-27b-q4")
+    assert m is not None and m.checkpoint_gb == 0.15
+    plain = dataclasses.replace(m, checkpoint_gb=0.0)
+    delta = local_catalog.footprint_gb(m, 32768) - local_catalog.footprint_gb(plain, 32768)
+    assert delta == pytest.approx(0.15 * local_catalog.CTX_CHECKPOINTS, abs=0.01)
+
+
+def test_the_checkpoint_term_is_zero_where_nobody_measured_it() -> None:
+    """An attention model's checkpoints are cheap KV bookkeeping, not a state copy — zero is
+    correct there. The Nemotron Mamba-2 hybrids ARE recurrent, but their SSM state has a
+    different shape and nobody has measured it on this box: a guessed number in a budget that
+    governs host stability is worse than a documented zero. Pinned so the omission stays
+    deliberate rather than becoming a silent gap again."""
+    for model_id in ("gpt-oss-120b", "qwen3-vl-30b", "llama-3.3-70b"):
+        model = local_catalog.get(model_id)
+        assert model is not None and model.checkpoint_gb == 0.0
+    for model_id in ("nemotron-3-super-120b", "nemotron-3.5-lightning-30b"):
+        model = local_catalog.get(model_id)
+        assert model is not None and model.checkpoint_gb == 0.0
+
+
+def test_the_served_checkpoint_count_has_one_source() -> None:
+    """The gateway command and the memory model must not disagree about how many checkpoints
+    are pinned — the number was only in the command, which is how the footprint came to ignore
+    them entirely."""
+    from jbrain.llm import llama_swap_config
+
+    assert local_catalog.CTX_CHECKPOINTS == 2
+    # An import-identity check would pin nothing — reverting `render` to a literal "2" would
+    # still pass it. Move the constant and the rendered command has to move with it.
+    import tempfile
+    from pathlib import Path
+
+    root = Path(tempfile.mkdtemp())
+    (root / "gpt-oss-120b").mkdir()
+    (root / "gpt-oss-120b" / "w-mxfp4.gguf").write_bytes(b"\0")
+    manifest = [
+        {
+            "id": "gpt-oss-120b",
+            "served_model": "gpt-oss-120b",
+            "gguf_include": "*mxfp4*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+        }
+    ]
+    monkey = dataclasses.replace  # noqa: F841 — readability: this test mutates a module const
+    original = local_catalog.CTX_CHECKPOINTS
+    try:
+        local_catalog.CTX_CHECKPOINTS = 7
+        text = llama_swap_config.render(manifest, str(root))
+        assert "--ctx-checkpoints 7" in text
+    finally:
+        local_catalog.CTX_CHECKPOINTS = original
+    assert "--ctx-checkpoints 2" in llama_swap_config.render(manifest, str(root))
 
 
 def test_get_by_served_maps_served_name_to_catalog_entry() -> None:

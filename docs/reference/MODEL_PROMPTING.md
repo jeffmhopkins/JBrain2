@@ -2,6 +2,14 @@
 
 > **Status:** Living · **Last verified:** 2026-08-18
 
+> **Applied (2026-08-18):** the Qwen3.8 KV estimate is **8.0**, superseding the 2.0 note below —
+> which was the last word on the number here while the code served 8.0, i.e. this doc had a reader
+> under-reserving memory by 4x. It is DERIVED, not estimated: per token per attention layer KV is
+> `2 (K+V) x n_kv_heads x head_dim x bytes`, here `2 x 4 x 256 x 2` (f16, llama.cpp's default —
+> the gateway passes no `--cache-type-*`) = 4 KiB, x16 attention layers = 64 KiB/token = **8.0 GiB
+> per 128k**. The 2.0 was the q4_0 figure (18 KiB/token) for a cache type this box does not serve.
+> If the serving flags ever gain a KV quant this moves with them: q8_0 = 4.25, q4_0 = 2.25.
+
 > **Applied (2026-08-18):** added `qwen3.8-27b-abliterated` — an ABLITERATED Qwen3.8-27B
 > (Blackfrost, Q4_K_M + F16 projector, ~16.5 GiB) as an opt-in **red-team probe** for exercising
 > the sandbox's controls against a model that will not refuse. Same base weights as the aligned
@@ -366,7 +374,7 @@ top_k 40 / min_p 0.1. Hybrid rows show non-thinking → thinking.
 | Model (served) | temp | top_p | top_k | min_p | presence_penalty | source |
 |---|---|---|---|---|---|---|
 | qwen3-vl-30b-a3b (+q4) | 0.7 | 0.8 | 20 | 0 | 1.5 | Qwen VL card |
-| qwen3.8-27b (+q4/mtp) | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5→– | Qwen3.8 card |
+| qwen3.8-27b (+q4) | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5→– | Qwen3.8 card |
 | qwen3.8-27b-abliterated | 0.7→1.0 | 0.8→0.95 | 20 | 0 | 1.5→– | Qwen3.8 card (same base) |
 | qwen3-coder-next (+q8) | 1.0 | 0.95 | 40 | 0 | – | Qwen Coder card |
 | qwen3-30b-a3b | 0.7 | 0.8 | 20 | 0 | – | Qwen 30B-A3B (Instruct-2507) |

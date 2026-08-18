@@ -344,6 +344,39 @@ def test_complete_returns_output_and_resolved_model(debug_client: tuple[TestClie
     assert body["output_tokens"] == 5
 
 
+def test_complete_accepts_a_sampling_override(debug_client: tuple[TestClient, str]) -> None:
+    """The only way to vary sampling from this box at all.
+
+    Sampling is catalog-static per model with no settings key and no endpoint, so the whole
+    class of failure that is NOT a launch flag — degenerate repetition, a model that will not
+    stop, malformed tool-call blocks, the `min_p` trap the catalog warns about — could not be
+    A/B'd against a live model. Per-request and unpersisted: no reload, nothing outlives the
+    call."""
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/complete",
+        headers=_auth(key),
+        json={
+            "user_text": "hi",
+            "sampling": {"temperature": 0.1, "min_p": 0.0, "presence_penalty": 1.5},
+        },
+    )
+    assert resp.status_code == 200 and resp.json()["text"] == "echo:hi"
+
+
+def test_complete_rejects_a_mistyped_sampling_key(debug_client: tuple[TestClient, str]) -> None:
+    """422, never a silent drop — a caller who believes they set a knob and did not would
+    misread the very comparison they ran the call to make."""
+    client, key = debug_client
+    resp = client.post(
+        "/api/debug/complete",
+        headers=_auth(key),
+        json={"user_text": "hi", "sampling": {"temp": 0.1}},
+    )
+    assert resp.status_code == 422
+    assert "sampling" in resp.json()["detail"]
+
+
 def test_complete_maps_router_error_to_400(debug_client: tuple[TestClient, str]) -> None:
     client, key = debug_client
     resp = client.post(

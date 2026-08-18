@@ -39,6 +39,8 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import cast
 
+from jbrain.llm import local_catalog
+
 # Concrete, distinct upstream ports — llama-swap's ${PORT} macro isn't substituted
 # by every build, and the non-swapping group runs models concurrently so they can't
 # share a port. 127.0.0.1: llama-swap and llama-server share the container.
@@ -112,6 +114,38 @@ def unresolved_ids(root: str, models: Sequence[Mapping[str, object]]) -> tuple[s
                 missing.append(model_id)
                 break
     return tuple(missing)
+
+
+def _drop_operator_overridden(args: Sequence[str], operator_args: Sequence[str]) -> list[str]:
+    """Strip from a base command every flag the operator has also set (and its value), so the
+    operator's copy appended afterwards is the ONLY occurrence.
+
+    The invariant is #1152's, generalised: a command line carrying the same flag twice is
+    unreadable as a record of what is actually served, on a box whose only window into the
+    engine is that string. #1152 established that for `--image-min-tokens` alone, by making it
+    a field. But `-ub` and `--slot-save-path` are BOTH hardcoded in the shared command and on
+    `EXTRA_ARG_FLAGS`, so overriding either already emitted it twice and left the result
+    resting on llama.cpp taking the last one — true today, undocumented, and exactly what
+    #1152 refused to rely on. Doing it here instead of per-flag means the next flag added to
+    the allowlist inherits the guarantee rather than the bug.
+
+    A value is a following token that does not start with `-`, matching how the settings API
+    validates these args (every allowlisted flag takes one except the boolean `--swa-full`)."""
+    overridden = {a for a in operator_args if a.startswith("-")}
+    out: list[str] = []
+    skip_value = False
+    for token in args:
+        if token in overridden:
+            skip_value = True
+            continue
+        if skip_value:
+            # Consume the dropped flag's value, but never swallow the next flag: a boolean
+            # like `--swa-full` has no value to eat.
+            skip_value = False
+            if not token.startswith("-"):
+                continue
+        out.append(token)
+    return out
 
 
 def _is_speculative(extra_server_args: Sequence[str]) -> bool:
@@ -196,11 +230,19 @@ def render(
             "-fa",
             "1",
             "--no-mmap",
-            # Prompt-prefix KV reuse (docs/plans/LLM_PROMPT_CACHE_PLAN.md W2): keep the KV of
+            # Prompt-prefix KV reuse (docs/archive/LLM_PROMPT_CACHE_PLAN.md W2): keep the KV of
             # a matching leading prefix and salvage it via KV-shifting even after a later
             # divergence, so a stable system-prompt + history prefix isn't re-prefilled every
             # turn (the "slow first token"). 256 is the min chunk size worth reusing. Pairs
             # with W1's cache-stable message layout. A long-standing llama.cpp server flag.
+            #
+            # NOT a whole-model property on a hybrid, though this comment used to read as one: a
+            # recurrent state cannot be KV-shifted, so on `qwen35` this salvages the 16 attention
+            # layers
+            # while the other 48 Gated DeltaNet layers re-run regardless, from the nearest context
+            # checkpoint (see `--ctx-checkpoints` below). W1's stable layout is still a precondition
+            # —
+            # it just is not sufficient on its own here.
             "--cache-reuse",
             "256",
             # OBSERVABILITY, and it is not optional here. llama-server exposes whether a model
@@ -225,13 +267,33 @@ def render(
             # At Qwen3.8's 248k vocab the reserve now costs ~11 MiB, not gigabytes.
             "-ub",
             "1024",
-            # Per-slot context checkpoints, down from llama-server's default of 32. On a HYBRID
-            # (recurrent) model each checkpoint is a full copy of the SSM state — ~150 MiB for
-            # Qwen3.8 — because a recurrent state cannot be partially rewound, and they are
-            # device-resident. 32 of them is ~4.7 GiB per slot spent on rollback depth nothing
-            # here uses (llama.cpp #20145, #23371).
+            # Per-slot context checkpoints, down from llama-server's default of 32. Each is a full
+            # copy of the recurrent state on a HYBRID model — ~150 MiB for Qwen3.8, device-resident
+            # —
+            # so 32 of them is ~4.7 GiB per slot (llama.cpp #20145, #23371).
+            #
+            # This comment used to justify the 2 as reclaiming "rollback depth nothing here uses",
+            # which inverts what checkpoints are FOR on a hybrid. The clause above is the
+            # refutation:
+            # because a recurrent state cannot be partially rewound, a checkpoint is the ONLY way
+            # such
+            # a model resumes at any position other than 0 or the exact end of what it last
+            # processed.
+            # On an attention model prefix reuse is free (truncate the KV); on `qwen35` and the
+            # Nemotron
+            # Mamba-2 hybrids it is mediated ENTIRELY by these. So this is not spare rollback depth
+            # — it
+            # is the prefix-reuse budget, and 2 is close to none.
+            #
+            # Left at 2 deliberately: raising it trades device memory `footprint_gb` does not model
+            # for
+            # prefill latency, and which side wins is an empirical question about this box. It is on
+            # the
+            # extra-args allowlist so that question can be answered without a release. Do NOT raise
+            # it
+            # here on reasoning alone — measure first (docs/runbooks/STRIX_HALO_SETUP.md).
             "--ctx-checkpoints",
-            "2",
+            str(local_catalog.CTX_CHECKPOINTS),
             "-m",
             f"/models/{model_id}/{gguf}",
             "-ngl",
@@ -272,7 +334,10 @@ def render(
         if floor is not None:
             cmd += ["--image-min-tokens", str(floor)]
         cmd += catalog_args
-        # Operator overrides last, so they append to (never reorder) the catalog's own flags.
+        # Operator overrides last, so they append to (never reorder) the catalog's own flags —
+        # and anything they override is stripped from what came before, so each flag appears
+        # exactly once whether its value came from this module, the catalog, or the operator.
+        cmd = _drop_operator_overridden(cmd, operator_args)
         cmd += operator_args
         lines.append(f"  {m['served_model']}:")
         lines.append(f"    proxy: http://127.0.0.1:{port}")
@@ -324,10 +389,16 @@ def write(
     return path
 
 
-def _saved_overrides() -> tuple[dict[str, int], dict[str, int], dict[str, list[str]]]:
-    """The operator's SAVED per-model context-window, `-np` slot and extra-flag overrides from
-    the settings store (owner-scoped), so the DEPLOY re-stamp preserves them — the settings API
-    caller already passes overrides, and now the deploy caller does too.
+def _saved_overrides() -> tuple[
+    dict[str, int], dict[str, int], dict[str, list[str]], dict[str, int]
+]:
+    """The operator's SAVED per-model context-window, `-np` slot, extra-flag and image-floor
+    overrides from the settings store (owner-scoped), so the DEPLOY re-stamp preserves them —
+    the settings API caller already passes overrides, and now the deploy caller does too.
+
+    The image floor was missing from this tuple, so every Ops → Update reverted it to the catalog
+    value — the exact failure this function was written to stop, reproduced for the override kind
+    added after it. Load every kind here or the next one inherits the bug again.
 
     Without this the deploy regenerates the config from base catalog defaults on every update, so a
     raised window (e.g. qwen3.8-27b-q4 lifted to 128k) silently drops back to its 32k catalog `-c`
@@ -346,7 +417,9 @@ def _saved_overrides() -> tuple[dict[str, int], dict[str, int], dict[str, list[s
         from jbrain.queue import SYSTEM_CTX
         from jbrain.settings_store import SqlSettingsStore
 
-        async def _load() -> tuple[dict[str, int], dict[str, int], dict[str, list[str]]]:
+        async def _load() -> tuple[
+            dict[str, int], dict[str, int], dict[str, list[str]], dict[str, int]
+        ]:
             engine = create_async_engine(get_settings().database_url)
             try:
                 store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
@@ -354,6 +427,7 @@ def _saved_overrides() -> tuple[dict[str, int], dict[str, int], dict[str, list[s
                     await store.llm_local_context_windows(SYSTEM_CTX),
                     await store.llm_local_parallel_slots(SYSTEM_CTX),
                     await store.llm_local_extra_args(SYSTEM_CTX),
+                    await store.llm_local_image_min_tokens(SYSTEM_CTX),
                 )
             finally:
                 await engine.dispose()
@@ -361,11 +435,11 @@ def _saved_overrides() -> tuple[dict[str, int], dict[str, int], dict[str, list[s
         return asyncio.run(_load())
     except Exception as exc:  # noqa: BLE001 — never fail config gen on a settings-read hiccup
         print(
-            f"[llama-swap] could not load saved window/slot/flag overrides ({exc}); "
+            f"[llama-swap] could not load saved window/slot/flag/image-floor overrides ({exc}); "
             "using catalog defaults — the boot reconcile will correct it",
             file=sys.stderr,
         )
-        return {}, {}, {}
+        return {}, {}, {}, {}
 
 
 def _main(argv: list[str]) -> int:
@@ -391,15 +465,20 @@ def _main(argv: list[str]) -> int:
         return 2
     root = argv[0]
     models = json.loads(os.environ["MANIFEST"])
-    windows, slots, extra = _saved_overrides()
-    path = write(root, models, windows=windows, slots=slots, extra_args=extra)
+    windows, slots, extra, floors = _saved_overrides()
+    path = write(
+        root, models, windows=windows, slots=slots, extra_args=extra, image_min_tokens=floors
+    )
     applied = sum(
         1
         for m in models
-        if str(m["id"]) in windows or str(m["id"]) in slots or str(m["id"]) in extra
+        if str(m["id"]) in windows
+        or str(m["id"]) in slots
+        or str(m["id"]) in extra
+        or str(m["id"]) in floors
     )
     print(
-        f"wrote {path}: {len(models)} model(s), {applied} with a saved window/slot/flag override; "
+        f"wrote {path}: {len(models)} model(s), {applied} with a saved override; "
         "the app evicts to make room per load"
     )
     return 0

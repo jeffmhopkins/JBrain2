@@ -53,7 +53,7 @@ from jbrain.llm import LlmImage
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, UserMessage
+from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, Sampling, UserMessage
 from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
@@ -257,6 +257,15 @@ class CompleteRequest(BaseModel):
     strength: str | None = None
     json_schema: dict[str, Any] | None = None
     max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, ge=1, le=32768)
+    # Per-call sampling override, e.g. {"temperature": 0.1, "min_p": 0.0}. Merges over the
+    # model's catalog defaults exactly as a prompt's `config: sampling:` block does.
+    #
+    # The only way to vary sampling from this box at all. It is catalog-static per model with no
+    # settings key and no endpoint, so the whole class of failure that is NOT a launch flag —
+    # degenerate repetition, a model that will not stop, malformed tool-call blocks, the `min_p`
+    # trap the catalog itself warns about — could not be A/B'd against a live model. Per-request
+    # and unpersisted: no reload, and nothing here can outlive the call that set it.
+    sampling: dict[str, Any] | None = None
 
 
 class CompleteOut(BaseModel):
@@ -279,6 +288,12 @@ async def _run_completion(router_: LlmRouter, body: CompleteRequest) -> Complete
     if body.task is None and body.strength is None:
         strength = "high"
     try:
+        sampling = Sampling.from_mapping(body.sampling) if body.sampling else None
+    except ValueError as exc:
+        # 422, not a silent drop: a caller that believes it set a knob and did not would
+        # misread the very comparison it ran this call to make.
+        raise HTTPException(status_code=422, detail=f"bad sampling override: {exc}") from exc
+    try:
         provider, model = await router_.effective_spec(task, strength)
         result = await router_.complete(
             task,
@@ -287,6 +302,7 @@ async def _run_completion(router_: LlmRouter, body: CompleteRequest) -> Complete
             json_schema=body.json_schema,
             max_tokens=body.max_tokens,
             strength=strength,
+            sampling=sampling,
         )
     except LlmError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1241,7 +1257,9 @@ async def model_props(
 ) -> dict[str, object]:
     """llama-server's `/props` for one model: `build_info` (the only build identity available
     over HTTP — and this box rebuilds llama.cpp on master by default, so it changes), the real
-    `n_ctx`, and `total_slots`. Loads the model on demand if it isn't resident."""
+    `n_ctx`, and `total_slots`. REFUSES a model that is not already resident — reaching it
+    would make the gateway load it outside the residency budget, the path that froze this
+    host. Load it first (which evicts to make room), then read its props."""
     request.state.debug_detail = model_id
     return await llm_settings.gateway_props(model_id, settings, _gateway(request))
 

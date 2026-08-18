@@ -1,6 +1,6 @@
 # Owner debug console (assistant access for live prompt iteration)
 
-> **Status:** Living · **Last verified:** 2026-08-17
+> **Status:** Living · **Last verified:** 2026-08-18
 
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read
@@ -52,7 +52,7 @@ PWA (owner) ──mint──▶ capability token  ──hand off──▶  assis
 
 ## Launch-flag experiments (no terminal)
 
-Four routes exist so a llama-server **launch flag** can be tried, measured and reverted from the
+These routes exist so a llama-server **launch flag** can be tried, measured and reverted from the
 console, instead of needing a catalog edit, a release and an Ops → Update per iteration:
 
 - `PUT /api/debug/llm/local-models/{id}/extra-args` — set or clear extra flags for one model
@@ -61,12 +61,45 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   on an unknown flag, so an unrestricted argv here could make a model permanently unloadable
   from a box with no shell. Clearing is the same call with `{"args": []}` — and clearing does
   not need the model to be loadable, so a bad *value* is always recoverable. The list covers
-  `--swa-full`, `--slot-save-path`, `-b`/`-ub`, and the four speculative-decoding knobs
-  (`--spec-type`, `--spec-draft-n-max`, `--spec-draft-n-min`, `--spec-draft-p-min`) — those
+  `--swa-full`, `--slot-save-path`, `-b`/`-ub`, the four speculative-decoding knobs
+  (`--spec-type`, `--spec-draft-n-max`, `--spec-draft-n-min`, `--spec-draft-p-min`), the image
+  pair (`--image-min-tokens`, `--image-max-tokens`) and the cache pair (`--ctx-checkpoints`,
+  `--cache-reuse`) — those
   because their right values are empirical and hardware-specific, so without a live path a
   single tuning iteration would cost a catalog edit, a release and an Ops → Update. Setting
   `--spec-type` here also pins the model to one slot: the config generator derives that from
   the flags it is about to write, so an operator flag gets the same clamp a catalog flag does.
+  Also on the list: `-ngl` and `-fa` (the "is it the GPU?" bisect — fewer offloaded layers or
+  flash attention off, when a model emits garbage or dies on this iGPU) and
+  `--reasoning-format` (for `<think>` leaking into `content`, or an empty reasoning channel,
+  after a llama.cpp rebuild on master). `--no-mmap` is deliberately absent and cannot be added:
+  llama.cpp has no positive `--mmap`, so an entry could not undo the flag we already pass — it
+  would be a silent no-op, which is worse than an absent one.
+  **`-fa 0` is refused (422) on a model carrying a vision projector.** Turning flash attention
+  off swaps the CLIP attention workspace from the linear branch to the quadratic one — ~0.47 GB
+  to ~16 GB — and `_vision_resident_gb` hardcodes the linear figure, so the residency budget
+  would under-reserve by ~15.5 GB. The allocation lands on the first full-resolution image,
+  after the load guard passed and after the watchdog stopped watching, which is the
+  unrecoverable hang. The bisect stays available on text-only models; budgeting it properly
+  (threading the served `-fa` into `footprint_gb`) is what would lift the refusal.
+  **`--ctx-checkpoints` is the one exception to "a bad value is always recoverable"**, so it is
+  bounded to `0..8` server-side. A checkpoint on a hybrid is a full copy of the recurrent state
+  (~150 MiB for Qwen3.8), device-resident and per slot. `footprint_gb` budgets it at the SERVED
+  count (2), not at whatever you set here — so everything above that is unbudgeted and the
+  residency evictor cannot see it coming. llama.cpp's own default of `32` (the most likely
+  typo, since every upstream doc names it) would be ~4.7 GiB/slot of unbudgeted device memory on
+  a box whose documented failure mode is an unrecoverable host hang.
+- `POST /api/debug/complete` takes an optional `sampling` object (`{"temperature": 0.1,
+  "min_p": 0.0}`), merged over the model's catalog defaults exactly as a prompt's
+  `config: sampling:` block is. This is the ONLY way to vary sampling from the box: it is
+  catalog-static per model with no settings key and no endpoint, so repetition loops, a model
+  that will not stop, or malformed tool-call blocks could not otherwise be A/B'd against a live
+  model. Per-request and unpersisted — no reload, and nothing outlives the call. A mistyped key
+  is a 422, never a silent drop.
+- `GET /api/debug/llm` reports `local_llm_timeout_s`, the client-side ceiling on a local call.
+  REPORTED, not settable (it is env-only). It is here because it masquerades as a hung model: a
+  cold prefill at a large window can exceed it and the turn fails as a client timeout with
+  nothing saying the model was still working.
 - `PUT /api/debug/llm/local-models/{id}/context-window` — the served `-c`. On this surface
   because window and KV are one decision: `--swa-full` doubles a model's KV and halving the
   window pays for it exactly.

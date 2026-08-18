@@ -10,7 +10,10 @@ import contextlib
 from collections.abc import Collection, Sequence
 from typing import cast
 
+import pytest
+
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.llm import warm_keeper
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import LlmTool
@@ -31,17 +34,39 @@ class _FakeGateway:
         )
         self._saved = set(saved)  # filenames that exist on the gateway's slot-save path
         self.actions: list[tuple[str, str]] = []  # (action, filename)
+        self.slots: list[int] = []  # slot index each action targeted
+        self.events: list[str] = []  # load/restore/save/prime, in the order they happened
 
     async def running(self) -> set[str]:
         return set(self._running)
 
+    async def load(self, served_model: str, *, warm_system=None, warm_tools=None) -> None:
+        # The real load brings weights up and runs a one-token readiness probe. Passing no warm
+        # system/tools means it does NOT prefill the persona — the keeper relies on that, since
+        # prefilling here would spend the cost the restore exists to avoid.
+        assert warm_system is None and warm_tools is None
+        self.events.append("load")
+        self._running.add(served_model)
+
     async def props(self, served_model: str) -> dict:
+        if served_model not in self._running:
+            raise RuntimeError(f"{served_model} is not resident — refusing to read props")
         if not isinstance(self._props, dict):
             raise RuntimeError("props unavailable")
         return dict(self._props)
 
     async def slot_action(self, served_model, slot_id, action, *, filename=None):
         self.actions.append((action, str(filename)))
+        self.slots.append(slot_id)
+        self.events.append(action)
+        if served_model not in self._running:
+            # llama-server has no slots for a model it has not loaded, and the gateway refuses
+            # to reach a cold one rather than loading it outside the residency budget.
+            raise RuntimeError(f"{served_model} is not resident — refusing a slot {action}")
+        # llama-server serves slots 0..total_slots-1; anything else is not a slot.
+        total = self._props.get("total_slots", 1) if isinstance(self._props, dict) else 1
+        if not 0 <= slot_id < int(total):
+            raise RuntimeError(f"invalid slot {slot_id} (server has {total})")
         if action == "restore" and filename not in self._saved:
             raise RuntimeError("no such state file")
         if action == "save":
@@ -51,15 +76,32 @@ class _FakeGateway:
 
 
 class _FakeRouter:
-    def __init__(self, served: str | None):
+    def __init__(self, served: str | None, gateway: "_FakeGateway | None" = None):
         self._served = served
         self.converses: list[dict[str, object]] = []
         self.fail = False
+        self.admitted: list[str] = []
+        # Set for the no-coordinator configuration, where admission is inert and the keeper
+        # has to do the load itself.
+        self.admit_without_loading = False
+        # Shared so the prime can be ordered against the load/restore the gateway records.
+        self._gateway = gateway
 
     async def primary_local_served_model(self) -> str | None:
         return self._served
 
+    async def admit_local_load(self, served_model: str) -> None:
+        # The REAL one loads. `ensure_room` takes the slow path for a non-resident target and
+        # calls `gateway.load` itself, so admission and load are one step in production. A fake
+        # that only recorded the call hid a double load in the keeper for exactly one review
+        # cycle; model the behaviour, not the signature.
+        self.admitted.append(served_model)
+        if self._gateway is not None and not self.admit_without_loading:
+            await self._gateway.load(served_model)
+
     async def converse(self, task: str, *, system: str, messages, tools=(), max_tokens=4096):
+        if self._gateway is not None:
+            self._gateway.events.append("prime")
         if self.fail:
             raise RuntimeError("gateway cold")
         self.converses.append({"task": task, "system": system, "tools": list(tools)})
@@ -346,7 +388,12 @@ async def test_auto_restore_off_stops_the_keeper_loading_a_model_that_is_gone() 
     g = _FakeGateway(running=set())
     k = _keeper(router=r, gateway=g, auto_restore=False)
     assert await k.reconcile_once() is True
-    assert r.converses == []  # nothing loaded, nothing primed
+    assert r.converses == []  # nothing primed
+    # And nothing LOADED. The keeper now brings weights up itself before restoring a saved
+    # prefix, so this gate has to sit in front of that too — an operator who switches automatic
+    # reloading off and watches a 68 GiB model reappear anyway has been told something untrue.
+    assert g.events == []
+    assert r.admitted == []
 
 
 async def test_auto_restore_off_still_primes_a_model_that_is_already_resident() -> None:
@@ -368,3 +415,149 @@ async def test_an_auto_restore_read_failure_leaves_the_keeper_working() -> None:
     k = _keeper(router=r, gateway=g, auto_restore=RuntimeError("settings down"))
     assert await k.reconcile_once() is True
     assert len(r.converses) == 1
+
+
+async def test_the_prefix_is_saved_into_a_slot_that_exists_on_a_single_slot_model() -> None:
+    """The regression that made the whole disk KV cache inert on the interactive model.
+
+    The slot index was hardcoded to 1, which is right only at `-np 2`. But `-np` is 1 unless the
+    operator raised it, and the config generator clamps any `--spec-type` model to 1 regardless —
+    and every Qwen3.8 entry serves `--spec-type draft-mtp`. So on the model the owner actually
+    waits on, slot 1 did not exist: save and restore both raised, both call sites swallow, and
+    the cache was silently never written. The symptom was a cold prefill on every restart with
+    nothing in the log to say why."""
+    gw = _FakeGateway(
+        props={"build_info": "b1-abc", "chat_template": "T", "total_slots": 1},
+    )
+    keeper = _keeper(gateway=gw, router=_FakeRouter("qwen3.8-27b-q4"))
+    assert await keeper.reconcile_once() is True
+    assert [a for a, _ in gw.actions] == ["restore", "save"]
+    # Every action targeted slot 0 — the only slot a single-slot server has.
+    assert gw.slots == [0, 0]
+    # And the save actually landed, rather than being swallowed as "skipped".
+    assert any(a == "save" for a, _ in gw.actions)
+    assert gw._saved
+
+
+async def test_the_prefix_still_uses_the_last_slot_when_a_second_one_is_configured() -> None:
+    """The behaviour the hardcoded 1 was right about, preserved. With `-np 2` llama-server routes
+    by longest matching prefix, so the interactive prefix belongs in the LAST slot and slot 0
+    stays free for background traffic (verified on the box)."""
+    gw = _FakeGateway(props={"build_info": "b1-abc", "chat_template": "T", "total_slots": 2})
+    keeper = _keeper(gateway=gw, router=_FakeRouter("gpt-oss-120b"))
+    assert await keeper.reconcile_once() is True
+    assert gw.slots and set(gw.slots) == {1}
+
+
+def test_the_interactive_slot_is_the_last_one_and_degrades_to_zero() -> None:
+    """Derived from what the engine reports, never guessed. A missing or junk `total_slots`
+    falls back to slot 0, which every running model has — a miss, never a wrong slot."""
+    assert warm_keeper._interactive_slot(1) == 0
+    assert warm_keeper._interactive_slot(2) == 1
+    assert warm_keeper._interactive_slot(4) == 3
+    assert warm_keeper._interactive_slot(None) == 0
+    assert warm_keeper._interactive_slot("two") == 0
+    assert warm_keeper._interactive_slot(0) == 0  # never negative
+
+
+async def test_a_cold_model_is_loaded_before_the_restore_so_the_disk_cache_can_fire() -> None:
+    """The cold start is the case this disk cache exists for, and it was the one case it could
+    not serve.
+
+    A restore needs slots to restore into, and a cold model has none — `props` and `slot_action`
+    both refuse a non-resident model on purpose, since reaching them through the passthrough
+    would make llama-swap load it outside the residency budget. But the priming completion was
+    what loaded the model, and the restore ran before it. So on a cold box the restore never
+    even attempted: it failed at `props`, returned None, and every restart paid a full cold
+    prefill while the runbook said the prefix was persisted and restored."""
+    gw = _FakeGateway(running=())  # cold box, no saved state
+    router = _FakeRouter("qwen3.8-27b-q4", gateway=gw)
+    keeper = _keeper(gateway=gw, router=router)
+    assert await keeper.reconcile_once() is True
+    # Weights first, then the slot work, then the prime that reuses it.
+    assert gw.events[0] == "load"
+    assert gw.events.index("load") < gw.events.index("prime")
+    # Admission ran before the load — the keeper must not co-load past the memory budget.
+    assert router.admitted == ["qwen3.8-27b-q4"]
+    # And the restore was actually ATTEMPTED, which is the whole point: reaching `slot_action`
+    # at all means `_slot_target` got its props, which means the model was resident by then. On
+    # the old ordering props raised on the cold model, `_slot_target` returned None, and no slot
+    # call was ever made — so this list would not contain "restore" at all.
+    assert "restore" in gw.events
+    assert gw.events.index("restore") > gw.events.index("load")
+    # A slot was computed from the ENGINE's own total_slots (2 in this fixture → the last one),
+    # rather than guessed — which is the other half of why the restore can now land.
+    assert gw.slots and set(gw.slots) == {1}
+
+
+async def test_a_cold_start_restores_a_saved_prefix_instead_of_prefilling_it() -> None:
+    """End to end: with a state file already on disk, a cold reconcile restores it before the
+    prime, so the prime is the cheap confirmation rather than the expensive prefill."""
+    gw = _FakeGateway(running=())
+    router = _FakeRouter("qwen3.8-27b-q4", gateway=gw)
+    keeper = _keeper(gateway=gw, router=router)
+    # First pass on an empty box: nothing to restore, so it primes and SAVES.
+    assert await keeper.reconcile_once() is True
+    saved_names = {name for action, name in gw.actions if action == "save"}
+    assert saved_names, "a cold prime must persist its prefix for the next boot"
+    # Now simulate the next boot: same fingerprint, model cold again, keeper state reset.
+    gw2 = _FakeGateway(running=(), saved=tuple(saved_names))
+    router2 = _FakeRouter("qwen3.8-27b-q4", gateway=gw2)
+    keeper2 = _keeper(gateway=gw2, router=router2)
+    assert await keeper2.reconcile_once() is True
+    # The restore HIT, so nothing was re-saved — the prefill was skipped, not repeated.
+    assert ("restore", next(iter(saved_names))) in gw2.actions
+    assert not [a for a, _ in gw2.actions if a == "save"]
+
+
+async def test_a_failed_preload_still_reaches_the_prime_rather_than_short_circuiting() -> None:
+    """Best-effort: a preload failure must not skip the prime, so the outcome is decided by the
+    same path that decided it before this reordering.
+
+    Note what this does NOT claim. In production the usual cause — no room — fails the prime
+    too, because `converse` calls the same `ensure_room`; the reconcile then returns False and
+    retries, as it always did. What is pinned here is only that the keeper still ATTEMPTS the
+    prime, i.e. the preload is not a new early exit."""
+
+    class _NoRoomRouter(_FakeRouter):
+        async def admit_local_load(self, served_model: str) -> None:
+            raise RuntimeError("no room")
+
+    gw = _FakeGateway(running=())
+    router = _NoRoomRouter("qwen3.8-27b-q4", gateway=gw)
+    keeper = _keeper(gateway=gw, router=router)
+    await keeper.reconcile_once()
+    assert "prime" in gw.events  # the prime was reached
+    assert "load" not in gw.events  # admission refused, so no load was attempted
+
+
+async def test_a_failed_slot_save_is_swallowed_but_carries_its_reason(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The swallow is deliberate — no `--slot-save-path`, no disk, no permission is a benign
+    gateway, not a broken keeper. But it is also what hid an always-invalid slot index for as
+    long as the index was hardcoded, so the log line has to name the cause.
+
+    Nothing exercised this arm, which meant the `error=` added for exactly that reason was
+    itself unverified."""
+
+    class _SaveFails(_FakeGateway):
+        async def slot_action(self, served_model, slot_id, action, *, filename=None):
+            if action == "save":
+                raise RuntimeError("no --slot-save-path on this gateway")
+            return await super().slot_action(served_model, slot_id, action, filename=filename)
+
+    gw = _SaveFails(running=())
+    keeper = _keeper(gateway=gw, router=_FakeRouter("qwen3.8-27b-q4", gateway=gw))
+    assert await keeper.reconcile_once() is True  # a failed save is never fatal
+    # structlog writes straight to stdout here rather than through stdlib logging, so this
+    # reads the rendered line rather than caplog's records. The RENDERER differs by
+    # environment — key=value from the console renderer locally, JSON in CI — so assert on
+    # both spellings rather than on whichever one this machine happens to produce.
+    logged = capsys.readouterr().out
+    assert "slot_save_skipped" in logged, "a swallowed save must still be logged"
+    # The CAUSE, so a benign gateway is distinguishable from a broken keeper...
+    assert "no --slot-save-path" in logged
+    # ...and which slot it tried, which is what would have made the hardcoded index obvious.
+    compact = logged.replace(" ", "")  # spacing differs between renderers too
+    assert "slot=1" in compact or '"slot":1' in compact

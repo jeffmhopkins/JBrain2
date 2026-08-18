@@ -322,6 +322,17 @@ class LlmRouter:
         if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:
             await self._residency.ensure_room(model)
 
+    async def admit_local_load(self, served_model: str) -> None:
+        """Make room for a local model a CALLER is about to load itself, through the same
+        admission a routed completion gets.
+
+        For the warm keeper, which must bring weights up before it can restore a saved KV slot
+        (a cold model has no slots to restore into) and so cannot let the priming completion be
+        what loads it. Without this it would either skip admission — co-loading past the
+        unified-memory budget, on a box that hard-locks when that happens — or reach into
+        `_admit_local`, which is the same bypass with extra steps."""
+        await self._admit_local(local_catalog.LOCAL_PROVIDER, served_model)
+
     def _resolve(self, task: str, strength: str | None) -> tuple[str, str]:
         """Precedence: an explicit per-task pin (JBRAIN_LLM_TASKS) wins; else the
         prompt's capability tier (`strength`); else the task default. So a prompt

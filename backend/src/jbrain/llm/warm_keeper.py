@@ -51,10 +51,30 @@ from jbrain.llm.types import LlmTool, UserMessage
 
 log = structlog.get_logger()
 
-# The slot the jerv prefix is restored into and saved from. With `-np 2` llama-server routes
-# by longest matching prefix and the interactive prefix lands in slot 1 (verified on the box);
-# slot 0 stays empty for background traffic. A wrong guess costs a miss, never a wrong answer.
-_INTERACTIVE_SLOT = 1
+
+def _interactive_slot(total_slots: object) -> int:
+    """Which slot the jerv prefix is saved from and restored into, from what the ENGINE says it
+    actually allocated (`/props` → `total_slots`).
+
+    The LAST slot: with `-np 2` llama-server routes by longest matching prefix, so the
+    interactive prefix lands in slot 1 and slot 0 stays free for background traffic (verified on
+    the box). That is what this used to hardcode — as a bare `1`.
+
+    Which was wrong for every model the box actually serves interactively. `-np` is 1 unless the
+    operator raised it, and `llama_swap_config` CLAMPS any `--spec-type` model to 1 regardless of
+    what they saved. Every Qwen3.8 entry serves `--spec-type draft-mtp`, so on the interactive
+    model **slot 1 does not exist**: every save and restore raised, and both call sites swallow
+    their exceptions, so the disk KV cache was silently never written and never read. No error,
+    no log line saying why — just a cold prefill on every restart, on the one model the owner
+    waits on.
+
+    Deriving it keeps the verified last-slot behaviour at `-np 2` and fixes the single-slot case.
+    Falls back to 0, which always exists — a wrong guess costs a miss, never a wrong answer."""
+    try:
+        return max(0, int(total_slots) - 1)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
 
 # The task the prime routes as — the interactive chat turn (jerv). Priming as this exact task
 # is what makes the primed prefix (model, effort, tools) match a real turn's, so the reuse lands.
@@ -141,7 +161,8 @@ class WarmKeeper:
             running = await self._gateway.running()
         except Exception:  # noqa: BLE001 — running() already swallows, but be defensive
             running = set()
-        if served not in running:
+        cold = served not in running
+        if cold:
             self._primed = None  # evicted (or never loaded) → the cache no longer holds our prime
             if not await self._auto_restore_allowed():
                 # Off: the operator asked for nothing to be loaded behind their back. SETTLED,
@@ -163,6 +184,39 @@ class WarmKeeper:
         # safe, because a restore that silently did nothing (the SWA failure mode, and any
         # stale-but-loadable file) is simply a slow prime, never a wrong answer. We never trust
         # the restore's own 200; we let the prefill be the proof.
+        # Bring the WEIGHTS up before attempting the restore, when the model is cold. A
+        # restore needs slots to restore into, and a cold model has none: `slot_action` and
+        # `props` both refuse a non-resident model (deliberately — reaching them through the
+        # passthrough would make llama-swap load it outside the residency budget, the path that
+        # froze this host). So while the priming completion below was what loaded the model, the
+        # restore above it could only ever fire for an already-resident one — and the cold start
+        # this disk cache exists for was precisely the case it could not serve.
+        #
+        # Admission FIRST, through the same coordinator a routed completion goes through — and
+        # in the wired configuration that is already the load: `ensure_room` takes the slow path
+        # for a non-resident target and calls `gateway.load` itself. So we re-read residency
+        # afterwards and only load explicitly if the model is still cold (no coordinator wired).
+        #
+        # Loading unconditionally here was a DOUBLE load. The second one re-runs
+        # `refuse_if_no_device_room` against a post-load sample — the model's own footprint is
+        # already subtracted from free GTT — so it demands roughly twice the footprint plus the
+        # headroom floor and raises on a box that is perfectly healthy. That lands a spurious
+        # "refusing to load rather than risk freezing the host" in the exact log an operator
+        # reads while investigating hard-locks, and in the narrow case where the pre-flight
+        # passes and the watchdog then trips, its abort UNLOADS the model we just loaded.
+        #
+        # Whichever path brings it up, it comes up WITHOUT a warm system/tools, so no persona
+        # prefill happens here — that is the point, since prefilling would spend the cost the
+        # restore exists to avoid.
+        #
+        # Best-effort: on failure fall through to the prime, which is exactly the old behaviour.
+        if cold:
+            try:
+                await self._router.admit_local_load(served)
+                if served not in await self._gateway.running():
+                    await self._gateway.load(served)
+            except Exception as exc:  # noqa: BLE001 — no room / gateway down: the prime retries
+                log.info("warm_keeper.preload_failed", model=served, error=str(exc))
         restored = await self._try_restore(served, system, tools)
         # Prime down the real turn path: resolves agent.turn's model+effort, admits through
         # residency (loading the model if needed), and prefills the exact persona+tools prefix a
@@ -192,12 +246,15 @@ class WarmKeeper:
             await self._try_save(served, system, tools)
         return True
 
-    async def _slot_filename(
+    async def _slot_target(
         self, served_model: str, system: str, tools: list[LlmTool]
-    ) -> str | None:
-        """The state file this exact prefix, build and day would use — or None when the gateway
-        cannot tell us what it is running. Best-effort: no props, no fingerprint, no restore
-        (and so a normal cold prime), which is the correct way to fail."""
+    ) -> tuple[str, int] | None:
+        """The state file this exact prefix, build and day would use, AND the slot it belongs in
+        — or None when the gateway cannot tell us what it is running. Best-effort: no props, no
+        fingerprint, no restore (and so a normal cold prime), which is the correct way to fail.
+
+        Both come from the same `props` call because they must agree: the slot count is already
+        part of the fingerprint, so a file saved under one `-np` is not restored under another."""
         try:
             props = await self._gateway.props(served_model)
         except Exception:  # noqa: BLE001 — a props hiccup must not break the reconcile
@@ -212,36 +269,46 @@ class WarmKeeper:
             n_slots=props.get("total_slots"),
             today_utc=dt.datetime.now(dt.UTC).strftime("%Y-%m-%d"),
         )
-        return jerv_slot_filename(served_model, fingerprint)
+        return jerv_slot_filename(served_model, fingerprint), _interactive_slot(
+            props.get("total_slots")
+        )
 
     async def _try_restore(self, served_model: str, system: str, tools: list[LlmTool]) -> bool:
         """Load this prefix's saved KV into the interactive slot. True only means the bytes
         loaded — the prime that follows is what establishes they were USEFUL."""
-        name = await self._slot_filename(served_model, system, tools)
-        if name is None:
+        target = await self._slot_target(served_model, system, tools)
+        if target is None:
             return False
+        name, slot = target
         try:
-            result = await self._gateway.slot_action(
-                served_model, _INTERACTIVE_SLOT, "restore", filename=name
-            )
+            result = await self._gateway.slot_action(served_model, slot, "restore", filename=name)
         except Exception:  # noqa: BLE001 — a miss is the common case on a fresh box, not an error
             return False
-        log.info("warm_keeper.slot_restored", model=served_model, tokens=result.get("n_restored"))
+        log.info(
+            "warm_keeper.slot_restored",
+            model=served_model,
+            slot=slot,
+            tokens=result.get("n_restored"),
+        )
         return True
 
     async def _try_save(self, served_model: str, system: str, tools: list[LlmTool]) -> None:
         """Persist the just-primed slot so the next cold start skips the prefill."""
-        name = await self._slot_filename(served_model, system, tools)
-        if name is None:
+        target = await self._slot_target(served_model, system, tools)
+        if target is None:
             return
+        name, slot = target
         try:
-            result = await self._gateway.slot_action(
-                served_model, _INTERACTIVE_SLOT, "save", filename=name
-            )
-        except Exception:  # noqa: BLE001 — no --slot-save-path, no disk, no permission: skip
-            log.info("warm_keeper.slot_save_skipped", model=served_model)
+            result = await self._gateway.slot_action(served_model, slot, "save", filename=name)
+        except Exception as exc:  # noqa: BLE001 — no --slot-save-path, no disk, no permission
+            # Carry the reason. This swallow hid a targeted slot that did not exist for as long
+            # as the index was hardcoded, and "skipped" alone gives the next reader nothing to
+            # tell a benign cause from a broken one.
+            log.info("warm_keeper.slot_save_skipped", model=served_model, slot=slot, error=str(exc))
             return
-        log.info("warm_keeper.slot_saved", model=served_model, tokens=result.get("n_saved"))
+        log.info(
+            "warm_keeper.slot_saved", model=served_model, slot=slot, tokens=result.get("n_saved")
+        )
 
     async def run(self) -> None:
         """The reconcile loop: settle, then sleep — short while still trying to reach a wanted
