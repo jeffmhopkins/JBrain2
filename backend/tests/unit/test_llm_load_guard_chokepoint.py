@@ -167,10 +167,26 @@ def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> 
     at_window = local_catalog.footprint_gb(vision, vision.context_window)
     assert at_window > local_catalog.load_footprint_gb(vision)
 
-    # A text-only entry pays neither term, and its two figures agree exactly.
-    assert local_catalog.footprint_gb(
+    # A text-only entry pays no vision term — but it is not the case that its two figures agree
+    # exactly, because context checkpoints are a SECOND resident-but-not-load cost, and for the
+    # same reason as the vision peak: they do not exist when the model loads. llama.cpp creates
+    # them as context is processed, bounded by `--ctx-checkpoints`, and they then persist. So the
+    # eviction budget must carry them and the load reservation must not.
+    #
+    # (If a measurement ever shows llama.cpp preallocating them at load, this is the assertion
+    # that should move — put the term in `load_footprint_gb` too and restore the equality.)
+    resident_only = local_catalog.footprint_gb(
         text_only, text_only.context_window
-    ) == local_catalog.load_footprint_gb(text_only)
+    ) - local_catalog.load_footprint_gb(text_only)
+    assert resident_only == pytest.approx(
+        text_only.checkpoint_gb * local_catalog.CTX_CHECKPOINTS, abs=0.01
+    )
+    # An entry with no checkpoint cost of its own DOES still agree exactly — which is what
+    # isolates the claim above to the checkpoints rather than to some other drift.
+    no_checkpoints = replace(text_only, checkpoint_gb=0.0)
+    assert local_catalog.footprint_gb(
+        no_checkpoints, no_checkpoints.context_window
+    ) == local_catalog.load_footprint_gb(no_checkpoints)
 
 
 def test_the_vision_workspace_is_the_measured_flash_attention_branch() -> None:
