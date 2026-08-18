@@ -490,11 +490,24 @@ Three things this settles:
 setting (1.81-2.02 tok/step), so treat them as tied and keep the default. Single samples per
 cell; re-measure before acting on any difference this small.
 
-The context effect keeps going. At ~25k tokens — most of the 32k window — n-max 5 reached
-**3.226 tokens/step at 20.35 t/s**, the highest acceptance measured anywhere, against 2.685 at
-~8.6k and 2.075 at ~30 tokens. Acceptance rises monotonically with context across every
-setting tested. If the routine workload is long-context, n-max 5 is worth re-measuring against
-the default rather than assumed equal to it.
+The context effect keeps going, and it does not separate 3 from 5. At ~25k tokens — most of
+the 32k window — both land in the same place:
+
+| `--spec-draft-n-max` | tok/step @ ~25k | t/s |
+|---|---|---|
+| 3 (default) | 3.150 | 20.10 |
+| 5 | 3.226 | 20.35 |
+
+Acceptance rises monotonically with context at every setting tested (2.075 → 2.685 → 3.150 for
+the default, at ~30 / ~8.6k / ~25k), but the two settings stay within 1% of each other at the
+long end. Nothing here argues for moving off the default.
+
+Measure with a WARM prefix. `n_decode_total` counts every `llama_decode()` call, prompt
+processing included, so a cold 25k prefill adds ~20 batches to the denominator and understates
+tokens/step. Send the request once to populate the prefix cache, then measure the second one.
+A cold 25k prefill also takes ~270s at ~92 t/s prompt throughput — long enough that a client
+timeout will report zero tokens against a nonzero decode count, which looks like a generation
+failure and is not one.
 
 ### Tuning MTP without a release
 
