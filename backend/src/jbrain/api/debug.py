@@ -1105,7 +1105,12 @@ class HostMetricsOut(BaseModel):
 
 # A long argv (a llama-server command line) would bloat the readout; the model
 # path that distinguishes processes is near the front, so a generous head is enough.
-_CMD_MAX = 200
+# The llama-server command line reaches ~200 chars BEFORE its per-model flags begin, so a
+# 200-char cap silently hid every catalog `extra_server_args` — --spec-type draft-mtp,
+# --image-min-tokens, --mmproj. Reading this field to check which flags were served showed a
+# command that looked flagless, which cost real debugging time chasing speculation that was
+# in fact enabled. The whole point of surfacing the command is seeing the tail.
+_CMD_MAX = 512
 
 
 @router.get("/host")

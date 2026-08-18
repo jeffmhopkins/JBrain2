@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import pathlib
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -154,8 +155,11 @@ def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> 
     vision_attn_buffer_gb); what matters is the direction, so this asserts ordering rather
     than a magnitude that would have to move if `-fa` ever came off."""
     vision = local_catalog.get("qwen3.8-27b-q4")
-    text_only = local_catalog.get("qwen3.8-27b-mtp")
-    assert vision is not None and text_only is not None
+    assert vision is not None
+    # The control is this same entry with the projector stripped, which isolates exactly one
+    # variable. A different model would vary weights and context window too — gpt-oss, the
+    # obvious candidate, has a resident-vs-load gap of its own from KV growth.
+    text_only = replace(vision, mmproj_include=None, supports_vision=False)
     assert vision.mmproj_include and not text_only.mmproj_include
 
     # The peak lands in the RESIDENT figure, which is what the eviction budget consults, and
@@ -185,10 +189,14 @@ def test_the_vision_workspace_is_the_measured_flash_attention_branch() -> None:
 
 
 def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:
-    """The MTP entry measured ~19.5 GiB on this hardware while the catalog predicted 16.4 —
-    weights and KV alone, with the f16 KV under-counted as q4_0 and every runtime term missing.
-    Pinned here because that gap is what made the load guard optimistic about the one model the
-    box is meant to run all day."""
+    """Served TEXT-ONLY, this entry measured 19.50 GiB on the box against 19.45 predicted
+    (0.26%). The catalog had said 16.4 — weights and KV alone, with the f16 KV under-counted as
+    q4_0 and every runtime term missing. That gap is what made the load guard optimistic about
+    the one model the box is meant to run all day, so the text-only arithmetic is pinned here.
+
+    Text-only is also what ships: giving this entry a projector froze the box twice, once with
+    105 GiB free, so memory is not the explanation and an MTP-beside-mmproj interaction has
+    never been ruled out."""
     mtp = local_catalog.get("qwen3.8-27b-mtp")
     assert mtp is not None
     assert mtp.is_speculative
@@ -196,37 +204,51 @@ def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:
     assert 19.0 <= predicted <= 20.0, predicted
 
 
-def test_spec_counters_are_parsed_by_substring_not_exact_name() -> None:
-    """The accept rate is the number that says whether speculation is earning its keep.
-
-    Matched by substring because llama.cpp renames these between builds and this box tracks
-    master; a build that moves a metric should report less, never 500."""
+def test_spec_numbers_are_derived_when_the_build_has_no_draft_counters() -> None:
+    """The build this box runs exposes NO draft/accept counters, so the speedup has to be
+    derived from decode totals: tokens emitted per forward pass. On a bandwidth-bound box that
+    ratio IS the speedup, and 1.0 means speculation is doing nothing."""
     from jbrain.llm.local_gateway import parse_spec_counters
 
     text = "\n".join(
         [
-            "# HELP llamacpp:n_draft_total drafted",
-            "llamacpp:n_draft_total 400",
-            'llamacpp:n_draft_accepted_total{slot="0"} 260',
-            "llamacpp:n_decode_total 999",  # not a spec counter — must be ignored
-            "malformed_draft_line not_a_number",
+            "# HELP llamacpp:n_decode_total decodes",
+            "llamacpp:n_decode_total 163",
+            "llamacpp:tokens_predicted_total 400",
+            "llamacpp:tokens_predicted_seconds_total 19.2",
+            "llamacpp:prompt_tokens_total 8600",
         ]
     )
     got = parse_spec_counters(text)
-    assert got["llamacpp:n_draft_total"] == 400.0
-    assert got["llamacpp:n_draft_accepted_total"] == 260.0
-    assert got["accept_rate"] == 0.65
-    assert "llamacpp:n_decode_total" not in got
-    assert "malformed_draft_line" not in got
+    assert got["tokens_per_step"] == round(400 / 163, 4)
+    assert got["tokens_per_second"] == round(400 / 19.2, 3)
 
 
-def test_spec_counters_on_a_build_that_exposes_none() -> None:
-    """A non-speculative model, or a build without the counters, is an empty dict — not an
-    error, and no accept_rate invented from a missing half."""
+def test_derived_numbers_are_absent_rather_than_divided_by_zero() -> None:
+    """A freshly restarted server has zero decodes. Reporting nothing beats reporting a
+    fabricated ratio, and must never raise."""
     from jbrain.llm.local_gateway import parse_spec_counters
 
-    assert parse_spec_counters("llamacpp:n_decode_total 12\n# nothing speculative here") == {}
-    assert "accept_rate" not in parse_spec_counters("llamacpp:n_draft_total 0")
+    got = parse_spec_counters("llamacpp:n_decode_total 0\nllamacpp:tokens_predicted_total 0")
+    assert "tokens_per_step" not in got
+    assert "tokens_per_second" not in got
+    assert parse_spec_counters("") == {}
+    assert parse_spec_counters("garbage\nllamacpp:n_decode_total not_a_number") == {}
+
+
+def test_real_draft_counters_are_still_passed_through_if_a_build_grows_them() -> None:
+    """Matched by SUBSTRING, not exact name: llama.cpp renames metrics and this box tracks
+    master, so a build that adds them should surface them without a code change."""
+    from jbrain.llm.local_gateway import parse_spec_counters
+
+    got = parse_spec_counters(
+        "llamacpp:n_draft_total 400\n"
+        'llamacpp:n_draft_accepted_total{slot="0"} 260\n'
+        "llamacpp:n_decode_total 100\n"
+        "llamacpp:tokens_predicted_total 200"
+    )
+    assert got["accept_rate"] == 0.65
+    assert got["tokens_per_step"] == 2.0
 
 
 @pytest.mark.anyio
