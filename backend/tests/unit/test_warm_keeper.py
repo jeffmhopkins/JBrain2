@@ -551,10 +551,13 @@ async def test_a_failed_slot_save_is_swallowed_but_carries_its_reason(
     keeper = _keeper(gateway=gw, router=_FakeRouter("qwen3.8-27b-q4", gateway=gw))
     assert await keeper.reconcile_once() is True  # a failed save is never fatal
     # structlog writes straight to stdout here rather than through stdlib logging, so this
-    # reads the rendered line rather than caplog's records.
+    # reads the rendered line rather than caplog's records. The RENDERER differs by
+    # environment — key=value from the console renderer locally, JSON in CI — so assert on
+    # both spellings rather than on whichever one this machine happens to produce.
     logged = capsys.readouterr().out
     assert "slot_save_skipped" in logged, "a swallowed save must still be logged"
     # The CAUSE, so a benign gateway is distinguishable from a broken keeper...
     assert "no --slot-save-path" in logged
     # ...and which slot it tried, which is what would have made the hardcoded index obvious.
-    assert "slot=1" in logged
+    compact = logged.replace(" ", "")  # spacing differs between renderers too
+    assert "slot=1" in compact or '"slot":1' in compact

@@ -355,10 +355,14 @@ def test_config_write_runs_as_root() -> None:
         DEPLOY.parent / "scripts" / "local-llm-setup.sh",
     )
     # Match the invocation, not a comment that merely mentions the module — and not the
-    # `--check` PREFLIGHT, which only resolves globs to decide what still needs downloading.
-    # It writes nothing, so it correctly runs as the ordinary api user. This used to take the
-    # FIRST match, which silently became the preflight when that was added ahead of the write
-    # (PR #1141) — so the assertion moved off the line it exists to guard and started failing
+    # `--check` PREFLIGHT, which only resolves globs to decide what still needs
+    # downloading.
+    # It writes nothing, so it correctly runs as the ordinary api user. This used to
+    # take the
+    # FIRST match, which silently became the preflight when that was added ahead of the
+    # write
+    # (PR #1141) — so the assertion moved off the line it exists to guard and started
+    # failing
     # on a script that was, and is, correct.
     needle = "python -m jbrain.llm.llama_swap_config"
     for script in scripts:
