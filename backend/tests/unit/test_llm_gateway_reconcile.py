@@ -206,3 +206,45 @@ async def test_on_boot_reconcile_is_inert_when_local_hosting_is_off(tmp_path: Pa
         CTX,
     )
     assert changed is False
+
+
+async def test_on_boot_reconcile_carries_every_override_kind_through(tmp_path: Path) -> None:
+    """The boot wiring itself, end to end — not just `reconcile_gateway_config` called directly.
+
+    This is the path that made a launch-flag experiment silently revert on the next restart: it
+    loaded windows and slots only, so `desired` could never match a config carrying an operator
+    flag or a raised image floor, and every boot re-stamped both away. The mechanism was covered
+    by calling `reconcile_gateway_config` with the new kwargs; the wiring that FEEDS it was not,
+    so a regression in this function would have gone unnoticed."""
+    _lay_down(tmp_path)
+
+    class _Store:
+        async def llm_local_context_windows(self, _ctx: object) -> dict[str, int]:
+            return {"gpt-oss-120b": 65536}
+
+        async def llm_local_parallel_slots(self, _ctx: object) -> dict[str, int]:
+            return {}
+
+        async def llm_local_extra_args(self, _ctx: object) -> dict[str, list[str]]:
+            return {"gpt-oss-120b": ["--ctx-checkpoints", "8"]}
+
+        async def llm_local_image_min_tokens(self, _ctx: object) -> dict[str, int]:
+            return {"qwen3-vl-30b": 4096}
+
+    settings = SimpleNamespace(
+        local_llm_enabled=True,
+        local_models=["qwen3-vl-30b", "gpt-oss-120b"],
+        local_models_dir=str(tmp_path),
+    )
+    changed = await reconcile_gateway_windows_on_boot(
+        settings,  # type: ignore[arg-type]
+        _Store(),  # type: ignore[arg-type]
+        _FakeGateway(set()),
+        CTX,
+    )
+    assert changed is True
+    text = (tmp_path / "llama-swap.yaml").read_text()
+    # All four kinds reached the served config, not just the two this used to load.
+    assert "-c 65536" in text
+    assert "--ctx-checkpoints 8" in text
+    assert "--image-min-tokens 4096" in text

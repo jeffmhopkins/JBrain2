@@ -1,6 +1,6 @@
 # Connecting a Claude session to a running box (debug console)
 
-> **Status:** Living · **Last verified:** 2026-08-17
+> **Status:** Living · **Last verified:** 2026-08-18
 
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`

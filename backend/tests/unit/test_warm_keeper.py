@@ -10,6 +10,8 @@ import contextlib
 from collections.abc import Collection, Sequence
 from typing import cast
 
+import pytest
+
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm import warm_keeper
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -527,3 +529,32 @@ async def test_a_failed_preload_still_reaches_the_prime_rather_than_short_circui
     await keeper.reconcile_once()
     assert "prime" in gw.events  # the prime was reached
     assert "load" not in gw.events  # admission refused, so no load was attempted
+
+
+async def test_a_failed_slot_save_is_swallowed_but_carries_its_reason(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The swallow is deliberate — no `--slot-save-path`, no disk, no permission is a benign
+    gateway, not a broken keeper. But it is also what hid an always-invalid slot index for as
+    long as the index was hardcoded, so the log line has to name the cause.
+
+    Nothing exercised this arm, which meant the `error=` added for exactly that reason was
+    itself unverified."""
+
+    class _SaveFails(_FakeGateway):
+        async def slot_action(self, served_model, slot_id, action, *, filename=None):
+            if action == "save":
+                raise RuntimeError("no --slot-save-path on this gateway")
+            return await super().slot_action(served_model, slot_id, action, filename=filename)
+
+    gw = _SaveFails(running=())
+    keeper = _keeper(gateway=gw, router=_FakeRouter("qwen3.8-27b-q4", gateway=gw))
+    assert await keeper.reconcile_once() is True  # a failed save is never fatal
+    # structlog writes straight to stdout here rather than through stdlib logging, so this
+    # reads the rendered line rather than caplog's records.
+    logged = capsys.readouterr().out
+    assert "slot_save_skipped" in logged, "a swallowed save must still be logged"
+    # The CAUSE, so a benign gateway is distinguishable from a broken keeper...
+    assert "no --slot-save-path" in logged
+    # ...and which slot it tried, which is what would have made the hardcoded index obvious.
+    assert "slot=1" in logged

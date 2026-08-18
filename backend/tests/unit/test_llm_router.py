@@ -859,3 +859,31 @@ async def test_non_title_task_does_not_follow_the_agent_model() -> None:
         local_enabled=True,
     )
     assert await router.effective_spec("note.extract") == ("xai", "grok-4.3")
+
+
+async def test_admit_local_load_reaches_residency_admission() -> None:
+    """The real method, not a fake's stand-in.
+
+    Its whole justification is that a caller which loads a model itself goes through the SAME
+    admission a routed completion does, rather than reaching into `_admit_local` — which would
+    be the same bypass with extra steps. Every warm-keeper test substitutes its own router, so
+    without this nothing proved the wiring existed at all."""
+
+    class _Admitter:
+        def __init__(self) -> None:
+            self.rooms: list[str] = []
+
+        async def ensure_room(self, served_model: str) -> None:
+            self.rooms.append(served_model)
+
+    admitter = _Admitter()
+    r = LlmRouter({}, {}, residency=admitter)
+    await r.admit_local_load("qwen3.8-27b-q4")
+    assert admitter.rooms == ["qwen3.8-27b-q4"]
+
+
+async def test_admit_local_load_is_inert_without_a_coordinator() -> None:
+    """A cloud-only box holds no coordinator. Admission is then a no-op rather than an error —
+    the keeper still loads, it just has nothing to make room against."""
+    r = LlmRouter({}, {}, residency=None)
+    await r.admit_local_load("qwen3.8-27b-q4")  # must not raise

@@ -354,13 +354,24 @@ def test_config_write_runs_as_root() -> None:
         DEPLOY / "local-models-sync.sh",
         DEPLOY.parent / "scripts" / "local-llm-setup.sh",
     )
-    # Match the invocation, not a comment that merely mentions the module.
+    # Match the invocation, not a comment that merely mentions the module — and not the
+    # `--check` PREFLIGHT, which only resolves globs to decide what still needs downloading.
+    # It writes nothing, so it correctly runs as the ordinary api user. This used to take the
+    # FIRST match, which silently became the preflight when that was added ahead of the write
+    # (PR #1141) — so the assertion moved off the line it exists to guard and started failing
+    # on a script that was, and is, correct.
     needle = "python -m jbrain.llm.llama_swap_config"
     for script in scripts:
-        cmd = next(ln for ln in _logical_lines(script.read_text()) if needle in ln)
-        assert "--user 0" in cmd, (
-            f"{script.name}: the llama-swap.yaml write must run as root"
-        )
+        writes = [
+            ln
+            for ln in _logical_lines(script.read_text())
+            if needle in ln and "--check" not in ln
+        ]
+        assert writes, f"{script.name}: no llama-swap.yaml write invocation found"
+        for cmd in writes:
+            assert "--user 0" in cmd, (
+                f"{script.name}: the llama-swap.yaml write must run as root"
+            )
 
 
 def test_prune_script_guards_each_delete() -> None:

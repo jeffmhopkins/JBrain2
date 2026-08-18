@@ -75,6 +75,13 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   after a llama.cpp rebuild on master). `--no-mmap` is deliberately absent and cannot be added:
   llama.cpp has no positive `--mmap`, so an entry could not undo the flag we already pass — it
   would be a silent no-op, which is worse than an absent one.
+  **`-fa 0` is refused (422) on a model carrying a vision projector.** Turning flash attention
+  off swaps the CLIP attention workspace from the linear branch to the quadratic one — ~0.47 GB
+  to ~16 GB — and `_vision_resident_gb` hardcodes the linear figure, so the residency budget
+  would under-reserve by ~15.5 GB. The allocation lands on the first full-resolution image,
+  after the load guard passed and after the watchdog stopped watching, which is the
+  unrecoverable hang. The bisect stays available on text-only models; budgeting it properly
+  (threading the served `-fa` into `footprint_gb`) is what would lift the refusal.
   **`--ctx-checkpoints` is the one exception to "a bad value is always recoverable"**, so it is
   bounded to `0..8` server-side. A checkpoint on a hybrid is a full copy of the recurrent state
   (~150 MiB for Qwen3.8), device-resident and per slot. `footprint_gb` budgets it at the SERVED
