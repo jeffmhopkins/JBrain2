@@ -142,25 +142,46 @@ async def test_a_load_that_balloons_mid_flight_is_aborted_and_unloaded() -> None
 
 
 def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> None:
-    """Where the CLIP attention buffer belongs, which the first version of this got backwards.
+    """Where the CLIP attention workspace belongs, which the first version of this got
+    backwards.
 
     It is NOT a load-time cost: llama.cpp warms the projector at a capped 46x46 image tokens,
-    and the full-resolution buffer only appears on the first real image. It IS persistent:
+    and the full-resolution workspace only appears on the first real image. It IS persistent:
     `ggml_gallocr_reserve_n_impl` only grows the allocation and it is freed at unload, so a
-    smaller later image releases nothing. Hence resident budget, not load reservation."""
+    smaller later image releases nothing. Hence resident budget, not load reservation.
+
+    The GAP between the two is small because flash attention is on (measured — see
+    vision_attn_buffer_gb); what matters is the direction, so this asserts ordering rather
+    than a magnitude that would have to move if `-fa` ever came off."""
     vision = local_catalog.get("qwen3.8-27b-q4")
     text_only = local_catalog.get("qwen3.8-27b-mtp")
     assert vision is not None and text_only is not None
     assert vision.mmproj_include and not text_only.mmproj_include
 
-    # The peak lands in the RESIDENT figure, which is what the eviction budget consults.
-    vision_resident = local_catalog.footprint_gb(vision, vision.context_window)
-    assert vision_resident - local_catalog.load_footprint_gb(vision) > 10.0
+    # The peak lands in the RESIDENT figure, which is what the eviction budget consults, and
+    # is strictly larger there than in the load reservation.
+    at_window = local_catalog.footprint_gb(vision, vision.context_window)
+    assert at_window > local_catalog.load_footprint_gb(vision)
 
-    # A text-only entry pays neither term, and its two figures agree.
+    # A text-only entry pays neither term, and its two figures agree exactly.
     assert local_catalog.footprint_gb(
         text_only, text_only.context_window
     ) == local_catalog.load_footprint_gb(text_only)
+
+
+def test_the_vision_workspace_is_the_measured_flash_attention_branch() -> None:
+    """Pinned because this was assumed wrong once and cost 16 GiB of phantom reservation on
+    every vision entry.
+
+    Measured on the box: loading the vision model moved GTT +26.02 GiB (predicted 25.60 with
+    flash attention on, 29.62 with it off), and a full-resolution 2.1 MB image then moved it
+    +0.11 GiB. Off, that image would have allocated up to 16 GiB."""
+    on = local_catalog.vision_attn_buffer_gb()
+    off = local_catalog.vision_attn_buffer_gb(flash_attention=False)
+    assert on < 1.0, on  # linear in patches
+    assert off > 15.0, off  # quadratic — kept for a build where -fa does not apply
+    # The anchor the linear branch is fitted to: 248.10 MiB at the 2116-token warmup.
+    assert local_catalog.vision_attn_buffer_gb(2116) == 0.24
 
 
 def test_the_mtp_estimate_matches_what_was_measured_on_the_box() -> None:

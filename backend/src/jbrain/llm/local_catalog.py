@@ -107,18 +107,31 @@ _VISION_MAX_IMAGE_TOKENS = 4096
 _VISION_WARMUP_IMAGE_TOKENS = 46 * 46
 
 
-def vision_attn_buffer_gb(max_image_tokens: int = _VISION_MAX_IMAGE_TOKENS) -> float:
-    """Resident GB the CLIP attention buffer reaches at `max_image_tokens`, flash attention OFF.
+# Bytes per patch of CLIP attention workspace WITH flash attention on, anchored to a measured
+# figure: 248.10 MiB at the 2116-token warmup (8464 patches). Flash attention never
+# materialises the [n_patches, n_patches] matrix — it tiles — so the cost is linear in patches
+# rather than quadratic, which is the whole difference.
+_CLIP_FA_BYTES_PER_PATCH = 248.10 * 1024**2 / (2116 * _CLIP_MERGE**2)
 
-    Quadratic: `n_patches = max_image_tokens * n_merge**2`, and the buffer is
-    `n_patches**2 * n_head * 4` bytes (F32). Softmax runs in-place on it, so it is 1x that
-    tensor, not 2x.
 
-    ⚠️ ASSUMES CLIP FLASH ATTENTION IS OFF, which is the conservative branch and is UNVERIFIED
-    on this box. With it on the same shape measures ~250 MiB — a ~60x difference, and the
-    single highest-value thing to check here. llama-server prints the answer at startup:
-    `warmup: flash attention is enabled|disabled`."""
+def vision_attn_buffer_gb(
+    max_image_tokens: int = _VISION_MAX_IMAGE_TOKENS, *, flash_attention: bool = True
+) -> float:
+    """Resident GB the CLIP attention workspace reaches at `max_image_tokens`.
+
+    MEASURED ON THIS BOX, no longer assumed. Loading `qwen3.8-27b-q4` beside a resident
+    gpt-oss moved GTT 67.71 -> 93.73 GiB (+26.02, against 25.60 predicted for flash attention
+    ON and 29.62 for OFF), and a subsequent full-resolution 2.1 MB image encode moved it only
+    93.73 -> 93.84 (+0.11 GiB). With flash attention off that image would have allocated up to
+    16 GiB. It is on — `-fa 1` reaches the CLIP graph — so the default is the linear branch.
+    The previous default was the quadratic one, which over-reserved by ~145x.
+
+    `flash_attention=False` keeps the quadratic worst case for a build or backend where it
+    does not apply: `n_patches**2 * n_head * 4` bytes (F32, softmax in-place so 1x not 2x).
+    Anything that drops `-fa` from the served flags has to revisit this."""
     n_patches = max_image_tokens * _CLIP_MERGE**2
+    if flash_attention:
+        return round(n_patches * _CLIP_FA_BYTES_PER_PATCH / 1024**3, 2)
     return round(n_patches**2 * _CLIP_ATTN_HEADS * 4 / 1024**3, 2)
 
 

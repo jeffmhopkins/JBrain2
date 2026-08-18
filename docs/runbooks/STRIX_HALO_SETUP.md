@@ -521,11 +521,33 @@ n_merge²`, buffer = `n_patches² × n_head × 4` bytes.
 | 1024 | 1.0 GiB |
 | 512 | 0.25 GiB |
 
-⚠️ **The catalog assumes CLIP flash attention is OFF, and that is UNVERIFIED on this box.**
-With it on, the same shape measures ~250 MiB — a ~60× difference. Conservative is the right
-default (over-reserving costs a refused load; under-reserving costs a power cycle), but it is
-an assumption, not a fact. llama-server prints the answer at startup: **`warmup: flash
-attention is enabled|disabled`**. Settling it is the single highest-value check here.
+✅ **MEASURED on this box: CLIP flash attention is ON**, so the workspace is the LINEAR branch
+(~0.47 GiB at the 4096-token ceiling), not the quadratic one. The catalog briefly assumed OFF
+and over-reserved every vision entry by ~145x. How it was settled, with auto-restore switched
+off so nothing could reload underneath the samples:
+
+| step | GTT (GiB) | Δ |
+|---|---|---|
+| baseline, `gpt-oss-120b` resident only | 67.71 | — |
+| after loading `qwen3.8-27b-q4` (served at `-c 131072`) | 93.73 | **+26.02** |
+| after a full-resolution 2.1 MB image encode | 93.84 | **+0.11** |
+
+The load delta discriminates on its own: 25.60 predicted with flash attention on versus 29.62
+with it off, against 26.02 measured. The image encode settles it — with flash attention off a
+full-resolution image allocates up to 16 GiB; it allocated 0.11. `-fa 1` reaches the CLIP
+graph. The corrected model predicts 25.82 resident at that window against 26.02 measured, a
+0.8% error.
+
+⚠️ **This is contingent on `-fa`.** Anything that drops it from the served flags, or a build
+where it silently does not apply to the CLIP graph, puts the quadratic branch back in play —
+`vision_attn_buffer_gb(flash_attention=False)` keeps it for exactly that case.
+
+> **The startup banner is NOT readable from any debug surface.** `warmup: flash attention is
+> enabled|disabled` never reaches `gateway-logs` or `logs local-llm` — both are llama-swap's
+> own HTTP access log, and llama-server's stdout/stderr is not interleaved into it at all.
+> This is the same "if a serving mode can't be observed, it can't be tuned" gap as
+> `speculative.types`, and it is why the question had to be answered by GTT deltas instead.
+> Capturing upstream process output into the gateway log is the fix.
 
 Note we pass `--image-min-tokens 1024`, which is the **floor**. Nothing caps the ceiling, so
 4096 is the exposure. Pinning `--image-max-tokens 1024` would cut the buffer quadratically at
