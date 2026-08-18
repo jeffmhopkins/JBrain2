@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-17
+> **Status:** Living · **Last verified:** 2026-08-18
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -380,22 +380,27 @@ Three things to know:
   raising `--spec-draft-n-max` (pinned at `3`, llama.cpp's default and the Strix Halo consensus),
   because ungated, the cost of a wasted draft scales with n-max.
 
-> ### ⚠️ Vision + MTP hard-freezes this box. Measured, twice.
+> ### ⚠️ Reading the memory instruments correctly (this cost two power cycles)
 >
-> The projector was briefly re-enabled on this entry (upstream reported the MTP-beside-`--mmproj`
-> crash fixed in b9240+). Loading it took the **host** down to a power cycle — not the gateway,
-> the machine — and did it **twice**. The second time there was **105 GiB free and a 21 GiB model
-> to load**, so memory pressure was not the cause.
+> **`mem_info_gtt_used` is DEVICE-WIDE, not per-process.** It reads
+> `ttm_resource_manager_usage()` and sums every client on the card. Attributing it to one model
+> is wrong, and it produced two false conclusions here: a load was read as costing 86 GiB when
+> the real figure was ~19 GiB and the rest was another model the residency restore had put back
+> underneath the measurement. For per-model attribution use `/proc/<pid>/fdinfo/<drm-fd>` →
+> **`drm-resident-gtt`**, or `amdgpu_top`'s process view.
 >
-> The mechanism is llama.cpp **#27146**: an mmproj/mtmd model balloons **GTT** allocation on an
-> AMD iGPU under Vulkan, and **GTT allocations are invisible to cgroups and `/proc/meminfo`**.
-> That is the important part for this box: `jbrain.llm.residency` budgets against
-> `mem_available`, so it **cannot see this class of allocation coming and cannot protect against
-> it**. A memory estimate is the wrong guard here — the projector simply stays off.
+> **What the freeze actually was.** Re-enabling the vision projector on the MTP entry froze the
+> host twice. The cause was memory arithmetic, not an MTP↔vision incompatibility:
+> ~67 GiB (gpt-oss, still resident) + ~19 GiB (this model) + ~33 GiB (the GTT balloon an mmproj
+> triggers on an AMD iGPU under Vulkan — llama.cpp **#27146**) ≈ 119 GiB against a ~124 GiB pool.
+> On an otherwise empty box that sum fits. So vision + MTP may well work here; it has never been
+> tried that way, and the entry is text-only pending that test — not because it is proven
+> impossible.
 >
-> Use `qwen3.8-27b-q4` when you need vision. The cost is real (the same Q4_K_M weights sit on
-> disk twice, and a vision turn means giving up speculative decoding) and it is the right trade
-> against a machine that stops answering. The gateway tracks llama.cpp master (see "Tracking newest llama.cpp" below), so after an
+> **Expected footprint is the check to apply.** A 15.9 GiB Q4 model at 32k should land near
+> 19–20 GiB (weights + ~2 GiB KV across the 16 attention layers + ~150 MiB recurrent state +
+> ~1 GiB compute). Published runs put this same model at 262k context inside 24 GB. If a
+> reading is multiples of that, suspect the instrument before the model. The gateway tracks llama.cpp master (see "Tracking newest llama.cpp" below), so after an
 update confirm it loads and generates; on a bad build fall back to `qwen3.8-27b-q4`.
 
 > **Reading what the engine actually did.** llama-server prints its build, allocated context,
@@ -451,8 +456,29 @@ still took the host down. `jbrain.llm.gpu_guard` closes that:
   guess.
 - **Post-load** — one more sample after the load returns, because a fast load can finish between
   two samples and an allocation can still be settling.
-- **Measurement** — the real GTT delta is logged (`gpu_guard.measured_footprint`), the number
-  that should eventually replace the catalog estimate.
+- **Measurement** — the real GTT delta is logged (`gpu_guard.measured_footprint`). ⚠️ It is
+  currently a DEVICE-WIDE delta, so a model restored concurrently by the residency coordinator
+  is counted into it; it needs moving to per-process `drm-resident-gtt` before it can be
+  trusted or used to replace the catalog estimate.
+
+### Is MTP actually drafting?
+
+`/props`'s `speculative.types` **cannot answer this** — the server builds that object from a
+`task_params` it never populates, so it reads `"none"` on every build whether or not speculation
+is running. An entire investigation here concluded MTP was off from that field. The real signals,
+both of which need flags the config now always passes (`--slots`, `--metrics`):
+
+| Signal | Where |
+|---|---|
+| `speculative: true` | `GET /slots` — a real bool from `can_speculate()` |
+| draft / accept counters | `GET /metrics` → `llamacpp:spec_decode_num_draft_tokens_total`, `…_accepted_tokens_total` |
+| `draft_n`, `draft_n_accepted` | a completion's `timings` — present only when tokens were drafted |
+| `draft acceptance = 0.72 ( 210 accepted / 290 generated)` | gateway log, per request |
+
+Note also that llama.cpp **hard-fails** at load when `--spec-type draft-mtp` is given and the
+model has no nextn tensors (`llama_init_from_model` returns null → the server aborts). So a
+server that starts at all has the MTP head loaded — "it started" is evidence of loading, never
+of drafting.
 
 Readings come from the supervisor's `/metrics` → `gpu_mem`, which reads
 `/sys/class/drm/card*/device/mem_info_*`. A box that can't read them (no amdgpu, supervisor

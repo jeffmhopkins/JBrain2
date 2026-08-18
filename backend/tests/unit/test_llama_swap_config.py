@@ -447,3 +447,41 @@ def test_operator_extra_args_land_after_the_catalog_flags(tmp_path: Path) -> Non
     )
     cmd = next(ln for ln in text.splitlines() if "/gpt-oss-120b/" in ln)
     assert cmd.index("--spec-draft-n-max 3") < cmd.index("--spec-draft-n-max 5")
+
+
+def test_every_model_is_launched_observable(tmp_path: Path) -> None:
+    # `--slots` and `--metrics` are NOT optional garnish. llama-server exposes whether a model
+    # is really speculating in exactly two places — `/slots[].speculative` and the /metrics
+    # spec-decode counters — and NEITHER endpoint exists without these flags. The only other
+    # readable field, `/props`'s `speculative.types`, is dead: the server builds it from a
+    # task_params it never populates, so it reads "none" on every build whether or not
+    # speculation runs. This box spent an entire investigation concluding MTP was off from
+    # that field. If a serving mode cannot be observed it cannot be tuned — it gets
+    # misdiagnosed instead, which is why this is pinned.
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    cmds = [ln for ln in text.splitlines() if "llama-server" in ln]
+    assert cmds and all("--slots" in ln and "--metrics" in ln for ln in cmds)
+
+
+def test_ubatch_avoids_the_vulkan_batch_512_corruption(tmp_path: Path) -> None:
+    # llama.cpp #27237: the qwen35 hybrid (Gated DeltaNet) emits GARBAGE OUTPUT at ubatch 512
+    # on Vulkan, and is clean at 1024/4096. llama-server's own default is 512 — exactly the
+    # broken value — and this deployment serves that arch on that backend, so the default must
+    # never be inherited. 1024 also trims the big-vocab graph reserve (#23527), which sizes a
+    # worst-case logits buffer off n_ubatch x n_vocab (~3 GiB at Qwen3.8's 248k vocab).
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    for ln in [x for x in text.splitlines() if "llama-server" in x]:
+        assert "-ub 1024" in ln
+        assert "-ub 512" not in ln
+
+
+def test_context_checkpoints_are_capped_for_hybrid_models(tmp_path: Path) -> None:
+    # llama-server defaults to 32 context checkpoints PER SLOT. On a hybrid (recurrent) model
+    # each one is a full copy of the SSM state (~150 MiB for Qwen3.8) and is device-resident,
+    # because a recurrent state cannot be partially rewound — so the default spends ~4.7 GiB
+    # per slot on rollback depth nothing here uses (llama.cpp #20145, #23371).
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    assert all("--ctx-checkpoints 2" in ln for ln in text.splitlines() if "llama-server" in ln)

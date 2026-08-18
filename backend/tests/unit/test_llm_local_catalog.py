@@ -271,10 +271,15 @@ def test_qwen38_27b_mtp_is_a_text_only_self_speculative_variant() -> None:
     assert args[args.index("--spec-type") + 1] == "draft-mtp"
     # n-max 3 is llama.cpp's own default and what every published Strix Halo measurement uses.
     assert args[args.index("--spec-draft-n-max") + 1] == "3"
-    # p-min gates a draft on the drafter's confidence. Its flag default is 0.00 — ungated, a
-    # documented acceptance-killer that lets MTP decay back to baseline on long generations —
-    # so it MUST be set explicitly, and set before n-max is raised.
-    assert args[args.index("--spec-draft-p-min") + 1] == "0.6"
+    # NO p-min. It was pinned at 0.6 here on a recommendation that said in its own words
+    # "sweep empirically; do not adopt without testing" — and it was never tested. The gate is
+    # evaluated BEFORE the first draft token is appended (common/speculative.cpp), so any step
+    # whose top-1 confidence falls below it drafts NOTHING: zero drafts, zero acceptance, zero
+    # speedup, indistinguishable from speculation being off. That is exactly how it was
+    # misdiagnosed here. It stays at llama.cpp's 0.00 default until a measured sweep says
+    # otherwise — an untested performance knob is worse than no knob, because it silently
+    # invalidates every measurement taken through it.
+    assert "--spec-draft-p-min" not in args
     # Still a hybrid reasoner (same model), so it keeps the deepseek reasoning format + gating.
     assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
     assert m.served_model in local_catalog.REASONING_SERVED_MODELS
