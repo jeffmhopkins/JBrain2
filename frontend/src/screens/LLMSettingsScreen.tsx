@@ -359,6 +359,20 @@ export function LLMSettingsScreen() {
       .finally(() => unmark(id));
   }
 
+  // Set (or clear, with null) the model's --image-min-tokens floor: how much of an image the
+  // model actually gets to see. The knob for small text in a photo.
+  function setImageMinTokens(id: string, tokens: number | null) {
+    mark(id);
+    const seq = ++putSeq.current;
+    api
+      .setLocalImageMinTokens(id, tokens)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
+
   // Set (or clear, with null) the box-wide residency free-RAM floor. Keyed on a fixed busy
   // id (not a model id) since it's a global knob, not a per-row action.
   function setFreeRam(fraction: number | null) {
@@ -664,6 +678,7 @@ export function LLMSettingsScreen() {
         onCancelStage={clearPreview}
         onSetWindow={setContextWindow}
         onSetSlots={setParallelSlots}
+        onSetImageFloor={setImageMinTokens}
         onSetAvailable={setAvailable}
         onInstall={queueInstall}
         onUninstall={queueUninstall}
@@ -1220,6 +1235,7 @@ function OnBoxModelsCard({
   onCancelStage,
   onSetWindow,
   onSetSlots,
+  onSetImageFloor,
   onSetAvailable,
   onInstall,
   onUninstall,
@@ -1257,6 +1273,7 @@ function OnBoxModelsCard({
   onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
   onSetSlots: (id: string, slots: number | null) => void;
+  onSetImageFloor: (id: string, tokens: number | null) => void;
   onSetAvailable: (id: string, on: boolean) => void;
   onInstall: (id: string, on: boolean) => void;
   onUninstall: (id: string, on: boolean) => void;
@@ -1564,6 +1581,7 @@ function OnBoxModelsCard({
                     onCancelStage={onCancelStage}
                     onSetWindow={onSetWindow}
                     onSetSlots={onSetSlots}
+                    onSetImageFloor={onSetImageFloor}
                   />
                 ),
               )}
@@ -1670,6 +1688,7 @@ function LlmModelRow({
   onCancelStage,
   onSetWindow,
   onSetSlots,
+  onSetImageFloor,
 }: {
   model: LocalModelInfo;
   busy: boolean;
@@ -1687,6 +1706,7 @@ function LlmModelRow({
   onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
   onSetSlots: (id: string, slots: number | null) => void;
+  onSetImageFloor: (id: string, tokens: number | null) => void;
 }) {
   const footprint = m.disk_gb ?? m.size_gb;
   const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
@@ -1834,9 +1854,47 @@ function LlmModelRow({
         </select>
         {!m.loaded && <span className="llm-local-ctx-meta">keeps chat instant after restart</span>}
       </div>
+      {/* Vision entries only. A floor on a text-only model would never be read, so the row is
+          absent rather than present-and-inert — the drawer should not offer a dead control. */}
+      {m.image_min_tokens !== null && (
+        <div className="llm-local-ctx">
+          <label className="llm-local-ctx-label" htmlFor={`imgmin-${m.id}`}>
+            image detail
+          </label>
+          <select
+            id={`imgmin-${m.id}`}
+            className="llm-local-ctx-select"
+            value={String(m.image_min_tokens)}
+            disabled={!editable || isBusy}
+            title="The floor an image is encoded to. Raise it when small text comes back garbled — a curved bottle label, a receipt, a screenshot of a table. Costs prefill time and KV, not weights, so it does not change how much memory the model needs to load."
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              // Storing the catalog's own floor as an override would persist a redundant row,
+              // so match the context-window control and send null for it.
+              onSetImageFloor(m.id, v === m.image_min_tokens_default ? null : v);
+            }}
+          >
+            {IMAGE_FLOOR_OPTS.map((t) => (
+              <option key={t} value={t}>
+                {fmtTokens(t)}
+                {t === m.image_min_tokens_default ? " (default)" : ""}
+              </option>
+            ))}
+          </select>
+          {m.loaded ? (
+            <span className="llm-local-ctx-hint">🔒 unload to change</span>
+          ) : (
+            <span className="llm-local-ctx-meta">higher = small text stays legible</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
+// llama.cpp caps this projector family at 4096 (`set_limit_image_tokens(8, 4096)`), so the
+// list stops there — offering more would promise detail the engine will not deliver.
+const IMAGE_FLOOR_OPTS = [256, 512, 1024, 2048, 4096];
 
 // A destructive action button that requires a second tap to confirm — replaces a
 // browser confirm() dialog for the weight-deleting Uninstall/Remove. First tap arms it

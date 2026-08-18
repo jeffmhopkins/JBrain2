@@ -24,6 +24,8 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
     context_window_override: null,
     kv_gb: 0,
     parallel_slots: 1,
+    image_min_tokens: null,
+    image_min_tokens_default: null,
     ...over,
   };
   // Default effective-available to provisioned unless a test sets it explicitly.
@@ -113,6 +115,7 @@ function stubLlmFetch(seed?: LlmSettings) {
   const jcodePlannerPuts: string[] = [];
   const freeRamPuts: (number | null)[] = [];
   const autoRestorePuts: boolean[] = [];
+  const imageFloorPuts: (number | null)[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
     // The free-RAM headroom control PUTs the fraction (or null to clear) and gets the
@@ -189,6 +192,15 @@ function stubLlmFetch(seed?: LlmSettings) {
         headers: { "Content-Type": "application/json" },
       });
     }
+    const imgMin = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/image-min-tokens$/);
+    if (imgMin) {
+      const body = JSON.parse(String(init?.body)) as { image_min_tokens: number | null };
+      imageFloorPuts.push(body.image_min_tokens);
+      return new Response(JSON.stringify(state), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (path !== "/api/settings/llm") throw new Error(`Unexpected fetch: ${path}`);
     if ((init?.method ?? "GET").toUpperCase() === "PUT") {
       const body = JSON.parse(String(init?.body)) as (typeof puts)[number];
@@ -217,6 +229,7 @@ function stubLlmFetch(seed?: LlmSettings) {
     jcodePlannerPuts,
     freeRamPuts,
     autoRestorePuts,
+    imageFloorPuts,
     state,
   };
 }
@@ -1618,5 +1631,53 @@ describe("LLMSettingsScreen", () => {
     expect(screen.getByText("982k in · 241k out · ~$1.83")).toBeInTheDocument();
     // vision.ocr has no price-table entry — tokens only, no guessed cost.
     expect(screen.getByText("2.4M in · 990 out")).toBeInTheDocument();
+  });
+});
+
+describe("image detail floor", () => {
+  it("offers the control only on a model with a projector", async () => {
+    // A floor on a text-only entry is never read by llama.cpp, so the row must be ABSENT
+    // rather than present-and-inert — a dead control in the drawer is a support question.
+    const seed = initialSettings();
+    seed.local_hosting_enabled = true;
+    seed.local_models = [
+      lm({
+        id: "seer",
+        label: "Seer",
+        enabled: true,
+        available: true,
+        supports_vision: true,
+        image_min_tokens: 1024,
+        image_min_tokens_default: 1024,
+      }),
+      lm({ id: "reader", label: "Reader", enabled: true, available: true }),
+    ];
+    stubLlmFetch(seed);
+    render(<LLMSettingsScreen />);
+    await screen.findByText("Seer");
+    expect(screen.queryAllByLabelText("image detail")).toHaveLength(1);
+  });
+
+  it("sends null for the catalog default so no redundant override is stored", async () => {
+    const seed = initialSettings();
+    seed.local_hosting_enabled = true;
+    seed.local_models = [
+      lm({
+        id: "seer",
+        label: "Seer",
+        enabled: true,
+        available: true,
+        supports_vision: true,
+        image_min_tokens: 2048,
+        image_min_tokens_default: 1024,
+      }),
+    ];
+    const { imageFloorPuts } = stubLlmFetch(seed);
+    render(<LLMSettingsScreen />);
+    const select = await screen.findByLabelText("image detail");
+    fireEvent.change(select, { target: { value: "1024" } });
+    await waitFor(() => expect(imageFloorPuts).toEqual([null]));
+    fireEvent.change(select, { target: { value: "4096" } });
+    await waitFor(() => expect(imageFloorPuts).toEqual([null, 4096]));
   });
 });

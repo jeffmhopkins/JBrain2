@@ -499,6 +499,36 @@ make the first turn slow for nothing.
 To hold the box genuinely empty — for a load measurement, or to test a model in isolation —
 turn automatic reloading OFF first, then unload. Otherwise the keeper wins.
 
+### Tuning how much of an image the model actually sees
+
+`--image-min-tokens` is the FLOOR an image is encoded to, `--image-max-tokens` the ceiling
+(llama.cpp defaults to 4096 for this projector family; the catalog pins only the floor, at
+1024). Both are on the `extra-args` allowlist, so they tune live:
+
+**In the PWA:** Settings → LLM, the **image detail** control on any vision model. It sits
+beside the context window, takes effect on the model's next load, and shows the catalog's own
+floor marked `(default)` so picking that stores no override. Text-only entries have no such
+control — a floor there would never be read.
+
+For a quick sweep without touching saved settings, `extra-args` does the same thing and clears
+in one call:
+
+```
+debug-connect.sh extra-args qwen3.8-27b-q4 --image-min-tokens 2048
+debug-connect.sh vision <attachment_id> --task vision.ocr --max-tokens 600
+debug-connect.sh extra-args qwen3.8-27b-q4          # no args = back to the catalog
+```
+
+Raise the floor when small text in a photo comes back garbled — a curved bottle label, a
+receipt, a screenshot of a table. The cost is prefill time and KV, not weights, so it does not
+move the load footprint; it shows up as a slower first token on image turns.
+
+Two cautions when reading the result. Setting `extra-args` RESTARTS the model, so the prefix
+cache is cold and the first call afterwards is slow for reasons unrelated to the flag. And
+these are hybrid-thinking models: a caption that comes back EMPTY usually means `max_tokens`
+was spent on the reasoning block, not that vision failed — check `reasoning_chars` in the
+`llm.complete` log line before concluding anything, and give it 600 tokens rather than 150.
+
 ### What the speculation numbers mean, and what to optimise
 
 This build of llama-server exposes **no draft/accept counters at all** — the metric set is

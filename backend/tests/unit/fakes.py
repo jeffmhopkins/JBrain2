@@ -588,6 +588,21 @@ class FakeSettingsStore:
         self.values["llm_local_parallel_slots"] = current
         return current
 
+    async def llm_local_image_min_tokens(self, ctx: object) -> dict[str, int]:
+        raw = self.values.get("llm_local_image_min_tokens", {})
+        return dict(raw) if isinstance(raw, dict) else {}
+
+    async def set_llm_local_image_min_tokens(
+        self, ctx: object, *, model_id: str, tokens: int | None
+    ) -> dict[str, int]:
+        current = await self.llm_local_image_min_tokens(ctx)
+        if tokens is None or tokens <= 0:
+            current.pop(model_id, None)
+        else:
+            current[model_id] = tokens
+        self.values["llm_local_image_min_tokens"] = current
+        return current
+
     async def llm_local_extra_args(self, ctx: object) -> dict[str, list[str]]:
         raw = self.values.get("llm_local_extra_args", {})
         if not isinstance(raw, dict):

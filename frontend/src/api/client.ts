@@ -663,6 +663,13 @@ export interface LocalModelInfo {
    * keep-warm slot beside the background one, so a primed chat prefix isn't evicted by
    * title/background traffic). Editable only while the model isn't resident. */
   parallel_slots: number;
+  /** `--image-min-tokens`: the floor an image is encoded to, and the knob for whether small
+   * text in a photo survives to the model. null on a text-only entry — no projector, so a
+   * floor would do nothing and the control is not rendered. */
+  image_min_tokens: number | null;
+  /** The catalog's own floor, so the drawer can mark it "(default)" and persist null for it
+   * instead of a redundant override row. */
+  image_min_tokens_default: number | null;
 }
 
 /** One model a staged load would evict — catalog id, label, and resident footprint (GB),
@@ -2288,6 +2295,19 @@ export const api = {
     const response = await request(
       `/api/settings/llm/local-models/${encodeURIComponent(id)}/context-window`,
       jsonInit("PUT", { context_window: window }),
+    );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Set (or clear, with null) the model's `--image-min-tokens` floor — how much of an image
+   * the model actually sees. Raise it when small text comes back garbled (a curved label, a
+   * receipt); the cost is prefill and KV, not weights, so it does not move the load footprint.
+   * Returns the full snapshot; the model unloads so its next request reloads with the new
+   * floor. 422 on a model with no projector. */
+  async setLocalImageMinTokens(id: string, tokens: number | null): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/image-min-tokens`,
+      jsonInit("PUT", { image_min_tokens: tokens }),
     );
     return (await response.json()) as LlmSettings;
   },

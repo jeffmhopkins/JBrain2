@@ -1155,6 +1155,26 @@ def test_extra_arg_allowlist_covers_the_speculative_tuning_flags() -> None:
         assert llm_settings._validate_extra_args([flag, "x"]) == [flag, "x"]
 
 
+def test_extra_arg_allowlist_covers_the_image_token_flags() -> None:
+    """The image FLOOR decides whether small text in a photo survives to the model — raise it
+    and OCR on a curved label or a receipt gets legible, at the cost of prefill and KV — and no
+    amount of reading says where that threshold sits for a given camera and subject. It is only
+    observable against real images, so it has to be tunable without a release, exactly like the
+    speculative flags beside it.
+
+    The ceiling is the memory lever: llama.cpp defaults it to 4096 for this projector family
+    and the catalog pins only the floor. It matters much less now that flash attention is
+    confirmed on (the CLIP term is linear in patches, not quadratic), but it is the control if
+    a build ever loses `-fa`."""
+    for flag in ("--image-min-tokens", "--image-max-tokens"):
+        assert flag in llm_settings.EXTRA_ARG_FLAGS
+        assert llm_settings._validate_extra_args([flag, "2048"]) == [flag, "2048"]
+    # Both at once is the realistic call — bracketing the encode from below and above.
+    assert llm_settings._validate_extra_args(
+        ["--image-min-tokens", "2048", "--image-max-tokens", "4096"]
+    ) == ["--image-min-tokens", "2048", "--image-max-tokens", "4096"]
+
+
 def test_extra_arg_allowlist_rejects_an_unknown_flag_loudly() -> None:
     # 422, never a silent drop: a caller that believes it set a flag and did not would misread
     # every measurement taken afterwards.
@@ -1164,3 +1184,60 @@ def test_extra_arg_allowlist_rejects_an_unknown_flag_loudly() -> None:
     # A bare value with no flag in front of it is refused too, not silently swallowed.
     with pytest.raises(HTTPException):
         llm_settings._validate_extra_args(["0.6"])
+
+
+def test_image_min_tokens_refuses_a_model_without_a_projector() -> None:
+    """422, not a silent no-op. `--image-min-tokens` is only read by the vision path, so a
+    floor saved against a text-only model would persist, render, and do nothing — and the
+    operator would conclude the knob does not work rather than that it does not apply."""
+    c, _ = _authed_client(_local_settings())
+    r = c.put(
+        "/api/settings/llm/local-models/gpt-oss-120b/image-min-tokens",
+        json={"image_min_tokens": 2048},
+    )
+    assert r.status_code == 422
+    assert "projector" in r.json()["detail"]
+
+
+def test_image_min_tokens_is_bounded_by_what_the_engine_can_honour() -> None:
+    """llama.cpp caps this projector family at 4096 (`set_limit_image_tokens(8, 4096)`), so a
+    higher floor could never take effect and accepting one would promise detail the engine
+    will not deliver."""
+    c, _ = _authed_client(_local_settings())
+    for bad in (0, -1, 8192):
+        r = c.put(
+            "/api/settings/llm/local-models/qwen3-vl-30b/image-min-tokens",
+            json={"image_min_tokens": bad},
+        )
+        assert r.status_code == 422, bad
+
+
+def test_image_min_tokens_round_trips_and_clears() -> None:
+    """The snapshot reports the EFFECTIVE floor plus the catalog default beside it, so the
+    drawer can mark the default and store null for it rather than a redundant override row."""
+    c, _ = _authed_client(_local_settings())
+    r = c.put(
+        "/api/settings/llm/local-models/qwen3-vl-30b/image-min-tokens",
+        json={"image_min_tokens": 2048},
+    )
+    assert r.status_code == 200
+    m = next(x for x in r.json()["local_models"] if x["id"] == "qwen3-vl-30b")
+    assert m["image_min_tokens"] == 2048
+    # This entry passes no floor of its own, so there is no default to fall back to — the
+    # drawer marks nothing "(default)" and the operator's value stands alone.
+    assert m["image_min_tokens_default"] is None
+
+    r = c.put(
+        "/api/settings/llm/local-models/qwen3-vl-30b/image-min-tokens",
+        json={"image_min_tokens": None},
+    )
+    m = next(x for x in r.json()["local_models"] if x["id"] == "qwen3-vl-30b")
+    assert m["image_min_tokens"] is None  # cleared, and no catalog floor beneath it
+
+
+def test_a_text_only_model_reports_no_image_floor_at_all() -> None:
+    """None rather than a number, so the drawer renders no control instead of a dead one."""
+    c, _ = _authed_client(_local_settings())
+    body = c.get("/api/settings/llm").json()
+    m = next(x for x in body["local_models"] if x["id"] == "gpt-oss-120b")
+    assert m["image_min_tokens"] is None and m["image_min_tokens_default"] is None

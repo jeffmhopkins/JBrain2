@@ -485,3 +485,36 @@ def test_context_checkpoints_are_capped_for_hybrid_models(tmp_path: Path) -> Non
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path))
     assert all("--ctx-checkpoints 2" in ln for ln in text.splitlines() if "llama-server" in ln)
+
+
+def test_an_image_floor_override_replaces_the_catalog_value_rather_than_appending(
+    tmp_path: Path,
+) -> None:
+    """One occurrence on the command line, not two.
+
+    Appending would leave `--image-min-tokens 1024 --image-min-tokens 4096` and lean on
+    llama.cpp taking the last — true today, undocumented, and unreadable as a record of what
+    is actually served, which matters on a box whose only window into the engine is that
+    string."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    manifest[0]["extra_server_args"] = ["--image-min-tokens", "1024", "--jinja-extra"]
+    text = llama_swap_config.render(
+        manifest, str(tmp_path), image_min_tokens={str(manifest[0]["id"]): 4096}
+    )
+    line = next(ln for ln in text.splitlines() if "--image-min-tokens" in ln)
+    assert line.count("--image-min-tokens") == 1
+    assert "--image-min-tokens 4096" in line
+    # Scoped to the flag: a bare "1024" also matches `-ub 1024` elsewhere on the line.
+    assert "--image-min-tokens 1024" not in line
+    assert "--jinja-extra" in line  # the flags around it survive the substitution
+
+
+def test_an_image_floor_is_appended_when_the_catalog_passes_none(tmp_path: Path) -> None:
+    """A vision entry that ships no floor of its own still takes an operator one."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    mid = str(manifest[0]["id"])
+    text = llama_swap_config.render(manifest, str(tmp_path), image_min_tokens={mid: 2048})
+    line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
+    assert "--image-min-tokens 2048" in line

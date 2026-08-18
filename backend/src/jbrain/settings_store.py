@@ -68,6 +68,7 @@ LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
 # dedicated interactive KV slot. Only values > 1 are stored; 1 (single slot) is the default
 # absence. Feeds the regenerated gateway `-np` and the residency KV budget.
 LLM_LOCAL_PARALLEL_SLOTS_KEY = "llm_local_parallel_slots"
+LLM_LOCAL_IMAGE_MIN_TOKENS_KEY = "llm_local_image_min_tokens"
 # Per-model EXTRA llama-server flags (catalog id → argv list), appended after the catalog's
 # static `extra_server_args`. The owner runs this box remotely with no terminal, so a launch
 # flag that can only be tried by editing the catalog and shipping a release is a flag that
@@ -786,6 +787,35 @@ class SqlSettingsStore:
         else:
             current[model_id] = slots
         await self.upsert(ctx, LLM_LOCAL_PARALLEL_SLOTS_KEY, current)
+        return current
+
+    async def llm_local_image_min_tokens(self, ctx: SessionContext) -> dict[str, int]:
+        """Per-model `--image-min-tokens` overrides, keyed by catalog id, sanitized.
+
+        The FLOOR an image is encoded to: raising it is what makes small text in a photo — a
+        curved label, a receipt — legible to the model. Costs prefill and KV, never weights, so
+        unlike the window it does not feed the residency budget. Anything not a positive int
+        (bool excluded) is dropped rather than trusted onto a launch command."""
+        raw = await self.get(ctx, LLM_LOCAL_IMAGE_MIN_TOKENS_KEY, {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            mid: n
+            for mid, n in raw.items()
+            if isinstance(mid, str) and isinstance(n, int) and not isinstance(n, bool) and n > 0
+        }
+
+    async def set_llm_local_image_min_tokens(
+        self, ctx: SessionContext, *, model_id: str, tokens: int | None
+    ) -> dict[str, int]:
+        """Set (a positive int) or clear (None) one model's floor; returns the sanitized map.
+        Bounds are the API's job — the store stays a dumb sanitizer."""
+        current = await self.llm_local_image_min_tokens(ctx)
+        if tokens is None or tokens <= 0:
+            current.pop(model_id, None)
+        else:
+            current[model_id] = tokens
+        await self.upsert(ctx, LLM_LOCAL_IMAGE_MIN_TOKENS_KEY, current)
         return current
 
     async def llm_local_extra_args(self, ctx: SessionContext) -> dict[str, list[str]]:
