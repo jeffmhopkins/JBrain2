@@ -11,6 +11,7 @@ from collections.abc import Collection, Sequence
 from typing import cast
 
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.llm import warm_keeper
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import LlmTool
@@ -31,6 +32,7 @@ class _FakeGateway:
         )
         self._saved = set(saved)  # filenames that exist on the gateway's slot-save path
         self.actions: list[tuple[str, str]] = []  # (action, filename)
+        self.slots: list[int] = []  # slot index each action targeted
 
     async def running(self) -> set[str]:
         return set(self._running)
@@ -42,6 +44,11 @@ class _FakeGateway:
 
     async def slot_action(self, served_model, slot_id, action, *, filename=None):
         self.actions.append((action, str(filename)))
+        self.slots.append(slot_id)
+        # llama-server serves slots 0..total_slots-1; anything else is not a slot.
+        total = self._props.get("total_slots", 1) if isinstance(self._props, dict) else 1
+        if not 0 <= slot_id < int(total):
+            raise RuntimeError(f"invalid slot {slot_id} (server has {total})")
         if action == "restore" and filename not in self._saved:
             raise RuntimeError("no such state file")
         if action == "save":
@@ -368,3 +375,46 @@ async def test_an_auto_restore_read_failure_leaves_the_keeper_working() -> None:
     k = _keeper(router=r, gateway=g, auto_restore=RuntimeError("settings down"))
     assert await k.reconcile_once() is True
     assert len(r.converses) == 1
+
+
+async def test_the_prefix_is_saved_into_a_slot_that_exists_on_a_single_slot_model() -> None:
+    """The regression that made the whole disk KV cache inert on the interactive model.
+
+    The slot index was hardcoded to 1, which is right only at `-np 2`. But `-np` is 1 unless the
+    operator raised it, and the config generator clamps any `--spec-type` model to 1 regardless —
+    and every Qwen3.8 entry serves `--spec-type draft-mtp`. So on the model the owner actually
+    waits on, slot 1 did not exist: save and restore both raised, both call sites swallow, and
+    the cache was silently never written. The symptom was a cold prefill on every restart with
+    nothing in the log to say why."""
+    gw = _FakeGateway(
+        props={"build_info": "b1-abc", "chat_template": "T", "total_slots": 1},
+    )
+    keeper = _keeper(gateway=gw, router=_FakeRouter("qwen3.8-27b-q4"))
+    assert await keeper.reconcile_once() is True
+    assert [a for a, _ in gw.actions] == ["restore", "save"]
+    # Every action targeted slot 0 — the only slot a single-slot server has.
+    assert gw.slots == [0, 0]
+    # And the save actually landed, rather than being swallowed as "skipped".
+    assert any(a == "save" for a, _ in gw.actions)
+    assert gw._saved
+
+
+async def test_the_prefix_still_uses_the_last_slot_when_a_second_one_is_configured() -> None:
+    """The behaviour the hardcoded 1 was right about, preserved. With `-np 2` llama-server routes
+    by longest matching prefix, so the interactive prefix belongs in the LAST slot and slot 0
+    stays free for background traffic (verified on the box)."""
+    gw = _FakeGateway(props={"build_info": "b1-abc", "chat_template": "T", "total_slots": 2})
+    keeper = _keeper(gateway=gw, router=_FakeRouter("gpt-oss-120b"))
+    assert await keeper.reconcile_once() is True
+    assert gw.slots and set(gw.slots) == {1}
+
+
+def test_the_interactive_slot_is_the_last_one_and_degrades_to_zero() -> None:
+    """Derived from what the engine reports, never guessed. A missing or junk `total_slots`
+    falls back to slot 0, which every running model has — a miss, never a wrong slot."""
+    assert warm_keeper._interactive_slot(1) == 0
+    assert warm_keeper._interactive_slot(2) == 1
+    assert warm_keeper._interactive_slot(4) == 3
+    assert warm_keeper._interactive_slot(None) == 0
+    assert warm_keeper._interactive_slot("two") == 0
+    assert warm_keeper._interactive_slot(0) == 0  # never negative
