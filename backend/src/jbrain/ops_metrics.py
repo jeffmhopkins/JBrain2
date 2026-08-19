@@ -75,6 +75,18 @@ _RATE_SOURCES: dict[str, tuple[str, str]] = {
 }
 
 
+def _breakdown(metrics: dict[str, Any]) -> dict[str, Any]:
+    """The supervisor's /proc/meminfo passthrough, or empty when it does not send one."""
+    value = metrics.get("mem_breakdown")
+    return value if isinstance(value, dict) else {}
+
+
+def _gpu_mem(metrics: dict[str, Any]) -> dict[str, Any]:
+    """The supervisor's amdgpu `mem_info_*` counters, or empty on a box without them."""
+    value = metrics.get("gpu_mem")
+    return value if isinstance(value, dict) else {}
+
+
 def _counters(metrics: dict[str, Any]) -> dict[str, int | None]:
     """Pull the cumulative byte counters out of a `/metrics` payload, one per rate
     series — None for a series the supervisor didn't report (an older build, or a
@@ -171,12 +183,16 @@ async def store_sample(
                 """
                 INSERT INTO app.host_metrics (
                     captured_at, mem_total_bytes, mem_available_bytes,
+                    mem_free_bytes, mem_cached_bytes, mem_sreclaimable_bytes,
+                    gtt_used_bytes, gtt_total_bytes, vram_used_bytes,
                     swap_total_bytes, swap_free_bytes, disk_total_bytes, disk_free_bytes,
                     load_1m, load_5m, load_15m, uptime_seconds, gpu_busy_percent,
                     power_w, fan_rpm_max, fan_rpm, containers,
                     net_rx_bps, net_tx_bps, disk_read_bps, disk_write_bps
                 ) VALUES (
                     coalesce(:captured_at, now()), :mem_total, :mem_avail,
+                    :mem_free, :mem_cached, :mem_sreclaimable,
+                    :gtt_used, :gtt_total, :vram_used,
                     :swap_total, :swap_free, :disk_total, :disk_free,
                     :load_1m, :load_5m, :load_15m, :uptime, :gpu,
                     :power, :fan_max, cast(:fan_rpm AS jsonb), cast(:containers AS jsonb),
@@ -188,6 +204,16 @@ async def store_sample(
                 "captured_at": captured_at,
                 "mem_total": metrics["mem_total_bytes"],
                 "mem_avail": metrics["mem_available_bytes"],
+                # The supervisor already measures all of this each tick and ships it on
+                # /metrics; it was simply dropped at the point of storage, which is why the
+                # 2026-08-19 livelock left no readable trace. `.get` throughout: an older
+                # supervisor, a non-AMD box or a kernel without a field stores NULL.
+                "mem_free": _breakdown(metrics).get("MemFree"),
+                "mem_cached": _breakdown(metrics).get("Cached"),
+                "mem_sreclaimable": _breakdown(metrics).get("SReclaimable"),
+                "gtt_used": _gpu_mem(metrics).get("gtt_used_bytes"),
+                "gtt_total": _gpu_mem(metrics).get("gtt_total_bytes"),
+                "vram_used": _gpu_mem(metrics).get("vram_used_bytes"),
                 "swap_total": metrics["swap_total_bytes"],
                 "swap_free": metrics["swap_free_bytes"],
                 "disk_total": metrics["disk_total_bytes"],
@@ -220,7 +246,8 @@ INSERT INTO app.host_metrics_hourly AS h (
     disk_total_bytes, disk_used_avg, disk_used_max,
     gpu_busy_avg, gpu_busy_max, fan_rpm_avg, fan_rpm_max, power_w_avg, power_w_max,
     net_rx_bps_avg, net_rx_bps_max, net_tx_bps_avg, net_tx_bps_max,
-    disk_read_bps_avg, disk_read_bps_max, disk_write_bps_avg, disk_write_bps_max
+    disk_read_bps_avg, disk_read_bps_max, disk_write_bps_avg, disk_write_bps_max,
+    mem_free_min, gtt_used_max
 )
 SELECT
     time_bucket(INTERVAL '1 hour', captured_at),
@@ -238,7 +265,8 @@ SELECT
     avg(fan_rpm_max), max(fan_rpm_max),
     avg(power_w), max(power_w),
     avg(net_rx_bps), max(net_rx_bps), avg(net_tx_bps), max(net_tx_bps),
-    avg(disk_read_bps), max(disk_read_bps), avg(disk_write_bps), max(disk_write_bps)
+    avg(disk_read_bps), max(disk_read_bps), avg(disk_write_bps), max(disk_write_bps),
+    min(mem_free_bytes), max(gtt_used_bytes)
 FROM app.host_metrics
 WHERE captured_at >= :since
 GROUP BY 1
@@ -259,7 +287,9 @@ ON CONFLICT (bucket) DO UPDATE SET
     disk_read_bps_avg = EXCLUDED.disk_read_bps_avg,
     disk_read_bps_max = EXCLUDED.disk_read_bps_max,
     disk_write_bps_avg = EXCLUDED.disk_write_bps_avg,
-    disk_write_bps_max = EXCLUDED.disk_write_bps_max
+    disk_write_bps_max = EXCLUDED.disk_write_bps_max,
+    mem_free_min = EXCLUDED.mem_free_min,
+    gtt_used_max = EXCLUDED.gtt_used_max
 """
 
 

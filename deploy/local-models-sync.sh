@@ -171,6 +171,27 @@ if [ -n "$ids" ]; then
 for m in json.loads(os.environ["MAN"]):
     print("[local-llm]   %s <- %s (%s) include=%s" % (m["id"], m["hf_repo"], m["quant"], m["gguf_include"]))' \
       || true
+    # Free-disk pre-check. This is the path a PWA **Install** actually runs, and it had no
+    # disk check at all — while the guarded one (scripts/local-llm-setup.sh) is a shell script
+    # the owner cannot run (CLAUDE.md #10). So the product told them to use the unguarded
+    # route: queueing the ~85 GB Q8 coder from the drawer on a box with 40 GB free filled the
+    # disk with no warning, and surfaced as `hf` errors buried in a provision log AFTER the
+    # filesystem was already full — the same filesystem as the database, the blob store and
+    # the backups.
+    #
+    # Sized from the catalog's own `size_gb` for the models actually being downloaded, plus a
+    # 10 GB margin for hf's `.cache` staging and the rest of the box. REFUSES rather than
+    # warns: the queue persists, so a refusal is a retry after the owner frees space, whereas
+    # proceeding is a full disk with a half-downloaded model on it.
+    need_gb="$(printf '%s' "$dl_manifest" | python3 -c 'import json,sys
+print(int(sum(m.get("size_gb") or 0 for m in json.load(sys.stdin))) + 10)' 2>/dev/null || echo 0)"
+    avail_gb="$(df -BG --output=avail "$PWD/local-models" 2>/dev/null | tail -1 | tr -dc '0-9')"
+    if [ -n "$avail_gb" ] && [ "$need_gb" -gt 0 ] && [ "$avail_gb" -lt "$need_gb" ]; then
+      say "NOT ENOUGH DISK for [${download_ids}] — need ~${need_gb} GB, only ${avail_gb} GB free."
+      say "Models stay queued. Free space (Settings -> uninstall a model) and the next sync retries."
+      exit 1
+    fi
+
     # Absolute models dir: `docker run -v` resolves its source on the daemon, which has no
     # notion of this script's cwd, so a relative `./local-models` is not the host path the api
     # reads — pass the absolute path (cwd is the install dir). Capture the download's exit code
