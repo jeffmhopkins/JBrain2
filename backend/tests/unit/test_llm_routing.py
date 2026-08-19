@@ -16,7 +16,6 @@ EXPECTED_TASKS = {
     "agent.turn",
     "agent.vision",
     "video.summarize",
-    "session.title",
     "research.title",
     "integrate.note",
     "intake.materialize",

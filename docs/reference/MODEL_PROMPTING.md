@@ -146,7 +146,7 @@ reads as a deviation (the card shows "mixed"):
 |---|---|---|
 | **High reasoning** · high | gpt-oss-120b | `integrate.note`, `fact.adjudicate`, `wiki.ground` |
 | **Medium reasoning** · medium | gpt-oss-120b | `agent.turn`, `note.extract`, `correction_note.extract`, `video.summarize`, `wiki.rewrite`, `intake.materialize` |
-| **Low reasoning** · low | gpt-oss-120b | `entity.disambiguate`, `session.title`, `triage.classify` |
+| **Low reasoning** · low | gpt-oss-120b | `entity.disambiguate`, `research.title`, `triage.classify` |
 | **Vision** · none | Qwen3-VL-30B-A3B | `vision.ocr`, `vision.caption`, `agent.vision` |
 
 The high/low buckets put their default effort on the wire; **Medium sends no
@@ -193,7 +193,7 @@ response format and emits a hidden chain-of-thought before its answer.
   the prompt. It trades latency for depth. Most High-stakes tasks run at **Med** by
   default — deliberately, because full **High** is *slow* and tends to over-think
   before acting; reserve High for the tasks that earn it (see "When to spend High
-  effort"). The Lightweight one-shots (`entity.disambiguate`, `session.title`,
+  effort"). The Lightweight one-shots (`entity.disambiguate`, `research.title`,
   `triage.classify`) run at **Low** — right for their short, deterministic
   classify/title jobs: minimal chain-of-thought, fast. Write those prompts so the
   answer needs almost no reasoning (a clear rule and output shape), because at low

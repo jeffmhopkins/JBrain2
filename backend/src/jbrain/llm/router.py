@@ -71,15 +71,16 @@ TASK_DEFAULTS: dict[str, str] = {
     # captioning is the separate `agent.vision` route. Individually routable so the
     # summary can run on a cheaper/local model than the vision pass.
     "video.summarize": "xai:grok-4.3",
-    # Auto-titling a chat from its first exchange — a cheap one-shot summary; the prompt
-    # declares the `low` tier. This value is only the fresh-box fallback: session.title
-    # FOLLOWS agent.turn (`_FOLLOW_PRIMARY_MODEL`), so it runs on whatever model the operator
-    # is using and needs no separate override; an explicit per-task pin still wins.
-    "session.title": "xai:grok-4.3",
-    # The report sibling of session.title (external.report_titler): distill a deep-research
-    # report's raw question into a short Research Library heading. Like session.title it FOLLOWS
-    # agent.turn, so this default is just the fresh-box fallback — a re-routed agent.turn (e.g. to
-    # a local model) carries the title with it, closing the "off-box title on a local box" gap.
+    # Titling a deep-research report (external.report_titler): distill a run's raw question
+    # into a short Research Library heading. It FOLLOWS agent.turn (`_FOLLOW_PRIMARY_MODEL`),
+    # so this default is just the fresh-box fallback — a re-routed agent.turn (e.g. to a local
+    # model) carries the title with it, closing the "off-box title on a local box" gap.
+    #
+    # (There is no `session.title` twin any more. Naming a CHAT was a separate completion that
+    # followed agent.turn onto the interactive model, where its ~200-token prompt evicted the
+    # ~32k primed prefix and made the real turn behind it pay a ~100 s cold prefill. jerv now
+    # names its own chat mid-turn through the `name_session` tool, so there is no second call
+    # to route at all. A report has no turn to name itself from, so this one stays.)
     "research.title": "xai:grok-4.3",
     # The Phase-6 wiki builder (docs/plans/PHASE6_WIKI_PLAN.md): `wiki.rewrite` drafts a
     # type-guided article from an entity's cited facts; `wiki.ground` is the strict
@@ -135,7 +136,6 @@ TASK_REASONING_BUCKET: dict[str, str] = {
     "intake.materialize": "medium",
     # Low reasoning
     "entity.disambiguate": "low",
-    "session.title": "low",
     "research.title": "low",
     "triage.classify": "low",
     "pet.turn": "low",
@@ -160,7 +160,7 @@ _PRIMARY_MODEL_TASK = "agent.turn"
 # (the gap that left `research.title` alone on the off-box default on a local-only box). They
 # keep their OWN low/none reasoning effort, and an explicit per-task pin still wins over the
 # follow (see `_resolve_live`). A prompt that passes a `strength` tier opts out.
-_FOLLOW_PRIMARY_MODEL = frozenset({"session.title", "research.title"})
+_FOLLOW_PRIMARY_MODEL = frozenset({"research.title"})
 
 # Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a
 # tier, never a model, so swapping the model behind a tier is config, not a
@@ -571,7 +571,7 @@ class LlmRouter:
     ) -> LlmResult:
         # `spec_override` is the per-call model pick (the omnibox's per-conversation
         # agent model) — same precedence as in converse_stream, so a background
-        # completion (e.g. the session titler) can run on the exact model the chat
+        # completion (e.g. the research-report titler) can run on the exact model the chat
         # turn will use, no separate route and no model swap.
         provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
         # `sampling` is the prompt's per-task override (its `.prompt` `config: sampling:`

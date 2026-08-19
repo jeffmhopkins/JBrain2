@@ -230,8 +230,10 @@ def render(
         # This used to resolve the conflict by pinning n_slots to 1 and ignoring the operator.
         # It now resolves the other way: an explicit request for a second slot DROPS speculation.
         # Silently ignoring the request was the worse failure — a second slot is the only thing
-        # that keeps a background task (the auto-titler follows the interactive model) out of the
-        # slot holding a 32k primed prefix, and losing that prefix costs a ~100 s cold prefill.
+        # that keeps a background task following the interactive model (`research.title`) out of
+        # the slot holding a 32k primed prefix, and losing that prefix costs a ~100 s cold
+        # prefill. The chat auto-titler used to be the loudest case; it is gone (jerv names its
+        # own chat in-turn via `name_session`), but the class of task remains.
         # Whichever the operator picks, they get the one they asked for.
         speculative = _is_speculative(catalog_args + operator_args)
         if speculative and n_slots > 1:

@@ -293,10 +293,13 @@ class LocalModel:
         An explicit request for more than one slot is now HONOURED on a speculative model, at
         the cost of speculation (`serves_speculative`). It used to be silently clamped to 1,
         which was the worst of both: the operator asked for a second slot, did not get it, and
-        got no signal saying so. A second slot is the only thing that stops a background task —
-        the auto-titler follows the interactive model — landing in the one slot and evicting a
-        32k primed prefix, which costs a ~100 s cold prefill. Trading MTP's decode gain (~22 vs
-        ~11-12 t/s measured) for that is a real choice, and it is the operator's to make."""
+        got no signal saying so. A second slot is the only thing that stops a background task
+        that FOLLOWS the interactive model (`research.title`, and anything a future feature
+        routes the same way) from landing in the one slot and evicting a 32k primed prefix,
+        which costs a ~100 s cold prefill. The chat auto-titler was the worst offender and is
+        gone — jerv now names its chat in-turn via `name_session` — but the class of task
+        remains. Trading MTP's decode gain (~22 vs ~11-12 t/s measured) for that is a real
+        choice, and it is the operator's to make."""
         return max(1, requested)
 
     def serves_speculative(self, requested_slots: int) -> bool:

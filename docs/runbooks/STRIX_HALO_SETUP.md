@@ -279,8 +279,9 @@ did nothing degrades to a slow prime, never a wrong answer.
 >
 > **What actually costs you a cold prefill, then, is anything that INVALIDATES the checkpoint.**
 > Known candidates on this box, unproven in ranking: a background task landing in the same slot
-> (a speculative model is clamped to `-np 1`, so there is no second slot to absorb it — see the
-> auto-title note in the agent path); an aborted request, since a prefill cut short by a client
+> (a request for a second slot now drops speculation instead of being clamped away, so there IS
+> one to absorb it if the operator asks; the chat auto-titler that used to be the loudest such
+> task is gone — jerv names its own chat in-turn via `name_session`); an aborted request, since a prefill cut short by a client
 > timeout appears to leave no committed checkpoint and the next turn starts cold again; and a
 > prompt whose leading bytes moved.
 >
