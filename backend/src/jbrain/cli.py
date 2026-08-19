@@ -185,7 +185,7 @@ async def _local_llm_smoketest() -> int:
     safe to keep; exit 1 = the update path should roll back to the pinned base. Reads
     the installed set + gateway URL from settings (env-wired in the api container); no
     DB needed, so it runs under `docker compose run --rm --no-deps -T api`."""
-    from jbrain.llm import gpu_guard
+    from jbrain.llm import gpu_guard, llama_swap_config, local_catalog
     from jbrain.llm.local_gateway import LocalGatewayClient
     from jbrain.llm.smoketest import run_smoketest
 
@@ -193,21 +193,44 @@ async def _local_llm_smoketest() -> int:
     if not settings.local_llm_enabled or not settings.local_models:
         print("[smoketest] local hosting off or no models installed — skipping (pass)")
         return 0
-    # Guarded like every other load path: the smoketest LOADS each installed model, and it
-    # runs unattended during an update, which is the worst possible moment to discover a
+    # Guarded like every other load path: the smoketest LOADS a model, and it runs
+    # unattended during an update, which is the worst possible moment to discover a
     # model's device footprint the hard way.
     #
-    # No window/slot loaders here, unlike the api and worker gateways: those read the operator's
-    # `-c` override out of the settings table, and this command's whole point is running with
-    # `--no-deps` (no DB). So the pre-flight sizes off the catalog window and can under-reserve
-    # on a model the operator has widened; the load WATCHDOG still measures the real growth and
-    # aborts, which is the backstop that makes running without the override survivable.
+    # The window/slot loaders read the llama-swap CONFIG rather than the settings table,
+    # because this command runs `--no-deps` (no DB). That is not a compromise — the config
+    # is what llama-swap executes, so it cannot disagree with the served command the way a
+    # re-derivation from the catalog can.
+    #
+    # It used to pass no loaders at all and size off the catalog window, with a comment
+    # claiming the watchdog was an adequate backstop. It was not: on 2026-08-19 the tiny
+    # model was projected at the catalog's 32768 while being served at the operator's
+    # 262144, so a normal 3.78 GiB load broke a 3.57 GiB ceiling and the watchdog aborted
+    # a healthy build. The rollback that followed was spurious — and since the newer
+    # llama.cpp is where the `no_alloc` estimator lives, the broken test was blocking the
+    # fix for the thing it was failing on.
+    _shapes = llama_swap_config.served_shape_from_config(settings.local_models_dir)
+    _by_id = {
+        model.id: shape
+        for served, shape in _shapes.items()
+        if (model := local_catalog.get_by_served(served)) is not None
+    }
+
+    async def _windows() -> dict[str, int]:
+        return {mid: shape[0] for mid, shape in _by_id.items()}
+
+    async def _slots() -> dict[str, int]:
+        return {mid: shape[1] for mid, shape in _by_id.items()}
+
     gateway = LocalGatewayClient(
         settings.local_llm_url,
         gpu_probe=gpu_guard.probe_for(settings),
-        # The smoketest LOADS every installed model in turn, so it is the single biggest
-        # producer of the `--no-mmap` page-cache copies; dropping each one keeps the sweep
-        # from leaving the box's cache full of weights nothing will read again.
+        windows_loader=_windows,
+        slots_loader=_slots,
+        # The smoketest loads a model and leaves a `--no-mmap` page-cache copy behind;
+        # dropping it keeps an update from leaving the box's cache full of weights nothing
+        # will read again. (It loads the SMALLEST tool-capable model, not "every installed
+        # model in turn" as this comment used to claim — see jbrain.llm.smoketest.)
         models_dir=settings.local_models_dir,
     )
     ok, messages = await run_smoketest(settings.local_models, gateway)

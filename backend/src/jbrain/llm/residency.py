@@ -62,6 +62,11 @@ BoxLock = Callable[[], "contextlib.AbstractAsyncContextManager[None]"]
 
 # A fixed, arbitrary advisory-lock key shared by every process on the box (the api and the
 # worker), so `pg_advisory_xact_lock` serializes their model loads against each other.
+# The single default for "how much RAM stays out of the model budget". Mirrors
+# `Settings.local_llm_free_ram_fraction`; the operator override rides the settings
+# store and is threaded in via `fraction_loader`.
+DEFAULT_FREE_RAM_FRACTION = 0.15
+
 _BOX_LOCK_KEY = 0x6A_42_52_41_4E_4C_4F_41  # "jBRANLOA"
 
 
@@ -156,7 +161,12 @@ class ResidencyCoordinator:
         slots_loader: WindowsLoader | None = None,
         models_dir: str = "",
         enabled: bool = False,
-        free_ram_fraction: float = 0.25,
+        # Matches `Settings.local_llm_free_ram_fraction` (0.15). It was 0.25, so any
+        # construction path that did not pass the fraction explicitly reserved 30 GiB
+        # instead of 18.2 on this box and planned against a ceiling 12 GiB tighter than
+        # the one the guard and the meter use — one of eight disagreeing memory budgets
+        # this repo carried (see docs/plans/MEMORY_ADMISSION_PLAN.md, D0).
+        free_ram_fraction: float = DEFAULT_FREE_RAM_FRACTION,
         fraction_loader: FractionLoader | None = None,
         hold_loader: HoldLoader | None = None,
         auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
