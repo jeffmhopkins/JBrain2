@@ -67,3 +67,52 @@ def dir_size_gb(models_dir: str, model_id: str) -> float | None:
             with contextlib.suppress(OSError):
                 total += os.path.getsize(os.path.join(dirpath, name))
     return round(total / _BYTES_PER_GIB, 1)
+
+
+def drop_weights_page_cache(models_dir: str, model_id: str) -> float | None:
+    """Drop the kernel page-cache copy of `model_id`'s weights. Returns the GiB whose
+    cache was released, or None when the model's directory is missing.
+
+    MEASURED on the box, and the reason this exists: the gateway serves every model with
+    `--no-mmap` (a gfx1151 stability flag, jbrain.llm.llama_swap_config). Without mmap
+    llama.cpp `read()`s the whole GGUF into buffers it hands to the GPU driver, so the
+    kernel caches every block it reads and the weights end up resident TWICE — once in
+    GTT, once in the page cache. Loading gpt-oss-120b took GTT to 67.6 GiB and `Cached`
+    from 5.2 to 49.1 GiB, leaving `MemFree` at 8.4 GiB of a 121 GiB box. Unloading freed
+    the GTT completely and left the 39.4 GiB cache copy behind for good.
+
+    That second copy is what killed the host on 2026-08-19: `MemAvailable` counts it as
+    free, so the residency budget saw ~36 GiB of headroom over ~8 GiB of actually-free
+    pages, admitted another model, and the reclaim-under-GTT-pressure that followed
+    livelocked the box for seven hours. Dropping the cache the moment the load finishes
+    removes the second copy at its source — the load has already read what it needs, and
+    nothing else wants those bytes until the next load reads them again.
+
+    `POSIX_FADV_DONTNEED` only drops CLEAN pages, and weights are read-only, so this can
+    never lose a write. It is advisory: the kernel may decline, and pages another process
+    still has mapped stay. Best-effort throughout — a failure here costs memory, never
+    correctness, so it degrades to the prior behaviour rather than failing a load.
+
+    Deliberately targeted rather than the global `drop_caches` the update path uses
+    (deploy/update-inner.sh): this touches only the weights just read, so Postgres's
+    working set and the rest of the box's cache survive."""
+    root = os.path.join(models_dir, model_id)
+    if not os.path.isdir(root):
+        return None
+    dropped = 0
+    for dirpath, _dirs, files in os.walk(root):
+        if ".cache" in os.path.relpath(dirpath, root).split(os.sep):
+            continue
+        for name in files:
+            if not name.endswith(".gguf"):
+                continue
+            path = os.path.join(dirpath, name)
+            with contextlib.suppress(OSError, AttributeError):
+                fd = os.open(path, os.O_RDONLY)
+                try:
+                    # (0, 0) means "the whole file" to posix_fadvise.
+                    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                    dropped += os.fstat(fd).st_size
+                finally:
+                    os.close(fd)
+    return round(dropped / _BYTES_PER_GIB, 1) if dropped else None

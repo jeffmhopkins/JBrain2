@@ -25,10 +25,36 @@ _KB_PER_GIB = 1024 * 1024
 def read_memory_gb(path: str = "/proc/meminfo") -> tuple[float, float] | None:
     """`(total_gb, used_gb)` from /proc/meminfo, or None if unavailable.
 
-    `used = MemTotal - MemAvailable` — it excludes reclaimable page cache, so it
-    reflects real memory pressure (what actually limits loading another model)
-    rather than counting cache as "used"."""
-    wanted = ("MemTotal", "MemAvailable")
+    `used = MemTotal - MemFree - SReclaimable`. **Page cache counts as USED.**
+
+    This deliberately does NOT use `MemAvailable`, which is what it used to do, on the
+    reasoning that MemAvailable "excludes reclaimable page cache, so it reflects real memory
+    pressure". On this box that reasoning is exactly inverted, and it cost a seven-hour
+    livelock and a power cycle on 2026-08-19.
+
+    Measured during a single gpt-oss-120b load on the 121 GiB box:
+
+        MemAvailable  35.7 GiB      <- what the budget believed it had
+        MemFree        8.0 GiB      <- what it actually had
+        Cached        39.4 GiB      <- a second copy of the model weights
+        GTT           67.6 GiB      <- the first copy
+
+    The gateway serves with `--no-mmap` (a gfx1151 stability flag), so llama.cpp reads each
+    GGUF rather than mapping it and the weights end up resident twice. Reclaiming that cache
+    is not the cheap operation MemAvailable assumes: the iGPU has most of RAM pinned as GTT,
+    and reclaim under that pressure is precisely what livelocks this host — the failure this
+    runbook has documented since the first freeze. The budget read 35.7, admitted another
+    model, and the box spent seven hours swapping every container in and out before it died.
+
+    So the honest question for "can I load another model" is how many pages are FREE, not how
+    many the kernel thinks it could free. `SReclaimable` is still credited: dentry/inode slab
+    really is cheap to give back and is not part of this failure mode.
+
+    The cost of the conservatism is small and shrinking: `local_weights.drop_weights_page_cache`
+    now drops each model's cache copy as its load finishes, so the remaining page cache is
+    ordinary (Postgres, logs) and was 5.2 GiB at idle on this box. If that drop ever stops
+    working, this number notices instead of being blind to it."""
+    wanted = ("MemTotal", "MemFree", "SReclaimable")
     fields: dict[str, int] = {}
     try:
         with open(path) as f:
@@ -40,11 +66,13 @@ def read_memory_gb(path: str = "/proc/meminfo") -> tuple[float, float] | None:
                         break
     except (OSError, ValueError, IndexError):
         return None
-    if not all(k in fields for k in wanted):
+    # SReclaimable is absent on older/uncommon kernels; treat it as zero rather than
+    # refusing to report at all, which would leave the budget with no number.
+    if "MemTotal" not in fields or "MemFree" not in fields:
         return None
     total = fields["MemTotal"] / _KB_PER_GIB
-    used = (fields["MemTotal"] - fields["MemAvailable"]) / _KB_PER_GIB
-    return round(total, 1), round(used, 1)
+    free = (fields["MemFree"] + fields.get("SReclaimable", 0)) / _KB_PER_GIB
+    return round(total, 1), round(total - free, 1)
 
 
 def read_gpu_busy_percent(drm: Path = Path("/sys/class/drm")) -> float | None:

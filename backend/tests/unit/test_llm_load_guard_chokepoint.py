@@ -25,6 +25,21 @@ from jbrain.llm.local_gateway import LocalGatewayClient
 _SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "jbrain"
 
 
+@pytest.fixture(autouse=True)
+def _ample_host_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pre-flight now bounds itself by the host's FREE pages as well as the GTT ceiling
+    (`gpu_guard.refuse_if_no_device_room`), because on this box `gtt_total` is essentially all
+    of RAM and therefore counts page cache as room the GPU could take — the reading that
+    admitted the load that livelocked the host on 2026-08-19.
+
+    That makes the guard read the REAL machine, so without this every case below would depend
+    on how much memory the CI runner happens to have free. Pin it wide open by default, so
+    these keep testing the GTT leg they were written for; the host leg has its own tests."""
+    monkeypatch.setattr(
+        "jbrain.llm.gpu_guard.read_memory_gb", lambda path="/proc/meminfo": (1024.0, 0.0)
+    )
+
+
 def _gateway_constructions() -> list[tuple[pathlib.Path, ast.Call]]:
     found: list[tuple[pathlib.Path, ast.Call]] = []
     for path in _SRC.rglob("*.py"):
@@ -370,3 +385,58 @@ async def test_an_unreadable_override_falls_back_instead_of_blocking_the_load() 
     )
     await gateway.load(model.served_model)
     assert any(path.endswith("/health") for path in seen)
+
+
+def test_a_finished_load_drops_the_page_cache_copy_of_the_weights(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--no-mmap` leaves every model resident TWICE — once in GTT, once in the page cache
+    the read filled — and only the GTT copy goes away on unload.
+
+    Measured on the box: one gpt-oss-120b load took `Cached` from 5.2 to 49.1 GiB and left
+    `MemFree` at 8.4 GiB of 121; after the unload the 39.4 GiB cache copy was still there.
+    That invisible second copy is what livelocked the host for seven hours on 2026-08-19, so
+    the drop belongs on the load chokepoint, not on the callers who remember to ask."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    (tmp_path / model.id).mkdir()
+    (tmp_path / model.id / "weights.gguf").write_bytes(b"x" * 4096)
+
+    dropped: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "jbrain.llm.local_weights.drop_weights_page_cache",
+        lambda models_dir, model_id: dropped.append((models_dir, model_id)) or 12.5,
+    )
+
+    async def run() -> None:
+        gateway = LocalGatewayClient(
+            "http://gw",
+            transport=_transport(),
+            gpu_probe=_StubProbe(_mem(10.0)),
+            models_dir=str(tmp_path),
+        )
+        await gateway.load(model.served_model)
+
+    asyncio.run(run())
+    assert dropped == [(str(tmp_path), model.id)]
+
+
+def test_the_drop_is_skipped_when_the_weights_are_not_mounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gateway built without `models_dir` (the CLI's unload path, every structural test)
+    must load exactly as before rather than erroring on a directory it cannot see."""
+    called: list[object] = []
+    monkeypatch.setattr(
+        "jbrain.llm.local_weights.drop_weights_page_cache",
+        lambda models_dir, model_id: called.append(models_dir),
+    )
+
+    async def run() -> None:
+        gateway = LocalGatewayClient(
+            "http://gw", transport=_transport(), gpu_probe=_StubProbe(_mem(10.0))
+        )
+        await gateway.load("gpt-oss-120b")
+
+    asyncio.run(run())
+    assert called == []

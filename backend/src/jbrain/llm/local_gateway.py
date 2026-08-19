@@ -36,7 +36,7 @@ import httpx
 import structlog
 
 from jbrain import box_events
-from jbrain.llm import gpu_guard, local_catalog
+from jbrain.llm import gpu_guard, local_catalog, local_weights
 
 log = structlog.get_logger()
 
@@ -72,6 +72,7 @@ class LocalGatewayClient:
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
         windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         slots_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
+        models_dir: str = "",
     ):
         self._root = base_url.rstrip("/").removesuffix("/v1")
         self._transport = transport
@@ -93,6 +94,13 @@ class LocalGatewayClient:
         # to the catalog default and one slot, which is what an unconfigured box serves.
         self._windows_loader = windows_loader
         self._slots_loader = slots_loader
+        # Where the weights live, so a finished load can drop their PAGE-CACHE copy. Same
+        # chokepoint reasoning again: `--no-mmap` leaves every model resident twice — once in
+        # GTT, once in the cache the read filled — and the copy that is invisible to
+        # `MemAvailable` is the one that killed this host (jbrain.llm.local_weights
+        # .drop_weights_page_cache). Unset (a container without the weights mount, the tests)
+        # skips the drop and keeps the prior behaviour.
+        self._models_dir = models_dir
 
     async def running(self) -> set[str]:
         """Served-model names currently loaded, or an empty set on ANY failure
@@ -255,6 +263,24 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
         return parsed if isinstance(parsed, dict) else {}
 
+    def _drop_weights_cache(self, model: local_catalog.LocalModel | None) -> None:
+        """Release the page-cache copy of the weights this load just read.
+
+        Called the moment the load returns, on BOTH paths (guarded and probe-less), because
+        the cost it removes is incurred by the read itself. With `--no-mmap` the weights are
+        resident twice — GTT plus the cache the read filled — and only the GTT copy is freed
+        on unload. Measured: one gpt-oss-120b load put `Cached` at 49.1 GiB and `MemFree` at
+        8.4 GiB on a 121 GiB box, and the cache copy survived the unload.
+
+        Synchronous on purpose. It is a handful of `posix_fadvise` calls with no I/O of their
+        own, and doing it before the warm-up means the warm-up's allocations meet the memory
+        this just returned rather than racing it."""
+        if model is None or not self._models_dir:
+            return
+        freed = local_weights.drop_weights_page_cache(self._models_dir, model.id)
+        if freed:
+            log.info("local_gateway.weights_cache_dropped", model=model.id, freed_gb=freed)
+
     async def _served_shape(self, model: local_catalog.LocalModel) -> tuple[int, int]:
         """The (context window, parallel slots) llama-swap will actually serve `model` with —
         the operator's saved overrides when a loader is wired, else the catalog default and one
@@ -345,6 +371,7 @@ class LocalGatewayClient:
 
         if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
             await _do_load()
+            self._drop_weights_cache(model)
             await self._warm(served_model, system=warm_system, tools=warm_tools)
             return
 
@@ -364,6 +391,7 @@ class LocalGatewayClient:
             target=served_model,
             abort=lambda: self.unload(served_model),
         )
+        self._drop_weights_cache(model)
         await self._warm(served_model, system=warm_system, tools=warm_tools)
 
     async def _warm(

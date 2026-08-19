@@ -77,6 +77,8 @@ from typing import Protocol
 import httpx
 import structlog
 
+from jbrain.host_metrics import read_memory_gb
+
 log = structlog.get_logger()
 
 _BYTES_PER_GB = 1024**3
@@ -228,25 +230,63 @@ class GpuBudgetError(Exception):
     box declined to do something, not silently get a model that never loaded."""
 
 
-def refuse_if_no_device_room(sample: GpuMem | None, projected_gb: float, target: str) -> None:
-    """Pre-flight: raise when the device pool cannot hold `projected_gb` on top of what is
-    already pinned, keeping `MIN_FREE_GTT_GB` in reserve.
+def refuse_if_no_device_room(
+    sample: GpuMem | None,
+    projected_gb: float,
+    target: str,
+    *,
+    host_free_gb: float | None = None,
+) -> None:
+    """Pre-flight: raise when the box cannot hold `projected_gb` on top of what is already
+    pinned, keeping `MIN_FREE_GTT_GB` in reserve.
 
-    This is the check the system-RAM budget cannot make. On an APU the two pools overlap —
-    GTT is pinned system RAM — but they are accounted separately and drift apart: a model
-    can be well inside the free-RAM floor while the device pool, capped by
-    `amdgpu.gttsize`/`ttm.pages_limit`, has no room left. A None sample means we could not
-    read the pool, so this is a no-op."""
-    if sample is None:
+    Bounded by BOTH pools, and by the smaller of the two:
+
+    * the device ceiling — `gtt_total - gtt_used`, capped by `amdgpu.gttsize`/`ttm.pages_limit`;
+    * the host's actually-free pages — `host_metrics.read_memory_gb`.
+
+    Taking only the first is what let this box die on 2026-08-19. `strix-halo-host-setup.sh`
+    sets `amdgpu.gttsize=126976` (124 GiB) on a 121 GiB machine, so `gtt_total` is ESSENTIALLY
+    ALL OF RAM and `gtt_free` therefore counts page cache, Postgres and every container's
+    anonymous memory as room the GPU could take. At the moment of the fatal load the device
+    ceiling reported 50.4 GB of headroom while the box had 8.0 GB of free pages: the guard
+    admitted a 27 GB model into 8 GB, and the reclaim that followed livelocked the host for
+    seven hours. The device number was not wrong about the ceiling — it was answering a
+    different question from the one that kills the machine.
+
+    A None sample (or an unreadable host figure) drops that term rather than the whole check,
+    so losing one probe degrades the guard instead of disabling it. Both None is a no-op, as
+    before — with nothing to read, refusing every load would be worse than the risk."""
+    device_headroom = None if sample is None else sample.gtt_free_gb - MIN_FREE_GTT_GB
+    if host_free_gb is None:
+        mem = read_memory_gb()
+        host_free_gb = None if mem is None else mem[0] - mem[1]
+    host_headroom = None if host_free_gb is None else host_free_gb - MIN_FREE_GTT_GB
+
+    limits = [
+        (h, name)
+        for h, name in ((device_headroom, "GTT"), (host_headroom, "host"))
+        if h is not None
+    ]
+    if not limits:
         return
-    headroom = sample.gtt_free_gb - MIN_FREE_GTT_GB
-    if projected_gb > headroom:
-        raise GpuBudgetError(
-            f"{target} needs ~{projected_gb:.1f} GB of device memory but only "
-            f"{headroom:.1f} GB is safely available (GTT {sample.gtt_used_gb:.1f}/"
-            f"{sample.gtt_total_gb:.1f} GB used, holding {MIN_FREE_GTT_GB:.0f} GB back) — "
-            "refusing to load rather than risk freezing the host."
-        )
+    headroom, binding = min(limits)
+    if projected_gb <= headroom:
+        return
+
+    where = (
+        f"GTT {sample.gtt_used_gb:.1f}/{sample.gtt_total_gb:.1f} GB used"
+        if sample is not None
+        else "GTT unreadable"
+    )
+    free = (
+        f"{host_free_gb:.1f} GB host pages free" if host_free_gb is not None else "host unreadable"
+    )
+    raise GpuBudgetError(
+        f"{target} needs ~{projected_gb:.1f} GB but only {headroom:.1f} GB is safely "
+        f"available — bound by the {binding} limit ({where}, {free}, holding "
+        f"{MIN_FREE_GTT_GB:.0f} GB back) — refusing to load rather than risk freezing the host."
+    )
 
 
 async def guarded_load(

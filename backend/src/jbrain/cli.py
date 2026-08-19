@@ -202,7 +202,14 @@ async def _local_llm_smoketest() -> int:
     # `--no-deps` (no DB). So the pre-flight sizes off the catalog window and can under-reserve
     # on a model the operator has widened; the load WATCHDOG still measures the real growth and
     # aborts, which is the backstop that makes running without the override survivable.
-    gateway = LocalGatewayClient(settings.local_llm_url, gpu_probe=gpu_guard.probe_for(settings))
+    gateway = LocalGatewayClient(
+        settings.local_llm_url,
+        gpu_probe=gpu_guard.probe_for(settings),
+        # The smoketest LOADS every installed model in turn, so it is the single biggest
+        # producer of the `--no-mmap` page-cache copies; dropping each one keeps the sweep
+        # from leaving the box's cache full of weights nothing will read again.
+        models_dir=settings.local_models_dir,
+    )
     ok, messages = await run_smoketest(settings.local_models, gateway)
     for message in messages:
         print(f"[smoketest] {message}")

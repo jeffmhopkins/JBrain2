@@ -522,6 +522,10 @@ async def run() -> None:
         # window llama-swap will really serve rather than the catalog default.
         windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
         slots_loader=lambda: worker_settings_store.llm_local_parallel_slots(queue.SYSTEM_CTX),
+        # Lets a finished load drop the page-cache copy of the weights it just read. The
+        # worker gained the weights mount for this (deploy/docker-compose.yml) — it swaps
+        # models for background jobs, so without it half the box's loads left the copy behind.
+        models_dir=settings.local_models_dir,
     )
     # The box's sole model evictor: llama-swap runs every model in one `swap: false`
     # group (jbrain.llm.llama_swap_config), so it NEVER evicts on its own — an unadmitted

@@ -814,6 +814,7 @@ def _default_residency(
             settings.local_llm_url,
             gpu_probe=gpu_guard.probe_for(settings),
             windows_loader=windows_loader,
+            models_dir=settings.local_models_dir,
         ),
         windows_loader=windows_loader,
         models_dir=settings.local_models_dir,

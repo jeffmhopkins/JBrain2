@@ -411,6 +411,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             gpu_probe=gpu_probe,
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
+            # Lets a finished load drop the page-cache copy of the weights it just read.
+            models_dir=settings.local_models_dir,
         )
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
         # the free-RAM floor before each local load (passed to build_router below as its

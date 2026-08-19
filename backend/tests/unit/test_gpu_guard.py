@@ -16,6 +16,21 @@ from jbrain.llm.gpu_guard import GpuBudgetError, GpuMem
 _GB = 1024**3
 
 
+@pytest.fixture(autouse=True)
+def _ample_host_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pre-flight now bounds itself by the host's FREE pages as well as the GTT ceiling
+    (`gpu_guard.refuse_if_no_device_room`), because on this box `gtt_total` is essentially all
+    of RAM and therefore counts page cache as room the GPU could take — the reading that
+    admitted the load that livelocked the host on 2026-08-19.
+
+    That makes the guard read the REAL machine, so without this every case below would depend
+    on how much memory the CI runner happens to have free. Pin it wide open by default, so
+    these keep testing the GTT leg they were written for; the host leg has its own tests."""
+    monkeypatch.setattr(
+        "jbrain.llm.gpu_guard.read_memory_gb", lambda path="/proc/meminfo": (1024.0, 0.0)
+    )
+
+
 def _sample(gtt_used: float, gtt_total: float = 120.0, vram_used: float = 0.5) -> GpuMem:
     return GpuMem(
         gtt_used_gb=gtt_used, gtt_total_gb=gtt_total, vram_used_gb=vram_used, vram_total_gb=2.0
@@ -77,8 +92,56 @@ def test_preflight_refuses_when_the_device_pool_is_short() -> None:
     # roomy — the two are accounted separately and drift apart.
     with pytest.raises(GpuBudgetError) as exc:
         gpu_guard.refuse_if_no_device_room(_sample(gtt_used=110.0), projected_gb=21.0, target="m")
-    assert "device memory" in str(exc.value)
+    assert "bound by the GTT limit" in str(exc.value)
     assert "freezing the host" in str(exc.value)
+
+
+def test_preflight_also_refuses_when_the_HOST_is_short_but_gtt_looks_roomy() -> None:
+    """The leg that was missing, and the exact reading that killed the box on 2026-08-19.
+
+    `strix-halo-host-setup.sh` sets `amdgpu.gttsize` to 124 GiB on a 121 GiB machine, so
+    `gtt_total - gtt_used` is essentially "all of RAM minus what the GPU has pinned" — it
+    counts page cache, Postgres and every container's anonymous memory as room the GPU could
+    take. At the fatal load it reported 50.4 GB of headroom while the box had 8.0 GB of free
+    pages, and the guard admitted a 27 GB model into 8 GB."""
+    # GTT says 56 GB free (124 - 68); the host says 8 GB of pages are actually free.
+    with pytest.raises(GpuBudgetError) as exc:
+        gpu_guard.refuse_if_no_device_room(
+            _sample(gtt_used=68.0, gtt_total=124.0), projected_gb=27.0, target="m", host_free_gb=8.0
+        )
+    assert "bound by the host limit" in str(exc.value)
+
+
+def test_preflight_takes_the_smaller_of_the_two_limits() -> None:
+    """Neither pool is authoritative on its own: GTT can be exhausted while RAM is roomy (a
+    small `gttsize`), and RAM can be exhausted while GTT looks roomy (this box). The guard
+    must be bound by whichever is tighter."""
+    # Plenty of host memory, no GTT ceiling left -> refused on GTT.
+    with pytest.raises(GpuBudgetError, match="bound by the GTT limit"):
+        gpu_guard.refuse_if_no_device_room(
+            _sample(gtt_used=110.0, gtt_total=120.0),
+            projected_gb=21.0,
+            target="m",
+            host_free_gb=900.0,
+        )
+    # Room in both -> admitted.
+    gpu_guard.refuse_if_no_device_room(
+        _sample(gtt_used=10.0, gtt_total=124.0), projected_gb=21.0, target="m", host_free_gb=90.0
+    )
+
+
+def test_one_unreadable_probe_degrades_the_guard_rather_than_disabling_it() -> None:
+    """Losing a probe must not silently turn the check off — that is how this box froze
+    three times. With no GTT sample the host figure still bounds the load, and vice versa."""
+    with pytest.raises(GpuBudgetError, match="bound by the host limit"):
+        gpu_guard.refuse_if_no_device_room(None, projected_gb=50.0, target="m", host_free_gb=8.0)
+    with pytest.raises(GpuBudgetError, match="bound by the GTT limit"):
+        gpu_guard.refuse_if_no_device_room(
+            _sample(gtt_used=118.0, gtt_total=120.0),
+            projected_gb=50.0,
+            target="m",
+            host_free_gb=None,
+        )
 
 
 def test_preflight_holds_a_floor_back_for_the_host() -> None:
