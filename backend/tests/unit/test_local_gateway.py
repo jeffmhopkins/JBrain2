@@ -211,14 +211,14 @@ async def test_load_progress_is_none_when_logs_are_unavailable() -> None:
     assert await _client(lambda r: httpx.Response(404)).load_progress() is None
 
 
-async def test_tail_logs_reads_the_only_buffered_endpoint() -> None:
-    """`/logs` is llama-swap's sole BUFFERED route.
+async def test_tail_logs_reads_the_proxy_buffer() -> None:
+    """`/logs` is llama-swap's proxy monitor — its own lines, not llama.cpp's.
 
-    A previous version took a `source` and fetched `/logs/upstream` for llama-server's own
-    output. That path does not exist — the real upstream routes are `/logs/stream/*`, which
-    stream and carry no history. Verified against the live box: `/logs/upstream` 404s, the
-    fallback returned `/logs`, and nothing was gained. Captured during a load instead; see
-    `capture_upstream_logs`."""
+    Three attempts to reach the engine's output through this surface failed, each
+    differently: `/logs/upstream` 404s; `/logs/stream/*` is chunked text, not SSE; and it
+    DOES replay history, so the attach-before-load design built on the opposite belief was
+    unnecessary as well as unreliable. The memory measurement now comes from the device
+    delta and needs no log route."""
     seen: dict[str, str] = {}
 
     def handle(req: httpx.Request) -> httpx.Response:
@@ -230,35 +230,48 @@ async def test_tail_logs_reads_the_only_buffered_endpoint() -> None:
     assert seen["path"] == "/logs"
 
 
-async def test_the_upstream_capture_streams_and_keeps_what_it_read() -> None:
-    """It must append into a caller-owned list, not return.
-
-    `/logs/stream/upstream` has no history, so the capture has to be running before the
-    load and cancelled after — and cancellation must not discard what was already read,
-    which a return value would."""
-    collected: list[str] = []
-
-    def handle(req: httpx.Request) -> httpx.Response:
-        assert req.url.path == "/logs/stream/upstream"
-        return httpx.Response(200, text="load_tensors: Vulkan0 model buffer size = 10.00 MiB\n")
-
-    await _client(handle).capture_upstream_logs(collected)
-    assert any("model buffer size" in line for line in collected)
-
-
-async def test_the_upstream_capture_is_silent_when_the_route_is_missing() -> None:
-    """Our pinned llama-swap 404s this route. A load must never fail because its
-    instrumentation could not attach."""
-    collected: list[str] = []
-    await _client(lambda r: httpx.Response(404)).capture_upstream_logs(collected)
-    assert collected == []
-
-
 async def test_tail_logs_raises_when_the_gateway_is_unreachable() -> None:
     # Unlike load_progress (a soft miss), tail_logs surfaces the failure — the operator
     # asked for the logs, so an empty success would mislead.
     with pytest.raises(LocalGatewayError):
         await _client(lambda r: httpx.Response(503)).tail_logs()
+
+
+async def test_tail_upstream_logs_reads_the_replay_burst_off_the_stream() -> None:
+    """The engine's own output IS reachable — via the history `/logs/stream/*` replays.
+
+    The route `tail_logs` cannot serve. This is the surface the three failed memory-scrape
+    attempts were looking for, so the test pins both the path and that the burst is what
+    comes back."""
+    seen: dict[str, str] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        return httpx.Response(
+            200, text="llama_model_loader: loaded\nmodel buffer size = 4400 MiB\n"
+        )
+
+    out = await _client(handle).tail_upstream_logs()
+    assert "model buffer size" in out
+    assert seen["path"] == "/logs/stream/upstream"
+
+
+async def test_tail_upstream_logs_can_isolate_one_served_model() -> None:
+    seen: dict[str, str] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        return httpx.Response(200, text="")
+
+    await _client(handle).tail_upstream_logs("qwen3-30b")
+    assert seen["path"] == "/logs/stream/qwen3-30b"
+
+
+async def test_tail_upstream_logs_raises_when_the_stream_cannot_be_opened() -> None:
+    # Same contract as tail_logs: the operator asked, so a miss is surfaced rather than
+    # returning an empty body that reads as "the engine printed nothing".
+    with pytest.raises(LocalGatewayError):
+        await _client(lambda r: httpx.Response(404)).tail_upstream_logs()
 
 
 def test_parse_load_progress_tolerates_floats_and_ignores_out_of_range() -> None:
@@ -297,32 +310,3 @@ async def test_slot_action_proceeds_for_a_resident_model() -> None:
 
     result = await _client(handle).slot_action("gpt-oss-120b", 1, "save", filename="x.bin")
     assert result["n_saved"] == 27476
-
-
-async def test_the_load_path_starts_the_capture_before_loading() -> None:
-    """Wiring, asserted on ordering rather than on observed HTTP.
-
-    llama.cpp prints its per-buffer sizes ONCE, while loading, and the stream carries no
-    history — so a capture started after `_do_load` would reliably see nothing.
-
-    The first version of this test FAILED, and was right to: `ensure_future` only schedules
-    the watcher, and the loop ran the whole load before ever starting it. The load now waits
-    (briefly, bounded) for the stream to attach."""
-    order: list[str] = []
-
-    async def fake_capture(self: object, collected: list[str], attached: object = None) -> None:
-        order.append("capture")
-        if attached is not None:
-            attached.set()  # type: ignore[attr-defined]
-
-    def handle(req: httpx.Request) -> httpx.Response:
-        if "health" in req.url.path:
-            order.append("load")
-        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
-
-    client = _client(handle)
-    # Bound on the instance, so the class (and every other test) is untouched.
-    client.capture_upstream_logs = fake_capture.__get__(client)  # type: ignore[method-assign]
-    await client.load("qwen3-vl-30b-a3b")
-
-    assert order and order[0] == "capture", order
