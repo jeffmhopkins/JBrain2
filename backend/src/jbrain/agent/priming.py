@@ -96,6 +96,27 @@ async def jerv_prime_spec(
 # in the FILENAME rather than a sidecar: a changed input yields a different name, the restore
 # simply misses, and the keeper falls through to a normal prefill. Self-invalidating, with no
 # metadata file to drift from the bytes it describes.
+# Chat-template constructs that render a date into the prompt. A template containing any of
+# these makes the prefix change at UTC midnight even though nothing we control changed, so the
+# date has to enter the fingerprint; a template containing none of them does not.
+#
+# Deliberately over-broad and matched case-insensitively: a false positive costs one stale file
+# a day, a false negative costs a prefix that silently stops matching. `strftime_now` is minja's
+# date builtin (what harmony calls), `date_string` is the variable name transformers' templates
+# conventionally pass it through, and the two literals catch a template that hardcodes the label.
+_DATE_CONSTRUCTS = ("strftime_now", "date_string", "current date", "current_date")
+
+
+def template_renders_date(chat_template: str) -> bool:
+    """Whether `chat_template` injects a date into the rendered prompt.
+
+    MEASURED, not assumed: gpt-oss's harmony template renders `Current date:` into the system
+    header, and Qwen3.8's 10,341-character template contains none of these constructs (checked
+    against the live gateway's `/props`). An EMPTY template — a `/props` hiccup — counts as
+    rendering one, because the conservative direction is to keep rotating."""
+    return not chat_template or any(k in chat_template.lower() for k in _DATE_CONSTRUCTS)
+
+
 def jerv_prime_fingerprint(
     system: str,
     tools: list[dict[str, Any]],
@@ -114,20 +135,26 @@ def jerv_prime_fingerprint(
     and cover the case the box makes likely — updates rebuild llama.cpp on master by default,
     and a template change rewrites the prefix upstream of everything.
 
-    `today_utc` is in here because the gpt-oss template renders `Current date:` into the system
-    header (verified on-box), so a cache is stale at UTC midnight — the CONTAINER's midnight,
-    which is not the owner's.
+    `today_utc` enters the digest ONLY for a template that actually renders a date. It used to
+    be unconditional, for the gpt-oss reason (harmony puts `Current date:` in the system header,
+    so its cache really is stale at the container's UTC midnight — which is not the owner's).
+    But the interactive model on this box is a Qwen3.8 hybrid whose template has no date in it,
+    and rotating its name daily wrote a fresh ~2 GB state file every midnight, orphaned the
+    previous one on a volume nothing prunes, and made the model pay a ~100 s cold prefill for a
+    prefix that had not changed. So the key is now per model per prompt: it moves when the
+    persona, the tools, the build, the template or the served shape moves, and otherwise stays
+    put.
     """
     payload = json.dumps(
         {
-            "v": 1,  # bump when the SET of inputs changes, else old names look valid to new code
+            "v": 2,  # bump when the SET of inputs changes, else old names look valid to new code
             "system": system,
             "tools": tools,
             "build": build_info,
             "template": chat_template,
             "n_ctx": n_ctx,
             "n_slots": n_slots,
-            "date": today_utc,
+            "date": today_utc if template_renders_date(chat_template) else None,
         },
         sort_keys=True,
         separators=(",", ":"),

@@ -194,6 +194,16 @@ being recreated by an update), and the keeper restores it before priming. Measur
 skipped, not shortened. The prime still runs in both paths ON PURPOSE: a restore that silently
 did nothing degrades to a slow prime, never a wrong answer.
 
+> **The state file is keyed per model, per prompt** — `jerv-<model>-<fingerprint>.bin`, where
+> the fingerprint digests the persona, the tool JSON, llama.cpp's `build_info`, the chat
+> template, and the served `-c`/`-np`. It is **not** keyed by date, with one exception: a
+> template that actually renders a date (harmony puts `Current date:` in gpt-oss's system
+> header) keeps the UTC day in the digest, because for that model the prefix really does change
+> at the container's midnight. Qwen3.8's template contains no date construct — checked against
+> `/props` — so its file now stays put until something real moves. It used to rotate nightly
+> for every model, which rewrote ~2 GB, orphaned the previous file on a volume nothing prunes,
+> and made the interactive model pay a ~100 s cold prefill for an unchanged prefix.
+
 > **`--swa-full` is mandatory here, not tuning.** gpt-oss is an interleaved sliding-window
 > model, and a restore into a windowed cache reports full success and is then discarded — same
 > token count, same bytes, same 0.3s, and llama-server re-prefills anyway. Measured A/B on the

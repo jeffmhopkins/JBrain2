@@ -8,7 +8,11 @@ from collections.abc import Collection
 from typing import Any, cast
 
 from jbrain.agent.agents import AGENTS
-from jbrain.agent.priming import jerv_prime_spec
+from jbrain.agent.priming import (
+    jerv_prime_fingerprint,
+    jerv_prime_spec,
+    template_renders_date,
+)
 from jbrain.agent.readtools import OPTIONAL_CANVAS_TOOLS, OPTIONAL_CROP_TOOLS
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm.openai_compat import openai_tools
@@ -101,3 +105,80 @@ async def test_jerv_prime_spec_is_best_effort_when_the_liveness_probe_fails() ->
     # Only the model-gated canvas pair is hidden (no served model named); the probe
     # failure itself hides nothing.
     assert set(reg.calls[0][3]) == GATED
+
+
+# The KV-slot state file's name is the fingerprint, so what enters the digest decides how often
+# the box rewrites a ~2 GB file and how often it pays a cold prefill for a prefix that did not
+# change. These pin the key at "per model, per prompt".
+
+_FP = {
+    "build_info": "b1234-abcdef",
+    "n_ctx": 262144,
+    "n_slots": 1,
+}
+
+# A date-free template, like the Qwen3.8 hybrid's (checked against the live gateway's /props:
+# 10,341 characters, zero date constructs).
+_DATELESS = "{% for message in messages %}<|im_start|>{{ message.role }}{% endfor %}"
+# Harmony's shape: minja's date builtin rendered into the system header.
+_DATED = "System: Current date: {{ strftime_now('%Y-%m-%d') }}\n{% for m in messages %}{% endfor %}"
+
+
+def test_a_dateless_template_keeps_the_same_fingerprint_across_days() -> None:
+    """The whole point of the change: a prompt that has not moved must not rewrite its state
+    file at UTC midnight. The hybrid was writing ~2 GB every night, orphaning the previous file
+    on a volume nothing prunes, and paying a ~100 s cold prefill for an identical prefix."""
+    monday = jerv_prime_fingerprint(
+        "persona", [{"name": "t"}], chat_template=_DATELESS, today_utc="2026-08-18", **_FP
+    )
+    tuesday = jerv_prime_fingerprint(
+        "persona", [{"name": "t"}], chat_template=_DATELESS, today_utc="2026-08-19", **_FP
+    )
+    assert monday == tuesday
+
+
+def test_a_dated_template_still_rotates_daily() -> None:
+    """gpt-oss's harmony template renders `Current date:` into the system header, so its prefix
+    genuinely differs after the container's UTC midnight. Dropping the date wholesale would make
+    it load a ~1 GB state file whose reusable prefix ends at the date token."""
+    monday = jerv_prime_fingerprint(
+        "persona", [{"name": "t"}], chat_template=_DATED, today_utc="2026-08-18", **_FP
+    )
+    tuesday = jerv_prime_fingerprint(
+        "persona", [{"name": "t"}], chat_template=_DATED, today_utc="2026-08-19", **_FP
+    )
+    assert monday != tuesday
+
+
+def test_everything_that_really_changes_the_prefix_still_moves_the_fingerprint() -> None:
+    """Dropping the date must not have loosened the key. Each of these rewrites the bytes
+    llama-server would prefill, so each must produce a different name and a clean miss."""
+    base = dict(
+        system="persona", tools=[{"name": "t"}], chat_template=_DATELESS, today_utc="2026-08-19"
+    )
+
+    def fp(**over: object) -> str:
+        args = {**base, **_FP, **over}
+        return jerv_prime_fingerprint(
+            args.pop("system"),  # type: ignore[arg-type]
+            args.pop("tools"),  # type: ignore[arg-type]
+            **args,  # type: ignore[arg-type]
+        )
+
+    baseline = fp()
+    assert fp(system="a different persona") != baseline  # the pinned prompt moved
+    assert fp(tools=[{"name": "t"}, {"name": "u"}]) != baseline  # a tool appeared
+    assert fp(build_info="b9999-fedcba") != baseline  # llama.cpp rebuilt
+    assert fp(chat_template=_DATELESS + " ") != baseline  # template edit
+    assert fp(n_ctx=32768) != baseline  # served -c changed
+    assert fp(n_slots=2) != baseline  # served -np changed
+
+
+def test_an_unreadable_template_keeps_rotating() -> None:
+    """A /props hiccup gives an empty template. The conservative direction is to keep the date:
+    a needless daily rotation costs one file, a missed one costs a prefix that stops matching."""
+    assert template_renders_date("")
+    assert not template_renders_date(_DATELESS)
+    assert template_renders_date(_DATED)
+    # Matched case-insensitively, so a template writing the label itself is caught.
+    assert template_renders_date("System: CURRENT DATE: 2026-08-19")
