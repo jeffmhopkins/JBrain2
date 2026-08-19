@@ -86,34 +86,62 @@ LOAD_HEADROOM_GB = 20.0
 
 
 def mem_available_gb(meminfo_path: Path = MEMINFO_PATH) -> float | None:
-    """Host MemAvailable in GB, or None when it can't be read.
+    """Host FREE memory in GB, or None when it can't be read.
 
     /proc/meminfo is not namespaced, so this is the HOST's number even from inside
     the api container the update runs this in.
+
+    Reads `MemFree + SReclaimable`, NOT `MemAvailable`, for the reason
+    `host_metrics.read_memory_gb` documents at length: `--no-mmap` leaves a page-cache copy
+    of every model's weights behind, MemAvailable counts that as free, and reclaiming it
+    while the iGPU pins most of RAM as GTT is the livelock this gate exists to avoid. The
+    caller drops the page cache first (deploy/update-inner.sh), so on the update path the
+    two numbers should agree — but this one is right even when that drop is skipped, which
+    is the case a direct `jbrain local-llm-smoketest` hits.
+
+    The name is kept because it is the module's public surface and its meaning — "how much
+    memory can this load actually have" — has not changed.
     """
     try:
         text = meminfo_path.read_text()
     except OSError:
         return None
+    free_kb: dict[str, int] = {}
     for line in text.splitlines():
-        if not line.startswith("MemAvailable:"):
-            continue
-        parts = line.split()
-        if len(parts) >= 2 and parts[1].isdigit():
-            return int(parts[1]) / (1024 * 1024)
-    return None
+        key, _, rest = line.partition(":")
+        if key in ("MemFree", "SReclaimable"):
+            parts = rest.split()
+            if parts and parts[0].isdigit():
+                free_kb[key] = int(parts[0])
+    if "MemFree" not in free_kb:
+        return None
+    return (free_kb["MemFree"] + free_kb.get("SReclaimable", 0)) / (1024 * 1024)
 
 
 def _resident_cost_gb(model: local_catalog.LocalModel) -> float:
-    """What holding `model` actually costs in unified memory, not just its weights.
+    """What holding `model` actually costs in unified memory, through the SHARED cost model.
 
-    Weights alone understate it: the KV cache is a real, non-swappable allocation
-    (`local_catalog.footprint_gb`), and on a 60 GB model it is several more GB. Counted
-    at the catalog's 128k reference window with one slot — the same headline number the
-    settings memory meter shows. A box serving a wider window or a second slot pays more
-    than this, which is part of what LOAD_HEADROOM_GB is absorbing.
+    This used to hand-roll `size_gb + kv_gb_per_128k`, which was a third independent model
+    of a cost the catalog already knows how to compute — and it was wrong in every direction
+    the others had been fixed for. It ignored the served window (so KV was pinned at the 128k
+    reference whatever `-c` really was), the `--swa-full` doubling, context checkpoints, the
+    runtime/MTP overhead and the vision buffer.
+
+    Two separate errors, worth keeping apart. At the CATALOG window the miss is the missing
+    terms: gpt-oss-120b now costs 68.5 GB against the old 63.5, because `--swa-full` doubles
+    its KV and the old formula did not know. That 5 GB was pure under-reserve on the update
+    path — the one whose own comment records having frozen the hardware. At a WIDENED window
+    the miss is far larger (tens of GB on the million-token entries), because KV is linear in
+    `-c` and the old formula pinned it to the 128k reference whatever was really served.
+
+    It now calls `local_catalog.footprint_gb`, so a term added there is a term this gate
+    honours. The window is still the catalog default rather than the operator's `-c`: this
+    runs under `docker compose run --no-deps` with no DB to read overrides from. That is a
+    real remaining gap and it under-counts a widened window — but the gate is now wrong by
+    one input instead of by six, and the load it guards passes through the device pre-flight
+    (`gpu_guard`), which does resolve the live window.
     """
-    return model.size_gb + model.kv_gb_per_128k
+    return local_catalog.footprint_gb(model, model.context_window)
 
 
 async def _room_for(

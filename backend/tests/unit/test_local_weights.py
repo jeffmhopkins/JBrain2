@@ -112,13 +112,28 @@ def _fadvised(monkeypatch) -> list[str]:  # type: ignore[no-untyped-def]
 
 
 def test_it_drops_every_shard_and_reports_the_total(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Every shard advised, and the GiB total is the sum of their sizes.
+
+    The sizes are faked rather than written: a real fixture would have to put GiB on disk to
+    move a figure reported in GiB, and a test is not worth the bytes."""
+    import os as _os
+
     seen = _fadvised(monkeypatch)
     root = tmp_path / "m"
     root.mkdir()
-    (root / "a.gguf").write_bytes(b"x" * (256 * 1024 * 1024))
-    (root / "b.gguf").write_bytes(b"x" * (256 * 1024 * 1024))
+    (root / "a.gguf").write_bytes(b"x")
+    (root / "b.gguf").write_bytes(b"x")
+
+    real_fstat = _os.fstat
+    monkeypatch.setattr(
+        _os,
+        "fstat",
+        lambda fd: type("_St", (), {"st_size": 16 * 1024**3})(),  # 16 GiB each
+    )
     freed = local_weights.drop_weights_page_cache(str(tmp_path), "m")
-    assert freed == 0.5  # 512 MiB across the two shards
+    monkeypatch.setattr(_os, "fstat", real_fstat)
+
+    assert freed == 32.0  # two 16 GiB shards
     assert sorted(p.rsplit("/", 1)[-1] for p in seen) == ["a.gguf", "b.gguf"]
 
 

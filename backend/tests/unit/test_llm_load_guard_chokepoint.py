@@ -194,15 +194,20 @@ def test_the_vision_peak_is_budgeted_as_resident_not_as_a_load_reservation() -> 
     resident_only = local_catalog.footprint_gb(
         text_only, text_only.context_window
     ) - local_catalog.load_footprint_gb(text_only)
+    # Two such costs now, both of the same kind — real while the model SERVES, absent at the
+    # moment it loads. Checkpoints llama.cpp creates as context is processed; the in-RAM
+    # prompt cache (`--cache-ram`, 8 GiB by default) fills as prompts are answered.
     assert resident_only == pytest.approx(
-        text_only.checkpoint_gb * local_catalog.CTX_CHECKPOINTS, abs=0.01
+        text_only.checkpoint_gb * local_catalog.CTX_CHECKPOINTS + local_catalog.CACHE_RAM_GB,
+        abs=0.01,
     )
     # An entry with no checkpoint cost of its own DOES still agree exactly — which is what
     # isolates the claim above to the checkpoints rather than to some other drift.
     no_checkpoints = replace(text_only, checkpoint_gb=0.0)
-    assert local_catalog.footprint_gb(
-        no_checkpoints, no_checkpoints.context_window
-    ) == local_catalog.load_footprint_gb(no_checkpoints)
+    assert (
+        local_catalog.footprint_gb(no_checkpoints, no_checkpoints.context_window)
+        == local_catalog.load_footprint_gb(no_checkpoints) + local_catalog.CACHE_RAM_GB
+    )
 
 
 def test_the_vision_workspace_is_the_measured_flash_attention_branch() -> None:

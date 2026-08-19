@@ -73,6 +73,27 @@ RUNTIME_OVERHEAD_GB = 0.55
 # with n-max, so a much larger window or draft depth needs this revisited rather than reused.
 MTP_OVERHEAD_GB = 1.0
 
+# llama.cpp's in-RAM prompt cache (`--cache-ram` / `-cram`), which defaults to 8192 MiB and
+# is therefore paid by EVERY resident model whether or not we ever write the flag.
+#
+# It is HOST memory, not GTT, and that distinction is why it was missed: the note beside the
+# flag on `EXTRA_ARG_FLAGS` reasons that it "does not touch the GTT budget" — true, and
+# irrelevant to `jbrain.llm.residency`, which is a HOST-RAM budget. So up to 8 GiB per
+# resident model has been invisible to the evictor all along; on a box holding three models
+# that is 24 GiB the plan could not see, on the machine whose failure mode is running out of
+# exactly this.
+#
+# It belongs in the RESIDENT figure and NOT in the load reservation, for the same reason as
+# context checkpoints and the vision peak: it is a cache LIMIT that fills lazily as prompts
+# are served, not an allocation the load makes. A model that has just loaded has not paid it
+# yet; a model that has been answering for an hour has.
+#
+# Budgeted at the default rather than the served value: an operator override rides
+# `extra_server_args`, which the cost model does not parse. Under-counting an override is the
+# same class of gap as the checkpoint count, and is why that flag is bounded (0..32 GiB) in
+# the settings API rather than left open.
+CACHE_RAM_GB = 8.0
+
 _KV_REFERENCE_TOKENS = 131072
 
 # Per-slot context checkpoints the gateway serves (`--ctx-checkpoints`). Lives HERE, not in
@@ -1018,7 +1039,13 @@ def footprint_gb(
     # llama.cpp's own default ceiling) in the settings API rather than left open.
     checkpoints = model.checkpoint_gb * CTX_CHECKPOINTS * model.effective_slots(slots)
     return round(
-        weights + kv + checkpoints + _runtime_overhead_gb(model) + _vision_resident_gb(model), 2
+        weights
+        + kv
+        + checkpoints
+        + CACHE_RAM_GB
+        + _runtime_overhead_gb(model)
+        + _vision_resident_gb(model),
+        2,
     )
 
 

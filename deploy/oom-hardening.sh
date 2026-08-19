@@ -29,11 +29,25 @@ if ! command -v earlyoom >/dev/null 2>&1; then
     || { say "WARNING: earlyoom install failed — box is unhardened against overcommit"; exit 0; }
 fi
 
-# -r 60: report hourly-ish. -m 10 then -m 5: SIGTERM at 10% RAM free, SIGKILL at 5% (same
-# for swap via -s). --prefer a llama-server (evicting a model is recoverable); --avoid the
-# processes whose death takes the box or the data down.
+# -r 60: report hourly-ish. --prefer a llama-server (evicting a model is recoverable);
+# --avoid the processes whose death takes the box or the data down.
+#
+# The thresholds are 30/20 (SIGTERM/SIGKILL) rather than the 10/5 they were, and that is
+# NOT a paranoia knob — it is what makes the trigger reachable at all.
+#
+# earlyoom fires only when memory AND swap are both under their limits, and its `-m` reads
+# **MemAvailable**, which counts page cache as free. On this box a load leaves a page-cache
+# copy of the weights behind (`--no-mmap`, see jbrain.llm.local_weights), so MemAvailable
+# stays high while the box is actually starving. In the 2026-08-19 freeze swap was 100%
+# consumed for SEVEN HOURS — `-s 5` was satisfied the whole time — while MemAvailable held
+# at 29%. `-m 10` was never approached, the AND never closed, and the backstop the whole
+# residency design leans on did not fire once.
+#
+# Raising the memory limit is safe precisely BECAUSE of that AND: swap is ~100% free on a
+# healthy box, so `-s 10` gates everything. Together they mean "swap is gone AND memory is
+# tight" — which is the livelock, and is not a state this box reaches in health.
 printf 'EARLYOOM_ARGS="%s"\n' \
-  '-r 60 -m 10 -m 5 -s 5 -s 3 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$' \
+  '-r 60 -m 30 -m 20 -s 10 -s 5 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$' \
   > /etc/default/earlyoom
 systemctl enable --now earlyoom >/dev/null 2>&1 || true
 systemctl restart earlyoom >/dev/null 2>&1 || say "WARNING: could not (re)start earlyoom"
