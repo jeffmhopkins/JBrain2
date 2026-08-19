@@ -11,6 +11,7 @@ import structlog
 from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from jbrain import box_events
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.brainevents import (
     build_event_emitter,
@@ -257,6 +258,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app.state.engine = engine
         app.state.session_maker = maker
+        # The box's narration of its own GPU work (model loads, evictions, renders), which
+        # the vitals surface reads back so a pinned trace with an empty roster explains
+        # itself. Wired per PROCESS, not per request: the writers sit inside the gateway
+        # client, which has no session of its own. See jbrain.box_events.
+        box_events.configure(maker, source="api")
         # When this process came up — the debug /version route pairs it with the
         # image's baked build_time so an operator can tell a freshly-published build
         # from one still running behind an un-recreated container.
@@ -1187,6 +1193,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await app.state.supervisor_client.aclose()
         if image_gen_client is not None:
             await image_gen_client.aclose()
+        # Unwire the box-event writer BEFORE the engine goes: it is a module global, so a
+        # late narration (a load cancelled during shutdown) would otherwise open a session
+        # on a disposed engine.
+        box_events.reset()
         await engine.dispose()
 
     app = FastAPI(title="JBrain", lifespan=lifespan)

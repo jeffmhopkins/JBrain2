@@ -32,7 +32,7 @@ import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain import queue
+from jbrain import box_events, queue
 from jbrain.db.session import scoped_session
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.models.notes import Attachment, AttachmentExtract, Note
@@ -202,6 +202,7 @@ class TranscribePipeline:
         if self._gateway is None:
             return
         try:
-            await self._gateway.unload(self._model)
+            with box_events.because("transcription is done with it"):
+                await self._gateway.unload(self._model)
         except LocalGatewayError as exc:
             log.info("transcribe.unload_failed", model=self._model, error=str(exc))

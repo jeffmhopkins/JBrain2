@@ -156,6 +156,24 @@ export interface VitalsHistorySample {
   gpu: number | null;
 }
 
+/** One thing the box DID that the GPU trace can be read against — a model load, the
+ *  eviction that made room for it, an image render. `ended_ms` is null while it is still
+ *  happening, which is what lets the surface say "loading gpt-oss-120b…" during the spike
+ *  instead of accounting for it a minute later. */
+export interface BoxEvent {
+  at_ms: number;
+  ended_ms: number | null;
+  kind: string;
+  /** The model or image model it happened to. */
+  subject: string;
+  /** WHY, when the caller knew — "to make room for gpt-oss-120b", "you unloaded it". */
+  detail: string;
+  /** running | ok | failed | stale — `stale` is a row whose process died mid-load. */
+  status: string;
+  /** Which half of the box did it: "api" or "worker". */
+  source: string;
+}
+
 export interface LiveTurns {
   turns: LiveTurn[];
   /** Carried with the roster so the surface can say "busy box, no turns" in one
@@ -2946,6 +2964,14 @@ export const api = {
   async opsVitalsHistory(seconds: number): Promise<VitalsHistorySample[]> {
     const response = await request(`/api/ops/vitals/history?seconds=${seconds}`);
     return ((await response.json()) as { samples: VitalsHistorySample[] }).samples;
+  },
+
+  /** What the box was DOING across the window the graph is showing — model loads, the
+   *  evictions that made room for them, image renders. The half of the vitals surface that
+   *  explains a pinned GPU with an empty roster. */
+  async opsVitalsEvents(seconds: number): Promise<BoxEvent[]> {
+    const response = await request(`/api/ops/vitals/events?seconds=${seconds}`);
+    return ((await response.json()) as { events: BoxEvent[] }).events;
   },
 
   /** One turn's step trail and raw output, for the vitals detail's level 2. Polled

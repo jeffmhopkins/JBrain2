@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-16
+> **Status:** Living · **Last verified:** 2026-08-19
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -270,6 +270,22 @@ plus expandable detail — with **two levels**:
   would multiply that table thirtyfold for a question that stops mattering a quarter of
   an hour later. The **token rate stays session-local**: it is measured in the browser
   off the chat stream, so its trace still begins empty after a reload.
+- **The box narrates what it is doing, not just how loaded it is** [decided]. Between the
+  graph and the roster sits *On the box, last N* — model loads, the evictions that made
+  room for them, image renders — because the surface's commonest reading was a trace
+  pinned at 94% above an empty roster, and the heaviest work this box does is not a turn.
+  Three properties make it an explanation rather than a log. It is **written when the work
+  starts**, so a load in flight reads "loading gpt-oss-120b…" *during* the spike instead
+  of being accounted for a minute after it passed. It carries **why**, supplied by whoever
+  knew — "to make room for gpt-oss-120b", "an image render needs the whole memory pool",
+  "you unloaded it" — which is the difference between two unexplained events and one
+  comprehensible swap. And it is **cross-process** (`app.box_events`, not an in-process
+  ring like the samples): the worker loads models of its own for deferred transcription
+  and ingest, and those are precisely the loads nothing on screen asked for, so a row
+  the api narrated is badged only when it wasn't — a *background* chip on the worker's.
+  The card is hidden entirely when there is nothing to report; a permanently empty card
+  teaches the eye to skip the place the answer appears. A row left open by a process that
+  died mid-load ages out as *stale* rather than claiming to still be loading.
 - **The detail plot is the shared Ops sparkline** [decided], not a private drawing:
   `components/TimeSeriesPlot.tsx`, the same component the Ops screen renders every host
   metric with. It began as hand-rolled bar columns, which meant the box's load was drawn

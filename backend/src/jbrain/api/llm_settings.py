@@ -18,6 +18,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
+from jbrain import box_events
 from jbrain.agent.agents import AGENTS
 from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_spec
 from jbrain.agent.toolregistry import ToolRegistry
@@ -718,7 +719,8 @@ async def _unload_if_loaded(
     that's down just means the stale process lingers until it's next swapped."""
     try:
         if model.served_model in await gateway.running():
-            await gateway.unload(model.served_model)
+            with box_events.because("its context window changed — it reloads at the new size"):
+                await gateway.unload(model.served_model)
     except LocalGatewayError as exc:
         log.warning("llm_settings.reload_unload_failed", model=model.id, error=str(exc))
 
@@ -789,7 +791,10 @@ async def reconcile_gateway_config(
         return True
     served = {str(m["served_model"]) for m in manifest}
     for name in sorted(running & served):
-        with contextlib.suppress(LocalGatewayError):
+        with (
+            contextlib.suppress(LocalGatewayError),
+            box_events.because("the gateway config changed — it reloads with the new flags"),
+        ):
             await gateway.unload(name)
     return True
 
@@ -1173,7 +1178,8 @@ async def set_local_available(
     if not body.available:
         with contextlib.suppress(LocalGatewayError):
             if model.served_model in await gateway.running():
-                await gateway.unload(model.served_model)
+                with box_events.because("you marked it unavailable"):
+                    await gateway.unload(model.served_model)
     return await _snapshot(settings, store, ctx, gateway)
 
 
@@ -1405,7 +1411,8 @@ async def gateway_load(
         # worse than no prime, since the reuse misses from the tools block onward.
         warm_system, warm_tools = await jerv_prime_spec(registry, liveness, model.served_model)
     try:
-        await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
+        with box_events.because("you loaded it"):
+            await gateway.load(model.served_model, warm_system=warm_system, warm_tools=warm_tools)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway load failed: {exc}") from exc
     return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)
@@ -1418,7 +1425,8 @@ async def gateway_unload(
     the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects."""
     model = _require_provisioned(settings, model_id)
     try:
-        await gateway.unload(model.served_model)
+        with box_events.because("you unloaded it"):
+            await gateway.unload(model.served_model)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway unload failed: {exc}") from exc
     return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)

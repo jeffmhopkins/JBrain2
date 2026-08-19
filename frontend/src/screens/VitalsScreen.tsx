@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  type BoxEvent,
   type CapturedPrompt,
   type LiveTurn,
   type LiveTurns,
@@ -82,6 +83,7 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
   // which left the two halves of the screen describing different spans of time: fifteen
   // minutes of GPU history above a list that emptied the moment a turn finished.
   const roster = useLiveTurns(seconds);
+  const events = useBoxEvents(seconds);
   const selected = roster?.turns.find((t) => t.id === selectedTurnId) ?? null;
 
   return (
@@ -93,7 +95,13 @@ export function VitalsScreen({ selectedTurnId, onSelectTurn }: VitalsScreenProps
           gpuNow={roster?.gpu_busy_percent ?? null}
           turnCount={roster?.turns.length ?? 0}
         />
-        <Roster roster={roster} range={range} onSelect={onSelectTurn} />
+        <BoxEvents events={events} range={range} />
+        <Roster
+          roster={roster}
+          range={range}
+          explained={events.length > 0}
+          onSelect={onSelectTurn}
+        />
         <StreamHealth />
       </main>
       {selected !== null && (
@@ -250,15 +258,125 @@ function StreamHealth() {
   );
 }
 
+// ---- level 1: what the box was doing --------------------------------------
+
+/** The other half of the reading.
+ *
+ *  The plot and the roster together could not explain the box's most common busy minute:
+ *  GPU pinned at 94%, roster empty. The heaviest work this box does is not a turn —
+ *  loading gpt-oss-120b reads tens of GB into unified memory, the eviction that made room
+ *  for it frees whatever was resident, an image render takes the whole pool — and none of
+ *  it had a row anywhere. The screen could only say "the box is doing something else" and
+ *  leave the owner guessing which something.
+ *
+ *  These events are recorded server-side as they START (jbrain.box_events), which is what
+ *  makes this "loading gpt-oss-120b…" while the trace is pinned rather than a note about
+ *  it a minute later. They also cross processes: a load the WORKER did — a deferred
+ *  transcription, an ingest — is exactly the one nothing on screen asked for, so it is
+ *  the one that most needed saying.
+ *
+ *  Hidden entirely when there is nothing to report. A permanently empty card teaches the
+ *  eye to skip the place the answer appears. */
+function BoxEvents({ events, range }: { events: BoxEvent[]; range: RangeKey }) {
+  if (events.length === 0) return null;
+  // Still-running first, then newest-first. A load in flight is the reading — it is what
+  // the GPU is doing THIS second — while everything below it is history, and history reads
+  // newest-first.
+  const ordered = [...events].sort((a, b) => {
+    const live = Number(b.ended_ms === null) - Number(a.ended_ms === null);
+    return live !== 0 ? live : b.at_ms - a.at_ms;
+  });
+  const live = ordered.filter((e) => e.ended_ms === null).length;
+
+  return (
+    <>
+      <div className="vitals-sec-head">
+        On the box, last {range}
+        <span className={`count${live > 0 ? " live" : ""}`}>{events.length}</span>
+      </div>
+      <section className="card vitals-events">
+        {ordered.map((event) => (
+          <EventRow key={`${event.at_ms}-${event.kind}-${event.subject}`} event={event} />
+        ))}
+      </section>
+      <p className="vitals-note">The work behind the trace that no turn accounts for.</p>
+    </>
+  );
+}
+
+function EventRow({ event }: { event: BoxEvent }) {
+  const running = event.ended_ms === null && event.status === "running";
+  const took = (event.ended_ms ?? Date.now()) - event.at_ms;
+
+  return (
+    <div className="vitals-row">
+      <span className="vr-name">
+        <i className={`vitals-dot ${eventDot(event)}`} />
+        <span className="n">{eventLabel(event)}</span>
+        {/* Only the worker is called out. An "api" badge on every row would be noise —
+            the point of the badge is that NOTHING on screen asked for this one. */}
+        {event.source === "worker" && <span className="kind">background</span>}
+      </span>
+      {event.detail !== "" && <span className="vr-meta">{event.detail}</span>}
+      <span className="vr-right">
+        <Elapsed sinceMs={took} ticking={running} />
+        <span className="vr-tok">{ago(event.at_ms)}</span>
+      </span>
+    </div>
+  );
+}
+
+/** The row's state dot, on the same three-state vocabulary as a turn's: in flight,
+ *  finished, failed. A stale event — one whose process died mid-load — is drawn as failed,
+ *  because from the box's point of view that is what happened to it. */
+function eventDot(event: BoxEvent): string {
+  if (event.status === "failed" || event.status === "stale") return "err";
+  return event.ended_ms === null ? "run" : "done";
+}
+
+/** One event as a sentence. Present tense while it is happening — "loading gpt-oss-120b…"
+ *  is the line the owner needs during the spike, and it has to read as NOW. */
+function eventLabel(event: BoxEvent): string {
+  const running = event.ended_ms === null && event.status === "running";
+  const failed = event.status === "failed";
+  if (event.kind === "model_load") {
+    if (failed) return `${event.subject} failed to load`;
+    if (event.status === "stale") return `${event.subject} — load stopped reporting`;
+    return running ? `loading ${event.subject}…` : `loaded ${event.subject}`;
+  }
+  if (event.kind === "model_unload") {
+    return failed ? `could not unload ${event.subject}` : `unloaded ${event.subject}`;
+  }
+  if (event.kind === "image_render") {
+    if (failed) return `image render failed (${event.subject})`;
+    return `render${running ? "ing" : "ed"} an image (${event.subject})${running ? "…" : ""}`;
+  }
+  // An event kind this build has never heard of still renders — the kinds are free text
+  // server-side on purpose, so a new one must not need a frontend release to be visible.
+  return `${event.kind.replace(/_/g, " ")} ${event.subject}`.trim();
+}
+
+/** How long ago it started, at the coarseness the eye needs to line a row up with the
+ *  plot above it. */
+function ago(atMs: number, now: number = Date.now()): string {
+  const s = Math.max(0, Math.round((now - atMs) / 1000));
+  if (s < 60) return `${s}s ago`;
+  return `${Math.floor(s / 60)}m ago`;
+}
+
 // ---- level 1: the roster --------------------------------------------------
 
 function Roster({
   roster,
   range,
+  explained,
   onSelect,
 }: {
   roster: LiveTurns | null;
   range: RangeKey;
+  /** Whether the box-events list above is carrying anything. When it is, the empty state
+   *  stops guessing at what else the GPU might be doing and points at the answer. */
+  explained: boolean;
   onSelect: (id: string) => void;
 }) {
   if (roster === null) {
@@ -280,9 +398,13 @@ function Roster({
         <p className="hl">No agent turns in the last {range}.</p>
         <p>
           {gpu !== null && gpu >= 20
-            ? `The GPU is at ${Math.round(gpu)}% because the box is doing something else —
-               generating an image, or loading a model. That is real work, but it is not an
-               agent turn, so it has no row here.`
+            ? explained
+              ? `The GPU is at ${Math.round(gpu)}% because of the work listed above — a model
+                 load or an image render. That is real work, but it is not an agent turn, so
+                 it has no row here.`
+              : `The GPU is at ${Math.round(gpu)}% because the box is doing something else —
+                 generating an image, or loading a model. That is real work, but it is not an
+                 agent turn, so it has no row here.`
             : "The box has been idle."}{" "}
           GPU busy counts everything the box does; this list counts turns.
         </p>
@@ -779,6 +901,47 @@ function useLiveTurns(seconds: number): LiveTurns | null {
   }, [foreground, seconds]);
 
   return roster;
+}
+
+/** What the box was doing across the same window, on the same clock as everything else.
+ *
+ *  A second poll per second, deliberately: the surface's rule is that everything on it is
+ *  live at 1 Hz, and an events list a beat behind the plot would put a load's row on screen
+ *  after the spike it explains. It is a small indexed read over a table that holds a
+ *  handful of rows an hour, and it stops the moment the screen is backgrounded or closed.
+ *
+ *  An empty list on failure, not a null: this surface is an explanation, and a failed poll
+ *  must degrade to "nothing to add" rather than to a broken card. */
+function useBoxEvents(seconds: number): BoxEvent[] {
+  const foreground = useForeground();
+  const [events, setEvents] = useState<BoxEvent[]>([]);
+
+  useEffect(() => {
+    if (!foreground) return;
+    let cancelled = false;
+    const load = async (): Promise<void> => {
+      try {
+        const next = await api.opsVitalsEvents(seconds);
+        if (!cancelled) setEvents(next);
+      } catch {
+        // A failed poll leaves what is on screen; the next tick retries.
+      }
+    };
+    // Chained from completion, like the roster: at 1 Hz an interval stacks requests on
+    // exactly the busy box this screen exists to watch.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const loop = async (): Promise<void> => {
+      await load();
+      if (!cancelled) timer = setTimeout(() => void loop(), TICK_MS);
+    };
+    void loop();
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [foreground, seconds]);
+
+  return events;
 }
 
 /** The shared history, re-read once a second so the plot advances while open. */

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from jbrain.agent.prompt_capture import forget, record_prompt
 from jbrain.agent.runlog import LiveTurnRow, RunDetail, RunStepView
+from jbrain.api import ops
 from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.main import create_app
@@ -504,6 +505,89 @@ def test_history_window_is_clamped_to_the_ring(client: TestClient, repo: FakeAut
     login(client, repo)
 
     assert client.get("/api/ops/vitals/history?seconds=99999").status_code == 200
+
+
+# --- GET /ops/vitals/events — what the box was DOING --------------------------
+# The graph and the roster together cannot explain the box's commonest busy minute: GPU
+# pinned, roster empty. These pin the route that supplies the missing half.
+
+
+def test_vitals_events_require_owner(client: TestClient) -> None:
+    assert client.get("/api/ops/vitals/events").status_code == 401
+
+
+def _serve_events(monkeypatch: pytest.MonkeyPatch, events: list[dict[str, object]]) -> list[float]:
+    """Stub the reader (a real one needs Postgres) and report the windows it was asked for."""
+    windows: list[float] = []
+
+    async def fake_recent(maker: object, ctx: object, *, seconds: float) -> list[dict[str, object]]:
+        windows.append(seconds)
+        return events
+
+    monkeypatch.setattr(ops.box_events, "recent", fake_recent)
+    return windows
+
+
+def test_reports_a_load_that_is_still_happening(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ended_ms` null is what lets the surface say "loading gpt-oss-120b…" during the
+    spike rather than accounting for it a minute later."""
+    _serve_events(
+        monkeypatch,
+        [
+            {
+                "at_ms": 1_760_000_000_000,
+                "ended_ms": None,
+                "kind": "model_load",
+                "subject": "gpt-oss-120b",
+                "detail": "",
+                "status": "running",
+                "source": "worker",
+            }
+        ],
+    )
+    login(client, repo)
+
+    events = client.get("/api/ops/vitals/events?seconds=300").json()["events"]
+
+    assert events[0]["subject"] == "gpt-oss-120b"
+    assert events[0]["ended_ms"] is None
+    assert events[0]["source"] == "worker"  # a load nothing on screen asked for
+
+
+def test_carries_why_a_model_was_evicted(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _serve_events(
+        monkeypatch,
+        [
+            {
+                "at_ms": 1_760_000_000_000,
+                "ended_ms": 1_760_000_001_000,
+                "kind": "model_unload",
+                "subject": "qwen35",
+                "detail": "to make room for gpt-oss-120b",
+                "status": "ok",
+                "source": "api",
+            }
+        ],
+    )
+    login(client, repo)
+
+    events = client.get("/api/ops/vitals/events").json()["events"]
+
+    assert events[0]["detail"] == "to make room for gpt-oss-120b"
+
+
+def test_events_window_is_clamped_like_the_graph(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    windows = _serve_events(monkeypatch, [])
+    login(client, repo)
+
+    assert client.get("/api/ops/vitals/events?seconds=99999").status_code == 200
+    assert windows == [900.0]  # the widest window the surface offers, not what was asked
 
 
 # --- the SSE stream's anti-buffering headers ---------------------------------

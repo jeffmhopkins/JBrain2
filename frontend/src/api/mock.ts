@@ -4193,6 +4193,44 @@ export const mockFetch: typeof fetch = async (input, init) => {
     });
   }
 
+  // What the box was DOING behind that trace — a load still in flight, the eviction that
+  // made room for it, and a finished render — so the explaining half of the surface can be
+  // worked on without a live box.
+  if (path.startsWith("/api/ops/vitals/events")) {
+    const now = Date.now();
+    return json({
+      events: [
+        {
+          at_ms: now - 24_000,
+          ended_ms: null,
+          kind: "model_load",
+          subject: "gpt-oss-120b",
+          detail: "putting back what a displacement took",
+          status: "running",
+          source: "worker",
+        },
+        {
+          at_ms: now - 26_000,
+          ended_ms: now - 25_000,
+          kind: "model_unload",
+          subject: "qwen3-vl-30b",
+          detail: "to make room for gpt-oss-120b",
+          status: "ok",
+          source: "worker",
+        },
+        {
+          at_ms: now - 190_000,
+          ended_ms: now - 121_000,
+          kind: "image_render",
+          subject: "qwen-image",
+          detail: "1328×1328, 30 steps",
+          status: "ok",
+          source: "api",
+        },
+      ],
+    });
+  }
+
   // One turn's trail + raw output for the vitals detail's level 2.
   if (path.startsWith("/api/ops/turns/")) {
     return json({

@@ -18,7 +18,7 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from jbrain import ops_metrics, queue
+from jbrain import box_events, ops_metrics, queue
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC, entity_hygiene_handler
@@ -335,13 +335,15 @@ async def _sample_metrics_safely(
 
 
 async def _maintain_metrics_safely(maker: async_sessionmaker[AsyncSession], *, boot: bool) -> None:
-    """Refresh the hourly rollup and prune past-retention rows. The boot pass
-    rolls up the full raw-retention window in case the worker was down for a
-    while; steady-state passes only refresh the trailing few hours."""
+    """Refresh the hourly rollup and prune past-retention rows — the host-metrics
+    tables, and the box-event narration the vitals surface reads (kept a day). The boot
+    pass rolls up the full raw-retention window in case the worker was down for a while;
+    steady-state passes only refresh the trailing few hours."""
     try:
         window = ops_metrics.RAW_RETENTION if boot else ops_metrics.ROLLUP_WINDOW
         await ops_metrics.rollup(maker, queue.SYSTEM_CTX, window=window)
         await ops_metrics.prune(maker, queue.SYSTEM_CTX)
+        await box_events.prune(maker, queue.SYSTEM_CTX)
     except Exception as exc:  # noqa: BLE001 - rollup/prune is best-effort maintenance
         log.warning("worker.metrics_maintain_error", error=repr(exc))
 
@@ -467,6 +469,11 @@ async def run() -> None:
     settings = get_settings()
     engine = create_async_engine(settings.database_url)
     maker = async_sessionmaker(engine, expire_on_commit=False)
+    # The worker loads and evicts models of its own (deferred transcription, ingest,
+    # workflow jobs), and those are exactly the loads that look like the box misbehaving
+    # from the PWA — nothing on screen asked for them. Narrate them under this process's
+    # own name so the vitals surface can say which half of the box did it.
+    box_events.configure(maker, source="worker")
     blobs = FsBlobStore(settings.blob_dir)
     # Audio transcription is gated on the whisper backend being configured: an
     # empty whisper_url leaves audio attachments un-enqueued (no chunks) rather

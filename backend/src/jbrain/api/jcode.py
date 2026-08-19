@@ -22,7 +22,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from jbrain import queue
+from jbrain import box_events, queue
 from jbrain.api.deps import JcodeAccessDep, OwnerDep
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
@@ -158,10 +158,11 @@ async def _warm_model(gateway: LocalGateway, served: str, residency: object | No
         if served in resident:
             return
         evicted: list[str] = []
-        for other in resident:
-            with contextlib.suppress(LocalGatewayError):
-                await gateway.unload(other)
-                evicted.append(other)
+        with box_events.because("code mode is taking the box"):
+            for other in resident:
+                with contextlib.suppress(LocalGatewayError):
+                    await gateway.unload(other)
+                    evicted.append(other)
         if evicted and residency is not None:
             residency.note_evicted(evicted)  # type: ignore[attr-defined]
         await gateway.load(served)
@@ -458,7 +459,10 @@ async def _free_coder_and_restore(request: Request, owner_id: str) -> None:
     gateway = getattr(request.app.state, "local_gateway", None)
     if gateway is not None:
         served = _served_model(await _resolve_model(request, owner_id))
-        with contextlib.suppress(LocalGatewayError):
+        with (
+            contextlib.suppress(LocalGatewayError),
+            box_events.because("code mode is giving the box back"),
+        ):
             await gateway.unload(served)
     residency = getattr(request.app.state, "residency", None)
     if residency is not None:

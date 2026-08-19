@@ -22,6 +22,7 @@ from collections.abc import Callable, Sequence
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain import box_events
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.image_gen.comfyui import EditSpec, GenSpec, ImageGen, OnProgress
 from jbrain.image_gen.gateway import ComfyUiGatewayError, ComfyUiMemory
@@ -196,9 +197,13 @@ async def _free_local_llms(
     clean no-op — never let memory housekeeping fail the generation."""
     freed: list[str] = []
     try:
-        for served in await gateway.running():
-            await gateway.unload(served)
-            freed.append(served)
+        # Narrated with its reason, because on the vitals graph this is the moment every
+        # model on the box vanishes at once — indistinguishable from the box misbehaving
+        # unless the screen can say an image render asked for the pool.
+        with box_events.because("an image render needs the whole memory pool"):
+            for served in await gateway.running():
+                await gateway.unload(served)
+                freed.append(served)
     except LocalGatewayError as exc:
         log.info("image_gen.llm_unload_skipped", error=str(exc))
     if freed and on_evicted is not None:
@@ -295,11 +300,18 @@ class ImageRenderService:
             model=model,
             negative_prompt=negative_prompt.strip(),
         )
-        await _free_local_llms(self._local_gateway, self._on_evicted)
-        # An interrupt/error propagates here untouched (skipping the ComfyUI free + the row),
-        # exactly as the original handler did — the caller maps it to its own surface.
-        png = await self._imagegen.generate(spec, on_progress)
-        await _free_comfyui_model(self._comfyui_gateway)
+        # One event covering the whole GPU-hogging window — the eviction, the diffusion,
+        # and the reclaim — because that whole window is a pinned GPU with no agent turn to
+        # account for it, which is exactly the reading the vitals surface could not explain.
+        async with box_events.span(
+            box_events.IMAGE_RENDER, model, detail=f"{width}×{height}, {resolved_steps} steps"
+        ):
+            await _free_local_llms(self._local_gateway, self._on_evicted)
+            # An interrupt/error propagates here untouched (skipping the ComfyUI free + the
+            # row), exactly as the original handler did — the caller maps it to its own
+            # surface.
+            png = await self._imagegen.generate(spec, on_progress)
+            await _free_comfyui_model(self._comfyui_gateway)
         out_w, out_h = _png_dims(png) or (width, height)
         return await self._store(
             ctx,
@@ -360,11 +372,14 @@ class ImageRenderService:
             megapixels=_megapixels(resolution),
             negative_prompt=negative_prompt.strip(),
         )
-        await _free_local_llms(self._local_gateway, self._on_evicted)
-        png = await self._imagegen.edit(
-            spec, source_bytes, on_progress, extra_sources=list(extra_sources)
-        )
-        await _free_comfyui_model(self._comfyui_gateway)
+        async with box_events.span(
+            box_events.IMAGE_RENDER, model, detail=f"edit · {resolved_steps} steps"
+        ):
+            await _free_local_llms(self._local_gateway, self._on_evicted)
+            png = await self._imagegen.edit(
+                spec, source_bytes, on_progress, extra_sources=list(extra_sources)
+            )
+            await _free_comfyui_model(self._comfyui_gateway)
         # The edit scales the source to a megapixel budget preserving ITS aspect, so the output
         # dims differ from the requested preset — record the real ones (the row's dims drive the
         # card's aspect; a mismatch letterboxes the before/after frame).

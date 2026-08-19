@@ -44,6 +44,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain import box_events
 from jbrain.host_metrics import read_memory_gb
 from jbrain.llm import gpu_guard, local_catalog
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
@@ -482,11 +483,15 @@ class ResidencyCoordinator:
         self._refuse_if_over_box(plan)  # raises before we evict anything
         # It's being loaded for active use now, so it's no longer awaiting restore.
         self._displaced.discard(served_model)
-        for served in plan.victims:
-            with contextlib.suppress(LocalGatewayError):
-                await self._gateway.unload(served)
-                self._displaced.add(served)  # remember it for the end-of-turn restore
-                self._prefix_lost(served)
+        # The eviction is narrated with WHO it was for: on the vitals surface "unloaded
+        # qwen35 — to make room for gpt-oss-120b" is the line that turns two unexplained
+        # GPU events into one comprehensible swap.
+        with box_events.because(f"to make room for {served_model}"):
+            for served in plan.victims:
+                with contextlib.suppress(LocalGatewayError):
+                    await self._gateway.unload(served)
+                    self._displaced.add(served)  # remember it for the end-of-turn restore
+                    self._prefix_lost(served)
         if load_target and not plan.already_resident:
             await self._guarded_load(served_model, plan.target_gb)
 
@@ -568,10 +573,11 @@ class ResidencyCoordinator:
             return
         self._refuse_if_over_box(plan)  # raises before we evict anything
         self._displaced.discard(served_model)
-        for served in plan.victims:
-            with contextlib.suppress(LocalGatewayError):
-                await self._gateway.unload(served)
-                self._prefix_lost(served)
+        with box_events.because(f"to make room for {served_model}, which you loaded"):
+            for served in plan.victims:
+                with contextlib.suppress(LocalGatewayError):
+                    await self._gateway.unload(served)
+                    self._prefix_lost(served)
 
     async def _restore(self) -> None:
         """Reload the displaced set that isn't already resident, as far as the budget allows
@@ -617,7 +623,12 @@ class ResidencyCoordinator:
                 continue
             if used + fp > ceiling:
                 continue  # no room without evicting a resident model — leave it for later
-            with contextlib.suppress(LocalGatewayError, gpu_guard.GpuBudgetError):
+            with (
+                contextlib.suppress(LocalGatewayError, gpu_guard.GpuBudgetError),
+                # A restore is a load nobody asked for at that moment, so it is the one most
+                # likely to read as the box misbehaving. Say whose it is.
+                box_events.because("putting back what a displacement took"),
+            ):
                 # A BARE load: weights back and the inference path warm, but no persona/tools
                 # prefill — so the model is resident and UNPRIMED. Say so, or the keeper's memo
                 # (set before the eviction) makes it skip the re-prime the model now needs.

@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from jbrain import ops_metrics
+from jbrain import box_events, ops_metrics
 from jbrain.agent.prompt_capture import prompt_for
 from jbrain.agent.runlog import RunLogReader
 from jbrain.agent.transcript_store import AgentTranscript
@@ -732,6 +732,46 @@ async def vitals_history(request: Request, seconds: int = _MAX_HISTORY_SECONDS) 
     return VitalsHistoryOut(
         samples=[VitalsSampleOut(**cast(dict[str, Any], s)) for s in ring.since(window)]
     )
+
+
+class BoxEventOut(BaseModel):
+    """One thing the box did that the GPU trace can be read against. `ended_ms` is null
+    while it is still happening — which is the whole point of the surface saying
+    "loading gpt-oss-120b…" during the spike rather than after it."""
+
+    at_ms: int
+    ended_ms: int | None
+    kind: str
+    subject: str
+    detail: str
+    # running | ok | failed | stale (a row whose process died under it — jbrain.box_events).
+    status: str
+    # Which process did it ("api" / "worker"), so a load nothing on screen asked for can
+    # be traced to the background half of the box.
+    source: str
+
+
+class BoxEventsOut(BaseModel):
+    events: list[BoxEventOut]
+
+
+@router.get("/vitals/events")
+async def vitals_events(
+    request: Request, principal: PrincipalDep, seconds: int = _MAX_HISTORY_SECONDS
+) -> BoxEventsOut:
+    """What the box was DOING across the window the graph is showing — model loads, the
+    evictions that made room for them, image renders.
+
+    The graph and the roster together could not explain a pinned GPU with no turn running,
+    because the box's heaviest work is not a turn: this is that missing half. Read from
+    `app.box_events` (not the in-process ring the samples use) so the api reports the
+    worker's loads too — a deferred transcription pinning the box is precisely the reading
+    that has no other explanation on screen."""
+    maker = cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
+    ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
+    window = max(1, min(seconds, _MAX_HISTORY_SECONDS))
+    rows = await box_events.recent(maker, ctx, seconds=window)
+    return BoxEventsOut(events=[BoxEventOut(**cast("dict[str, Any]", r)) for r in rows])
 
 
 class ClientVitalsReport(BaseModel):

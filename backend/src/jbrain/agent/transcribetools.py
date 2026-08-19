@@ -15,6 +15,7 @@ import uuid
 
 import structlog
 
+from jbrain import box_events
 from jbrain.agent.attachments import (
     TurnAttachmentRepo,
     is_transcribable_media_type,
@@ -141,6 +142,7 @@ async def _unload(gateway: LocalGateway | None, model: str) -> None:
     if gateway is None:
         return
     try:
-        await gateway.unload(model)
+        with box_events.because("transcription is done with it"):
+            await gateway.unload(model)
     except LocalGatewayError as exc:
         log.info("transcribe_tool.unload_failed", model=model, error=str(exc))

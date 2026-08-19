@@ -35,6 +35,7 @@ from typing import Protocol
 import httpx
 import structlog
 
+from jbrain import box_events
 from jbrain.llm import gpu_guard, local_catalog
 
 log = structlog.get_logger()
@@ -108,7 +109,14 @@ class LocalGatewayClient:
             return set()
 
     async def unload(self, served_model: str) -> None:
-        """Unload one model from memory. Raises LocalGatewayError on any failure."""
+        """Unload one model from memory. Raises LocalGatewayError on any failure.
+
+        Narrated to the vitals surface (jbrain.box_events) from HERE rather than from the
+        six callers, for the same reason the device-memory guard lives on `load`: this is
+        the one chokepoint every path to freeing a model passes through, so instrumenting
+        it leaves nothing to forget. WHY it is being unloaded rides in on the caller's
+        `box_events.because(...)` — "to make room for gpt-oss-120b", "an image render
+        needs the box" — which is the difference between a log and an explanation."""
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout, transport=self._transport
@@ -116,7 +124,11 @@ class LocalGatewayClient:
                 resp = await client.post(f"{self._root}/api/models/unload/{served_model}")
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
+            await box_events.record(
+                box_events.MODEL_UNLOAD, served_model, status="failed", detail=str(exc)
+            )
             raise LocalGatewayError(str(exc)) from exc
+        await box_events.record(box_events.MODEL_UNLOAD, served_model)
 
     async def props(self, served_model: str) -> dict[str, object]:
         """llama-server's own `/props` for one RESIDENT model — `build_info` (the ONLY build
@@ -293,7 +305,27 @@ class LocalGatewayClient:
 
         Raises LocalGatewayError if the model can't load; the warm-up itself is best-effort
         (the model is resident regardless — a failed warm-up just leaves that cost on first
-        use, the prior behaviour). Generous timeout: a cold 80B reads tens of GB of weights."""
+        use, the prior behaviour). Generous timeout: a cold 80B reads tens of GB of weights.
+
+        Narrated to the vitals surface for the WHOLE duration — probe, weights, warm-up —
+        because that whole duration is what the owner sees as a pinned GPU with nothing in
+        the roster to explain it. The event opens before the first byte is read, so the
+        screen says "loading gpt-oss-120b…" while it happens rather than accounting for it
+        a minute later. Same chokepoint argument as the device-memory guard: every caller
+        that can commit GPU memory comes through here, so none of them can forget to say
+        so."""
+        async with box_events.span(box_events.MODEL_LOAD, served_model):
+            await self._load_and_warm(served_model, warm_system=warm_system, warm_tools=warm_tools)
+
+    async def _load_and_warm(
+        self,
+        served_model: str,
+        *,
+        warm_system: str | None = None,
+        warm_tools: list[dict[str, object]] | None = None,
+    ) -> None:
+        """`load` minus its narration: the health probe that makes llama-swap read the
+        weights, the device-memory guard around it, and the inference warm-up."""
         load_timeout = max(self._timeout, 120.0)
         model = local_catalog.get_by_served(served_model)
         projected_gb = 0.0

@@ -45,7 +45,7 @@ import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain import media, queue
+from jbrain import box_events, media, queue
 from jbrain.db.session import scoped_session
 from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
@@ -437,7 +437,8 @@ async def _unload(gateway: LocalGateway | None, model: str) -> None:
     if gateway is None or not model:
         return
     try:
-        await gateway.unload(model)
+        with box_events.because("video transcription is done with it"):
+            await gateway.unload(model)
     except LocalGatewayError as exc:
         log.info("video.unload_failed", model=model, error=str(exc))
 
