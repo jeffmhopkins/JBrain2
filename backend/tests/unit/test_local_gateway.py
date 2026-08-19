@@ -74,9 +74,12 @@ async def test_load_probes_health_then_warms_with_one_token() -> None:
     await _client(handle).load("qwen3-vl-30b-a3b")
     # Health GET loads the model; the 1-token POST faults the mmap'd weights in so the
     # user's first real turn isn't the cold load.
+    # The trailing log read compares what llama.cpp says the load cost against the
+    # catalog's prediction, so a wrong entry is a logged number rather than a freeze.
     assert seen == [
         ("GET", "/upstream/qwen3-vl-30b-a3b/health"),
         ("POST", "/upstream/qwen3-vl-30b-a3b/v1/chat/completions"),
+        ("GET", "/logs/upstream"),
     ]
     assert body["model"] == "qwen3-vl-30b-a3b"
     assert body["max_tokens"] == 1
@@ -207,9 +210,12 @@ async def test_load_progress_is_none_when_logs_are_unavailable() -> None:
     assert await _client(lambda r: httpx.Response(404)).load_progress() is None
 
 
-async def test_tail_logs_returns_the_gateway_stdout_verbatim() -> None:
-    # The raw /logs text, returned as-is (the debug route tails it). It targets the
-    # admin endpoint at the root, not under /v1.
+async def test_tail_logs_defaults_to_the_upstream_buffer() -> None:
+    """llama-swap keeps the wrapper's log and llama-server's output in SEPARATE buffers,
+    and `/logs` is the wrapper's — HTTP access lines only. This defaulted to `/logs` while
+    documenting itself as returning both interleaved, so llama.cpp's per-load memory
+    breakdown was unreachable; two catalog KV figures were 1.4 and >5.5 GiB wrong with the
+    correct numbers being printed at every load into a buffer nothing read."""
     seen: dict[str, str] = {}
 
     def handle(req: httpx.Request) -> httpx.Response:
@@ -218,6 +224,34 @@ async def test_tail_logs_returns_the_gateway_stdout_verbatim() -> None:
 
     out = await _client(handle).tail_logs()
     assert out == "slot 0 launch\nslot 0 released\n"
+    assert seen["path"] == "/logs/upstream"
+
+
+async def test_tail_logs_falls_back_when_the_build_has_no_split_buffers() -> None:
+    """Older llama-swap serves only `/logs`. Falling back keeps this working across
+    versions instead of 404ing the operator's only view of the engine."""
+    seen: list[str] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.path)
+        if req.url.path == "/logs/upstream":
+            return httpx.Response(404)
+        return httpx.Response(200, text="combined\n")
+
+    assert await _client(handle).tail_logs() == "combined\n"
+    assert seen == ["/logs/upstream", "/logs"]
+
+
+async def test_tail_logs_can_still_ask_for_the_proxy_buffer() -> None:
+    """The slot-acquired / slot-RELEASED account of a turn lives in the wrapper log, and
+    is what answers whether a Stop actually halts decoding."""
+    seen: dict[str, str] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        return httpx.Response(200, text="slot 0 released\n")
+
+    await _client(handle).tail_logs("proxy")
     assert seen["path"] == "/logs"
 
 

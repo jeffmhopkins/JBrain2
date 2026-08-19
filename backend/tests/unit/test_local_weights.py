@@ -111,30 +111,37 @@ def _fadvised(monkeypatch) -> list[str]:  # type: ignore[no-untyped-def]
     return seen
 
 
-def test_it_drops_every_shard_and_reports_the_total(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Every shard advised, and the GiB total is the sum of their sizes.
+def test_it_advises_every_shard(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Every shard is advised, covering the whole file.
 
-    The sizes are faked rather than written: a real fixture would have to put GiB on disk to
-    move a figure reported in GiB, and a test is not worth the bytes."""
-    import os as _os
-
+    This used to also assert the returned GiB equalled the SUM OF THE FILE SIZES — faking
+    `os.fstat` to 16 GiB a shard and expecting 32.0 back. That assertion encoded the bug:
+    `posix_fadvise` returns 0 unconditionally (`generic_fadvise` discards the count from
+    `invalidate_mapping_pages`), so adding file sizes reported the same figure whether the
+    kernel evicted everything or nothing — on the one function whose job is proving the
+    second copy of the weights is gone. The reported number is now measured with
+    `cachestat(2)`; what it reports is pinned in test_weights_cache_drop.py against a real
+    page cache, which is the only place that claim can honestly be tested."""
     seen = _fadvised(monkeypatch)
     root = tmp_path / "m"
     root.mkdir()
     (root / "a.gguf").write_bytes(b"x")
     (root / "b.gguf").write_bytes(b"x")
 
-    real_fstat = _os.fstat
-    monkeypatch.setattr(
-        _os,
-        "fstat",
-        lambda fd: type("_St", (), {"st_size": 16 * 1024**3})(),  # 16 GiB each
-    )
-    freed = local_weights.drop_weights_page_cache(str(tmp_path), "m")
-    monkeypatch.setattr(_os, "fstat", real_fstat)
+    local_weights.drop_weights_page_cache(str(tmp_path), "m")
 
-    assert freed == 32.0  # two 16 GiB shards
     assert sorted(p.rsplit("/", 1)[-1] for p in seen) == ["a.gguf", "b.gguf"]
+
+
+def test_it_never_reports_a_number_it_did_not_measure(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A kernel without `cachestat(2)` (pre-6.5) has nothing to measure with, and the
+    function must say so rather than fall back to inventing a size-derived figure."""
+    root = tmp_path / "m"
+    root.mkdir()
+    (root / "a.gguf").write_bytes(b"x" * 4096)
+    monkeypatch.setattr(local_weights, "_SYS_CACHESTAT", None)
+
+    assert local_weights.drop_weights_page_cache(str(tmp_path), "m") is None
 
 
 def test_it_leaves_alone_anything_that_is_not_a_shard(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

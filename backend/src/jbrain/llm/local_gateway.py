@@ -28,6 +28,7 @@ strip that suffix once here.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
@@ -36,9 +37,14 @@ import httpx
 import structlog
 
 from jbrain import box_events
-from jbrain.llm import gpu_guard, local_catalog, local_weights
+from jbrain.llm import gpu_guard, local_catalog, local_weights, memory_report
 
 log = structlog.get_logger()
+
+# A catalog entry wrong by this much is worth waking someone for: the two found on
+# 2026-08-19 were light by 1.4 and >5.5 GiB, and the smaller of those was enough to abort
+# a healthy load. Below it, drift is ordinary per-build variation and is logged at info.
+_FOOTPRINT_DRIFT_GB = 1.0
 
 
 class LocalGatewayError(Exception):
@@ -378,6 +384,7 @@ class LocalGatewayClient:
                 # it. See the guarded branch below for the measurement that proved it.
                 self._drop_weights_cache(model)
             await self._warm(served_model, system=warm_system, tools=warm_tools)
+            await self._record_measured_footprint(model, projected_gb)
             return
 
         # PRE-FLIGHT, then WATCH — for every caller, with no way to opt out. The projection
@@ -414,6 +421,7 @@ class LocalGatewayClient:
             # here rather than racing an in-flight read.
             self._drop_weights_cache(model)
         await self._warm(served_model, system=warm_system, tools=warm_tools)
+        await self._record_measured_footprint(model, projected_gb)
 
     async def _warm(
         self,
@@ -497,20 +505,66 @@ class LocalGatewayClient:
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
 
-    async def tail_logs(self) -> str:
-        """The gateway's own recent stdout — the llama-swap wrapper plus the upstream
-        llama-server, interleaved exactly as the engine emits them. This is the inference
-        engine's account of a turn (the slot acquired when a request starts, the slot
-        RELEASED when its generation ends), so a debug session can see whether a client
-        disconnect — a Stop — actually halts decoding or the engine keeps running to its
-        own limit. Distinct from the container-log proxy: same source as `load_progress`
-        but returned raw. Raises LocalGatewayError on any failure — the operator asked for
-        this, so a miss is surfaced, not swallowed (unlike best-effort load_progress)."""
+    # llama-swap keeps the wrapper's own log and the upstream llama-server output in
+    # SEPARATE buffers. `/logs` is the proxy's, which is HTTP access lines and nothing else.
+    LOG_SOURCES = {"proxy": "/logs", "upstream": "/logs/upstream", "all": "/logs"}
+
+    async def _record_measured_footprint(self, model: object, projected_gb: float) -> None:
+        """Compare what llama.cpp says the load cost against what the catalog predicted.
+
+        Best-effort and non-fatal: a failure here costs a log line, never a load. The
+        point is that a wrong catalog entry announces itself. On 2026-08-19 two were light
+        by 1.4 and >5.5 GiB, which aborted a healthy load and rolled back a llama.cpp
+        upgrade — and llama.cpp had been printing the true figures at every load into a
+        buffer nothing read."""
+        model_id = getattr(model, "id", None)
+        if model_id is None or projected_gb <= 0:
+            return
+        with contextlib.suppress(Exception):
+            report = memory_report.parse_memory_report(await self.tail_logs("upstream"))
+            if report is None:
+                return
+            drift = memory_report.catalog_divergence(report, projected_gb)
+            record = log.warning if abs(drift) >= _FOOTPRINT_DRIFT_GB else log.info
+            record(
+                "local_gateway.footprint_measured",
+                model=model_id,
+                predicted_gb=round(projected_gb, 2),
+                measured_gb=report.total_gb,
+                drift_gb=drift,
+                weights_gb=report.model_gb,
+                kv_gb=report.kv_gb,
+                compute_gb=report.compute_gb,
+                unaccounted_gb=report.unaccounted_gb,
+            )
+
+    async def tail_logs(self, source: str = "upstream") -> str:
+        """Recent gateway output. `source` selects which buffer:
+
+        - `upstream` (default) — llama-server's own stdout. This is where llama.cpp prints
+          the things that answer memory questions: the per-buffer model/KV/compute sizes at
+          load, `llama_memory_breakdown_print`'s table with its `unaccounted` column, and
+          the "compute buffer size does not match expectation" warning.
+        - `proxy` — llama-swap's wrapper log (HTTP access, health checks, swap decisions).
+        - `all` — both where the build supports it.
+
+        This used to hit `/logs` unconditionally while documenting itself as returning "the
+        llama-swap wrapper plus the upstream llama-server, interleaved". It does not: `/logs`
+        is the proxy buffer alone. The consequence was not cosmetic — on 2026-08-19 two
+        catalog KV figures were found to be 1.4 and >5.5 GiB light, and llama.cpp had been
+        printing the correct numbers at every single load into a buffer nothing read.
+
+        Falls back to `/logs` when a build has no split buffers, so this works across
+        llama-swap versions rather than 404ing on the older ones. Raises LocalGatewayError
+        when even that fails — the operator asked, so a miss is surfaced, not swallowed."""
+        path = self.LOG_SOURCES.get(source, "/logs")
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout, transport=self._transport
             ) as client:
-                resp = await client.get(f"{self._root}/logs")
+                resp = await client.get(f"{self._root}{path}")
+                if resp.status_code == 404 and path != "/logs":
+                    resp = await client.get(f"{self._root}/logs")
                 resp.raise_for_status()
                 return resp.text
         except httpx.HTTPError as exc:
