@@ -170,6 +170,28 @@ host_file_write() {
   return 0
 }
 
+# Apply a loaded module's parameter for THIS BOOT, from either caller.
+#
+# `ttm.pages_limit` is the only thing that turns a GTT over-commit into a clean -ENOSPC
+# before the pages are handed out; above it the failure is a reclaim livelock instead. It is
+# a kernel command-line parameter, so PERSISTING it needs grub and a reboot — a host step
+# with no PWA equivalent. But the module exposes it under /sys/module, and a privileged
+# container gets /sys read-write, so the current boot can be corrected without one.
+#
+# Deliberately attempt-and-report rather than assume: whether this parameter is writable at
+# runtime depends on the permission bits the kernel compiled it with, which differ across
+# versions and which we have not verified on this box. A write that is refused costs
+# nothing, and saying which of the two happened is the difference between a setting the
+# owner can trust and one they have to go and read for themselves.
+host_module_param_write() {
+  if [ -n "$HOST_UPDATE" ]; then
+    echo "$2" > "/sys/module/$1" 2>/dev/null
+  else
+    docker run --rm --privileged --network none "$HELPER_IMAGE" \
+      sh -c "echo $2 > /sys/module/$1" >/dev/null 2>&1
+  fi
+}
+
 # The earlyoom arguments, in ONE place so the host script and the containerized fallback
 # cannot drift (deploy/oom-hardening.sh carries the same string; a test pins them together).
 #
@@ -595,6 +617,20 @@ if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
       echo "[update] earlyoom thresholds applied"
     else
       echo "[update] earlyoom thresholds NOT applied — run deploy/oom-hardening.sh on the host"
+    fi
+    # ttm.pages_limit for THIS boot. It has to be BELOW MemTotal to do anything: at or above
+    # it, the over-commit it exists to refuse simply never trips, and the box livelocks
+    # instead. scripts/strix-halo-host-setup.sh derives the same MemTotal-16GiB figure for
+    # grub (which is what makes it survive a reboot, and which needs the host).
+    _mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+    if [ "$_mem_kb" -gt 0 ]; then
+      _pages=$(( (_mem_kb - 16 * 1024 * 1024) / 4 ))
+      if [ "$_pages" -gt 0 ] && host_module_param_write ttm/parameters/pages_limit "$_pages"; then
+        echo "[update] ttm.pages_limit set to $_pages pages ($((_pages / 262144)) GiB) for this boot"
+      else
+        echo "[update] ttm.pages_limit NOT settable at runtime — it needs the grub entry"
+        echo "[update]   (Ops -> Host settings shows whether the running value is safe)"
+      fi
     fi
   fi
 fi

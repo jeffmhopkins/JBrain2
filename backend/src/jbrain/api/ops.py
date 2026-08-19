@@ -8,6 +8,7 @@ only the supervisor's fixed command set.
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,6 +29,7 @@ from jbrain.api.settings import get_settings_store
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
+from jbrain.host_settings import check_host_settings as host_settings_check
 from jbrain.storage import BackupShelf, BlobStore
 from jbrain.tasks.schedule import FREQS
 from jbrain.usage import usage_summary
@@ -319,6 +321,25 @@ async def status(request: Request, settings: SettingsDep) -> dict[str, object]:
     resp = await _client(request).get("/status", headers=_headers(settings))
     resp.raise_for_status()
     return cast(dict[str, object], resp.json())
+
+
+@router.get("/host-settings")
+async def host_settings() -> dict[str, object]:
+    """Host settings the app depends on and cannot always apply (jbrain.host_settings).
+
+    Exists because the one that mattered was invisible: `ttm.pages_limit` had been set to
+    124 GiB on a 121 GiB box by our own installer, which disables it, and nothing in the
+    product said so until a freeze was investigated weeks later. A boot parameter cannot be
+    changed from here — but it can be READ from here, and an owner who cannot open a shell
+    can at least be told which of them is wrong."""
+    checks = host_settings_check()
+    return {
+        "settings": [asdict(c) for c in checks],
+        "ok": all(c.ok for c in checks),
+        # The ones an Update cannot fix, so a screen can say "this needs the host" rather
+        # than offering a button that will not help.
+        "needs_host": [c.key for c in checks if not c.ok and c.needs_host],
+    }
 
 
 class RestartRequest(BaseModel):

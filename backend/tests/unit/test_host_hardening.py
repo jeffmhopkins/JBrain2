@@ -86,5 +86,7 @@ def test_the_reclaim_knobs_agree_across_both_paths() -> None:
         ("watermark_scale_factor", "200"),
         ("swappiness", "10"),
     ):
-        assert value in re.search(rf"{knob}\D{{0,4}}(\d+)", update).group(0), knob
-        assert value in re.search(rf"{knob}\D{{0,4}}(\d+)", hardening).group(0), knob
+        for name, text in (("update-inner.sh", update), ("oom-hardening.sh", hardening)):
+            found = re.search(rf"{knob}\D{{0,4}}(\d+)", text)
+            assert found, f"{knob} is not set at all in {name}"
+            assert found.group(1) == value, f"{knob} is {found.group(1)} in {name}, want {value}"
