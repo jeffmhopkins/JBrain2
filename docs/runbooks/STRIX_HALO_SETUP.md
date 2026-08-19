@@ -427,9 +427,15 @@ Once hosting is on, **Settings → LLM → On-box models** lists the whole catal
 not just what's provisioned. Each un-provisioned model (e.g. **Qwen3.8 27B** at
 Q8, ~28 GB) has an **Install** button. Tapping it **starts the download
 immediately** — a dedicated weight-sync one-shot, **not** a system update: it
-pulls the queued weights, adds them to `LOCAL_MODELS`, re-stamps the gateway
-config, and restarts the gateway — the same provisioning `enable-local-models`
-does, but with no `git pull` or image rebuild. The drawer follows it live (a
+checks free disk, pulls the queued weights, adds them to `LOCAL_MODELS`, re-stamps
+the gateway config, and restarts the gateway — the same provisioning `enable-local-models`
+does, but with no `git pull` or image rebuild. The **disk check refuses** rather than warns
+(catalog `size_gb` for the queued models plus a 10 GB margin) and leaves the queue intact,
+so freeing space and waiting for the next sync is the whole retry. It had no check at all
+until 2026-08-19: the guarded path was `scripts/local-llm-setup.sh`, a shell script the owner
+cannot run, so the product pointed them at the unguarded one — queueing the ~85 GB Q8 coder
+with 40 GB free filled the filesystem that also holds the database, the blobs and the
+backups, and surfaced only as `hf` errors in the provision log after the fact. The drawer follows it live (a
 per-model GB bar reading the bytes on disk); the coarse phase and the verbose
 per-model download log stream into the queue banner. **Removing** is symmetric:
 an installed model's **Uninstall** button (on the Installed or Catalog tab) applies
@@ -1084,8 +1090,16 @@ steps below are what the hardening does and how to verify:
    Installed and configured by the setup script; verify (or reapply by hand):
    ```bash
    systemctl is-active earlyoom && cat /etc/default/earlyoom
-   # EARLYOOM_ARGS="-r 60 -m 10 -m 5 -s 5 -s 3 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"
+   # EARLYOOM_ARGS="-r 60 -m 30 -m 20 -s 10 -s 5 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"
    ```
+   > **Why 30/20 and not the 10/5 this used to say.** earlyoom fires only when memory **and**
+   > swap are both under their limits, and its `-m` reads **MemAvailable** — which counts page
+   > cache as free. During the 2026-08-19 livelock swap was 100% consumed for seven hours (so
+   > `-s` was satisfied throughout) while MemAvailable held at **29%**. `-m 10` was never
+   > approached, the AND never closed, and this backstop did not fire once. Raising the memory
+   > limit is safe *because* of that AND: swap is ~100% free on a healthy box, so `-s 10` gates
+   > everything. Together they mean "swap is gone AND memory is tight" — the livelock, and not
+   > a state this box reaches in health.
 2. **Reclaim headroom (sysctl)** — start reclaiming earlier, thrash into swap less.
    Written to `/etc/sysctl.d/99-jbrain-oom.conf` by the setup script; verify:
    ```bash

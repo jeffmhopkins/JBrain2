@@ -82,6 +82,14 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   only ~3 checkpoints by SPACING however high the count goes) and **`--cache-ram`** (default 8192
   MiB; unlike a KV-slot file the in-RAM prompt cache preserves checkpoints, so it is the lever
   that survives eviction).
+  **`--cache-ram` costs HOST memory, and the default 8 GiB is now budgeted** as
+  `local_catalog.CACHE_RAM_GB` in every model's resident footprint. It was not, on the
+  reasoning that it "does not touch the GTT budget" — true of `gpu_guard`, and irrelevant to
+  `residency`, which is a host-RAM budget. Up to 8 GiB per resident model was therefore
+  invisible to the evictor, on the box whose failure mode is running out of exactly this. An
+  OVERRIDE is still unbudgeted (it rides `extra_server_args`, which the cost model does not
+  parse), which is why the flag is bounded to 0..32 GiB rather than left open — raise it and
+  the evictor under-counts that model by the difference.
   **`-fa 0` is refused (422) on a model carrying a vision projector.** Turning flash attention
   off swaps the CLIP attention workspace from the linear branch to the quadratic one — ~0.47 GB
   to ~16 GB — and `_vision_resident_gb` hardcodes the linear figure, so the residency budget
