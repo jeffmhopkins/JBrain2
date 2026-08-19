@@ -733,6 +733,8 @@ class FakeLocalGateway:
         self.fail_load = fail_load
         self.fail_logs = fail_logs
         self.logs_text = logs_text
+        # Which buffer each caller asked for; `/logs` is the wrapper's, not llama-server's.
+        self.log_sources: list[str] = []
         self.fail_props = fail_props
         self.props_payload = props_payload or {}
         self.unloaded: list[str] = []
@@ -771,9 +773,10 @@ class FakeLocalGateway:
         self.warmed_tools.append(warm_tools)
         self._running.add(served_model)
 
-    async def tail_logs(self) -> str:
+    async def tail_logs(self, source: str = "upstream") -> str:
         from jbrain.llm.local_gateway import LocalGatewayError
 
+        self.log_sources.append(source)
         if self.fail_logs:
             raise LocalGatewayError("simulated gateway failure")
         return self.logs_text

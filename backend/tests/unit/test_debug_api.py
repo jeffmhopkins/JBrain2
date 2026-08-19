@@ -1087,3 +1087,39 @@ def test_client_vitals_says_nothing_reported_rather_than_implying_a_fault(
 def test_client_vitals_requires_a_token(debug_client: tuple[TestClient, str]) -> None:
     client, _key = debug_client
     assert client.get("/api/debug/client-vitals").status_code == 401
+
+
+def test_gateway_logs_defaults_to_the_engine_not_the_wrapper(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The default source is llama-server's own output, not llama-swap's.
+
+    This endpoint documented itself as returning the wrapper "plus the upstream
+    llama-server, interleaved" while fetching llama-swap's PROXY buffer, which carries HTTP
+    access lines only. Not cosmetic: llama.cpp prints its per-buffer model/KV/compute sizes
+    at every load, and two catalog KV figures turned out to be 1.4 and >5.5 GiB light — the
+    correct numbers had been printed all along, into a buffer nothing read."""
+    client, key = debug_client
+    gateway = _state(client).local_gateway
+    assert client.get("/api/debug/llm/gateway-logs", headers=_auth(key)).status_code == 200
+    assert gateway.log_sources[-1] == "upstream"
+
+
+def test_gateway_logs_can_request_the_wrapper_buffer(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    """The slot-acquired / slot-RELEASED account of a turn is the wrapper's, and is what
+    answers whether a Stop actually halts decoding."""
+    client, key = debug_client
+    gateway = _state(client).local_gateway
+    resp = client.get("/api/debug/llm/gateway-logs", params={"source": "proxy"}, headers=_auth(key))
+    assert resp.status_code == 200
+    assert gateway.log_sources[-1] == "proxy"
+
+
+def test_gateway_logs_rejects_an_unknown_source(debug_client: tuple[TestClient, str]) -> None:
+    """Rejected rather than silently falling back — silent fallback to the wrong buffer is
+    exactly how this went unnoticed."""
+    client, key = debug_client
+    resp = client.get("/api/debug/llm/gateway-logs", params={"source": "nope"}, headers=_auth(key))
+    assert resp.status_code == 422

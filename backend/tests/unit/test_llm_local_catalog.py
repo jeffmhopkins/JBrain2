@@ -747,3 +747,37 @@ def test_halving_the_window_pays_for_full_history() -> None:
     assert local_catalog.footprint_gb(model, 65536) == pytest.approx(
         local_catalog.footprint_gb(plain, 131072), abs=0.01
     )
+
+
+def test_the_residency_default_matches_the_settings_default() -> None:
+    """Two defaults for one number is how a planner and a guard end up disagreeing.
+
+    `ResidencyCoordinator` defaulted to 0.25 against `Settings.local_llm_free_ram_fraction`
+    = 0.15, so any construction path that did not pass the fraction explicitly reserved
+    30 GiB instead of 18.2 on this box — planning against a ceiling 12 GiB tighter than the
+    one the guard and the settings meter use, and refusing loads the meter said would fit.
+    """
+    from jbrain.config import Settings
+    from jbrain.llm.residency import DEFAULT_FREE_RAM_FRACTION
+
+    settings_default = Settings.model_fields["local_llm_free_ram_fraction"].default
+    assert settings_default == DEFAULT_FREE_RAM_FRACTION
+
+
+def test_every_saved_override_names_a_model_the_cost_model_knows() -> None:
+    """An override for an id outside the catalog is invisible, not inert.
+
+    `residency._footprint` returns 0.0 for a served name it cannot resolve, so a model
+    running under an unknown id costs the eviction budget NOTHING and can never be chosen
+    as a victim. This asserts the catalog can still resolve everything it ships; the live
+    box additionally carried saved overrides for `qwen3-235b-a22b` and
+    `qwen3.5-122b-a10b-mtp`, which are in neither CATALOG nor RETIRED_IDS — those are
+    settings rows to clean up, and this test is what stops the catalog side regressing.
+    """
+    catalog = local_catalog.CATALOG
+    ids = {m.id for m in catalog}
+    served = {m.served_model for m in catalog}
+    assert len(ids) == len(catalog), "duplicate catalog ids"
+    for model in catalog:
+        assert local_catalog.get_by_served(model.served_model) is not None, model.id
+    assert served, "catalog is empty"

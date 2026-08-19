@@ -39,6 +39,8 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import cast
 
+import yaml
+
 from jbrain.llm import local_catalog
 
 # Concrete, distinct upstream ports — llama-swap's ${PORT} macro isn't substituted
@@ -431,6 +433,61 @@ def write(
         f.write(text)
     os.replace(tmp, path)
     return path
+
+
+def served_shape_from_config(root: str) -> dict[str, tuple[int, int]]:
+    """The `(window, slots)` each model is ACTUALLY served at, read back out of the
+    llama-swap.yaml we already wrote. Keyed by served model name.
+
+    This exists so a caller with no database can still size a load correctly. The
+    smoketest is the one that matters: it runs under `docker compose run --rm --no-deps`
+    during an update, so it cannot read the operator's `-c` override out of the settings
+    table, and it therefore projected the CATALOG window while llama-swap served the
+    operator's. On 2026-08-19 that made a routine load look like a runaway:
+
+        window used to project   projected   ceiling   observed   verdict
+        32768  (catalog)              1.57      3.57       3.78   ABORT
+        262144 (actually served)      2.45      4.45       3.78   pass
+
+    Same model, same build, same memory — and the abort rolled llama.cpp back to its
+    pinned base. The config file is the right source precisely because it is what
+    llama-swap executes; it needs no DB, and it cannot disagree with the served command
+    the way a re-derivation from the catalog can.
+
+    `-c` is total KV cells across all slots (llama-server divides it evenly by `-np`), so
+    the per-slot window this returns is `-c // -np`, matching what the router reports to
+    the meter. Best-effort: an unreadable or unparseable config returns an empty map and
+    the caller falls back to catalog defaults, which is the prior behaviour."""
+    shapes: dict[str, tuple[int, int]] = {}
+    path = os.path.join(root, "llama-swap.yaml")
+    try:
+        with open(path) as handle:
+            parsed = yaml.safe_load(handle)
+    except (OSError, yaml.YAMLError):
+        return shapes
+    if not isinstance(parsed, dict):
+        return shapes
+    for name, spec in (parsed.get("models") or {}).items():
+        cmd = spec.get("cmd") if isinstance(spec, dict) else None
+        if isinstance(cmd, str):
+            cmd = cmd.split()
+        if not isinstance(cmd, list):
+            continue
+        flags = [str(token) for token in cmd]
+
+        def _flag(flag: str, tokens: list[str] = flags) -> int | None:
+            try:
+                return int(tokens[tokens.index(flag) + 1])
+            except (ValueError, IndexError):
+                return None
+
+        cells = _flag("-c")
+        if cells is None or cells <= 0:
+            continue
+        slots = _flag("-np") or 1
+        slots = max(1, slots)
+        shapes[str(name)] = (max(1, cells // slots), slots)
+    return shapes
 
 
 def _saved_overrides() -> tuple[

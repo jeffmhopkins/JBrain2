@@ -987,19 +987,33 @@ async def jcode_logs(
 async def gateway_logs(
     request: Request,
     _p: DebugDep,
-    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+    tail: Annotated[int, Query(ge=1, le=20000)] = 200,
+    source: Annotated[str, Query(pattern="^(upstream|proxy|all)$")] = "upstream",
 ) -> PlainTextResponse:
-    """Tail the local model gateway's OWN recent stdout — the llama-swap wrapper plus the
-    upstream llama-server, interleaved. This is the inference engine's account of a turn
-    (slot acquired on a request, slot RELEASED when its generation ends), the read that
-    answers whether a Stop/disconnect actually halts decoding or the engine runs on. Sits
-    beside /logs/{service} (the container's stdout via the supervisor): the same bytes in
-    the common case, but sourced straight from the gateway so it's right even if the
-    container-log plumbing isn't carrying the upstream output. 502 if the gateway can't be
-    reached (the operator asked, so a miss is surfaced, not an empty success)."""
-    request.state.debug_detail = f"gateway (tail {tail})"
+    """Tail the local model gateway's recent output.
+
+    `source=upstream` (default) is llama-server's own stdout — where llama.cpp prints the
+    per-buffer model/KV/compute sizes at load, the `llama_memory_breakdown_print` table
+    including its `unaccounted` column, and the "compute buffer size does not match
+    expectation" warning. Those are the reads that answer a memory question, and they were
+    unreachable until now: this endpoint documented itself as returning the wrapper "plus
+    the upstream llama-server, interleaved" while actually fetching llama-swap's proxy
+    buffer, which is HTTP access lines only. On 2026-08-19 two catalog KV figures turned
+    out to be 1.4 and >5.5 GiB light while llama.cpp had been printing the right numbers
+    at every load into a buffer nothing read.
+
+    `source=proxy` is llama-swap's wrapper log — health checks, swap decisions, and the
+    slot-acquired/slot-RELEASED account of a turn that answers whether a Stop actually
+    halts decoding. `source=all` is both where the build supports it.
+
+    `tail` reaches 20000 because a single model's load banner is hundreds of lines and the
+    old 2000 cap silently truncated it away. Sits beside /logs/{service} (the container's
+    stdout via the supervisor); this one is sourced straight from the gateway, so it is
+    right even when the container-log plumbing is not carrying upstream output — which,
+    on this box, it is not. 502 if the gateway can't be reached."""
+    request.state.debug_detail = f"gateway {source} (tail {tail})"
     try:
-        full = await _gateway(request).tail_logs()
+        full = await _gateway(request).tail_logs(source)
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway logs unavailable: {exc}") from exc
     return PlainTextResponse("\n".join(full.splitlines()[-tail:]))

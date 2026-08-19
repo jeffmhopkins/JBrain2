@@ -282,7 +282,15 @@ def _authed_client(
     # Residency over the SAME fake gateway, so the load/plan-load endpoints exercise the
     # real evictor against the test's running set (memory is monkeypatched per test).
     app.state.residency = ResidencyCoordinator(
-        app.state.local_gateway, enabled=settings.local_llm_enabled, models_dir=""
+        app.state.local_gateway,
+        enabled=settings.local_llm_enabled,
+        models_dir="",
+        # Passed exactly as main.py / worker.py / router.py do. Omitting it left this
+        # harness on the constructor default while every production site passed the
+        # settings value, so these tests pinned a ceiling the box never used — 96.0 GB
+        # against a real 108.8. Two defaults for one number is how a preview ends up
+        # disagreeing with the evictor it is previewing.
+        free_ram_fraction=settings.local_llm_free_ram_fraction,
     )
     key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
     assert (
@@ -815,7 +823,9 @@ def test_plan_load_previews_the_eviction_without_touching_the_box(
     assert body["fits"] is False and body["over"] is False and body["already_resident"] is False
     assert [v["id"] for v in body["victims"]] == ["gpt-oss-120b"]
     assert body["victims"][0]["gb"] == 76.5  # incl. the 8 GB in-RAM prompt cache
-    assert body["ceiling_gb"] == 96.0
+    # 128 GB * (1 - 0.15). Was asserted at 96.0 (i.e. 0.25) because the harness above
+    # omitted the fraction; production has always used the settings value.
+    assert body["ceiling_gb"] == 108.8
     assert gw.unloaded == []  # dry-run — nothing evicted
 
 
