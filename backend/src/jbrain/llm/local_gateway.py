@@ -577,11 +577,22 @@ class LocalGatewayClient:
                 # how this failed on 2026-08-19, and with no sample there was no way to
                 # tell a framing problem from a build that prints nothing. The sample is
                 # model-load output (buffer sizes, device names), not user content.
+                # Sampled to answer the ONE question that distinguishes the two remaining
+                # explanations: are the figures present and unreadable, or absent?
+                #
+                # The first version sampled `captured[:6]`, which is always the same
+                # startup banner — it proved the capture ran and nothing else. Any line
+                # mentioning a buffer is what matters; the tail shows where the capture
+                # stopped, which is what would show truncation.
+                matched = [line for line in captured if "buffer" in line.lower()]
                 log.warning(
                     "local_gateway.footprint_unparsed",
                     model=model_id,
                     lines=len(captured),
-                    sample=[line[:200] for line in captured[:6]],
+                    chars=sum(len(line) for line in captured),
+                    buffer_lines=len(matched),
+                    buffer_sample=[line[:200] for line in matched[:5]],
+                    tail=[line[:200] for line in captured[-4:]],
                 )
                 return
             drift = memory_report.catalog_divergence(report, projected_gb)
