@@ -66,6 +66,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_intake_link_handlers, build_proposal_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.sessiontools import build_session_handlers
 from jbrain.agent.spawn import DecomposeRef, SpawnRef, SpawnService
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.agent.transcript_store import AgentTranscript
@@ -833,6 +834,9 @@ def build_registry(
             # A clock read — no owner data, no domain — so every agent that holds it
             # (the curator by default; jerv by allowlist) can ground time-relative talk.
             **build_clock_handlers(),
+            # `name_session`: the chat names itself from inside its own turn, replacing the
+            # separate `session.title` completion that evicted the primed prefix to do it.
+            **build_session_handlers(AgentSessionRepo(maker)),
             **build_entity_handlers(entities),
             **build_list_handlers(lists),
             **build_appointment_handlers(appointments),

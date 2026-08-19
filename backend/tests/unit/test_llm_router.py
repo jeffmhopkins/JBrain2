@@ -603,13 +603,13 @@ async def test_reasoning_effort_reaches_a_hybrid_qwen_local_model() -> None:
     local = FakeLlmClient(["l"])
     router = LlmRouter(
         {"local": local},
-        {"session.title": ("xai", "grok-4.3")},
+        {"research.title": ("xai", "grok-4.3")},
         overrides_loader=_loader(
-            {"session.title": {"spec": "local:qwen3.5-0.8b", "reasoning_effort": "none"}}
+            {"research.title": {"spec": "local:qwen3.5-0.8b", "reasoning_effort": "none"}}
         ),
         local_enabled=True,
     )
-    await router.complete("session.title", system="s", user_text="u")
+    await router.complete("research.title", system="s", user_text="u")
     assert local.calls[0]["reasoning_effort"] == "none"
 
 
@@ -630,9 +630,12 @@ async def test_bucket_default_effort_sent_without_an_override() -> None:
 
 
 async def test_low_bucket_default_effort_sent_without_an_override() -> None:
+    # research.title, not session.title: naming a CHAT is no longer a routed completion at all
+    # (jerv calls `name_session` mid-turn), so the low bucket's remaining title task is the
+    # deep-research report heading.
     xai = FakeLlmClient(["a"])
-    router = LlmRouter({"xai": xai}, {"session.title": ("xai", "grok-4.3")})
-    await router.complete("session.title", system="s", user_text="u")
+    router = LlmRouter({"xai": xai}, {"research.title": ("xai", "grok-4.3")})
+    await router.complete("research.title", system="s", user_text="u")
     assert xai.calls[0]["reasoning_effort"] == "low"
 
 
@@ -790,7 +793,6 @@ def _title_router(clients, overrides, *, pinned=frozenset()):  # type: ignore[no
         clients,
         {
             "agent.turn": ("xai", "grok-4.3"),
-            "session.title": ("xai", "grok-4.3"),
             "research.title": ("xai", "grok-4.3"),
         },
         tiers={"high": ("xai", "grok-strong"), "low": ("xai", "grok-cheap")},
@@ -808,20 +810,19 @@ async def test_title_follows_a_re_routed_agent_model() -> None:
         {"agent.turn": {"spec": "local:gpt-oss-120b"}},
     )
     assert await router.effective_spec("research.title") == ("local", "gpt-oss-120b")
-    assert await router.effective_spec("session.title") == ("local", "gpt-oss-120b")
 
 
 async def test_title_default_unchanged_without_an_agent_override() -> None:
     # No overrides at all: a fresh box still runs the title on the shipped default.
     router = _title_router({"xai": FakeLlmClient()}, {})
-    assert await router.effective_spec("session.title") == ("xai", "grok-4.3")
+    assert await router.effective_spec("research.title") == ("xai", "grok-4.3")
 
 
 async def test_a_stale_title_pin_is_ignored_and_it_follows_agent_turn() -> None:
-    # Title tasks are NOT independently routable: a stored own-task spec (a stale pin from
-    # before the picker hid these tasks, or one set via a direct PUT) is IGNORED, and the
-    # title follows agent.turn's model. Otherwise naming a chat would swap in the pinned model
-    # — the exact "titling swaps in a different model" problem the follow prevents.
+    # The title task is NOT independently routable: a stored own-task spec (a stale pin from
+    # before the picker hid it, or one set via a direct PUT) is IGNORED, and the title follows
+    # agent.turn's model. Otherwise naming a report would swap in the pinned model — the exact
+    # "titling swaps in a different model" problem the follow prevents.
     router = _title_router(
         {"xai": FakeLlmClient(), "local": FakeLlmClient(), "anthropic": FakeLlmClient()},
         {

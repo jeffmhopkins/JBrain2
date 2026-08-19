@@ -73,7 +73,6 @@ TASK_LABELS: dict[str, str] = {
     "vision.ocr": "Vision OCR",
     "vision.caption": "Vision caption",
     "video.summarize": "Video summary",
-    "session.title": "Session title",
     "research.title": "Research report title",
     "wiki.rewrite": "Wiki rewrite",
     "wiki.ground": "Wiki grounding",
@@ -85,12 +84,15 @@ TASK_LABELS: dict[str, str] = {
     "pet.statue": "JPet — statue sculptor",
 }
 
-# Auto-generated titles are NOT independently routable: they run as a quick turn on the
-# chat's own model (jbrain.agent.titler passes the turn's model; the router also has them
-# follow agent.turn via _FOLLOW_PRIMARY_MODEL). Hiding them from the per-task picker avoids
-# offering a control that does nothing — and stops a stale pick from swapping in a second
-# model just to name a chat. They stay in TASK_DEFAULTS (the router still routes them).
-_HIDDEN_TASKS: frozenset[str] = frozenset({"session.title", "research.title"})
+# The research-report title is NOT independently routable: it runs on the chat's own model
+# (external.report_titler passes the turn's model; the router also has it follow agent.turn via
+# _FOLLOW_PRIMARY_MODEL). Hiding it from the per-task picker avoids offering a control that
+# does nothing — and stops a stale pick from swapping in a second model just to name a report.
+# It stays in TASK_DEFAULTS (the router still routes it).
+#
+# The chat-title twin is gone: jerv names its own chat mid-turn via `name_session`, so there
+# is no second completion to route or to hide (jbrain.agent.sessiontools).
+_HIDDEN_TASKS: frozenset[str] = frozenset({"research.title"})
 
 
 # Tasks that send image content to the model and so require a vision-capable provider:

@@ -49,7 +49,7 @@ from jbrain.agent.readtools import (
 )
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
-from jbrain.agent.titler import SessionTitler
+from jbrain.agent.sessiontools import UNNAMED_CHAT_BLOCK
 from jbrain.agent.tool_artifacts import ToolArtifactRepo
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
@@ -106,7 +106,6 @@ _THINK_FLUSH_S = 0.7
 # (retryable 5xx/network → the adapter's 4× backoff, minutes) would stall first-token latency.
 # Best-effort: on timeout the title is skipped and the turn proceeds. Generous enough to cover
 # a cold model load + a quick title on the small models titling typically uses.
-_AUTOTITLE_TIMEOUT_S = 30.0
 
 # A ceiling on the owner's CONCURRENT detached chat turns. A turn runs detached from its
 # SSE socket, so a PWA that lost its in-memory single-in-flight guard (a full reload) could
@@ -524,36 +523,6 @@ async def _research_report_blocks(
     return [UserMessage(text=body)]
 
 
-async def _maybe_autotitle(
-    request: Request,
-    owner_ctx: SessionContext,
-    sessions: AgentSessionRepo,
-    session: AgentSessionInfo,
-    question: str,
-    spec_override: str | None,
-) -> None:
-    """Name a chat the owner left untitled — UP FRONT, from its opening message, run as
-    a quick turn on the SAME model this chat turn will use (`spec_override`), so titling
-    never routes to a different model or forces a cold reload/swap. Owner-only metadata,
-    best-effort: a failed or empty title leaves the chat untitled (the UI shows a
-    placeholder) and never delays or breaks the turn that follows. The rename persists to
-    the DB (the session record the PWA reads); the in-memory `session` is immutable."""
-    if session.title.strip():
-        return
-    with contextlib.suppress(Exception):
-        # Time-bounded so a slow/degraded title model can't hold the turn's first token
-        # (this runs before the main stream and outside the turn watchdogs). On timeout the
-        # suppress swallows the TimeoutError and the turn starts untitled.
-        title = await asyncio.wait_for(
-            SessionTitler(get_llm_router(request)).title_for(
-                question=question, spec_override=spec_override
-            ),
-            timeout=_AUTOTITLE_TIMEOUT_S,
-        )
-        if title:
-            await sessions.rename(owner_ctx, session.id, title)
-
-
 def _appt_hint(appointment_id: str | None) -> str | None:
     """A calendar handoff's appointment id, validated as a UUID before it rides
     into the prompt. Anything malformed is dropped rather than pasted in — the
@@ -877,6 +846,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     if presence:
         volatile.append(UserMessage(text=presence))
     volatile.append(UserMessage(text=now_block(owner_tz)))
+    # Whether this chat still has no name. The `name_session` tool names it from inside the
+    # turn; this line is how the model knows it is needed. It lives in the VOLATILE suffix on
+    # purpose: it changes the moment the chat is named, and anything that varies per turn must
+    # stay out of the cache-stable prefix — which is the whole reason the separate
+    # `session.title` completion was removed (it evicted that prefix to name the chat).
+    if not session.title.strip():
+        volatile.append(UserMessage(text=UNNAMED_CHAT_BLOCK))
     # Backstop the deferred auto-resume: fold in any finished-but-unclaimed analysis
     # (a headless Task run, or a chat whose card never mounted to claim it) as data-framed
     # context before the current turn, so a "read the transcript" answers from it. A
@@ -1003,11 +979,6 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # near-real-time, not one dump at settle. Any residual flushes at done.
         think_buf = ""
         last_think = 0.0
-        # Name an untitled chat BEFORE the main response streams, on this turn's own model
-        # (model_override — already the one about to run, so no swap/reload). A quick title
-        # turn from the opening message; best-effort inside _maybe_autotitle, so a slow or
-        # failed title never blocks or breaks the turn.
-        await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, model_override)
         stream = loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,

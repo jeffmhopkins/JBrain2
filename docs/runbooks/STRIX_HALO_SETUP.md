@@ -194,6 +194,25 @@ being recreated by an update), and the keeper restores it before priming. Measur
 skipped, not shortened. The prime still runs in both paths ON PURPOSE: a restore that silently
 did nothing degrades to a slow prime, never a wrong answer.
 
+> **The state file is keyed per model, per prompt** — `jerv-<model>-<fingerprint>.bin`, where
+> the fingerprint digests the persona, the tool JSON, llama.cpp's `build_info`, the chat
+> template, and the served `-c`/`-np`. It is **not** keyed by date, with one exception: a
+> template that actually renders a date (harmony puts `Current date:` in gpt-oss's system
+> header) keeps the UTC day in the digest, because for that model the prefix really does change
+> at the container's midnight. Qwen3.8's template contains no date construct — checked against
+> `/props` — so its file now stays put until something real moves. It used to rotate nightly
+> for every model, which rewrote ~2 GB, orphaned the previous file, and made the interactive
+> model pay a ~100 s cold prefill for an unchanged prefix.
+>
+> **Orphans are reclaimed by the update** (`deploy/prune-kv-state.sh`, run from
+> `update-inner.sh`), which keeps the newest 2 files per model and deletes the rest. The update
+> is where orphans come from — a rebuilt llama.cpp moves `build_info` — and it is the only
+> recurring host-side job that can reach the volume: the api container does not mount `llm_kv`,
+> so nothing inside the app can delete these files. Newest-kept rather than wiped, so an update
+> that did NOT rebuild the gateway leaves the live file in place and the next cold start still
+> restores. Verified against a fake volume: three files per model reduce to two, and a
+> directory, a symlink and any non-`jerv-<model>-<16 hex>.bin` name are left untouched.
+
 > **`--swa-full` is mandatory here, not tuning.** gpt-oss is an interleaved sliding-window
 > model, and a restore into a windowed cache reports full success and is then discarded — same
 > token count, same bytes, same 0.3s, and llama-server re-prefills anyway. Measured A/B on the
@@ -260,8 +279,9 @@ did nothing degrades to a slow prime, never a wrong answer.
 >
 > **What actually costs you a cold prefill, then, is anything that INVALIDATES the checkpoint.**
 > Known candidates on this box, unproven in ranking: a background task landing in the same slot
-> (a speculative model is clamped to `-np 1`, so there is no second slot to absorb it — see the
-> auto-title note in the agent path); an aborted request, since a prefill cut short by a client
+> (a request for a second slot now drops speculation instead of being clamped away, so there IS
+> one to absorb it if the operator asks; the chat auto-titler that used to be the loudest such
+> task is gone — jerv names its own chat in-turn via `name_session`); an aborted request, since a prefill cut short by a client
 > timeout appears to leave no committed checkpoint and the next turn starts cold again; and a
 > prompt whose leading bytes moved.
 >

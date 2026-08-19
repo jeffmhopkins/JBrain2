@@ -336,10 +336,19 @@ a right-swipe from the Full Brain composer, DESIGN.md):
   **staged**, `external` **staged as an egress Proposal** (#9). A write can target **only an in-scope
   domain** — you cannot stage a write to a domain the session cannot read.
 
-**Chat lifecycle.** A chat the owner doesn't name is **auto-titled** from its first
-exchange — a cheap one-shot summary through the LLM adapter (the `session.title`
-task), best-effort and owner-only metadata, never blocking the turn that produced
-it. A chat can be **archived** (a third status beside `active`/`ended`) to tidy it
+**Chat lifecycle.** A chat the owner doesn't name **names itself from inside its own
+turn**: an unnamed chat gets a DATA-framed `This chat has no name yet` line in the
+turn's volatile suffix, and jerv calls the `name_session` tool alongside its answer.
+Owner-only metadata; the handler refuses a chat that already has a name, so naming is
+a one-way door and neither a confused model nor an injected instruction can rename a
+chat the owner named.
+
+This replaced a separate `session.title` completion that ran *before* the first reply.
+That call FOLLOWED the interactive model, so on a one-slot local box its ~200-token
+prompt landed in the slot holding jerv's ~32k primed prefix and evicted it — and the
+real turn behind it then paid a ~100 s cold prefill, against 0.99 s warm. Naming from
+inside the turn removes the second call rather than making it cheaper, and the model
+choosing the name is the one that read the whole message. A chat can be **archived** (a third status beside `active`/`ended`) to tidy it
 out of the live Chats list without deleting it or its transcript; archiving is
 reversible and orthogonal to read scope. Read scope is **adjustable after start**
 (owner-only endpoint; RLS still enforces the firewall per query) — the resting

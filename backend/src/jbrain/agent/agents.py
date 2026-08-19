@@ -240,6 +240,12 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "research_report",
         "show_research_report",
         "remove_research_report",
+        # Name this chat, from inside the turn. Replaces the `session.title` completion that
+        # ran BEFORE every untitled chat's first reply: that call followed the interactive
+        # model, so on a one-slot local model its ~200-token prompt evicted jerv's ~32k primed
+        # prefix and the real turn behind it paid a ~100 s cold prefill. The handler refuses a
+        # chat that already has a name, so this is one-way (jbrain.agent.sessiontools).
+        "name_session",
     }
 )
 
