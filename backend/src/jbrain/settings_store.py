@@ -371,7 +371,8 @@ WORKFLOW_DISPATCH_MODE_KEY = "workflow_dispatch_mode"
 
 
 def _dedup_str_list(raw: object) -> list[str]:
-    """The sanitize shared by the catalog-id list settings (staged, install queue):
+    """The sanitize shared by the catalog-id list settings (availability, install/remove queues —
+    there is no "staged" list; staging is a dry-run that persists nothing):
     a non-list store, or non-string / duplicate entries, are dropped — first-seen
     order preserved. A junk store must never read as a model id."""
     if not isinstance(raw, list):
