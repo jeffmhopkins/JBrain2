@@ -6,6 +6,14 @@ on:
     tags: ["v*"]
   pull_request:
 
+# A superseded run is wasted minutes by definition: pushing twice to a PR used to leave
+# the first run grinding to completion against a commit nobody will merge. Cancelled per
+# ref, and only for pull_request -- a push to main or a tag must finish, because that is
+# the run that publishes images.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Work out which top-level areas a PR actually touches, so the heavy jobs (above
   # all backend's Postgres testcontainers suite) can no-op when they're irrelevant.
@@ -13,6 +21,7 @@ jobs:
   # Every area filter also includes this workflow, so a CI edit re-runs everything.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # 20s observed
     permissions:
       contents: read
       pull-requests: read
@@ -70,6 +79,7 @@ jobs:
   backend-checks:
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # ~1m observed
     defaults:
       run:
         working-directory: backend
@@ -93,6 +103,7 @@ jobs:
   backend-unit:
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # ~2m30s observed, plus the ffmpeg install
     # Sharded across runners because this half is the long pole: ~4.2k tests, and xdist
     # only spreads them over ONE runner's cores. Round-robin by sorted filename — a
     # deterministic split needing no plugin and no committed durations file to go stale.
@@ -115,57 +126,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media),
-      # which skip WHOLESALE without them (`media.ffmpeg_available`) — a missing binary
-      # costs coverage silently rather than failing. Same package set as
-      # scripts/dev-setup.sh, but not the same fetch strategy -- a developer pays a slow
-      # mirror once, whereas every backend job in every run pays it here.
-      #
-      # ubuntu-24.04 does NOT ship ffmpeg; an earlier comment here asserted it did,
-      # which is how this step's cost stayed invisible. Every backend job pays a real
-      # 99-package install, so both apt settings below are load-bearing:
-      #
-      #   --no-install-recommends drops 12 of those packages and 31 MB of the 94 MB
-      #   fetch — VA-API/VDPAU drivers, Blu-ray DRM, GTK decorations, an SVG loader, a
-      #   speech model. Headless file decode reaches none of them; the media suite
-      #   passes against exactly this set.
-      #
-      #   Retries + a fetch timeout because the archive is the least reliable thing in
-      #   this workflow. Those two settings only cover a STALLED mirror, though, and the
-      #   failure we actually keep hitting is a slow one, which they cannot see:
-      #   Acquire::*::Timeout is an INACTIVITY timeout, so a backend dribbling bytes
-      #   never trips it and never retries. On 2026-08-19 this step took 21m10s --
-      #   `Fetched 62.8 MB in 20min 54s (50.1 kB/s)` from azure.archive.ubuntu.com,
-      #   seconds after the index fetch off the SAME host ran at 5400 kB/s. The pool is
-      #   load-balanced, so the fix is a wall-clock cap that forces a reconnect onto a
-      #   different backend; see the retry loop below.
+      # which skip WHOLESALE without them -- see the action for why it is not a
+      # plain `apt-get install`, and why it is one shared copy rather than two.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # An array, not a wrapper function: the capped call below needs `timeout` to
-          # exec apt-get directly, and `timeout` cannot run a shell function.
-          apt_opts=(-o Acquire::Retries=3
-                    -o Acquire::http::Timeout=30
-                    -o Acquire::https::Timeout=30)
-          command -v ffmpeg >/dev/null 2>&1 || {
-            sudo apt-get "${apt_opts[@]}" update
-            # Download under a wall-clock cap, and retry on a FRESH connection. apt
-            # keeps partials, so each attempt resumes rather than restarts. `timeout`
-            # runs UNDER sudo so it signals apt-get itself rather than the sudo wrapper.
-            for attempt in 1 2 3; do
-              sudo timeout 120 apt-get "${apt_opts[@]}" -y --no-install-recommends \
-                                                        --download-only install ffmpeg &&
-                break
-              echo "::warning::ffmpeg fetch attempt ${attempt} hit the 2m cap;" \
-                   "reconnecting to pick a different archive backend"
-            done
-            # Uncapped last resort, and never under `timeout`: by here the bytes are
-            # usually already local, and killing apt during unpack/configure instead of
-            # during download is how you get a broken dpkg database. A comprehensively
-            # degraded mirror therefore degrades to the old slow-but-green behaviour,
-            # minus whatever the capped attempts already fetched.
-            sudo apt-get "${apt_opts[@]}" -y --no-install-recommends install ffmpeg
-          }
+        uses: ./.github/actions/setup-ffmpeg
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         uses: astral-sh/setup-uv@v7
         with:
@@ -202,6 +166,7 @@ jobs:
   backend-integration:
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # ~6m observed, plus the ffmpeg install
     defaults:
       run:
         working-directory: backend
@@ -212,35 +177,10 @@ jobs:
       COVERAGE_CORE: sysmon
     steps:
       - uses: actions/checkout@v5
-      # Same install as backend-unit above, and the same reasons — see that comment.
+      # Same ffmpeg install as backend-unit -- literally, now: one composite action,
+      # so the two cannot drift.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # An array, not a wrapper function: the capped call below needs `timeout` to
-          # exec apt-get directly, and `timeout` cannot run a shell function.
-          apt_opts=(-o Acquire::Retries=3
-                    -o Acquire::http::Timeout=30
-                    -o Acquire::https::Timeout=30)
-          command -v ffmpeg >/dev/null 2>&1 || {
-            sudo apt-get "${apt_opts[@]}" update
-            # Download under a wall-clock cap, and retry on a FRESH connection. apt
-            # keeps partials, so each attempt resumes rather than restarts. `timeout`
-            # runs UNDER sudo so it signals apt-get itself rather than the sudo wrapper.
-            for attempt in 1 2 3; do
-              sudo timeout 120 apt-get "${apt_opts[@]}" -y --no-install-recommends \
-                                                        --download-only install ffmpeg &&
-                break
-              echo "::warning::ffmpeg fetch attempt ${attempt} hit the 2m cap;" \
-                   "reconnecting to pick a different archive backend"
-            done
-            # Uncapped last resort, and never under `timeout`: by here the bytes are
-            # usually already local, and killing apt during unpack/configure instead of
-            # during download is how you get a broken dpkg database. A comprehensively
-            # degraded mirror therefore degrades to the old slow-but-green behaviour,
-            # minus whatever the capped attempts already fetched.
-            sudo apt-get "${apt_opts[@]}" -y --no-install-recommends install ffmpeg
-          }
+        uses: ./.github/actions/setup-ffmpeg
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         uses: astral-sh/setup-uv@v7
         with:
@@ -273,6 +213,7 @@ jobs:
   backend:
     needs: [changes, backend-checks, backend-unit, backend-integration]
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # coverage merge only
     defaults:
       run:
         working-directory: backend
@@ -305,6 +246,7 @@ jobs:
   supervisor:
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # ~20s observed
     defaults:
       run:
         working-directory: supervisor
@@ -332,6 +274,7 @@ jobs:
   jcode:
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # ~30s observed
     defaults:
       run:
         working-directory: jcode
@@ -360,6 +303,7 @@ jobs:
   jlaunch:
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # ~20s observed
     defaults:
       run:
         working-directory: jlaunch
@@ -384,6 +328,7 @@ jobs:
   frontend:
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # ~1m40s observed
     defaults:
       run:
         working-directory: frontend
@@ -413,6 +358,7 @@ jobs:
   # still leave a doc stale). Errors fail; warnings don't.
   docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # ~10s observed
     steps:
       - uses: actions/checkout@v5
       - run: bash scripts/docs-freshness.sh
@@ -422,6 +368,7 @@ jobs:
     if: github.event_name == 'push'
     needs: [backend, supervisor, frontend]
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # ~40s per image observed; docker build + push
     permissions:
       contents: read
       packages: write
