@@ -26,11 +26,18 @@ fresh() { # fresh <stamp-name> <lockfile> — 0 if stamp is current
 # backend test suite generates synthetic clips with them). Best-effort apt install,
 # like dockerd above: never fatal — the feature degrades (media.ffmpeg_available())
 # and its tests skip when the binaries are absent.
+#
+# --no-install-recommends and the retry/timeout options for the same reasons as the CI
+# step this mirrors (.github/workflows/ci.yml): they cut 31 MB of the 94 MB fetch — GPU
+# decode drivers and other desktop extras a headless box never reaches — and stop a
+# stalled archive mirror from hanging session startup indefinitely.
 if ! command -v ffmpeg >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
     log "installing ffmpeg (analyze_video frame sampling)"
-    sudo apt-get update -qq >/dev/null 2>&1 \
-      && sudo apt-get install -y -qq ffmpeg >/dev/null 2>&1 \
+    apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+    # shellcheck disable=SC2086  # apt_opts is a deliberate list of flags to split
+    sudo apt-get $apt_opts update -qq >/dev/null 2>&1 \
+      && sudo apt-get $apt_opts install -y -qq --no-install-recommends ffmpeg >/dev/null 2>&1 \
       || log "WARNING: could not install ffmpeg — analyze_video tests will skip"
   else
     log "ffmpeg not installed and no apt/sudo — analyze_video tests will skip"

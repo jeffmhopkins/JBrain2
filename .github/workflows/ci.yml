@@ -114,13 +114,36 @@ jobs:
       COVERAGE_CORE: sysmon
     steps:
       - uses: actions/checkout@v5
-      # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media).
-      # Skip the ~1-minute `apt-get update` when the runner image already ships
-      # ffmpeg (it does today); only pay for a real install if a future image drops
-      # it. Mirrors the guard in scripts/dev-setup.sh so the suite never silently
-      # skips media tests and drops coverage.
+      # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media),
+      # which skip WHOLESALE without them (`media.ffmpeg_available`) — a missing binary
+      # costs coverage silently rather than failing. Mirrors scripts/dev-setup.sh.
+      #
+      # ubuntu-24.04 does NOT ship ffmpeg; an earlier comment here asserted it did,
+      # which is how this step's cost stayed invisible. Every backend job pays a real
+      # 99-package install, so both apt settings below are load-bearing:
+      #
+      #   --no-install-recommends drops 12 of those packages and 31 MB of the 94 MB
+      #   fetch — VA-API/VDPAU drivers, Blu-ray DRM, GTK decorations, an SVG loader, a
+      #   speech model. Headless file decode reaches none of them; the media suite
+      #   passes against exactly this set.
+      #
+      #   Retries + a fetch timeout because the archive is the least reliable thing in
+      #   this workflow: one run sat here 30 minutes on a stalled mirror while its
+      #   sibling shards finished in 90 seconds. apt waits on a stalled socket forever
+      #   by default; a timeout makes that a retry instead of a hung job.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        run: command -v ffmpeg >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y ffmpeg; }
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt_get() {
+            sudo apt-get -o Acquire::Retries=3 \
+                         -o Acquire::http::Timeout=30 \
+                         -o Acquire::https::Timeout=30 "$@"
+          }
+          command -v ffmpeg >/dev/null 2>&1 || {
+            apt_get update
+            apt_get install -y --no-install-recommends ffmpeg
+          }
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         uses: astral-sh/setup-uv@v7
         with:
@@ -167,8 +190,20 @@ jobs:
       COVERAGE_CORE: sysmon
     steps:
       - uses: actions/checkout@v5
+      # Same install as backend-unit above, and the same reasons — see that comment.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
-        run: command -v ffmpeg >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y ffmpeg; }
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt_get() {
+            sudo apt-get -o Acquire::Retries=3 \
+                         -o Acquire::http::Timeout=30 \
+                         -o Acquire::https::Timeout=30 "$@"
+          }
+          command -v ffmpeg >/dev/null 2>&1 || {
+            apt_get update
+            apt_get install -y --no-install-recommends ffmpeg
+          }
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         uses: astral-sh/setup-uv@v7
         with:
