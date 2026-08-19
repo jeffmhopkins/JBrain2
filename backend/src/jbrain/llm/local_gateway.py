@@ -594,14 +594,18 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
 
     async def tail_upstream_logs(self, stream: str = "upstream", idle_s: float = 1.0) -> str:
-        """llama.cpp's OWN output — the per-buffer memory breakdown, the CUDA/Vulkan device
-        report, the tensor-split account — which `tail_logs` cannot reach.
+        """llama-server's OWN stdout — slot lifecycle, per-request throughput, context-checkpoint
+        evictions, a failed load's reason — which `tail_logs` cannot reach.
 
         llama-swap buffers upstream output separately from the proxy log and exposes it only
         at `/logs/stream/{proxy,upstream,<model>}`. Those are endless `text/plain` chunked
         responses, but they REPLAY the buffered history as the opening burst before going
         live, so a reader that takes the burst and hangs up gets a tail. `stream` is
         `upstream` for every model's output interleaved, or a served model id to isolate one.
+
+        It does NOT carry the model loader's per-buffer figures, and the api.debug route's
+        docstring records why: on this build the loader prints nothing at all, here or in the
+        container log. The memory measurement is the device delta above, not this.
 
         The reader stops after `idle_s` with no new bytes rather than at a byte count: the
         burst arrives as fast as the socket allows and the silence after it is the only

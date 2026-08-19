@@ -238,21 +238,20 @@ async def test_tail_logs_raises_when_the_gateway_is_unreachable() -> None:
 
 
 async def test_tail_upstream_logs_reads_the_replay_burst_off_the_stream() -> None:
-    """The engine's own output IS reachable — via the history `/logs/stream/*` replays.
+    """llama-server's own output IS reachable — via the history `/logs/stream/*` replays.
 
-    The route `tail_logs` cannot serve. This is the surface the three failed memory-scrape
-    attempts were looking for, so the test pins both the path and that the burst is what
-    comes back."""
+    The route `tail_logs` cannot serve. The sample is real box output rather than the
+    `model buffer size` line an earlier draft used: that line does not appear on this
+    build (see the api.debug route's docstring), and a fixture implying otherwise would
+    reinstate the false belief this whole series of commits exists to clear out."""
     seen: dict[str, str] = {}
 
     def handle(req: httpx.Request) -> httpx.Response:
         seen["path"] = req.url.path
-        return httpx.Response(
-            200, text="llama_model_loader: loaded\nmodel buffer size = 4400 MiB\n"
-        )
+        return httpx.Response(200, text="0.02.36 I slot launch_slot_: id  0 | task 0\n")
 
     out = await _client(handle).tail_upstream_logs()
-    assert "model buffer size" in out
+    assert "launch_slot_" in out
     assert seen["path"] == "/logs/stream/upstream"
 
 
