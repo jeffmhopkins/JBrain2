@@ -28,6 +28,7 @@ strip that suffix once here.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -45,6 +46,12 @@ log = structlog.get_logger()
 # 2026-08-19 were light by 1.4 and >5.5 GiB, and the smaller of those was enough to abort
 # a healthy load. Below it, drift is ordinary per-build variation and is logged at info.
 _FOOTPRINT_DRIFT_GB = 1.0
+
+# How long to wait for the upstream log stream to attach before loading anyway. Short
+# because it is pure instrumentation: a build without the route sets the event immediately
+# on its 404, and the only case that spends the full budget is a gateway already too sick
+# to answer — where delaying the load further helps nobody.
+_UPSTREAM_ATTACH_S = 2.0
 
 
 class LocalGatewayError(Exception):
@@ -375,53 +382,76 @@ class LocalGatewayClient:
             except httpx.HTTPError as exc:
                 raise LocalGatewayError(str(exc)) from exc
 
-        if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
+        # Streaming BEFORE the load, because `/logs/stream/upstream` carries no history:
+        # llama.cpp prints its per-buffer sizes once, while loading, and a reader that
+        # attaches afterwards sees nothing at all.
+        captured: list[str] = []
+        attached = asyncio.Event()
+        watcher = asyncio.ensure_future(self.capture_upstream_logs(captured, attached))
+        # Wait for the stream to be live before loading. `ensure_future` only SCHEDULES the
+        # watcher, so without this the load can run to completion first and the buffer
+        # sizes — printed once, during the load — are missed entirely. Bounded, and
+        # `attached` is set on failure too, so a build without the route costs ~nothing.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(attached.wait(), timeout=_UPSTREAM_ATTACH_S)
+
+        async def _stop_watching() -> None:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await watcher
+
+        try:
+            if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
+                try:
+                    await _do_load()
+                finally:
+                    # `finally`, not the next line: a load that raises has still READ the
+                    # weights, so its page-cache copy exists and nothing else will ever drop
+                    # it. See the guarded branch below for the measurement that proved it.
+                    self._drop_weights_cache(model)
+                await self._warm(served_model, system=warm_system, tools=warm_tools)
+                return
+
+            # PRE-FLIGHT, then WATCH — for every caller, with no way to opt out. The projection
+            # includes the VISION PROJECTOR BALLOON (`local_catalog.load_footprint_gb`): an
+            # mmproj model pins tens of GB of GTT at load on an AMD iGPU (llama.cpp #27146), and
+            # every freeze this box took was a projector-carrying model whose weights+KV
+            # arithmetic looked comfortable. The watchdog covers the rest, because the first load
+            # of any model is a guess and here a wrong guess costs a power cycle.
+            gpu_guard.refuse_if_no_device_room(
+                await self._gpu_probe.sample(), projected_gb, served_model
+            )
             try:
-                await _do_load()
+                await gpu_guard.guarded_load(
+                    _do_load,
+                    probe=self._gpu_probe,
+                    projected_gb=projected_gb,
+                    target=served_model,
+                    abort=lambda: self.unload(served_model),
+                )
             finally:
-                # `finally`, not the next line: a load that raises has still READ the
-                # weights, so its page-cache copy exists and nothing else will ever drop
-                # it. See the guarded branch below for the measurement that proved it.
+                # MEASURED: an aborted qwen3.5-4b left `Cached` +4.29 GiB — its entire 4.3 GB
+                # weight file — while a successful 16.8 GB load left it unchanged. The drop
+                # works; it simply never ran here, because `guarded_load` raises
+                # `GpuBudgetError` from outside its own try/finally and this call used to sit
+                # on the line after the `await`.
+                #
+                # That mattered more than a leak: `host_metrics.read_memory_gb` counts page
+                # cache as USED, so a stranded copy shrinks the apparent headroom, which makes
+                # the next load likelier to abort, which strands more. `residency` suppresses
+                # `GpuBudgetError` on the end-of-turn restore, so the ratchet turned silently.
+                #
+                # `abort` unloads the model before this runs, so llama-server has released the
+                # file and its folios are unlocked — which is what makes the drop effective
+                # here rather than racing an in-flight read.
                 self._drop_weights_cache(model)
             await self._warm(served_model, system=warm_system, tools=warm_tools)
-            await self._record_measured_footprint(model, projected_gb)
-            return
-
-        # PRE-FLIGHT, then WATCH — for every caller, with no way to opt out. The projection
-        # includes the VISION PROJECTOR BALLOON (`local_catalog.load_footprint_gb`): an
-        # mmproj model pins tens of GB of GTT at load on an AMD iGPU (llama.cpp #27146), and
-        # every freeze this box took was a projector-carrying model whose weights+KV
-        # arithmetic looked comfortable. The watchdog covers the rest, because the first load
-        # of any model is a guess and here a wrong guess costs a power cycle.
-        gpu_guard.refuse_if_no_device_room(
-            await self._gpu_probe.sample(), projected_gb, served_model
-        )
-        try:
-            await gpu_guard.guarded_load(
-                _do_load,
-                probe=self._gpu_probe,
-                projected_gb=projected_gb,
-                target=served_model,
-                abort=lambda: self.unload(served_model),
-            )
         finally:
-            # MEASURED: an aborted qwen3.5-4b left `Cached` +4.29 GiB — its entire 4.3 GB
-            # weight file — while a successful 16.8 GB load left it unchanged. The drop
-            # works; it simply never ran here, because `guarded_load` raises
-            # `GpuBudgetError` from outside its own try/finally and this call used to sit
-            # on the line after the `await`.
-            #
-            # That mattered more than a leak: `host_metrics.read_memory_gb` counts page
-            # cache as USED, so a stranded copy shrinks the apparent headroom, which makes
-            # the next load likelier to abort, which strands more. `residency` suppresses
-            # `GpuBudgetError` on the end-of-turn restore, so the ratchet turned silently.
-            #
-            # `abort` unloads the model before this runs, so llama-server has released the
-            # file and its folios are unlocked — which is what makes the drop effective
-            # here rather than racing an in-flight read.
-            self._drop_weights_cache(model)
-        await self._warm(served_model, system=warm_system, tools=warm_tools)
-        await self._record_measured_footprint(model, projected_gb)
+            # One exit point for the watcher: the pre-flight can refuse, the guard can
+            # abort, and the warm can fail — each would otherwise leak a streaming
+            # connection per load. `_stop_watching` is idempotent.
+            await _stop_watching()
+            self._record_measured_footprint(model, projected_gb, captured)
 
     async def _warm(
         self,
@@ -505,23 +535,25 @@ class LocalGatewayClient:
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
 
-    # llama-swap keeps the wrapper's own log and the upstream llama-server output in
-    # SEPARATE buffers. `/logs` is the proxy's, which is HTTP access lines and nothing else.
-    LOG_SOURCES = {"proxy": "/logs", "upstream": "/logs/upstream", "all": "/logs"}
-
-    async def _record_measured_footprint(self, model: object, projected_gb: float) -> None:
+    def _record_measured_footprint(
+        self, model: object, projected_gb: float, captured: list[str]
+    ) -> None:
         """Compare what llama.cpp says the load cost against what the catalog predicted.
 
-        Best-effort and non-fatal: a failure here costs a log line, never a load. The
-        point is that a wrong catalog entry announces itself. On 2026-08-19 two were light
-        by 1.4 and >5.5 GiB, which aborted a healthy load and rolled back a llama.cpp
-        upgrade — and llama.cpp had been printing the true figures at every load into a
-        buffer nothing read."""
+        Fed from `capture_upstream_logs`, which must already be streaming when the load
+        starts. The first version of this polled `tail_logs()` afterwards, which cannot
+        work: the buffered endpoint does not carry llama-server's output at all, and the
+        streaming one carries no history.
+
+        Best-effort and non-fatal — a failure costs a log line, never a load. The point is
+        that a wrong catalog entry announces itself. On 2026-08-19 two were light by 1.4
+        and >5.5 GiB, which aborted a healthy load and rolled back a llama.cpp upgrade,
+        and llama.cpp had been printing the true figures at every load, unread."""
         model_id = getattr(model, "id", None)
-        if model_id is None or projected_gb <= 0:
+        if model_id is None or projected_gb <= 0 or not captured:
             return
         with contextlib.suppress(Exception):
-            report = memory_report.parse_memory_report(await self.tail_logs("upstream"))
+            report = memory_report.parse_memory_report("\n".join(captured))
             if report is None:
                 return
             drift = memory_report.catalog_divergence(report, projected_gb)
@@ -538,37 +570,69 @@ class LocalGatewayClient:
                 unaccounted_gb=report.unaccounted_gb,
             )
 
-    async def tail_logs(self, source: str = "upstream") -> str:
-        """Recent gateway output. `source` selects which buffer:
+    async def tail_logs(self) -> str:
+        """The gateway's buffered log — llama-swap's `/logs`, the only BUFFERED endpoint it
+        has.
 
-        - `upstream` (default) — llama-server's own stdout. This is where llama.cpp prints
-          the things that answer memory questions: the per-buffer model/KV/compute sizes at
-          load, `llama_memory_breakdown_print`'s table with its `unaccounted` column, and
-          the "compute buffer size does not match expectation" warning.
-        - `proxy` — llama-swap's wrapper log (HTTP access, health checks, swap decisions).
-        - `all` — both where the build supports it.
+        A previous version of this took a `source` and fetched `/logs/upstream` for
+        llama-server's own output. That path does not exist. llama-swap's real routes are
+        `/logs` (buffered, combined) and `/logs/stream/{proxy,upstream,<model>}`, which are
+        STREAMING — they hold the connection open and carry no history, so they cannot back
+        a tail. The wrong guess degraded safely (it fell back here) but bought nothing.
 
-        This used to hit `/logs` unconditionally while documenting itself as returning "the
-        llama-swap wrapper plus the upstream llama-server, interleaved". It does not: `/logs`
-        is the proxy buffer alone. The consequence was not cosmetic — on 2026-08-19 two
-        catalog KV figures were found to be 1.4 and >5.5 GiB light, and llama.cpp had been
-        printing the correct numbers at every single load into a buffer nothing read.
+        What is buffered here is llama-swap's own account: swap decisions, health checks,
+        and the slot-acquired / slot-RELEASED lines that answer whether a Stop actually
+        halts decoding. llama.cpp's per-load memory breakdown is NOT in it on the pinned
+        build — see `capture_upstream_logs`, which is the shape that can catch it.
 
-        Falls back to `/logs` when a build has no split buffers, so this works across
-        llama-swap versions rather than 404ing on the older ones. Raises LocalGatewayError
-        when even that fails — the operator asked, so a miss is surfaced, not swallowed."""
-        path = self.LOG_SOURCES.get(source, "/logs")
+        Raises LocalGatewayError on failure: the operator asked, so a miss is surfaced."""
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout, transport=self._transport
             ) as client:
-                resp = await client.get(f"{self._root}{path}")
-                if resp.status_code == 404 and path != "/logs":
-                    resp = await client.get(f"{self._root}/logs")
+                resp = await client.get(f"{self._root}/logs")
                 resp.raise_for_status()
                 return resp.text
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
+
+    async def capture_upstream_logs(
+        self, collected: list[str], attached: asyncio.Event | None = None
+    ) -> None:
+        """Append llama-server's output to `collected` until cancelled.
+
+        `/logs/stream/upstream` carries no history, so this cannot be polled after a load —
+        it has to be attached BEFORE the load starts and cancelled once it finishes. It
+        appends into a caller-owned list rather than returning, because the caller cancels
+        it and cancellation must not throw away what was already read.
+
+        `attached` is set once the stream is live OR once it is known to be unavailable, so
+        a caller can wait for the attach without risking a hang on a build that lacks the
+        route. Without it the caller races: `ensure_future` only schedules this, and the
+        loop may not run it until after the load has already printed its buffer sizes —
+        which is exactly what the wiring test caught.
+
+        Entirely best-effort. A missing route, an unreachable gateway, or a mid-read failure
+        all leave `collected` short or empty, and the caller simply has nothing to measure.
+        A load must never fail because its instrumentation did."""
+        try:
+            async with (
+                httpx.AsyncClient(timeout=None, transport=self._transport) as client,
+                client.stream("GET", f"{self._root}/logs/stream/upstream") as resp,
+            ):
+                if attached is not None:
+                    attached.set()
+                if resp.status_code != 200:
+                    return
+                async for line in resp.aiter_lines():
+                    collected.append(line)
+        except Exception:
+            pass
+        finally:
+            # Also on failure, so a caller waiting to attach is never left blocking on a
+            # build that does not serve this route.
+            if attached is not None:
+                attached.set()
 
     async def load_progress(self) -> float | None:
         """A real load fraction (0..1) for the model currently coming onto the box, parsed
