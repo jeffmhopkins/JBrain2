@@ -132,6 +132,51 @@ const HISTORY: MetricsHistory = {
   ],
 };
 
+/** The live misconfiguration this card exists for: `ttm.pages_limit` at 124 GiB on a
+ *  121 GiB box, which DISABLES it — the GTT over-commit it refuses cannot occur above total
+ *  RAM. It sat like that for weeks and the product said nothing. */
+const HOST_SETTINGS_BAD = {
+  settings: [
+    {
+      key: "ttm.pages_limit",
+      current: "124 GiB",
+      expected: "< 121 GiB (we set 105)",
+      ok: false,
+      impact:
+        "DISABLED — the limit is at or above total RAM, so a GTT over-commit cannot be refused.",
+      remedy: "Edit ttm.pages_limit in /etc/default/grub, run update-grub, reboot.",
+      needs_host: true,
+    },
+    {
+      key: "vm.swappiness",
+      current: "10",
+      expected: "<= 10",
+      ok: true,
+      impact: "Keeps the box out of swap.",
+      remedy: "Ops -> Update applies this.",
+      needs_host: false,
+    },
+  ],
+  ok: false,
+  needs_host: ["ttm.pages_limit"],
+};
+
+const HOST_SETTINGS_OK = {
+  settings: [
+    {
+      key: "vm.swappiness",
+      current: "10",
+      expected: "<= 10",
+      ok: true,
+      impact: "Keeps the box out of swap.",
+      remedy: "Ops -> Update applies this.",
+      needs_host: false,
+    },
+  ],
+  ok: true,
+  needs_host: [],
+};
+
 function baseMock(input: RequestInfo | URL): Response | null {
   const path = String(input);
   if (path === "/api/ops/status") return json(STATUS);
@@ -584,5 +629,47 @@ describe("OpsScreen", () => {
     fireEvent.click(toggle);
 
     await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+  });
+
+  it("opens the host-settings card by itself when a setting is wrong", async () => {
+    // A health panel nobody opens is not a health panel. The setting that cost a freeze was
+    // invisible for weeks; a collapsed card would have kept it that way.
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/ops/host-settings") return json(HOST_SETTINGS_BAD);
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+
+    expect(await screen.findByText("ttm.pages_limit")).toBeInTheDocument();
+    expect(screen.getByText(/124 GiB/)).toBeInTheDocument();
+    expect(screen.getByText(/DISABLED/)).toBeInTheDocument();
+    // And it says plainly that no button here will fix it.
+    expect(screen.getByText(/Needs host access/)).toBeInTheDocument();
+  });
+
+  it("stays collapsed and quiet when every host setting holds", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/ops/host-settings") return json(HOST_SETTINGS_OK);
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+
+    expect(await screen.findByText("all good")).toBeInTheDocument();
+    // Collapsed: the passing row is not rendered until the owner asks for it.
+    expect(screen.queryByText("vm.swappiness")).not.toBeInTheDocument();
+  });
+
+  it("survives the host-settings check being unavailable", async () => {
+    // Best-effort: an older box without the endpoint must not break the Ops screen.
+    fetchMock.mockImplementation(
+      async (input) => baseMock(input) ?? new Response(null, { status: 404 }),
+    );
+
+    render(<OpsScreen />);
+
+    expect(await screen.findByRole("button", { name: /Core/ })).toBeInTheDocument();
+    expect(screen.getByText("unavailable", { exact: false })).toBeInTheDocument();
   });
 });

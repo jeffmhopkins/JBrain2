@@ -3457,6 +3457,58 @@ button.small {
   flex: none;
 }
 
+/* Host settings card: the checks the app cannot apply itself.
+   A healthy row is one quiet line; a failing one earns the space to say what breaks and
+   what to do, because this card exists to stop a bad setting being silent. */
+.ops-host-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ops-host-row:last-child {
+  border-bottom: none;
+}
+
+.ops-host-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ops-host-key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.ops-host-value {
+  font-size: var(--fs-micro);
+  color: var(--text);
+  text-align: right;
+  min-width: 0;
+}
+
+.ops-host-row.bad .ops-host-value {
+  color: var(--danger);
+}
+
+.ops-host-impact {
+  margin: 4px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text);
+}
+
+.ops-host-remedy {
+  margin: 2px 0 0;
+  font-size: var(--fs-micro);
+}
+
+.ops-card-summary.warn {
+  color: var(--warn);
+}
+
 /* History card: range selector + per-metric sparklines. */
 .ops-range {
   display: flex;
