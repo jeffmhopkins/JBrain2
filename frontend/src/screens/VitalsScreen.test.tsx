@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { LiveTurn, LiveTurns } from "../api/client";
+import type { BoxEvent, LiveTurn, LiveTurns } from "../api/client";
 import { VitalsScreen, formatElapsed, perSecond } from "./VitalsScreen";
 
 const opsTurns = vi.hoisted(() => vi.fn());
@@ -11,7 +11,7 @@ const history = vi.hoisted(() => ({
 
 vi.mock("../api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/client")>()),
-  api: { opsTurns, opsTurnDetail, opsVitalsHistory, opsReportClientVitals },
+  api: { opsTurns, opsTurnDetail, opsVitalsHistory, opsVitalsEvents, opsReportClientVitals },
 }));
 vi.mock("../hostVitals", () => ({
   vitalsHistory: () => history.samples,
@@ -21,6 +21,7 @@ vi.mock("../hostVitals", () => ({
 
 const opsTurnDetail = vi.hoisted(() => vi.fn());
 const opsVitalsHistory = vi.hoisted(() => vi.fn());
+const opsVitalsEvents = vi.hoisted(() => vi.fn());
 const seedSpy = vi.hoisted(() => vi.fn());
 const opsReportClientVitals = vi.hoisted(() => vi.fn(async () => {}));
 
@@ -59,12 +60,26 @@ function roster(turns: LiveTurn[], gpu: number | null = 40): LiveTurns {
   return { turns, gpu_busy_percent: gpu };
 }
 
+function event(over: Partial<BoxEvent> = {}): BoxEvent {
+  return {
+    at_ms: Date.now() - 12_000,
+    ended_ms: null,
+    kind: "model_load",
+    subject: "gpt-oss-120b",
+    detail: "",
+    status: "running",
+    source: "api",
+    ...over,
+  };
+}
+
 describe("VitalsScreen", () => {
   beforeEach(() => {
     history.samples = [];
     opsTurns.mockReset().mockResolvedValue(roster([turn()]));
     opsTurnDetail.mockReset().mockResolvedValue({ steps: [], output: null, prompt: null });
     opsVitalsHistory.mockReset().mockResolvedValue([]);
+    opsVitalsEvents.mockReset().mockResolvedValue([]);
     seedSpy.mockReset();
   });
   afterEach(() => vi.useRealTimers());
@@ -414,10 +429,118 @@ describe("perSecond", () => {
   });
 });
 
+describe("what the box was doing", () => {
+  beforeEach(() => {
+    history.samples = [];
+    opsTurns.mockReset().mockResolvedValue(roster([]));
+    opsTurnDetail.mockReset().mockResolvedValue({ steps: [], output: null, prompt: null });
+    opsVitalsHistory.mockReset().mockResolvedValue([]);
+    opsVitalsEvents.mockReset().mockResolvedValue([]);
+    seedSpy.mockReset();
+  });
+
+  it("says what is loading while it is still loading", async () => {
+    // The line the whole surface exists for: the GPU is pinned, nothing is in the roster,
+    // and the reason is a model reading tens of GB into memory RIGHT NOW.
+    opsVitalsEvents.mockResolvedValue([event()]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("loading gpt-oss-120b…")).toBeInTheDocument();
+  });
+
+  it("says why a model was evicted, not just that it was", async () => {
+    opsVitalsEvents.mockResolvedValue([
+      event({
+        kind: "model_unload",
+        subject: "qwen35",
+        detail: "to make room for gpt-oss-120b",
+        status: "ok",
+        ended_ms: Date.now() - 11_000,
+      }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("unloaded qwen35")).toBeInTheDocument();
+    expect(screen.getByText("to make room for gpt-oss-120b")).toBeInTheDocument();
+  });
+
+  it("marks work the background half of the box started", async () => {
+    // A load nothing on screen asked for is the confusing one — say where it came from.
+    opsVitalsEvents.mockResolvedValue([event({ source: "worker" })]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("background")).toBeInTheDocument();
+  });
+
+  it("puts a load still in flight above the history", async () => {
+    opsVitalsEvents.mockResolvedValue([
+      event({
+        kind: "model_unload",
+        subject: "qwen35",
+        status: "ok",
+        at_ms: Date.now() - 2_000,
+        ended_ms: Date.now() - 1_000,
+      }),
+      event({ at_ms: Date.now() - 30_000 }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    await screen.findByText("loading gpt-oss-120b…");
+    const rows = screen.getAllByText(/loading gpt-oss-120b…|unloaded qwen35/);
+    expect(rows[0]).toHaveTextContent("loading gpt-oss-120b…");
+  });
+
+  it("does not claim a render finished when its process died under it", async () => {
+    // The api restarted mid-render, so the row was never settled. Saying "rendered an
+    // image" would claim a success nobody observed.
+    opsVitalsEvents.mockResolvedValue([
+      event({ kind: "image_render", subject: "qwen-image", status: "stale" }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("qwen-image — render stopped reporting")).toBeInTheDocument();
+    expect(screen.queryByText(/rendered an image/)).not.toBeInTheDocument();
+  });
+
+  it("does not draw an empty card on a quiet box", async () => {
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+    await waitFor(() => expect(opsVitalsEvents).toHaveBeenCalled());
+
+    expect(screen.queryByText(/On the box, last/)).not.toBeInTheDocument();
+  });
+
+  it("points the empty roster at the work that explains the GPU", async () => {
+    opsTurns.mockResolvedValue(roster([], 94));
+    opsVitalsEvents.mockResolvedValue([event({ kind: "image_render", subject: "qwen-image" })]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText(/because of the work listed above/)).toBeInTheDocument();
+  });
+
+  it("asks for the window the graph is showing", async () => {
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+    await waitFor(() => expect(opsVitalsEvents).toHaveBeenCalledWith(60));
+
+    fireEvent.click(screen.getByRole("button", { name: "15m" }));
+
+    await waitFor(() => expect(opsVitalsEvents).toHaveBeenCalledWith(900));
+  });
+
+  it("survives the box having nothing to say about itself", async () => {
+    // An explanation that breaks the screen it is explaining is worse than no explanation.
+    opsVitalsEvents.mockRejectedValue(new Error("nope"));
+    opsTurns.mockResolvedValue(roster([turn()]));
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("synthesising 6 sources")).toBeInTheDocument();
+  });
+});
+
 describe("the roster over a window", () => {
   beforeEach(() => {
     opsTurnDetail.mockResolvedValue({ steps: [], output: null, prompt: null });
     opsVitalsHistory.mockResolvedValue([]);
+    opsVitalsEvents.mockReset().mockResolvedValue([]);
   });
 
   it("asks the server for the window the graph is showing", async () => {

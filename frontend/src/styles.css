@@ -23462,6 +23462,41 @@ button.task-band:active {
   box-shadow: inset 0 0 0 1.5px var(--text-3);
 }
 
+/* ---- what the box was doing (model loads, evictions, renders) ---- */
+
+/* Shares the roster's row grid so the two lists read as one column of things the box is
+   doing — the only difference is that an event is not tappable, so it is a div. */
+.vitals-events {
+  padding: 0;
+  overflow: hidden;
+}
+
+.vitals-events > .vitals-row:first-child {
+  border-top: none;
+}
+
+/* A load in flight, in the amber the rest of the app uses for in-progress. It pulses
+   because it is the one row on this screen that means "right now, still going" — the
+   thing the owner opened the screen to find out. Scoped to this card: a running TURN's
+   dot is the roster's own long-standing green, and re-coloring it is a separate
+   decision from adding this list. */
+.vitals-events .vitals-dot.run {
+  background: var(--warn);
+  animation: vitals-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes vitals-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vitals-events .vitals-dot.run {
+    animation: none;
+  }
+}
+
 .vitals-empty {
   padding: 18px 16px;
   display: flex;

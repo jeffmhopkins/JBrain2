@@ -159,3 +159,31 @@ class HostMetricHourly(Base):
     disk_read_bps_max: Mapped[float | None] = mapped_column(nullable=True)
     disk_write_bps_avg: Mapped[float | None] = mapped_column(nullable=True)
     disk_write_bps_max: Mapped[float | None] = mapped_column(nullable=True)
+
+
+class BoxEvent(Base):
+    """One notable thing the box did to the GPU (migration 0167) — a model load, an
+    eviction, an image render — so the vitals graph can be read.
+
+    Opened when the work starts and closed when it finishes: `ended_at` is NULL while it
+    is still running, which is what lets the surface say "loading oss120b…" during the
+    minute the trace is pinned rather than only explaining it afterwards. Written by
+    `jbrain.box_events` from both the api and the worker; owner-only RLS, like the rest
+    of this module. Pruned by the worker at `box_events.RETENTION`."""
+
+    __tablename__ = "box_events"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    kind: Mapped[str] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(Text, default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    # running | ok | failed. A row is opened `running` and settled by the span's exit;
+    # one that never settles (the process died mid-load) stays `running` and is aged out
+    # by the reader, which is honest — the load really did stop being observed.
+    status: Mapped[str] = mapped_column(Text, default="ok")
+    # Which process narrated it ("api" / "worker"), so a mystery load can be traced to
+    # the half of the box that caused it.
+    source: Mapped[str] = mapped_column(Text, default="")
