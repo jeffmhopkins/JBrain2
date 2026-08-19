@@ -22,6 +22,7 @@
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
+#   scripts/debug-connect.sh upstream-logs --tail 400  # llama.cpp's OWN log (per-buffer memory)
 #   scripts/debug-connect.sh props <model_id>          # engine's own build / n_ctx / total_slots
 #   scripts/debug-connect.sh slots <model_id>          # per-slot state; is speculation drafting?
 #   scripts/debug-connect.sh spec-metrics <model_id>   # tokens/step + PROMPT-CACHE reuse
@@ -267,6 +268,14 @@ PY
     tail=200
     [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
     _call GET "/api/debug/llm/gateway-logs?tail=$tail"
+    ;;
+
+  upstream-logs) # [<stream>] [--tail N] — llama.cpp's OWN log; <stream> = upstream (default) or a model id
+    stream=upstream
+    case "${1:-}" in ""|--tail) ;; *) stream="$1"; shift ;; esac
+    tail=400
+    [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
+    _call GET "/api/debug/llm/upstream-logs?stream=$stream&tail=$tail"
     ;;
 
   props) # <model_id> — the engine's OWN build / n_ctx / total_slots (RESIDENT models only)

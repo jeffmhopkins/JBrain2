@@ -994,12 +994,11 @@ async def gateway_logs(
     halts decoding.
 
     What this does NOT contain, despite an earlier version of this docstring claiming it:
-    llama-server's own output. llama-swap's only buffered route is `/logs`; the
-    upstream-only routes are `/logs/stream/*`, which stream with no history and so cannot
-    back a tail. A build that keeps llama.cpp's per-load memory breakdown out of `/logs`
-    keeps it out of here too — that reading is captured during a load instead, by
-    `LocalGatewayClient.capture_upstream_logs`, and surfaces as the
-    `local_gateway.footprint_measured` event rather than as raw text here.
+    llama-server's own output. llama-swap's only buffered route is `/logs`, and it carries
+    the proxy's lines alone. For llama.cpp's own output — the per-buffer memory breakdown,
+    the device report — use /debug/llm/upstream-logs, which reads the replay burst off
+    `/logs/stream/*`. (That earlier docstring also claimed those streams carry no history;
+    they do, which is what makes the sibling route possible.)
 
     `tail` reaches 20000 because a busy box turns over the buffer quickly and the old 2000
     cap could drop the window an operator was looking for. Sits beside /logs/{service}
@@ -1009,6 +1008,34 @@ async def gateway_logs(
         full = await _gateway(request).tail_logs()
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway logs unavailable: {exc}") from exc
+    return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
+
+
+@router.get("/llm/upstream-logs", response_class=PlainTextResponse)
+async def upstream_logs(
+    request: Request,
+    _p: DebugDep,
+    stream: Annotated[str, Query(pattern=r"^[A-Za-z0-9._-]+$")] = "upstream",
+    tail: Annotated[int, Query(ge=1, le=20000)] = 400,
+) -> PlainTextResponse:
+    """llama.cpp's own log, which /llm/gateway-logs cannot show: the per-buffer memory
+    breakdown of a load (`model buffer size`, `KV buffer size`, `compute buffer size`), the
+    Vulkan device report, and the engine's account of why a load failed.
+
+    This is the surface three separate attempts to measure a load's real memory went
+    looking for and did not find. It reads llama-swap's `/logs/stream/{stream}`, whose
+    opening burst replays the buffered history before the stream goes live; the reader
+    takes the burst and hangs up.
+
+    `stream` defaults to `upstream` (every model's output interleaved) and also accepts a
+    served model id to isolate one model's load. An empty body means the engine has printed
+    nothing since llama-swap started — usually a box with no load since boot, not a fault.
+    502 if the gateway can't be reached."""
+    request.state.debug_detail = f"upstream {stream} (tail {tail})"
+    try:
+        full = await _gateway(request).tail_upstream_logs(stream)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"upstream logs unavailable: {exc}") from exc
     return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
 
 

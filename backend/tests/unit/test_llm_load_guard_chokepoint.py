@@ -19,7 +19,7 @@ from dataclasses import replace
 import httpx
 import pytest
 
-from jbrain.llm import gpu_guard, local_catalog
+from jbrain.llm import gpu_guard, local_catalog, local_gateway
 from jbrain.llm.local_gateway import LocalGatewayClient
 
 _SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "jbrain"
@@ -491,3 +491,64 @@ def test_the_weights_cache_is_dropped_when_the_guard_aborts(
 
     asyncio.run(run())
     assert dropped == [model.id], "the aborted load left its weights in the page cache"
+
+
+def test_a_load_reports_the_device_delta_against_the_catalog(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The measurement that replaced three failed log-scraping attempts.
+
+    `gpu_guard.measure_footprint` computes the GTT+VRAM a load actually pinned, from the
+    samples the guard already brackets it with. It existed in the tree the whole time,
+    wired into one of six call sites, while `local_gateway` — the path every caller goes
+    through — threw its baseline away.
+
+    It is also the only instrument that can see the VISION PROJECTOR: mmproj weights print
+    as `model size:`, not `model buffer size`, so no log parser counts them, and the
+    projector balloon is what every freeze on this box involved."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    (tmp_path / model.id).mkdir()
+    (tmp_path / model.id / "weights.gguf").write_bytes(b"x")
+
+    events: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        local_gateway.log, "warning", lambda event, **kw: events.append({"e": event, **kw})
+    )
+    monkeypatch.setattr(
+        local_gateway.log, "info", lambda event, **kw: events.append({"e": event, **kw})
+    )
+
+    async def run() -> None:
+        # 10 GB free before, 90 GB after — a 80 GB load against a ~68.5 GB projection.
+        probe = _StubProbe(_mem(10.0))
+        gateway = LocalGatewayClient(
+            "http://gw", transport=_transport(), gpu_probe=probe, models_dir=str(tmp_path)
+        )
+        await gateway.load(model.served_model)
+
+    asyncio.run(run())
+    measured = [e for e in events if e["e"] == "local_gateway.footprint_measured"]
+    assert measured, f"no footprint reported; saw {[e['e'] for e in events]}"
+    row = measured[-1]
+    assert row["model"] == model.id
+    assert "predicted_gb" in row and "measured_gb" in row and "drift_gb" in row
+
+
+def test_a_probe_less_load_reports_nothing_rather_than_zero(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No probe means no measurement — and a measurement of 0.0 would read as a model that
+    costs nothing, i.e. infinite headroom. Silence is the only safe answer."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    events: list[str] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda event, **_kw: events.append(event))
+    monkeypatch.setattr(local_gateway.log, "warning", lambda event, **_kw: events.append(event))
+
+    async def run() -> None:
+        gateway = LocalGatewayClient("http://gw", transport=_transport())
+        await gateway.load(model.served_model)
+
+    asyncio.run(run())
+    assert "local_gateway.footprint_measured" not in events
