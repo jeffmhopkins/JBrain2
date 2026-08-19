@@ -109,3 +109,44 @@ def test_a_colon_in_the_payload_is_not_mistaken_for_framing() -> None:
     """Only the SSE field names are stripped, and only at line start — a device or
     subsystem name containing a colon must survive."""
     assert parse_memory_report("data: load_tensors: Vulkan0 model buffer size = 1024.00 MiB")
+
+
+# The ACTUAL format the box emits, captured from `footprint_unparsed` on 2026-08-19.
+# Every line carries llama.cpp's structured-logger prefix: <elapsed> <LEVEL> <subsystem>.
+_REAL = """
+0.00.184.502 W DEPRECATED: --mmap and --no-mmap are deprecated. use --load-mode mmap instead
+0.00.184.891 I cmn  common_param: common_params_print_info: verbosity = 3
+0.00.186.453 W srv  llama_server: -----------------
+0.01.203.118 I ggml load_tensors: Vulkan0 model buffer size =  4402.34 MiB
+0.01.203.402 I ggml load_tensors:     CPU model buffer size =   315.30 MiB
+0.02.881.007 I ctx  llama_kv_cache_unified: Vulkan0 KV buffer size =  8144.00 MiB
+0.02.999.240 I ctx  llama_context: Vulkan0 compute buffer size =   560.02 MiB
+0.03.001.115 I srv  main: server is listening on 127.0.0.1:9110
+"""
+
+
+def test_the_format_the_box_actually_emits_parses() -> None:
+    """Built from `footprint_unparsed`'s sample rather than from a guess.
+
+    Two earlier hypotheses were wrong: a separate `/logs/upstream` buffer (that path 404s)
+    and SSE `data:` framing (the stream is not SSE). The truth is llama.cpp's structured
+    logger prefixing every line with `<elapsed> <LEVEL> <subsystem>`, which defeated a
+    pattern anchored at line start — so a 7356-byte capture of a real load banner parsed
+    to nothing."""
+    report = parse_memory_report(_REAL)
+    assert report is not None, "the real format still does not parse"
+    assert report.model_gb == round((4402.34 + 315.30) / 1024, 2)
+    assert report.kv_gb == round(8144.00 / 1024, 2)
+    assert report.compute_gb == round((560.02 + 24.01 - 24.01) / 1024, 2)
+
+
+def test_prose_mentioning_a_buffer_is_not_mistaken_for_a_measurement() -> None:
+    """Unanchoring the pattern widens what it can match, so it must not fire on a log line
+    that merely talks about buffers."""
+    assert parse_memory_report("0.00.1 W srv llama_server: compute buffer size unknown") is None
+
+
+def test_a_deprecation_warning_alone_is_not_a_report() -> None:
+    """The box's capture opens with several warning lines before any real figure; a report
+    built from those would be worse than none."""
+    assert parse_memory_report(_REAL.split("load_tensors")[0]) is None

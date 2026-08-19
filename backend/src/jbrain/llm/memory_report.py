@@ -26,14 +26,24 @@ from dataclasses import dataclass
 _MIB = 1024 * 1024
 _BYTES_PER_GIB = 1024**3
 
-# The per-buffer form every current build prints, e.g.
-#   load_tensors:      Vulkan0 model buffer size =  4096.00 MiB
-#   llama_kv_cache:    Vulkan0 KV buffer size =    2048.00 MiB
-#   llama_context:     Vulkan0 compute buffer size =  304.00 MiB
+# The per-buffer figures, matched ANYWHERE in a line rather than anchored to its start.
+#
+# Anchoring was wrong, and the live box said so. Current llama.cpp prefixes every line with
+# its structured logger — `<elapsed> <LEVEL> <subsystem> <component>: <message>` — so a real
+# line reads:
+#
+#   0.01.234.567 I ggml  load_tensors: Vulkan0 model buffer size =  4402.34 MiB
+#
+# An anchored `^who:` pattern matches none of that, which is how a 7356-byte capture of a
+# perfectly good load banner parsed to nothing. Two earlier guesses at the cause (a separate
+# `/logs/upstream` buffer, then SSE `data:` framing) were both wrong; this one is built from
+# `footprint_unparsed`'s sample of the actual bytes.
+#
+# Matching only the part that carries meaning also makes this robust to the prefix changing
+# again — the emitting subsystem and device name were never needed.
 _BUFFER = re.compile(
-    r"^\s*(?P<who>[\w.]+)\s*:\s*(?P<dev>\S+)?\s*(?P<kind>model|KV|compute)\s+buffer size\s*=\s*"
-    r"(?P<mib>[\d.]+)\s*MiB",
-    re.I | re.M,
+    r"(?P<kind>model|KV|compute)\s+buffer size\s*=\s*(?P<mib>[\d.]+)\s*MiB",
+    re.I,
 )
 
 # The newer `llama_memory_breakdown_print` table, whose `unaccounted` column is the
