@@ -96,15 +96,40 @@ def drop_weights_page_cache(models_dir: str, model_id: str) -> float | None:
     Deliberately targeted rather than the global `drop_caches` the update path uses
     (deploy/update-inner.sh): this touches only the weights just read, so Postgres's
     working set and the rest of the box's cache survive."""
-    root = os.path.join(models_dir, model_id)
+    return _drop_page_cache(os.path.join(models_dir, model_id), (".gguf",))
+
+
+# The weight formats ComfyUI reads. Same double-residency problem, different loader: a render
+# streams tens of GB of diffusion weights off disk and `image_gen.render` frees the model
+# straight afterwards, so EVERY render re-reads them cold and leaves another cache copy.
+_IMAGE_WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pt", ".pth", ".sft", ".gguf")
+
+
+def drop_image_model_page_cache(models_dir: str) -> float | None:
+    """The `drop_weights_page_cache` twin for the on-box image models. Returns GiB dropped.
+
+    A render reads ~58 GB of diffusion weights and then unloads the model on purpose
+    (`image_gen.render._free_comfyui_model`) so the pool goes back to the LLMs — but the
+    page-cache copy of those weights stays, and since the budget now counts page cache as
+    used (`host_metrics.read_memory_gb`), that residue would read as a box with no room and
+    block the end-of-turn LLM restore the render just made space for.
+
+    Whole-tree rather than per-model: ComfyUI resolves its own checkpoints/VAE/text-encoders
+    across the mount and we do not model which files a given render touched."""
+    return _drop_page_cache(models_dir, _IMAGE_WEIGHT_SUFFIXES)
+
+
+def _drop_page_cache(root: str, suffixes: tuple[str, ...]) -> float | None:
+    """Advise the kernel to drop clean page cache for every matching file under `root`."""
     if not os.path.isdir(root):
         return None
     dropped = 0
     for dirpath, _dirs, files in os.walk(root):
+        # hf's download staging holds partial shards nothing has read into a model.
         if ".cache" in os.path.relpath(dirpath, root).split(os.sep):
             continue
         for name in files:
-            if not name.endswith(".gguf"):
+            if not name.endswith(suffixes):
                 continue
             path = os.path.join(dirpath, name)
             with contextlib.suppress(OSError, AttributeError):
