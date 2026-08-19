@@ -60,11 +60,13 @@ def pdf_page_images(data: bytes) -> list[bytes]:
     try:
         with pymupdf.open(stream=data, filetype="pdf") as doc:
             page_count = doc.page_count
-            for index, page in enumerate(doc):
+            # Indexed rather than `enumerate(doc)`: pymupdf's Document is subscriptable but
+            # not typed as Iterable, so iterating it directly fails the typecheck.
+            for index in range(page_count):
                 if index >= MAX_PDF_PAGES or total >= MAX_PDF_RASTER_BYTES:
                     stopped_at = index
                     break
-                png = page.get_pixmap(dpi=PDF_RENDER_DPI).tobytes("png")
+                png = doc[index].get_pixmap(dpi=PDF_RENDER_DPI).tobytes("png")
                 total += len(png)
                 pages.append(png)
     except Exception as exc:  # noqa: BLE001 — a bad scan must not fail the batch

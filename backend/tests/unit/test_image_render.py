@@ -298,5 +298,5 @@ class _FreeRecorder:
     def __init__(self) -> None:
         self.freed = False
 
-    async def free(self, *, unload_models: bool, free_memory: bool) -> None:
+    async def free(self, *, unload_models: bool = True, free_memory: bool = True) -> None:
         self.freed = True
