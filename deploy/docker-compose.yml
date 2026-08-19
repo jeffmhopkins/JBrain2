@@ -806,6 +806,6 @@ volumes:
   # distinct prefix for gpt-oss, ~2 GB for the 27B hybrid; self-invalidating by filename, so
   # stale entries are simply never read. The name is per model per prompt, so a file is
   # rewritten when the persona, tools, llama.cpp build, chat template or served `-c`/`-np`
-  # move — NOT on a schedule. Nothing prunes the orphans, which is survivable at that rate and
-  # was not at the daily one this used to churn at.
+  # move — NOT on a schedule. The update prunes the orphans that leaves behind
+  # (deploy/prune-kv-state.sh), keeping the newest per model, so growth is bounded.
   llm_kv:

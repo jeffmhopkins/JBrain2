@@ -201,8 +201,17 @@ did nothing degrades to a slow prime, never a wrong answer.
 > header) keeps the UTC day in the digest, because for that model the prefix really does change
 > at the container's midnight. Qwen3.8's template contains no date construct — checked against
 > `/props` — so its file now stays put until something real moves. It used to rotate nightly
-> for every model, which rewrote ~2 GB, orphaned the previous file on a volume nothing prunes,
-> and made the interactive model pay a ~100 s cold prefill for an unchanged prefix.
+> for every model, which rewrote ~2 GB, orphaned the previous file, and made the interactive
+> model pay a ~100 s cold prefill for an unchanged prefix.
+>
+> **Orphans are reclaimed by the update** (`deploy/prune-kv-state.sh`, run from
+> `update-inner.sh`), which keeps the newest 2 files per model and deletes the rest. The update
+> is where orphans come from — a rebuilt llama.cpp moves `build_info` — and it is the only
+> recurring host-side job that can reach the volume: the api container does not mount `llm_kv`,
+> so nothing inside the app can delete these files. Newest-kept rather than wiped, so an update
+> that did NOT rebuild the gateway leaves the live file in place and the next cold start still
+> restores. Verified against a fake volume: three files per model reduce to two, and a
+> directory, a symlink and any non-`jerv-<model>-<16 hex>.bin` name are left untouched.
 
 > **`--swa-full` is mandatory here, not tuning.** gpt-oss is an interleaved sliding-window
 > model, and a restore into a windowed cache reports full success and is then discarded — same
