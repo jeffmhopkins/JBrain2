@@ -1046,6 +1046,42 @@ async def upstream_logs(
     return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
 
 
+@router.post("/llm/drop-page-cache")
+async def drop_page_cache(
+    request: Request,
+    _p: DebugDep,
+    models: Annotated[str | None, Query()] = None,
+) -> dict[str, object]:
+    """Reclaim the page-cache copy of on-box model weights. `models` is a comma-separated
+    list of catalog ids; omit it to sweep every model.
+
+    The box serves with `--no-mmap`, so a load leaves the weights resident TWICE — once in
+    GTT, once in the page cache the read filled — and unloading frees only the GTT copy.
+    `host_metrics.read_memory_gb` counts page cache as used, so that residue shrinks the
+    admission budget for every later load.
+
+    MEASURED, and why this route exists: 29.19 GiB of stale gpt-oss-120b cache left host
+    pages free at 86.2 GB, and qwen3-coder-next-q8 (needs ~95.5 GB) was refused for want of
+    15.3 GB that nothing was actually using. Before this, the only way to reclaim it was the
+    global `drop_caches` in deploy/update-inner.sh — host shell, which the owner running this
+    box remotely does not have (CLAUDE.md #10).
+
+    Safe while models are resident: `POSIX_FADV_DONTNEED` drops clean cache only, never the
+    GTT copy llama-server serves from, and weights are read-only. `freed_gb` is MEASURED via
+    `cachestat(2)`; a null per-model value means the kernel could not measure the drop (the
+    syscall is unavailable — it is blocked by the container's seccomp profile on this box),
+    not that nothing was freed."""
+    request.state.debug_detail = f"drop page cache ({models or 'all'})"
+    ids = [m.strip() for m in models.split(",") if m.strip()] if models else None
+    freed = _gateway(request).drop_page_cache(ids)
+    measured = [v for v in freed.values() if v is not None]
+    return {
+        "models": freed,
+        "freed_gb": round(sum(measured), 2) if measured else None,
+        "measured": bool(measured),
+    }
+
+
 @router.get("/client-vitals")
 async def client_vitals(request: Request, _p: DebugDep) -> dict[str, object]:
     """The browser's own account of the top-bar vitals stream, as last reported.
