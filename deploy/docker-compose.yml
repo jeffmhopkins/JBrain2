@@ -247,6 +247,12 @@ services:
     environment: *api_env
     volumes:
       - blobs:/data/blobs
+      # The local-model weights, READ-ONLY. The worker never downloads or serves them; it
+      # needs the files only so a finished load can drop their PAGE-CACHE copy
+      # (jbrain.llm.local_weights.drop_weights_page_cache). `--no-mmap` leaves every model
+      # resident twice — GTT plus the cache the read filled — and the worker swaps models for
+      # background jobs, so without this mount half the box's loads leave that copy behind.
+      - ./local-models:/data/local-models:ro
     networks: [internal]
     depends_on:
       db:

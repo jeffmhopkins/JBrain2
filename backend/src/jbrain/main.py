@@ -411,6 +411,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             gpu_probe=gpu_probe,
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
+            # Lets a finished load drop the page-cache copy of the weights it just read.
+            models_dir=settings.local_models_dir,
         )
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
         # the free-RAM floor before each local load (passed to build_router below as its
@@ -735,6 +737,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Freeing the LLMs for a render is a displacement: record what it evicts so the
                 # end-of-turn restore puts the box back to its pre-render steady state.
                 on_evicted=app.state.residency.note_evicted,
+                # Lets a finished render drop the page-cache copy of the diffusion weights it
+                # read; without it that residue reads as a full box to the memory budget.
+                models_dir=settings.comfyui_models_dir,
             )
             image_handlers = build_image_handlers(
                 app.state.image_gen,

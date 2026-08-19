@@ -26,6 +26,7 @@ from jbrain import box_events
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.image_gen.comfyui import EditSpec, GenSpec, ImageGen, OnProgress
 from jbrain.image_gen.gateway import ComfyUiGatewayError, ComfyUiMemory
+from jbrain.llm import local_weights
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
 from jbrain.models.images import GeneratedImage, GeneratedImageRepo
 from jbrain.storage import BlobStore
@@ -210,7 +211,7 @@ async def _free_local_llms(
         on_evicted(freed)
 
 
-async def _free_comfyui_model(gateway: ComfyUiMemory) -> None:
+async def _free_comfyui_model(gateway: ComfyUiMemory, models_dir: str = "") -> None:
     """Time-share the other direction: after a render, unload ComfyUI's resident
     diffusion model so the ~39 GB it pins returns to the unified pool. ComfyUI caches
     the model for the next render by default, but on this box that 39 GB blocks the
@@ -224,6 +225,16 @@ async def _free_comfyui_model(gateway: ComfyUiMemory) -> None:
         await gateway.free(unload_models=True, free_memory=True)
     except ComfyUiGatewayError as exc:
         log.info("image_gen.comfyui_free_skipped", error=str(exc))
+    # And the OTHER copy. Reading those weights off disk left them in the page cache too, and
+    # ComfyUI freeing the model does not touch that — same double residency `--no-mmap` gives
+    # the LLMs (jbrain.llm.local_weights). It matters more here: the model is deliberately
+    # unloaded after every render, so every render re-reads ~58 GB cold and leaves another
+    # copy. Since the memory budget now counts page cache as used, that residue would read as
+    # a full box and block the LLM restore this unload just made room for.
+    if models_dir:
+        freed = local_weights.drop_image_model_page_cache(models_dir)
+        if freed:
+            log.info("image_gen.weights_cache_dropped", freed_gb=freed)
 
 
 class ImageRenderService:
@@ -246,6 +257,7 @@ class ImageRenderService:
         comfyui_gateway: ComfyUiMemory,
         provisioned_models: Sequence[str] = (),
         on_evicted: Callable[[Sequence[str]], None] | None = None,
+        models_dir: str = "",
     ) -> None:
         self._imagegen = imagegen
         self._blob_store = blob_store
@@ -256,6 +268,9 @@ class ImageRenderService:
         self._installed = set(provisioned_models)
         # Records the LLMs a render frees so residency can restore them afterward.
         self._on_evicted = on_evicted
+        # Where ComfyUI's weights live, so a finished render can drop their page-cache copy.
+        # Empty (a box with no image mount, the tests) skips the drop.
+        self._models_dir = models_dir
 
     async def generate(
         self,
@@ -311,7 +326,7 @@ class ImageRenderService:
             # row), exactly as the original handler did — the caller maps it to its own
             # surface.
             png = await self._imagegen.generate(spec, on_progress)
-            await _free_comfyui_model(self._comfyui_gateway)
+            await _free_comfyui_model(self._comfyui_gateway, self._models_dir)
         out_w, out_h = _png_dims(png) or (width, height)
         return await self._store(
             ctx,
@@ -379,7 +394,7 @@ class ImageRenderService:
             png = await self._imagegen.edit(
                 spec, source_bytes, on_progress, extra_sources=list(extra_sources)
             )
-            await _free_comfyui_model(self._comfyui_gateway)
+            await _free_comfyui_model(self._comfyui_gateway, self._models_dir)
         # The edit scales the source to a megapixel budget preserving ITS aspect, so the output
         # dims differ from the requested preset — record the real ones (the row's dims drive the
         # card's aspect; a mismatch letterboxes the before/after frame).

@@ -7,22 +7,53 @@ import pytest
 
 from jbrain.host_metrics import read_gpu_busy_percent, read_memory_gb
 
+# The shape that killed the box on 2026-08-19, in miniature: a big MemAvailable sitting on a
+# tiny MemFree, because ~39 GiB of page cache held a second copy of the model weights that
+# `--no-mmap` left behind. The budget must read the FREE number, not the available one.
 _SAMPLE = """MemTotal:       131923456 kB
 MemFree:          1234567 kB
 MemAvailable:    65961728 kB
 Buffers:           123456 kB
+SReclaimable:      262144 kB
 """
 
 
-def test_parses_total_and_used(tmp_path: Path) -> None:
+def test_used_counts_page_cache_because_reclaiming_it_livelocks_this_box(tmp_path: Path) -> None:
+    """`used = MemTotal - MemFree - SReclaimable`, NOT `MemTotal - MemAvailable`.
+
+    The old formula reported 62.9 GiB used against this sample. The box really had 1.2 GiB
+    free; the other 63 GiB the kernel called "available" was page cache it could only reclaim
+    by fighting the iGPU for pinned GTT — the reclaim storm that livelocked the host for seven
+    hours. Admitting a model against 62.9 GiB of imaginary headroom is the bug."""
     p = tmp_path / "meminfo"
     p.write_text(_SAMPLE)
     result = read_memory_gb(str(p))
     assert result is not None
     total, used = result
-    # 131923456 kB / 1048576 ≈ 125.8 GiB; used = (total - available) ≈ 62.9 GiB.
+    # 131923456 kB / 1048576 ≈ 125.8 GiB. Free = MemFree + SReclaimable ≈ 1.18 + 0.25 GiB,
+    # so used ≈ 124.4 — the box is nearly full, which is the truth.
     assert total == pytest.approx(125.8, abs=0.1)
-    assert used == pytest.approx(62.9, abs=0.1)
+    assert used == pytest.approx(124.4, abs=0.2)
+    assert used > 100.0, "MemAvailable must not be what this reports"
+
+
+def test_slab_that_is_genuinely_cheap_to_reclaim_is_still_credited(tmp_path: Path) -> None:
+    """SReclaimable is dentry/inode cache — giving it back is cheap and is not part of the
+    GTT-pressure failure mode, so it counts as free. Only the page cache moved."""
+    p = tmp_path / "meminfo"
+    p.write_text("MemTotal: 1048576 kB\nMemFree: 262144 kB\nSReclaimable: 262144 kB\n")
+    result = read_memory_gb(str(p))
+    assert result is not None
+    assert result[1] == pytest.approx(0.5, abs=0.01)  # 1 GiB total, 0.5 GiB free
+
+
+def test_a_kernel_without_sreclaimable_still_reports(tmp_path: Path) -> None:
+    """Older/uncommon kernels omit it. Reporting a slightly pessimistic number beats
+    returning None and leaving the budget with nothing to decide on."""
+    p = tmp_path / "meminfo"
+    p.write_text("MemTotal: 1048576 kB\nMemFree: 524288 kB\n")
+    result = read_memory_gb(str(p))
+    assert result is not None and result[1] == pytest.approx(0.5, abs=0.01)
 
 
 def test_missing_file_returns_none(tmp_path: Path) -> None:
@@ -31,13 +62,13 @@ def test_missing_file_returns_none(tmp_path: Path) -> None:
 
 def test_missing_fields_returns_none(tmp_path: Path) -> None:
     p = tmp_path / "meminfo"
-    p.write_text("MemFree: 5 kB\n")  # no MemTotal/MemAvailable
+    p.write_text("MemAvailable: 5 kB\n")  # no MemTotal/MemFree
     assert read_memory_gb(str(p)) is None
 
 
 def test_malformed_value_returns_none(tmp_path: Path) -> None:
     p = tmp_path / "meminfo"
-    p.write_text("MemTotal: not-a-number kB\nMemAvailable: 1 kB\n")
+    p.write_text("MemTotal: not-a-number kB\nMemFree: 1 kB\n")
     assert read_memory_gb(str(p)) is None
 
 

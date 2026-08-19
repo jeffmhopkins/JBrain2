@@ -39,11 +39,30 @@ if ! grep -qi 'AMD' /proc/cpuinfo 2>/dev/null; then
 fi
 
 # --- 1. Kernel boot parameters (unified-memory sizing + GPU perf) ------------
-# amd_iommu=off: better GPU access on unified memory; gttsize/pages_limit let
-# the iGPU address ~124GB of the shared pool. Added only if absent (an existing
-# value is respected, not overwritten).
+# amd_iommu=off: better GPU access on unified memory; gttsize lets the iGPU address
+# ~124GB of the shared pool. Added only if absent (an existing value is respected,
+# not overwritten).
+#
+# `ttm.pages_limit` is the one that has to be RIGHT, not just large. It is the only
+# mechanism that turns a GTT over-commit into a clean `-ENOSPC` before the pages are
+# requested. Without it the box does not OOM-kill and recover — every task enters direct
+# reclaim, finds nothing reclaimable, and the machine simply stops answering. That is the
+# freeze this host has taken repeatedly, most recently a seven-hour livelock on
+# 2026-08-19 that needed a power cycle.
+#
+# This used to hardcode 32505856 pages = 124 GiB ≈ 100% of RAM on this box, which DISABLES
+# the backstop it exists to provide (kernel 6.18 has no physical-RAM sanity cap of its own;
+# that lands in v7.2). It is now derived: MemTotal minus a 16 GiB host reserve, so the
+# kernel refuses the allocation while there is still enough RAM left to stay responsive.
+RESERVE_GIB=16
+PAGES_LIMIT="$(awk -v reserve="$RESERVE_GIB" '
+  /^MemTotal:/ { kb = $2 }
+  END { pages = (kb - reserve * 1048576) / 4; if (pages < 1048576) pages = 1048576;
+        printf "%d", pages }
+' /proc/meminfo)"
+say "ttm.pages_limit=$PAGES_LIMIT pages ($((PAGES_LIMIT / 262144)) GiB) — MemTotal less ${RESERVE_GIB} GiB"
 GRUB_FILE=/etc/default/grub
-PARAMS="amd_iommu=off amdgpu.gttsize=126976 ttm.pages_limit=32505856"
+PARAMS="amd_iommu=off amdgpu.gttsize=126976 ttm.pages_limit=$PAGES_LIMIT"
 if [ -f "$GRUB_FILE" ]; then
   # Compute the merged file into a temp WITHOUT touching the original; print the
   # params that would be added. We only commit it after confirmation.

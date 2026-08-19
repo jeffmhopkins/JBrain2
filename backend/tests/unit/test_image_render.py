@@ -8,6 +8,7 @@ import hashlib
 import pytest
 
 from jbrain.db.session import SessionContext
+from jbrain.image_gen import render
 from jbrain.image_gen.comfyui import ImageGenError, ImageGenInterrupted, OnProgress
 from jbrain.image_gen.fake import FakeImageGen
 from jbrain.image_gen.render import (
@@ -255,3 +256,47 @@ async def test_edit_fast_records_lightning_edit_at_four_steps() -> None:
         speed="fast",
     )
     assert row.model == "qwen-image-edit-lightning" and row.steps == 4
+
+
+async def test_a_finished_render_drops_the_diffusion_weights_page_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A render reads ~58 GB of diffusion weights and then unloads the model ON PURPOSE, so
+    the pool goes back to the LLMs. ComfyUI freeing the model does not touch the page-cache
+    copy that read left behind — the same double residency `--no-mmap` gives the LLMs.
+
+    It bites harder here: the model is freed after every render, so every render re-reads the
+    weights cold and leaves another copy. And since the memory budget now counts page cache as
+    used (`host_metrics.read_memory_gb`), that residue reads as a full box and would block the
+    end-of-turn LLM restore this unload just made room for."""
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        "jbrain.llm.local_weights.drop_image_model_page_cache",
+        lambda models_dir: dropped.append(models_dir) or 41.0,
+    )
+    await render._free_comfyui_model(_FreeRecorder(), "/data/comfyui-models")
+    assert dropped == ["/data/comfyui-models"]
+
+
+async def test_the_render_drop_is_skipped_without_a_weights_mount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A box with no image mount (and every test that builds the service bare) must free
+    ComfyUI exactly as before rather than walking a directory that is not there."""
+    called: list[str] = []
+    monkeypatch.setattr(
+        "jbrain.llm.local_weights.drop_image_model_page_cache",
+        lambda models_dir: called.append(models_dir),
+    )
+    await render._free_comfyui_model(_FreeRecorder())
+    assert called == []
+
+
+class _FreeRecorder:
+    """The ComfyUiMemory slice `_free_comfyui_model` uses."""
+
+    def __init__(self) -> None:
+        self.freed = False
+
+    async def free(self, *, unload_models: bool = True, free_memory: bool = True) -> None:
+        self.freed = True

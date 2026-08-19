@@ -188,3 +188,95 @@ async def test_prune_drops_old_rows(maker: async_sessionmaker) -> None:
     async with scoped_session(maker, OWNER) as s:
         remaining = (await s.execute(text("SELECT count(*) FROM app.host_metrics"))).scalar_one()
     assert remaining >= 1  # the fresh sample survives
+
+
+# --- the columns that make an incident readable (migration 0168) -------------
+#
+# On 2026-08-19 this box livelocked for seven hours and needed a power cycle, and its own
+# telemetry could not explain it: only `mem_available_bytes` was stored, and MemAvailable is
+# exactly the number that lied — 29% used while the box had 8 GiB free and swap fully spent.
+# The supervisor was already measuring the meminfo breakdown and the amdgpu counters every
+# tick; they were dropped at the point of storage.
+
+_LIVELOCK = {
+    # A box in the failure state: the kernel calls 100 GiB available while 8 GiB of pages
+    # are free, because ~90 GiB of page cache holds a second copy of the model weights.
+    "mem_breakdown": {
+        "MemFree": 8 << 30,
+        "Cached": 90 << 30,
+        "SReclaimable": 1 << 30,
+    },
+    "gpu_mem": {
+        "gtt_used_bytes": 67 << 30,
+        "gtt_total_bytes": 124 << 30,
+        "vram_used_bytes": 2 << 30,
+    },
+}
+
+
+async def test_the_real_memory_state_is_stored_not_just_MemAvailable(
+    maker: async_sessionmaker,
+) -> None:
+    """MemFree, Cached and the GTT pair survive to the row, so a livelock can be read back."""
+    await ops_metrics.store_sample(maker, OWNER, {**_sample(), **_LIVELOCK}, rates=_RATES)
+    async with scoped_session(maker, OWNER) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT mem_free_bytes, mem_cached_bytes, mem_sreclaimable_bytes,"
+                    " gtt_used_bytes, gtt_total_bytes, vram_used_bytes"
+                    " FROM app.host_metrics ORDER BY captured_at DESC LIMIT 1"
+                )
+            )
+        ).one()
+    assert row.mem_free_bytes == 8 << 30
+    assert row.mem_cached_bytes == 90 << 30
+    assert row.mem_sreclaimable_bytes == 1 << 30
+    assert row.gtt_used_bytes == 67 << 30
+    assert row.gtt_total_bytes == 124 << 30
+    assert row.vram_used_bytes == 2 << 30
+
+
+async def test_a_supervisor_that_sends_none_of_it_stores_nulls(maker: async_sessionmaker) -> None:
+    """An older supervisor, a non-AMD box, or a kernel missing a field must store NULL — not
+    a zero, which would read as 'measured, and empty'."""
+    await ops_metrics.store_sample(maker, OWNER, _sample(), rates=_RATES)
+    async with scoped_session(maker, OWNER) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT mem_free_bytes, gtt_used_bytes FROM app.host_metrics"
+                    " ORDER BY captured_at DESC LIMIT 1"
+                )
+            )
+        ).one()
+    assert row.mem_free_bytes is None and row.gtt_used_bytes is None
+
+
+async def test_the_rollup_keeps_the_hours_worst_moment(maker: async_sessionmaker) -> None:
+    """`mem_free_min` and `gtt_used_max`, not averages: a mean smooths away the spike that is
+    the entire reason to look at the hour."""
+    now = datetime.now(UTC).replace(minute=5, second=0, microsecond=0)
+    roomy = {**_LIVELOCK, "mem_breakdown": {**_LIVELOCK["mem_breakdown"], "MemFree": 90 << 30}}
+    await ops_metrics.store_sample(
+        maker, OWNER, {**_sample(), **roomy}, rates=_RATES, captured_at=now
+    )
+    await ops_metrics.store_sample(
+        maker,
+        OWNER,
+        {**_sample(), **_LIVELOCK},
+        rates=_RATES,
+        captured_at=now + timedelta(minutes=1),
+    )
+    await ops_metrics.rollup(maker, OWNER, window=timedelta(hours=2))
+    async with scoped_session(maker, OWNER) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT mem_free_min, gtt_used_max FROM app.host_metrics_hourly"
+                    " ORDER BY bucket DESC LIMIT 1"
+                )
+            )
+        ).one()
+    assert row.mem_free_min == 8 << 30  # the bad sample, not the average of the two
+    assert row.gtt_used_max == 67 << 30

@@ -427,9 +427,15 @@ Once hosting is on, **Settings → LLM → On-box models** lists the whole catal
 not just what's provisioned. Each un-provisioned model (e.g. **Qwen3.8 27B** at
 Q8, ~28 GB) has an **Install** button. Tapping it **starts the download
 immediately** — a dedicated weight-sync one-shot, **not** a system update: it
-pulls the queued weights, adds them to `LOCAL_MODELS`, re-stamps the gateway
-config, and restarts the gateway — the same provisioning `enable-local-models`
-does, but with no `git pull` or image rebuild. The drawer follows it live (a
+checks free disk, pulls the queued weights, adds them to `LOCAL_MODELS`, re-stamps
+the gateway config, and restarts the gateway — the same provisioning `enable-local-models`
+does, but with no `git pull` or image rebuild. The **disk check refuses** rather than warns
+(catalog `size_gb` for the queued models plus a 10 GB margin) and leaves the queue intact,
+so freeing space and waiting for the next sync is the whole retry. It had no check at all
+until 2026-08-19: the guarded path was `scripts/local-llm-setup.sh`, a shell script the owner
+cannot run, so the product pointed them at the unguarded one — queueing the ~85 GB Q8 coder
+with 40 GB free filled the filesystem that also holds the database, the blobs and the
+backups, and surfaced only as `hf` errors in the provision log after the fact. The drawer follows it live (a
 per-model GB bar reading the bytes on disk); the coarse phase and the verbose
 per-model download log stream into the queue banner. **Removing** is symmetric:
 an installed model's **Uninstall** button (on the Installed or Catalog tab) applies
@@ -534,11 +540,14 @@ Three things to know:
 > backstop, and on kernel 6.18 nothing caps it for you (the physical-RAM sanity cap first
 > appears in v7.2).
 >
-> **Action:** `ttm.pages_limit` should be about `MemTotal − 16 GiB` (≈ 28311552 pages for this
-> box), not 100%. ⚠️ This is a kernel command-line parameter, so it is currently a HOST step
-> the owner cannot perform — see CLAUDE.md #10. Treat it as a gap to design out: the update
-> path should set and verify it, and Ops should surface the live value so a wrong setting is
-> visible rather than latent.
+> **Action:** `ttm.pages_limit` should be about `MemTotal − 16 GiB`, not 100%.
+> `scripts/strix-halo-host-setup.sh` now DERIVES it that way rather than hardcoding the 124 GiB
+> that disabled the backstop. ⚠️ But it is a kernel command-line parameter, and the script
+> respects an existing value rather than overwriting it — so **a box already carrying the old
+> `ttm.pages_limit=32505856` keeps it until someone edits `/etc/default/grub` and reboots.**
+> That is a HOST step the owner cannot perform (CLAUDE.md #10), and it remains the gap to
+> design out: the update path should set and verify it, and Ops should surface the live value
+> so a wrong setting is visible rather than latent.
 >
 > **Expected footprint is the check to apply.** A 15.9 GiB Q4 model at 32k should land near
 > 19–20 GiB (weights + ~2 GiB KV across the 16 attention layers + ~150 MiB recurrent state +
@@ -782,6 +791,44 @@ still took the host down. `jbrain.llm.gpu_guard` closes that:
   model restored concurrently by the residency coordinator is counted into it; it needs moving
   to per-process `drm-resident-gtt` before it can be trusted or used to replace the catalog
   estimate.
+
+### The weights are resident twice — MEASURED 2026-08-19, after the box died for it
+
+The gateway serves `--no-mmap` (a gfx1151 stability flag), so llama.cpp READS each GGUF
+rather than mapping it. The weights then exist **twice**: once in GTT, once in the page cache
+the read filled. Sampling a single `gpt-oss-120b` load on the idle box:
+
+| | avail | MemFree | Cached | GTT |
+|---|---|---|---|---|
+| baseline | 105.4 | 109.9 | 5.2 | 0.0 |
+| mid-load | 46.0 | **8.4** | 49.1 | 57.4 |
+| steady | 35.7 | 8.0 | 39.4 | 67.6 |
+| **after unload** | 103.8 | **76.0** | **39.4** | **0.0** |
+
+Unload frees the GTT copy perfectly and **never** frees the cache copy. So one 68 GiB model
+occupies ~107 GiB of the 121 GiB pool while loaded and leaves ~39 GiB behind when it goes.
+
+Three things follow, all now fixed in code:
+
+- **`local_weights.drop_weights_page_cache`** fadvises `DONTNEED` over the model's GGUFs as
+  each load returns, from the load chokepoint. `drop_image_model_page_cache` does the same for
+  ComfyUI's weights after a render — that path re-reads ~58 GB cold every time, because the
+  render deliberately unloads the model afterwards.
+- **`host_metrics.read_memory_gb` stopped believing `MemAvailable`.** It now reports
+  `MemTotal − MemFree − SReclaimable`: page cache counts as USED. Reclaiming it while the iGPU
+  pins most of RAM as GTT is the livelock, not the escape from it.
+- **`gpu_guard.refuse_if_no_device_room` is bound by BOTH pools.** It used to use
+  `gtt_total − gtt_used` alone — but `amdgpu.gttsize` is 124 GiB on a 121 GiB box, so that
+  "device pool" is essentially all of RAM and counts page cache as room the GPU could take. At
+  the fatal load it read **50.4 GB of headroom over 8.0 GB of free pages**.
+
+**How the box actually died (2026-08-19).** `agent.turn` moved off the abliterated 27B onto
+gpt-oss at 02:26. The old model's GTT was freed; its ~16 GiB cache shadow stayed. gpt-oss then
+pulled 59 GiB of weights through a cache that was already holding it, `MemFree` collapsed, and
+the kernel pushed all 17 containers' anonymous pages to swap at once. Swap never drains, so
+every service ran from swap for the next seven hours — which is why the 2-second vitals sampler
+kept timing out and a `/props` metadata read later took 31 seconds. The morning tasks were the
+load that finished it, not the cause.
 
 **Where the guard lives, and why that is the whole point.** It is inside
 `LocalGatewayClient.load` — the single chokepoint every path to committing device memory passes
@@ -1043,8 +1090,16 @@ steps below are what the hardening does and how to verify:
    Installed and configured by the setup script; verify (or reapply by hand):
    ```bash
    systemctl is-active earlyoom && cat /etc/default/earlyoom
-   # EARLYOOM_ARGS="-r 60 -m 10 -m 5 -s 5 -s 3 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"
+   # EARLYOOM_ARGS="-r 60 -m 30 -m 20 -s 10 -s 5 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"
    ```
+   > **Why 30/20 and not the 10/5 this used to say.** earlyoom fires only when memory **and**
+   > swap are both under their limits, and its `-m` reads **MemAvailable** — which counts page
+   > cache as free. During the 2026-08-19 livelock swap was 100% consumed for seven hours (so
+   > `-s` was satisfied throughout) while MemAvailable held at **29%**. `-m 10` was never
+   > approached, the AND never closed, and this backstop did not fire once. Raising the memory
+   > limit is safe *because* of that AND: swap is ~100% free on a healthy box, so `-s 10` gates
+   > everything. Together they mean "swap is gone AND memory is tight" — the livelock, and not
+   > a state this box reaches in health.
 2. **Reclaim headroom (sysctl)** — start reclaiming earlier, thrash into swap less.
    Written to `/etc/sysctl.d/99-jbrain-oom.conf` by the setup script; verify:
    ```bash

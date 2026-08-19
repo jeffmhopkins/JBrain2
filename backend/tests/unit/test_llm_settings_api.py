@@ -677,7 +677,9 @@ def test_the_meter_reports_the_same_kv_the_eviction_budget_uses() -> None:
     # of the formulas agreeing. (`disk_gb=0.0` above zeroes the weights, so what is left is the
     # `--swa-full` doubled KV and the compute/output/state overhead every entry carries.)
     kv_doubled = model.kv_gb_per_128k * model.context_window / 131072 * 2
-    assert expected == round(kv_doubled + local_catalog.RUNTIME_OVERHEAD_GB, 2)
+    assert expected == round(
+        kv_doubled + local_catalog.RUNTIME_OVERHEAD_GB + local_catalog.CACHE_RAM_GB, 2
+    )
 
 
 def test_set_parallel_slots_round_trips_and_doubles_the_kv_estimate() -> None:
@@ -690,8 +692,10 @@ def test_set_parallel_slots_round_trips_and_doubles_the_kv_estimate() -> None:
     # The meter reflects the doubled KV — and ONLY the KV. A second slot holds its own cache,
     # but the weights and the flat runtime term (compute/output buffers, recurrent state) are
     # shared, so the figure is not a plain doubling of the whole footprint.
-    runtime = local_catalog.RUNTIME_OVERHEAD_GB
-    assert m["kv_gb"] == round((base["kv_gb"] - runtime) * 2 + runtime, 2)
+    # The flat terms are the runtime overhead AND the in-RAM prompt cache: both are per-model,
+    # not per-slot, so both stay outside the doubling.
+    flat = local_catalog.RUNTIME_OVERHEAD_GB + local_catalog.CACHE_RAM_GB
+    assert m["kv_gb"] == round((base["kv_gb"] - flat) * 2 + flat, 2)
     assert store.values["llm_local_parallel_slots"] == {"gpt-oss-120b": 2}
     # Clearing (1 or null) reverts to a single slot and drops the override row.
     resp = c.put("/api/settings/llm/local-models/gpt-oss-120b/parallel-slots", json={"slots": 1})
@@ -810,7 +814,7 @@ def test_plan_load_previews_the_eviction_without_touching_the_box(
     assert body["measured"] is True
     assert body["fits"] is False and body["over"] is False and body["already_resident"] is False
     assert [v["id"] for v in body["victims"]] == ["gpt-oss-120b"]
-    assert body["victims"][0]["gb"] == 68.5
+    assert body["victims"][0]["gb"] == 76.5  # incl. the 8 GB in-RAM prompt cache
     assert body["ceiling_gb"] == 96.0
     assert gw.unloaded == []  # dry-run — nothing evicted
 

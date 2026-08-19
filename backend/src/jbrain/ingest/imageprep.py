@@ -27,6 +27,22 @@ JPEG_QUALITY = 90
 # survives OCR, low enough to stay under the vision size cap after downscaling.
 PDF_RENDER_DPI = 200
 
+# Ceilings on what one document may rasterize into memory at once. The INPUT is already
+# capped (`ocr.MAX_OCR_BYTES`, 8 MiB) but the expansion from it is not bounded by anything:
+# a scanned PDF is CCITT-G4/JBIG2, so 8 MiB is routinely 500-2000 pages, and at 200 DPI a
+# letter page is 1700x2200 — an ~11 MiB pixmap that retains as a ~0.5-3 MiB PNG. Every page
+# was held until the whole document finished, so the peak was pages x that, in the worker,
+# which has no `mem_limit` and shares the unified pool with up to ~91 GB of resident models.
+# earlyoom would not even have helped: it is told to `--prefer ^llama-server$`, so the OS
+# backstop kills a MODEL rather than the runaway rasterizer.
+#
+# Both bounds, not one: a page cap alone still admits a few enormous pages, and a byte cap
+# alone still walks a thousand of them. Truncating beats refusing — OCR of the first pages of
+# a huge scan is worth more than nothing — but it is LOGGED, because silently reading half a
+# document is the kind of thing that should never be discovered from a wrong answer.
+MAX_PDF_PAGES = 200
+MAX_PDF_RASTER_BYTES = 512 * 1024 * 1024
+
 
 def pdf_page_images(data: bytes) -> list[bytes]:
     """Render each page of a (scanned, text-less) PDF to PNG bytes for vision OCR.
@@ -34,14 +50,35 @@ def pdf_page_images(data: bytes) -> list[bytes]:
     The one PDF-page rasterizer in the codebase (the text path uses `get_text`).
     Synchronous CPU work — the caller runs it off the event loop. An unreadable
     PDF yields no pages rather than raising, so a corrupt attachment degrades to
-    'no OCR text' instead of failing the import batch."""
+    'no OCR text' instead of failing the import batch.
+
+    Bounded by `MAX_PDF_PAGES` and `MAX_PDF_RASTER_BYTES`: a document past either stops
+    there and reports how far it got."""
     pages: list[bytes] = []
+    total = 0
+    stopped_at: int | None = None
     try:
         with pymupdf.open(stream=data, filetype="pdf") as doc:
-            for page in doc:
-                pages.append(page.get_pixmap(dpi=PDF_RENDER_DPI).tobytes("png"))
+            page_count = doc.page_count
+            # Indexed rather than `enumerate(doc)`: pymupdf's Document is subscriptable but
+            # not typed as Iterable, so iterating it directly fails the typecheck.
+            for index in range(page_count):
+                if index >= MAX_PDF_PAGES or total >= MAX_PDF_RASTER_BYTES:
+                    stopped_at = index
+                    break
+                png = doc[index].get_pixmap(dpi=PDF_RENDER_DPI).tobytes("png")
+                total += len(png)
+                pages.append(png)
     except Exception as exc:  # noqa: BLE001 — a bad scan must not fail the batch
         log.info("vision.pdf_rasterize_skipped", error=str(exc))
+        return pages
+    if stopped_at is not None:
+        log.warning(
+            "vision.pdf_rasterize_truncated",
+            rendered=stopped_at,
+            page_count=page_count,
+            bytes_rendered=total,
+        )
     return pages
 
 

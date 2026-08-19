@@ -99,6 +99,18 @@ class HostMetric(Base):
     )
     mem_total_bytes: Mapped[int] = mapped_column(BigInteger)
     mem_available_bytes: Mapped[int] = mapped_column(BigInteger)
+    # What the box REALLY had, alongside what the kernel said it could have (migration 0168).
+    # MemAvailable counts page cache as free; on this box that cache holds a second copy of
+    # every model's weights (`--no-mmap`), so it read 29% used through a seven-hour livelock
+    # that ended in a power cycle. These are the columns that make such an hour readable
+    # afterwards: MemFree is the honest figure, Cached is the size of the lie, and the GTT
+    # pair is where a loaded model actually sits. Nullable — rows predating 0168 have none.
+    mem_free_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mem_cached_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mem_sreclaimable_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    gtt_used_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    gtt_total_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    vram_used_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     swap_total_bytes: Mapped[int] = mapped_column(BigInteger)
     swap_free_bytes: Mapped[int] = mapped_column(BigInteger)
     disk_total_bytes: Mapped[int] = mapped_column(BigInteger)
@@ -139,6 +151,9 @@ class HostMetricHourly(Base):
     mem_total_bytes: Mapped[int] = mapped_column(BigInteger)
     mem_used_avg: Mapped[int] = mapped_column(BigInteger)
     mem_used_max: Mapped[int] = mapped_column(BigInteger)
+    # The hour's WORST moment, not its average: a mean smooths away the spike worth finding.
+    mem_free_min: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    gtt_used_max: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     swap_used_avg: Mapped[int] = mapped_column(BigInteger)
     swap_used_max: Mapped[int] = mapped_column(BigInteger)
     disk_total_bytes: Mapped[int] = mapped_column(BigInteger)

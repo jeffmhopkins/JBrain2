@@ -61,6 +61,10 @@ def test_smoketest_exit_code_follows_the_result(monkeypatch: pytest.MonkeyPatch)
         local_llm_enabled = True
         local_models = ["gpt-oss-120b", "qwen3.5-0.8b"]
         local_llm_url = "http://local-llm:8080/v1"
+        # The smoketest LOADS every installed model in turn, so it is the biggest single
+        # producer of the `--no-mmap` page-cache copies; the gateway takes the weights dir
+        # so each load can drop its own (jbrain.llm.local_weights).
+        local_models_dir = "/data/local-models"
 
     monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
     monkeypatch.setattr(gateway_mod, "LocalGatewayClient", lambda url, **_kw: object())

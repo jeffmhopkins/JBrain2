@@ -8,17 +8,20 @@ back to the pinned base.
 
 import pytest
 
-from jbrain.llm import smoketest
+from jbrain.llm import local_catalog, smoketest
 from jbrain.llm.local_gateway import LocalGatewayError
 
 
 def _meminfo(tmp_path, available_gb: float | None, name: str = "meminfo"):
-    """A /proc/meminfo stand-in. `None` omits the field, which is how a host that
-    reports no MemAvailable must be exercised."""
+    """A /proc/meminfo stand-in, in FREE-memory terms. `None` omits MemFree, which is how a
+    host that reports nothing usable must be exercised."""
     path = tmp_path / name
-    body = "MemTotal:       131072000 kB\n"
+    # MemAvailable is written too, and is DELIBERATELY generous: the gate reads MemFree, and
+    # a fixture where the two disagree is the whole point — that gap is the page-cache copy
+    # of the weights that `--no-mmap` leaves behind, and believing it is what killed the box.
+    body = "MemTotal:       131072000 kB\nMemAvailable:   131072000 kB\n"
     if available_gb is not None:
-        body += f"MemAvailable:   {int(available_gb * 1024 * 1024)} kB\n"
+        body += f"MemFree:        {int(available_gb * 1024 * 1024)} kB\n"
     path.write_text(body)
     return path
 
@@ -218,10 +221,12 @@ async def test_an_already_resident_model_is_never_gated(tmp_path) -> None:
     """
     gw = _FakeGateway()
     # A gpt-oss-only box: the smallest installed model IS gpt-oss, so step 1 loads it and
-    # the probe then reuses it. 90 GB clears the one load (63.5 + 20 = 83.5); charging for
-    # it a second time would need 147 GB and refuse every update forever.
+    # the probe then reuses it. 100 GB clears the one load (76.55 resident + 20 headroom =
+    # 96.55); charging for it a second time would need ~173 GB and refuse every update
+    # forever. The resident figure includes the 8 GB in-RAM prompt cache every model carries
+    # (local_catalog.CACHE_RAM_GB), which is why this fixture is not the old 90.
     ok, messages = await smoketest.run_smoketest(
-        ["gpt-oss-120b"], gw, meminfo_path=_meminfo(tmp_path, 90)
+        ["gpt-oss-120b"], gw, meminfo_path=_meminfo(tmp_path, 100)
     )
     assert ok, f"gpt-oss-only box must be able to pass: {messages}"
     assert gw.loaded == ["gpt-oss-120b"] and gw.probed == ["gpt-oss-120b"]
@@ -259,3 +264,33 @@ def test_the_headroom_matches_the_apps_own_residency_floor() -> None:
         f"the smoke test would load with less headroom ({smoketest.LOAD_HEADROOM_GB} GB) "
         f"than a normal turn requires ({turn_floor_gb:.1f} GB)"
     )
+
+
+def test_the_gate_reads_free_memory_not_MemAvailable(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The distinction that killed the box on 2026-08-19.
+
+    `--no-mmap` leaves a page-cache copy of every model's weights behind. MemAvailable counts
+    that as free; reclaiming it while the iGPU pins most of RAM as GTT is the livelock this
+    gate exists to prevent. A host reporting 100 GB "available" over 8 GB free has no room."""
+    path = tmp_path / "meminfo"
+    path.write_text(
+        "MemTotal:       131072000 kB\n"
+        "MemAvailable:   104857600 kB\n"  # 100 GiB — the cache-inflated lie
+        "MemFree:          8388608 kB\n"  # 8 GiB — the truth
+        "SReclaimable:      262144 kB\n"
+    )
+    assert smoketest.mem_available_gb(path) == pytest.approx(8.25, abs=0.01)
+
+
+def test_the_cost_model_is_the_catalogs_not_a_hand_rolled_one() -> None:
+    """`_resident_cost_gb` used to be `size_gb + kv_gb_per_128k` — a third independent model
+    of a cost the catalog already computes, missing `--swa-full`, checkpoints, runtime/MTP
+    overhead and the vision buffer. gpt-oss is the case that mattered: its KV doubles under
+    `--swa-full`, so the old formula under-reserved by 5 GB on the update path."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    assert smoketest._resident_cost_gb(model) == local_catalog.footprint_gb(
+        model, model.context_window
+    )
+    # And it is strictly larger than the formula it replaced, for this model.
+    assert smoketest._resident_cost_gb(model) > model.size_gb + model.kv_gb_per_128k
