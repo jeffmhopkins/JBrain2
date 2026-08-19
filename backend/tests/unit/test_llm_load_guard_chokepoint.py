@@ -520,8 +520,14 @@ def test_a_load_reports_the_device_delta_against_the_catalog(
     )
 
     async def run() -> None:
-        # 10 GB free before, 90 GB after — a 80 GB load against a ~68.5 GB projection.
-        probe = _StubProbe(_mem(10.0))
+        # 10 GB of device memory in use before, 14 GB after: a 4 GB delta.
+        #
+        # Two DISTINCT samples on purpose. An earlier version passed one — and `_StubProbe`
+        # repeats its last sample, so both reads were 10.0 and the delta this test claims to
+        # check was zero. It asserted a footprint had been reported, and one had: 0.0. The
+        # test was green on precisely the defect that later showed up on the box as
+        # `measured_gb 0.0, drift_gb -26.59`.
+        probe = _StubProbe(_mem(10.0), _mem(14.0))
         gateway = LocalGatewayClient(
             "http://gw", transport=_transport(), gpu_probe=probe, models_dir=str(tmp_path)
         )
@@ -532,7 +538,42 @@ def test_a_load_reports_the_device_delta_against_the_catalog(
     assert measured, f"no footprint reported; saw {[e['e'] for e in events]}"
     row = measured[-1]
     assert row["model"] == model.id
-    assert "predicted_gb" in row and "measured_gb" in row and "drift_gb" in row
+    assert "predicted_gb" in row and "drift_gb" in row
+    # Pin the VALUE, not just the key: a measurement that is always 0.0 has every key too.
+    assert row["measured_gb"] == 4.0
+
+
+def test_an_eviction_that_races_the_measurement_is_not_a_zero_footprint(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OBSERVED on the box: a load whose model was gone by sample time logged
+    `measured_gb 0.0, drift_gb -26.59` at WARNING — which reads as the catalog
+    over-predicting a 27B by its entire size, the exact inverse of the truth.
+
+    A resident model always pins GB, so a delta at or below zero is a failed measurement,
+    not a free model. Same class of lie as `if freed:` hiding the drop that freed nothing."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    (tmp_path / model.id).mkdir()
+    (tmp_path / model.id / "weights.gguf").write_bytes(b"x")
+
+    events: list[str] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda event, **_kw: events.append(event))
+    monkeypatch.setattr(local_gateway.log, "warning", lambda event, **_kw: events.append(event))
+
+    async def run() -> None:
+        # Same reading before and after: whatever the load pinned is already gone.
+        probe = _StubProbe(_mem(10.0), _mem(10.0))
+        gateway = LocalGatewayClient(
+            "http://gw", transport=_transport(), gpu_probe=probe, models_dir=str(tmp_path)
+        )
+        await gateway.load(model.served_model)
+
+    asyncio.run(run())
+    assert "local_gateway.footprint_unmeasured" in events
+    assert "local_gateway.footprint_measured" not in events, (
+        "a raced eviction was reported as a real measurement of zero"
+    )
 
 
 def test_a_probe_less_load_reports_nothing_rather_than_zero(

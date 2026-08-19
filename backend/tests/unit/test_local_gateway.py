@@ -2,10 +2,12 @@
 on running(), and a surfaced error on unload(). All via httpx.MockTransport."""
 
 import json
+import pathlib
 
 import httpx
 import pytest
 
+from jbrain.llm import local_catalog, local_weights
 from jbrain.llm.local_gateway import (
     LocalGatewayClient,
     LocalGatewayError,
@@ -237,22 +239,95 @@ async def test_tail_logs_raises_when_the_gateway_is_unreachable() -> None:
         await _client(lambda r: httpx.Response(503)).tail_logs()
 
 
-async def test_tail_upstream_logs_reads_the_replay_burst_off_the_stream() -> None:
-    """The engine's own output IS reachable — via the history `/logs/stream/*` replays.
+async def test_a_model_that_appears_without_us_gets_its_cache_dropped(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """llama-swap loads on REQUEST, so most loads never call `load()`.
 
-    The route `tail_logs` cannot serve. This is the surface the three failed memory-scrape
-    attempts were looking for, so the test pins both the path and that the burst is what
-    comes back."""
+    MEASURED: during one sweep the app's own turns swapped gpt-oss-120b in repeatedly and
+    `Cached` went 2.36 -> 47.83 GiB with `MemFree` at 8.07 on a 121 GiB box — the exact
+    double-residency that livelocked this host — with no `weights_cache_*` line, because no
+    load we knew about had happened. `running()` is the one poll that sees those arrivals."""
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        local_weights, "drop_weights_page_cache", lambda _d, mid: dropped.append(mid) or 1.0
+    )
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"running": [{"model": model.served_model}]})
+        ),
+        models_dir=str(tmp_path),
+    )
+    assert await gw.running() == {model.served_model}
+    assert dropped == [model.id], "a request-driven load left its weights in the page cache"
+    # Only on the TRANSITION: a steady poll must not re-sweep every tick.
+    await gw.running()
+    assert dropped == [model.id]
+
+
+async def test_a_model_we_loaded_ourselves_is_not_dropped_twice(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`load()` already dropped it; a poll that dropped it again would be pure waste."""
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        local_weights, "drop_weights_page_cache", lambda _d, mid: dropped.append(mid) or 1.0
+    )
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"running": [{"model": model.served_model}]})
+        ),
+        models_dir=str(tmp_path),
+    )
+    gw._loaded_here.add(model.served_model)
+    await gw.running()
+    assert dropped == []
+
+
+async def test_drop_page_cache_reports_the_measured_total(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recovery lever: 29.19 GiB of stale cache is what refused qwen3-coder-next-q8 for
+    want of 15.3 GB nothing was using, and no no-terminal path could reclaim it."""
+    monkeypatch.setattr(local_weights, "drop_weights_page_cache", lambda _d, mid: 2.5)
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+        models_dir=str(tmp_path),
+    )
+    out = gw.drop_page_cache(["gpt-oss-120b", "qwen3.5-0.8b"])
+    assert out == {"gpt-oss-120b": 2.5, "qwen3.5-0.8b": 2.5}
+
+
+async def test_drop_page_cache_is_a_no_op_without_a_weights_mount() -> None:
+    # A container without the mount must not invent a reclaim it cannot perform.
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1", transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+    )
+    assert gw.drop_page_cache() == {}
+
+
+async def test_tail_upstream_logs_reads_the_replay_burst_off_the_stream() -> None:
+    """llama-server's own output IS reachable — via the history `/logs/stream/*` replays.
+
+    The route `tail_logs` cannot serve. The sample is real box output rather than the
+    `model buffer size` line an earlier draft used: that line does not appear on this
+    build (see the api.debug route's docstring), and a fixture implying otherwise would
+    reinstate the false belief this whole series of commits exists to clear out."""
     seen: dict[str, str] = {}
 
     def handle(req: httpx.Request) -> httpx.Response:
         seen["path"] = req.url.path
-        return httpx.Response(
-            200, text="llama_model_loader: loaded\nmodel buffer size = 4400 MiB\n"
-        )
+        return httpx.Response(200, text="0.02.36 I slot launch_slot_: id  0 | task 0\n")
 
     out = await _client(handle).tail_upstream_logs()
-    assert "model buffer size" in out
+    assert "launch_slot_" in out
     assert seen["path"] == "/logs/stream/upstream"
 
 

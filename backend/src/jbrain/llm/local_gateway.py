@@ -111,20 +111,66 @@ class LocalGatewayClient:
         # .drop_weights_page_cache). Unset (a container without the weights mount, the tests)
         # skips the drop and keeps the prior behaviour.
         self._models_dir = models_dir
+        # Resident set as of the last `running()` poll, and the models THIS client loaded.
+        # Together they say which arrivals came from llama-swap serving a request rather than
+        # from us — the loads whose page-cache copy nothing was dropping. See
+        # `_drop_cache_for_unannounced`.
+        self._seen_resident: set[str] = set()
+        self._loaded_here: set[str] = set()
 
     async def running(self) -> set[str]:
         """Served-model names currently loaded, or an empty set on ANY failure
-        (unreachable, non-2xx, malformed, or an old build without /running)."""
+        (unreachable, non-2xx, malformed, or an old build without /running).
+
+        Also the observation point for a model that arrived WITHOUT us: see
+        `_drop_cache_for_unannounced`."""
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout, transport=self._transport
             ) as client:
                 resp = await client.get(f"{self._root}/running")
                 resp.raise_for_status()
-                return _parse_running(resp.json())
+                resident = _parse_running(resp.json())
         except (httpx.HTTPError, ValueError) as exc:
             log.info("local_gateway.running_unavailable", error=str(exc))
             return set()
+        self._drop_cache_for_unannounced(resident)
+        return resident
+
+    def _drop_cache_for_unannounced(self, resident: set[str]) -> None:
+        """Drop the weights cache for any model that became resident without going through
+        `load()` — llama-swap loads on REQUEST, so most loads never touch this client.
+
+        MEASURED on the box, and the reason this exists: `_drop_weights_cache` covers only
+        the deliberate paths (residency, warm_keeper, the settings screen, jcode). Actual
+        inference goes through the LLM adapter straight to the OpenAI-compatible endpoint,
+        and llama-swap loads the model itself to serve it. During one sweep the app's own
+        turns swapped gpt-oss-120b in repeatedly and `Cached` climbed 2.36 -> 47.83 GiB with
+        `MemFree` at 8.07 on a 121 GiB box — the exact double-residency that livelocked this
+        host on 2026-08-19 — and not one `weights_cache_*` line was logged, because no load
+        we knew about had happened.
+
+        `running()` is the chokepoint that sees those loads: every poller in the process
+        already calls it on a tick. Dropping from here needs no new loop and cannot be
+        forgotten by a caller, the same argument that puts the device guard on `load` and the
+        vitals narration on `unload`.
+
+        Only on the TRANSITION into residency, so a steady poll costs nothing. Models we
+        loaded ourselves are skipped — `load()` already dropped theirs. Several clients exist
+        in a process (main, worker), each with its own view; the worst case is one extra
+        `posix_fadvise` sweep over already-evicted files, which is idempotent and harmless."""
+        if not self._models_dir:
+            return
+        arrived = resident - self._seen_resident
+        self._seen_resident = set(resident)
+        for served in sorted(arrived - self._loaded_here):
+            model = local_catalog.get_by_served(served)
+            if model is not None:
+                log.info("local_gateway.unannounced_load", model=model.id)
+                self._drop_weights_cache(model)
+        # Forget our own loads once they are gone, so a later request-driven reload of the
+        # same model is treated as unannounced (it is).
+        self._loaded_here &= resident
 
     async def unload(self, served_model: str) -> None:
         """Unload one model from memory. Raises LocalGatewayError on any failure.
@@ -396,6 +442,12 @@ class LocalGatewayClient:
             except httpx.HTTPError as exc:
                 raise LocalGatewayError(str(exc)) from exc
 
+        # Remember it as OURS before the load runs. `_drop_cache_for_unannounced` skips
+        # models in this set because the drop below already covers them, and a load that
+        # raises has still read the weights — so claiming it up front, rather than on
+        # success, keeps a failed load from being dropped twice.
+        self._loaded_here.add(served_model)
+
         if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
             try:
                 await _do_load()
@@ -556,6 +608,21 @@ class LocalGatewayClient:
         model_id = getattr(model, "id", None)
         if model_id is None or projected_gb <= 0 or measured_gb is None:
             return
+        # A resident model always pins GB, so a delta at or below zero does not mean a load
+        # with no footprint — it means the model was gone by the time the second sample was
+        # taken (an eviction raced the measurement, or the load unwound). OBSERVED: a load
+        # cut short logged `measured_gb 0.0, drift_gb -26.59` at WARNING, which reads as a
+        # catalog over-predicting by 26 GB when the truth was the exact opposite. Same class
+        # of lie as the `if freed:` blind spot in _drop_weights_cache: report the miss.
+        if measured_gb <= 0:
+            log.info(
+                "local_gateway.footprint_unmeasured",
+                model=model_id,
+                predicted_gb=round(projected_gb, 2),
+                device_delta_gb=round(measured_gb, 2),
+                reason="model not resident at sample time (eviction raced the measurement)",
+            )
+            return
         drift = round(measured_gb - projected_gb, 2)
         record = log.warning if abs(drift) >= _FOOTPRINT_DRIFT_GB else log.info
         record(
@@ -565,6 +632,45 @@ class LocalGatewayClient:
             measured_gb=round(measured_gb, 2),
             drift_gb=drift,
         )
+
+    def drop_page_cache(self, model_ids: list[str] | None = None) -> dict[str, float | None]:
+        """Drop the weights page cache for `model_ids`, or for EVERY catalog model when None.
+        Returns {model_id: GiB freed}, with None where the drop could not be measured.
+
+        The recovery lever for residue the automatic drops did not catch. `--no-mmap` leaves
+        every model resident twice, and only the GTT copy is freed on unload; the cache copy
+        survives, and `host_metrics.read_memory_gb` counts it as USED. MEASURED consequence:
+        29.19 GiB of stale gpt-oss-120b cache put host pages free at 86.2 GB, and
+        qwen3-coder-next-q8 — which needs ~95.5 — was refused for want of 15.3 GB that was
+        not actually in use. Dropping that residue is the difference between a model this box
+        can serve and one it cannot.
+
+        Until now the only way to reclaim it was `deploy/update-inner.sh`'s global
+        `drop_caches`, which needs host shell — so an owner running the box remotely could
+        not do it at all (CLAUDE.md #10). This is targeted rather than global: it touches only
+        weights files, so Postgres's working set and the rest of the box's cache survive.
+
+        Safe on a RESIDENT model: `POSIX_FADV_DONTNEED` drops clean page cache, never the
+        GTT copy llama-server is serving from, and weights are read-only so nothing can be
+        lost. Synchronous — a handful of `posix_fadvise` calls with no I/O of their own."""
+        if not self._models_dir:
+            return {}
+        wanted = model_ids if model_ids is not None else [m.id for m in local_catalog.CATALOG]
+        freed: dict[str, float | None] = {}
+        for model_id in wanted:
+            got = local_weights.drop_weights_page_cache(self._models_dir, model_id)
+            # Absent directories return None from the walk too, and reporting those as
+            # "unmeasurable" would bury the real ones. Only provisioned models get a row.
+            if got is not None or local_catalog.get(model_id) is not None:
+                freed[model_id] = got
+        total = sum(v for v in freed.values() if v)
+        log.info(
+            "local_gateway.page_cache_dropped",
+            models=len(freed),
+            freed_gb=round(total, 2),
+            requested=("all" if model_ids is None else ",".join(model_ids)),
+        )
+        return freed
 
     async def tail_logs(self) -> str:
         """llama-swap's buffered `/logs` — its own account of the box: swap decisions,
@@ -594,14 +700,18 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
 
     async def tail_upstream_logs(self, stream: str = "upstream", idle_s: float = 1.0) -> str:
-        """llama.cpp's OWN output — the per-buffer memory breakdown, the CUDA/Vulkan device
-        report, the tensor-split account — which `tail_logs` cannot reach.
+        """llama-server's OWN stdout — slot lifecycle, per-request throughput, context-checkpoint
+        evictions, a failed load's reason — which `tail_logs` cannot reach.
 
         llama-swap buffers upstream output separately from the proxy log and exposes it only
         at `/logs/stream/{proxy,upstream,<model>}`. Those are endless `text/plain` chunked
         responses, but they REPLAY the buffered history as the opening burst before going
         live, so a reader that takes the burst and hangs up gets a tail. `stream` is
         `upstream` for every model's output interleaved, or a served model id to isolate one.
+
+        It does NOT carry the model loader's per-buffer figures, and the api.debug route's
+        docstring records why: on this build the loader prints nothing at all, here or in the
+        container log. The memory measurement is the device delta above, not this.
 
         The reader stops after `idle_s` with no new bytes rather than at a byte count: the
         burst arrives as fast as the socket allows and the silence after it is the only

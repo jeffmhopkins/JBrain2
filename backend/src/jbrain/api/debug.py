@@ -1018,14 +1018,21 @@ async def upstream_logs(
     stream: Annotated[str, Query(pattern=r"^[A-Za-z0-9._-]+$")] = "upstream",
     tail: Annotated[int, Query(ge=1, le=20000)] = 400,
 ) -> PlainTextResponse:
-    """llama.cpp's own log, which /llm/gateway-logs cannot show: the per-buffer memory
-    breakdown of a load (`model buffer size`, `KV buffer size`, `compute buffer size`), the
-    Vulkan device report, and the engine's account of why a load failed.
+    """llama-server's own stdout, which /llm/gateway-logs cannot show: the slot lifecycle,
+    per-request prompt-eval throughput, context-checkpoint evictions, and the engine's
+    account of why a load failed.
 
-    This is the surface three separate attempts to measure a load's real memory went
-    looking for and did not find. It reads llama-swap's `/logs/stream/{stream}`, whose
-    opening burst replays the buffered history before the stream goes live; the reader
-    takes the burst and hangs up.
+    It reads llama-swap's `/logs/stream/{stream}`, whose opening burst replays the buffered
+    history before the stream goes live; the reader takes the burst and hangs up.
+
+    MEASURED, and the reason this docstring no longer promises a memory breakdown: on the
+    box's build the model LOADER prints nothing. A load shows as a ~1.4 s gap between
+    `load_model: loading model` and `init: llama threadpool init` with no `llama_model_loader`,
+    no `load_tensors`, and no `model buffer size` — not here, and not in the `local-llm`
+    container log either. That output is simply not emitted at the default verbosity 3 (we
+    pass no `-lv`), so the per-buffer split has no known reachable source on this build and
+    should not be claimed to have one. The load's memory is measured by the device delta
+    instead (`local_gateway._record_measured_footprint`), which needs no log at all.
 
     `stream` defaults to `upstream` (every model's output interleaved) and also accepts a
     served model id to isolate one model's load. An empty body means the engine has printed
@@ -1037,6 +1044,42 @@ async def upstream_logs(
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"upstream logs unavailable: {exc}") from exc
     return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
+
+
+@router.post("/llm/drop-page-cache")
+async def drop_page_cache(
+    request: Request,
+    _p: DebugDep,
+    models: Annotated[str | None, Query()] = None,
+) -> dict[str, object]:
+    """Reclaim the page-cache copy of on-box model weights. `models` is a comma-separated
+    list of catalog ids; omit it to sweep every model.
+
+    The box serves with `--no-mmap`, so a load leaves the weights resident TWICE — once in
+    GTT, once in the page cache the read filled — and unloading frees only the GTT copy.
+    `host_metrics.read_memory_gb` counts page cache as used, so that residue shrinks the
+    admission budget for every later load.
+
+    MEASURED, and why this route exists: 29.19 GiB of stale gpt-oss-120b cache left host
+    pages free at 86.2 GB, and qwen3-coder-next-q8 (needs ~95.5 GB) was refused for want of
+    15.3 GB that nothing was actually using. Before this, the only way to reclaim it was the
+    global `drop_caches` in deploy/update-inner.sh — host shell, which the owner running this
+    box remotely does not have (CLAUDE.md #10).
+
+    Safe while models are resident: `POSIX_FADV_DONTNEED` drops clean cache only, never the
+    GTT copy llama-server serves from, and weights are read-only. `freed_gb` is MEASURED via
+    `cachestat(2)`; a null per-model value means the kernel could not measure the drop (the
+    syscall is unavailable — it is blocked by the container's seccomp profile on this box),
+    not that nothing was freed."""
+    request.state.debug_detail = f"drop page cache ({models or 'all'})"
+    ids = [m.strip() for m in models.split(",") if m.strip()] if models else None
+    freed = _gateway(request).drop_page_cache(ids)
+    measured = [v for v in freed.values() if v is not None]
+    return {
+        "models": freed,
+        "freed_gb": round(sum(measured), 2) if measured else None,
+        "measured": bool(measured),
+    }
 
 
 @router.get("/client-vitals")
