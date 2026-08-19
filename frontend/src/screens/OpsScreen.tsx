@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import {
   ApiError,
   type ContainerStatus,
+  type HostSettings,
   type MetricRange,
   type MetricsHistory,
   type OpsMetrics,
@@ -766,6 +767,87 @@ function ServiceBody({
 
 const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
 
+/** Host settings the app depends on and cannot always apply.
+ *
+ *  This card exists because the setting that mattered was invisible. Our own installer put
+ *  `ttm.pages_limit` at 124 GiB on a 121 GiB box — which DISABLES it, since the GTT
+ *  over-commit it refuses can never occur above total RAM — and the product said nothing.
+ *  It surfaced weeks later, from reading a shell script, after a freeze that cost a power
+ *  cycle. A boot parameter cannot be changed from a phone; being told it is wrong can.
+ *
+ *  Collapsed by default when everything holds, and OPEN when something does not: a health
+ *  panel nobody opens is not a health panel. The body fetches on mount, so a healthy box
+ *  pays nothing for it. */
+function HostSettingsCard() {
+  const [data, setData] = useState<HostSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await api.opsHostSettings();
+        if (!cancelled) setData(result);
+      } catch (err) {
+        if (!cancelled) setError(errorMessage(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const bad = data ? data.settings.filter((c) => !c.ok) : [];
+  const summary = error
+    ? "unavailable"
+    : data === null
+      ? "checking…"
+      : bad.length === 0
+        ? "all good"
+        : `${bad.length} need${bad.length === 1 ? "s" : ""} attention`;
+
+  return (
+    <OpsCard
+      // Keyed on the verdict, not decorative. `OpsCard` reads `defaultOpen` into `useState`,
+      // which captures only the FIRST render — and this card's data arrives after mount, so
+      // without a key the auto-open never fires and a failing setting stays collapsed. That
+      // is the exact failure mode this card exists to prevent, so it is worth a remount.
+      key={bad.length > 0 ? "attention" : "healthy"}
+      title="Host settings"
+      defaultOpen={bad.length > 0}
+      summaryCollapsed={
+        <span className={`ops-card-summary${bad.length > 0 ? " warn" : ""}`}>{summary}</span>
+      }
+    >
+      {error && <p className="muted ops-vrow-empty">{error}</p>}
+      {data?.settings.map((c) => (
+        <div key={c.key} className={`ops-host-row${c.ok ? "" : " bad"}`}>
+          <div className="ops-host-head">
+            <span className="ops-host-key">{c.key}</span>
+            <span className="ops-host-value">
+              {c.current}
+              {c.ok ? "" : ` — want ${c.expected}`}
+            </span>
+          </div>
+          {!c.ok && (
+            <>
+              <p className="ops-host-impact">{c.impact}</p>
+              {c.remedy && (
+                <p className="muted ops-host-remedy">
+                  {/* Named explicitly, because "needs the host" is the difference between
+                      something the owner can fix now and something they must plan for. */}
+                  {c.needs_host ? "Needs host access: " : ""}
+                  {c.remedy}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      ))}
+    </OpsCard>
+  );
+}
+
 /** The body is a child of OpsCard, so it mounts (and fetches) only when the card
  * is expanded — a collapsed History card costs nothing. The range buttons drive
  * the refetch; the resolution note tells the operator raw vs hourly rollup. */
@@ -1299,6 +1381,8 @@ export function OpsScreen() {
       <SystemCard metrics={metrics} />
 
       <MemoryCard metrics={metrics} onRefresh={refresh} busy={busy} />
+
+      <HostSettingsCard />
 
       <HistoryCard refreshKey={refreshKey} />
 

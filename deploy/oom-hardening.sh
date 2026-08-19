@@ -46,8 +46,9 @@ fi
 # Raising the memory limit is safe precisely BECAUSE of that AND: swap is ~100% free on a
 # healthy box, so `-s 10` gates everything. Together they mean "swap is gone AND memory is
 # tight" — which is the livelock, and is not a state this box reaches in health.
-printf 'EARLYOOM_ARGS="%s"\n' \
-  '-r 60 -m 30 -m 20 -s 10 -s 5 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$' \
+# Kept character-identical to EARLYOOM_ARGS_LINE in deploy/update-inner.sh, which is how
+# the PWA path applies the same thresholds without a shell; a test pins the two together.
+echo 'EARLYOOM_ARGS="-r 60 -m 30 -m 20 -s 10 -s 5 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"' \
   > /etc/default/earlyoom
 systemctl enable --now earlyoom >/dev/null 2>&1 || true
 systemctl restart earlyoom >/dev/null 2>&1 || say "WARNING: could not (re)start earlyoom"

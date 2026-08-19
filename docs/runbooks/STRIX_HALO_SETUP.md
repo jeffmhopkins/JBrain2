@@ -1087,7 +1087,11 @@ reclaim-headroom knobs in step 2 for the current boot through a privileged one-s
 steps below are what the hardening does and how to verify:
 
 1. **earlyoom** — kill the biggest hog on memory pressure *before* the kernel stalls.
-   Installed and configured by the setup script; verify (or reapply by hand):
+   Installed by the setup script (it needs `apt`), but its **thresholds are applied by an
+   ordinary Ops → Update too**: `update-inner.sh` writes `/etc/default/earlyoom` through the
+   same privileged one-shot it uses for the `vm.*` knobs and restarts the unit via `nsenter`.
+   That closes a real gap — the arguments used to come only from the host script, so a box
+   updated from the PWA kept whatever a past host install wrote. Verify:
    ```bash
    systemctl is-active earlyoom && cat /etc/default/earlyoom
    # EARLYOOM_ARGS="-r 60 -m 30 -m 20 -s 10 -s 5 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"
@@ -1100,6 +1104,13 @@ steps below are what the hardening does and how to verify:
    > limit is safe *because* of that AND: swap is ~100% free on a healthy box, so `-s 10` gates
    > everything. Together they mean "swap is gone AND memory is tight" — the livelock, and not
    > a state this box reaches in health.
+> **Ops → Host settings shows all of this without a shell.** `/api/ops/host-settings`
+> (`jbrain.host_settings`) reads the live `ttm.pages_limit`, the `vm.*` knobs and MemTotal
+> and reports which assumptions actually hold, flagging separately the ones an Update cannot
+> fix. It exists because the one that mattered was invisible: `ttm.pages_limit` sat at 124 GiB
+> on a 121 GiB box — **disabled**, since the over-commit it refuses can never occur above
+> MemTotal — and nothing said so until a freeze was traced back to it weeks later.
+
 2. **Reclaim headroom (sysctl)** — start reclaiming earlier, thrash into swap less.
    Written to `/etc/sysctl.d/99-jbrain-oom.conf` by the setup script; verify:
    ```bash

@@ -1,0 +1,74 @@
+name: Set up ffmpeg
+description: >
+  Put ffmpeg and ffprobe on PATH for the backend test jobs, without letting a bad
+  Ubuntu mirror decide how long CI takes.
+
+# WHY THIS EXISTS
+#
+# ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media), which skip
+# WHOLESALE without them (`media.ffmpeg_available`) -- a missing binary costs coverage
+# silently rather than failing. ubuntu-24.04 does not ship them, so every backend job
+# installs them, and that install has twice been the most expensive thing in the pipeline:
+#
+#   2026-08-18  backend-unit (2) hung SIX HOURS on `apt-get install ffmpeg` and the run
+#               died at GitHub's 360-minute default.
+#   2026-08-19  `Fetched 62.8 MB in 20min 54s (50.1 kB/s)` -- 21m10s, for a job whose
+#               actual tests take 2m36s. The index fetch off the SAME host seconds
+#               earlier ran at 5400 kB/s.
+#
+# azure.archive.ubuntu.com is load-balanced and a backend goes bad. `Acquire::Retries`
+# plus `Acquire::*::Timeout` cannot see it: that timeout measures INACTIVITY, and a
+# backend dribbling 50 kB/s is never inactive, so it never trips and never retries.
+#
+# It is also ONE copy on purpose. This used to be two identical inline blocks in ci.yml,
+# kept in step by a comment -- the arrangement that has caused every drift this repo has
+# hit. A composite action cannot drift from itself.
+
+runs:
+  using: composite
+  steps:
+    # The steady state: no network at all. The .debs are keyed by distro + a manual
+    # revision, so the cache only misses when the runner image or this action changes.
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/ffmpeg-debs
+        key: ffmpeg-debs-${{ runner.os }}-${{ runner.arch }}-v1
+
+    - shell: bash
+      run: |
+        command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1 && exit 0
+
+        # An array rather than a wrapper function: the capped call below needs `timeout`
+        # to exec apt-get directly, and `timeout` cannot run a shell function.
+        apt_opts=(-o Acquire::Retries=3
+                  -o Acquire::http::Timeout=30
+                  -o Acquire::https::Timeout=30
+                  -o Dir::Cache::archives="$HOME/ffmpeg-debs")
+        # apt writes here as root and needs `partial/` to already exist.
+        sudo mkdir -p ~/ffmpeg-debs/partial
+
+        if ! compgen -G "$HOME/ffmpeg-debs/*.deb" >/dev/null; then
+          sudo apt-get -o Acquire::Retries=3 update
+          # Cap the DOWNLOAD and retry on a fresh connection, which is what actually
+          # escapes a degraded backend. apt keeps partials, so attempts resume rather
+          # than restart. `timeout` runs under sudo so it signals apt-get, not sudo.
+          for attempt in 1 2 3; do
+            sudo timeout 120 apt-get "${apt_opts[@]}" -y --no-install-recommends \
+                                                      --download-only install ffmpeg &&
+              break
+            echo "::warning::ffmpeg fetch attempt ${attempt} hit the 2m cap;" \
+                 "reconnecting to pick a different archive backend"
+          done
+        fi
+
+        # Unpack and configure. Never under `timeout` -- killing apt mid-dpkg leaves a
+        # broken package database, and by here the bytes are local anyway. If every
+        # capped attempt above failed this still fetches, so a comprehensively degraded
+        # mirror degrades to slow-but-green rather than red; the job's timeout-minutes
+        # is the real backstop.
+        sudo apt-get "${apt_opts[@]}" -y --no-install-recommends install ffmpeg
+
+        # actions/cache saves as the runner user, and apt just wrote these as root.
+        sudo chown -R "$(id -u):$(id -g)" ~/ffmpeg-debs
+        sudo rm -rf ~/ffmpeg-debs/partial ~/ffmpeg-debs/lock

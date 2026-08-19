@@ -362,6 +362,27 @@ export interface OpsStatus {
   containers: ContainerStatus[];
 }
 
+/** One host setting the app depends on, and whether that dependency currently holds.
+ *  Mirrors `jbrain.host_settings.HostSetting`. */
+export interface HostSetting {
+  key: string;
+  current: string;
+  expected: string;
+  ok: boolean;
+  /** What breaks when it is wrong — the reason the row is worth showing. */
+  impact: string;
+  /** What the owner has to do about it. Empty when there is nothing to do. */
+  remedy: string;
+  /** Applying it needs a shell the owner does not have, so no button will help. */
+  needs_host: boolean;
+}
+
+export interface HostSettings {
+  settings: HostSetting[];
+  ok: boolean;
+  needs_host: string[];
+}
+
 export interface OpsMetrics {
   mem_total_bytes: number;
   mem_available_bytes: number;
@@ -2813,6 +2834,14 @@ export const api = {
   async llmUsage(): Promise<LlmUsage> {
     const response = await request("/api/ops/llm-usage");
     return (await response.json()) as LlmUsage;
+  },
+
+  /** Host settings the app assumes and cannot always apply. Exists because the one that
+   *  mattered was invisible: `ttm.pages_limit` sat above total RAM — which disables it —
+   *  and nothing said so until a freeze was traced back to it weeks later. */
+  async opsHostSettings(): Promise<HostSettings> {
+    const response = await request("/api/ops/host-settings");
+    return (await response.json()) as HostSettings;
   },
 
   async opsMetrics(): Promise<OpsMetrics> {

@@ -1,6 +1,6 @@
 # JBrain2 — Development Standards
 
-> **Status:** Living · **Last verified:** 2026-07-18
+> **Status:** Living · **Last verified:** 2026-08-19
 
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
@@ -149,6 +149,23 @@ and phase-aware (skips parts of the project that don't exist yet).
   deliberately-run eval suite outside CI.
 - Tests are deterministic: no network, no real clock (inject time), no
   ordering dependence. The suite stays fast enough to run on every commit.
+
+### CI runtime budget
+- **Every workflow job declares `timeout-minutes`.** A job that omits it inherits
+  GitHub's 360-minute default, which is not a timeout so much as an invitation:
+  two runs on `main` burned a full six hours each on a hung `apt-get` before that
+  default killed them. Size the budget from the job's observed duration with
+  headroom, not from a round number. `backend/tests/unit/test_ci_budgets.py`
+  fails the build if a job ships without one, or with one loose enough to be
+  meaningless.
+- **Superseded pull-request runs are cancelled** (`concurrency` + a `github.ref`
+  group). Pushes to `main` and tags are exempt — that run publishes images and
+  must be allowed to finish.
+- **Network installs are capped and cached, never left to a mirror.** ffmpeg
+  comes from `.github/actions/setup-ffmpeg`: one composite action, shared by both
+  backend test jobs, with the `.deb`s cached and the download wall-clock-capped.
+  `Acquire::*::Timeout` is an *inactivity* timeout and does not catch a slow
+  mirror — a backend dribbling 50 kB/s never trips it.
 
 ### What gets unit tests vs integration tests
 - Pure logic (chunking, RRF fusion, supersession resolution, triage parsing):

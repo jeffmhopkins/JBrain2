@@ -16,9 +16,18 @@ on:
       - "android/**"
       - ".github/workflows/android.yml"
 
+# A superseded run is wasted minutes by definition: pushing twice to a PR used to leave
+# the first run grinding to completion against a commit nobody will merge. Cancelled per
+# ref, and only for pull_request -- a push to main or a tag must finish, because that is
+# the run that publishes images.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # gradle build, no baseline measured -- deliberately loose
     defaults:
       run:
         working-directory: android
@@ -43,6 +52,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: android
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # upload only
     permissions:
       contents: write
     steps:

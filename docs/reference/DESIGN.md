@@ -374,6 +374,18 @@ similar) uses **half-width cards** in a 2-column grid, not full-width rows
 (settled in Phase 1 polish); names/images truncate with ellipsis rather
 than wrapping.
 
+**Ops Host settings card** — the one card that **opens itself**. Every other
+Ops card is collapsed by default and expands on tap; this one is `defaultOpen`
+when any checked setting fails, and collapses to a one-word summary ("all
+good") when they all hold. The asymmetry is deliberate and is the reason the
+card exists: `ttm.pages_limit` sat misconfigured for weeks and nothing said so,
+so a panel the owner has to think to open would not have helped. A failing row
+earns the space to state what breaks and what to do; a passing row is one quiet
+line behind the fold. Remedies that need a shell are prefixed **"Needs host
+access:"** rather than being styled the same as the ones an Update fixes — the
+owner has no terminal (CLAUDE.md #10), so "press the button" and "plan a
+reboot" must be distinguishable at a glance.
+
 **Ops Data card** (settled in a three-way review — inline card won over a
 backup-vault list and a guided transfer sheet): a "Data" section with two
 inline buttons. **Export backup** runs a supervisor one-shot that bundles

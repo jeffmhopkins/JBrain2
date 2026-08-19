@@ -140,6 +140,68 @@ host_kernel_write() {
   fi
 }
 
+# Write a host file the owner cannot reach, from either caller, and optionally restart the
+# unit that reads it.
+#
+# The containerized (PWA) branch is the point. `host_kernel_write` above already proved a
+# privileged container writes the host's /proc/sys exactly as the host would; a bind mount
+# extends that to a host FILE, and `nsenter` into PID 1's namespaces reaches the host's
+# systemd to make a daemon re-read it. Without this, anything living in /etc is applied only
+# by the host script — which the owner, who runs this box from the PWA with no terminal
+# (CLAUDE.md #10), cannot invoke. That is how earlyoom's thresholds sat unapplied.
+#
+# Best-effort in three independent steps: the write can fail (no --privileged), the restart
+# can fail (no nsenter, no systemd) without undoing the write, and a failed restart still
+# leaves the file correct for the next boot. $1 = absolute host path, $2 = contents,
+# $3 = optional unit to restart.
+host_file_write() {
+  _dir="$(dirname "$1")"
+  if [ -n "$HOST_UPDATE" ]; then
+    printf '%s\n' "$2" > "$1" 2>/dev/null || return 1
+    [ -n "${3:-}" ] && systemctl restart "$3" >/dev/null 2>&1
+    return 0
+  fi
+  docker run --rm --privileged --network none -v "$_dir:/hostdir" "$HELPER_IMAGE" \
+    sh -c "printf '%s\n' \"\$1\" > /hostdir/\"\$2\"" -- "$2" "$(basename "$1")" \
+    >/dev/null 2>&1 || return 1
+  # The restart needs the HOST's systemd, which lives in PID 1's namespaces.
+  [ -n "${3:-}" ] && docker run --rm --privileged --pid=host --network none "$HELPER_IMAGE" \
+    nsenter -t 1 -m -u -i -n -p systemctl restart "$3" >/dev/null 2>&1
+  return 0
+}
+
+# Apply a loaded module's parameter for THIS BOOT, from either caller.
+#
+# `ttm.pages_limit` is the only thing that turns a GTT over-commit into a clean -ENOSPC
+# before the pages are handed out; above it the failure is a reclaim livelock instead. It is
+# a kernel command-line parameter, so PERSISTING it needs grub and a reboot — a host step
+# with no PWA equivalent. But the module exposes it under /sys/module, and a privileged
+# container gets /sys read-write, so the current boot can be corrected without one.
+#
+# Deliberately attempt-and-report rather than assume: whether this parameter is writable at
+# runtime depends on the permission bits the kernel compiled it with, which differ across
+# versions and which we have not verified on this box. A write that is refused costs
+# nothing, and saying which of the two happened is the difference between a setting the
+# owner can trust and one they have to go and read for themselves.
+host_module_param_write() {
+  if [ -n "$HOST_UPDATE" ]; then
+    echo "$2" > "/sys/module/$1" 2>/dev/null
+  else
+    docker run --rm --privileged --network none "$HELPER_IMAGE" \
+      sh -c "echo $2 > /sys/module/$1" >/dev/null 2>&1
+  fi
+}
+
+# The earlyoom arguments, in ONE place so the host script and the containerized fallback
+# cannot drift (deploy/oom-hardening.sh carries the same string; a test pins them together).
+#
+# 30/20 rather than the 10/5 they were: earlyoom fires only when memory AND swap are both
+# under their limits, and its `-m` reads MemAvailable, which counts page cache as free. In
+# the 2026-08-19 livelock swap was 100% consumed for seven hours while MemAvailable held at
+# 29% — `-m 10` was never approached and this backstop never fired. Raising the memory limit
+# is safe because of that AND: swap is ~100% free on a healthy box, so `-s 10` gates it.
+EARLYOOM_ARGS_LINE='EARLYOOM_ARGS="-r 60 -m 30 -m 20 -s 10 -s 5 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"'
+
 # Return the page cache to the kernel before a model load.
 #
 # MemAvailable counts reclaimable page cache as available — and reclaiming it under
@@ -547,6 +609,29 @@ if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
     host_kernel_write vm/min_free_kbytes 2097152 || echo "[update] min_free_kbytes not applied"
     host_kernel_write vm/watermark_scale_factor 200 || echo "[update] watermark not applied"
     host_kernel_write vm/swappiness 10 || echo "[update] swappiness not applied"
+    # earlyoom's thresholds too. This is the OS backstop the residency design leans on, and
+    # until now the PWA path — the only one the owner can run — left it at whatever the last
+    # host install wrote. Installing the package still needs apt (the host script's job), but
+    # a box that already has it gets the corrected arguments from an ordinary Update.
+    if host_file_write /etc/default/earlyoom "$EARLYOOM_ARGS_LINE" earlyoom; then
+      echo "[update] earlyoom thresholds applied"
+    else
+      echo "[update] earlyoom thresholds NOT applied — run deploy/oom-hardening.sh on the host"
+    fi
+    # ttm.pages_limit for THIS boot. It has to be BELOW MemTotal to do anything: at or above
+    # it, the over-commit it exists to refuse simply never trips, and the box livelocks
+    # instead. scripts/strix-halo-host-setup.sh derives the same MemTotal-16GiB figure for
+    # grub (which is what makes it survive a reboot, and which needs the host).
+    _mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+    if [ "$_mem_kb" -gt 0 ]; then
+      _pages=$(( (_mem_kb - 16 * 1024 * 1024) / 4 ))
+      if [ "$_pages" -gt 0 ] && host_module_param_write ttm/parameters/pages_limit "$_pages"; then
+        echo "[update] ttm.pages_limit set to $_pages pages ($((_pages / 262144)) GiB) for this boot"
+      else
+        echo "[update] ttm.pages_limit NOT settable at runtime — it needs the grub entry"
+        echo "[update]   (Ops -> Host settings shows whether the running value is safe)"
+      fi
+    fi
   fi
 fi
 
