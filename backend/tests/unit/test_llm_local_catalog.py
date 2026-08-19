@@ -334,7 +334,11 @@ def test_qwen38_27b_abliterated_serves_exactly_like_its_aligned_twin() -> None:
     assert m.supports_vision and m.supports_tools
     assert m.quant == q4.quant == "Q4_K_M"
     assert m.extra_server_args == q4.extra_server_args
-    assert m.is_speculative and m.effective_slots(4) == 1  # MTP serves one sequence
+    assert m.is_speculative
+    # MTP serves one sequence, so speculation and a second slot are mutually exclusive — and an
+    # explicit slot request now WINS, dropping speculation rather than being ignored.
+    assert m.serves_speculative(1) and not m.serves_speculative(2)
+    assert m.effective_slots(4) == 4
     # The grounding floor is a FIELD, not a raw flag, so an operator override replaces it
     # rather than appending a second --image-min-tokens. Same shipped 2048 as the aligned
     # twins: abliteration edits refusal directions, it does not touch the vision tower.
@@ -657,28 +661,44 @@ def test_qwen38_hybrids_publish_an_effort_level_map_and_older_hybrids_do_not() -
     assert all(local_catalog.get(i).hybrid_thinking for i in mapped)  # type: ignore[union-attr]
 
 
-def test_speculative_models_are_pinned_to_a_single_slot() -> None:
-    # llama.cpp's speculative paths serve ONE sequence, so a stored -np override must not reach
-    # them. effective_slots is the single place that decides, so the gateway command, the
-    # residency budget and the settings drawer cannot disagree about what is really served.
-    spec = local_catalog.get("qwen3.8-27b-q4")  # MTP is a serving mode of this entry now
+def test_an_explicit_slot_request_wins_and_costs_speculation() -> None:
+    """Speculation and parallel slots are mutually exclusive — llama.cpp's speculative paths
+    serve ONE sequence. This used to resolve by pinning `-np` to 1 and IGNORING the operator,
+    which was the worst of both: they asked for a second slot, did not get it, and got no signal.
+
+    It now resolves the other way. A second slot is the only thing that keeps a background task
+    (the auto-titler follows the interactive model) out of the slot holding a 32k primed prefix,
+    and losing that prefix costs a ~100 s cold prefill — measured on the box. Trading MTP's
+    decode gain (~22 vs ~11-12 t/s) for that is a real choice and it is the operator's."""
+    spec = local_catalog.get("qwen3.8-27b-q4")  # MTP is a serving mode of this entry
     plain = local_catalog.get("gpt-oss-120b")  # a genuinely non-speculative contrast
     assert spec is not None and plain is not None
     assert spec.is_speculative and not plain.is_speculative
-    assert spec.effective_slots(4) == 1  # serving mode overrides the operator's slot setting
-    assert plain.effective_slots(2) == 2  # a non-speculative model keeps its override
+    # The request is honoured...
+    assert spec.effective_slots(4) == 4
+    # ...and speculation is what gives way, at exactly the point a second slot appears.
+    assert spec.serves_speculative(1) is True
+    assert spec.serves_speculative(2) is False
+    # A non-speculative model is unaffected either way.
+    assert plain.effective_slots(2) == 2
     assert plain.effective_slots(0) == 1  # ...floored at one
+    assert plain.serves_speculative(1) is False
 
 
-def test_footprint_ignores_a_slot_override_on_a_speculative_model() -> None:
-    # The residency budget must reserve for the slots the engine will ACTUALLY allocate. A
-    # speculative model pinned to one slot costs one slot's KV even with 2 saved — reserving
-    # for the second would starve co-residence on a box that is already memory-tight.
+def test_footprint_follows_a_slot_override_on_a_speculative_model() -> None:
+    """The residency budget must reserve for the slots the engine will ACTUALLY allocate.
+
+    Inverted with the clamp: a second slot is now really served (speculation drops instead), so
+    the budget has to carry its KV. Under the old clamp this asserted the opposite — that a saved
+    2 cost one slot's KV — which was correct only while the request was being ignored."""
     mtp = local_catalog.get("qwen3.8-27b-q4")
     assert mtp is not None
-    assert local_catalog.footprint_gb(mtp, 131072, slots=2) == local_catalog.footprint_gb(
-        mtp, 131072, slots=1
-    )
+    one = local_catalog.footprint_gb(mtp, 131072, slots=1)
+    two = local_catalog.footprint_gb(mtp, 131072, slots=2)
+    assert two > one
+    # Exactly one extra slot's worth of KV and checkpoints — weights are shared.
+    extra = mtp.kv_gb_per_128k + mtp.checkpoint_gb * local_catalog.CTX_CHECKPOINTS
+    assert two - one == pytest.approx(extra, abs=0.01)
 
 
 def test_qwen38_kv_estimate_reflects_its_hybrid_attention() -> None:

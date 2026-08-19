@@ -80,20 +80,28 @@ def test_render_always_emits_np_because_the_llama_server_default_is_not_one(
     assert text.count("-np 1") == 2  # both models in the fixture manifest, explicitly
 
 
-def test_render_clamps_a_speculative_model_to_one_slot(tmp_path: Path) -> None:
-    # llama.cpp's speculative paths serve ONE sequence: MTP takes no second slot, and draft
-    # acceptance collapses as concurrent sequences rise. So a saved `-np` override must NOT
-    # reach a model served with --spec-type — the serving mode wins over the stored setting,
-    # rather than the operator having to know the interaction. `-c` follows the clamped count,
-    # so the window is not silently multiplied for slots the engine will never allocate.
+def test_a_slot_request_drops_speculation_rather_than_being_ignored(tmp_path: Path) -> None:
+    """Speculation and parallel slots are mutually exclusive (llama.cpp's speculative paths serve
+    ONE sequence). This used to resolve by clamping `-np` to 1 and discarding the request.
+
+    It now resolves the other way, because a second slot is the only thing that keeps a
+    background task out of the slot holding the interactive prefix — and losing that prefix costs
+    a ~100 s cold prefill, measured. The operator gets whichever of the two they asked for, and
+    the whole `--spec-draft-*` family comes out with `--spec-type` (llama-server rejects a
+    tuning flag with no mode to tune)."""
     _lay_down(tmp_path)
     manifest = [dict(m) for m in _manifest()]
     manifest[0]["extra_server_args"] = ("--spec-type", "draft-mtp", "--spec-draft-n-max", "3")
     text = llama_swap_config.render(manifest, str(tmp_path), slots={"qwen3-vl-30b": 2})
-    speculative_block = text.split("  gpt-oss-120b:")[0]
-    assert "-np 1" in speculative_block and "-np 2" not in speculative_block
-    assert "-c 32768" in speculative_block  # NOT 65536 — the override never applied
-    assert "--spec-type draft-mtp" in speculative_block
+    block = text.split("  gpt-oss-120b:")[0]
+    assert "-np 2" in block  # the request is honoured...
+    assert "--spec-type" not in block and "--spec-draft-n-max" not in block  # ...at this cost
+    assert "-c 65536" in block  # and `-c` scales with the slots actually served
+
+    # At one slot nothing changes: speculation stays, and so does the unmultiplied window.
+    text1 = llama_swap_config.render(manifest, str(tmp_path))
+    block1 = text1.split("  gpt-oss-120b:")[0]
+    assert "-np 1" in block1 and "--spec-type draft-mtp" in block1 and "-c 32768" in block1
 
 
 def test_render_scales_c_off_the_overridden_window_not_the_default(tmp_path: Path) -> None:
@@ -105,12 +113,45 @@ def test_render_scales_c_off_the_overridden_window_not_the_default(tmp_path: Pat
     assert "-c 131072" in text and "-np 2" in text  # 65536 * 2
 
 
-def test_render_enables_prompt_prefix_cache_reuse_for_every_model(tmp_path: Path) -> None:
-    # docs/plans/LLM_PROMPT_CACHE_PLAN.md W2: every model's llama-server command carries
-    # --cache-reuse so a stable system-prompt + history prefix is reused, not re-prefilled.
+def test_cache_reuse_is_served_for_attention_models_and_withheld_from_recurrent_ones(
+    tmp_path: Path,
+) -> None:
+    """docs/archive/LLM_PROMPT_CACHE_PLAN.md W2: prefix KV reuse, so a stable system-prompt +
+    history prefix is not re-prefilled every turn. Real on an ATTENTION model.
+
+    Withheld from a recurrent/hybrid one, where it is a latent CRASH rather than a no-op: you
+    cannot KV-shift a recurrent state, and the partial-range `seq_rm` this path calls returns
+    false for recurrent memory, which reaches GGML_ABORT — the server dies. It has never fired
+    because on an identical prompt the reuse loop never executes. Prefix reuse on those models
+    is mediated entirely by context checkpoints instead."""
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path))
-    assert text.count("--cache-reuse 256") == len(_manifest())
+    assert text.count("--cache-reuse 256") == len(_manifest())  # both fixtures are attention
+
+    manifest = [dict(m) for m in _manifest()]
+    manifest[0]["recurrent"] = True
+    mixed = llama_swap_config.render(manifest, str(tmp_path))
+    recurrent_block = mixed.split("  gpt-oss-120b:")[0]
+    assert "--cache-reuse" not in recurrent_block
+    assert mixed.count("--cache-reuse 256") == 1  # the attention model still gets it
+
+
+def test_every_recurrent_catalog_entry_is_served_without_cache_reuse(tmp_path: Path) -> None:
+    """The real entries, not a fixture: a hybrid that slipped through with `recurrent` unset
+    would ship the crash path, and nothing else in the config would look wrong."""
+    recurrent = [m for m in local_catalog.CATALOG if m.recurrent]
+    assert {m.id for m in recurrent} == {
+        "qwen3.8-27b",
+        "qwen3.8-27b-q4",
+        "qwen3.8-27b-abliterated",
+        "nemotron-3-super-120b",
+        "nemotron-3.5-lightning-30b",
+    }
+    for model in recurrent:
+        (tmp_path / model.id).mkdir(exist_ok=True)
+        (tmp_path / model.id / "w.gguf").write_bytes(b"\0")
+        entry = dict(asdict(model), gguf_include="*.gguf", mmproj_include=None)
+        assert "--cache-reuse" not in llama_swap_config.render([entry], str(tmp_path))
 
 
 def test_render_adds_reasoning_format_only_for_thinking_models(tmp_path: Path) -> None:
@@ -423,12 +464,12 @@ def test_every_model_gets_a_slot_save_path_and_only_swa_models_get_swa_full(
     assert len(flagged) == sum(1 for m in _manifest() if m.get("kv_full_history"))
 
 
-def test_an_operator_set_spec_flag_gets_the_same_single_slot_clamp(tmp_path: Path) -> None:
-    # Speculation can be turned on two ways: the catalog's static flags, or an operator trying
-    # `--spec-type` live through the extra-args route (no release needed). Both constrain
-    # llama-server to one sequence, so the clamp must read the flags actually going onto the
-    # command line — not just the catalog's. Otherwise a remote experiment would quietly run
-    # multi-slot and measure acceptance that the real serving mode would never produce.
+def test_an_operator_set_spec_flag_loses_to_an_operator_set_slot(tmp_path: Path) -> None:
+    """Speculation can be turned on two ways — the catalog's static flags, or an operator trying
+    `--spec-type` live — so the resolution must read the flags actually going onto the command
+    line, not just the catalog's. With both set, the SLOT wins and the spec flag comes out;
+    otherwise a remote experiment would run multi-slot while measuring acceptance the real
+    serving mode could never produce."""
     _lay_down(tmp_path)
     text = llama_swap_config.render(
         _manifest(),
@@ -437,9 +478,16 @@ def test_an_operator_set_spec_flag_gets_the_same_single_slot_clamp(tmp_path: Pat
         extra_args={"gpt-oss-120b": ["--spec-type", "draft-mtp"]},
     )
     gpt_oss_cmd = next(ln for ln in text.splitlines() if "/gpt-oss-120b/" in ln)
-    assert "--spec-type draft-mtp" in gpt_oss_cmd
-    assert "-np 1" in gpt_oss_cmd and "-np 2" not in gpt_oss_cmd
-    assert "-c 131072" in gpt_oss_cmd  # the window is NOT doubled for a slot never allocated
+    assert "-np 2" in gpt_oss_cmd
+    assert "--spec-type" not in gpt_oss_cmd
+    # Without the slot request the operator's spec flag stands.
+    one = llama_swap_config.render(
+        _manifest(), str(tmp_path), extra_args={"gpt-oss-120b": ["--spec-type", "draft-mtp"]}
+    )
+    one_cmd = next(ln for ln in one.splitlines() if "/gpt-oss-120b/" in ln)
+    assert "--spec-type draft-mtp" in one_cmd and "-np 1" in one_cmd
+    # And `-c` now scales with the slots actually served, because they really are allocated.
+    assert "-c 262144" in gpt_oss_cmd  # 131072 * 2
 
 
 def test_operator_extra_args_replace_the_catalog_flag_they_target(tmp_path: Path) -> None:

@@ -75,6 +75,13 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   after a llama.cpp rebuild on master). `--no-mmap` is deliberately absent and cannot be added:
   llama.cpp has no positive `--mmap`, so an entry could not undo the flag we already pass — it
   would be a silent no-op, which is worse than an absent one.
+  Also on the list for prefill work: **`-lv`** (llama-server verbosity — `-lv 4` is TRC, the only
+  place `created context checkpoint` / `restored context checkpoint` / `forcing full prompt
+  re-processing` appear, and without them a checkpoint sweep cannot tell a wrong count from
+  nothing ever being restored), **`--checkpoint-min-step`** (default 8192, so a ~24k prompt gets
+  only ~3 checkpoints by SPACING however high the count goes) and **`--cache-ram`** (default 8192
+  MiB; unlike a KV-slot file the in-RAM prompt cache preserves checkpoints, so it is the lever
+  that survives eviction).
   **`-fa 0` is refused (422) on a model carrying a vision projector.** Turning flash attention
   off swaps the CLIP attention workspace from the linear branch to the quadratic one — ~0.47 GB
   to ~16 GB — and `_vision_resident_gb` hardcodes the linear figure, so the residency budget
@@ -83,12 +90,27 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   unrecoverable hang. The bisect stays available on text-only models; budgeting it properly
   (threading the served `-fa` into `footprint_gb`) is what would lift the refusal.
   **`--ctx-checkpoints` is the one exception to "a bad value is always recoverable"**, so it is
-  bounded to `0..8` server-side. A checkpoint on a hybrid is a full copy of the recurrent state
-  (~150 MiB for Qwen3.8), device-resident and per slot. `footprint_gb` budgets it at the SERVED
-  count (2), not at whatever you set here — so everything above that is unbudgeted and the
-  residency evictor cannot see it coming. llama.cpp's own default of `32` (the most likely
-  typo, since every upstream doc names it) would be ~4.7 GiB/slot of unbudgeted device memory on
-  a box whose documented failure mode is an unrecoverable host hang.
+  bounded to `0..32` server-side — 32 being llama.cpp's OWN default, so a sweep can reach it (an
+  earlier 0..8 bound put the one value most worth trying out of reach). A checkpoint on a hybrid
+  is a full copy of the recurrent state (~150 MiB for Qwen3.8), device-resident and per slot.
+  `footprint_gb` budgets it at the SERVED count (2), not at whatever you set here — so everything
+  above that is unbudgeted on a box whose documented failure mode is an unrecoverable host hang.
+
+  ⚠️ **A cold prime cannot be measured through this console.** The proxy in front of the box
+  returns 524 around 100 s and `/upstream/…` has a hard 180 s ceiling, while a cold prefill of the
+  agent prefix takes ~101 s at 32k and ~220 s at 262k. The client gives up while the server keeps
+  working, and on a one-slot model the next request queues behind a task that may already have
+  been dropped. Read cold behaviour from `gateway-logs` and `/metrics` deltas instead. And note
+  `n_prompt_tokens_cache` in `slots` is **zeroed on slot release**, so it reads 0 after any
+  completed request regardless of reuse — use `llamacpp:prompt_tokens_cached_total` from the
+  metrics route, or `timings.cache_n` in a completion response body.
+- `GET /api/debug/llm/local-models/{id}/metrics` (`debug-connect.sh spec-metrics`) now reports
+  **`prompt_tokens_cached_total`, `prompt_tokens_total` and `cache_hit_rate`** beside the
+  speculation figures. These are the authoritative prompt-reuse signal. Do NOT use
+  `n_prompt_tokens_cache` from `slots` for this: llama.cpp zeroes a slot's stats on release, so
+  it reads 0 after any completed request whether reuse was total or nonexistent — the same class
+  of trap as the dead `speculative.types` field. All of these are lifetime totals, so delta them
+  around a single request. A warm prime on this box measured 32,485 of 32,489 tokens reused.
 - `POST /api/debug/complete` takes an optional `sampling` object (`{"temperature": 0.1,
   "min_p": 0.0}`), merged over the model's catalog defaults exactly as a prompt's
   `config: sampling:` block is. This is the ONLY way to vary sampling from the box: it is

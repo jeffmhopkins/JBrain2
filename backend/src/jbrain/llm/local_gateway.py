@@ -29,6 +29,7 @@ strip that suffix once here.
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
 import httpx
@@ -68,6 +69,8 @@ class LocalGatewayClient:
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 3.0,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
+        windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
+        slots_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
     ):
         self._root = base_url.rstrip("/").removesuffix("/v1")
         self._transport = transport
@@ -80,6 +83,15 @@ class LocalGatewayClient:
         # console load, and the residency RESTORE — three of the six call sites). A safety
         # check a caller can decline is not a safety check.
         self._gpu_probe = gpu_probe
+        # The live per-model context-window and parallel-slot overrides (Settings → LLM), read
+        # per load. They live here for the same chokepoint reason as the probe: KV is LINEAR in
+        # the window, so a guard that reserves for the catalog default while llama-swap serves
+        # an override is not sized for the load it is guarding. Measured: the abliterated 27B
+        # served at `-c 262144` against a 32768 catalog default reserved 20.29 GB for a load
+        # that took 36.92 GB. Unset (the tests, the CLI without a settings context) falls back
+        # to the catalog default and one slot, which is what an unconfigured box serves.
+        self._windows_loader = windows_loader
+        self._slots_loader = slots_loader
 
     async def running(self) -> set[str]:
         """Served-model names currently loaded, or an empty set on ANY failure
@@ -198,7 +210,15 @@ class LocalGatewayClient:
         prefill. On a sliding-window model llama-server can accept the restore and then discard
         it, logging `forcing full prompt re-processing`. The gateway log is the only honest
         signal; treat this method's success as "the bytes loaded", never as "the prefill is
-        saved" (docs/runbooks/STRIX_HALO_SETUP.md)."""
+        saved" (docs/runbooks/STRIX_HALO_SETUP.md).
+
+        On a HYBRID (`qwen35`, Nemotron Mamba-2) it is stronger than that: a slot restore can
+        NEVER save a prefill, because the restore path calls `prompt.clear()`, which clears the
+        context checkpoints — and checkpoints are the only prefix-reuse mechanism a recurrent
+        model has. So a disk-restored slot always full-reprocesses its next request. The bytes
+        load, the log line says success, and the next turn pays in full. This whole KV-slot
+        feature is a gpt-oss win; on a hybrid it is inert by construction, which is why the
+        keeper's restore is worth keeping only for its cheapness, never for its promise."""
         if served_model not in await self.running():
             raise LocalGatewayError(
                 f"{served_model} is not resident — refusing a slot {action}, because reaching it "
@@ -222,6 +242,21 @@ class LocalGatewayClient:
         except (httpx.HTTPError, ValueError) as exc:
             raise LocalGatewayError(str(exc)) from exc
         return parsed if isinstance(parsed, dict) else {}
+
+    async def _served_shape(self, model: local_catalog.LocalModel) -> tuple[int, int]:
+        """The (context window, parallel slots) llama-swap will actually serve `model` with —
+        the operator's saved overrides when a loader is wired, else the catalog default and one
+        slot. Best-effort: a settings read that fails must not block a load, so it degrades to
+        the catalog shape rather than raising, and the watchdog still covers the difference."""
+        window, slots = model.context_window, 1
+        try:
+            if self._windows_loader is not None:
+                window = (await self._windows_loader()).get(model.id, window)
+            if self._slots_loader is not None:
+                slots = (await self._slots_loader()).get(model.id, slots)
+        except Exception:  # noqa: BLE001 — any settings failure falls back, never blocks
+            log.warning("local_gateway.served_shape_unavailable", model=model.id)
+        return window, slots
 
     async def load(
         self,
@@ -261,7 +296,10 @@ class LocalGatewayClient:
         use, the prior behaviour). Generous timeout: a cold 80B reads tens of GB of weights."""
         load_timeout = max(self._timeout, 120.0)
         model = local_catalog.get_by_served(served_model)
-        projected_gb = local_catalog.load_footprint_gb(model) if model else 0.0
+        projected_gb = 0.0
+        if model:
+            window, slots = await self._served_shape(model)
+            projected_gb = local_catalog.load_footprint_gb(model, window, slots=slots)
 
         async def _do_load() -> None:
             try:
@@ -439,7 +477,8 @@ def _parse_load_progress(text: str) -> float | None:
 
 
 def parse_spec_counters(metrics_text: str) -> dict[str, float]:
-    """Derive the speculation numbers from llama-server's Prometheus text.
+    """Derive the serving numbers — speculation AND prompt-cache reuse — from llama-server's
+    Prometheus text.
 
     The build this box runs exposes NO draft/accept counters — the whole metric set is
     prompt/predict/decode totals — so the acceptance rate cannot be read directly. It can be
@@ -475,6 +514,21 @@ def parse_spec_counters(metrics_text: str) -> dict[str, float]:
         except ValueError:
             continue
     out = {k: n for k, n in v.items() if any(t in k for t in ("draft", "spec", "accept"))}
+    # PROMPT-CACHE counters, and they are the authoritative reuse signal on this box. The
+    # per-slot `n_prompt_tokens_cache` in /slots is NOT: llama.cpp zeroes a slot's stats on
+    # release, so polling it after a request reads 0 whether reuse was total or nonexistent —
+    # which is how an entire investigation concluded a hybrid could not cache at all. These are
+    # cumulative and survive release, so a before/after delta around one request is the truth.
+    cached = v.get("llamacpp:prompt_tokens_cached_total")
+    processed = v.get("llamacpp:prompt_tokens_total")
+    if cached is not None:
+        out["prompt_tokens_cached_total"] = cached
+    if processed is not None:
+        out["prompt_tokens_total"] = processed
+    if cached is not None and processed is not None and (cached + processed) > 0:
+        # Lifetime reuse fraction. Like everything here it is a process-lifetime figure — delta
+        # it across one request to measure that request.
+        out["cache_hit_rate"] = round(cached / (cached + processed), 4)
     decodes = v.get("llamacpp:n_decode_total", 0.0)
     tokens = v.get("llamacpp:tokens_predicted_total", 0.0)
     seconds = v.get("llamacpp:tokens_predicted_seconds_total", 0.0)

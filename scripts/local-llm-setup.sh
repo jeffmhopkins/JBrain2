@@ -101,10 +101,14 @@ MANIFEST="$(catalog -m jbrain.llm.local_catalog "${IDS[@]}")"
 
 mkdir -p "$MODELS_DIR"
 # Own the dir by the api container's appuser uid (pinned to 1000 in backend/Dockerfile)
-# so the NON-root api can re-stamp llama-swap.yaml at runtime — when the operator stages
-# a model or edits a context window in Settings, the api rewrites the config in place.
-# Without this the re-stamp fails with EACCES (the dir is root-owned from the sudo setup +
-# the root download/config containers) and staging silently never reaches the gateway.
+# so the NON-root api can re-stamp llama-swap.yaml at runtime — when the operator edits a
+# context window, slot count, image floor or launch flag in Settings, the api rewrites the
+# config in place. Without this the re-stamp fails with EACCES (the dir is root-owned from the
+# sudo setup + the root download/config containers) and the edit silently never reaches the
+# gateway. NOT staging: this text used to say "when the operator stages a model", describing a
+# retired design in which staging was a persisted set that drove the config. Staging is now a
+# pure dry-run (`POST …/plan-load` -> `residency.plan_load`) that writes nothing and evicts
+# nothing — and this sentence was the only thing in the repo still implying otherwise.
 # Root (the --user 0 install/sync writes below) can still write into a uid-1000-owned dir;
 # only the top dir needs it (the api just replaces the top-level yaml, never the weights).
 chown 1000 "$MODELS_DIR"

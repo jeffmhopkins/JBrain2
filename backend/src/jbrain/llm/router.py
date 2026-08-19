@@ -810,7 +810,11 @@ def _default_residency(
         # The gpu_probe is what makes this default coordinator's loads pass the device-memory
         # guard. It goes on the GATEWAY rather than the coordinator because `load()` is the
         # chokepoint: a guard there covers callers that never touch a coordinator at all.
-        LocalGatewayClient(settings.local_llm_url, gpu_probe=gpu_guard.probe_for(settings)),
+        LocalGatewayClient(
+            settings.local_llm_url,
+            gpu_probe=gpu_guard.probe_for(settings),
+            windows_loader=windows_loader,
+        ),
         windows_loader=windows_loader,
         models_dir=settings.local_models_dir,
         enabled=settings.local_llm_enabled,

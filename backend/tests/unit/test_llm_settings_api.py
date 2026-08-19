@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import llm_settings
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
-from jbrain.llm import local_catalog
+from jbrain.llm import local_catalog, local_gateway
 from jbrain.llm.residency import ResidencyCoordinator
 from jbrain.llm.router import TASK_DEFAULTS
 from jbrain.main import create_app
@@ -1202,8 +1202,14 @@ def test_ctx_checkpoints_is_bounded_because_its_bad_value_hangs_the_box() -> Non
     so everything above that is unbudgeted and the residency evictor cannot see it coming.
     llama.cpp's own default of 32 is the most likely typo (every upstream doc names it) and would
     be ~4.7 GiB/slot unbudgeted on a box whose documented failure mode is an unrecoverable hang."""
+    # 32 is llama.cpp's own default and must be REACHABLE — an earlier 0..8 bound put the one
+    # value most worth sweeping out of reach, which defeats the point of exposing the flag.
+    assert llm_settings._validate_extra_args(["--ctx-checkpoints", "32"]) == [
+        "--ctx-checkpoints",
+        "32",
+    ]
     with pytest.raises(HTTPException) as exc:
-        llm_settings._validate_extra_args(["--ctx-checkpoints", "32"])
+        llm_settings._validate_extra_args(["--ctx-checkpoints", "64"])
     assert exc.value.status_code == 422
     assert "hang" in str(exc.value.detail)
     with pytest.raises(HTTPException):
@@ -1298,6 +1304,50 @@ def test_the_image_ceiling_is_bounded_to_what_the_vision_budget_assumes() -> Non
     with pytest.raises(HTTPException) as exc:
         llm_settings._validate_extra_args(["--image-max-tokens", "8192"])
     assert exc.value.status_code == 422
+
+
+def test_the_next_prefill_investigation_can_reach_its_levers() -> None:
+    """The three flags this session needed and could not set.
+
+    `-lv 4` is the decisive one and has no substitute: whether checkpoints are created and
+    MATCHED is only visible in llama-server's TRC lines. Without it a checkpoint sweep cannot
+    tell "the count is wrong" from "nothing is ever restored" — identical timings either way,
+    which is how a 2-vs-8 sweep measured nothing and was misread as the flag being inert."""
+    for flag, value in (("-lv", "4"), ("--checkpoint-min-step", "512"), ("--cache-ram", "16384")):
+        assert flag in llm_settings.EXTRA_ARG_FLAGS
+        assert llm_settings._validate_extra_args([flag, value]) == [flag, value]
+    # Bounded: verbosity has no level 9, and --cache-ram is host memory this box cannot spare
+    # without starving everything else.
+    for flag, bad in (("-lv", "9"), ("--cache-ram", "999999")):
+        with pytest.raises(HTTPException) as exc:
+            llm_settings._validate_extra_args([flag, bad])
+        assert exc.value.status_code == 422
+
+
+def test_serving_metrics_expose_prompt_cache_reuse() -> None:
+    """The authoritative reuse signal, and the reason it is not the obvious one.
+
+    `/slots`' `n_prompt_tokens_cache` is zeroed when llama.cpp releases the slot, so polling it
+    after a completed request reads 0 whether reuse was total or nonexistent — an entire
+    investigation concluded a hybrid could not cache at all on exactly that reading. The
+    cumulative counters survive release."""
+    text = "\n".join(
+        [
+            "# HELP llamacpp:prompt_tokens_total Number of prompt tokens processed",
+            "llamacpp:prompt_tokens_total 4",
+            "llamacpp:prompt_tokens_cached_total 32485",
+            "llamacpp:n_decode_total 10",
+            "llamacpp:tokens_predicted_total 24",
+            "llamacpp:tokens_predicted_seconds_total 2.0",
+        ]
+    )
+    out = local_gateway.parse_spec_counters(text)
+    assert out["prompt_tokens_cached_total"] == 32485
+    assert out["prompt_tokens_total"] == 4
+    # ~99.99% reuse — the shape of a warm prime on this box, measured 2026-08-18.
+    assert out["cache_hit_rate"] == pytest.approx(0.9999, abs=0.0001)
+    # The speculation figures still come through unchanged.
+    assert out["tokens_per_step"] == 2.4
 
 
 def test_extra_arg_allowlist_rejects_an_unknown_flag_loudly() -> None:

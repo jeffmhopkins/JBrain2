@@ -398,7 +398,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The probe goes on the GATEWAY, not just the residency coordinator: `load()` is the
         # one chokepoint every caller passes through, so a guard there is one no caller can
         # skip — which is precisely how the three freezes got past the coordinator's guard.
-        app.state.local_gateway = LocalGatewayClient(settings.local_llm_url, gpu_probe=gpu_probe)
+        # The window/slot loaders make the guard reserve for the window llama-swap will REALLY
+        # serve (the operator's `-c` override), not the catalog default — KV is linear in it.
+        app.state.local_gateway = LocalGatewayClient(
+            settings.local_llm_url,
+            gpu_probe=gpu_probe,
+            windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
+            slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
+        )
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
         # the free-RAM floor before each local load (passed to build_router below as its
         # residency, so every local completion admits through this same instance),

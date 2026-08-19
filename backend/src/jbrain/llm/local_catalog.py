@@ -225,6 +225,13 @@ class LocalModel:
     # served default stays small for memory; this opens the door to the full window
     # the weights support, with the drawer's KV-cache estimate as the guardrail.
     native_context_window: int = 0
+    # A HYBRID/RECURRENT attention stack (qwen35's Gated DeltaNet, Nemotron's Mamba-2) rather
+    # than plain attention. Not derivable from `checkpoint_gb`, which is a memory figure we only
+    # have for some of them — this is an architecture fact and drives SERVING decisions:
+    # `--cache-reuse` is dropped for these (its partial-range `seq_rm` returns false for
+    # recurrent memory and reaches GGML_ABORT, i.e. the server dies), and prefix reuse here is
+    # mediated entirely by context checkpoints.
+    recurrent: bool = False
     # GiB per context checkpoint, per slot. Non-zero only for a HYBRID (recurrent) model,
     # where a checkpoint is a full copy of the recurrent state and is device-resident —
     # ~150 MiB for Qwen3.8 (llama.cpp #20145, #23371). Zero on an attention model, whose
@@ -280,12 +287,26 @@ class LocalModel:
 
     def effective_slots(self, requested: int) -> int:
         """The `-np` this model will ACTUALLY serve with, given a requested slot count.
-        llama.cpp's speculative paths run one sequence — MTP takes no second slot, and draft
-        acceptance collapses as concurrent sequences rise — so a speculative model is pinned
-        to 1 whatever the operator saved. Everything that reasons about slots (the gateway
-        command, the residency budget, the settings drawer) goes through here, so a stale
-        override can't make one of them disagree with what the engine does."""
-        return 1 if self.is_speculative else max(1, requested)
+        Everything that reasons about slots (the gateway command, the residency budget, the
+        settings drawer) goes through here, so none of them can disagree with the engine.
+
+        An explicit request for more than one slot is now HONOURED on a speculative model, at
+        the cost of speculation (`serves_speculative`). It used to be silently clamped to 1,
+        which was the worst of both: the operator asked for a second slot, did not get it, and
+        got no signal saying so. A second slot is the only thing that stops a background task —
+        the auto-titler follows the interactive model — landing in the one slot and evicting a
+        32k primed prefix, which costs a ~100 s cold prefill. Trading MTP's decode gain (~22 vs
+        ~11-12 t/s measured) for that is a real choice, and it is the operator's to make."""
+        return max(1, requested)
+
+    def serves_speculative(self, requested_slots: int) -> bool:
+        """Whether speculation is actually served at `requested_slots`.
+
+        llama.cpp's speculative paths run ONE sequence — MTP takes no second parallel slot and
+        draft acceptance collapses as concurrent sequences rise (reported on this exact gfx1151
+        SoC). So the two features are mutually exclusive, and asking for slots turns speculation
+        OFF rather than being ignored."""
+        return self.is_speculative and max(1, requested_slots) == 1
 
     @property
     def max_context_window(self) -> int:
@@ -476,6 +497,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # conservative guardrail rather than a true measure.
         native_context_window=1048576,
         kv_gb_per_128k=3.0,
+        recurrent=True,  # Mamba-2 hybrid
     ),
     LocalModel(
         id="nemotron-3.5-lightning-30b",
@@ -513,6 +535,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # guardrail, not a true measure).
         native_context_window=1048576,
         kv_gb_per_128k=3.0,
+        recurrent=True,  # Mamba-2 hybrid
     ),
     LocalModel(
         id="qwen3.8-27b",
@@ -565,6 +588,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # default with the native window as the picker's ceiling.
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        recurrent=True,
         checkpoint_gb=0.15,
     ),
     LocalModel(
@@ -615,6 +639,7 @@ CATALOG: tuple[LocalModel, ...] = (
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        recurrent=True,
         checkpoint_gb=0.15,
     ),
     LocalModel(
@@ -677,6 +702,7 @@ CATALOG: tuple[LocalModel, ...] = (
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        recurrent=True,
         checkpoint_gb=0.15,
     ),
     LocalModel(
@@ -952,6 +978,16 @@ def get_by_served(served_model: str) -> LocalModel | None:
 # the runtime-overhead and vision terms, because load_footprint_gb needs them.)
 
 
+def _kv_gb(model: LocalModel, window: int, slots: int) -> float:
+    """KV cache (GiB) for `model` held at `window` tokens across `slots` parallel slots.
+
+    Linear off the 128k reference. `--swa-full` (`kv_full_history`) gives the sliding-window
+    layers a full-size cache instead of a ring, which roughly doubles the term — counted here
+    so the load reservation, the eviction budget and the settings meter cannot drift apart."""
+    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
+    return kv * 2 if model.kv_full_history else kv
+
+
 def footprint_gb(
     model: LocalModel, window: int, *, disk_gb: float | None = None, slots: int = 1
 ) -> float:
@@ -969,16 +1005,14 @@ def footprint_gb(
     with a larger override saved — matching what the gateway will really serve rather than
     reserving for slots the engine won't allocate."""
     weights = disk_gb if disk_gb is not None else model.size_gb
-    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
-    # `--swa-full` gives the sliding-window layers a full-size cache, so the KV term roughly
-    # doubles. Counted here or the meter and the eviction budget would both under-report the
-    # model by several GB — on a box that has hard-locked under memory pressure.
-    if model.kv_full_history:
-        kv *= 2
+    # `--swa-full` doubling lives in `_kv_gb`: omitting it under-reported the model by several
+    # GB in both the meter and the eviction budget — on a box that has hard-locked under
+    # memory pressure.
+    kv = _kv_gb(model, window, slots)
     # Context checkpoints: per slot, device-resident, and on a hybrid a full copy of the
     # recurrent state each. Budgeted at the SERVED count — an operator override through
-    # `--ctx-checkpoints` is not threaded in here, which is why that flag is bounded to 0..8
-    # in the settings API rather than left open.
+    # `--ctx-checkpoints` is not threaded in here, which is why that flag is bounded (0..32,
+    # llama.cpp's own default ceiling) in the settings API rather than left open.
     checkpoints = model.checkpoint_gb * CTX_CHECKPOINTS * model.effective_slots(slots)
     return round(
         weights + kv + checkpoints + _runtime_overhead_gb(model) + _vision_resident_gb(model), 2
@@ -1004,23 +1038,32 @@ def _vision_resident_gb(model: LocalModel) -> float:
     return vision_attn_buffer_gb() if model.mmproj_include else 0.0
 
 
-def load_footprint_gb(model: LocalModel) -> float:
+def load_footprint_gb(model: LocalModel, window: int | None = None, *, slots: int = 1) -> float:
     """Device memory to have free before loading `model`, in GiB.
 
-    Weights + KV at its default window + runtime overhead, and for a vision model the CLIP
-    attention buffer at its LOAD-TIME warmup size rather than its eventual peak. llama.cpp
-    warms the projector at a capped 46x46 = 2116 image tokens (`set_warmup_n_tokens`), and the
-    full-resolution buffer only materialises on the first real image — which may be much later,
-    or never. Reserving the peak here would refuse loads that are genuinely safe; the peak is
-    the eviction budget's problem (`footprint_gb`), which is where it now lives.
+    Weights + KV at the window it will actually be SERVED at + runtime overhead, and for a
+    vision model the CLIP attention buffer at its LOAD-TIME warmup size rather than its
+    eventual peak. llama.cpp warms the projector at a capped 46x46 = 2116 image tokens
+    (`set_warmup_n_tokens`), and the full-resolution buffer only materialises on the first real
+    image — which may be much later, or never. Reserving the peak here would refuse loads that
+    are genuinely safe; the peak is the eviction budget's problem (`footprint_gb`), which is
+    where it now lives.
+
+    `window` and `slots` are the OPERATOR-RESOLVED values (Settings → LLM per-model overrides),
+    the same pair the gateway config generator writes as `-c` / `-np` and the same pair the
+    eviction budget sizes with. They default to the catalog's own window and one slot, which is
+    what an unconfigured box serves.
+
+    Passing them is not optional in practice. This function took no window at all until a
+    measurement caught it: the abliterated 27B is served at `-c 262144` against a catalog
+    default of 32768, so the pre-flight reserved 20.29 GB for a load that measured 36.92 GB —
+    1.8x light, on the one code path whose stated job is refusing a load rather than freezing
+    the host. KV is linear in the window, so any override at all moves this number.
 
     Kept distinct from `footprint_gb` because the two answer different questions, but note the
     difference is now much smaller than the old code assumed — and pointed the other way."""
-    total = (
-        model.size_gb
-        + model.kv_gb_per_128k * model.context_window / _KV_REFERENCE_TOKENS
-        + _runtime_overhead_gb(model)
-    )
+    served_window = model.context_window if window is None else window
+    total = model.size_gb + _kv_gb(model, served_window, slots) + _runtime_overhead_gb(model)
     if model.mmproj_include:
         total += vision_attn_buffer_gb(_VISION_WARMUP_IMAGE_TOKENS)
     return round(total, 2)

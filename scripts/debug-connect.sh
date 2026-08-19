@@ -24,7 +24,10 @@
 #   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
 #   scripts/debug-connect.sh props <model_id>          # engine's own build / n_ctx / total_slots
 #   scripts/debug-connect.sh slots <model_id>          # per-slot state; is speculation drafting?
-#   scripts/debug-connect.sh spec-metrics <model_id>   # drafted / accepted / accept rate
+#   scripts/debug-connect.sh spec-metrics <model_id>   # tokens/step + PROMPT-CACHE reuse
+#     (`serving-metrics` is the same route. `prompt_tokens_cached_total` is the authoritative
+#      reuse signal — /slots' n_prompt_tokens_cache is zeroed on release and reads 0 after any
+#      completed request. Both are lifetime totals: delta them around one request.)
 #   scripts/debug-connect.sh extra-args <id> --swa-full  # try launch flags live; no args clears
 #   scripts/debug-connect.sh ctx <id> 65536            # the served -c
 #   scripts/debug-connect.sh prime <id>                # real jerv prime, returns elapsed_ms
@@ -276,7 +279,7 @@ PY
     _call GET "/api/debug/llm/local-models/$m/slots" | _pp
     ;;
 
-  spec-metrics) # <model_id> — speculative counters: drafted, accepted, accept rate
+  spec-metrics|serving-metrics) # <model_id> — speculation AND prompt-cache reuse counters
     m="${1:?usage: debug-connect.sh spec-metrics <model_id>}"
     _call GET "/api/debug/llm/local-models/$m/metrics" | _pp
     ;;
