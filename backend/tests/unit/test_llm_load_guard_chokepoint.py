@@ -445,3 +445,49 @@ def test_the_drop_is_skipped_when_the_weights_are_not_mounted(
 
     asyncio.run(run())
     assert called == []
+
+
+def test_the_weights_cache_is_dropped_when_the_guard_aborts(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure path, which had no coverage at all.
+
+    An aborted load has still READ the weights, so the page-cache copy exists — measured
+    at +4.29 GiB for a 4.3 GB model on 2026-08-19, against +0.00 GiB for a SUCCESSFUL
+    16.8 GB one. The drop works; it just never ran here, because `guarded_load` raises
+    `GpuBudgetError` from outside its own try/finally and the drop sat on the line after
+    the `await`. No unload path drops either, and the abort routes through exactly that
+    unload.
+
+    Worse than a leak: `host_metrics.read_memory_gb` counts page cache as USED, so every
+    abort shrinks the apparent headroom and makes the next abort likelier, and
+    `residency` suppresses `GpuBudgetError` on the end-of-turn restore — so it ratchets
+    silently."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    (tmp_path / model.id).mkdir()
+    (tmp_path / model.id / "weights.gguf").write_bytes(b"x" * 4096)
+
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        "jbrain.llm.local_weights.drop_weights_page_cache",
+        lambda models_dir, model_id: dropped.append(model_id) or 4.29,
+    )
+
+    async def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise gpu_guard.GpuBudgetError("device memory ran away while loading")
+
+    monkeypatch.setattr(gpu_guard, "guarded_load", _refuse)
+
+    async def run() -> None:
+        gateway = LocalGatewayClient(
+            "http://gw",
+            transport=_transport(),
+            gpu_probe=_StubProbe(_mem(10.0)),
+            models_dir=str(tmp_path),
+        )
+        with pytest.raises(gpu_guard.GpuBudgetError):
+            await gateway.load(model.served_model)
+
+    asyncio.run(run())
+    assert dropped == [model.id], "the aborted load left its weights in the page cache"

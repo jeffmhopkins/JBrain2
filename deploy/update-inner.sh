@@ -172,17 +172,10 @@ host_file_write() {
 
 # Apply a loaded module's parameter for THIS BOOT, from either caller.
 #
-# `ttm.pages_limit` is the only thing that turns a GTT over-commit into a clean -ENOSPC
-# before the pages are handed out; above it the failure is a reclaim livelock instead. It is
-# a kernel command-line parameter, so PERSISTING it needs grub and a reboot — a host step
-# with no PWA equivalent. But the module exposes it under /sys/module, and a privileged
-# container gets /sys read-write, so the current boot can be corrected without one.
-#
-# Deliberately attempt-and-report rather than assume: whether this parameter is writable at
-# runtime depends on the permission bits the kernel compiled it with, which differ across
-# versions and which we have not verified on this box. A write that is refused costs
-# nothing, and saying which of the two happened is the difference between a setting the
-# owner can trust and one they have to go and read for themselves.
+# NOT usable for ttm.pages_limit — see the note at the call site. The parameter is
+# writable (0644) and the write appears to succeed, but the GTT cap it is supposed to
+# move was snapshotted at probe, so nothing changes. Kept for parameters that ARE
+# re-read per use.
 host_module_param_write() {
   if [ -n "$HOST_UPDATE" ]; then
     echo "$2" > "/sys/module/$1" 2>/dev/null
@@ -618,20 +611,21 @@ if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
     else
       echo "[update] earlyoom thresholds NOT applied — run deploy/oom-hardening.sh on the host"
     fi
-    # ttm.pages_limit for THIS boot. It has to be BELOW MemTotal to do anything: at or above
-    # it, the over-commit it exists to refuse simply never trips, and the box livelocks
-    # instead. scripts/strix-halo-host-setup.sh derives the same MemTotal-16GiB figure for
-    # grub (which is what makes it survive a reboot, and which needs the host).
-    _mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-    if [ "$_mem_kb" -gt 0 ]; then
-      _pages=$(( (_mem_kb - 16 * 1024 * 1024) / 4 ))
-      if [ "$_pages" -gt 0 ] && host_module_param_write ttm/parameters/pages_limit "$_pages"; then
-        echo "[update] ttm.pages_limit set to $_pages pages ($((_pages / 262144)) GiB) for this boot"
-      else
-        echo "[update] ttm.pages_limit NOT settable at runtime — it needs the grub entry"
-        echo "[update]   (Ops -> Host settings shows whether the running value is safe)"
-      fi
-    fi
+    # ttm.pages_limit is deliberately NOT written here.
+    #
+    # This used to attempt a runtime write and report success. That was wrong, and it
+    # reported a no-op as a fix from 2026-08-19 until this change. The GTT bound is not
+    # the ttm_tt_populate soft loop (which, when nothing is swappable, breaks and
+    # allocates anyway) — it is the resource-manager size:
+    #
+    #   amdgpu_ttm.c   gtt_size = ttm_tt_pages_limit() << PAGE_SHIFT   (at probe)
+    #   amdgpu_gtt_mgr.c  if (ttm_resource_manager_usage(man) > man->size) return -ENOSPC;
+    #
+    # `man->size` is assigned once at probe and nothing re-reads the module parameter
+    # afterwards. So the write succeeds, reads back the new value, and changes no cap.
+    # Only the grub entry binds, which is a genuine host step with no PWA equivalent —
+    # Ops -> Host settings reports the real enforced value (mem_info_gtt_total IS
+    # man->size) so the owner can see whether a reboot is owed.
   fi
 fi
 

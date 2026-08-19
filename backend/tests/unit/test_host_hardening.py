@@ -16,6 +16,7 @@ from pathlib import Path
 _DEPLOY = Path(__file__).resolve().parents[3] / "deploy"
 _UPDATE = _DEPLOY / "update-inner.sh"
 _HARDENING = _DEPLOY / "oom-hardening.sh"
+_HARDENING_SETUP = _DEPLOY.parent / "scripts" / "strix-halo-host-setup.sh"
 
 
 def _earlyoom_args(text: str) -> str:
@@ -90,3 +91,72 @@ def test_the_reclaim_knobs_agree_across_both_paths() -> None:
             found = re.search(rf"{knob}\D{{0,4}}(\d+)", text)
             assert found, f"{knob} is not set at all in {name}"
             assert found.group(1) == value, f"{knob} is {found.group(1)} in {name}, want {value}"
+
+
+def _merge(grub_text: str, params: str, tmp_path: Path) -> tuple[str, str]:
+    """Run the host script's grub-merge block verbatim, so the test cannot drift from it."""
+    import os
+    import re as _re
+    import subprocess
+    import sys
+
+    marker = (
+        'ADDED="$(GRUB_FILE="$GRUB_FILE" GRUB_TMP="$GRUB_TMP" PARAMS="$PARAMS" python3 - <<\'PY\'\n'
+    )
+    body = _HARDENING_SETUP.read_text().split(marker, 1)[1].split("\nPY\n", 1)[0]
+    src, out = tmp_path / "grub", tmp_path / "out"
+    src.write_text(grub_text)
+    result = subprocess.run(
+        [sys.executable, "-c", body],
+        env={**os.environ, "GRUB_FILE": str(src), "GRUB_TMP": str(out), "PARAMS": params},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    line = _re.search(r'^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"$', out.read_text(), _re.M)
+    assert line
+    return result.stdout.strip(), line.group(1)
+
+
+def test_an_existing_pages_limit_is_replaced_not_skipped(tmp_path: Path) -> None:
+    """The bug this closes made the script a no-op on the one box that needed it.
+
+    Merging by key-ABSENCE meant a host already carrying `ttm.pages_limit=32505856`
+    (124 GiB — above MemTotal, therefore binding nothing) printed "already present —
+    nothing to do" and changed nothing, forever. The value is load-bearing, so it has to
+    be replaced."""
+    before = 'GRUB_CMDLINE_LINUX_DEFAULT="quiet amd_iommu=off ttm.pages_limit=32505856"\n'
+    changed, after = _merge(before, "amd_iommu=off ttm.pages_limit=27262976", tmp_path)
+    assert "ttm.pages_limit=27262976" in after
+    assert "32505856" not in after, "the stale, non-binding value survived"
+    assert "quiet" in after and "amd_iommu=off" in after, "unrelated params were dropped"
+    assert changed, "a real change reported nothing, so the operator sees no diff to confirm"
+
+
+def test_the_deprecated_gttsize_is_removed(tmp_path: Path) -> None:
+    """The kernel itself prints a deprecation warning pointing at ttm.pages_limit, and
+    carrying both invites the two disagreeing."""
+    before = 'GRUB_CMDLINE_LINUX_DEFAULT="amdgpu.gttsize=126976 ttm.pages_limit=32505856"\n'
+    _changed, after = _merge(before, "ttm.pages_limit=27262976", tmp_path)
+    assert "gttsize" not in after
+
+
+def test_the_merge_is_idempotent(tmp_path: Path) -> None:
+    """A second run must report nothing, or the operator is asked to confirm a no-op
+    reboot every time."""
+    before = 'GRUB_CMDLINE_LINUX_DEFAULT="quiet ttm.pages_limit=27262976"\n'
+    changed, after = _merge(before, "ttm.pages_limit=27262976", tmp_path)
+    assert changed == "", f"reported a change against an already-correct file: {changed}"
+    assert "ttm.pages_limit=27262976" in after
+
+
+def test_no_runtime_write_of_pages_limit_returns() -> None:
+    """`man->size` is snapshotted at probe from ttm_tt_pages_limit(), so a write to
+    /sys/module/ttm/parameters/pages_limit succeeds, reads back the new value, and moves
+    no cap. The update used to do exactly that and report it as a fix."""
+    text = _UPDATE.read_text()
+    live = "\n".join(ln for ln in text.splitlines() if not ln.strip().startswith("#"))
+    assert "ttm/parameters/pages_limit" not in live, (
+        "the update is writing ttm.pages_limit at runtime again — it cannot work, and it "
+        "reports success while changing nothing"
+    )

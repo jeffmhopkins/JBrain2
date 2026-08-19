@@ -39,13 +39,32 @@ if ! grep -qi 'AMD' /proc/cpuinfo 2>/dev/null; then
 fi
 
 # --- 1. Kernel boot parameters (unified-memory sizing + GPU perf) ------------
-# amd_iommu=off: better GPU access on unified memory; gttsize lets the iGPU address
-# ~124GB of the shared pool. Added only if absent (an existing value is respected,
-# not overwritten).
+# amd_iommu=off: a benchmark tweak, contested upstream — kept only because it is already
+# deployed here. `amdgpu.gttsize` is DEPRECATED (the kernel prints a warning pointing at
+# ttm.pages_limit) and is no longer written.
 #
-# `ttm.pages_limit` is the one that has to be RIGHT, not just large. It is the only
-# mechanism that turns a GTT over-commit into a clean `-ENOSPC` before the pages are
-# requested. Without it the box does not OOM-kill and recover — every task enters direct
+# `ttm.pages_limit` is the one that has to be RIGHT, not just large, and the mechanism is
+# worth naming precisely because two comments in this repo used to get it wrong.
+#
+# It is NOT the `ttm_tt_populate` soft loop. That loop compares ttm_pages_allocated to the
+# limit and calls ttm_global_swapout(), but a return of 0 (nothing swappable — i.e. every
+# BO pinned, which is exactly a serving model) BREAKS the loop and allocates anyway; and
+# -ENOSPC cannot even escape that path, since ttm_bo_swapout_cb rewrites it to -EBUSY and
+# ttm_lru_walk_for_evict rewrites -EBUSY to 0.
+#
+# The real bound is the GTT RESOURCE MANAGER size:
+#
+#   amdgpu_ttm.c      gtt_size = ttm_tt_pages_limit() << PAGE_SHIFT      (at probe)
+#   amdgpu_gtt_mgr.c  if (ttm_resource_manager_usage(man) > man->size) return -ENOSPC;
+#
+# That is a genuine allocator refusal before pages are handed out. Two consequences: the
+# value only binds if it is BELOW MemTotal (the stock default is already MemTotal/2, so a
+# larger value RAISES the ceiling rather than setting one), and it is read exactly once at
+# probe — so this must be set via grub. A runtime write to /sys/module/ttm/parameters/
+# pages_limit succeeds, reads back the new value, and moves no cap. `mem_info_gtt_total`
+# reports man->size and is therefore the only honest readout of what is enforced.
+#
+# Without a binding value the box does not OOM-kill and recover — every task enters direct
 # reclaim, finds nothing reclaimable, and the machine simply stops answering. That is the
 # freeze this host has taken repeatedly, most recently a seven-hour livelock on
 # 2026-08-19 that needed a power cycle.
@@ -62,7 +81,7 @@ PAGES_LIMIT="$(awk -v reserve="$RESERVE_GIB" '
 ' /proc/meminfo)"
 say "ttm.pages_limit=$PAGES_LIMIT pages ($((PAGES_LIMIT / 262144)) GiB) — MemTotal less ${RESERVE_GIB} GiB"
 GRUB_FILE=/etc/default/grub
-PARAMS="amd_iommu=off amdgpu.gttsize=126976 ttm.pages_limit=$PAGES_LIMIT"
+PARAMS="amd_iommu=off ttm.pages_limit=$PAGES_LIMIT"
 if [ -f "$GRUB_FILE" ]; then
   # Compute the merged file into a temp WITHOUT touching the original; print the
   # params that would be added. We only commit it after confirmation.
@@ -74,13 +93,34 @@ params = os.environ["PARAMS"].split()
 key = "GRUB_CMDLINE_LINUX_DEFAULT"
 m = re.search(rf'^{key}="(.*)"$', src, re.M)
 cur = m.group(1) if m else ""
-have = {t.split("=", 1)[0] for t in cur.split()}
-add = [p for p in params if p.split("=", 1)[0] not in have]
-if add:
-    line = f'{key}="{(cur + " " + " ".join(add)).strip()}"'
+# Key-absence-only merging was a silent no-op on the box that needed this most: it
+# already carried ttm.pages_limit=32505856 (124 GiB, above MemTotal, so binding
+# nothing), and a re-run printed "already present" and changed it. Params whose VALUE
+# is load-bearing are now replaced, not skipped.
+REPLACE = {"ttm.pages_limit"}
+# Deprecated by the kernel in favour of ttm.pages_limit; removed if present.
+DROP = {"amdgpu.gttsize"}
+
+want = {p.split("=", 1)[0]: p for p in params}
+kept, changed = [], []
+for tok in cur.split():
+    k = tok.split("=", 1)[0]
+    if k in DROP:
+        changed.append(f"-{tok}")
+        continue
+    if k in REPLACE and k in want and want[k] != tok:
+        changed.append(f"{tok} -> {want[k]}")
+        kept.append(want.pop(k))
+        continue
+    want.pop(k, None)          # already present and acceptable
+    kept.append(tok)
+add = list(want.values())
+changed.extend(add)
+if changed:
+    line = f'{key}="{" ".join(kept + add).strip()}"'
     src = re.sub(rf'^{key}=".*"$', line, src, count=1, flags=re.M) if m else src + f"\n{line}\n"
 open(os.environ["GRUB_TMP"], "w").write(src)
-print(" ".join(add))
+print(" ".join(changed))
 PY
 )"
   if [ -n "$ADDED" ]; then

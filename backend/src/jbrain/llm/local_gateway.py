@@ -370,8 +370,13 @@ class LocalGatewayClient:
                 raise LocalGatewayError(str(exc)) from exc
 
         if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
-            await _do_load()
-            self._drop_weights_cache(model)
+            try:
+                await _do_load()
+            finally:
+                # `finally`, not the next line: a load that raises has still READ the
+                # weights, so its page-cache copy exists and nothing else will ever drop
+                # it. See the guarded branch below for the measurement that proved it.
+                self._drop_weights_cache(model)
             await self._warm(served_model, system=warm_system, tools=warm_tools)
             return
 
@@ -384,14 +389,30 @@ class LocalGatewayClient:
         gpu_guard.refuse_if_no_device_room(
             await self._gpu_probe.sample(), projected_gb, served_model
         )
-        await gpu_guard.guarded_load(
-            _do_load,
-            probe=self._gpu_probe,
-            projected_gb=projected_gb,
-            target=served_model,
-            abort=lambda: self.unload(served_model),
-        )
-        self._drop_weights_cache(model)
+        try:
+            await gpu_guard.guarded_load(
+                _do_load,
+                probe=self._gpu_probe,
+                projected_gb=projected_gb,
+                target=served_model,
+                abort=lambda: self.unload(served_model),
+            )
+        finally:
+            # MEASURED: an aborted qwen3.5-4b left `Cached` +4.29 GiB — its entire 4.3 GB
+            # weight file — while a successful 16.8 GB load left it unchanged. The drop
+            # works; it simply never ran here, because `guarded_load` raises
+            # `GpuBudgetError` from outside its own try/finally and this call used to sit
+            # on the line after the `await`.
+            #
+            # That mattered more than a leak: `host_metrics.read_memory_gb` counts page
+            # cache as USED, so a stranded copy shrinks the apparent headroom, which makes
+            # the next load likelier to abort, which strands more. `residency` suppresses
+            # `GpuBudgetError` on the end-of-turn restore, so the ratchet turned silently.
+            #
+            # `abort` unloads the model before this runs, so llama-server has released the
+            # file and its folios are unlocked — which is what makes the drop effective
+            # here rather than racing an in-flight read.
+            self._drop_weights_cache(model)
         await self._warm(served_model, system=warm_system, tools=warm_tools)
 
     async def _warm(

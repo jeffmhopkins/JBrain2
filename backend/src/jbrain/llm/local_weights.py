@@ -14,10 +14,13 @@ catalog's nominal size.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import os
+import platform
 
 # Weights are GiB-scale; report in GiB to match the catalog's size_gb units.
 _BYTES_PER_GIB = 1024**3
+_PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 
 
 def weights_size_gb(models_dir: str, model_id: str) -> float | None:
@@ -119,11 +122,57 @@ def drop_image_model_page_cache(models_dir: str) -> float | None:
     return _drop_page_cache(models_dir, _IMAGE_WEIGHT_SUFFIXES)
 
 
+class _CachestatRange(ctypes.Structure):
+    _fields_ = [("off", ctypes.c_uint64), ("len", ctypes.c_uint64)]
+
+
+class _Cachestat(ctypes.Structure):
+    _fields_ = [
+        ("nr_cache", ctypes.c_uint64),
+        ("nr_dirty", ctypes.c_uint64),
+        ("nr_writeback", ctypes.c_uint64),
+        ("nr_evicted", ctypes.c_uint64),
+        ("nr_recently_evicted", ctypes.c_uint64),
+    ]
+
+
+# cachestat(2), Linux 6.5+. No glibc wrapper, so it goes through syscall(2) directly.
+_SYS_CACHESTAT = {"x86_64": 451, "aarch64": 451}.get(platform.machine())
+
+
+def _cached_pages(fd: int) -> int | None:
+    """Pages of THIS file currently in the page cache, or None if unavailable.
+
+    The reason this exists: `posix_fadvise` returns 0 unconditionally — the kernel
+    discards the count from `invalidate_mapping_pages()` and reports success whether it
+    evicted every page or none. This function was previously written to add
+    `fstat().st_size` after that call, so its "GiB dropped" was the total size of every
+    matching file, evicted or not. It could not distinguish a working drop from a total
+    no-op, which is exactly the failure mode the drop is prone to (see the caveats in
+    `drop_weights_page_cache`)."""
+    if _SYS_CACHESTAT is None:
+        return None
+    libc = ctypes.CDLL(None, use_errno=True)
+    span, out = _CachestatRange(0, 0), _Cachestat()  # (0, 0) = the whole file
+    if libc.syscall(_SYS_CACHESTAT, fd, ctypes.byref(span), ctypes.byref(out), 0) != 0:
+        return None
+    return int(out.nr_cache)
+
+
 def _drop_page_cache(root: str, suffixes: tuple[str, ...]) -> float | None:
-    """Advise the kernel to drop clean page cache for every matching file under `root`."""
+    """Drop clean page cache for every matching file under `root`, returning the GiB
+    ACTUALLY released — measured, not assumed.
+
+    Advisory throughout: the kernel skips folios that are dirty, under writeback, locked
+    for in-flight I/O, or mapped by anyone. Weights are read-only so nothing can be lost,
+    but a partial drop is normal and a total no-op is possible, which is why the return
+    value is a measurement rather than a total of file sizes. On a kernel without
+    `cachestat(2)` there is nothing to measure with, and the function reports None rather
+    than inventing a number."""
     if not os.path.isdir(root):
         return None
-    dropped = 0
+    freed_pages = 0
+    measured = False
     for dirpath, _dirs, files in os.walk(root):
         # hf's download staging holds partial shards nothing has read into a model.
         if ".cache" in os.path.relpath(dirpath, root).split(os.sep):
@@ -135,9 +184,17 @@ def _drop_page_cache(root: str, suffixes: tuple[str, ...]) -> float | None:
             with contextlib.suppress(OSError, AttributeError):
                 fd = os.open(path, os.O_RDONLY)
                 try:
+                    before = _cached_pages(fd)
                     # (0, 0) means "the whole file" to posix_fadvise.
                     os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-                    dropped += os.fstat(fd).st_size
+                    after = _cached_pages(fd)
+                    if before is not None and after is not None:
+                        measured = True
+                        freed_pages += max(0, before - after)
                 finally:
                     os.close(fd)
-    return round(dropped / _BYTES_PER_GIB, 1) if dropped else None
+    if not measured:
+        return None
+    # Two decimals, not one: at one decimal an 8 MiB drop and a total no-op both render
+    # as 0.0, which reinstates exactly the ambiguity this function was rewritten to remove.
+    return round(freed_pages * _PAGE_SIZE / _BYTES_PER_GIB, 2)
