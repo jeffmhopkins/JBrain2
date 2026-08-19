@@ -82,3 +82,30 @@ def test_the_real_qwen35_4b_numbers_reproduce_the_bug() -> None:
     assert report is not None
     assert report.total_gb > 12.0, report
     assert catalog_divergence(report, predicted_gb=7.25) > 5.0
+
+
+def test_sse_framed_lines_still_parse() -> None:
+    """llama-swap serves `/logs/stream/*` as Server-Sent Events, so each line arrives as
+    `data: <original>`.
+
+    Unframed, the regex reads `data` as the emitting subsystem and then fails to find the
+    buffer kind — which is the leading explanation for a 3772-byte capture from the live
+    box parsing to nothing on 2026-08-19. Unconfirmed at the time of writing, hence
+    `footprint_unparsed` logging a sample rather than this being assumed correct."""
+    framed = "\n".join(f"data: {line}" for line in _BUFFERS.strip().splitlines())
+    report = parse_memory_report(framed)
+    assert report is not None, "SSE framing defeated the parse"
+    assert report.kv_gb == round(8144.00 / 1024, 2)
+
+
+def test_unframed_lines_are_untouched_by_the_stripper() -> None:
+    """A build that streams raw must not be broken by the SSE handling."""
+    assert parse_memory_report(_BUFFERS) == parse_memory_report(
+        "\n".join(f"data: {line}" for line in _BUFFERS.strip().splitlines())
+    )
+
+
+def test_a_colon_in_the_payload_is_not_mistaken_for_framing() -> None:
+    """Only the SSE field names are stripped, and only at line start — a device or
+    subsystem name containing a colon must survive."""
+    assert parse_memory_report("data: load_tensors: Vulkan0 model buffer size = 1024.00 MiB")

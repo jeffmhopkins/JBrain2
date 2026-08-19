@@ -555,6 +555,17 @@ class LocalGatewayClient:
         with contextlib.suppress(Exception):
             report = memory_report.parse_memory_report("\n".join(captured))
             if report is None:
+                # Captured something and could not read it — the case that has to be
+                # LOUD rather than silent. A 3772-byte capture that parsed to nothing is
+                # how this failed on 2026-08-19, and with no sample there was no way to
+                # tell a framing problem from a build that prints nothing. The sample is
+                # model-load output (buffer sizes, device names), not user content.
+                log.warning(
+                    "local_gateway.footprint_unparsed",
+                    model=model_id,
+                    lines=len(captured),
+                    sample=[line[:200] for line in captured[:6]],
+                )
                 return
             drift = memory_report.catalog_divergence(report, projected_gb)
             record = log.warning if abs(drift) >= _FOOTPRINT_DRIFT_GB else log.info
