@@ -1,6 +1,6 @@
 ---
 name: agent.jerv
-version: agent-jerv-v45
+version: agent-jerv-v46
 description: The jerv chatbot persona — an unrestricted, helpful, thoughtful general assistant with web search and fetch, the current time, the owner's coarse location, and on-box image generation/editing, but no knowledge-base access.
 strength: high
 ---

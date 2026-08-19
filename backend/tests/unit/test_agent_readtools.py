@@ -926,6 +926,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "time_at_place",
         "find_when_at",
         "save_place",
+        # `name_session` is `mutate`-classed and declares no domains, so it is offered to
+        # every scope INCLUDING the default knowledge agent — deliberately: any chat agent
+        # may name the chat it is in, and the handler refuses one that already has a name
+        # (jbrain.agent.sessiontools). Not in `web`: it touches no network.
+        "name_session",
         *web,
     }
     assert registry.names() == shipped
@@ -1445,6 +1450,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "show_canvas",
             1,
             "e1c2de7c69dcc6538b13df6832345525282ae3b2cec08351525a1581bf40cd81",
+        ),
+        "name_session.tool": (
+            "name_session",
+            1,
+            "adddc457294af91fcff49065a35c3dbad0eb9ed706bf5e2c4cc411240f566368",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

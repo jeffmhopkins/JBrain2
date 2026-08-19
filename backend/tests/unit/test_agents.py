@@ -125,6 +125,9 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "research_report",
             "show_research_report",
             "remove_research_report",
+            # Names THIS chat, from inside the turn — replacing the `session.title`
+            # completion that evicted jerv's primed prefix to do the same job.
+            "name_session",
         }
     )
     assert jerv.reads_knowledge_base is False
@@ -416,8 +419,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v45",
-            "11e727e6897d95774ef9b397ebb61191360152e1d0e0ec9267a4a688282738d3",
+            "agent-jerv-v46",
+            "6d8388d164948b511dfadc6f7d3faa3e00019534ad6060b01c50b1bce82462cc",
         ),
         "archivist": (
             "agent-archivist-v6",

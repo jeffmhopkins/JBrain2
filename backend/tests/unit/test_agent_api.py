@@ -19,6 +19,7 @@ from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec,
 from jbrain.agent.identity import _ME_FRAME
 from jbrain.agent.loop import ToolOutput
 from jbrain.agent.session import AgentSessionInfo
+from jbrain.agent.sessiontools import UNNAMED_CHAT_BLOCK
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.agent.transcript_store import TurnRecord
@@ -943,10 +944,12 @@ def test_chat_history_is_replayed_into_the_turn(
         },
     )
     assert resp.status_code == 200
-    # The loop received prior turns plus the new user message, in order — after the
-    # ambient date/time block that now leads every turn (filtered out here).
+    # The loop received prior turns plus the new user message, in order — after the ambient
+    # blocks in the volatile suffix (filtered out here): the date/time line, and — because this
+    # session is untitled — the `name_session` hint.
     msgs = fake.stream_calls[0]["messages"]
-    sent = [m for m in msgs if _CLOCK_FRAME not in getattr(m, "text", "")]
+    ambient = (_CLOCK_FRAME, UNNAMED_CHAT_BLOCK)
+    sent = [m for m in msgs if not any(frame in getattr(m, "text", "") for frame in ambient)]
     assert [type(m).__name__ for m in sent] == [
         "UserMessage",
         "AssistantMessage",
@@ -1858,25 +1861,44 @@ def test_list_carries_card_metadata(
     assert card["staged_count"] == 0
 
 
-def test_chat_autotitles_an_untitled_session(
+def test_an_untitled_chat_is_told_it_has_no_name(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:
+    """The chat names ITSELF now, via the `name_session` tool. All the API owes it is the
+    signal that naming is needed — and NO second completion: the `session.title` call this
+    replaced followed agent.turn onto the interactive model, where it evicted the primed
+    prefix and cost the real turn a ~100 s cold prefill."""
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
-    fake = FakeLlmClient(
-        responses=["Weekly Recap"],  # what the titler's complete() returns
-        turns=[LlmTurn("hi there", (), "end_turn", LlmUsage(7, 3))],
-        stream_chunks=[["hi ", "there"]],
-    )
-    # session.title is configured (as it is in TASK_DEFAULTS) so the pre-turn titler can
-    # route it; with strength dropped it follows agent.turn onto the chat's own model.
-    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
-        {"xai": fake}, {"agent.turn": ("xai", "grok-4.3"), "session.title": ("xai", "grok-4.3")}
-    )
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+
     client.post("/api/chat", json={"session_id": "sess-1", "message": "what happened this week?"})
-    # The chat is named UP FRONT, before the turn, from the opening question.
-    assert sessions_store._by_id["sess-1"].title == "Weekly Recap"
-    assert any("what happened this week?" in c["user_text"] for c in fake.calls)
+
+    msgs = fake.stream_calls[0]["messages"]
+    assert any(UNNAMED_CHAT_BLOCK in getattr(m, "text", "") for m in msgs)
+    # The hint rides the VOLATILE suffix — after the history, before the current message — so
+    # it never disturbs the cache-stable prefix it exists to protect.
+    texts = [getattr(m, "text", "") for m in msgs]
+    assert texts.index(UNNAMED_CHAT_BLOCK) < len(texts) - 1
+    # And nothing else called the model to name the chat.
+    assert fake.calls == []
+
+
+def test_a_named_chat_gets_no_naming_hint(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    """The hint is what tells jerv to call `name_session`; a named chat must not get it, or
+    every turn would invite a rename the handler then has to refuse."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "My Chat", "active", ("general",), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "anything"})
+
+    msgs = fake.stream_calls[0]["messages"]
+    assert not any(UNNAMED_CHAT_BLOCK in getattr(m, "text", "") for m in msgs)
 
 
 def test_chat_does_not_retitle_a_named_session(
@@ -1885,7 +1907,8 @@ def test_chat_does_not_retitle_a_named_session(
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "My Chat", "active", ("general",), (), NOW, NOW))
     client.post("/api/chat", json={"session_id": "sess-1", "message": "anything"})
-    # An owner-named chat is left alone — auto-titling only fills an empty title.
+    # An owner-named chat is left alone: nothing in the turn path renames it, and
+    # `name_session` refuses a chat that already has a name.
     assert sessions_store._by_id["sess-1"].title == "My Chat"
 
 
@@ -1932,7 +1955,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert call["system"] == AGENTS["jerv"].prompt
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # The run carries its version.
-    assert ("sess-j", "agent-jerv-v45") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v46") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
