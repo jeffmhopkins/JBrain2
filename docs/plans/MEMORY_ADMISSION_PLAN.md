@@ -93,6 +93,46 @@ while (atomic_long_read(&ttm_pages_allocated) > ttm_pages_limit || ...) {
 - The stock default is already `MemTotal / 2`, so "below MemTotal" is not even a
   tightening relative to stock.
 
+> ✅ **RESOLVED 2026-08-19 — and it reverses the paragraph below.** A second
+> mechanism exists and it is the real one. `amdgpu_ttm.c:2156` sets
+> `gtt_size = ttm_tt_pages_limit() << PAGE_SHIFT` at probe and passes it to
+> `amdgpu_gtt_mgr_init()`; `amdgpu_gtt_mgr.c:129-134` then refuses:
+>
+> ```c
+> if (!(place->flags & TTM_PL_FLAG_TEMPORARY) &&
+>     ttm_resource_manager_usage(man) > man->size) {
+>         r = -ENOSPC;
+> ```
+>
+> That IS a clean allocator refusal before pages are handed out. So:
+>
+> | mechanism | refuses? |
+> |---|---|
+> | `ttm_tt_populate` soft loop (analysed below) | **no** — breaks and allocates anyway |
+> | GTT resource-manager size (`man->size`) | **YES** — `-ENOSPC` |
+>
+> **A BOOT-TIME `ttm.pages_limit` below MemTotal is a genuine hard cap.**
+> **A RUNTIME write is not**: `man->size` is assigned once at
+> `ttm_resource.c:541` and nothing re-reads `ttm_tt_pages_limit()` afterwards.
+> The runtime write fails *silently and looks like success* — it returns 0 and
+> reads back the new value while the cap is untouched. `mem_info_gtt_total`
+> reports `man->size`, so it is the only honest readout of the enforced cap.
+>
+> Consequences: v1's conclusion ("inert, lower it") was RIGHT, for a mechanism
+> neither v1 nor v2 identified. **W1b is dead. W1d (grub + reboot) is the only
+> mechanism**, and is a terminal dependency that genuinely cannot be designed
+> out. The Ops card's `ttm` row and its grub remedy are correct after all.
+> Note the stock default is already `MemTotal/2`, so our 124 GiB cmdline
+> *raises* the ceiling rather than setting one; and `TTM_PL_FLAG_TEMPORARY`
+> allocations bypass the check.
+>
+> **Also a live defect:** #1160 (merged today) writes this parameter on every
+> update and reports it produces "a clean `-ENOSPC` for the current boot". It
+> does not. It has been reporting success for a no-op since 2026-08-19.
+
+The soft-loop analysis below remains accurate for what it covers, and is kept
+because it explains why the *other* mechanism is not a backstop:
+
 > ⚠ **PENDING RE-VERIFICATION (2026-08-19).** Everything above concerns the
 > `ttm_tt_populate` soft loop, and is confirmed. But a SECOND mechanism may
 > exist and would change the conclusion: `amdgpu_ttm.c` derives the GTT
@@ -106,9 +146,10 @@ while (atomic_long_read(&ttm_pages_allocated) > ttm_pages_limit || ...) {
 > the manager size does track the parameter. Do not act on D1 or W1 until this
 > resolves.
 
-**Therefore lowering `ttm.pages_limit` does not help and makes things worse**: in
-exactly the state we care about (everything pinned) it forces a futile global LRU
-walk on every populate, adding lock traffic and shmem churn.
+**Therefore the soft loop is not a backstop**: in exactly the state we care
+about (everything pinned) it forces a futile global LRU walk on every populate,
+adding lock traffic and shmem churn. The enforcement comes entirely from
+`man->size`, set at boot.
 
 Two places assert the false version and must be corrected in the same change:
 `scripts/strix-halo-host-setup.sh:47` and `deploy/update-inner.sh:175`, both
