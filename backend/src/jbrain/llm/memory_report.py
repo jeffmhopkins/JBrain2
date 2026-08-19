@@ -63,6 +63,18 @@ class MemoryReport:
         return round(self.model_gb + self.kv_gb + self.compute_gb + (self.unaccounted_gb or 0.0), 2)
 
 
+# llama-swap serves /logs/stream/* as Server-Sent Events, so each line arrives framed as
+# `data: <original line>`. Unframed input passes through untouched, so this is safe against
+# a build that streams raw — which matters, because the framing has not been confirmed and
+# is the current best explanation for a 3772-byte capture parsing to nothing.
+_SSE = re.compile(r"^(?:data|event|id|retry)\s*:\s?", re.I)
+
+
+def strip_sse_framing(log_text: str) -> str:
+    """Drop SSE field prefixes so the payload can be parsed as ordinary log lines."""
+    return "\n".join(_SSE.sub("", line) for line in log_text.splitlines())
+
+
 def parse_memory_report(log_text: str) -> MemoryReport | None:
     """The LAST complete report in `log_text`, or None if the build printed none.
 
@@ -70,6 +82,7 @@ def parse_memory_report(log_text: str) -> MemoryReport | None:
     that matters is the model that just loaded. Returns None rather than a zeroed report
     when nothing matched, so a caller cannot mistake "this build does not print it" for
     "this model cost nothing"."""
+    log_text = strip_sse_framing(log_text)
     table = _parse_breakdown(log_text)
     if table is not None:
         return table

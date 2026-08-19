@@ -126,3 +126,28 @@ def test_download_staging_is_skipped(model_dir: Path) -> None:
     drop_weights_page_cache(str(model_dir.parent), model_dir.name)
 
     assert _cached(partial) != 0, "staging shards were dropped"
+
+
+def test_every_drop_outcome_is_logged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`0.0` and `None` are the readings worth having, and both used to be silent.
+
+    The gateway logged on `if freed:`, which was harmless while the figure was the sum of
+    file sizes and therefore always truthy. Once it became a MEASUREMENT, a drop that freed
+    nothing and a kernel that cannot measure both stopped saying anything — verified on the
+    live box, where a successful load dropped its cache and logged no line at all."""
+    from jbrain.llm import local_gateway, local_weights
+
+    events: list[str] = []
+    monkeypatch.setattr(local_gateway.log, "info", lambda event, **_kw: events.append(event))
+    client = local_gateway.LocalGatewayClient("http://gw", models_dir="/models")
+    model = next(iter(__import__("jbrain.llm.local_catalog", fromlist=["CATALOG"]).CATALOG))
+
+    for value, expected in (
+        (None, "local_gateway.weights_cache_unmeasured"),
+        (0.0, "local_gateway.weights_cache_drop_freed_nothing"),
+        (4.29, "local_gateway.weights_cache_dropped"),
+    ):
+        events.clear()
+        monkeypatch.setattr(local_weights, "drop_weights_page_cache", lambda _d, _m, v=value: v)
+        client._drop_weights_cache(model)
+        assert events == [expected], f"{value!r} logged {events}"
