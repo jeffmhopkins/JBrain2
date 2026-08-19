@@ -339,9 +339,15 @@ function eventDot(event: BoxEvent): string {
 function eventLabel(event: BoxEvent): string {
   const running = event.ended_ms === null && event.status === "running";
   const failed = event.status === "failed";
+  // Never a guess at how it ended. A stale row is one whose process died under it, so we
+  // know only that we stopped watching — said the same way for every kind, because a
+  // render aged out as stale reading "rendered an image" would claim a success that may
+  // never have happened.
+  if (event.status === "stale") {
+    return `${event.subject} — ${event.kind === "image_render" ? "render" : "load"} stopped reporting`;
+  }
   if (event.kind === "model_load") {
     if (failed) return `${event.subject} failed to load`;
-    if (event.status === "stale") return `${event.subject} — load stopped reporting`;
     return running ? `loading ${event.subject}…` : `loaded ${event.subject}`;
   }
   if (event.kind === "model_unload") {

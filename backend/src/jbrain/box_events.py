@@ -214,10 +214,14 @@ async def recent(
     seconds: float,
     now: datetime | None = None,
 ) -> list[dict[str, object]]:
-    """Events inside the trailing window, oldest first — the same ordering as the graph
-    they sit under. A still-open event is returned whenever it OVERLAPS the window (it
-    started before it and has not ended), because a load that began three minutes ago is
-    the explanation for the last three minutes of trace.
+    """Events OVERLAPPING the trailing window, oldest first — the same ordering as the graph
+    they sit under.
+
+    Overlap, not "started inside": a 90-second load is the explanation for the whole last
+    minute of trace whether it is still running or settled ten seconds ago. Selecting on
+    start alone made a load vanish from the 1m range at the instant it finished — the row
+    went from "loading gpt-oss-120b…" to gone rather than to "loaded gpt-oss-120b", while
+    the spike it caused was still on screen above it.
 
     Epoch milliseconds, matching the vitals history, so the surface can place an event
     against the plot without a timezone or precision argument."""
@@ -230,7 +234,7 @@ async def recent(
                     """
                     SELECT at, ended_at, kind, subject, detail, status, source
                     FROM app.box_events
-                    WHERE at >= :cut OR ended_at IS NULL
+                    WHERE at >= :cut OR ended_at >= :cut OR ended_at IS NULL
                     ORDER BY at
                     """
                 ),
@@ -240,10 +244,11 @@ async def recent(
     out: list[dict[str, object]] = []
     for row in rows:
         status = _status(row.status, row.at, row.ended_at, moment)
-        # An open row that has gone stale is no longer overlapping anything — drop it
-        # once it also falls out of the window, so a dead process's leftovers don't
-        # accumulate at the top of the list forever.
-        if row.at < cutoff and (row.ended_at is not None or status == "stale"):
+        # A stale row is open only because the process that opened it died — it is not
+        # overlapping anything, so it earns its place only while its START is still inside
+        # the window. Otherwise a dead process's leftovers would sit at the top of the list
+        # forever, claiming to be the most recent thing the box did.
+        if status == "stale" and row.at < cutoff:
             continue
         out.append(
             {

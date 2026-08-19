@@ -490,6 +490,18 @@ describe("what the box was doing", () => {
     expect(rows[0]).toHaveTextContent("loading gpt-oss-120b…");
   });
 
+  it("does not claim a render finished when its process died under it", async () => {
+    // The api restarted mid-render, so the row was never settled. Saying "rendered an
+    // image" would claim a success nobody observed.
+    opsVitalsEvents.mockResolvedValue([
+      event({ kind: "image_render", subject: "qwen-image", status: "stale" }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("qwen-image — render stopped reporting")).toBeInTheDocument();
+    expect(screen.queryByText(/rendered an image/)).not.toBeInTheDocument();
+  });
+
   it("does not draw an empty card on a quiet box", async () => {
     render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
     await waitFor(() => expect(opsVitalsEvents).toHaveBeenCalled());

@@ -110,6 +110,30 @@ async def test_a_load_that_started_before_the_window_still_explains_it(
     assert [e["subject"] for e in events] == ["gpt-oss-120b"]
 
 
+async def test_a_load_that_finished_inside_the_window_stays_in_it(
+    wired: async_sessionmaker,
+) -> None:
+    """The regression: selecting on START alone made a 90-second load VANISH from the 1m
+    range at the instant it settled — the row went from "loading gpt-oss-120b…" straight to
+    gone, rather than to "loaded gpt-oss-120b", while the spike it caused was still drawn
+    above it."""
+    owner = await _owner(wired)
+    started = datetime.now(tz=UTC) - timedelta(seconds=90)
+    ended = datetime.now(tz=UTC) - timedelta(seconds=10)
+
+    async with scoped_session(wired, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.box_events (at, ended_at, kind, subject, status, source) "
+                "VALUES (:at, :end, 'model_load', 'gpt-oss-120b', 'ok', 'api')"
+            ),
+            {"at": started, "end": ended},
+        )
+
+    events = await box_events.recent(wired, owner, seconds=60)
+    assert [(e["subject"], e["status"]) for e in events] == [("gpt-oss-120b", "ok")]
+
+
 async def test_settled_events_leave_the_window(wired: async_sessionmaker) -> None:
     owner = await _owner(wired)
     old = datetime.now(tz=UTC) - timedelta(seconds=3600)
