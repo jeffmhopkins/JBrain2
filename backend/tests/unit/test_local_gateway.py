@@ -74,12 +74,13 @@ async def test_load_probes_health_then_warms_with_one_token() -> None:
     await _client(handle).load("qwen3-vl-30b-a3b")
     # Health GET loads the model; the 1-token POST faults the mmap'd weights in so the
     # user's first real turn isn't the cold load.
-    # The trailing log read compares what llama.cpp says the load cost against the
-    # catalog's prediction, so a wrong entry is a logged number rather than a freeze.
-    assert seen == [
+    # Health GET loads the model; the 1-token POST faults the weights in so the user's
+    # first real turn isn't the cold load. The upstream capture runs alongside and is
+    # covered separately — asserting it here would encode a race, since a load this fast
+    # can finish before the watcher task is ever scheduled.
+    assert [c for c in seen if not c[1].startswith("/logs")] == [
         ("GET", "/upstream/qwen3-vl-30b-a3b/health"),
         ("POST", "/upstream/qwen3-vl-30b-a3b/v1/chat/completions"),
-        ("GET", "/logs/upstream"),
     ]
     assert body["model"] == "qwen3-vl-30b-a3b"
     assert body["max_tokens"] == 1
@@ -210,12 +211,14 @@ async def test_load_progress_is_none_when_logs_are_unavailable() -> None:
     assert await _client(lambda r: httpx.Response(404)).load_progress() is None
 
 
-async def test_tail_logs_defaults_to_the_upstream_buffer() -> None:
-    """llama-swap keeps the wrapper's log and llama-server's output in SEPARATE buffers,
-    and `/logs` is the wrapper's — HTTP access lines only. This defaulted to `/logs` while
-    documenting itself as returning both interleaved, so llama.cpp's per-load memory
-    breakdown was unreachable; two catalog KV figures were 1.4 and >5.5 GiB wrong with the
-    correct numbers being printed at every load into a buffer nothing read."""
+async def test_tail_logs_reads_the_only_buffered_endpoint() -> None:
+    """`/logs` is llama-swap's sole BUFFERED route.
+
+    A previous version took a `source` and fetched `/logs/upstream` for llama-server's own
+    output. That path does not exist — the real upstream routes are `/logs/stream/*`, which
+    stream and carry no history. Verified against the live box: `/logs/upstream` 404s, the
+    fallback returned `/logs`, and nothing was gained. Captured during a load instead; see
+    `capture_upstream_logs`."""
     seen: dict[str, str] = {}
 
     def handle(req: httpx.Request) -> httpx.Response:
@@ -224,35 +227,31 @@ async def test_tail_logs_defaults_to_the_upstream_buffer() -> None:
 
     out = await _client(handle).tail_logs()
     assert out == "slot 0 launch\nslot 0 released\n"
-    assert seen["path"] == "/logs/upstream"
-
-
-async def test_tail_logs_falls_back_when_the_build_has_no_split_buffers() -> None:
-    """Older llama-swap serves only `/logs`. Falling back keeps this working across
-    versions instead of 404ing the operator's only view of the engine."""
-    seen: list[str] = []
-
-    def handle(req: httpx.Request) -> httpx.Response:
-        seen.append(req.url.path)
-        if req.url.path == "/logs/upstream":
-            return httpx.Response(404)
-        return httpx.Response(200, text="combined\n")
-
-    assert await _client(handle).tail_logs() == "combined\n"
-    assert seen == ["/logs/upstream", "/logs"]
-
-
-async def test_tail_logs_can_still_ask_for_the_proxy_buffer() -> None:
-    """The slot-acquired / slot-RELEASED account of a turn lives in the wrapper log, and
-    is what answers whether a Stop actually halts decoding."""
-    seen: dict[str, str] = {}
-
-    def handle(req: httpx.Request) -> httpx.Response:
-        seen["path"] = req.url.path
-        return httpx.Response(200, text="slot 0 released\n")
-
-    await _client(handle).tail_logs("proxy")
     assert seen["path"] == "/logs"
+
+
+async def test_the_upstream_capture_streams_and_keeps_what_it_read() -> None:
+    """It must append into a caller-owned list, not return.
+
+    `/logs/stream/upstream` has no history, so the capture has to be running before the
+    load and cancelled after — and cancellation must not discard what was already read,
+    which a return value would."""
+    collected: list[str] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        assert req.url.path == "/logs/stream/upstream"
+        return httpx.Response(200, text="load_tensors: Vulkan0 model buffer size = 10.00 MiB\n")
+
+    await _client(handle).capture_upstream_logs(collected)
+    assert any("model buffer size" in line for line in collected)
+
+
+async def test_the_upstream_capture_is_silent_when_the_route_is_missing() -> None:
+    """Our pinned llama-swap 404s this route. A load must never fail because its
+    instrumentation could not attach."""
+    collected: list[str] = []
+    await _client(lambda r: httpx.Response(404)).capture_upstream_logs(collected)
+    assert collected == []
 
 
 async def test_tail_logs_raises_when_the_gateway_is_unreachable() -> None:
@@ -298,3 +297,32 @@ async def test_slot_action_proceeds_for_a_resident_model() -> None:
 
     result = await _client(handle).slot_action("gpt-oss-120b", 1, "save", filename="x.bin")
     assert result["n_saved"] == 27476
+
+
+async def test_the_load_path_starts_the_capture_before_loading() -> None:
+    """Wiring, asserted on ordering rather than on observed HTTP.
+
+    llama.cpp prints its per-buffer sizes ONCE, while loading, and the stream carries no
+    history — so a capture started after `_do_load` would reliably see nothing.
+
+    The first version of this test FAILED, and was right to: `ensure_future` only schedules
+    the watcher, and the loop ran the whole load before ever starting it. The load now waits
+    (briefly, bounded) for the stream to attach."""
+    order: list[str] = []
+
+    async def fake_capture(self: object, collected: list[str], attached: object = None) -> None:
+        order.append("capture")
+        if attached is not None:
+            attached.set()  # type: ignore[attr-defined]
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if "health" in req.url.path:
+            order.append("load")
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    client = _client(handle)
+    # Bound on the instance, so the class (and every other test) is untouched.
+    client.capture_upstream_logs = fake_capture.__get__(client)  # type: ignore[method-assign]
+    await client.load("qwen3-vl-30b-a3b")
+
+    assert order and order[0] == "capture", order
