@@ -511,6 +511,10 @@ async def run() -> None:
         gpu_probe=gpu_guard.SupervisorGpuMemProbe(
             lambda: supervisor_client, settings.supervisor_token
         ),
+        # Same overrides the coordinator below budgets with, so the guard reserves for the
+        # window llama-swap will really serve rather than the catalog default.
+        windows_loader=lambda: worker_settings_store.llm_local_context_windows(queue.SYSTEM_CTX),
+        slots_loader=lambda: worker_settings_store.llm_local_parallel_slots(queue.SYSTEM_CTX),
     )
     # The box's sole model evictor: llama-swap runs every model in one `swap: false`
     # group (jbrain.llm.llama_swap_config), so it NEVER evicts on its own — an unadmitted

@@ -29,6 +29,7 @@ strip that suffix once here.
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
 import httpx
@@ -68,6 +69,8 @@ class LocalGatewayClient:
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 3.0,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
+        windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
+        slots_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
     ):
         self._root = base_url.rstrip("/").removesuffix("/v1")
         self._transport = transport
@@ -80,6 +83,15 @@ class LocalGatewayClient:
         # console load, and the residency RESTORE — three of the six call sites). A safety
         # check a caller can decline is not a safety check.
         self._gpu_probe = gpu_probe
+        # The live per-model context-window and parallel-slot overrides (Settings → LLM), read
+        # per load. They live here for the same chokepoint reason as the probe: KV is LINEAR in
+        # the window, so a guard that reserves for the catalog default while llama-swap serves
+        # an override is not sized for the load it is guarding. Measured: the abliterated 27B
+        # served at `-c 262144` against a 32768 catalog default reserved 20.29 GB for a load
+        # that took 36.92 GB. Unset (the tests, the CLI without a settings context) falls back
+        # to the catalog default and one slot, which is what an unconfigured box serves.
+        self._windows_loader = windows_loader
+        self._slots_loader = slots_loader
 
     async def running(self) -> set[str]:
         """Served-model names currently loaded, or an empty set on ANY failure
@@ -231,6 +243,21 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
         return parsed if isinstance(parsed, dict) else {}
 
+    async def _served_shape(self, model: local_catalog.LocalModel) -> tuple[int, int]:
+        """The (context window, parallel slots) llama-swap will actually serve `model` with —
+        the operator's saved overrides when a loader is wired, else the catalog default and one
+        slot. Best-effort: a settings read that fails must not block a load, so it degrades to
+        the catalog shape rather than raising, and the watchdog still covers the difference."""
+        window, slots = model.context_window, 1
+        try:
+            if self._windows_loader is not None:
+                window = (await self._windows_loader()).get(model.id, window)
+            if self._slots_loader is not None:
+                slots = (await self._slots_loader()).get(model.id, slots)
+        except Exception:  # noqa: BLE001 — any settings failure falls back, never blocks
+            log.warning("local_gateway.served_shape_unavailable", model=model.id)
+        return window, slots
+
     async def load(
         self,
         served_model: str,
@@ -269,7 +296,10 @@ class LocalGatewayClient:
         use, the prior behaviour). Generous timeout: a cold 80B reads tens of GB of weights."""
         load_timeout = max(self._timeout, 120.0)
         model = local_catalog.get_by_served(served_model)
-        projected_gb = local_catalog.load_footprint_gb(model) if model else 0.0
+        projected_gb = 0.0
+        if model:
+            window, slots = await self._served_shape(model)
+            projected_gb = local_catalog.load_footprint_gb(model, window, slots=slots)
 
         async def _do_load() -> None:
             try:

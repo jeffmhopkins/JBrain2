@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import pathlib
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 
 import httpx
@@ -300,3 +301,72 @@ async def test_slots_and_metrics_refuse_a_non_resident_model() -> None:
         with pytest.raises(Exception) as exc:  # noqa: PT011 — LocalGatewayError
             await call
         assert "not resident" in str(exc.value)
+
+
+@pytest.mark.anyio
+async def test_the_preflight_reserves_for_the_served_window_not_the_catalog_default() -> None:
+    """The guard sizes off the `-c` llama-swap will really serve.
+
+    This is the bug that motivated the window parameter. The abliterated 27B ships a 32768
+    catalog window and is served at `-c 262144`; with the guard blind to the override it
+    reserved 20.29 GB for a load that MEASURED 36.92 GB on the box — 1.8x light, on the one
+    code path whose stated job is refusing a load rather than freezing the host. KV is linear
+    in the window, so the error grows with every widening the operator makes."""
+    model = local_catalog.get("qwen3.8-27b-abliterated")
+    assert model is not None
+    assert model.context_window < 262144  # the premise: the box serves wider than the catalog
+
+    at_catalog = local_catalog.load_footprint_gb(model)
+    at_served = local_catalog.load_footprint_gb(model, 262144)
+    assert at_served > at_catalog + 10.0, (at_catalog, at_served)
+    # Measured on the box at 262144: 36.92 GiB. The reservation must be in that neighbourhood,
+    # and the gpu_guard headroom covers the remaining conservatism.
+    assert 33.0 <= at_served <= 38.0, at_served
+
+    # A second parallel slot holds its own window-sized KV; the weights are shared. So the
+    # increment is exactly one more window's worth of cache, nothing else.
+    two_slots = local_catalog.load_footprint_gb(model, 262144, slots=2)
+    one_window_of_kv = model.kv_gb_per_128k * 262144 / 131072
+    assert two_slots - at_served == pytest.approx(one_window_of_kv, abs=0.01)
+
+    # And the gateway actually consults the override rather than the catalog: a probe with room
+    # for the catalog figure but not the served one must REFUSE.
+    probe = _StubProbe(_mem(124.0 - at_catalog - 8.0))
+    gateway = LocalGatewayClient(
+        "http://gw",
+        gpu_probe=probe,
+        windows_loader=_windows({model.id: 262144}),
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await gateway.load(model.served_model)
+
+
+def _windows(mapping: dict[str, int]) -> Callable[[], Awaitable[Mapping[str, int]]]:
+    async def load() -> Mapping[str, int]:
+        return mapping
+
+    return load
+
+
+@pytest.mark.anyio
+async def test_an_unreadable_override_falls_back_instead_of_blocking_the_load() -> None:
+    """Settings are read per load; a DB hiccup must not become a refusal to load anything.
+
+    The fallback is the catalog window — which under-reserves rather than over-reserves, so the
+    load WATCHDOG is what covers the gap. That trade is deliberate: a guard that hard-fails
+    when the settings table blinks would take the box's models offline for a transient."""
+    model = local_catalog.get("qwen3.8-27b-abliterated")
+    assert model is not None
+
+    async def boom() -> Mapping[str, int]:
+        raise RuntimeError("settings unavailable")
+
+    seen: list[str] = []
+    gateway = LocalGatewayClient(
+        "http://gw",
+        transport=_transport(seen=seen),
+        gpu_probe=_StubProbe(_mem(20.0)),  # ample for the catalog figure
+        windows_loader=boom,
+    )
+    await gateway.load(model.served_model)
+    assert any(path.endswith("/health") for path in seen)

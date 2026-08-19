@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-18
+> **Status:** Living · **Last verified:** 2026-08-19
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -198,8 +198,10 @@ did nothing degrades to a slow prime, never a wrong answer.
 > model, and a restore into a windowed cache reports full success and is then discarded — same
 > token count, same bytes, same 0.3s, and llama-server re-prefills anyway. Measured A/B on the
 > box: **69,373 ms without the flag, 194 ms with it.** The catalog carries it as
-> `kv_full_history=True` on gpt-oss-120b, and `footprint_gb` doubles that model's KV term to
-> match (4.5 → 9.0 GB per 128k) so the memory meter and the eviction budget stay honest. The
+> `kv_full_history=True` on gpt-oss-120b, and the shared `_kv_gb` term doubles that model's KV
+> to match (4.5 → 9.0 GB per 128k) so the memory meter, the eviction budget **and the load
+> pre-flight** stay honest. The pre-flight used to skip the doubling: it reserved 64.0 GB for a
+> model that measured 69.24, and now reserves 68.55. The
 > lever that pays for it is the **context window**: KV scales linearly with `-c`, so serving at
 > 64k costs exactly what 128k did before the flag.
 
@@ -773,6 +775,21 @@ not a check. A unit test (`tests/unit/test_llm_load_guard_chokepoint.py`) walks 
 term (recurrent state, compute/output buffers, and the MTP draft context on a speculative
 entry). For a vision model it adds the CLIP attention buffer at its **load-time warmup size**
 only. It does **not** reserve that buffer's peak, because the peak does not exist at load.
+
+**It reserves at the window the box actually serves, not the catalog default.** KV is *linear*
+in `-c`, so a guard that sizes off the catalog's `context_window` while llama-swap serves an
+operator override is not sized for the load it is guarding. Measured 2026-08-19: the abliterated
+27B ships a 32768 catalog window, is served at `-c 262144`, and the pre-flight reserved
+**20.29 GB** for a load that measured **36.92 GB** — 1.8× light on the one code path whose job is
+refusing a load rather than freezing the host. `LocalGatewayClient` now reads the live
+per-model window and slot overrides (the same `settings_store` loaders the eviction budget
+uses) and passes them in; at 262144 the reservation is **34.29 GB** against 36.92 measured,
+which the guard's 6 GB held-back headroom covers.
+
+Two paths deliberately keep the catalog fallback: `jbrain local-llm smoketest`, which runs
+under `docker compose run --no-deps` with **no DB** to read overrides from, and any gateway
+built without the loaders (the tests). Both under-reserve rather than over-reserve; the load
+**watchdog** measures real growth mid-flight and aborts, which is what makes that survivable.
 
 **Where the vision cost really is.** The large allocation behind #27146 is the CLIP/mtmd
 encoder's attention matrix — F32 `[n_patches, n_patches, n_head]`, materialised when flash

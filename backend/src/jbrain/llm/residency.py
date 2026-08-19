@@ -507,8 +507,18 @@ class ResidencyCoordinator:
         get corrected from data rather than from the next freeze."""
         probe = self._gpu_probe
         baseline = await probe.sample() if probe is not None else None
-        with contextlib.suppress(LocalGatewayError):
+        # A gateway failure stays non-fatal — the completion that wanted the model fails on its
+        # own, and a housekeeping restore must not take a turn down with it. But it is LOGGED,
+        # and it suppresses the measurement below: `load_measured` on a load that never
+        # happened reads as a successful load whose footprint came in near zero, which is
+        # exactly backwards from the truth and poisons the predicted-vs-measured series the
+        # catalog numbers are corrected from. (A GpuBudgetError is deliberately NOT caught here
+        # — a refusal is the operator's business and propagates.)
+        try:
             await self._gateway.load(served_model)
+        except LocalGatewayError as exc:
+            log.warning("residency.load_failed", model=served_model, error=repr(exc))
+            return
         if probe is not None:
             measured = await gpu_guard.measure_footprint(probe, baseline, served_model)
             if measured is not None:

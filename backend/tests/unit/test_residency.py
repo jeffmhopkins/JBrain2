@@ -829,6 +829,35 @@ async def test_the_load_measurement_is_logged_against_the_prediction() -> None:
     assert gw.loaded == ["qwen3.8-27b-q4"] and gw.unloaded == []
 
 
+async def test_a_failed_load_is_not_reported_as_a_measured_one(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A gateway failure stays non-fatal but must not be logged as a successful load.
+
+    `load_measured` on a load that never happened reads as a model that came in near zero —
+    exactly backwards from the truth, and it poisons the predicted-vs-measured series the
+    catalog numbers are corrected from. The failure gets its own event instead."""
+    from jbrain.llm import gpu_guard
+    from jbrain.llm.local_gateway import LocalGatewayError
+
+    class _FailingGateway(FakeLocalGateway):
+        async def load(self, served_model: str, **kw: object) -> None:
+            raise LocalGatewayError("gateway unreachable")
+
+    class _SteadyProbe:
+        async def sample(self) -> gpu_guard.GpuMem | None:
+            return gpu_guard.GpuMem(
+                gtt_used_gb=10.0, gtt_total_gb=120.0, vram_used_gb=0.0, vram_total_gb=0.0
+            )
+
+    gw = _FailingGateway(running=set())
+    coord = ResidencyCoordinator(gw, enabled=True, gpu_probe=_SteadyProbe(), box_lock=None)
+    await coord._guarded_load("qwen3.8-27b-q4", projected_gb=21.0)  # non-fatal, as before
+    text = capsys.readouterr().out
+    assert "residency.load_failed" in text
+    assert "load_measured" not in text
+
+
 async def test_a_healthy_load_still_goes_through_untouched() -> None:
     """The guard must be invisible in the normal case. A guard that trips on healthy loads
     gets switched off, and then it protects nothing."""

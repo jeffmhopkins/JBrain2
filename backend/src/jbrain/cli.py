@@ -196,6 +196,12 @@ async def _local_llm_smoketest() -> int:
     # Guarded like every other load path: the smoketest LOADS each installed model, and it
     # runs unattended during an update, which is the worst possible moment to discover a
     # model's device footprint the hard way.
+    #
+    # No window/slot loaders here, unlike the api and worker gateways: those read the operator's
+    # `-c` override out of the settings table, and this command's whole point is running with
+    # `--no-deps` (no DB). So the pre-flight sizes off the catalog window and can under-reserve
+    # on a model the operator has widened; the load WATCHDOG still measures the real growth and
+    # aborts, which is the backstop that makes running without the override survivable.
     gateway = LocalGatewayClient(settings.local_llm_url, gpu_probe=gpu_guard.probe_for(settings))
     ok, messages = await run_smoketest(settings.local_models, gateway)
     for message in messages:

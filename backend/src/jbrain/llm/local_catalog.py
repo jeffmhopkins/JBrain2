@@ -978,6 +978,16 @@ def get_by_served(served_model: str) -> LocalModel | None:
 # the runtime-overhead and vision terms, because load_footprint_gb needs them.)
 
 
+def _kv_gb(model: LocalModel, window: int, slots: int) -> float:
+    """KV cache (GiB) for `model` held at `window` tokens across `slots` parallel slots.
+
+    Linear off the 128k reference. `--swa-full` (`kv_full_history`) gives the sliding-window
+    layers a full-size cache instead of a ring, which roughly doubles the term — counted here
+    so the load reservation, the eviction budget and the settings meter cannot drift apart."""
+    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
+    return kv * 2 if model.kv_full_history else kv
+
+
 def footprint_gb(
     model: LocalModel, window: int, *, disk_gb: float | None = None, slots: int = 1
 ) -> float:
@@ -995,16 +1005,14 @@ def footprint_gb(
     with a larger override saved — matching what the gateway will really serve rather than
     reserving for slots the engine won't allocate."""
     weights = disk_gb if disk_gb is not None else model.size_gb
-    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
-    # `--swa-full` gives the sliding-window layers a full-size cache, so the KV term roughly
-    # doubles. Counted here or the meter and the eviction budget would both under-report the
-    # model by several GB — on a box that has hard-locked under memory pressure.
-    if model.kv_full_history:
-        kv *= 2
+    # `--swa-full` doubling lives in `_kv_gb`: omitting it under-reported the model by several
+    # GB in both the meter and the eviction budget — on a box that has hard-locked under
+    # memory pressure.
+    kv = _kv_gb(model, window, slots)
     # Context checkpoints: per slot, device-resident, and on a hybrid a full copy of the
     # recurrent state each. Budgeted at the SERVED count — an operator override through
-    # `--ctx-checkpoints` is not threaded in here, which is why that flag is bounded to 0..8
-    # in the settings API rather than left open.
+    # `--ctx-checkpoints` is not threaded in here, which is why that flag is bounded (0..32,
+    # llama.cpp's own default ceiling) in the settings API rather than left open.
     checkpoints = model.checkpoint_gb * CTX_CHECKPOINTS * model.effective_slots(slots)
     return round(
         weights + kv + checkpoints + _runtime_overhead_gb(model) + _vision_resident_gb(model), 2
@@ -1030,23 +1038,32 @@ def _vision_resident_gb(model: LocalModel) -> float:
     return vision_attn_buffer_gb() if model.mmproj_include else 0.0
 
 
-def load_footprint_gb(model: LocalModel) -> float:
+def load_footprint_gb(model: LocalModel, window: int | None = None, *, slots: int = 1) -> float:
     """Device memory to have free before loading `model`, in GiB.
 
-    Weights + KV at its default window + runtime overhead, and for a vision model the CLIP
-    attention buffer at its LOAD-TIME warmup size rather than its eventual peak. llama.cpp
-    warms the projector at a capped 46x46 = 2116 image tokens (`set_warmup_n_tokens`), and the
-    full-resolution buffer only materialises on the first real image — which may be much later,
-    or never. Reserving the peak here would refuse loads that are genuinely safe; the peak is
-    the eviction budget's problem (`footprint_gb`), which is where it now lives.
+    Weights + KV at the window it will actually be SERVED at + runtime overhead, and for a
+    vision model the CLIP attention buffer at its LOAD-TIME warmup size rather than its
+    eventual peak. llama.cpp warms the projector at a capped 46x46 = 2116 image tokens
+    (`set_warmup_n_tokens`), and the full-resolution buffer only materialises on the first real
+    image — which may be much later, or never. Reserving the peak here would refuse loads that
+    are genuinely safe; the peak is the eviction budget's problem (`footprint_gb`), which is
+    where it now lives.
+
+    `window` and `slots` are the OPERATOR-RESOLVED values (Settings → LLM per-model overrides),
+    the same pair the gateway config generator writes as `-c` / `-np` and the same pair the
+    eviction budget sizes with. They default to the catalog's own window and one slot, which is
+    what an unconfigured box serves.
+
+    Passing them is not optional in practice. This function took no window at all until a
+    measurement caught it: the abliterated 27B is served at `-c 262144` against a catalog
+    default of 32768, so the pre-flight reserved 20.29 GB for a load that measured 36.92 GB —
+    1.8x light, on the one code path whose stated job is refusing a load rather than freezing
+    the host. KV is linear in the window, so any override at all moves this number.
 
     Kept distinct from `footprint_gb` because the two answer different questions, but note the
     difference is now much smaller than the old code assumed — and pointed the other way."""
-    total = (
-        model.size_gb
-        + model.kv_gb_per_128k * model.context_window / _KV_REFERENCE_TOKENS
-        + _runtime_overhead_gb(model)
-    )
+    served_window = model.context_window if window is None else window
+    total = model.size_gb + _kv_gb(model, served_window, slots) + _runtime_overhead_gb(model)
     if model.mmproj_include:
         total += vision_attn_buffer_gb(_VISION_WARMUP_IMAGE_TOKENS)
     return round(total, 2)
