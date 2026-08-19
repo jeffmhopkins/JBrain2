@@ -116,7 +116,9 @@ jobs:
       - uses: actions/checkout@v5
       # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media),
       # which skip WHOLESALE without them (`media.ffmpeg_available`) — a missing binary
-      # costs coverage silently rather than failing. Mirrors scripts/dev-setup.sh.
+      # costs coverage silently rather than failing. Same package set as
+      # scripts/dev-setup.sh, but not the same fetch strategy -- a developer pays a slow
+      # mirror once, whereas every backend job in every run pays it here.
       #
       # ubuntu-24.04 does NOT ship ffmpeg; an earlier comment here asserted it did,
       # which is how this step's cost stayed invisible. Every backend job pays a real
@@ -128,21 +130,41 @@ jobs:
       #   passes against exactly this set.
       #
       #   Retries + a fetch timeout because the archive is the least reliable thing in
-      #   this workflow: one run sat here 30 minutes on a stalled mirror while its
-      #   sibling shards finished in 90 seconds. apt waits on a stalled socket forever
-      #   by default; a timeout makes that a retry instead of a hung job.
+      #   this workflow. Those two settings only cover a STALLED mirror, though, and the
+      #   failure we actually keep hitting is a slow one, which they cannot see:
+      #   Acquire::*::Timeout is an INACTIVITY timeout, so a backend dribbling bytes
+      #   never trips it and never retries. On 2026-08-19 this step took 21m10s --
+      #   `Fetched 62.8 MB in 20min 54s (50.1 kB/s)` from azure.archive.ubuntu.com,
+      #   seconds after the index fetch off the SAME host ran at 5400 kB/s. The pool is
+      #   load-balanced, so the fix is a wall-clock cap that forces a reconnect onto a
+      #   different backend; see the retry loop below.
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt_get() {
-            sudo apt-get -o Acquire::Retries=3 \
-                         -o Acquire::http::Timeout=30 \
-                         -o Acquire::https::Timeout=30 "$@"
-          }
+          # An array, not a wrapper function: the capped call below needs `timeout` to
+          # exec apt-get directly, and `timeout` cannot run a shell function.
+          apt_opts=(-o Acquire::Retries=3
+                    -o Acquire::http::Timeout=30
+                    -o Acquire::https::Timeout=30)
           command -v ffmpeg >/dev/null 2>&1 || {
-            apt_get update
-            apt_get install -y --no-install-recommends ffmpeg
+            sudo apt-get "${apt_opts[@]}" update
+            # Download under a wall-clock cap, and retry on a FRESH connection. apt
+            # keeps partials, so each attempt resumes rather than restarts. `timeout`
+            # runs UNDER sudo so it signals apt-get itself rather than the sudo wrapper.
+            for attempt in 1 2 3; do
+              sudo timeout 120 apt-get "${apt_opts[@]}" -y --no-install-recommends \
+                                                        --download-only install ffmpeg &&
+                break
+              echo "::warning::ffmpeg fetch attempt ${attempt} hit the 2m cap;" \
+                   "reconnecting to pick a different archive backend"
+            done
+            # Uncapped last resort, and never under `timeout`: by here the bytes are
+            # usually already local, and killing apt during unpack/configure instead of
+            # during download is how you get a broken dpkg database. A comprehensively
+            # degraded mirror therefore degrades to the old slow-but-green behaviour,
+            # minus whatever the capped attempts already fetched.
+            sudo apt-get "${apt_opts[@]}" -y --no-install-recommends install ffmpeg
           }
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         uses: astral-sh/setup-uv@v7
@@ -195,14 +217,29 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt_get() {
-            sudo apt-get -o Acquire::Retries=3 \
-                         -o Acquire::http::Timeout=30 \
-                         -o Acquire::https::Timeout=30 "$@"
-          }
+          # An array, not a wrapper function: the capped call below needs `timeout` to
+          # exec apt-get directly, and `timeout` cannot run a shell function.
+          apt_opts=(-o Acquire::Retries=3
+                    -o Acquire::http::Timeout=30
+                    -o Acquire::https::Timeout=30)
           command -v ffmpeg >/dev/null 2>&1 || {
-            apt_get update
-            apt_get install -y --no-install-recommends ffmpeg
+            sudo apt-get "${apt_opts[@]}" update
+            # Download under a wall-clock cap, and retry on a FRESH connection. apt
+            # keeps partials, so each attempt resumes rather than restarts. `timeout`
+            # runs UNDER sudo so it signals apt-get itself rather than the sudo wrapper.
+            for attempt in 1 2 3; do
+              sudo timeout 120 apt-get "${apt_opts[@]}" -y --no-install-recommends \
+                                                        --download-only install ffmpeg &&
+                break
+              echo "::warning::ffmpeg fetch attempt ${attempt} hit the 2m cap;" \
+                   "reconnecting to pick a different archive backend"
+            done
+            # Uncapped last resort, and never under `timeout`: by here the bytes are
+            # usually already local, and killing apt during unpack/configure instead of
+            # during download is how you get a broken dpkg database. A comprehensively
+            # degraded mirror therefore degrades to the old slow-but-green behaviour,
+            # minus whatever the capped attempts already fetched.
+            sudo apt-get "${apt_opts[@]}" -y --no-install-recommends install ffmpeg
           }
       - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
         uses: astral-sh/setup-uv@v7
