@@ -148,6 +148,29 @@ def _drop_operator_overridden(args: Sequence[str], operator_args: Sequence[str])
     return out
 
 
+_SPEC_FLAGS = ("--spec-type", "--spec-draft-n-max", "--spec-draft-n-min", "--spec-draft-p-min")
+
+
+def _drop_speculative(args: Sequence[str]) -> list[str]:
+    """Remove every speculative-decoding flag (and its value) from a command.
+
+    Used when an operator asks for a second slot: the two cannot coexist, so the flags come out
+    rather than the request being ignored. Dropping the whole family — not just `--spec-type` —
+    because llama-server rejects a `--spec-draft-*` tuning flag with no mode to tune."""
+    out: list[str] = []
+    skip = False
+    for token in args:
+        if token in _SPEC_FLAGS:
+            skip = True
+            continue
+        if skip:
+            skip = False
+            if not token.startswith("-"):
+                continue
+        out.append(token)
+    return out
+
+
 def _is_speculative(extra_server_args: Sequence[str]) -> bool:
     """Whether a model's serving flags turn on speculative decoding (`--spec-type <mode>`),
     which constrains it to a single sequence. Read off the flags rather than a catalog boolean
@@ -200,13 +223,21 @@ def render(
         # Either source can turn speculation on: the catalog's static flags, or an operator
         # trying `--spec-type` remotely via the extra-args route. Both must pin the model to
         # one slot, so the test reads the flags actually going on the command line.
-        if _is_speculative(catalog_args + operator_args):
-            # llama.cpp's speculative paths serve ONE sequence: MTP takes no second parallel
-            # slot, and draft acceptance collapses as concurrent sequences rise (reported on
-            # this exact gfx1151 SoC). A saved -np override would silently defeat the very
-            # speedup the model was installed for, so the serving mode wins over the setting
-            # rather than the operator having to know the interaction.
-            n_slots = 1
+        # Speculation and parallel slots are MUTUALLY EXCLUSIVE: llama.cpp's speculative paths
+        # serve ONE sequence — MTP takes no second parallel slot, and draft acceptance collapses
+        # as concurrent sequences rise (reported on this exact gfx1151 SoC).
+        #
+        # This used to resolve the conflict by pinning n_slots to 1 and ignoring the operator.
+        # It now resolves the other way: an explicit request for a second slot DROPS speculation.
+        # Silently ignoring the request was the worse failure — a second slot is the only thing
+        # that keeps a background task (the auto-titler follows the interactive model) out of the
+        # slot holding a 32k primed prefix, and losing that prefix costs a ~100 s cold prefill.
+        # Whichever the operator picks, they get the one they asked for.
+        speculative = _is_speculative(catalog_args + operator_args)
+        if speculative and n_slots > 1:
+            catalog_args = tuple(_drop_speculative(catalog_args))
+            operator_args = tuple(_drop_speculative(operator_args))
+            speculative = False
         cmd = [
             "llama-server",
             "--host",
@@ -246,8 +277,6 @@ def render(
             # so it is a latent crash rather than a live one. It should be dropped for hybrid
             # entries;
             # that needs a per-model field and is not done here.
-            "--cache-reuse",
-            "256",
             # OBSERVABILITY, and it is not optional here. llama-server exposes whether a model
             # is actually speculating in exactly two places: `/slots[].speculative` (a real
             # bool from `can_speculate()`) and the `/metrics` spec-decode counters. Neither
@@ -312,6 +341,14 @@ def render(
         # KV in one slot while title/background traffic uses the other — neither can evict the
         # other's cache (docs/runbooks/STRIX_HALO_SETUP.md).
         cmd += ["-np", str(n_slots)]
+        # Prompt-prefix KV reuse — for an ATTENTION model only. On a recurrent/hybrid stack you
+        # cannot KV-shift the state, and the partial-range `seq_rm` this path calls returns false
+        # for recurrent memory, which reaches GGML_ABORT: the server dies. It has never fired
+        # here only because on an identical prompt the reuse loop never executes (n_past already
+        # equals the prompt length) — a latent crash, not a no-op. Prefix reuse on these models
+        # is mediated entirely by context checkpoints instead (see --ctx-checkpoints).
+        if not m.get("recurrent"):
+            cmd += ["--cache-reuse", "256"]
         # A thinking model emits its reasoning inline as `<think>…</think>`;
         # `--reasoning-format deepseek` (paired with --jinja above) makes llama.cpp parse
         # those tags out of `content` into the `reasoning_content` channel OpenAI-compatible

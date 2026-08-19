@@ -225,6 +225,13 @@ class LocalModel:
     # served default stays small for memory; this opens the door to the full window
     # the weights support, with the drawer's KV-cache estimate as the guardrail.
     native_context_window: int = 0
+    # A HYBRID/RECURRENT attention stack (qwen35's Gated DeltaNet, Nemotron's Mamba-2) rather
+    # than plain attention. Not derivable from `checkpoint_gb`, which is a memory figure we only
+    # have for some of them — this is an architecture fact and drives SERVING decisions:
+    # `--cache-reuse` is dropped for these (its partial-range `seq_rm` returns false for
+    # recurrent memory and reaches GGML_ABORT, i.e. the server dies), and prefix reuse here is
+    # mediated entirely by context checkpoints.
+    recurrent: bool = False
     # GiB per context checkpoint, per slot. Non-zero only for a HYBRID (recurrent) model,
     # where a checkpoint is a full copy of the recurrent state and is device-resident —
     # ~150 MiB for Qwen3.8 (llama.cpp #20145, #23371). Zero on an attention model, whose
@@ -280,12 +287,26 @@ class LocalModel:
 
     def effective_slots(self, requested: int) -> int:
         """The `-np` this model will ACTUALLY serve with, given a requested slot count.
-        llama.cpp's speculative paths run one sequence — MTP takes no second slot, and draft
-        acceptance collapses as concurrent sequences rise — so a speculative model is pinned
-        to 1 whatever the operator saved. Everything that reasons about slots (the gateway
-        command, the residency budget, the settings drawer) goes through here, so a stale
-        override can't make one of them disagree with what the engine does."""
-        return 1 if self.is_speculative else max(1, requested)
+        Everything that reasons about slots (the gateway command, the residency budget, the
+        settings drawer) goes through here, so none of them can disagree with the engine.
+
+        An explicit request for more than one slot is now HONOURED on a speculative model, at
+        the cost of speculation (`serves_speculative`). It used to be silently clamped to 1,
+        which was the worst of both: the operator asked for a second slot, did not get it, and
+        got no signal saying so. A second slot is the only thing that stops a background task —
+        the auto-titler follows the interactive model — landing in the one slot and evicting a
+        32k primed prefix, which costs a ~100 s cold prefill. Trading MTP's decode gain (~22 vs
+        ~11-12 t/s measured) for that is a real choice, and it is the operator's to make."""
+        return max(1, requested)
+
+    def serves_speculative(self, requested_slots: int) -> bool:
+        """Whether speculation is actually served at `requested_slots`.
+
+        llama.cpp's speculative paths run ONE sequence — MTP takes no second parallel slot and
+        draft acceptance collapses as concurrent sequences rise (reported on this exact gfx1151
+        SoC). So the two features are mutually exclusive, and asking for slots turns speculation
+        OFF rather than being ignored."""
+        return self.is_speculative and max(1, requested_slots) == 1
 
     @property
     def max_context_window(self) -> int:
@@ -476,6 +497,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # conservative guardrail rather than a true measure.
         native_context_window=1048576,
         kv_gb_per_128k=3.0,
+        recurrent=True,  # Mamba-2 hybrid
     ),
     LocalModel(
         id="nemotron-3.5-lightning-30b",
@@ -513,6 +535,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # guardrail, not a true measure).
         native_context_window=1048576,
         kv_gb_per_128k=3.0,
+        recurrent=True,  # Mamba-2 hybrid
     ),
     LocalModel(
         id="qwen3.8-27b",
@@ -565,6 +588,7 @@ CATALOG: tuple[LocalModel, ...] = (
         # default with the native window as the picker's ceiling.
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        recurrent=True,
         checkpoint_gb=0.15,
     ),
     LocalModel(
@@ -615,6 +639,7 @@ CATALOG: tuple[LocalModel, ...] = (
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        recurrent=True,
         checkpoint_gb=0.15,
     ),
     LocalModel(
@@ -677,6 +702,7 @@ CATALOG: tuple[LocalModel, ...] = (
         thinking_effort_map=dict(QWEN38_EFFORT_LEVELS),
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
+        recurrent=True,
         checkpoint_gb=0.15,
     ),
     LocalModel(
