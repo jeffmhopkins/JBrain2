@@ -1494,6 +1494,23 @@ async def gateway_unload(
 # counterpart, so an allowlist entry could not undo the flag we already pass. An entry would be a
 # silent no-op, which is worse than an absent one. Same for `--jinja`, which is unconditional and
 # would need a `--chat-template-file` (a file on the box) to be worth overriding.
+#   -lv                     llama-server log verbosity
+#   --checkpoint-min-step   minimum token spacing between context checkpoints
+#   --cache-ram             MiB of host RAM for the prompt cache that survives slot eviction
+# These three are what the NEXT prefill investigation needs, and none of them were reachable.
+#
+# `-lv 4` (trace) is the decisive diagnostic and there is no substitute: whether checkpoints are
+# being created and MATCHED is only visible in llama-server's own `created context checkpoint` /
+# `restored context checkpoint` / `forcing full prompt re-processing due to lack of cache data`
+# lines, which are TRC-level. Without it, a checkpoint sweep cannot distinguish "the count is
+# wrong" from "nothing is ever restored" — the two produce identical timings, which is exactly
+# how a 2-vs-8 sweep here measured nothing and was misread as the flag being inert.
+#
+# `--checkpoint-min-step` defaults to 8192, so across a ~24k prompt only ~3 checkpoints are
+# permitted by SPACING no matter how high the count goes — tuning the count alone can be
+# pointless. `--cache-ram` (default 8192 MiB) backs the in-RAM prompt cache, which unlike a
+# KV-slot file preserves checkpoints, so it is the lever that actually survives eviction.
+#
 # Flags taking a value are allowed to carry one; the value itself is NOT interpreted here.
 EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
     {
@@ -1512,6 +1529,9 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
         "-ngl",
         "-fa",
         "--reasoning-format",
+        "-lv",
+        "--checkpoint-min-step",
+        "--cache-ram",
     }
 )
 
@@ -1537,6 +1557,16 @@ _EXTRA_ARG_BOUNDS: dict[str, tuple[int, int]] = {
     # (llama.cpp's ceiling for this projector family). Raising the ceiling past that grows the
     # workspace the budget does not follow, so cap it at the figure the budget assumes.
     "--image-max-tokens": (1, 4096),
+    # Verbosity is a log-volume knob, not a memory one; 4 is TRC, llama.cpp's most verbose.
+    # Bounded so a typo cannot ask for a level that does not exist.
+    "-lv": (0, 4),
+    # Host RAM (MiB) for the prompt cache. Bounded at 32 GiB: it is host memory rather than
+    # device memory, so it does not touch the GTT budget, but this box has 128 GB total and an
+    # unbounded value here would be a way to starve everything else from one API call.
+    "--cache-ram": (0, 32768),
+    # Token spacing between checkpoints. 0 lets llama.cpp choose; the floor of 64 upstream
+    # rejects anything denser, and a very large value silently disables checkpointing.
+    "--checkpoint-min-step": (0, 131072),
 }
 
 # Values of `-fa` that turn flash attention OFF. Not a style question: with `-fa` on, the CLIP

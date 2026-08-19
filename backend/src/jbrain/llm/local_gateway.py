@@ -447,7 +447,8 @@ def _parse_load_progress(text: str) -> float | None:
 
 
 def parse_spec_counters(metrics_text: str) -> dict[str, float]:
-    """Derive the speculation numbers from llama-server's Prometheus text.
+    """Derive the serving numbers — speculation AND prompt-cache reuse — from llama-server's
+    Prometheus text.
 
     The build this box runs exposes NO draft/accept counters — the whole metric set is
     prompt/predict/decode totals — so the acceptance rate cannot be read directly. It can be
@@ -483,6 +484,21 @@ def parse_spec_counters(metrics_text: str) -> dict[str, float]:
         except ValueError:
             continue
     out = {k: n for k, n in v.items() if any(t in k for t in ("draft", "spec", "accept"))}
+    # PROMPT-CACHE counters, and they are the authoritative reuse signal on this box. The
+    # per-slot `n_prompt_tokens_cache` in /slots is NOT: llama.cpp zeroes a slot's stats on
+    # release, so polling it after a request reads 0 whether reuse was total or nonexistent —
+    # which is how an entire investigation concluded a hybrid could not cache at all. These are
+    # cumulative and survive release, so a before/after delta around one request is the truth.
+    cached = v.get("llamacpp:prompt_tokens_cached_total")
+    processed = v.get("llamacpp:prompt_tokens_total")
+    if cached is not None:
+        out["prompt_tokens_cached_total"] = cached
+    if processed is not None:
+        out["prompt_tokens_total"] = processed
+    if cached is not None and processed is not None and (cached + processed) > 0:
+        # Lifetime reuse fraction. Like everything here it is a process-lifetime figure — delta
+        # it across one request to measure that request.
+        out["cache_hit_rate"] = round(cached / (cached + processed), 4)
     decodes = v.get("llamacpp:n_decode_total", 0.0)
     tokens = v.get("llamacpp:tokens_predicted_total", 0.0)
     seconds = v.get("llamacpp:tokens_predicted_seconds_total", 0.0)

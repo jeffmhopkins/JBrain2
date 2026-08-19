@@ -117,6 +117,12 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             "sql.read",
             "logs.read",
             "llm.routing",
+            # The gateway surface: load/unload, the served `-c`, `-np`, launch flags via the
+            # allowlist, KV-slot save/restore, props/slots/metrics, and prime. Listed because
+            # this list is what an assistant reads to decide what it may attempt, and omitting
+            # these read as "not permitted" — a session lost real time believing the flag sweep
+            # it had been asked to run was out of scope, when every route was already open.
+            "llm.gateway",
             "host.read",
             "host.metrics",
             "web.fetch",
