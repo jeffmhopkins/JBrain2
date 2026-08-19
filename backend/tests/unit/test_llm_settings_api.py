@@ -1202,8 +1202,14 @@ def test_ctx_checkpoints_is_bounded_because_its_bad_value_hangs_the_box() -> Non
     so everything above that is unbudgeted and the residency evictor cannot see it coming.
     llama.cpp's own default of 32 is the most likely typo (every upstream doc names it) and would
     be ~4.7 GiB/slot unbudgeted on a box whose documented failure mode is an unrecoverable hang."""
+    # 32 is llama.cpp's own default and must be REACHABLE — an earlier 0..8 bound put the one
+    # value most worth sweeping out of reach, which defeats the point of exposing the flag.
+    assert llm_settings._validate_extra_args(["--ctx-checkpoints", "32"]) == [
+        "--ctx-checkpoints",
+        "32",
+    ]
     with pytest.raises(HTTPException) as exc:
-        llm_settings._validate_extra_args(["--ctx-checkpoints", "32"])
+        llm_settings._validate_extra_args(["--ctx-checkpoints", "64"])
     assert exc.value.status_code == 422
     assert "hang" in str(exc.value.detail)
     with pytest.raises(HTTPException):

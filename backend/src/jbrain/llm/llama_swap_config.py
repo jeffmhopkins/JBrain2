@@ -230,19 +230,22 @@ def render(
             "-fa",
             "1",
             "--no-mmap",
-            # Prompt-prefix KV reuse (docs/archive/LLM_PROMPT_CACHE_PLAN.md W2): keep the KV of
-            # a matching leading prefix and salvage it via KV-shifting even after a later
-            # divergence, so a stable system-prompt + history prefix isn't re-prefilled every
-            # turn (the "slow first token"). 256 is the min chunk size worth reusing. Pairs
-            # with W1's cache-stable message layout. A long-standing llama.cpp server flag.
+            # Prompt-prefix KV reuse (docs/archive/LLM_PROMPT_CACHE_PLAN.md W2): keep the KV of a
+            # matching
+            # leading prefix and salvage it via KV-shifting even after a later divergence. 256 is
+            # the min
+            # chunk worth reusing. Pairs with W1's cache-stable message layout.
             #
-            # NOT a whole-model property on a hybrid, though this comment used to read as one: a
-            # recurrent state cannot be KV-shifted, so on `qwen35` this salvages the 16 attention
-            # layers
-            # while the other 48 Gated DeltaNet layers re-run regardless, from the nearest context
-            # checkpoint (see `--ctx-checkpoints` below). W1's stable layout is still a precondition
-            # —
-            # it just is not sufficient on its own here.
+            # REAL on an attention model (gpt-oss). On a HYBRID it is worse than useless: you cannot
+            # KV-shift a recurrent state, and the partial-range `seq_rm` this path calls returns
+            # false for
+            # recurrent memory, which reaches GGML_ABORT — the server dies. We have not hit it
+            # because on
+            # an identical prompt the reuse loop never executes (n_past already equals the prompt
+            # length),
+            # so it is a latent crash rather than a live one. It should be dropped for hybrid
+            # entries;
+            # that needs a per-model field and is not done here.
             "--cache-reuse",
             "256",
             # OBSERVABILITY, and it is not optional here. llama-server exposes whether a model
@@ -268,30 +271,32 @@ def render(
             "-ub",
             "1024",
             # Per-slot context checkpoints, down from llama-server's default of 32. Each is a full
-            # copy of the recurrent state on a HYBRID model — ~150 MiB for Qwen3.8, device-resident
-            # —
-            # so 32 of them is ~4.7 GiB per slot (llama.cpp #20145, #23371).
+            # copy
+            # of the recurrent state on a HYBRID model — ~150 MiB for Qwen3.8 (upstream #27211
+            # measures
+            # 149.6 MiB for this exact arch), device-resident, so 32 is ~4.7 GiB per slot.
             #
-            # This comment used to justify the 2 as reclaiming "rollback depth nothing here uses",
-            # which inverts what checkpoints are FOR on a hybrid. The clause above is the
-            # refutation:
-            # because a recurrent state cannot be partially rewound, a checkpoint is the ONLY way
-            # such
-            # a model resumes at any position other than 0 or the exact end of what it last
-            # processed.
-            # On an attention model prefix reuse is free (truncate the KV); on `qwen35` and the
-            # Nemotron
-            # Mamba-2 hybrids it is mediated ENTIRELY by these. So this is not spare rollback depth
-            # — it
-            # is the prefix-reuse budget, and 2 is close to none.
+            # Checkpoints are the prefix-reuse mechanism, and on a hybrid they are the ONLY one: a
+            # recurrent model's pos_min is always ~the end of the sequence, so llama.cpp takes the
+            # checkpoint branch every request and, finding no match, logs `forcing full prompt
+            # re-processing due to lack of cache data` and reprocesses from zero (discussion #19264,
+            # closed 'It's already implemented'; PR #20288).
             #
-            # Left at 2 deliberately: raising it trades device memory `footprint_gb` does not model
-            # for
-            # prefill latency, and which side wins is an empirical question about this box. It is on
-            # the
-            # extra-args allowlist so that question can be answered without a release. Do NOT raise
-            # it
-            # here on reasoning alone — measure first (docs/runbooks/STRIX_HALO_SETUP.md).
+            # MEASURED on this box 2026-08-18, and it is not what an earlier version of this comment
+            # predicted: with a checkpoint hit a warm prime is 0.99 s reusing 32,485 of 32,489
+            # tokens.
+            # Caching WORKS here. Sweeping this value 2 -> 8 moved a cold prime by 0.2% (101.26 ->
+            # 101.08 s)
+            # — which measures nothing, because if no checkpoint MATCHES the count is irrelevant. Do
+            # not
+            # read that as evidence the flag is inert.
+            #
+            # Left at 2 pending a trace-level diagnosis (`-lv 4`: `created context checkpoint` /
+            # `restored context checkpoint`) that shows whether checkpoints are being created and
+            # matched
+            # at all. Raising the count without that only spends memory. It is on the extra-args
+            # allowlist
+            # so the question is answerable without a release (docs/runbooks/STRIX_HALO_SETUP.md).
             "--ctx-checkpoints",
             str(local_catalog.CTX_CHECKPOINTS),
             "-m",

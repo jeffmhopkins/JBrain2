@@ -203,36 +203,72 @@ did nothing degrades to a slow prime, never a wrong answer.
 > lever that pays for it is the **context window**: KV scales linearly with `-c`, so serving at
 > 64k costs exactly what 128k did before the flag.
 
-> **All of the numbers above are gpt-oss. They do NOT transfer to a hybrid.** Qwen3.8 (`qwen35`)
-> runs 48 of its 65 layers as Gated DeltaNet — linear attention carrying a *recurrent state* —
-> and the Nemotron Lightning/Super entries are Mamba-2 hybrids of the same shape. A recurrent
-> state cannot be KV-shifted or partially rewound, which breaks both halves of the caching this
-> section describes:
+> **The numbers above are gpt-oss. Here are the MEASURED ones for a hybrid** (Qwen3.8-27B
+> `qwen35`, 262k window, on this box, 2026-08-18). Qwen3.8 runs 48 of its 65 layers as Gated
+> DeltaNet — linear attention carrying a recurrent state — and the Nemotron Lightning/Super
+> entries are Mamba-2 hybrids of the same shape.
 >
-> - **`--cache-reuse` covers the attention layers only.** On `qwen35` that is 16 of 65. The other
->   48 re-run whatever the prefix match says, so "reuse a matching leading prefix instead of
->   re-prefilling it" is a property of gpt-oss, not of the gateway.
-> - **`--ctx-checkpoints` is the whole mid-sequence resume budget, and we serve 2.** Where an
->   attention model resumes anywhere by truncating its KV, a hybrid can only resume from a stored
->   checkpoint. Down from llama.cpp's 32 to save ~4.7 GiB/slot — a deliberate memory trade, but it
->   means a divergence almost anywhere costs a re-run from near the start.
-> - **A slot restore can no-op for a second reason.** The documented signature (200, correct
->   `n_restored`, full re-prefill anyway) has an SWA cause *and* a hybrid cause: if the restored
->   token sequence is not an exact prefix of the next request, the state must rewind to a
->   checkpoint. `--swa-full` is the remedy for the first and does nothing for the second — it is
->   correctly not set on any hybrid.
+> | what | measured |
+> |---|---|
+> | Warm prime (checkpoint hit) | **0.99 s**, 32,485 of 32,489 prompt tokens reused |
+> | Cold prime (no checkpoint yet) | **~101 s** at 32k window, ~220 s at 262k |
+> | Prefill throughput | **~243 tok/s** |
 >
-> Symptom: **slow prefill on every turn**, on a model the drawer and this runbook both describe
-> as cached. Compounding it, `--reasoning-format deepseek` splits `<think>` into
-> `reasoning_content` and nothing sends it back, so each assistant turn re-renders *without* the
-> thinking tokens that are in the KV — a mid-sequence divergence at the first tool round.
+> **Prompt caching WORKS on a hybrid.** Steady state is a second and ~99.99% reuse. An earlier
+> version of this section claimed the opposite; it was wrong, and the two mistakes behind it are
+> worth keeping because both are easy to repeat:
 >
-> None of this is measured on this box yet. `--ctx-checkpoints` and `--cache-reuse` are both on
-> the extra-args allowlist so it can be, and `--ctx-checkpoints` is bounded to `0..8` because its
-> memory cost is per-slot, device-resident and invisible to `footprint_gb`. Start by comparing a
-> multi-turn conversation on `qwen3.8-27b-q4` against gpt-oss-120b, then sweep upward in small
-> steps — and set the task's thinking level to `none` first, which removes the trace divergence
-> and the effort sentence in one move.
+> - **`n_prompt_tokens_cache` in `/slots` is zeroed when the slot is released** (llama.cpp
+>   `server-context.cpp`, `reset()` does `stats = {}`). It is a snapshot of the RUNNING task, so
+>   polling it after a request always reads 0 — whether reuse was total or nonexistent. Use
+>   **`timings.cache_n` in the completion response body** (copied before release) or the
+>   cumulative `llamacpp:prompt_tokens_cached_total` from `/metrics`. This is the same trap as
+>   `/props`'s dead `speculative.types` field, one layer along.
+> - **~243 tok/s prefill is this hardware, not a fault.** Published figures for a 27B-class Q4 on
+>   Strix Halo Vulkan are 250–330 tok/s, and 243 tok/s is ~44% of the 8060S's 29.7 TFLOPS FP16
+>   peak — high utilisation for llama.cpp on an iGPU. A cold 24.5k-token prefill costing ~100 s is
+>   arithmetic, not a bug. Linear attention is also FLATTER with depth than dense attention
+>   (263→260 tok/s from pp2048 to pp8192, against a dense model's 884→490), so the hybrid helps
+>   here rather than hurting.
+>
+> **Context checkpoints are the prefix-reuse mechanism, and for a hybrid they are the ONLY one.**
+> Not a rollback feature that happens to exist. A recurrent model's `pos_min` is always ≈ the end
+> of the sequence, so llama.cpp enters the checkpoint branch on every request; with no matching
+> checkpoint it logs `forcing full prompt re-processing due to lack of cache data` and reprocesses
+> from zero (upstream: discussion #19264, closed "It's already implemented"; PR #20288 exists so
+> hybrids get "near-zero prompt re-eval", citing Qwen3.5-35B).
+>
+> Consequences that are easy to get backwards:
+>
+> - **Sweeping `--ctx-checkpoints` proves nothing on its own.** If no checkpoint ever MATCHES,
+>   2 and 8 behave identically — measured here at 101.26 s vs 101.08 s. That is not evidence the
+>   flag is inert; it is evidence nothing was being restored. Diagnose with `-lv 4` and grep for
+>   `created context checkpoint`, `restored context checkpoint`, and the `forcing full prompt
+>   re-processing` line before tuning the count.
+> - **We serve 2 against llama.cpp's default of 32**, and `--checkpoint-min-step` (default 8192,
+>   not currently settable here) also caps how densely they can be spaced.
+> - **`--cache-reuse` is not merely a no-op on a hybrid — it is a hazard.** Its partial-range
+>   `seq_rm` returns false for recurrent memory, which reaches `GGML_ABORT`, i.e. the server dies.
+>   On an identical prompt the reuse loop never executes, which is why we have not seen it.
+> - **`--slot-save-path` restore cannot deliver prefix reuse on a hybrid.** Restore calls
+>   `prompt.clear()`, which clears the checkpoints, so a disk-restored slot full-reprocesses its
+>   next request. The KV-slot cache is a gpt-oss win; on a hybrid it loads bytes that buy nothing.
+> - **`--swa-full` is inert here** — llama.cpp auto-disables it when `n_swa == 0`, which holds for
+>   `qwen35`. Correctly unset on every hybrid entry.
+>
+> **What actually costs you a cold prefill, then, is anything that INVALIDATES the checkpoint.**
+> Known candidates on this box, unproven in ranking: a background task landing in the same slot
+> (a speculative model is clamped to `-np 1`, so there is no second slot to absorb it — see the
+> auto-title note in the agent path); an aborted request, since a prefill cut short by a client
+> timeout appears to leave no committed checkpoint and the next turn starts cold again; and a
+> prompt whose leading bytes moved.
+>
+> ⚠️ **The debug console cannot observe a cold prime.** The reverse proxy in front of this box
+> times out around 100 s and returns 524, and `/upstream/…` has its own hard 180 s ceiling
+> (observed: `POST …/v1/chat/completions 502` at exactly `3m0.003s`). A cold prime exceeds both,
+> so the client gives up while the server keeps working — and on a one-slot model the next request
+> queues behind a task that may already have been dropped. Measure cold behaviour from the gateway
+> log and `/metrics` deltas, never from the debug client's own wall time.
 
 The cache is keyed by FILENAME — a digest of the system prompt, the serialized tool schemas,
 llama.cpp's `build_info`, the chat template, `n_ctx`/`n_slots`, and the UTC date. Anything that

@@ -198,7 +198,15 @@ class LocalGatewayClient:
         prefill. On a sliding-window model llama-server can accept the restore and then discard
         it, logging `forcing full prompt re-processing`. The gateway log is the only honest
         signal; treat this method's success as "the bytes loaded", never as "the prefill is
-        saved" (docs/runbooks/STRIX_HALO_SETUP.md)."""
+        saved" (docs/runbooks/STRIX_HALO_SETUP.md).
+
+        On a HYBRID (`qwen35`, Nemotron Mamba-2) it is stronger than that: a slot restore can
+        NEVER save a prefill, because the restore path calls `prompt.clear()`, which clears the
+        context checkpoints — and checkpoints are the only prefix-reuse mechanism a recurrent
+        model has. So a disk-restored slot always full-reprocesses its next request. The bytes
+        load, the log line says success, and the next turn pays in full. This whole KV-slot
+        feature is a gpt-oss win; on a hybrid it is inert by construction, which is why the
+        keeper's restore is worth keeping only for its cheapness, never for its promise."""
         if served_model not in await self.running():
             raise LocalGatewayError(
                 f"{served_model} is not resident — refusing a slot {action}, because reaching it "

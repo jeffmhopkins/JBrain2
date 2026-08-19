@@ -1457,6 +1457,11 @@ async def gateway_unload(
 # linear in patches, not quadratic), but it remains the lever if a build ever loses `-fa`.
 #   --ctx-checkpoints  how many per-slot context checkpoints llama-server keeps
 #   --cache-reuse      minimum chunk size worth salvaging from a matching prompt prefix
+# MEASURED 2026-08-18: prompt caching WORKS on the hybrid — a warm prime is 0.99 s reusing
+# 32,485 of 32,489 tokens. What costs a cold prefill (~101 s, which is this hardware's ~243
+# tok/s, not a fault) is anything that INVALIDATES the checkpoint. Sweeping the checkpoint
+# count is still the right experiment, but 2 vs 8 measured identical — because if no checkpoint
+# MATCHES, the count cannot matter. Diagnose with `-lv 4` first (docs/runbooks/STRIX_HALO_SETUP.md).
 # The cache pair is here because the SLOW-PREFILL investigation cannot start without it, and on
 # a HYBRID model our shipped values are the prime suspects. Qwen3.8 runs 48 of its 65 layers as
 # Gated DeltaNet, which carries a recurrent state: that state cannot be KV-shifted or partially
@@ -1521,7 +1526,13 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
 # likely typo, being the value every llama.cpp doc names. 8 is above any value this investigation
 # needs and well under the cliff.
 _EXTRA_ARG_BOUNDS: dict[str, tuple[int, int]] = {
-    "--ctx-checkpoints": (0, 8),
+    # 32 is llama.cpp's OWN default; we serve 2. An earlier bound of 0..8 put the upstream
+    # default out of reach — i.e. the one value most worth trying could not be tried, which is
+    # precisely the gap the allowlist exists to close. The ceiling is now that default, so a
+    # sweep can reach it and no further: on a hybrid each checkpoint is a full recurrent-state
+    # copy (~150 MiB for Qwen3.8, upstream #27211 measures 149.6), device-resident and per slot,
+    # so 32 is ~4.7 GiB/slot that `footprint_gb` budgets only at the SERVED count.
+    "--ctx-checkpoints": (0, 32),
     # `_vision_resident_gb` sizes the CLIP workspace at a hardcoded 4096 image tokens
     # (llama.cpp's ceiling for this projector family). Raising the ceiling past that grows the
     # workspace the budget does not follow, so cap it at the figure the budget assumes.
