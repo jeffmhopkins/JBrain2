@@ -1,58 +1,124 @@
 # Memory Admission on Unified Memory — Design Spec
 
-> **Status:** Draft · **Last verified:** 2026-08-19 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️
+> **Status:** Draft (v2 — rewritten after adversarial review) · **Last verified:** 2026-08-19 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4❌ W5◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — no LLM or storage
-> surface changes (rules 1–2); the one new table is RLS-scoped with an isolation
-> test (rule 3); tests land with the code (rule 5); **rule 10 is load-bearing
-> here**, because every step below is either PWA/debug-operable or is explicitly
-> named as a host step with a date and an owner.
+> surface changes (rules 1–2); tests land with the code (rule 5); rule 10 is
+> load-bearing and every step is named as PWA-operable, debug-API-operable, or
+> host-bound with no pretence otherwise.
+
+> **v2 supersedes v1 wholesale.** Three adversarial reviews and four research
+> passes overturned v1's central diagnosis, its headline number, its wave order
+> and two of its four proposed mechanisms. v1 claimed `ttm.pages_limit` was the
+> lost kernel back-pressure; it never was any. v1 proposed a 21 GiB reserve; the
+> correct direction is *smaller* than the 16 already shipped. v1 proposed cgroup
+> enforcement; GTT is not charged to a cgroup at all. What survives is the
+> observation that we have **eight uncoordinated memory budgets and no working
+> enforcement layer other than our own code**. Errors are kept visible below
+> rather than quietly deleted, because two of them are also committed in the
+> repo and on the live box.
 
 The box froze for seven hours on 2026-08-19 and needed a power cycle the owner
-could not perform remotely. Three separate fixes have shipped since, each
-correct and each treating a symptom. This plan stops that: it names the actual
-mechanism, states what we are **not** going to do, and sequences the work so the
-guard stops being a guess.
+could not perform remotely. Three fixes have shipped since, each correct and
+each treating a symptom. This plan stops that.
 
 ---
 
 ## 1. What is actually wrong
 
-Four defects, in descending order of how much damage they can still do. Every
-one is measured or read from source, not inferred.
+### D0 — eight uncoordinated budgets, and no single source of truth
 
-### D1 — `ttm.pages_limit` is inert, so there is no back-pressure at all
+**This is the root defect.** D1–D4 are its symptoms. Every one of these claims
+to protect the same RAM, none of them agree, and nothing reconciles them:
 
-`ttm.pages_limit` is **not a hard cap**. From `ttm_tt_populate()`:
+| # | constant | value | location |
+|---|---|---|---|
+| 1 | `MIN_FREE_GTT_GB` | 6.0 | `gpu_guard.py:100` |
+| 2 | `RUNAWAY_MULTIPLE` / `+2.0` | 1.75 | `gpu_guard.py:95` |
+| 3 | `llm_local_free_ram_fraction` | 0.15 (live) | Settings / `config.py` |
+| 4 | residency constructor default | **0.25** | `residency.py:159` |
+| 5 | `LOAD_HEADROOM_GB` | 20.0 | `smoketest.py:85` |
+| 6 | `RESERVE_GIB` | 16 | `strix-halo-host-setup.sh:57` |
+| 6b | same, hardcoded | `16 * 1024 * 1024` | `update-inner.sh:627` |
+| 7 | `HOST_RESERVE_GIB` | 16 | `host_settings.py:35` |
+| 8 | `CACHE_RAM_GB` | 8.0 | `local_catalog.py:95` |
+
+Row 4 disagreeing with row 3 is a latent bug on its own: any construction path
+that does not pass the fraction explicitly reserves 30 GiB instead of 18.2.
+
+Two live consequences already measurable today, neither of which anything
+reports:
+
+- `footprint_gb(qwen3-coder-next-q8, 262144)` = **103.55** against a residency
+  ceiling of **103.02**. That model is permanently over budget at its own
+  catalog default window — it evicts everything on every load, silently.
+- Saved context-window overrides exist for **`qwen3-235b-a22b`** and
+  **`qwen3.5-122b-a10b-mtp`**, neither of which is in `CATALOG` or
+  `RETIRED_IDS`. `_footprint` returns **0.0** for a served name outside the
+  catalog, so anything running under those names is invisible to the evictor.
+
+### D1 — CORRECTED: `ttm.pages_limit` is not, and never was, back-pressure
+
+**v1 of this plan was wrong here, and so are two comments already in the repo.**
+
+v1 claimed: the limit sits above `MemTotal`, so the swapout loop is unreachable,
+so we lost the kernel's allocation-time refusal. The first half is true. The
+conclusion is false, because there was never a refusal to lose.
+
+`ttm_tt_populate()`, read to the end this time:
 
 ```c
-atomic_long_add(ttm->num_pages, &ttm_pages_allocated);
+atomic_long_add(ttm->num_pages, &ttm_pages_allocated);   /* counted BEFORE the check */
 while (atomic_long_read(&ttm_pages_allocated) > ttm_pages_limit || ...) {
         ret = ttm_global_swapout(ctx, GFP_KERNEL);
+        if (ret == 0)
+                break;        /* nothing swappable -> ALLOCATE ANYWAY, over the limit */
+        if (ret < 0)
+                goto error;
+}
 ```
 
-`ttm_pages_allocated` counts pages TTM has actually obtained, which by
-construction cannot exceed physical RAM. So when the limit is at or above
-`MemTotal`, the `while` condition is unreachable, `ttm_global_swapout()` never
-runs, and **TTM applies zero back-pressure at allocation time**. All pressure
-then falls to generic MM reclaim, which cannot reclaim GTT pages (not on the
-LRU), leaving only page cache — which is re-faulted immediately. That is the
-livelock, mechanically.
+- The counter is incremented **before** the check: this is soft accounting, not
+  an admission gate. Exceeding the limit never by itself refuses anything.
+- `ret == 0` means "nothing could be swapped" and **breaks the loop, allowing
+  the allocation**. Refusal happens only on a negative errno, which is a hard
+  error (interrupted wait), never "over budget".
+- **`-ENOSPC` cannot escape this path.** `ttm_bo_swapout_cb()` explicitly
+  rewrites `-ENOSPC`/`-ENOMEM` → `-EBUSY`; `ttm_lru_walk_for_evict()` rewrites
+  `-EBUSY` → 0. Pinned BOs (a serving model's weights) return `-EBUSY`, and the
+  LRU walk is `trylock_only`, so contended BOs are skipped silently too.
+- TTM "swapout" writes BO pages to **shmem — i.e. back into page cache**, not to
+  a swap device. With little or no swap it copies RAM→RAM, frees the originals,
+  and **transiently doubles the footprint during the copy**.
+- The stock default is already `MemTotal / 2`, so "below MemTotal" is not even a
+  tightening relative to stock.
 
-Our box: `gtt_total` **124.0 GiB** against `MemTotal` **121.2 GiB**. Inert.
+> ⚠ **PENDING RE-VERIFICATION (2026-08-19).** Everything above concerns the
+> `ttm_tt_populate` soft loop, and is confirmed. But a SECOND mechanism may
+> exist and would change the conclusion: `amdgpu_ttm.c` derives the GTT
+> **resource manager** size from `ttm_tt_pages_limit()` at probe
+> (`gtt_size = ttm_tt_pages_limit() << PAGE_SHIFT`), and if `amdgpu_gtt_mgr_new()`
+> refuses once that manager is full, then a BOOT-TIME `ttm.pages_limit` is a real
+> hard cap after all — while a RUNTIME write would be the useless one, since the
+> manager is already sized. That is the exact opposite of the paragraph below.
+> Supporting observation: this box reports `gtt_total` = 124.0 GiB, matching its
+> cmdline `ttm.pages_limit=32505856` exactly and EXCEEDING `MemTotal` (121.2), so
+> the manager size does track the parameter. Do not act on D1 or W1 until this
+> resolves.
 
-We did not misconfigure this. `ttm.pages_limit=32505856` is the most-copied
-line in the Strix Halo community (kyuz0's reference cmdline), and it is
-**correct for that audience**: a benchmarking distribution wants the largest
-possible model, the kernel default is `MemTotal/2` (~60 GiB) which would refuse
-a 120B, so the guidance is "raise it". Nobody notices the inertness because a
-freeze on a desk is a power button, not an outage. We are an unattended server
-administered with no terminal. Same setting, opposite conclusion.
+**Therefore lowering `ttm.pages_limit` does not help and makes things worse**: in
+exactly the state we care about (everything pinned) it forces a futile global LRU
+walk on every populate, adding lock traffic and shmem churn.
 
-Also inherited from that line and worth correcting: `amdgpu.gttsize=126976` is
-**deprecated** (the kernel prints a warning pointing at `ttm.pages_limit`), and
-`amd_iommu=off` is a contested benchmark tweak — at least one report has IOMMU
-*on* helping dual-model loading.
+Two places assert the false version and must be corrected in the same change:
+`scripts/strix-halo-host-setup.sh:47` and `deploy/update-inner.sh:175`, both
+claiming this "turns a GTT over-commit into a clean `-ENOSPC`".
+
+**And one is live and user-facing:** the Ops → Host settings card (shipped
+#1160) tells the owner `ttm.pages_limit` is *"DISABLED — a GTT over-commit
+cannot be refused"* and offers a grub-and-reboot remedy. A GTT over-commit
+cannot be refused **at any value**. The card reports a false problem with a
+remedy that would not work. Fixing that is W0.
 
 ### D2 — the failure path strands the whole model in page cache
 
@@ -140,11 +206,36 @@ groups, manual unload endpoints, but it never asks "is there room". So the layer
 we hand-built is not a reimplementation of something purchasable. There is
 nothing on the shelf.
 
-And the thing worth remembering when we are tempted again: `gpu_guard.py`
-already computes `min(gtt_total - gtt_used, host_free - reserve)` and documents
-why the alternative double-reserves. **That is precisely the bug in LM Studio
-#1471, Ollama #16719, and llama.cpp #22592.** We are ahead of all three on the
-one axis that matters here. Adopting any of them imports a bug we already fixed.
+`gpu_guard.py` does already compute `min(gtt_total - gtt_used, host_free -
+reserve)`, which is the shape LM Studio #1471, Ollama #16719 and llama.cpp
+#22592 each get wrong. v1 of this plan concluded from that "we are ahead of all
+three". **That line is cut.** By D1, one of those two terms uses a `gtt_total`
+that is not a bound we control, and by D0 the `reserve` in the other is one of
+eight disagreeing numbers — so the formula being praised is not obviously doing
+the work claimed for it, in a system that froze for seven hours and currently
+cannot load `qwen3.5-4b`.
+
+### Candidates NOT yet evaluated, which belong here
+
+- **Remove `--no-mmap`.** This is the big omission in v1. `--no-mmap` is the
+  *cause* of the double residency; D2's page-cache drop is cleanup for a copy
+  that should not exist. Dropping the flag makes weights page-cache-backed and
+  evictable instead of duplicated, which removes the D2 ratchet at the root
+  rather than sweeping after every load. It is currently justified as "a gfx1151
+  stability flag" with no citation and no re-test date — though note the
+  community toolbox does list it as standing guidance, and per §5.2 it is also
+  what makes the cache drop possible at all. Needs a decision, not silence.
+- **Swap configuration.** The incident narrative has every service running from
+  swap for seven hours. TTM's own swapout writes to shmem, which needs somewhere
+  to go. Whether this box should have swap at all is a first-order question and
+  v1 never asked it.
+- **BIOS/UMA carve-out.** A firmware-level split is a genuine hardware partition
+  between GPU and host. Not mentioned in v1 even to be rejected.
+- **`memory.high` rather than `memory.max`.** Throttle-and-reclaim rather than
+  kill. Moot for GTT (§5.1) but relevant to the page-cache half.
+- **Reduce demand instead of policing it.** KV quantisation (`--cache-type-k/v
+  q8_0`) and narrower served windows cut the footprint directly; the roster
+  currently runs several models at 262144.
 
 ---
 
@@ -171,6 +262,30 @@ thresholds (shipped) only helps once memory actually drops.
 ---
 
 ## 4. Waves
+
+> ⚠ **W1–W3 below are v1 text and are NOT yet re-derived.** Three findings
+> invalidate them and the rewrite is blocked on §5.6:
+> 1. **The wave order is inverted.** W1's ceiling is an *output* of W2/W3, not an
+>    input — W2/D4a raises every projection by ~5.5 GiB, and W1 picks a number
+>    before that lands. Correct order is W0 → W5 → W3 → W2 → W1.
+> 2. **W1's number is wrong in direction.** At the "~21 GiB reserve" figure,
+>    `qwen3-coder-next-q8` at its catalog window needs 95.55 against 94.2
+>    admissible — permanently unloadable. With slots=2 (a shipped PWA feature)
+>    it needs 105.55, above *every* candidate ceiling. Keeping it loadable after
+>    D4a needs a reserve **≤14.15 GiB**, i.e. SMALLER than the 16 already
+>    shipped, not the 21 v1 proposed.
+> 3. **W1 must become a consolidation of D0's eight budgets, not a ninth.**
+>    "One derived budget, five constants deleted" is the fix; "one more constant,
+>    asserted, shipped before W3 measures anything" is the fourth band-aid.
+>
+> Also unfixed in the v1 text below: **W0 claims "no dependencies" and then names
+> a blocking research item four bullets later**; both cannot be true. And D4's
+> "+5.5 GiB is the warm-up phase" causal claim is **falsified** by a measurement
+> already in the runbook — gpt-oss-120b measures GTT 67.6 against a 68.55
+> projection, i.e. 0.95 GiB *heavy*, so whatever the gap is, it is not a
+> mechanism that applies to every model.
+
+
 
 ### W0 — the two unambiguous fixes ◻️
 No dependencies, evidence already nailed down.
@@ -254,10 +369,25 @@ cached number when current free memory is below the recorded baseline** — that
 gate is what makes a stale cache safe.
 - Prerequisite: confirm our pinned image has `no_alloc` (it may not; see W5).
 
-### W4 — kernel-enforced per-model budget ◻️ **[gated]**
-Per-model cgroup `MemoryMax=`. **Do not start until the open question in §5.1 is
-answered** — if GTT pages are not charged to the allocating process's memcg,
-this wave is void and must be deleted rather than attempted.
+### W4 — ~~kernel-enforced per-model budget~~ ❌ DELETED
+**Answered and dead.** GTT pages are allocated `GFP_USER | GFP_HIGHUSER` with no
+`__GFP_ACCOUNT`, are never `mem_cgroup_charge()`d, and are mapped to userspace
+as `VM_PFNMAP` so they appear in neither `memory.current` nor RSS. AMD's own
+patch to add accounting was NAK'd upstream ("That's intentionally not done like
+that"). The `dmem` controller (6.14, amdgpu 6.15) registers only a **vram**
+region — `amdgpu_gtt_mgr.c` has no `cgroup_register_region` at all. Docker and
+systemd are identical here; the gap is below both.
+
+Consequence worth recording: a runaway llama-server can exhaust host RAM through
+GTT while its cgroup shows `memory.current` far below `memory.max`, the cgroup
+OOM killer never fires, and the global OOM killer's badness scores **also**
+ignore GTT — so even if it had run during the 2026-08-19 freeze it would have
+picked the wrong victim.
+
+A cgroup limit is not useless, but it must be honestly labelled: it bounds
+llama-server's anonymous memory and the `--no-mmap` page-cache copy, and
+**nothing of the GTT**. A guard that fires on the wrong few percent of a
+process's footprint is worse than no guard, because it reads as protection.
 
 ### W5 — unblock llama.cpp upgrades ◻️
 Depends on W0's D3a. Once the smoke test stops failing spuriously, re-run the
@@ -266,36 +396,68 @@ upgrade and confirm whether the newest build carries `no_alloc`/`--fit`
 
 ---
 
-## 5. Open questions
+## 5. Questions — answered
 
-**5.1 — Are GTT allocations charged to a cgroup v2 memcg?** *(gates W4
-entirely.)* TTM allocates `GFP_HIGHUSER` through the driver. If those pages are
-not charged to the calling process's memcg, `MemoryMax=` gives no protection
-against a model pinning GTT. DRM cgroup support (`drm.memory.stat`) has been an
-in-flight patch series for years. **Under research.**
+**5.1 — Are GTT allocations charged to a cgroup v2 memcg? → NO.** Confirmed
+independently twice. See W4 above for the evidence and consequences.
 
-**5.2 — Is `posix_fadvise(DONTNEED)` reliable on the failure path?** *(gates
-W0's D2.)* It is best-effort and silently no-ops on pages another process still
-references — precisely the situation on an aborted load where llama-server may
-still hold the file. A fix that looks right and does nothing is the exact shape
-of the `timeout`-on-a-shell-function bug from earlier today. **Under research.**
+**5.2 — Is `posix_fadvise(DONTNEED)` reliable on the failure path? → YES, with
+conditions.** Confirmed twice. An open fd is irrelevant — page cache belongs to
+the inode's `address_space`, not to any descriptor, so v1's stated fear was
+unfounded. But:
+- folios locked for in-flight I/O are **trylocked and skipped**, so dropping
+  while the doomed llama-server is still streaming strands most of the file.
+  The abort path must **terminate → wait for exit → drop**.
+- **mapped folios are skipped wholesale**, so `--no-mmap` is what makes the drop
+  work at all. If anyone ever flips it back for performance, the drop silently
+  becomes a no-op with no code change to blame. Record it as load-bearing.
+- `generic_fadvise()` returns **0 unconditionally**, and short-circuits to 0 for
+  DAX and `noop_backing_dev_info` filesystems (tmpfs/ramfs).
+- Walking an 85 GB file's page cache is ~21M folios — hundreds of ms to seconds
+  of CPU, contending the reader's own lookups, and `lru_add_drain_all()` fires
+  work on every CPU whenever anything fails to evict. Not free at roster scale.
 
-**5.3 — Does PSI actually rise during this livelock?** During the event, reclaim
-keeps *nominally succeeding* — it evicts page cache and the pages come straight
-back. If `full` only rises when reclaim genuinely stalls, PSI could read
-deceptively low during the exact event we want it to catch. **Under research.**
+**→ `local_weights.py` has a live bug.** It does
+`os.posix_fadvise(...); dropped += os.fstat(fd).st_size`. Since the call always
+returns 0, the reported "GiB dropped" is the total size of every `.gguf`
+present, whether one page was evicted or none. It is not evidence of anything,
+and a W0 test asserting on it would pass on a total no-op. Replace with a
+`cachestat(2)` (syscall 451, Linux 6.5+) before/after delta.
 
-**5.4 — Is the RADV heap split?** RADV can present unified memory as ~80 GB
-device-local + ~40 GB host-visible instead of one pool;
-`radv_enable_unified_heap_on_apu=true` in `drirc` fixes it. **There is no
-`drirc` anywhere in this repo.** If our heap is split, every number we compute
-is subtly wrong. Cheap to check, not yet checked.
+**5.3 — Does PSI rise during this livelock? → YES.** v1's fear was unfounded.
+`psi_memstall_enter()` sits in `__alloc_pages_direct_reclaim()`, so every
+microsecond TTM spends in direct reclaim is charged; `gfp_retry_mayfail`
+suppresses the OOM killer but is orthogonal to stall accounting. The refault
+path in `filemap.c` measures exactly the evict-and-immediately-re-fault
+treadmill. Caveats for implementation:
+- **Attribution is broken because of 5.1** — PSI names the cgroup *suffering*,
+  not the one *causing*; the GTT hog is invisible and the pressure may surface
+  in Postgres. Never pick the victim from cgroup PSI. Use
+  `/proc/<pid>/fdinfo/<drm-fd>` (`drm-memory-gtt`, `drm-resident-gtt`,
+  `amd-requested-gtt`) — per-process GTT, which the residency table currently
+  lacks entirely.
+- Sub-second triggers need `CAP_SYS_RESOURCE` (not in Docker's default set), and
+  per-cgroup `memory.pressure` needs writable cgroups (Docker mounts them ro).
+  **Run the responder on the host, not in a container** — it must not live in the
+  cgroup it is judging.
+- May require `psi=1` at boot, i.e. the same grub dependency W1d has.
+- Confirm with `pgscan`/`pgsteal` and `workingset_refault_file` deltas; PSI is a
+  ratio, not a cause.
+
+**5.4 — Is the RADV heap split?** `radv_enable_unified_heap_on_apu=true` belongs
+in `drirc`; **there is none anywhere in this repo**. If the heap is split
+(~80 GB device-local + ~40 GB host-visible) every number we compute is wrong.
+Still unchecked, still cheap.
 
 **5.5 — Was the 2026-08-19 freeze during load or during serving?** RADV has a
-known slow-load path for >64 GB allocations that looks exactly like a hang and
-is not one. Does not change D1–D4, but changes how we read that incident.
+known slow-load path for >64 GB allocations that looks exactly like a hang.
+Does not change D0–D4; changes how that incident is read.
 
----
+**5.6 — NEW, and it gates D1 and all of W1.** Does the GTT **resource manager**
+size (set at probe from `ttm_tt_pages_limit()`) refuse allocations independently
+of the soft loop? If yes, a boot-time `ttm.pages_limit` is a real hard cap and a
+runtime write is the useless one — the reverse of what D1 currently says. See
+the caveat box in D1. **Under research.**
 
 ## 6. What "done" looks like
 
