@@ -291,7 +291,24 @@ class LocalGatewayClient:
         if model is None or not self._models_dir:
             return
         freed = local_weights.drop_weights_page_cache(self._models_dir, model.id)
-        if freed:
+        # All three outcomes are worth a line, and they are not the same thing. `if freed:`
+        # logged only the happy case — which was harmless while the figure was the sum of
+        # file sizes (always truthy) and became a blind spot the moment it started being
+        # MEASURED: a drop that freed nothing, and a kernel that cannot measure, both went
+        # silent. Those are precisely the two readings worth having.
+        if freed is None:
+            log.info(
+                "local_gateway.weights_cache_unmeasured",
+                model=model.id,
+                reason="cachestat(2) unavailable (needs Linux 6.5+) or model dir missing",
+            )
+        elif freed == 0.0:
+            log.info(
+                "local_gateway.weights_cache_drop_freed_nothing",
+                model=model.id,
+                note="pages were dirty, mapped, or under I/O — see local_weights",
+            )
+        else:
             log.info("local_gateway.weights_cache_dropped", model=model.id, freed_gb=freed)
 
     async def _served_shape(self, model: local_catalog.LocalModel) -> tuple[int, int]:
