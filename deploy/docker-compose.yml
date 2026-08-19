@@ -4,8 +4,31 @@
 # scopes its view of the Docker daemon.
 name: jbrain
 
+# Every container's log, bounded. Docker's default json-file driver has NO max-size and
+# NO max-file, so each service writes an unbounded log under /var/lib/docker — the same
+# filesystem as the database, the blob store, the backups and ~91 GB of model weights.
+# The stack has natural floods: llama-swap's access log (its own in-process ring is
+# bounded, the Docker sink it drains into is not), jlaunch's multi-hour job output, the
+# wall's 1 Hz vitals loop, and jcode/jlaunch at DEBUG — which is exactly when the owner is
+# investigating a problem. Nothing else reclaims them: the update prunes images and caps
+# the builder cache, but container logs are neither.
+#
+# Here, per service, rather than as a `log-driver` default in /etc/docker/daemon.json —
+# which is what this was first written as, and which was wrong for this box. daemon.json is
+# a HOST file: it needs a root shell to write and a daemon reload to take, so it could only
+# ever be applied by an installer the owner cannot run (CLAUDE.md #10). Compose applies
+# this at container creation, which every update already does, so the PWA's Update button
+# is the whole delivery mechanism. A service added later that omits it fails
+# `test_every_service_bounds_its_logs`.
+x-logging: &logbound
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   proxy:
+    logging: *logbound
     image: jbrain2-proxy:local
     build:
       context: ./src
@@ -50,6 +73,7 @@ services:
   # that origin and the public hostname in the Cloudflare dashboard. The token
   # carries the tunnel's identity and routing — see docs/runbooks/CLOUDFLARE_TUNNEL.md.
   cloudflared:
+    logging: *logbound
     profiles: [tunnel]
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
@@ -58,6 +82,7 @@ services:
     depends_on: [proxy]
 
   api:
+    logging: *logbound
     image: jbrain2-api:local
     build:
       context: ./src/backend
@@ -207,6 +232,7 @@ services:
   # need DDL rights, so only this short-lived container sees the superuser
   # URL — the api/worker stay on the RLS-bound app role.
   migrate:
+    logging: *logbound
     image: jbrain2-api:local
     profiles: [tools]
     command: ["alembic", "upgrade", "head"]
@@ -224,6 +250,7 @@ services:
   # volume, so it can never run twice or fire by accident. Needs the superuser
   # URL like migrate; mounts the same storage volumes it clears.
   wipe:
+    logging: *logbound
     image: jbrain2-api:local
     profiles: [tools]
     command: ["python", "-m", "jbrain.install_wipe"]
@@ -241,6 +268,7 @@ services:
         condition: service_healthy
 
   worker:
+    logging: *logbound
     image: jbrain2-api:local
     restart: unless-stopped
     command: ["python", "-m", "jbrain.worker"]
@@ -259,6 +287,7 @@ services:
         condition: service_healthy
 
   db:
+    logging: *logbound
     # TimescaleDB + PostGIS in one image; pgvector arrives with Phase 2.
     image: timescale/timescaledb-ha:pg17
     restart: unless-stopped
@@ -278,6 +307,7 @@ services:
       retries: 10
 
   supervisor:
+    logging: *logbound
     image: jbrain2-supervisor:local
     build:
       context: ./src/supervisor
@@ -314,6 +344,7 @@ services:
   # serves the new page with no rebuild. Read-aloud audio is FORWARDED to the tts-stt service
   # (BRAIN_TTS_URL) so the kiosk browser fetches it same-origin. Default profile -> up -d.
   wall:
+    logging: *logbound
     build:
       context: ./src
       dockerfile: deploy/Dockerfile.wall
@@ -340,6 +371,7 @@ services:
   # weights + config and flips the profile on. Vulkan needs only /dev/dri (not
   # /dev/kfd); weights and the generated config bind-mount from the host.
   local-llm:
+    logging: *logbound
     profiles: [local-llm]
     image: jbrain2-local-llm:local
     build:
@@ -397,6 +429,7 @@ services:
   # stack CPU-falls-back). The api reaches it at http://comfyui:8188 (internal
   # only, no host port). Weights bind-mount read-only from the host.
   comfyui:
+    logging: *logbound
     profiles: [comfyui]
     image: ${COMFYUI_IMAGE:-docker.io/kyuz0/amd-strix-halo-comfyui:latest}
     restart: unless-stopped
@@ -436,6 +469,7 @@ services:
   # (no whisper config -> no llama-swap), so a stock box serves read-aloud, not a dead STT
   # port. Internal only — neither port is published.
   tts-stt:
+    logging: *logbound
     image: jbrain2-tts-stt:local
     build:
       context: ./src
@@ -487,6 +521,7 @@ services:
   # seam below makes a git/npm egress ALLOWLIST opt-in (an allowlisting forward proxy),
   # left opt-in because routing cloudflared over a proxy needs on-box verification.
   jcode:
+    logging: *logbound
     profiles: [jcode]
     image: jbrain2-jcode:local
     build:
@@ -576,6 +611,7 @@ services:
   # joins it (proxies the control surface + streams the artifact), so the job's arbitrary
   # code has no route to db/supervisor/worker/blobs.
   jlaunch:
+    logging: *logbound
     image: jbrain2-jlaunch:local
     build:
       # Repo-root context so the Dockerfile can also compile research/es-census
@@ -605,6 +641,7 @@ services:
     pids_limit: ${JLAUNCH_PIDS_LIMIT:-2048}
 
   embed:
+    logging: *logbound
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
     restart: unless-stopped
     command: ["--model-id", "${EMBED_MODEL:-BAAI/bge-small-en-v1.5}"]
@@ -626,6 +663,7 @@ services:
   # can't reach searxng directly) — so no personal context ever rides a query
   # (docs/plans/JCODE_GROK_INTERNET_PLAN.md).
   searxng:
+    logging: *logbound
     image: ${SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}
     restart: unless-stopped
     mem_limit: 512m
@@ -666,6 +704,7 @@ services:
   # NOT disable it, since env_ignore_empty falls back to the on-box default. It needs
   # egress to fetch the target, so it sits on `internal` alongside searxng.
   reader:
+    logging: *logbound
     image: ${READER_IMAGE:-ghcr.io/intergalacticalvariable/reader:latest}
     restart: unless-stopped
     mem_limit: 1g
@@ -685,6 +724,7 @@ services:
   # to the on-box default). On `internal` — it needs egress to reach the target and holds no
   # owner data (only jerv reaches it, like the reader).
   byparr:
+    logging: *logbound
     image: ${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr:latest}
     restart: unless-stopped
     mem_limit: ${BYPARR_MEM_LIMIT:-2g}  # a stealth browser is heavier than the reader's Chromium
@@ -702,6 +742,7 @@ services:
   # box pays only the ~150-200 MB process baseline, not the loaded sessions — mem_limit caps
   # a burst. CPU-only (onnxruntime), no GPU.
   rapidocr:
+    logging: *logbound
     image: jbrain2-rapidocr:local
     build:
       context: ./src
@@ -730,6 +771,7 @@ services:
   # searxng/reader/rapidocr, so a plain `up -d` — what a PWA update runs — brings it up
   # with no CLI step.
   htmlrender:
+    logging: *logbound
     image: jbrain2-htmlrender:local
     build:
       context: ./src
@@ -752,6 +794,7 @@ services:
   # path and the go-auth .so path inside the image are image-specific — verify
   # against the pinned image.
   mqtt:
+    logging: *logbound
     profiles: [mqtt]
     image: ${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}
     restart: unless-stopped
@@ -766,6 +809,7 @@ services:
   # `mqtt` profile; connects to the broker as the ingest identity. Fails closed when
   # MQTT_INGEST_SECRET is unset (it logs and exits).
   mqtt-ingest:
+    logging: *logbound
     profiles: [mqtt]
     image: jbrain2-api:local
     restart: unless-stopped

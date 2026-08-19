@@ -23,38 +23,6 @@ if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
 fi
 
-# Bound the container logs. Docker's default json-file driver has NO max-size and NO
-# max-file, so every service writes an unbounded log under /var/lib/docker — on the same
-# filesystem as the database, the blob store, the backups and ~91 GB of model weights.
-# The stack has natural floods: llama-swap's access log (its own in-process ring is
-# bounded, the Docker sink it drains into is not), jlaunch's multi-hour job output, the
-# wall's 1 Hz vitals loop, and jcode/jlaunch at DEBUG — which is exactly when the owner is
-# investigating a problem. Nothing else reclaims them: the update prunes images and caps
-# the builder cache, but container logs are neither.
-#
-# Set at the DAEMON level rather than per-service in the compose file, so a service added
-# later inherits it instead of being the one that was forgotten. Applies to containers
-# created after this point; existing ones pick it up when the update next recreates them.
-DOCKER_DAEMON_JSON=/etc/docker/daemon.json
-if [ ! -f "$DOCKER_DAEMON_JSON" ]; then
-  say "Bounding container logs (50 MB x 3 per container)"
-  mkdir -p /etc/docker
-  printf '%s\n' \
-    '{' \
-    '  "log-driver": "json-file",' \
-    '  "log-opts": { "max-size": "50m", "max-file": "3" }' \
-    '}' > "$DOCKER_DAEMON_JSON"
-  systemctl reload docker >/dev/null 2>&1 || systemctl restart docker >/dev/null 2>&1 || true
-elif ! grep -q '"log-driver"' "$DOCKER_DAEMON_JSON"; then
-  # An existing config we did not write: merge our keys rather than replacing it, and leave
-  # an operator's own log-driver choice alone if they made one.
-  say "Adding a log-size bound to the existing /etc/docker/daemon.json"
-  if python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c.setdefault("log-driver","json-file"); o=c.setdefault("log-opts",{}); o.setdefault("max-size","50m"); o.setdefault("max-file","3"); json.dump(c, open(p,"w"), indent=2)' "$DOCKER_DAEMON_JSON"; then
-    systemctl reload docker >/dev/null 2>&1 || systemctl restart docker >/dev/null 2>&1 || true
-  else
-    say "WARNING: could not update $DOCKER_DAEMON_JSON — container logs stay unbounded"
-  fi
-fi
 if ! command -v git >/dev/null 2>&1; then
   say "Installing git"
   apt-get update -qq && apt-get install -y -qq git
