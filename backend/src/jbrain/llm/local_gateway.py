@@ -556,6 +556,21 @@ class LocalGatewayClient:
         model_id = getattr(model, "id", None)
         if model_id is None or projected_gb <= 0 or measured_gb is None:
             return
+        # A resident model always pins GB, so a delta at or below zero does not mean a load
+        # with no footprint — it means the model was gone by the time the second sample was
+        # taken (an eviction raced the measurement, or the load unwound). OBSERVED: a load
+        # cut short logged `measured_gb 0.0, drift_gb -26.59` at WARNING, which reads as a
+        # catalog over-predicting by 26 GB when the truth was the exact opposite. Same class
+        # of lie as the `if freed:` blind spot in _drop_weights_cache: report the miss.
+        if measured_gb <= 0:
+            log.info(
+                "local_gateway.footprint_unmeasured",
+                model=model_id,
+                predicted_gb=round(projected_gb, 2),
+                device_delta_gb=round(measured_gb, 2),
+                reason="model not resident at sample time (eviction raced the measurement)",
+            )
+            return
         drift = round(measured_gb - projected_gb, 2)
         record = log.warning if abs(drift) >= _FOOTPRINT_DRIFT_GB else log.info
         record(
