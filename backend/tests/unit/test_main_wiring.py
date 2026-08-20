@@ -29,11 +29,18 @@ class _FakeCoordinator:
         self.restores += 1
 
 
+class _FakeState:
+    """`app.state` is a bag of attributes; the helper reaches for `residency` with getattr,
+    so the missing-attribute case has to be a genuinely missing attribute."""
+
+    def __init__(self, residency: object | None) -> None:
+        if residency is not None:
+            self.residency = residency
+
+
 class _FakeApp:
     def __init__(self, residency: object | None) -> None:
-        self.state = type("S", (), {})()
-        if residency is not None:
-            self.state.residency = residency
+        self.state = _FakeState(residency)
 
 
 def test_reload_casualties_are_noted_and_a_restore_is_scheduled() -> None:
