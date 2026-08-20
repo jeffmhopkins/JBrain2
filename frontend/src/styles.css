@@ -1872,6 +1872,19 @@ button.vitals:focus-visible {
     color-mix(in srgb, var(--text-3) 14%, transparent) 4px 8px
   );
 }
+/* The gateway is serving flags that no longer match the saved settings. Amber, not red: the
+   model is running and answering, it is just not at the settings this screen shows — a
+   correctness gap in what the operator is told, not an outage. */
+.llm-config-stale {
+  color: var(--amber);
+  border-left: 2px solid var(--amber);
+  padding-left: 8px;
+}
+.llm-config-stale-why {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
 .llm-local-state {
   font-size: var(--fs-micro);
   color: var(--text-3);

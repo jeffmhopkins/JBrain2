@@ -32,9 +32,11 @@ recommended. `windows` overrides a model's `-c` by catalog id.
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import json
 import os
+import pathlib
 import sys
 from collections.abc import Mapping, Sequence
 from typing import cast
@@ -437,7 +439,32 @@ def write(
     image_min_tokens: Mapping[str, int] | None = None,
 ) -> str:
     """Render and atomically write {root}/llama-swap.yaml (temp + rename so the
-    gateway's --watch-config never sees a half-written file). Returns the path."""
+    gateway's --watch-config never sees a half-written file). Returns the path.
+
+    NO-OPS WHEN THE RENDERED CONFIG IS UNCHANGED, and that is the whole point of the
+    comparison rather than a micro-optimisation: rewriting this file KILLS EVERY RESIDENT
+    MODEL.
+
+    DIAGNOSED on the box 2026-08-20, after the owner reported — repeatedly, and was
+    repeatedly told it was a display artifact — that staging a model in the PWA unloaded
+    gpt-oss-120b. The chain:
+
+      a settings PUT (context window / image floor / slots / extra args)
+        -> `api.llm_settings._try_regenerate` calls this
+        -> `os.replace` lands a file with a fresh mtime, even byte-identical
+        -> llama-swap's `--watch-config` poller compares MTIME + SIZE, so it fires
+        -> llama-swap `reload()` builds a new server and calls `old.Shutdown()`
+        -> every running llama-server process dies
+
+    Two things made it invisible for so long. The unload happens inside llama-swap, so no
+    `box_events` row is written and the vitals surface stays silent — the app genuinely does
+    not know it happened. And `_unload_if_loaded`, right beside the regen call, unloads only
+    the model named in the PUT, which makes the code read as if a settings edit touches one
+    model. It touches all of them. Confirmed in llama-swap's own log, where `reloading
+    configuration` sits between every one of three consecutive manual loads of gpt-oss.
+
+    A PUT that genuinely changes a served command still writes, still reloads, and still
+    costs the resident set — correctly, since the model must relaunch to pick it up."""
     text = render(
         models,
         root,
@@ -447,6 +474,12 @@ def write(
         image_min_tokens=image_min_tokens,
     )
     path = os.path.join(root, "llama-swap.yaml")
+    # Compare CONTENT, not mtime: the caller re-stamps on every settings PUT and the common
+    # case is that nothing about the served commands changed. A read failure (absent file,
+    # first boot) falls through to the write, which is the safe direction.
+    with contextlib.suppress(OSError):
+        if pathlib.Path(path).read_text() == text:
+            return path
     tmp = f"{path}.tmp"
     with open(tmp, "w") as f:
         f.write(text)

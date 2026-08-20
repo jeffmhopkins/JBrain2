@@ -51,6 +51,13 @@ log = structlog.get_logger()
 MODEL_LOAD = "model_load"
 MODEL_UNLOAD = "model_unload"
 IMAGE_RENDER = "image_render"
+# The gateway config could not be re-stamped, so llama-swap is serving flags that no longer
+# match the saved settings. Surfaced because the re-stamp now happens ONCE, immediately before
+# a load (llm.local_gateway._config_regen) instead of on every settings PUT: the old code got a
+# retry on the operator's next edit, this one does not, and a model that quietly loads with
+# stale flags is exactly the kind of thing that reads as "the model is behaving oddly" weeks
+# later. Never fails the load — the model still starts, just not at the settings the meter shows.
+GATEWAY_CONFIG_STALE = "gateway_config_stale"
 
 # How long rows are kept. The surface's widest window is fifteen minutes; a day gives the
 # debug console something to read back after the fact without the table ever mattering.

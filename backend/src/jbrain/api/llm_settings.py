@@ -18,7 +18,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from jbrain import box_events
+from jbrain import box_events, queue
 from jbrain.agent.agents import AGENTS
 from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_spec
 from jbrain.agent.toolregistry import ToolRegistry
@@ -362,6 +362,11 @@ class LlmSettingsOut(BaseModel):
     local_models: list[LocalModelInfo]
     # Live host memory for the drawer meter; None when hosting is off or off-Linux.
     host_memory: HostMemory | None = None
+    # Why llama-swap is serving flags that do not match the saved settings, or None when it is
+    # up to date. The re-stamp happens once, right before a load, and it is best-effort — so
+    # without this a failed write leaves a model quietly running at a window the screen says it
+    # is not, with nothing on screen to say so.
+    gateway_config_error: str | None = None
     # The residency free-RAM floor (headroom the evictor keeps free) — the card's current
     # value + config default. Always present; the screen renders its card only when hosting
     # is on (it's meaningless without a box to budget).
@@ -488,6 +493,7 @@ async def _snapshot(
             for m in local_catalog.CATALOG
         ],
         host_memory=_host_memory(settings),
+        gateway_config_error=gateway_config_error(),
         free_ram=FreeRamInfo(
             fraction=free_ram_override
             if free_ram_override is not None
@@ -693,6 +699,46 @@ async def _saved_override_maps(
     )
 
 
+async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> None:
+    """Re-stamp llama-swap.yaml from the saved overrides. Called by the gateway client
+    IMMEDIATELY BEFORE A LOAD, not by the settings PUTs that change those overrides.
+
+    Rewriting that file makes llama-swap reload, and its reload calls `old.Shutdown()`, which
+    kills EVERY running llama-server — not only the model being edited. Doing it on the PUT
+    therefore charged an unrelated resident model for someone changing a dropdown, and did it
+    silently: the kill is inside llama-swap, so nothing writes a `box_events` row.
+
+    Safe to defer because the PWA only lets a model's flags be edited while it is NOT resident
+    (`editable = !m.loaded`) — at edit time there is no process to update. `llama_swap_config
+    .write` compares content, so when nothing changed this writes nothing and no reload fires.
+
+    Best-effort by contract: the settings are already persisted, so a failure here only delays
+    the gateway catching up and must never fail the load that called it."""
+    windows, slots, extra, floors = await _saved_override_maps(store, queue.SYSTEM_CTX)
+    _try_regenerate(settings, windows, slots, extra, floors)
+    if (err := gateway_config_error()) is not None:
+        # The load still proceeds — the model starts, just not at the settings the meter shows.
+        # Loud on both surfaces because this path gets ONE attempt per load, where the old
+        # per-PUT regen was retried on the operator's next edit.
+        with contextlib.suppress(Exception):  # noqa: BLE001 — narration must not fail a load
+            await box_events.record(
+                box_events.GATEWAY_CONFIG_STALE,
+                "llama-swap.yaml",
+                detail=f"the gateway is serving stale flags: {err}",
+                status="failed",
+            )
+
+
+# The last gateway-config re-stamp failure, or None when the most recent attempt succeeded.
+#
+# Module state on purpose: the failure happens during a LOAD (llm.local_gateway._config_regen),
+# in a different request from the settings PUT that caused it and possibly in the worker
+# process, so there is no response to attach it to. The settings screen reads it back through
+# `_snapshot` and says so, instead of the operator discovering months later that a model has
+# been serving a window they thought they changed.
+_last_regen_error: str | None = None
+
+
 def _try_regenerate(
     settings: Settings,
     windows: dict[str, int],
@@ -716,8 +762,21 @@ def _try_regenerate(
             extra_args=extra,
             image_min_tokens=image_min_tokens,
         )
+        _set_regen_error(None)
     except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
+        _set_regen_error(str(exc))
         log.warning("llm_settings.gateway_config_regen_failed", error=str(exc))
+
+
+def _set_regen_error(error: str | None) -> None:
+    global _last_regen_error  # noqa: PLW0603 — see `_last_regen_error` for why it is module state
+    _last_regen_error = error
+
+
+def gateway_config_error() -> str | None:
+    """Why llama-swap is serving flags that do not match the saved settings, or None when it
+    is up to date. Read by `_snapshot` for the settings screen."""
+    return _last_regen_error
 
 
 async def _unload_if_loaded(
@@ -990,9 +1049,7 @@ async def set_local_context_window_value(
     ceiling = model.max_context_window
     if window is not None and not (1 <= window <= ceiling):
         raise HTTPException(status_code=422, detail=f"context window must be 1..{ceiling}")
-    windows = await store.set_llm_local_context_window(ctx, model_id=model_id, window=window)
-    _, slots, extra, floors = await _saved_override_maps(store, ctx)
-    _try_regenerate(settings, windows, slots, extra, floors)
+    await store.set_llm_local_context_window(ctx, model_id=model_id, window=window)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1036,9 +1093,7 @@ async def set_local_image_min_tokens(
     if tokens is not None and not (1 <= tokens <= IMAGE_TOKENS_MAX):
         raise HTTPException(status_code=422, detail=f"image floor must be 1..{IMAGE_TOKENS_MAX}")
     ctx = ctx_for(principal)
-    floors = await store.set_llm_local_image_min_tokens(ctx, model_id=model_id, tokens=tokens)
-    windows, slots, extra, _ = await _saved_override_maps(store, ctx)
-    _try_regenerate(settings, windows, slots, extra, floors)
+    await store.set_llm_local_image_min_tokens(ctx, model_id=model_id, tokens=tokens)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1075,9 +1130,7 @@ async def set_local_parallel_slots(
     if body.slots is not None and not (1 <= body.slots <= PARALLEL_SLOTS_MAX):
         raise HTTPException(status_code=422, detail=f"slots must be 1..{PARALLEL_SLOTS_MAX}")
     ctx = ctx_for(principal)
-    slots = await store.set_llm_local_parallel_slots(ctx, model_id=model_id, slots=body.slots)
-    windows, _, extra, floors = await _saved_override_maps(store, ctx)
-    _try_regenerate(settings, windows, slots, extra, floors)
+    await store.set_llm_local_parallel_slots(ctx, model_id=model_id, slots=body.slots)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1715,9 +1768,7 @@ async def set_local_extra_args(
     running llama-server cannot change its launch flags any more than it can resize its KV."""
     model = _require_provisioned(settings, model_id)
     validated = _validate_extra_args(args, model)
-    extra = await store.set_llm_local_extra_args(ctx, model_id=model_id, args=validated)
-    windows, slots, _, floors = await _saved_override_maps(store, ctx)
-    _try_regenerate(settings, windows, slots, extra, floors)
+    await store.set_llm_local_extra_args(ctx, model_id=model_id, args=validated)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 

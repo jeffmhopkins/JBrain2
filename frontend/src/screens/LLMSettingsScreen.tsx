@@ -662,6 +662,7 @@ export function LLMSettingsScreen() {
         hostingEnabled={settings.local_hosting_enabled}
         models={settings.local_models}
         hostMemory={settings.host_memory}
+        gatewayConfigError={settings.gateway_config_error ?? null}
         freeRam={settings.free_ram}
         onSetFreeRam={setFreeRam}
         freeRamBusy={busy.has("free-ram")}
@@ -1219,6 +1220,7 @@ function OnBoxModelsCard({
   hostingEnabled,
   models,
   hostMemory,
+  gatewayConfigError,
   freeRam,
   onSetFreeRam,
   freeRamBusy,
@@ -1257,6 +1259,7 @@ function OnBoxModelsCard({
   hostingEnabled: boolean;
   models: LocalModelInfo[];
   hostMemory: { total_gb: number; used_gb: number; cache_gb?: number | null } | null;
+  gatewayConfigError: string | null;
   freeRam: { fraction: number; default: number; override: number | null };
   onSetFreeRam: (fraction: number | null) => void;
   freeRamBusy: boolean;
@@ -1386,6 +1389,17 @@ function OnBoxModelsCard({
           <span className="onbox-status-title">On-box memory</span>
           <span className="onbox-status-sub">{anyOn ? summary : "off"}</span>
         </div>
+        {/* llama-swap is serving flags that no longer match the saved settings. The re-stamp
+            happens once, immediately before a load, and is best-effort — so a failed write
+            leaves a model running at a window this screen claims it is not. Without this the
+            only trace is a log line nobody reads until the model "behaves oddly" weeks on. */}
+        {gatewayConfigError && (
+          <output className="llm-local-note llm-config-stale">
+            ⚠ The gateway is serving stale flags — a model may be running at settings other than the
+            ones shown. It re-applies on the next load of that model.{" "}
+            <span className="llm-config-stale-why">{gatewayConfigError}</span>
+          </output>
+        )}
         {meterShown ? (
           <div className="llm-mem" aria-label="unified memory in use">
             <div className="llm-mem-bar">
