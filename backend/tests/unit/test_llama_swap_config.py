@@ -553,12 +553,22 @@ def test_context_checkpoints_are_pinned_low_as_a_memory_trade(tmp_path: Path) ->
     recurrent state cannot be partially rewound, checkpoints are the ONLY mid-sequence resume
     path a hybrid has — this is the prefix-reuse budget, and 2 is close to none.
 
-    So what is pinned here is the VALUE and the fact that it is a deliberate trade, not a claim
-    that it is free. `--ctx-checkpoints` is on the extra-args allowlist so the trade can be
-    measured on the box; if a sweep shows a higher value wins, change it here with the number."""
+    The sweep this docstring asked for has now been run on the box, and 2 lost badly. Against a
+    real 33k-token conversation on the hybrid 27B, every turn re-prefilled the WHOLE prompt:
+    33,648 tokens, 232 s, repeatedly — because both checkpoints sat bunched at the end and
+    `--checkpoint-min-step` was left at llama.cpp's 8192 default, so none covered the divergence
+    point. At 16 checkpoints with a 1024 step the same conversation processes only its delta:
+    814 tokens in 8.4 s, 1,084 in 15.9 s, and `erasing old context checkpoint` went from 12
+    occurrences to 0.
+
+    The count and the step are pinned TOGETHER because either alone is inert: 16 checkpoints
+    forced 8192 apart still cannot cover a conversation densely enough."""
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path))
-    assert all("--ctx-checkpoints 2" in ln for ln in text.splitlines() if "llama-server" in ln)
+    server_lines = [ln for ln in text.splitlines() if "llama-server" in ln]
+    assert server_lines
+    assert all("--ctx-checkpoints 16" in ln for ln in server_lines)
+    assert all("--checkpoint-min-step 1024" in ln for ln in server_lines)
 
 
 def test_an_operator_override_of_a_shared_flag_appears_exactly_once(tmp_path: Path) -> None:
@@ -625,7 +635,7 @@ def test_an_unrelated_operator_flag_leaves_the_shared_defaults_alone(tmp_path: P
     )
     line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
     assert "-ub 1024" in line
-    assert "--ctx-checkpoints 2" in line
+    assert "--ctx-checkpoints 16" in line
     assert "--cache-reuse 256" in line
 
 

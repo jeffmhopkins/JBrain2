@@ -332,6 +332,11 @@ def render(
             # so the question is answerable without a release (docs/runbooks/STRIX_HALO_SETUP.md).
             "--ctx-checkpoints",
             str(local_catalog.CTX_CHECKPOINTS),
+            # Without this llama.cpp uses 8192, which makes the count above nearly useless: the
+            # checkpoints bunch at the end of the conversation and none covers an earlier
+            # divergence. The two are one setting (local_catalog.CHECKPOINT_MIN_STEP).
+            "--checkpoint-min-step",
+            str(local_catalog.CHECKPOINT_MIN_STEP),
             "-m",
             f"/models/{model_id}/{gguf}",
             "-ngl",

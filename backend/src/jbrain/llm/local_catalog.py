@@ -100,7 +100,24 @@ _KV_REFERENCE_TOKENS = 131072
 # llama_swap_config, because two things need the same number: the command that sets it and the
 # footprint that must budget for it. It was only in the command, so the memory model did not
 # know checkpoints existed at all.
-CTX_CHECKPOINTS = 2
+#
+# 16, up from 2, MEASURED on the box against a real 33k-token conversation. On a HYBRID model
+# `seq_pos_min` is the tail position (llama-memory-hybrid.cpp), so `pos_min >= pos_min_thold`
+# always holds and llama.cpp must find a checkpoint at or before the divergence point or
+# reprocess the WHOLE prompt from token 0. At 2 — with `--checkpoint-min-step` left at its
+# 8192 default — both checkpoints sat bunched at the end of the conversation, none covered the
+# divergence, and every turn paid a full re-prefill: 33,648 prompt tokens, 232 s, on repeat.
+# With 16 + a 1024 step the same conversation processes only its delta: 814 tokens in 8.4 s,
+# 1,084 in 15.9 s, and `erasing old context checkpoint` went from 12 occurrences to 0.
+#
+# Still half of llama.cpp's own default of 32.
+CTX_CHECKPOINTS = 16
+
+# Minimum token spacing between checkpoints (`--checkpoint-min-step`). llama.cpp defaults to
+# 8192, which we never set — and the count above is worthless without it: 16 checkpoints forced
+# 8192 apart still cannot cover a conversation densely enough to catch a divergence near the
+# end. The two are one setting and are raised together. llama.cpp rejects anything below 64.
+CHECKPOINT_MIN_STEP = 1024
 
 # The CLIP/mtmd vision encoder's attention buffer — the real cost behind llama.cpp #27146, and
 # NOT what this code previously claimed it was.
@@ -263,6 +280,12 @@ class LocalModel:
     # already spoken for. Deliberately NOT set for the Nemotron Mamba-2 hybrids — their SSM
     # state has a different shape and nobody has measured it here, and a guessed number in a
     # budget that governs host stability is worse than a documented zero.
+    #
+    # That zero got 8x more expensive when CTX_CHECKPOINTS went 2 -> 16, so measuring it is now
+    # worth doing: load a Nemotron, hold a multi-turn conversation, and read the `size = N MiB`
+    # off its `create_check` lines via GET /api/debug/llm/upstream-logs. That is exactly how the
+    # 0.28 above was obtained (275-284 MiB observed, against a catalog 0.15 taken from upstream
+    # #27211's figure for a different quant).
     checkpoint_gb: float = 0.0
     # Rough KV-cache size (GB) at the model's full 131072-token window — an ESTIMATE
     # (not a measurement) the settings drawer's memory bar uses to size the context
@@ -613,7 +636,7 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
-        checkpoint_gb=0.15,
+        checkpoint_gb=0.28,
     ),
     LocalModel(
         id="qwen3.8-27b-q4",
@@ -664,7 +687,7 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
-        checkpoint_gb=0.15,
+        checkpoint_gb=0.28,
     ),
     LocalModel(
         id="qwen3.8-27b-abliterated",
@@ -727,7 +750,7 @@ CATALOG: tuple[LocalModel, ...] = (
         native_context_window=262144,
         kv_gb_per_128k=_QWEN38_KV_GB_PER_128K,
         recurrent=True,
-        checkpoint_gb=0.15,
+        checkpoint_gb=0.28,
     ),
     LocalModel(
         id="qwen3-coder-next",
@@ -1033,10 +1056,18 @@ def footprint_gb(
     # GB in both the meter and the eviction budget — on a box that has hard-locked under
     # memory pressure.
     kv = _kv_gb(model, window, slots)
-    # Context checkpoints: per slot, device-resident, and on a hybrid a full copy of the
-    # recurrent state each. Budgeted at the SERVED count — an operator override through
-    # `--ctx-checkpoints` is not threaded in here, which is why that flag is bounded (0..32,
-    # llama.cpp's own default ceiling) in the settings API rather than left open.
+    # Context checkpoints: per slot, and on a hybrid a full copy of the recurrent state each.
+    #
+    # HOST RAM, not device memory, despite what this comment said for as long as it existed:
+    # `common_prompt_checkpoint` holds `std::vector<uint8_t>` buffers (llama.cpp common/common.h).
+    # CONFIRMED on the box — raising the count from 2 to 16 left GTT at 26.21 GiB, unchanged to
+    # the centibyte. It still belongs in this total because on Strix Halo host and device draw
+    # on one physical pool, so the budget counts it either way; what changes is that checkpoints
+    # do NOT add to the GTT cap pressure that is this box's documented hang mode.
+    #
+    # Budgeted at the SERVED count — an operator override through `--ctx-checkpoints` is not
+    # threaded in here, which is why that flag is bounded in the settings API rather than left
+    # open.
     checkpoints = model.checkpoint_gb * CTX_CHECKPOINTS * model.effective_slots(slots)
     return round(
         weights
