@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentStatus, planWaitingStatus } from "./status";
+import { agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import type { TranscriptMessage } from "./transcript";
 
 function asst(over: Partial<TranscriptMessage> = {}): TranscriptMessage {
@@ -31,6 +31,24 @@ describe("planWaitingStatus", () => {
       label: "Starting next step in",
       emphasis: "0:54",
     });
+  });
+});
+
+describe("modelLoadStatus", () => {
+  it("names the model, its fraction, and the load's own start", () => {
+    expect(modelLoadStatus("gpt-oss-120b", 0.43, 1000)).toEqual({
+      kind: "loading",
+      label: "Loading",
+      emphasis: "gpt-oss-120b",
+      percent: 0.43,
+      sinceMs: 1000,
+    });
+  });
+
+  it("carries a null fraction through rather than inventing a zero", () => {
+    // A gateway build that prints no parseable progress is the ordinary case; "0%" on a
+    // load that is halfway through reads as stuck.
+    expect(modelLoadStatus("qwen35", null, 1000).percent).toBeNull();
   });
 });
 

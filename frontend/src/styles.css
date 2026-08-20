@@ -9673,6 +9673,15 @@ button.small {
   font-weight: 500;
   color: var(--text-3);
 }
+/* A model load in flight — "Loading gpt-oss-120b… 43%". Steel like the live states it
+   outranks (the box IS working), with the model name carrying the emphasis a tool object
+   gets and the fraction set in the same tabular numerals as the elapsed beside it, so a
+   climbing percentage doesn't shuffle the line. */
+.fb-shell .fb-status.loading .fb-status-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
 /* The between-steps plan countdown (JERV_PLANNING_TOOL_PLAN.md): a calm amber line whose
    emphasised tail is the ticking remaining time, with an inline Stop to hold the armed
    auto-continuation — the wait is interruptible right where it's announced. */

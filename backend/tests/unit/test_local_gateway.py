@@ -14,7 +14,6 @@ from jbrain.llm import local_catalog, local_gateway, local_weights
 from jbrain.llm.local_gateway import (
     LocalGatewayClient,
     LocalGatewayError,
-    _parse_load_progress,
     _parse_running,
 )
 
@@ -193,29 +192,6 @@ def test_parse_running_tolerates_messy_shapes() -> None:
     assert _parse_running([]) == set()
 
 
-async def test_load_progress_parses_the_latest_percent_from_the_logs() -> None:
-    logs = (
-        "srv  load_model: loading model from /models/coder.gguf\n"
-        "load_tensors: loading model tensors 25 %\n"
-        "load_tensors: loading model tensors 80%\n"
-        "srv  update_slots: all slots are idle\n"  # a non-load line is ignored
-    )
-    # The freshest load line wins (80%), reported as a 0..1 fraction.
-    assert await _client(lambda r: httpx.Response(200, text=logs)).load_progress() == 0.8
-
-
-async def test_load_progress_is_none_without_a_parseable_line() -> None:
-    # No load-keyword line carrying a percent → soft miss, not an error (bar uses the
-    # time estimate). A stray "100% idle" lacks a load keyword and must be ignored.
-    logs = "server listening\nupdate_slots: 100% idle\n"
-    assert await _client(lambda r: httpx.Response(200, text=logs)).load_progress() is None
-
-
-async def test_load_progress_is_none_when_logs_are_unavailable() -> None:
-    # Old build without /logs (or gateway down) is a soft miss, never raised.
-    assert await _client(lambda r: httpx.Response(404)).load_progress() is None
-
-
 async def test_tail_logs_reads_the_proxy_buffer() -> None:
     """`/logs` is llama-swap's proxy monitor — its own lines, not llama.cpp's.
 
@@ -236,7 +212,7 @@ async def test_tail_logs_reads_the_proxy_buffer() -> None:
 
 
 async def test_tail_logs_raises_when_the_gateway_is_unreachable() -> None:
-    # Unlike load_progress (a soft miss), tail_logs surfaces the failure — the operator
+    # Unlike the best-effort narration reads, tail_logs surfaces the failure — the operator
     # asked for the logs, so an empty success would mislead.
     with pytest.raises(LocalGatewayError):
         await _client(lambda r: httpx.Response(503)).tail_logs()
@@ -390,14 +366,6 @@ async def test_tail_upstream_logs_raises_when_the_stream_cannot_be_opened() -> N
     # returning an empty body that reads as "the engine printed nothing".
     with pytest.raises(LocalGatewayError):
         await _client(lambda r: httpx.Response(404)).tail_upstream_logs()
-
-
-def test_parse_load_progress_tolerates_floats_and_ignores_out_of_range() -> None:
-    assert _parse_load_progress("load weights 12.5%") == 0.125
-    assert _parse_load_progress("loading tensors 0%") == 0.0
-    # A bogus >100 percent on a load line is rejected, leaving no signal.
-    assert _parse_load_progress("load tensors 250%") is None
-    assert _parse_load_progress("") is None
 
 
 async def test_slot_action_refuses_a_model_that_is_not_resident() -> None:

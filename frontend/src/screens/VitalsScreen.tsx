@@ -348,7 +348,14 @@ function eventDot(event: BoxEvent): string {
 }
 
 /** One event as a sentence. Present tense while it is happening — "loading gpt-oss-120b…"
- *  is the line the owner needs during the spike, and it has to read as NOW. */
+ *  is the line the owner needs during the spike, and it has to read as NOW.
+ *
+ *  A running load carries how far in it is when the box can say: the elapsed count beside
+ *  it answers "how long has this been going", and only the fraction answers "how much
+ *  longer" — which on a load that reads tens of GB is the question actually being asked.
+ *  Null when the gateway build prints nothing parseable, and never shown on a settled row:
+ *  "loaded gpt-oss-120b 100%" would put a progress figure on a row whose point is that it
+ *  is over. */
 function eventLabel(event: BoxEvent): string {
   const running = event.ended_ms === null && event.status === "running";
   const failed = event.status === "failed";
@@ -361,7 +368,9 @@ function eventLabel(event: BoxEvent): string {
   }
   if (event.kind === "model_load") {
     if (failed) return `${event.subject} failed to load`;
-    return running ? `loading ${event.subject}…` : `loaded ${event.subject}`;
+    if (!running) return `loaded ${event.subject}`;
+    const pct = event.percent == null ? "" : ` ${Math.round(event.percent * 100)}%`;
+    return `loading ${event.subject}…${pct}`;
   }
   if (event.kind === "model_unload") {
     return failed ? `could not unload ${event.subject}` : `unloaded ${event.subject}`;

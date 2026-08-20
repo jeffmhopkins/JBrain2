@@ -8,6 +8,7 @@ and a still-open event started before the window still shows up in it — a load
 three minutes ago is the explanation for the last three minutes of trace.
 """
 
+import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -172,6 +173,89 @@ async def test_a_row_abandoned_by_a_dead_process_ages_out(wired: async_sessionma
     assert await box_events.recent(wired, owner, seconds=60) == []
 
 
+async def test_in_flight_reports_the_load_happening_right_now(
+    wired: async_sessionmaker,
+) -> None:
+    """The narrow read behind the chat status line: one row, present tense, or nothing.
+
+    Distinct from `recent` because a status line has room for one thing, not a window: it
+    needs "is the box loading, and what" answered in the affirmative only while it is true."""
+    owner = await _owner(wired)
+
+    assert await box_events.in_flight(wired, owner) is None
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        during = await box_events.in_flight(wired, owner)
+        assert during is not None
+        assert during["subject"] == "gpt-oss-120b"
+        assert during["source"] == "api"
+
+    # Settled: the status line falls silent the moment the weights are in, rather than
+    # holding "loading…" until some window scrolls past it.
+    assert await box_events.in_flight(wired, owner) is None
+
+
+async def test_in_flight_ignores_work_of_another_kind(wired: async_sessionmaker) -> None:
+    """An image render pins the GPU just as hard, but "Loading …" is a claim about a MODEL
+    and the line must not make it about a render."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.IMAGE_RENDER, "sdxl"):
+        assert await box_events.in_flight(wired, owner) is None
+
+
+async def test_in_flight_falls_silent_on_a_row_a_dead_process_left_open(
+    wired: async_sessionmaker,
+) -> None:
+    """The one lie a status line cannot afford. A process killed mid-load leaves its row
+    open forever; the vitals LIST can render that honestly as "stopped reporting", but a
+    single line has no way to say it — so it says nothing instead of "loading gpt-oss-120b…"
+    for the rest of the session."""
+    owner = await _owner(wired)
+    abandoned = datetime.now(tz=UTC) - box_events.STALE_AFTER - timedelta(minutes=1)
+
+    async with scoped_session(wired, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.box_events (at, kind, subject, status, source) "
+                "VALUES (:at, 'model_load', 'gpt-oss-120b', 'running', 'api')"
+            ),
+            {"at": abandoned},
+        )
+
+    assert await box_events.in_flight(wired, owner) is None
+
+
+async def test_in_flight_prefers_the_newer_of_two_open_rows(wired: async_sessionmaker) -> None:
+    """Only one model loads at a time, but a row abandoned inside the staleness window can
+    still be open beside the real one. The newer row is the true one."""
+    owner = await _owner(wired)
+    stalled = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+    async with scoped_session(wired, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.box_events (at, kind, subject, status, source) "
+                "VALUES (:at, 'model_load', 'qwen35', 'running', 'worker')"
+            ),
+            {"at": stalled},
+        )
+    await box_events._write(  # noqa: SLF001 — the open-row insert, without a span to close it
+        box_events._INSERT_OPEN,  # noqa: SLF001
+        {
+            "id": uuid.uuid4(),
+            "kind": box_events.MODEL_LOAD,
+            "subject": "gpt-oss-120b",
+            "detail": "",
+            "source": "api",
+        },
+    )
+
+    live = await box_events.in_flight(wired, owner)
+    assert live is not None
+    assert live["subject"] == "gpt-oss-120b"
+
+
 async def test_prune_drops_rows_past_retention(wired: async_sessionmaker) -> None:
     owner = await _owner(wired)
     old = datetime.now(tz=UTC) - box_events.RETENTION - timedelta(hours=1)
@@ -209,3 +293,90 @@ async def test_non_owner_sees_nothing_and_cannot_write(wired: async_sessionmaker
             await session.execute(
                 text("INSERT INTO app.box_events (kind, subject) VALUES ('model_load', 'x')")
             )
+
+
+async def test_progress_rides_the_open_row_and_climbs(wired: async_sessionmaker) -> None:
+    """The percentage lives on the row rather than beside it, so the surfaces that show a
+    load cannot disagree about how far in it is — they read one number."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        # Null until the first sample lands: a load that has just opened has no measurement
+        # yet, and 0% would read as "started and stuck" during the seconds that matters most.
+        first = await box_events.in_flight(wired, owner)
+        assert first is not None
+        assert first["progress"] is None
+
+        await box_events.progress(0.42)
+        during = await box_events.in_flight(wired, owner)
+        assert during is not None
+        assert during["progress"] == pytest.approx(0.42)
+
+        await box_events.progress(0.87)
+        later = await box_events.in_flight(wired, owner)
+        assert later is not None
+        assert later["progress"] == pytest.approx(0.87)
+
+
+async def test_progress_is_clamped_to_the_range_a_bar_can_render(
+    wired: async_sessionmaker,
+) -> None:
+    """The denominator is the CATALOG's projection, and the whole reason the measured
+    footprint is logged separately is that the projection drifts. A model that outgrows its
+    estimate must read as arrived, not as 118%."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        await box_events.progress(1.4)
+        over = await box_events.in_flight(wired, owner)
+        assert over is not None
+        assert over["progress"] == pytest.approx(1.0)
+
+        # And the other end: a sample taken while the pool is momentarily below the
+        # baseline (an eviction still settling) is a floor, not a negative bar.
+        await box_events.progress(-0.2)
+        under = await box_events.in_flight(wired, owner)
+        assert under is not None
+        assert under["progress"] == pytest.approx(0.0)
+
+
+async def test_a_settled_load_reports_no_progress(wired: async_sessionmaker) -> None:
+    """A finished load has no fraction to report. "loaded gpt-oss-120b" beside a 94% invites
+    the reading that 6% of it never arrived, and a 100% is a progress figure on a row whose
+    whole point is that it is over."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        await box_events.progress(0.94)
+
+    rows = await box_events.recent(wired, owner, seconds=60)
+    loads = [r for r in rows if r["kind"] == box_events.MODEL_LOAD]
+    assert len(loads) == 1
+    assert loads[0]["ended_ms"] is not None
+    assert loads[0]["progress"] is None
+
+
+async def test_a_late_sample_cannot_reopen_a_settled_loads_percentage(
+    wired: async_sessionmaker,
+) -> None:
+    """The watchdog takes a final sample once the load returns, which races the settle by
+    construction. The write is guarded on the row still being open so the loser of that race
+    is dropped rather than putting a live-looking percentage on a finished row."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        await box_events.progress(0.5)
+    # The span has closed and reset the ambient row, so this is a no-op twice over.
+    await box_events.progress(1.0)
+
+    rows = await box_events.recent(wired, owner, seconds=60)
+    loads = [r for r in rows if r["kind"] == box_events.MODEL_LOAD]
+    assert loads[0]["progress"] is None
+
+
+async def test_progress_outside_a_span_is_a_no_op(wired: async_sessionmaker) -> None:
+    """Same contract as every other write here: narration never raises, and never invents a
+    row to attach itself to."""
+    owner = await _owner(wired)
+    await box_events.progress(0.5)
+    assert await box_events.recent(wired, owner, seconds=60) == []

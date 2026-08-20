@@ -12,10 +12,14 @@ models are resident in memory:
                                          inference path after load so the first real
                                          turn isn't the slow one, optionally priming a
                                          persona system prompt into the KV cache (see `load`)
-  - GET  /logs                         → recent gateway + upstream stdout, which the
-                                         loading bar mines for the llama.cpp model-load
-                                         percentage (a real "weights read in" signal,
-                                         since we run --no-mmap)
+  - GET  /logs                         → recent gateway stdout, served to the debug
+                                         console. It carries llama-swap's OWN lines only,
+                                         never llama.cpp's — which is why the load
+                                         percentage is measured off device memory
+                                         (gpu_guard) rather than read out of here
+  - GET  /slots  (per model)           → llama-server's per-slot state, including whatever
+                                         this build calls its prefill counters
+                                         (jbrain.llm.prefill_probe)
 
 Best-effort by design. The settings screen must render even when the gateway is
 down, still cold, or too old to expose these endpoints, so `running()` swallows
@@ -30,7 +34,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import re
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
@@ -61,11 +64,6 @@ _SWEEP_GROWTH_GB = 1.0
 # a healthy load. Below it, drift is ordinary per-build variation and is logged at info.
 _FOOTPRINT_DRIFT_GB = 1.0
 
-# How long to wait for the upstream log stream to attach before loading anyway. Short
-# because it is pure instrumentation: a build without the route sets the event immediately
-# on its 404, and the only case that spends the full budget is a gateway already too sick
-# to answer — where delaying the load further helps nobody.
-
 
 class LocalGatewayError(Exception):
     """A load/unload call the gateway rejected or couldn't be reached for."""
@@ -81,11 +79,6 @@ class LocalGateway(Protocol):
     async def unload(self, served_model: str) -> None: ...
 
     async def load(self, served_model: str) -> None: ...
-
-    # NOTE: load_progress() is deliberately NOT on this protocol. It's an optional,
-    # best-effort extension only the jcode status probes (via getattr), so keeping it off
-    # the protocol lets the many structural test fakes satisfy LocalGateway without each
-    # having to stub it. Add it here only if a typed caller must depend on it.
 
 
 class LocalGatewayClient:
@@ -618,6 +611,12 @@ class LocalGatewayClient:
                 projected_gb=projected_gb,
                 target=served_model,
                 abort=lambda: self.unload(served_model),
+                # The watchdog's samples ARE the progress bar. It already reads the device
+                # pool once a second to decide whether to abort; publishing the same
+                # reading onto the open `box_events` row is what puts a percentage on the
+                # chat status line and the vitals list, with no second probe of anything
+                # and nothing new to keep alive.
+                on_progress=box_events.progress,
             )
         finally:
             # MEASURED: an aborted qwen3.5-4b left `Cached` +4.29 GiB — its entire 4.3 GB
@@ -883,46 +882,6 @@ class LocalGatewayClient:
             if not chunks:
                 raise LocalGatewayError(str(exc)) from exc
         return "".join(chunks)
-
-    async def load_progress(self) -> float | None:
-        """A real load fraction (0..1) for the model currently coming onto the box, parsed
-        best-effort from the gateway's recent logs — or None when it can't be determined
-        (gateway down, no /logs endpoint, or the build emits no parseable progress). The
-        loading bar follows this when present and falls back to a time estimate otherwise,
-        so None is a soft miss, never an error. Only one model loads at a time (we evict
-        the others first), so the latest progress line in the log is unambiguous."""
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, transport=self._transport
-            ) as client:
-                resp = await client.get(f"{self._root}/logs")
-                resp.raise_for_status()
-                return _parse_load_progress(resp.text)
-        except (httpx.HTTPError, ValueError) as exc:
-            log.info("local_gateway.logs_unavailable", error=str(exc))
-            return None
-
-
-# llama.cpp surfaces model-load progress on its stderr (captured by llama-swap's /logs).
-# The exact wording shifts across builds, so match tolerantly: a recent log line that pairs
-# a load/tensor/weight keyword with a percentage. We take the LAST such line — progress
-# only climbs, and the freshest line is the truest read of how far the load has gotten.
-_LOAD_KEYWORD_RE = re.compile(r"(?i)load|tensor|weight")
-_PERCENT_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
-
-
-def _parse_load_progress(text: str) -> float | None:
-    last: float | None = None
-    for line in text.splitlines():
-        if not _LOAD_KEYWORD_RE.search(line):
-            continue
-        m = _PERCENT_RE.search(line)
-        if m is None:
-            continue
-        pct = float(m.group(1))
-        if 0.0 <= pct <= 100.0:
-            last = pct / 100.0
-    return last
 
 
 def parse_spec_counters(metrics_text: str) -> dict[str, float]:

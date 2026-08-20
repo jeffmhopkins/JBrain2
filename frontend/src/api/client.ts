@@ -64,6 +64,21 @@ export interface Principal {
  *  here", which the top bar renders as an absent reading rather than an idle GPU. */
 export interface HostVitals {
   gpu_busy_percent: number | null;
+  /** The model coming onto the box right now, or null. Rides the vitals reading because
+   *  it answers the same question at the same cadence — "what is the box doing this
+   *  second" — and so needs no stream, poll, or endpoint of its own. */
+  loading?: ModelLoad | null;
+}
+
+/** A model load in flight. `percent` is the fraction of the weights actually read in
+ *  (0..1), or null when the gateway build prints no parseable progress — which the
+ *  surfaces render as "loading, no figure", never as 0%. */
+export interface ModelLoad {
+  model: string;
+  /** When the load started, so a status line counts up from the LOAD rather than from
+   *  whatever phase it interrupted. */
+  at_ms: number;
+  percent: number | null;
 }
 
 /** What a turn was asked to do, resolved at its start (backend migration 0166). Every
@@ -172,6 +187,9 @@ export interface BoxEvent {
   status: string;
   /** Which half of the box did it: "api" or "worker". */
   source: string;
+  /** How far a still-running load has got (0..1). Absent on settled rows — a finished
+   *  load has no fraction to report. */
+  percent?: number | null;
 }
 
 export interface LiveTurns {

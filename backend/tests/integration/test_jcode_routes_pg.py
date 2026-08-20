@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain import box_events
 from jbrain.api import jcode
 from jbrain.api.deps import current_principal
 from jbrain.auth import service
@@ -36,6 +37,22 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
     engine: AsyncEngine = create_async_engine(database_url, poolclass=NullPool)
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
+
+
+@pytest.fixture
+async def wired(maker: async_sessionmaker) -> AsyncIterator[async_sessionmaker]:
+    """The `box_events` writer wired the way a real process wires it, and unwired
+    afterwards — it is module-global, so a leak would have the rest of the suite writing
+    to a disposed engine. Only the status test needs it: that route reads the load's
+    percentage back off the row the load itself opens.
+
+    The table is emptied first because the container is shared: `in_flight` is a box-wide
+    read, so a row another suite left open could shadow this load's."""
+    async with scoped_session(maker, SessionContext(principal_kind="owner")) as session:
+        await session.execute(text("DELETE FROM app.box_events"))
+    box_events.configure(maker, source="api")
+    yield maker
+    box_events.reset()
 
 
 async def _owner_id(maker: async_sessionmaker) -> str:
@@ -155,14 +172,9 @@ class _FakeGateway:
         self.resident: set[str] = set(resident or ())
         self.loaded: list[str] = []
         self.unloaded: list[str] = []
-        # The real load fraction the status would surface while warming (None = no signal).
-        self.progress: float | None = None
 
     async def running(self) -> set[str]:
         return set(self.resident)
-
-    async def load_progress(self) -> float | None:
-        return self.progress
 
     async def load(self, served_model: str) -> None:
         self.loaded.append(served_model)
@@ -210,29 +222,38 @@ async def test_create_does_not_warm_and_warm_endpoint_swaps(
 
 class _BlockingGateway(_FakeGateway):
     """Lists the model resident the moment load() is requested (the gateway's real
-    behavior), then blocks until released — so a poll mid-load sees loaded AND warming."""
+    behavior), then blocks until released — so a poll mid-load sees loaded AND warming.
+
+    Narrates the load into `box_events` while it blocks, because that open row IS where
+    the bar's percentage comes from: the real client opens the span in `load` and the
+    watchdog publishes its device samples onto it. `progress` left None models the box
+    with no device probe, which publishes nothing and leaves the bar on its estimate."""
 
     def __init__(self) -> None:
         super().__init__()
         self.gate = asyncio.Event()
+        self.progress: float | None = None
 
     async def load(self, served_model: str) -> None:
         self.resident = {served_model}  # resident-as-requested: `loaded` races true here
         self.loaded.append(served_model)
-        await self.gate.wait()
+        async with box_events.span(box_events.MODEL_LOAD, served_model):
+            if self.progress is not None:
+                await box_events.progress(self.progress)
+            await self.gate.wait()
 
 
 async def test_status_reports_warming_while_the_load_is_in_flight(
-    maker: async_sessionmaker,
+    wired: async_sessionmaker,
 ) -> None:
     # The race the bar must survive: the gateway reports the model resident (loaded:true)
     # while the warm task is still loading its weights. `warming` stays true until the
     # task finishes, so the bar keys off it and doesn't vanish mid-load.
-    owner_id = await _owner_id(maker)
-    app = _app(maker, owner_id)
+    owner_id = await _owner_id(wired)
+    app = _app(wired, owner_id)
     app.state.settings = Settings(secure_cookies=False, local_llm_enabled=True)
     gw = _BlockingGateway()
-    gw.progress = 0.5  # the gateway reports the load half done while it blocks
+    gw.progress = 0.5  # the watchdog publishes "half done" onto the open row
     app.state.local_gateway = gw
     transport = ASGITransport(app=app)
 
@@ -243,13 +264,13 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
         mid = (await client.get("/api/jcode/model")).json()
         assert mid["loaded"] is True  # the gateway already lists it...
         assert mid["warming"] is True  # ...but the warm task is still loading
-        assert mid["progress"] == 0.5  # ...and the real load fraction is surfaced
+        assert mid["progress"] == 0.5  # ...and the measured fraction is read off its row
 
         gw.gate.set()  # release the load
         await asyncio.sleep(0.05)  # let the warm task finish + the done-callback fire
         done = (await client.get("/api/jcode/model")).json()
         assert done["warming"] is False
-        assert done["progress"] is None  # not warming → no progress probe
+        assert done["progress"] is None  # settled row → nothing in flight to report
 
 
 async def test_warm_is_a_noop_when_the_coder_is_already_resident(

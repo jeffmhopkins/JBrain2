@@ -1,12 +1,13 @@
 """API-surface tests with a fake repo and a mocked supervisor."""
 
+import asyncio
 import itertools
 import json
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -198,14 +199,14 @@ def test_ops_vitals_answers_from_the_ring(client: TestClient, repo: FakeAuthRepo
     login(client, repo)
     _seed_gauge(client, 73.0)
 
-    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": 73.0}
+    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": 73.0, "loading": None}
 
 
 def test_ops_vitals_reports_a_box_with_no_gauge(client: TestClient, repo: FakeAuthRepo) -> None:
     login(client, repo)
     _seed_gauge(client, None)
 
-    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": None}
+    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": None, "loading": None}
 
 
 def test_ops_vitals_reports_nothing_when_the_sampler_has_gone_stale(
@@ -216,7 +217,7 @@ def test_ops_vitals_reports_nothing_when_the_sampler_has_gone_stale(
     login(client, repo)
     client.app.state.vitals_ring.record(time.time() - 3600, 99.0)  # type: ignore[attr-defined]
 
-    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": None}
+    assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": None, "loading": None}
 
 
 def _stops_after(ticks: int) -> Callable[[], Awaitable[bool]]:
@@ -245,10 +246,42 @@ async def test_ops_vitals_stream_repeats_every_tick(monkeypatch: pytest.MonkeyPa
         )
     ]
 
+    # `loading` is present on every frame, null included: an ABSENT key is indistinguishable,
+    # to the meter, from one the transport lost.
     assert frames == [
-        b'data: {"gpu_busy_percent": 61.0}\n\n',
-        b'data: {"gpu_busy_percent": 61.0}\n\n',
-        b'data: {"gpu_busy_percent": 88.5}\n\n',
+        b'data: {"gpu_busy_percent": 61.0, "loading": null}\n\n',
+        b'data: {"gpu_busy_percent": 61.0, "loading": null}\n\n',
+        b'data: {"gpu_busy_percent": 88.5, "loading": null}\n\n',
+    ]
+
+
+async def test_ops_vitals_stream_carries_the_in_flight_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The chat status line's whole supply: what is loading and how far in, on the socket
+    the top bar already holds open. A second stream or a second poll for this would be the
+    fourth independent "a model is loading" path on one screen."""
+    from jbrain.api import ops
+
+    monkeypatch.setattr(ops, "_VITALS_PERIOD_S", 0)
+    checks = iter([False, True])
+
+    async def disconnected() -> bool:
+        return next(checks)
+
+    async def loading() -> dict[str, object]:
+        return {"model": "gpt-oss-120b", "at_ms": 1770000000000, "percent": 0.43}
+
+    frames = [
+        frame
+        async for frame in ops.vitals_frames(
+            disconnected, lambda _after: {"gpu_busy_percent": 94.0}, loading
+        )
+    ]
+
+    assert frames == [
+        b'data: {"gpu_busy_percent": 94.0, "loading": {"model": "gpt-oss-120b", '
+        b'"at_ms": 1770000000000, "percent": 0.43}}\n\n'
     ]
 
 
@@ -298,6 +331,118 @@ async def test_ops_vitals_stream_stops_when_the_client_leaves(
     frames = ops.vitals_frames(gone, lambda _after: {"gpu_busy_percent": float(next(reads))})
     assert [frame async for frame in frames] == []
     assert next(reads) == 0, "the gauge was never read for a client already gone"
+
+
+# --- the shared in-flight-load probe -----------------------------------------
+# Three surfaces want "is a model loading, and how far in" at 1 Hz, and the answer is a
+# database round trip. These pin that the cost is paid once per second for the box, not
+# once per client per surface.
+
+
+def _probe_request(monkeypatch: pytest.MonkeyPatch, row: dict[str, object] | None) -> Any:
+    """A bare request carrying just the app state the probe reads, plus a counter of how
+    often the underlying row read actually happened."""
+    from jbrain.api import ops
+
+    reads: list[int] = []
+
+    async def fake_in_flight(maker: object, ctx: object, **kw: object) -> dict[str, object] | None:
+        reads.append(1)
+        return row
+
+    monkeypatch.setattr(ops.box_events, "in_flight", fake_in_flight)
+    state = SimpleNamespace(session_maker=object())
+    return SimpleNamespace(app=SimpleNamespace(state=state)), reads, state
+
+
+async def test_the_load_probe_answers_repeat_readers_from_one_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Four open streams on one screen must not make four database round trips a second —
+    during a load, which is the one minute the box has nothing to spare."""
+    from jbrain.api import ops
+
+    request, reads, _state = _probe_request(
+        monkeypatch,
+        {"at_ms": 1_760_000_000_000, "subject": "gpt-oss-120b", "progress": 0.43},
+    )
+
+    first = await ops._load_in_flight(request)
+    for _ in range(3):
+        assert await ops._load_in_flight(request) == first
+
+    assert first == {"model": "gpt-oss-120b", "at_ms": 1_760_000_000_000, "percent": 0.43}
+    assert len(reads) == 1
+
+
+async def test_the_load_probe_survives_a_box_that_cannot_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This drives an instrument. An instrument that takes the screen down with it when the
+    box is busy is worse than one that goes quiet."""
+    from jbrain.api import ops
+
+    request, _reads, _state = _probe_request(monkeypatch, None)
+
+    async def boom(maker: object, ctx: object, **kw: object) -> dict[str, object] | None:
+        raise RuntimeError("pool exhausted")
+
+    monkeypatch.setattr(ops.box_events, "in_flight", boom)
+
+    assert await ops._load_in_flight(request) is None
+
+
+async def test_a_load_with_no_measurement_still_reports_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The model and the start time come from the box's own record; the fraction is an
+    embellishment that needs a device-memory probe and a catalog projection. Losing the
+    figure must not lose the line — an unmeasurable load is still one worth naming."""
+    from jbrain.api import ops
+
+    request, _reads, _state = _probe_request(
+        monkeypatch,
+        {"at_ms": 1_760_000_000_000, "subject": "gpt-oss-120b", "progress": None},
+    )
+
+    assert (await ops._load_in_flight(request)) == {
+        "model": "gpt-oss-120b",
+        "at_ms": 1_760_000_000_000,
+        "percent": None,
+    }
+
+
+async def test_the_load_probe_gives_up_rather_than_stall_the_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This read sits on the SSE frame path, and that path's constant cadence IS the
+    liveness signal the meter's watchdog reads. A read that hung would not merely lose a
+    percentage — it would make a perfectly healthy stream look dead."""
+    from jbrain.api import ops
+
+    request, _reads, _state = _probe_request(monkeypatch, None)
+    monkeypatch.setattr(ops, "_LOAD_PROBE_BUDGET_S", 0.01)
+
+    async def never(maker: object, ctx: object, **kw: object) -> dict[str, object] | None:
+        await asyncio.sleep(10)
+        return None
+
+    monkeypatch.setattr(ops.box_events, "in_flight", never)
+
+    assert await ops._load_in_flight(request) is None
+
+
+async def test_the_idle_case_costs_one_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The idle case is every second the box is not loading, which is nearly all of them,
+    and it now costs exactly one query: the fraction rides the row, so there is no second
+    read to skip. (There used to be — a fetch of the gateway's whole log buffer, ordered
+    after the row read so the idle second would not pay for it.)"""
+    from jbrain.api import ops
+
+    request, reads, _state = _probe_request(monkeypatch, None)
+
+    assert await ops._load_in_flight(request) is None
+    assert len(reads) == 1
 
 
 def test_ops_vitals_frame_stamps_each_sample() -> None:

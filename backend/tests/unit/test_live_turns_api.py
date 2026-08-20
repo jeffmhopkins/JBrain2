@@ -580,6 +580,74 @@ def test_carries_why_a_model_was_evicted(
     assert events[0]["detail"] == "to make room for gpt-oss-120b"
 
 
+def _load_row(
+    subject: str = "gpt-oss-120b",
+    status: str = "running",
+    progress: float | None = None,
+) -> dict[str, object]:
+    return {
+        "at_ms": 1_760_000_000_000,
+        "ended_ms": None if status == "running" else 1_760_000_090_000,
+        "kind": "model_load",
+        "subject": subject,
+        "detail": "",
+        "status": status,
+        "source": "api",
+        "progress": progress,
+    }
+
+
+def test_a_running_load_carries_how_far_in_it_is(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The elapsed count beside the row says how long this has been going; only the
+    fraction says how much longer, which on a load that reads tens of GB is the question
+    the owner is actually asking."""
+    _serve_events(monkeypatch, [_load_row(progress=0.43)])
+    login(client, repo)
+
+    events = client.get("/api/ops/vitals/events").json()["events"]
+
+    assert events[0]["percent"] == pytest.approx(0.43)
+
+
+def test_a_load_with_no_measurement_still_reports_itself(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A box with no device-memory probe, or a load whose first sample has not landed, has
+    no fraction — and must still say it is loading. The percentage is the embellishment;
+    the row is the reading."""
+    _serve_events(monkeypatch, [_load_row()])
+    login(client, repo)
+
+    event = client.get("/api/ops/vitals/events").json()["events"][0]
+
+    assert event["subject"] == "gpt-oss-120b"
+    assert event["status"] == "running"
+    assert event["percent"] is None
+
+
+def test_each_load_carries_its_own_fraction(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stalled row for one model must not wear the progress of the load that replaced it.
+    The figure rides its own row, so there is nothing to match up and nothing to get wrong —
+    which is the point of having moved it there. (`box_events.recent` is what blanks the
+    fraction on a settled row; that rule is covered against a real database.)"""
+    _serve_events(
+        monkeypatch,
+        [_load_row(subject="qwen35"), _load_row(progress=0.43)],
+    )
+    login(client, repo)
+
+    events = client.get("/api/ops/vitals/events").json()["events"]
+
+    assert [(e["subject"], e["percent"]) for e in events] == [
+        ("qwen35", None),
+        ("gpt-oss-120b", pytest.approx(0.43)),
+    ]
+
+
 def test_events_window_is_clamped_like_the_graph(
     client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
 ) -> None:

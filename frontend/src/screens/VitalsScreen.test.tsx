@@ -470,6 +470,36 @@ describe("what the box was doing", () => {
     expect(await screen.findByText("loading gpt-oss-120b…")).toBeInTheDocument();
   });
 
+  it("says how far in a running load is", async () => {
+    // The elapsed count beside the row answers "how long has this been going". Only the
+    // fraction answers "how much longer" — which on a load that reads tens of GB is the
+    // question actually being asked while the trace above it sits pinned.
+    opsVitalsEvents.mockResolvedValue([event({ percent: 0.43 })]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("loading gpt-oss-120b… 43%")).toBeInTheDocument();
+  });
+
+  it("shows a load with no parseable fraction without inventing one", async () => {
+    // A gateway build that prints no progress line is the ordinary case, and "0%" on a
+    // load that is halfway through reads as stuck.
+    opsVitalsEvents.mockResolvedValue([event({ percent: null })]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("loading gpt-oss-120b…")).toBeInTheDocument();
+  });
+
+  it("puts no fraction on a load that has finished", async () => {
+    // "loaded gpt-oss-120b 100%" would put a progress figure on a row whose whole point is
+    // that there is no more progress to make.
+    opsVitalsEvents.mockResolvedValue([
+      event({ status: "ok", ended_ms: Date.now() - 2_000, percent: 1 }),
+    ]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+
+    expect(await screen.findByText("loaded gpt-oss-120b")).toBeInTheDocument();
+  });
+
   it("says why a model was evicted, not just that it was", async () => {
     opsVitalsEvents.mockResolvedValue([
       event({

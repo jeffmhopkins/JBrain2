@@ -6,6 +6,7 @@ The system-RAM budget could not see it; every test here is about the check that 
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -402,3 +403,93 @@ async def test_supervisor_probe_tolerates_a_client_that_does_not_exist_yet() -> 
     resolved[0] = _FakeClient(_FakeResp(body))  # …the client appears later in startup
     got = await probe.sample()
     assert got is not None and got.gtt_used_gb == pytest.approx(4.0, abs=0.01)
+
+
+async def _never_aborts() -> None:
+    raise AssertionError("a healthy load must not be aborted")
+
+
+def _collect(into: list[float]) -> Callable[[float], Awaitable[None]]:
+    async def publish(fraction: float) -> None:
+        into.append(fraction)
+
+    return publish
+
+
+async def test_watchdog_publishes_the_load_fraction_as_it_climbs() -> None:
+    # The watchdog's samples ARE the progress bar. This is the only measurement of a load in
+    # flight the box has — the log parser this replaced had no source at all on the build
+    # here (the loader prints nothing at the default verbosity), so the bar it fed was
+    # permanently blank.
+    probe = _ScriptedProbe([_sample(1.0), _sample(6.0), _sample(11.0), _sample(21.0)])
+    seen: list[float] = []
+
+    async def load() -> None:
+        await asyncio.sleep(0.05)
+
+    await gpu_guard.guarded_load(
+        load,
+        probe=probe,
+        projected_gb=20.0,
+        target="m",
+        abort=_never_aborts,
+        sample_interval_s=0.01,
+        on_progress=_collect(seen),
+    )
+    # Fractions of the projection, measured from the baseline the guard already took.
+    assert seen[0] == pytest.approx(0.25)
+    assert seen == sorted(seen)
+    # The settled sample is published too, so a load that finishes between two ticks still
+    # reads full rather than freezing at whatever the last in-flight tick saw.
+    assert seen[-1] == pytest.approx(1.0)
+
+
+async def test_watchdog_publishes_nothing_without_a_projection() -> None:
+    # No projection, no denominator. A bar climbing against a made-up figure would be worse
+    # than no bar: the surfaces render null as "loading, no percentage", which is exactly
+    # what is known about an uncatalogued model.
+    # Kept under the no-projection ceiling (baseline + 2 GB): this is testing what gets
+    # published, not the runaway abort those samples would otherwise trip.
+    probe = _ScriptedProbe([_sample(1.0), _sample(2.0)])
+    seen: list[float] = []
+
+    async def load() -> None:
+        await asyncio.sleep(0.03)
+
+    await gpu_guard.guarded_load(
+        load,
+        probe=probe,
+        projected_gb=0.0,
+        target="m",
+        abort=_never_aborts,
+        sample_interval_s=0.01,
+        on_progress=_collect(seen),
+    )
+    assert seen == []
+
+
+async def test_a_failing_progress_publisher_never_breaks_the_load() -> None:
+    # Narration must not be able to fail the work it narrates — the rule the whole
+    # box_events module is built on, enforced here because this is the call site that runs
+    # inside the load.
+    probe = _ScriptedProbe([_sample(1.0), _sample(6.0)])
+    finished = False
+
+    async def load() -> None:
+        nonlocal finished
+        await asyncio.sleep(0.03)
+        finished = True
+
+    async def explode(_fraction: float) -> None:
+        raise RuntimeError("the database went away mid-load")
+
+    await gpu_guard.guarded_load(
+        load,
+        probe=probe,
+        projected_gb=20.0,
+        target="m",
+        abort=_never_aborts,
+        sample_interval_s=0.01,
+        on_progress=explode,
+    )
+    assert finished

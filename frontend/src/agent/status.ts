@@ -4,15 +4,31 @@
 
 import type { TranscriptMessage } from "./transcript";
 
-export type AgentStatusKind = "thinking" | "tool" | "answering" | "done" | "error" | "waiting";
+export type AgentStatusKind =
+  | "thinking"
+  | "tool"
+  | "answering"
+  | "done"
+  | "error"
+  | "waiting"
+  | "loading";
 
 export interface AgentStatus {
   kind: AgentStatusKind;
   /** Plain leading text. */
   label: string;
   /** Emphasised tail — the tool's object ("your notes"), rendered stronger. On a
-   * `waiting` status this carries the live countdown (e.g. "0:54"). */
+   * `waiting` status this carries the live countdown (e.g. "0:54"); on a `loading` one,
+   * the name of the model coming onto the box. */
   emphasis?: string;
+  /** `loading` only: the fraction of the weights read in (0..1), or null when the gateway
+   * gives no parseable figure — rendered as a bare "loading…" rather than as 0%. */
+  percent?: number | null;
+  /** `loading` only: when the load started, so the line counts up from the LOAD's own
+   * clock. The view's phase timer anchors to the phase it replaced (a turn that has been
+   * "thinking" for two minutes), which would open this line mid-count on a load that
+   * began a second ago. */
+  sinceMs?: number;
   /** Identity of the live turn, so the status line can reset its per-turn timer at a
    * turn boundary. Steady across a turn's phases (thinking → tool → answering) and
    * distinct across turns — a new turn appends messages, so the message count changes
@@ -96,6 +112,27 @@ function phaseStatus(last: TranscriptMessage): AgentStatus {
  * surface, which owns the live plan state. */
 export function planWaitingStatus(countdown: string): AgentStatus {
   return { kind: "waiting", label: "Starting next step in", emphasis: countdown };
+}
+
+/** What the BOX is doing, when that outranks what the turn is doing: a model is being
+ * read into memory, and until it is there no turn can move.
+ *
+ * This is the line's honesty fix. A cold 120B takes the better part of a minute to load,
+ * and for every second of it the transcript-derived status said "Thinking it through" with
+ * a climbing timer — the agent looking hung, while the box was in fact doing the heaviest
+ * work it ever does. Built here rather than by `agentStatus`, which reads only the
+ * transcript, and passed in by the surface (like the plan countdown) because the load is a
+ * property of the box, not of the conversation: it shows with no turn running at all, which
+ * is exactly the case where nothing else on the chat screen would explain the wait.
+ *
+ * `model` is the served name the box knows it by — the same string the vitals event list
+ * shows — so the owner reading both surfaces sees one name, not two. */
+export function modelLoadStatus(
+  model: string,
+  percent: number | null,
+  sinceMs: number,
+): AgentStatus {
+  return { kind: "loading", label: "Loading", emphasis: model, percent, sinceMs };
 }
 
 /** The current agent status, or null when idle (nothing to show). Reads only the

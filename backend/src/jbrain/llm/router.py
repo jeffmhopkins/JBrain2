@@ -20,7 +20,7 @@ import httpx
 import structlog
 
 from jbrain.config import Settings
-from jbrain.llm import local_catalog, model_sampling
+from jbrain.llm import local_catalog, model_sampling, prefill_probe
 from jbrain.llm.anthropic import AnthropicClient
 from jbrain.llm.errors import LlmBadResponseError, LlmError
 from jbrain.llm.openai_compat import OpenAiCompatClient
@@ -284,6 +284,7 @@ class LlmRouter:
         local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         residency: LocalAdmitter | None = None,
         local_enabled: bool = True,
+        slots_probe: prefill_probe.SlotsReader | None = None,
     ):
         self._clients = clients
         self._tasks = tasks
@@ -317,6 +318,10 @@ class LlmRouter:
         # model can't fit the box even after evicting everything) propagates and fails the
         # turn/job by design — better one failed call than an OOM hard-lock.
         self._residency = residency
+        # Reads llama-server's `/slots` for the diagnostic that photographs a turn stuck in
+        # prefill (jbrain.llm.prefill_probe). Only the streamed path takes it, and only on a
+        # local route; None everywhere else, where the probe starts no task.
+        self._slots_probe = slots_probe
 
     async def _admit_local(self, provider: str, model: str) -> None:
         if provider == local_catalog.LOCAL_PROVIDER and self._residency is not None:
@@ -709,18 +714,24 @@ class LlmRouter:
         await self._admit_local(provider, model)
         final: LlmTurn | None = None
         start = time.perf_counter()
-        async for part in client.converse_stream(
-            model=model,
-            system=system,
-            messages=messages,
-            tools=tools,
-            max_tokens=max_tokens,
-            reasoning_effort=reasoning_effort,
-            sampling=resolved_sampling,
-        ):
-            if isinstance(part, LlmTurn):
-                final = part
-            yield part
+        # The gap before the first part is PREFILL — the model eating the prompt. It is the
+        # longest silence a local turn has, and nothing on this box has ever read it; the probe
+        # photographs `/slots` if the gap runs long, and stops the moment anything streams.
+        probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
+        async with prefill_probe.watch(probe, model) as streaming:
+            async for part in client.converse_stream(
+                model=model,
+                system=system,
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+                sampling=resolved_sampling,
+            ):
+                streaming()
+                if isinstance(part, LlmTurn):
+                    final = part
+                yield part
         if final is not None:
             elapsed = time.perf_counter() - start
             await self._record(task, provider, model, final.usage)
@@ -747,6 +758,7 @@ def build_router(
     overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
     local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
     residency: LocalAdmitter | None = None,
+    slots_probe: prefill_probe.SlotsReader | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
     `overrides_loader` supplies the live DB-backed per-task overrides;
@@ -759,7 +771,11 @@ def build_router(
     — build one from `settings` when the caller passes none — making the memory-managed
     path the only path. A caller that owns a coordinator (the API, for plan_load/restore;
     the worker) passes it so admission runs on the same instance its displacement bookkeeping
-    uses; everyone else gets a default that is inert on a cloud-only box (enabled off)."""
+    uses; everyone else gets a default that is inert on a cloud-only box (enabled off).
+
+    `slots_probe` is the gateway's `/slots` reader, and is what turns the prefill diagnostic
+    on (jbrain.llm.prefill_probe). Optional in the way admission is NOT: this one only reads,
+    so a caller that omits it loses a log line, not the box."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:
         extra["sleep"] = sleep
@@ -787,6 +803,7 @@ def build_router(
             if residency is not None
             else _default_residency(settings, local_windows_loader)
         ),
+        slots_probe=slots_probe,
         local_enabled=settings.local_llm_enabled,
     )
 
