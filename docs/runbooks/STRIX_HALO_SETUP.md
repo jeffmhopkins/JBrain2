@@ -814,6 +814,51 @@ still took the host down. `jbrain.llm.gpu_guard` closes that:
   to per-process `drm-resident-gtt` before it can be trusted or used to replace the catalog
   estimate.
 
+### Rewriting llama-swap.yaml kills EVERY resident model
+
+Not the model being edited — **all of them**. DIAGNOSED 2026-08-20, after the owner reported
+several times that staging a model in the PWA unloaded `gpt-oss-120b` and was several times
+told it was a display artifact. It was not.
+
+```
+a settings PUT (context window / image floor / slots / extra args)
+  -> api.llm_settings._try_regenerate()
+  -> llama_swap_config.write() lands a fresh mtime, even byte-identical
+  -> llama-swap --watch-config polls MTIME + SIZE every 2 s, so it fires
+  -> llama-swap reload(): builds a new server, then old.Shutdown()
+  -> every running llama-server process dies
+```
+
+**Why it stayed invisible.** The kill happens inside llama-swap, so nothing writes an
+`app.box_events` row and the vitals surface says nothing — the app does not know it happened.
+Meanwhile `_unload_if_loaded`, sitting on the line right after the regen call, unloads only the
+model named in the PUT, so the code reads as though a settings edit touches one model.
+
+**How it was finally caught.** Three consecutive manual loads of `gpt-oss-120b` with **zero**
+`model_unload` rows between them — proof the app never asked — and then llama-swap's own log:
+
+```
+<gpt-oss-120b> Health check passed
+reloading configuration
+configuration reloaded          <- model dies here
+<gpt-oss-120b> Health check passed
+reloading configuration
+configuration reloaded
+```
+
+**Fixed** by making `llama_swap_config.write` compare rendered content against the file and
+no-op when unchanged. The boot reconciler (`llm_settings.reconcile_gateway_config`) already did
+exactly this, with the comment *"leave any resident model warm"* — the knowledge existed and had
+only ever been applied to the boot path.
+
+A PUT that genuinely changes a served command still writes, still reloads, and still costs the
+resident set. That is correct: the model has to relaunch to pick the change up.
+
+**Diagnostic recipe, reusable.** `app.box_events` records every unload the APP performs, with a
+distinct `detail` per path (`to make room for X, which you loaded`, `its context window changed`,
+`you unloaded it`, …). A model that vanishes with **no row at all** was not unloaded by us —
+look at the gateway, not the app. `POST /api/debug/sql` reaches that table.
+
 ### The gateway (llama-swap) is pinned to a commit — currently v250
 
 `deploy/Dockerfile.local-llm` pins `LLAMA_SWAP_VERSION` to a full commit SHA, because

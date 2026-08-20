@@ -640,6 +640,47 @@ def test_dropping_an_overridden_flag_never_swallows_the_flag_after_it(tmp_path: 
     assert llama_swap_config._drop_operator_overridden(["-ub", "1024"], []) == ["-ub", "1024"]
 
 
+def test_an_unchanged_config_is_not_rewritten(tmp_path: Path) -> None:
+    """Rewriting llama-swap.yaml KILLS EVERY RESIDENT MODEL, so an unchanged render must not
+    touch the file at all.
+
+    DIAGNOSED on the box 2026-08-20. `_try_regenerate` runs on every settings PUT; `os.replace`
+    lands a fresh mtime even for byte-identical content; llama-swap's `--watch-config` poller
+    compares MTIME + SIZE, so it reloads; and its `reload()` calls `old.Shutdown()`, which stops
+    every running llama-server. The owner reported this for a long time as "staging a model
+    unloads gpt-oss" and was repeatedly told it was a display artifact.
+
+    It leaves no trace in the app: the kill happens inside llama-swap, so no `box_events` row is
+    written and the vitals surface stays silent. mtime is therefore the assertion — content
+    equality alone would still pass while the file was being replaced underneath.
+    """
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    path = Path(llama_swap_config.write(str(tmp_path), manifest))
+    first = path.stat().st_mtime_ns
+    before = path.read_text()
+
+    path2 = Path(llama_swap_config.write(str(tmp_path), manifest))
+    assert path2 == path
+    assert path.stat().st_mtime_ns == first, (
+        "llama-swap.yaml was rewritten for an unchanged config — every resident model just died"
+    )
+    assert path.read_text() == before
+
+
+def test_a_real_change_still_rewrites(tmp_path: Path) -> None:
+    """The other half: a PUT that genuinely alters a served command MUST write, and the reload
+    that follows is correct — the model has to relaunch to pick the change up."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    mid = str(manifest[0]["id"])
+    path = Path(llama_swap_config.write(str(tmp_path), manifest))
+    first = path.stat().st_mtime_ns
+    llama_swap_config.write(str(tmp_path), manifest, extra_args={mid: ["-lm", "mmap"]})
+    assert path.stat().st_mtime_ns != first, "a real config change did not reach the gateway"
+    assert "-lm mmap" in path.read_text()
+
+
 def test_load_mode_supersedes_the_hardcoded_no_mmap(tmp_path: Path) -> None:
     """`--load-mode` replaces the deprecated `--mmap`/`--no-mmap`/`--mlock` family upstream, and
     llama.cpp warns when both appear: "only the last flag on the command line will take effect".
