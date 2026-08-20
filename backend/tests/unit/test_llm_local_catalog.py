@@ -540,18 +540,25 @@ def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
 
 
 def test_footprint_budgets_the_checkpoints_a_hybrid_actually_pins() -> None:
-    """Context checkpoints are device-resident and, on a hybrid, a full copy of the recurrent
-    state each. `footprint_gb` modelled none of them, so the residency evictor would co-load a
-    second model against RAM already spoken for — which matters now that `--ctx-checkpoints` is
-    an operator-settable flag.
+    """On a hybrid a checkpoint is a full copy of the recurrent state. `footprint_gb` modelled
+    none of them, so the residency evictor would co-load a second model against RAM already
+    spoken for — which matters now that `--ctx-checkpoints` is an operator-settable flag.
+
+    HOST RAM, not device memory (`common_prompt_checkpoint` holds `std::vector<uint8_t>`) —
+    confirmed on the box, where raising the served count from 2 to 16 left GTT unchanged at
+    26.21 GiB. It is still budgeted here because unified memory draws both from one pool.
+
+    0.28 is MEASURED (275-284 MiB observed for this arch). The previous 0.15 was upstream
+    #27211's figure for a different quant, i.e. 1.85x light.
 
     Budgeted at the SERVED count. An operator override is not threaded in here, which is exactly
     why that flag is bounded rather than left open."""
     m = local_catalog.get("qwen3.8-27b-q4")
-    assert m is not None and m.checkpoint_gb == 0.15
+    assert m is not None and m.checkpoint_gb == 0.28
     plain = dataclasses.replace(m, checkpoint_gb=0.0)
     delta = local_catalog.footprint_gb(m, 32768) - local_catalog.footprint_gb(plain, 32768)
-    assert delta == pytest.approx(0.15 * local_catalog.CTX_CHECKPOINTS, abs=0.01)
+    # The measured model earns the raised count; `plain` (unmeasured) would serve the low one.
+    assert delta == pytest.approx(0.28 * local_catalog.CTX_CHECKPOINTS, abs=0.01)
 
 
 def test_the_checkpoint_term_is_zero_where_nobody_measured_it() -> None:
@@ -571,12 +578,18 @@ def test_the_checkpoint_term_is_zero_where_nobody_measured_it() -> None:
 def test_the_served_checkpoint_count_has_one_source() -> None:
     """The gateway command and the memory model must not disagree about how many checkpoints
     are pinned — the number was only in the command, which is how the footprint came to ignore
-    them entirely."""
+    them entirely.
+
+    The count is now gated on whether the per-checkpoint cost has been MEASURED: an unmeasured
+    model keeps `CTX_CHECKPOINTS_UNMEASURED`, because a checkpoint is per slot and unbudgeted
+    above `checkpoint_gb`, and one provisioned unmeasured hybrid runs two slots. The manifest
+    below carries no `checkpoint_gb`, so it renders the unmeasured count."""
     from jbrain.llm import llama_swap_config
 
-    assert local_catalog.CTX_CHECKPOINTS == 2
-    # An import-identity check would pin nothing — reverting `render` to a literal "2" would
-    # still pass it. Move the constant and the rendered command has to move with it.
+    assert local_catalog.CTX_CHECKPOINTS == 16
+    assert local_catalog.CTX_CHECKPOINTS_UNMEASURED == 2
+    # An import-identity check would pin nothing — reverting `render` to a literal would still
+    # pass it. Move the constant and the rendered command has to move with it.
     import tempfile
     from pathlib import Path
 
@@ -593,13 +606,15 @@ def test_the_served_checkpoint_count_has_one_source() -> None:
         }
     ]
     monkey = dataclasses.replace  # noqa: F841 — readability: this test mutates a module const
+    measured = [{**manifest[0], "checkpoint_gb": 0.28}]
     original = local_catalog.CTX_CHECKPOINTS
     try:
         local_catalog.CTX_CHECKPOINTS = 7
-        text = llama_swap_config.render(manifest, str(root))
-        assert "--ctx-checkpoints 7" in text
+        assert "--ctx-checkpoints 7" in llama_swap_config.render(measured, str(root))
     finally:
         local_catalog.CTX_CHECKPOINTS = original
+    assert "--ctx-checkpoints 16" in llama_swap_config.render(measured, str(root))
+    # Same manifest without the measurement renders the conservative count.
     assert "--ctx-checkpoints 2" in llama_swap_config.render(manifest, str(root))
 
 
