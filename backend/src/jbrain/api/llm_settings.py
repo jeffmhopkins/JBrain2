@@ -1548,13 +1548,15 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
 
 # The one flag on the list whose bad value is not self-limiting. Everything else fails by not
 # loading — recoverable, because clearing does not need the model to be loadable. A checkpoint on
-# a hybrid is a full copy of the recurrent state (~150 MiB for Qwen3.8), device-resident and per
-# slot, and `footprint_gb` budgets it only at the SERVED count (2), not at whatever an operator
-# sets here — so everything above that is unbudgeted and the residency evictor cannot see it. At
-# llama.cpp's own default of 32 that is ~4.7 GiB/slot of unbudgeted device memory on a box whose
-# documented failure mode is an unrecoverable host hang under GTT pressure — and `32` is the most
-# likely typo, being the value every llama.cpp doc names. 8 is above any value this investigation
-# needs and well under the cliff.
+# a hybrid is a full copy of the recurrent state (MEASURED 275-284 MiB for Qwen3.8) and it is per
+# slot, while `footprint_gb` budgets it only at the SERVED count — so everything above that is
+# unbudgeted and the residency evictor cannot see it.
+#
+# It is HOST RAM, not device memory, which is what an earlier version of this comment got wrong
+# and used to justify a tighter ceiling: `common_prompt_checkpoint` holds `std::vector<uint8_t>`
+# buffers, and raising the served count from 2 to 16 on the box left GTT unchanged at 26.21 GiB.
+# On unified memory it still comes out of the same pool, so the bound stays — but it does not add
+# to the GTT-cap pressure that is this box's documented hang mode.
 _EXTRA_ARG_BOUNDS: dict[str, tuple[int, int]] = {
     # 32 is llama.cpp's OWN default; we serve 2. An earlier bound of 0..8 put the upstream
     # default out of reach — i.e. the one value most worth trying could not be tried, which is

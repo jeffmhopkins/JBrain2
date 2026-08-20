@@ -261,13 +261,35 @@ did nothing degrades to a slow prime, never a wrong answer.
 >
 > Consequences that are easy to get backwards:
 >
-> - **Sweeping `--ctx-checkpoints` proves nothing on its own.** If no checkpoint ever MATCHES,
->   2 and 8 behave identically — measured here at 101.26 s vs 101.08 s. That is not evidence the
->   flag is inert; it is evidence nothing was being restored. Diagnose with `-lv 4` and grep for
->   `created context checkpoint`, `restored context checkpoint`, and the `forcing full prompt
->   re-processing` line before tuning the count.
-> - **We serve 2 against llama.cpp's default of 32**, and `--checkpoint-min-step` (default 8192,
->   not currently settable here) also caps how densely they can be spaced.
+> - **Sweeping `--ctx-checkpoints` proves nothing on its own — RESOLVED, and the reason matters.**
+>   An earlier sweep found 2 and 8 identical (101.26 s vs 101.08 s) and concluded nothing was
+>   being restored. The count was never the whole setting: `--checkpoint-min-step` defaults to
+>   **8192**, so 8 checkpoints forced 8192 tokens apart still could not cover a 33k conversation
+>   densely enough to catch a divergence near its end. Raising the count while leaving the step
+>   alone is inert *by construction*. **Raise them together.**
+> - **We now serve `--ctx-checkpoints 16` + `--checkpoint-min-step 1024` — on MEASURED models only**
+>   (llama.cpp's own
+>   defaults are 32 and 8192). MEASURED on the box against a real 33k-token conversation: every
+>   turn used to re-prefill the whole prompt — 33,648 tokens, 232 s, repeatedly — and now
+>   processes only its delta, 814 tokens in 8.4 s and 1,084 in 15.9 s. `erasing old context
+>   checkpoint` went from 12 occurrences to 0. First-response time went from ~4 minutes to
+>   10-25 s.
+> - **Checkpoints are HOST RAM, not device memory.** `common_prompt_checkpoint` holds
+>   `std::vector<uint8_t>` buffers. Confirmed here: going from 2 to 16 left GTT at 26.21 GiB,
+>   unchanged. On unified memory it still comes out of the one pool and the budget counts it, but
+>   it does **not** add to the GTT-cap pressure that is this box's hang mode — so the count is a
+>   cheaper knob than it was documented to be. Size, measured: **275-284 MiB** each for the
+>   hybrid 27B, against a catalog figure of 150 MiB taken from upstream #27211 for a different
+>   quant.
+> - **The raise is gated on that measurement, not applied flat.** Checkpoints are created for a
+>   hybrid, or an SWA model served without `--swa-full` (that flag zeroes `n_swa`, so gpt-oss
+>   creates none at all). Both Nemotron hybrids qualify and are still unmeasured
+>   (`checkpoint_gb=0.0`), and `nemotron-3.5-lightning-30b` runs **two slots** — so a flat raise
+>   would have put 32 checkpoints of unknown size on the box against a budget of zero. A model
+>   earns the higher count by having its cost measured; everything else stays at 2. Measure a
+>   Nemotron and it picks up the raise with no code change beyond the catalog number.
+> - **Both flags ARE settable live**, via `PUT /api/debug/llm/local-models/{id}/extra-args` — no
+>   deploy. That is how the above was measured before it became the default.
 > - **`--cache-reuse` is not merely a no-op on a hybrid — it is a hazard.** Its partial-range
 >   `seq_rm` returns false for recurrent memory, which reaches `GGML_ABORT`, i.e. the server dies.
 >   On an identical prompt the reuse loop never executes, which is why we have not seen it.
