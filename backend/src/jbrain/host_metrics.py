@@ -75,6 +75,32 @@ def read_memory_gb(path: str = "/proc/meminfo") -> tuple[float, float] | None:
     return round(total, 1), round(total - free, 1)
 
 
+def read_page_cache_gb(path: str = "/proc/meminfo") -> float | None:
+    """`Cached` from /proc/meminfo, in GiB — or None when it can't be read.
+
+    Reported SEPARATELY from `read_memory_gb`'s used figure, which counts this as used (see
+    above) and must keep doing so. This exists because the settings meter drew `used` minus the
+    catalog's estimate for each resident model and labelled the whole remainder "System + other
+    containers (OS, database, on-box services)". Page cache is neither the OS nor a container,
+    and with `--no-mmap` a single model load puts TENS of GB there — measured 39.4 GiB during
+    one gpt-oss-120b load. So the segment that named the OS was in fact mostly a second copy of
+    the model weights, and an operator watching it bloat had no way to see that from the meter.
+
+    Deliberately the whole `Cached` figure rather than a weights-only slice: nothing on the box
+    can attribute page cache to a file cheaply (`cachestat(2)` is per-fd and blocked in the API
+    container by seccomp anyway), and a number split by guesswork would recreate the problem
+    this is fixing. Postgres and the logs are in here too, and the meter says so."""
+    try:
+        with open(path) as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                if key == "Cached":
+                    return round(int(rest.strip().split()[0]) / _KB_PER_GIB, 1)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def read_gpu_busy_percent(drm: Path = Path("/sys/class/drm")) -> float | None:
     """Highest amdgpu `gpu_busy_percent` (0-100) across DRM cards, or None when no
     card exposes the attribute — a non-AMD box, no GPU, or /sys absent.

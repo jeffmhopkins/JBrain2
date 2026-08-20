@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from jbrain.host_metrics import read_gpu_busy_percent, read_memory_gb
+from jbrain.host_metrics import read_gpu_busy_percent, read_memory_gb, read_page_cache_gb
 
 # The shape that killed the box on 2026-08-19, in miniature: a big MemAvailable sitting on a
 # tiny MemFree, because ~39 GiB of page cache held a second copy of the model weights that
@@ -113,3 +113,29 @@ def test_malformed_card_is_skipped(tmp_path: Path) -> None:
 def test_all_cards_malformed_returns_none(tmp_path: Path) -> None:
     _card(tmp_path, "card0", "")
     assert read_gpu_busy_percent(tmp_path) is None
+
+
+def test_page_cache_is_reported_separately_from_used(tmp_path: Path) -> None:
+    """`read_memory_gb` counts page cache as used and must keep doing so — that conservatism is
+    what the 2026-08-19 livelock bought. But the settings meter drew `used` minus each resident
+    model's catalog estimate and labelled the whole remainder "System + other containers (OS,
+    database, on-box services)", so with `--no-mmap` leaving a second copy of every model's
+    weights in page cache, the segment naming the OS was mostly model weights. Reporting the
+    figure separately is what lets the meter name it."""
+    p = tmp_path / "meminfo"
+    p.write_text(_SAMPLE + "Cached:          41943040 kB\n")
+    assert read_page_cache_gb(str(p)) == 40.0
+    # Still counted inside `used` — the budget's view is unchanged by this addition.
+    mem = read_memory_gb(str(p))
+    assert mem is not None
+    total, used = mem
+    assert used > 40.0
+
+
+def test_page_cache_is_none_when_absent(tmp_path: Path) -> None:
+    # A kernel or container without a `Cached` line reports nothing rather than 0.0 — the meter
+    # then keeps its old undifferentiated segment instead of drawing an empty cache block.
+    p = tmp_path / "meminfo"
+    p.write_text(_SAMPLE)
+    assert read_page_cache_gb(str(p)) is None
+    assert read_page_cache_gb(str(tmp_path / "absent")) is None

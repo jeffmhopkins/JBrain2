@@ -1256,7 +1256,7 @@ function OnBoxModelsCard({
   onImgTab: (tab: ImgTab) => void;
   hostingEnabled: boolean;
   models: LocalModelInfo[];
-  hostMemory: { total_gb: number; used_gb: number } | null;
+  hostMemory: { total_gb: number; used_gb: number; cache_gb?: number | null } | null;
   freeRam: { fraction: number; default: number; override: number | null };
   onSetFreeRam: (fraction: number | null) => void;
   freeRamBusy: boolean;
@@ -1323,7 +1323,15 @@ function OnBoxModelsCard({
   // plus any drift between catalog footprints and real RSS. Drawn as its own segment so the
   // bar fills to the SAME `used` the floor budgets against — a staged eviction then lines up
   // with the bar instead of looking like free room. Clamped at 0 (estimates can run over RSS).
-  const systemGb = usedGb !== null ? Math.max(usedGb - residentGb - imgUsedGb, 0) : 0;
+  // Page cache, measured (/proc/meminfo `Cached`), which `used` INCLUDES. Split out of the
+  // system segment because it is neither the OS nor a container: the gateway serves `--no-mmap`,
+  // so every model load leaves a second copy of the weights here (39.4 GiB measured on one
+  // gpt-oss-120b load). Before this it was drawn inside "System + other containers", so the
+  // segment labelled OS/database/services grew by tens of GB whenever a model loaded and the
+  // operator had no way to see why from the meter.
+  const cacheGb = Math.min(hostMemory?.cache_gb ?? 0, usedGb ?? 0);
+  const systemGb =
+    usedGb !== null ? Math.max(usedGb - residentGb - imgUsedGb - cacheGb, 0) : 0;
   // Honest "used" for the caption: measured used when we have it, else what we can see.
   const shownUsedGb = usedGb ?? residentGb + imgUsedGb;
 
@@ -1383,16 +1391,38 @@ function OnBoxModelsCard({
           <div className="llm-mem" aria-label="unified memory in use">
             <div className="llm-mem-bar">
               {/* The OS + non-LLM containers the evictor counts but the model segments don't —
-                  drawn first so the bar's fill matches the real `used` the floor budgets on. */}
+                  drawn first so the bar's fill matches the real `used` the floor budgets on.
+                  Its label no longer claims to be ONLY that: whatever a resident model costs
+                  beyond its catalog estimate lands here too, and tonight's measurements put that
+                  drift at up to 2.68 GB on one model. Naming the residual honestly is the point
+                  — a segment that says "OS" while holding page cache and estimate error sends
+                  you looking in the wrong place. */}
               {systemGb > 0.5 && (
                 <div
                   className="llm-mem-seg llm-mem-sys"
                   style={{ width: `${(systemGb / total) * 100}%` }}
-                  title={`System + other containers — ${Math.round(systemGb)} GB (OS, database, on-box services)`}
+                  title={`System + unaccounted — ${Math.round(systemGb)} GB (OS, database, on-box services, plus any gap between a resident model's real cost and its catalog estimate)`}
                 >
                   <div className="llm-mem-w" style={{ width: "100%" }} />
                   <span className="llm-mem-label">
                     system <span className="gb">{Math.round(systemGb)}G</span>
+                  </span>
+                </div>
+              )}
+              {/* Page cache — measured, and counted as used by the residency floor, so it really
+                  does take room from the next load. Mostly a second copy of model weights on a
+                  `--no-mmap` box; Postgres and logs are in here too, which is why the tooltip
+                  does not claim it is all weights. Reclaim it from the console with
+                  `debug-connect.sh drop-cache`. */}
+              {cacheGb > 0.5 && (
+                <div
+                  className="llm-mem-seg llm-mem-cache"
+                  style={{ width: `${(cacheGb / total) * 100}%` }}
+                  title={`Page cache — ${Math.round(cacheGb)} GB. Counts as used against the residency floor. With --no-mmap each model load leaves a second copy of its weights here; Postgres and logs also live in it.`}
+                >
+                  <div className="llm-mem-w" style={{ width: "100%" }} />
+                  <span className="llm-mem-label">
+                    cache <span className="gb">{Math.round(cacheGb)}G</span>
                   </span>
                 </div>
               )}
@@ -1455,6 +1485,12 @@ function OnBoxModelsCard({
                 <span className="onbox-mem-key">
                   <span className="onbox-mem-sw sys" />
                   system {Math.round(systemGb)} GB
+                </span>
+              )}
+              {cacheGb > 0.5 && (
+                <span className="onbox-mem-key">
+                  <span className="onbox-mem-sw cache" />
+                  cache {Math.round(cacheGb)} GB
                 </span>
               )}
               {imgActive && (

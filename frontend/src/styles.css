@@ -1860,6 +1860,18 @@ button.vitals:focus-visible {
   border-radius: inherit;
   background: color-mix(in srgb, var(--text-3) 42%, transparent);
 }
+/* Page cache: distinct from the system fill because it behaves differently — it is reclaimable
+   in principle, counts as used against the residency floor in practice, and on a `--no-mmap`
+   box it is mostly a second copy of model weights. Hatched rather than solid so it reads as
+   "occupied but recoverable" beside the flat system block. */
+.llm-mem-cache .llm-mem-w {
+  border-radius: inherit;
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--text-3) 30%, transparent) 0 4px,
+    color-mix(in srgb, var(--text-3) 14%, transparent) 4px 8px
+  );
+}
 .llm-local-state {
   font-size: var(--fs-micro);
   color: var(--text-3);
@@ -2140,6 +2152,14 @@ button.vitals:focus-visible {
 /* The muted swatch for the system / other-containers key (matches the .llm-mem-sys fill). */
 .onbox-mem-sw.sys {
   background: color-mix(in srgb, var(--text-3) 42%, transparent);
+}
+/* Matches the .llm-mem-cache hatched fill. */
+.onbox-mem-sw.cache {
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--text-3) 30%, transparent) 0 4px,
+    color-mix(in srgb, var(--text-3) 14%, transparent) 4px 8px
+  );
 }
 /* The amber "staged" dot state on the shared meter's status light. */
 .onbox-status .llm-local-dot.amber {

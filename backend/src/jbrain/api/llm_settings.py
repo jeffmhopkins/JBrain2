@@ -26,7 +26,7 @@ from jbrain.api.deps import PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
-from jbrain.host_metrics import read_memory_gb
+from jbrain.host_metrics import read_memory_gb, read_page_cache_gb
 from jbrain.llm import llama_swap_config, local_catalog, local_weights
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import (
@@ -298,6 +298,13 @@ class HostMemory(BaseModel):
 
     total_gb: float
     used_gb: float
+    # Page cache (/proc/meminfo `Cached`), which `used_gb` INCLUDES. Broken out so the meter can
+    # name it instead of burying it: the bar drew `used` minus each resident model's catalog
+    # estimate and called the remainder "System + other containers", but with `--no-mmap` a
+    # single load puts tens of GB of weight copies in page cache (39.4 GiB measured on one
+    # gpt-oss-120b load), so that segment grew for a reason its own label denied. None when it
+    # can't be read; the meter then falls back to the old undifferentiated segment.
+    cache_gb: float | None = None
 
 
 class FreeRamInfo(BaseModel):
@@ -555,7 +562,7 @@ def _host_memory(settings: Settings) -> HostMemory | None:
     if mem is None:
         return None
     total, used = mem
-    return HostMemory(total_gb=total, used_gb=used)
+    return HostMemory(total_gb=total, used_gb=used, cache_gb=read_page_cache_gb())
 
 
 def _local_model_info(
