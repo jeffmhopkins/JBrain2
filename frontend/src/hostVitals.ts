@@ -21,7 +21,7 @@
 import { useEffect, useState } from "react";
 
 import { currentTokenRate } from "./agent/tokenMeter";
-import { ApiError, api } from "./api/client";
+import { ApiError, type ModelLoad, api } from "./api/client";
 import { isForeground } from "./visibility";
 
 /** How long to wait before re-probing after a failure that might pass — a server
@@ -99,12 +99,20 @@ export interface VitalsSample {
 const history: VitalsSample[] = [];
 
 type Listener = (busy: GpuBusy) => void;
+type LoadListener = (load: ModelLoad | null) => void;
 type Access = "unknown" | "allowed" | "denied";
 
 const listeners = new Set<Listener>();
+/** Readers of the in-flight model load. A SECOND set on the SAME stream, not a second
+ *  stream: the chat status line wants only the load, the top bar wants only the gauge, and
+ *  giving either its own connection would re-create exactly the duplication this module was
+ *  written to end. Both sets feed the stream's lifecycle — the first reader of EITHER kind
+ *  starts it, and it stops only when both are empty. */
+const loadListeners = new Set<LoadListener>();
 let source: EventSource | null = null;
 let access: Access = "unknown";
 let published: GpuBusy = UNKNOWN;
+let publishedLoad: ModelLoad | null = null;
 let reprobe: ReturnType<typeof setTimeout> | null = null;
 /** A probe is awaiting the server. Guards against a SECOND attempt starting while the
  *  first is still in flight — which is what happens when two readers mount together (the
@@ -144,7 +152,7 @@ export function vitalsDiagnostics(): Record<string, unknown> {
   return {
     ...diag,
     access,
-    listeners: listeners.size,
+    listeners: listeners.size + loadListeners.size,
     hasSource: source !== null,
     // 0 CONNECTING, 1 OPEN, 2 CLOSED, -1 when there is no stream to ask.
     readyState: source?.readyState ?? -1,
@@ -154,9 +162,16 @@ export function vitalsDiagnostics(): Record<string, unknown> {
   };
 }
 
-function publish(busy: GpuBusy): void {
+/** Publish one frame's worth of reading. Both channels go out TOGETHER, always, so they
+ *  cannot desync — and in particular so every path that gives up on the gauge (a fatal
+ *  close, a silent socket, backgrounding) also drops the load. A status line still saying
+ *  "loading gpt-oss-120b…" off a frame from four minutes ago is the failure mode this
+ *  coupling exists to make unreachable: the load it names probably finished long ago. */
+function publish(busy: GpuBusy, load: ModelLoad | null): void {
   published = busy;
+  publishedLoad = load;
   for (const listener of listeners) listener(busy);
+  for (const listener of loadListeners) listener(load);
 }
 
 /** Append a sample to the shared ring. Called once per frame — the stream's own 1 Hz
@@ -215,6 +230,23 @@ function fromFrame(value: unknown): GpuBusy {
     : { percent: null, state: "absent" };
 }
 
+/** A frame's in-flight load, or null. Validated field by field rather than trusted: an
+ *  older box sends no `loading` key at all, and a half-populated one must read as "nothing
+ *  loading" rather than put an empty name on the status line. `percent` is optional in a
+ *  way the others are not — a gateway that prints no parseable progress is the ordinary
+ *  case, and it still has a model and a start time worth showing. */
+function loadFromFrame(value: unknown): ModelLoad | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { model, at_ms: at, percent } = value as Record<string, unknown>;
+  if (typeof model !== "string" || model === "") return null;
+  if (typeof at !== "number" || !Number.isFinite(at)) return null;
+  return {
+    model,
+    at_ms: at,
+    percent: typeof percent === "number" && Number.isFinite(percent) ? percent : null,
+  };
+}
+
 function openStream(): void {
   if (source !== null) return;
   let stream: EventSource;
@@ -225,7 +257,7 @@ function openStream(): void {
     // would unmount the whole top bar over a gauge — leave the reading unknown and
     // let everything else render.
     diag.openFailed = String(error).slice(0, 200);
-    publish(UNKNOWN);
+    publish(UNKNOWN, null);
     return;
   }
   source = stream;
@@ -237,10 +269,13 @@ function openStream(): void {
     diag.frames += 1;
     diag.lastFrameAt = Date.now();
     try {
-      const frame = JSON.parse(event.data) as { gpu_busy_percent?: unknown };
+      const frame = JSON.parse(event.data) as {
+        gpu_busy_percent?: unknown;
+        loading?: unknown;
+      };
       const busy = fromFrame(frame.gpu_busy_percent);
       remember(busy, Date.now());
-      publish(busy);
+      publish(busy, loadFromFrame(frame.loading));
     } catch {
       // A malformed frame must not kill the stream — the next tick is a second away.
     }
@@ -250,7 +285,7 @@ function openStream(): void {
   stream.onerror = () => {
     diag.errors += 1;
     diag.lastErrorAt = Date.now();
-    publish(UNKNOWN);
+    publish(UNKNOWN, null);
     // EventSource retries a DROPPED connection by itself, but a FATAL one — the box
     // answering 502 mid-deploy, a proxy closing with the wrong content type — leaves it
     // CLOSED, where it never retries again. `source` stayed set through that, so
@@ -272,7 +307,7 @@ function armSilenceWatchdog(stream: EventSource): void {
   silence = setTimeout(() => {
     silence = null;
     if (source !== stream) return;
-    publish(UNKNOWN); // stale is not a reading — say so before trying again
+    publish(UNKNOWN, null); // stale is not a reading — say so before trying again
     diag.reopensAfterSilence += 1;
     reopenLater(stream);
   }, SILENCE_MS);
@@ -297,12 +332,12 @@ async function probe(): Promise<void> {
   probing = true;
   try {
     const vitals = await api.opsVitals();
-    if (listeners.size === 0 || !isForeground()) return; // gave up while awaiting
+    if (readerCount() === 0 || !isForeground()) return; // gave up while awaiting
     access = "allowed";
-    publish(fromFrame(vitals.gpu_busy_percent));
+    publish(fromFrame(vitals.gpu_busy_percent), loadFromFrame(vitals.loading));
     openStream();
   } catch (error) {
-    if (listeners.size === 0) return;
+    if (readerCount() === 0) return;
     // 401/403 is this principal's standing answer — stop asking. Anything else
     // (offline, server restarting) may pass later, so try again on a slow timer.
     if (isRejection(error)) {
@@ -382,7 +417,7 @@ function stop(): void {
     clearTimeout(reprobe);
     reprobe = null;
   }
-  publish(UNKNOWN);
+  publish(UNKNOWN, null);
 }
 
 function onVisibilityChange(): void {
@@ -390,29 +425,65 @@ function onVisibilityChange(): void {
   else stop();
 }
 
+/** How many readers the stream has, of either channel. The lifecycle counts them
+ *  together: a chat status line watching only the load is every bit as much a reason to
+ *  hold the socket open as a top bar watching only the gauge. */
+function readerCount(): number {
+  return listeners.size + loadListeners.size;
+}
+
+/** The half of subscribing that is the same whichever channel you wanted: the first
+ *  reader of either kind arms the stream, a later one re-checks it. Factored out so the
+ *  two subscribe functions cannot drift — a second copy of this that forgot `ensureLive`
+ *  would leave one channel silently reading a dead socket. */
+function attach(wasFirst: boolean): void {
+  if (wasFirst) {
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    for (const event of RESUME_EVENTS) window.addEventListener(event, ensureLive);
+    start();
+    return;
+  }
+  // A NEW READER APPEARING is itself evidence the app is in use. Opening the vitals card
+  // used to show live numbers (it polls) while the top bar behind it stayed on dashes,
+  // since nothing about mounting a second reader ever questioned the shared stream.
+  // Mounting one is now a reason to re-check it.
+  ensureLive();
+}
+
+/** …and the half that is the same on the way out: the last reader of either kind, and
+ *  only the last, tears the stream down. */
+function detach(): void {
+  if (readerCount() > 0) return;
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  for (const event of RESUME_EVENTS) window.removeEventListener(event, ensureLive);
+  stop();
+}
+
 /** Subscribe to the shared reading; returns an unsubscribe. The first subscriber
  *  starts the stream, the last one to leave stops it. */
 export function subscribeGpuBusy(listener: Listener): () => void {
   listeners.add(listener);
-  if (listeners.size === 1) {
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    for (const event of RESUME_EVENTS) window.addEventListener(event, ensureLive);
-    start();
-  } else {
-    listener(published); // a late joiner gets the current reading, not a blank
-    // …and then a health check, because a NEW READER APPEARING is itself evidence the app
-    // is in use. Opening the vitals card used to show live numbers (it polls) while the top
-    // bar behind it stayed on dashes, since nothing about mounting a second reader ever
-    // questioned the shared stream. Mounting one is now a reason to re-check it.
-    ensureLive();
-  }
+  const first = readerCount() === 1;
+  if (!first) listener(published); // a late joiner gets the current reading, not a blank
+  attach(first);
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0) {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      for (const event of RESUME_EVENTS) window.removeEventListener(event, ensureLive);
-      stop();
-    }
+    detach();
+  };
+}
+
+/** Subscribe to the in-flight model load on that same stream; returns an unsubscribe.
+ *  Null means nothing is loading — or that the stream has stopped delivering, which is
+ *  deliberately the same answer: a load we can no longer see is one we must stop
+ *  claiming (see `publish`). */
+export function subscribeModelLoad(listener: LoadListener): () => void {
+  loadListeners.add(listener);
+  const first = readerCount() === 1;
+  if (!first) listener(publishedLoad);
+  attach(first);
+  return () => {
+    loadListeners.delete(listener);
+    detach();
   };
 }
 
@@ -423,6 +494,15 @@ export function useGpuBusy(): GpuBusy {
   const [busy, setBusy] = useState<GpuBusy>(() => published);
   useEffect(() => subscribeGpuBusy(setBusy), []);
   return busy;
+}
+
+/** The model coming onto the box right now, or null — off the same one stream as the
+ *  gauge, so the chat status line and the vitals event list can never disagree about what
+ *  is loading or how far in it is. */
+export function useModelLoad(): ModelLoad | null {
+  const [load, setLoad] = useState<ModelLoad | null>(() => publishedLoad);
+  useEffect(() => subscribeModelLoad(setLoad), []);
+  return load;
 }
 
 /** True when the failure means "not for you" rather than "not right now". Anything

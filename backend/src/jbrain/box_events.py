@@ -271,6 +271,58 @@ async def recent(
     return out
 
 
+async def in_flight(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    kind: str = MODEL_LOAD,
+    now: datetime | None = None,
+) -> dict[str, object] | None:
+    """The `kind` of work happening RIGHT NOW, or None when nothing is — the narrow read
+    behind every surface that says "loading gpt-oss-120b…" in the present tense.
+
+    Separate from `recent` because the question is different. `recent` answers "what
+    overlapped the window the graph is showing", which is a list and belongs under a plot;
+    this answers "is the box loading something this second", which is one row and belongs
+    on a status line. Reading it out of `recent` would mean pulling the whole window and
+    filtering in the caller, once per frame per surface.
+
+    Rows older than STALE_AFTER are excluded rather than returned as stale: a status line
+    has no way to render "we stopped watching", so the honest degradation is to fall
+    silent. The vitals list, which CAN say it, still does (see `recent`).
+
+    Newest-first with a limit of one: only one model loads at a time (the evictor makes
+    room before the load starts), but a row left open by a process that died under it can
+    still sit inside the staleness window, and the newer row is the true one."""
+    moment = now or datetime.now(tz=UTC)
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT at, subject, detail, source
+                    FROM app.box_events
+                    WHERE kind = :kind
+                      AND ended_at IS NULL
+                      AND status = 'running'
+                      AND at >= :cut
+                    ORDER BY at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"kind": kind, "cut": moment - STALE_AFTER},
+            )
+        ).first()
+    if row is None:
+        return None
+    return {
+        "at_ms": int(row.at.timestamp() * 1000),
+        "subject": row.subject,
+        "detail": row.detail,
+        "source": row.source,
+    }
+
+
 async def prune(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,

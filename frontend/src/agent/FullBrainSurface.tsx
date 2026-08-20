@@ -10,7 +10,7 @@
 // result, and raw payload (docs/research/brain-tooluse-ux).
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, chatAttachmentUrl, faviconUrl } from "../api/client";
+import { type ModelLoad, api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
@@ -22,7 +22,7 @@ import { SubagentFan } from "./SubagentFan";
 import { attachmentKind } from "./attachmentKind";
 import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
-import { type AgentStatus, agentStatus, planWaitingStatus } from "./status";
+import { type AgentStatus, agentStatus, modelLoadStatus, planWaitingStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
 import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
@@ -145,6 +145,11 @@ interface Props {
         onContinue?: (() => void) | undefined;
       }
     | undefined;
+  /** The model being read onto the box right now, off the shared vitals stream (null when
+   * none is). It takes the status line over while it lasts, because for that minute it is
+   * the true answer to "what is happening" — see `modelLoadStatus`. Passed in rather than
+   * read here so this surface keeps taking its live state from the screen that owns it. */
+  modelLoad?: ModelLoad | null | undefined;
 }
 
 export function FullBrainSurface({
@@ -154,6 +159,7 @@ export function FullBrainSurface({
   onProposalEnacted,
   readAloud,
   planWaiting,
+  modelLoad,
 }: Props): ReactNode {
   const chatRef = useRef<HTMLElement>(null);
   const { panel, setPanel } = fb;
@@ -264,6 +270,15 @@ export function FullBrainSurface({
       ? turnStatus
       : null;
   const idleStatus = planWaiting ? planWaitingStatus(planWaiting.countdown) : turnStatus;
+  // A load outranks BOTH. While the weights are being read in, the turn is not thinking and
+  // the plan's next step is not starting — nothing can move until the model is resident —
+  // so the line that claims otherwise is simply wrong for that whole minute. It also shows
+  // with no turn at all: a load the owner kicked off from Settings, or one the worker
+  // started, is the reason the next thing they type will sit there, and saying so before
+  // they type it is the point.
+  const loadStatus = modelLoad
+    ? modelLoadStatus(modelLoad.model, modelLoad.percent, modelLoad.at_ms)
+    : null;
 
   // The session's name lives in the top bar (HomeScreen owns it); the panels are
   // a swipe away on the omnibox — right for Sessions, left for Proposals.
@@ -327,9 +342,9 @@ export function FullBrainSurface({
             tool / answering) always wins; only when the turn has settled does an armed plan
             continuation take the line over as the interruptible next-step countdown. */}
         <AgentStatusLine
-          status={liveStatus ?? idleStatus}
-          onInterrupt={liveStatus ? undefined : planWaiting?.onStop}
-          onContinueNow={liveStatus ? undefined : planWaiting?.onContinue}
+          status={loadStatus ?? liveStatus ?? idleStatus}
+          onInterrupt={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onStop}
+          onContinueNow={(loadStatus ?? liveStatus) ? undefined : planWaiting?.onContinue}
         />
       </div>
 
@@ -482,10 +497,14 @@ export function AgentStatusLine({
     return () => clearTimeout(t);
   }, [kind]);
 
-  // Tick once a second while a live phase (thinking / a tool / answering) is on
-  // screen so its elapsed count advances; idle otherwise (no timer while settled).
+  // Tick once a second while a live phase (thinking / a tool / answering) — or a model
+  // load — is on screen so its elapsed count advances; idle otherwise (no timer while
+  // settled).
   const ticking =
-    shown?.kind === "thinking" || shown?.kind === "tool" || shown?.kind === "answering";
+    shown?.kind === "thinking" ||
+    shown?.kind === "tool" ||
+    shown?.kind === "answering" ||
+    shown?.kind === "loading";
   useEffect(() => {
     if (!ticking) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -514,6 +533,31 @@ export function AgentStatusLine({
             Stop
           </button>
         ) : null}
+      </output>
+    );
+  }
+  // A model load: its own branch, because its clock is not the turn's. The timers below
+  // anchor to a PHASE — and the phase this replaces may have been running for two minutes
+  // when a mid-turn reload starts, which would open the line already counting. A load
+  // carries the instant it began, from the box's own record, so the count is the load's.
+  if (shown.kind === "loading") {
+    const elapsed = formatElapsed(Math.max(0, now - (shown.sinceMs ?? now)));
+    // Rounded, and only when there IS a figure: a gateway build that prints no parseable
+    // progress leaves it null, and "0%" on a load that is halfway through reads as stuck.
+    const pct = shown.percent == null ? null : Math.round(shown.percent * 100);
+    return (
+      <output className="fb-status live loading">
+        <span className="fb-status-mark" aria-hidden="true" />
+        <span className="fb-status-lab">
+          {shown.label}
+          {shown.emphasis ? <span className="tool"> {shown.emphasis}</span> : null}…
+        </span>
+        {/* aria-hidden for the same reason as the phase timer: a per-second announcement
+            of a climbing percentage would make the live region unusable. The label beside
+            it already says what is happening, and it is stable for the whole load. */}
+        <span className="fb-status-time" aria-hidden="true">
+          {pct === null ? elapsed : `${pct}% · ${elapsed}`}
+        </span>
       </output>
     );
   }

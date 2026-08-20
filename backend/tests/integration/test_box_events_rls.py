@@ -8,6 +8,7 @@ and a still-open event started before the window still shows up in it — a load
 three minutes ago is the explanation for the last three minutes of trace.
 """
 
+import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -170,6 +171,89 @@ async def test_a_row_abandoned_by_a_dead_process_ages_out(wired: async_sessionma
     assert [e["status"] for e in wide] == ["stale"]
     # Outside that window it is simply gone, rather than pinned to the top forever.
     assert await box_events.recent(wired, owner, seconds=60) == []
+
+
+async def test_in_flight_reports_the_load_happening_right_now(
+    wired: async_sessionmaker,
+) -> None:
+    """The narrow read behind the chat status line: one row, present tense, or nothing.
+
+    Distinct from `recent` because a status line has room for one thing, not a window: it
+    needs "is the box loading, and what" answered in the affirmative only while it is true."""
+    owner = await _owner(wired)
+
+    assert await box_events.in_flight(wired, owner) is None
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        during = await box_events.in_flight(wired, owner)
+        assert during is not None
+        assert during["subject"] == "gpt-oss-120b"
+        assert during["source"] == "api"
+
+    # Settled: the status line falls silent the moment the weights are in, rather than
+    # holding "loading…" until some window scrolls past it.
+    assert await box_events.in_flight(wired, owner) is None
+
+
+async def test_in_flight_ignores_work_of_another_kind(wired: async_sessionmaker) -> None:
+    """An image render pins the GPU just as hard, but "Loading …" is a claim about a MODEL
+    and the line must not make it about a render."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.IMAGE_RENDER, "sdxl"):
+        assert await box_events.in_flight(wired, owner) is None
+
+
+async def test_in_flight_falls_silent_on_a_row_a_dead_process_left_open(
+    wired: async_sessionmaker,
+) -> None:
+    """The one lie a status line cannot afford. A process killed mid-load leaves its row
+    open forever; the vitals LIST can render that honestly as "stopped reporting", but a
+    single line has no way to say it — so it says nothing instead of "loading gpt-oss-120b…"
+    for the rest of the session."""
+    owner = await _owner(wired)
+    abandoned = datetime.now(tz=UTC) - box_events.STALE_AFTER - timedelta(minutes=1)
+
+    async with scoped_session(wired, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.box_events (at, kind, subject, status, source) "
+                "VALUES (:at, 'model_load', 'gpt-oss-120b', 'running', 'api')"
+            ),
+            {"at": abandoned},
+        )
+
+    assert await box_events.in_flight(wired, owner) is None
+
+
+async def test_in_flight_prefers_the_newer_of_two_open_rows(wired: async_sessionmaker) -> None:
+    """Only one model loads at a time, but a row abandoned inside the staleness window can
+    still be open beside the real one. The newer row is the true one."""
+    owner = await _owner(wired)
+    stalled = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+    async with scoped_session(wired, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.box_events (at, kind, subject, status, source) "
+                "VALUES (:at, 'model_load', 'qwen35', 'running', 'worker')"
+            ),
+            {"at": stalled},
+        )
+    await box_events._write(  # noqa: SLF001 — the open-row insert, without a span to close it
+        box_events._INSERT_OPEN,  # noqa: SLF001
+        {
+            "id": uuid.uuid4(),
+            "kind": box_events.MODEL_LOAD,
+            "subject": "gpt-oss-120b",
+            "detail": "",
+            "source": "api",
+        },
+    )
+
+    live = await box_events.in_flight(wired, owner)
+    assert live is not None
+    assert live["subject"] == "gpt-oss-120b"
 
 
 async def test_prune_drops_rows_past_retention(wired: async_sessionmaker) -> None:

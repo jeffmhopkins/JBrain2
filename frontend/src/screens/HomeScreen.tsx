@@ -10,6 +10,7 @@ import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
 import { useRegisterHomeBack } from "../homeBack";
+import { useModelLoad } from "../hostVitals";
 import type { SegState } from "../notes/modes";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController, StreamItem } from "../notes/useNotes";
@@ -203,6 +204,11 @@ export function HomeScreen({
 
   // Research and Full Brain are conversation surfaces; everything else is capture.
   const conversational = seg.mode === "research" || seg.mode === "fullbrain";
+  // The box's in-flight model load, off the same 1 Hz stream the top bar's trace already
+  // rides — no second poll, and no way for the chat line and the vitals surface to report
+  // different models. Read here rather than in the surface so the conversation surface
+  // keeps taking all its live state from this screen.
+  const modelLoad = useModelLoad();
 
   // One live plan-state instance for the active conversation, driving BOTH the composer-foot
   // pill and its popover. Seeds from the session-list `plan_status` (so the pill reads right
@@ -277,6 +283,10 @@ export function HomeScreen({
                 }
               : undefined
           }
+          // "Loading gpt-oss-120b… 43%" on the line above the composer while the weights
+          // come in. Without it that minute reads as "Thinking it through", which is the
+          // agent looking hung during the heaviest work the box does.
+          modelLoad={modelLoad}
         />
       ) : (
         <Stream

@@ -1021,6 +1021,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # detail screen opens with a history instead of an empty plot after a reload.
         # Runs whether or not anyone is watching — that is what makes it a history.
         app.state.vitals_ring = VitalsRing()
+        # The other half of "what is the box doing this second": the in-flight model load,
+        # answered once per second for the whole box rather than once per client per
+        # surface. Created here rather than on first use so two frames landing together at
+        # startup cannot each build one (jbrain.api.ops._LoadProbe).
+        app.state.load_probe = ops._LoadProbe()
         # Off under test. The sampler writes a reading a second for the life of the
         # process, so a test that seeds the ring and then asserts on it races a tick that
         # overwrites the seed with whatever a CI container's absent gauge reads (None).

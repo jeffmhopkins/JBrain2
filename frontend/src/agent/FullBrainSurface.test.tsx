@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { type ModelLoad, api } from "../api/client";
 import { AgentStatusLine, FullBrainSurface, resolveSelectionClamp } from "./FullBrainSurface";
 import type { AgentStatus } from "./status";
 import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
@@ -60,6 +60,7 @@ function Harness({
   onOpenEntity,
   files,
   readAloud,
+  modelLoad,
 }: {
   d: FullBrainDeps;
   onOpenNote?: (id: string) => void;
@@ -73,6 +74,7 @@ function Harness({
         onToggleAuto: () => void;
       }
     | undefined;
+  modelLoad?: ModelLoad | null;
 }) {
   const fb = useFullBrain("fullbrain", d);
   const [text, setText] = useState("");
@@ -83,6 +85,7 @@ function Harness({
         onOpenNote={onOpenNote}
         onOpenEntity={onOpenEntity}
         readAloud={readAloud}
+        modelLoad={modelLoad}
       />
       <input aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />
       <button type="button" onClick={() => fb.send(text, files ? { files } : undefined)}>
@@ -1347,6 +1350,52 @@ describe("FullBrainSurface", () => {
     );
   });
 
+  it("lets a model load take the line over from the turn's own phase", async () => {
+    // Precedence, and the reason the whole thing exists: while the weights are being read
+    // in, the turn is NOT thinking — nothing can move until the model is resident — so the
+    // transcript-derived label is simply wrong for that minute.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      await gate;
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const load = { model: "gpt-oss-120b", at_ms: Date.now(), percent: 0.6 };
+    const { rerender } = render(<Harness d={deps({ chat: answer })} modelLoad={load} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "what labs?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Loading"));
+    expect(screen.getByRole("status").textContent).toContain("gpt-oss-120b");
+    expect(screen.getByRole("status").textContent).not.toContain("Thinking");
+
+    // The weights land: the line hands back to whatever the turn is actually doing.
+    rerender(<Harness d={deps({ chat: answer })} modelLoad={null} />);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Thinking"));
+
+    release();
+  });
+
+  it("says a model is loading even with no turn running", async () => {
+    // The duplicate of what the vitals surface reports, and deliberately so: a load the
+    // owner kicked off from Settings — or one the worker started — is the reason the next
+    // thing they type will sit there, and saying so BEFORE they type it is the point.
+    render(
+      <Harness
+        d={deps({})}
+        modelLoad={{ model: "gpt-oss-120b", at_ms: Date.now(), percent: 0.12 }}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    const line = await screen.findByRole("status");
+    expect(line.textContent).toContain("Loading gpt-oss-120b");
+    expect(line.textContent).toContain("12%");
+  });
+
   it("pins a tool label for a beat so a fast call is readable, swapping on a new tool", () => {
     vi.useFakeTimers();
     try {
@@ -1410,6 +1459,52 @@ describe("FullBrainSurface", () => {
     );
     expect(screen.getByRole("status").textContent).toContain("0:12");
     expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+  });
+
+  it("says the box is loading a model, with how far in and how long it has been", () => {
+    // The honesty fix. A cold 120B takes the better part of a minute to read in, and for
+    // every second of it this line said "Thinking it through" with a climbing timer — the
+    // agent looking hung during the heaviest work the box does.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(100_000);
+      const loading = (percent: number | null, sinceMs: number): AgentStatus => ({
+        kind: "loading",
+        label: "Loading",
+        emphasis: "gpt-oss-120b",
+        percent,
+        sinceMs,
+      });
+
+      render(<AgentStatusLine status={loading(0.43, 88_000)} />);
+      const line = screen.getByRole("status");
+
+      expect(line.textContent).toContain("Loading gpt-oss-120b");
+      expect(line.textContent).toContain("43%");
+      // Counted from the LOAD's own start, not from when this line appeared.
+      expect(line.textContent).toContain("12s");
+      act(() => vi.advanceTimersByTime(4_000));
+      expect(screen.getByRole("status").textContent).toContain("16s");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows a load with no parseable fraction as a load, never as 0%", () => {
+    render(
+      <AgentStatusLine
+        status={{
+          kind: "loading",
+          label: "Loading",
+          emphasis: "qwen35",
+          percent: null,
+          sinceMs: Date.now(),
+        }}
+      />,
+    );
+    const line = screen.getByRole("status");
+    expect(line.textContent).toContain("Loading qwen35");
+    expect(line.textContent).not.toContain("%");
   });
 
   it("shows a live elapsed timer through each phase, re-anchoring on a phase change", () => {

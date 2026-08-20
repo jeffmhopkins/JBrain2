@@ -29,8 +29,8 @@ class FakeSource {
       this.onmessage?.({ data: body } as MessageEvent<string>);
     });
   }
-  send(gpu: number | null): void {
-    this.frame(JSON.stringify({ gpu_busy_percent: gpu }));
+  send(gpu: number | null, loading: unknown = null): void {
+    this.frame(JSON.stringify({ gpu_busy_percent: gpu, loading }));
   }
   fail(): void {
     act(() => this.onerror?.());
@@ -327,5 +327,122 @@ describe("useGpuBusy", () => {
     window.dispatchEvent(new Event("focus"));
 
     expect(FakeSource.open).toHaveLength(1);
+  });
+});
+
+describe("useModelLoad", () => {
+  beforeEach(() => {
+    FakeSource.open = [];
+    opsVitals.mockReset();
+    opsVitalsStream.mockReset().mockImplementation(() => new FakeSource());
+    visibility("visible");
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("rides the gauge's stream rather than opening one of its own", async () => {
+    // The whole point of putting the load on this frame. The chat status line and the top
+    // bar want different fields of the same 1 Hz reading; giving either its own connection
+    // would re-create the duplication that once burned the per-origin socket cap.
+    const { useGpuBusy, useModelLoad } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40, loading: null });
+
+    const gauge = renderHook(() => useGpuBusy());
+    const line = renderHook(() => useModelLoad());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    FakeSource.open[0]?.send(94, { model: "gpt-oss-120b", at_ms: 1000, percent: 0.43 });
+
+    expect(gauge.result.current.percent).toBe(94);
+    expect(line.result.current).toEqual({ model: "gpt-oss-120b", at_ms: 1000, percent: 0.43 });
+  });
+
+  it("holds the stream open for a reader that only wants the load", async () => {
+    // The chat status line may be the only thing watching — the top bar's chart is a
+    // separate reader, and a screen can be showing one without the other.
+    const { useModelLoad } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: null, loading: null });
+
+    const line = renderHook(() => useModelLoad());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    FakeSource.open[0]?.send(null, { model: "qwen35", at_ms: 20, percent: null });
+    expect(line.result.current).toEqual({ model: "qwen35", at_ms: 20, percent: null });
+
+    line.unmount();
+    expect(FakeSource.open[0]?.closed).toBe(true);
+  });
+
+  it("opens on the probe's answer, not a second later", async () => {
+    // The probe's reading is what is published until the first frame arrives. A chat line
+    // that read "Thinking it through" for that second — during a load, the one time it is
+    // wrong — would flicker into the truth rather than open on it.
+    const { useModelLoad } = await load();
+    opsVitals.mockResolvedValue({
+      gpu_busy_percent: 94,
+      loading: { model: "gpt-oss-120b", at_ms: 5, percent: 0.1 },
+    });
+
+    const line = renderHook(() => useModelLoad());
+
+    await waitFor(() =>
+      expect(line.result.current).toEqual({ model: "gpt-oss-120b", at_ms: 5, percent: 0.1 }),
+    );
+  });
+
+  it("reads a load with no parseable fraction as a load, not as 0%", async () => {
+    // A gateway build that prints no progress line is the ordinary case. It still has a
+    // model and a start time worth showing.
+    const { useModelLoad } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40, loading: null });
+
+    const line = renderHook(() => useModelLoad());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    FakeSource.open[0]?.send(94, { model: "gpt-oss-120b", at_ms: 1000 });
+    expect(line.result.current).toEqual({ model: "gpt-oss-120b", at_ms: 1000, percent: null });
+  });
+
+  it("ignores a frame from a box too old to send the field, or one half-populated", async () => {
+    const { useModelLoad } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40, loading: null });
+
+    const line = renderHook(() => useModelLoad());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+
+    FakeSource.open[0]?.frame(JSON.stringify({ gpu_busy_percent: 94 }));
+    expect(line.result.current).toBeNull();
+
+    // A name with no clock behind it would put a line on screen counting from nowhere.
+    FakeSource.open[0]?.send(94, { model: "gpt-oss-120b" });
+    expect(line.result.current).toBeNull();
+  });
+
+  it("drops the load when the stream stops delivering", async () => {
+    // The one lie this line cannot afford. A frame from four minutes ago naming a load
+    // that has long since finished would leave "Loading gpt-oss-120b…" up forever.
+    const { useModelLoad } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40, loading: null });
+
+    const line = renderHook(() => useModelLoad());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+    FakeSource.open[0]?.send(94, { model: "gpt-oss-120b", at_ms: 1000, percent: 0.43 });
+    expect(line.result.current).not.toBeNull();
+
+    FakeSource.open[0]?.fail();
+
+    expect(line.result.current).toBeNull();
+  });
+
+  it("drops the load when the app is backgrounded", async () => {
+    const { useModelLoad } = await load();
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 40, loading: null });
+
+    const line = renderHook(() => useModelLoad());
+    await waitFor(() => expect(FakeSource.open).toHaveLength(1));
+    FakeSource.open[0]?.send(94, { model: "gpt-oss-120b", at_ms: 1000, percent: 0.43 });
+
+    visibility("hidden");
+
+    expect(line.result.current).toBeNull();
   });
 });

@@ -580,6 +580,92 @@ def test_carries_why_a_model_was_evicted(
     assert events[0]["detail"] == "to make room for gpt-oss-120b"
 
 
+def _serve_load(monkeypatch: pytest.MonkeyPatch, load: dict[str, object] | None) -> list[int]:
+    """Stub the shared in-flight-load probe and count how many times it was actually read,
+    so a route that reaches for it once per surface can be told from one that reaches for
+    it once per row."""
+    reads: list[int] = []
+
+    async def fake_load(request: object) -> dict[str, object] | None:
+        reads.append(1)
+        return load
+
+    monkeypatch.setattr(ops, "_load_in_flight", fake_load)
+    return reads
+
+
+def _load_row(subject: str = "gpt-oss-120b", status: str = "running") -> dict[str, object]:
+    return {
+        "at_ms": 1_760_000_000_000,
+        "ended_ms": None if status == "running" else 1_760_000_090_000,
+        "kind": "model_load",
+        "subject": subject,
+        "detail": "",
+        "status": status,
+        "source": "api",
+    }
+
+
+def test_a_running_load_carries_how_far_in_it_is(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The elapsed count beside the row says how long this has been going; only the
+    fraction says how much longer, which on a load that reads tens of GB is the question
+    the owner is actually asking."""
+    _serve_events(monkeypatch, [_load_row()])
+    _serve_load(monkeypatch, {"model": "gpt-oss-120b", "at_ms": 1_760_000_000_000, "percent": 0.43})
+    login(client, repo)
+
+    events = client.get("/api/ops/vitals/events").json()["events"]
+
+    assert events[0]["percent"] == pytest.approx(0.43)
+
+
+def test_a_settled_load_reports_no_fraction(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "loaded gpt-oss-120b 100%" would put a progress figure on a row whose whole point is
+    that there is no more progress to make."""
+    _serve_events(monkeypatch, [_load_row(status="ok")])
+    _serve_load(monkeypatch, {"model": "gpt-oss-120b", "at_ms": 1_760_000_000_000, "percent": 0.43})
+    login(client, repo)
+
+    assert client.get("/api/ops/vitals/events").json()["events"][0]["percent"] is None
+
+
+def test_the_fraction_lands_on_the_load_it_belongs_to(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stalled row for one model must not wear the progress of the load that replaced
+    it — the figure is matched on the subject, never assumed to belong to whatever row
+    happens to be running."""
+    _serve_events(monkeypatch, [_load_row(subject="qwen35"), _load_row()])
+    _serve_load(monkeypatch, {"model": "gpt-oss-120b", "at_ms": 1_760_000_000_000, "percent": 0.43})
+    login(client, repo)
+
+    events = client.get("/api/ops/vitals/events").json()["events"]
+
+    assert [(e["subject"], e["percent"]) for e in events] == [
+        ("qwen35", None),
+        ("gpt-oss-120b", pytest.approx(0.43)),
+    ]
+
+
+def test_the_load_probe_is_read_once_for_the_whole_list(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading it per row would put a fetch of the gateway's log buffer behind every entry
+    in a fifteen-minute window, once a second, during the one minute the box has nothing
+    to spare."""
+    _serve_events(monkeypatch, [_load_row(subject=f"m{i}") for i in range(6)])
+    reads = _serve_load(monkeypatch, None)
+    login(client, repo)
+
+    client.get("/api/ops/vitals/events")
+
+    assert len(reads) == 1
+
+
 def test_events_window_is_clamped_like_the_graph(
     client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
 ) -> None:

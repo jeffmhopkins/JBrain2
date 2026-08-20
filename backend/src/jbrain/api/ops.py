@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -41,6 +42,8 @@ from jbrain.workflow.registry import ActionRegistry
 # The schedule kinds the owner can set on a sweep: the legacy fixed `interval` plus
 # the task-style spec kinds (mirrors jbrain.tasks.schedule.KINDS + interval).
 _SCHEDULE_KINDS = frozenset({"interval", "on_demand", "once", "repeat"})
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/ops", dependencies=[Depends(owner_only)])
 
@@ -472,17 +475,160 @@ def _gpu_busy(request: Request) -> float | None:
     return ring.latest() if ring is not None else None
 
 
+# The owner identity the shared load probe reads under. `app.box_events` is owner-only RLS
+# (migration 0167) and the probe is process-wide rather than per-request — it answers every
+# connected stream from one read — so it carries the same synthetic owner the WRITER uses
+# rather than whichever principal's frame happened to trigger the refresh.
+_BOX_CTX = SessionContext(principal_id="box", principal_kind="owner")
+
+# How long one reading of "what is loading" is reused. Matched to the frame period: the
+# surfaces are 1 Hz, so anything finer buys nothing and anything coarser makes the percent
+# visibly lag the bar it drives.
+_LOAD_PROBE_TTL_S = 1.0
+
+# How long that reading may take before it is abandoned for the tick.
+#
+# This probe sits on the SSE frame path, and that path has a property worth protecting: the
+# frame is sent every second whether or not anything moved, BECAUSE the constant cadence is
+# the liveness signal the meter's silence watchdog reads (six seconds of quiet and the
+# client tears the stream down and reopens it). An unbounded read here — a connection pool
+# under contention, a gateway not answering — would therefore not merely delay a percentage,
+# it would make a healthy stream look dead. Both halves of the read are local and cost
+# milliseconds when the box is well; two seconds is far past that and still leaves worst-case
+# frame spacing comfortably inside the watchdog.
+_LOAD_PROBE_BUDGET_S = 2.0
+
+
+class _LoadProbe:
+    """One box-wide answer to "is a model loading, and how far in", shared by every surface
+    that reports it.
+
+    Shared because the cost is per-READ, not per-client. Both halves of the answer go off
+    the box — a query for the open `app.box_events` row, and a fetch of llama-swap's log
+    buffer to parse the fraction — and the three surfaces that want it (the chat status
+    line, the vitals event list, the top bar's probe) are all 1 Hz, on a screen that may
+    have several open at once. Read per client per frame, a box with four open streams
+    would pull the gateway's whole log buffer four times a second, during a load, which is
+    the one minute the box has nothing to spare. Cached here it is one query and one fetch
+    per second no matter how many are watching.
+
+    Single-flight, not merely cached: without the lock, N frames landing together on an
+    expired entry all miss and all go to the box — the stampede the cache exists to stop.
+
+    Best-effort in the same sense as the narration it reads: any failure reports "nothing
+    loading" rather than raising, because this drives an instrument, and an instrument that
+    takes the screen down with it when the box is busy is worse than one that goes quiet."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._read_at: float | None = None
+        self._value: dict[str, object] | None = None
+
+    def _fresh(self, now: float) -> bool:
+        return self._read_at is not None and now - self._read_at < _LOAD_PROBE_TTL_S
+
+    async def read(self, request: Request) -> dict[str, object] | None:
+        now = asyncio.get_running_loop().time()
+        if self._fresh(now):
+            return self._value
+        async with self._lock:
+            # Re-check under the lock: the frame that queued behind the refresh wants its
+            # result, not a second round trip for the same second.
+            now = asyncio.get_running_loop().time()
+            if self._fresh(now):
+                return self._value
+            self._value = await self._bounded(request)
+            self._read_at = asyncio.get_running_loop().time()
+        return self._value
+
+    async def _bounded(self, request: Request) -> dict[str, object] | None:
+        """The read, inside its budget. A timeout is stamped like any other answer so the
+        next frame is not sent straight back into the same stall — the whole tick is what
+        must stay cheap, not each attempt."""
+        try:
+            async with asyncio.timeout(_LOAD_PROBE_BUDGET_S):
+                return await _read_load_in_flight(request)
+        except TimeoutError:
+            log.info("ops.load_in_flight_slow", budget_s=_LOAD_PROBE_BUDGET_S)
+            return None
+
+
+async def _load_in_flight(request: Request) -> dict[str, object] | None:
+    """The load happening right now — `{model, at_ms, percent}` — or None. See `_LoadProbe`."""
+    probe = cast("_LoadProbe | None", getattr(request.app.state, "load_probe", None))
+    if probe is None:
+        probe = _LoadProbe()
+        request.app.state.load_probe = probe
+    return await probe.read(request)
+
+
+async def _read_load_in_flight(request: Request) -> dict[str, object] | None:
+    """The uncached read: the open `model_load` row, plus the fraction of it that has
+    actually been read in.
+
+    The row is the authority for WHETHER and WHAT — it is written cross-process, so a load
+    the worker started for a deferred transcription counts, and it is stamped at the moment
+    the load begins rather than when the first progress line appears. The percent is a
+    best-effort embellishment on top: the gateway parses it out of llama.cpp's own log
+    lines, and a build that prints none simply leaves it null, which every surface renders
+    as "loading, no figure" rather than as zero."""
+    maker = cast(
+        "async_sessionmaker[AsyncSession] | None", getattr(request.app.state, "session_maker", None)
+    )
+    if maker is None:
+        return None
+    try:
+        row = await box_events.in_flight(maker, _BOX_CTX)
+    except Exception as exc:  # noqa: BLE001 — an instrument must not fail the surface
+        log.info("ops.load_in_flight_unavailable", error=str(exc))
+        return None
+    if row is None:
+        return None
+    return {
+        "model": row["subject"],
+        "at_ms": row["at_ms"],
+        "percent": await _load_percent(request),
+    }
+
+
+async def _load_percent(request: Request) -> float | None:
+    """How far the in-flight load has got, 0..1, or None when there is no parseable signal.
+
+    Read through the gateway's `load_progress`, which parses llama.cpp's own progress lines
+    out of llama-swap's log buffer. That buffer is the BOX's, not this process's, so the
+    figure is right for a load the worker started as well as one we started ourselves —
+    the same reason the row above is read from a table rather than a process-local ring.
+    Optional on the protocol (see `llm.local_gateway.LocalGateway`), so a gateway without
+    it, or a probe that throws, degrades to no figure rather than to no line."""
+    gateway = getattr(request.app.state, "local_gateway", None)
+    probe = getattr(gateway, "load_progress", None)
+    if probe is None:
+        return None
+    try:
+        return cast("float | None", await probe())
+    except Exception as exc:  # noqa: BLE001 — a log hiccup drops the figure, never the line
+        log.info("ops.load_progress_unavailable", error=str(exc))
+        return None
+
+
 @router.get("/vitals")
 async def vitals(request: Request) -> dict[str, object]:
     """One host-vitals reading. Also the PWA's PROBE: the top-bar meter calls this
     once and only opens the stream below if it succeeds, so a family member (whom
     the router's owner_only rejects) never opens an EventSource that would retry
-    against a 403 forever."""
-    return {"gpu_busy_percent": _gpu_busy(request)}
+    against a 403 forever.
+
+    Carries `loading` for the same reason it carries the gauge: the probe's answer is
+    what the meter publishes until the first frame arrives a second later, and a chat
+    status line that reads "Thinking it through" for that second — during a load, the
+    one time it is wrong — would flicker into the truth rather than open on it."""
+    return {"gpu_busy_percent": _gpu_busy(request), "loading": await _load_in_flight(request)}
 
 
 async def vitals_frames(
-    disconnected: Callable[[], Awaitable[bool]], gauge: Callable[[], float | None]
+    disconnected: Callable[[], Awaitable[bool]],
+    gauge: Callable[[], float | None],
+    loading: Callable[[], Awaitable[dict[str, object] | None]] | None = None,
 ) -> AsyncIterator[bytes]:
     """SSE frames of host vitals, one per `_VITALS_PERIOD_S`, until the client goes.
 
@@ -490,12 +636,22 @@ async def vitals_frames(
     the liveness signal that tells the meter its reading is still current, so a
     stalled stream can go stale rather than freeze on a stale number.
 
+    `loading` rides the SAME frame rather than getting a stream or a poll of its own.
+    This socket is already open on every screen (the top bar renders everywhere), already
+    foreground-gated, already access-probed, and already ticking at exactly the cadence a
+    load indicator wants — so the chat status line costs no new connection, and cannot
+    disagree with the gauge beside it about what second it is.
+
     The disconnect check is a parameter rather than a captured `Request` so the loop
     can be driven directly in tests — `TestClient` never delivers an ASGI
     `http.disconnect`, so a route-local closure over `request.is_disconnected` would
-    spin forever with no way to stop it."""
+    spin forever with no way to stop it. `loading` is a parameter for the same reason,
+    and optional so a caller with nothing to report still sends the key: an ABSENT key
+    would be indistinguishable, to the meter, from a frame that lost it."""
     while not await disconnected():
-        payload = json.dumps({"gpu_busy_percent": gauge()})
+        payload = json.dumps(
+            {"gpu_busy_percent": gauge(), "loading": await loading() if loading else None}
+        )
         yield f"data: {payload}\n\n".encode()
         await asyncio.sleep(_VITALS_PERIOD_S)
 
@@ -770,6 +926,11 @@ class BoxEventOut(BaseModel):
     # Which process did it ("api" / "worker"), so a load nothing on screen asked for can
     # be traced to the background half of the box.
     source: str
+    # How far a STILL-RUNNING load has got, 0..1 — null on every settled row, and on a
+    # running one whose gateway build prints no parseable progress. A finished load has no
+    # fraction to report, and rendering one as 100% would put a progress figure on a row
+    # whose point is that it is over.
+    percent: float | None = None
 
 
 class BoxEventsOut(BaseModel):
@@ -792,7 +953,22 @@ async def vitals_events(
     ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
     window = max(1, min(seconds, _MAX_HISTORY_SECONDS))
     rows = await box_events.recent(maker, ctx, seconds=window)
-    return BoxEventsOut(events=[BoxEventOut(**cast("dict[str, Any]", r)) for r in rows])
+    # The live row gets the fraction the chat status line shows, off the same shared probe,
+    # so the two surfaces cannot report different percentages for one load. Matched on the
+    # subject rather than assumed to be the newest running row: `recent` returns image
+    # renders and unloads too, and only the model load has a fraction to carry.
+    live = await _load_in_flight(request)
+    events = [BoxEventOut(**cast("dict[str, Any]", r)) for r in rows]
+    if live is not None:
+        for event in events:
+            if (
+                event.kind == box_events.MODEL_LOAD
+                and event.ended_ms is None
+                and event.status == "running"
+                and event.subject == live["model"]
+            ):
+                event.percent = cast("float | None", live["percent"])
+    return BoxEventsOut(events=events)
 
 
 class ClientVitalsReport(BaseModel):
@@ -830,7 +1006,11 @@ async def vitals_stream(request: Request) -> StreamingResponse:
     through; the client's own silence watchdog is the backstop for one that ignores
     them."""
     return StreamingResponse(
-        vitals_frames(request.is_disconnected, lambda: _gpu_busy(request)),
+        vitals_frames(
+            request.is_disconnected,
+            lambda: _gpu_busy(request),
+            lambda: _load_in_flight(request),
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
