@@ -881,11 +881,31 @@ window changed"*, the app's own eviction, correct), then a **failed** `model_loa
 and, for the bystander that also died, **no row at all**.
 
 `regen_gateway_config` now compares the config's mtime across the write and, **only when the
-file actually changed**, waits `_GATEWAY_RELOAD_SETTLE_S` (4 s: the 2 s poll plus margin) before
-returning to the caller. A sleep rather than a readiness probe because llama-swap exposes no
-"reload done" signal — `/running` answers throughout, and the new server is swapped in before
-the old one is shut down. The unchanged case still returns immediately, which is nearly every
-load.
+file actually changed**, waits `_GATEWAY_RELOAD_SETTLE_S` before returning to the caller. The
+unchanged case still returns immediately, which is nearly every load.
+
+**Why 4 s and not 30.** llama-swap's `reload()` swaps the server *before* it kills anything:
+
+```go
+activeSrv = newSrv        // the SWAP
+old.Shutdown(30s)         // the old llama-servers are killed here
+```
+
+Only the window before the swap can hurt a load — one that starts after it is served by the new
+server and cannot be killed by that reload. That window is the watcher's 2 s poll plus a
+`LoadConfig` and a `server.New()`, neither of which loads a model. The 30 s `shutdownTimeout` is
+spent *after* the swap, on processes the load no longer races, so it is not the number to size
+against. (First read of this code suggested the opposite and nearly bought a streaming
+log-watcher; the ordering is the whole answer.)
+
+A sleep rather than a readiness probe because llama-swap exposes no "reload done" signal a client
+can poll: `/logs` carries `configuration reloaded`, but only after the shutdown that we do not
+need to wait for, and `/running` is answered by the new server from the moment of the swap.
+
+**Not covered, deliberately:** the old llama-servers can still be dying as the new load starts,
+so both may hold GTT briefly. That inflates the `gpu_guard` baseline sampled just after the wait,
+which errs toward *refusing* a load — the safe direction on a box that freezes when GTT is
+exhausted.
 
 **The eviction is still real, and is now NARRATED.** A genuine flag change has to reach the
 file eventually, so loading an edited model still costs whatever else was resident — that part

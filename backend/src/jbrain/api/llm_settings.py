@@ -760,11 +760,24 @@ async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> N
 # been serving a window they thought they changed.
 _last_regen_error: str | None = None
 
-# How long to let llama-swap finish reloading after the config actually changed, before the
-# caller's load starts. Its config watcher polls every 2 s (`watching configuration for changes
-# (poll-based, 2s interval)`), and the reload itself builds a new server and shuts the old one
-# down. Overshooting costs a few seconds on the rare load that changed a setting; undershooting
-# means the reload lands ON the freshly loaded model and kills it.
+# How long to let llama-swap pick up a changed config before the caller's load starts.
+#
+# Sized against llama-swap's reload(), which does its work in this order:
+#
+#     activeSrv = newSrv        <- the SWAP
+#     old.Shutdown(30s)         <- the old llama-servers are killed here
+#
+# Only the window before the swap can hurt us: a load that starts after it is served by the new
+# server and cannot be killed by that reload. That window is the watcher's poll interval (2 s,
+# `watching configuration for changes (poll-based, 2s interval)`) plus a LoadConfig and a
+# server.New() — neither of which loads a model. So 4 s is the 2 s poll with margin, NOT a guess
+# against the 30 s shutdown budget: that budget is spent after the swap, on processes the load no
+# longer races. Undershooting means the reload lands on the freshly loaded model and kills it.
+#
+# What the wait does NOT cover, deliberately: the old llama-servers can still be dying while the
+# new load starts, so both can hold GTT briefly. That inflates the gpu_guard baseline sampled
+# just after this, which errs toward refusing a load — the safe direction on a box that freezes
+# when GTT is exhausted.
 _GATEWAY_RELOAD_SETTLE_S = 4.0
 
 
