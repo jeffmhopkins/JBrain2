@@ -303,7 +303,7 @@ async def test_the_load_fraction_counts_what_went_PAST_the_cache_not_what_sits_i
         models_dir=str(tmp_path),
     )
     task = asyncio.create_task(
-        gw._sweep_page_cache_during_load(model, projected_gb=10.0, on_progress=on_progress)
+        gw._sweep_page_cache_during_load(model, weights_gb=10.0, on_progress=on_progress)
     )
     await asyncio.sleep(1.1)
     task.cancel()
@@ -319,7 +319,7 @@ async def test_the_load_fraction_counts_what_went_PAST_the_cache_not_what_sits_i
 async def test_the_load_fraction_is_absent_when_the_catalog_cannot_size_the_model(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # No projection is no denominator. Silence beats a bar climbing against a guess.
+    # No weight size is no denominator. Silence beats a bar climbing against a guess.
     monkeypatch.setattr(local_weights, "drop_weights_page_cache", lambda _d, _m: 1.0)
     readings = iter([0.0, 2.0, 4.0, 6.0])
     monkeypatch.setattr(host_metrics, "read_page_cache_gb", lambda: next(readings, 6.0))
@@ -336,7 +336,7 @@ async def test_the_load_fraction_is_absent_when_the_catalog_cannot_size_the_mode
         models_dir=str(tmp_path),
     )
     task = asyncio.create_task(
-        gw._sweep_page_cache_during_load(model, projected_gb=0.0, on_progress=on_progress)
+        gw._sweep_page_cache_during_load(model, weights_gb=0.0, on_progress=on_progress)
     )
     await asyncio.sleep(0.6)
     task.cancel()

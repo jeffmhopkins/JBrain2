@@ -392,7 +392,7 @@ class LocalGatewayClient:
         self,
         model: local_catalog.LocalModel | None,
         *,
-        projected_gb: float = 0.0,
+        weights_gb: float = 0.0,
         on_progress: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         """Evict the weights' page cache WHILE the load runs, not only after it — and count
@@ -430,6 +430,10 @@ class LocalGatewayClient:
         survives the drops that keep taking it back out; that load swept 58 times at roughly a
         GiB each across a 69 GiB model.
 
+        The denominator is the model's WEIGHTS ON DISK, not the load's projected footprint:
+        the footprint budgets for KV and compute buffers, which are allocated rather than
+        read, so measuring a read against it can never reach 1.0 (measured: 57.7 of 68.55).
+
         The numerator is GLOBAL `Cached`, not this model's alone: `cachestat(2)` is per-fd and
         seccomp-blocked in this container, so `drop_weights_page_cache` returns None here and
         per-file accounting is unavailable. During a load reading tens of GB the global figure
@@ -457,8 +461,8 @@ class LocalGatewayClient:
                     if now > prev:
                         read_gb += now - prev
                     prev = now
-                if on_progress is not None and projected_gb > 0:
-                    fraction = read_gb / projected_gb
+                if on_progress is not None and weights_gb > 0:
+                    fraction = read_gb / weights_gb
                     # Throttled to the watchdog's old cadence: the poll is four times a second
                     # because the sweep needs it to be, and a row update that often is narration
                     # outrunning the work it narrates.
@@ -487,7 +491,7 @@ class LocalGatewayClient:
                     cache_before_gb=cache_before,
                     cache_after_gb=host_metrics.read_page_cache_gb(),
                     read_gb=round(read_gb, 2),
-                    projected_gb=round(projected_gb, 2),
+                    weights_gb=round(weights_gb, 2),
                 )
             raise
 
@@ -608,7 +612,14 @@ class LocalGatewayClient:
             sweeper = asyncio.create_task(
                 self._sweep_page_cache_during_load(
                     model,
-                    projected_gb=projected_gb,
+                    # The WEIGHTS on disk, not the load's footprint. MEASURED: one cold
+                    # gpt-oss-120b swept 57.7 GiB past the cache against a 68.55 GiB
+                    # projection, so the bar topped out at 84% of this phase's share and
+                    # jumped at the handover. The projection is right for the memory guard
+                    # and wrong here: it includes the KV and compute buffers, which are
+                    # ALLOCATED and never read from disk. Against the catalog's 59.0 GiB of
+                    # weights the same sweep is 97.8% accurate.
+                    weights_gb=model.size_gb if model else 0.0,
                     # The sweep's own accounting IS the first half of the loading bar; see its
                     # docstring for why this is not the device-memory watchdog's job.
                     on_progress=box_events.progress,
