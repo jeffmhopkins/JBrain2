@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -51,6 +51,12 @@ log = structlog.get_logger()
 MODEL_LOAD = "model_load"
 MODEL_UNLOAD = "model_unload"
 IMAGE_RENDER = "image_render"
+# A local turn eating its prompt. Recorded for the same reason a load is: it pins the iGPU for
+# tens of seconds with nothing in the agent roster to explain the spike — the priming prefill a
+# load ends with was MEASURED at 118 s of a 198 s load. Only opened for a turn that has already
+# been silent long enough to count as prefill (`llm.prefill`), so a box answering normally
+# writes none of these.
+PREFILL = "prefill"
 # The gateway config could not be re-stamped, so llama-swap is serving flags that no longer
 # match the saved settings. Surfaced because the re-stamp now happens ONCE, immediately before
 # a load (llm.local_gateway._config_regen) instead of on every settings PUT: the old code got a
@@ -224,6 +230,44 @@ async def span(kind: str, subject: str, *, detail: str | None = None) -> AsyncIt
     await _write(_SETTLE, {"id": row, "status": "ok", "detail": _clip(reason)})
 
 
+@asynccontextmanager
+async def lazy_span(kind: str, subject: str) -> AsyncIterator[Callable[[float], Awaitable[None]]]:
+    """A `span` that only comes into existence if something is published to it.
+
+    `span` opens its row up front, which is right for work we know is happening the moment we
+    start it. Prefill is not that: most turns answer straight off a primed prefix, and a row
+    per turn — opened, settled, and pruned a day later — would bury the handful of rows that
+    explain a real spike. So the row is opened by the FIRST publish and settled on the way out
+    only if it exists.
+
+    Yields the publish callable. Everything here is best-effort in the usual way: a database
+    hiccup costs a narration, never the turn."""
+    row: uuid.UUID | None = None
+    reason = _reason.get()
+
+    async def publish(fraction: float) -> None:
+        nonlocal row
+        if row is None:
+            row = uuid.uuid4()
+            await _write(
+                _INSERT_OPEN,
+                {
+                    "id": row,
+                    "kind": kind,
+                    "subject": subject,
+                    "detail": _clip(reason),
+                    "source": _source,
+                },
+            )
+        await _write(_PROGRESS, {"id": row, "progress": min(1.0, max(0.0, fraction))})
+
+    try:
+        yield publish
+    finally:
+        if row is not None:
+            await _write(_SETTLE, {"id": row, "status": "ok", "detail": _clip(reason)})
+
+
 async def progress(fraction: float) -> None:
     """Publish how far the enclosing `span` has got, as 0..1.
 
@@ -316,7 +360,7 @@ async def in_flight(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,
     *,
-    kind: str = MODEL_LOAD,
+    kinds: tuple[str, ...] = (MODEL_LOAD, PREFILL),
     now: datetime | None = None,
 ) -> dict[str, object] | None:
     """The `kind` of work happening RIGHT NOW, or None when nothing is — the narrow read
@@ -334,16 +378,21 @@ async def in_flight(
 
     Newest-first with a limit of one: only one model loads at a time (the evictor makes
     room before the load starts), but a row left open by a process that died under it can
-    still sit inside the staleness window, and the newer row is the true one."""
+    still sit inside the staleness window, and the newer row is the true one.
+
+    Answers for a LOAD or a PREFILL by default, and returns `kind` so the caller can word the
+    two differently ("loading gpt-oss-120b" against "reading your prompt"). They are the same
+    question to a status line — what is the GPU doing this second — and they cannot overlap
+    for one model, because the prefill runs on weights the load has already finished."""
     moment = now or datetime.now(tz=UTC)
     async with scoped_session(maker, ctx) as session:
         row = (
             await session.execute(
                 text(
                     """
-                    SELECT at, subject, detail, source, progress
+                    SELECT at, kind, subject, detail, source, progress
                     FROM app.box_events
-                    WHERE kind = :kind
+                    WHERE kind = ANY(:kinds)
                       AND ended_at IS NULL
                       AND status = 'running'
                       AND at >= :cut
@@ -351,13 +400,14 @@ async def in_flight(
                     LIMIT 1
                     """
                 ),
-                {"kind": kind, "cut": moment - STALE_AFTER},
+                {"kinds": list(kinds), "cut": moment - STALE_AFTER},
             )
         ).first()
     if row is None:
         return None
     return {
         "at_ms": int(row.at.timestamp() * 1000),
+        "kind": row.kind,
         "subject": row.subject,
         "detail": row.detail,
         "source": row.source,

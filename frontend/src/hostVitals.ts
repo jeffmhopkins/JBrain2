@@ -335,18 +335,19 @@ function fromFrame(value: unknown): GpuBusy {
 /** A frame's in-flight load, or null. Validated field by field rather than trusted: an
  *  older box sends no `loading` key at all, and a half-populated one must read as "nothing
  *  loading" rather than put an empty name on the status line. `percent` is optional in a
- *  way the others are not — a load reports no fraction until its first device-memory
- *  sample lands, and none at all on a box with no device probe, and it still has a model
- *  and a start time worth showing. */
+ *  way the others are not — nothing reports a fraction until its first sample lands, and
+ *  a box with no page-cache reading reports none at all, and it still has a model and a
+ *  start time worth showing. `kind` is absent on an older box and reads as a load. */
 function loadFromFrame(value: unknown): ModelLoad | null {
   if (typeof value !== "object" || value === null) return null;
-  const { model, at_ms: at, percent } = value as Record<string, unknown>;
+  const { model, at_ms: at, percent, kind } = value as Record<string, unknown>;
   if (typeof model !== "string" || model === "") return null;
   if (typeof at !== "number" || !Number.isFinite(at)) return null;
   return {
     model,
     at_ms: at,
     percent: typeof percent === "number" && Number.isFinite(percent) ? percent : null,
+    kind: kind === "prefill" ? "prefill" : "model_load",
   };
 }
 

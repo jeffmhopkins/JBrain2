@@ -914,7 +914,7 @@ async def _drain(router: LlmRouter, **kwargs: object) -> None:
 async def test_a_local_turn_stuck_in_prefill_is_probed(monkeypatch: pytest.MonkeyPatch) -> None:
     # The instrument this exists for: the box's longest unread silence is the gap before a
     # local model's first token, and `/slots` is the only thing that can describe it.
-    monkeypatch.setattr("jbrain.llm.prefill_probe._SCHEDULE", (0.02,))
+    monkeypatch.setattr("jbrain.llm.prefill._FIRST_DELAY_S", 0.02)
     probed: list[str] = []
 
     async def slots(served_model: str) -> list[dict[str, object]]:
@@ -934,7 +934,7 @@ async def test_a_cloud_turn_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> 
     # `/slots` belongs to llama-server. A slow Claude turn is slow for reasons no endpoint on
     # this box can see, and probing one would ask the local gateway about a model it isn't
     # serving — reaching a passthrough that LOADS on demand, outside residency.
-    monkeypatch.setattr("jbrain.llm.prefill_probe._SCHEDULE", (0.02,))
+    monkeypatch.setattr("jbrain.llm.prefill._FIRST_DELAY_S", 0.02)
     probed: list[str] = []
 
     async def slots(served_model: str) -> list[dict[str, object]]:
@@ -951,7 +951,7 @@ async def test_a_cloud_turn_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 async def test_a_fast_local_turn_costs_no_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("jbrain.llm.prefill_probe._SCHEDULE", (0.2,))
+    monkeypatch.setattr("jbrain.llm.prefill._FIRST_DELAY_S", 0.2)
     probed: list[str] = []
 
     async def slots(served_model: str) -> list[dict[str, object]]:

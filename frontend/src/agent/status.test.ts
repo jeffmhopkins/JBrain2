@@ -45,6 +45,19 @@ describe("modelLoadStatus", () => {
     });
   });
 
+  it("names the prompt, not the model, once the model is already on the box", () => {
+    // A prefill is a different wait with a different cause. "Loading gpt-oss-120b" answers
+    // "why is nothing happening" while the weights are still arriving; once they have
+    // arrived the model's name explains nothing and the prompt is the thing being eaten.
+    expect(modelLoadStatus("gpt-oss-120b", 0.6, 1000, "prefill")).toEqual({
+      kind: "loading",
+      label: "Reading",
+      emphasis: "your prompt",
+      percent: 0.6,
+      sinceMs: 1000,
+    });
+  });
+
   it("carries a null fraction through rather than inventing a zero", () => {
     // A gateway build that prints no parseable progress is the ordinary case; "0%" on a
     // load that is halfway through reads as stuck.

@@ -297,7 +297,6 @@ async def guarded_load(
     target: str,
     abort: Callable[[], Awaitable[None]],
     sample_interval_s: float = SAMPLE_INTERVAL_S,
-    on_progress: Callable[[float], Awaitable[None]] | None = None,
 ) -> None:
     """Run `load()` while watching device memory, and abort it if GTT runs away.
 
@@ -310,14 +309,13 @@ async def guarded_load(
     hardware a wrong guess does not fail the load, it takes the machine. Watching the actual
     number while it climbs is the only check that works on the first attempt.
 
-    `on_progress` receives the load's completed fraction (0..1) on each sample. This watch
-    loop is the only thing on the box that measures a load AS IT HAPPENS, so it is also the
-    only honest source for a progress bar — and it costs nothing extra, since the sample is
-    already being taken to decide whether to abort. The alternative that was tried first,
-    parsing a percentage out of llama.cpp's log, has no source on this build at all: the
-    loader prints nothing at the default verbosity (measured — see the api.debug
-    `upstream-logs` route), so the bar it fed was permanently blank. Best-effort like the
-    rest: a publisher that raises must not take down the load it is describing.
+    THIS IS A WATCHDOG, NOT A PROGRESS BAR, and it briefly tried to be both. Device memory
+    here is the RESERVATION: llama.cpp commits the whole GTT buffer before it reads a byte
+    (measured, `local_gateway._sweep_page_cache_during_load` — 57 GB committed up front), so
+    the fraction it yields is already at 0.78 four seconds into a load that has three more
+    minutes to run. That reading is exactly right for catching a runaway, which is a question
+    about the booking, and wrong for "how far in is this", which is a question about the read.
+    The bar is fed from the page-cache sweep and the warm-up's prefill instead.
 
     Degrades cleanly: if the probe can't read the pool (no amdgpu, supervisor down), the
     load runs exactly as it does today, unwatched — a box that can't measure must still be
@@ -340,7 +338,6 @@ async def guarded_load(
             now = await probe.sample()
             if now is None:
                 continue  # lost the probe mid-load: fall back to running unwatched
-            await _publish(on_progress, baseline, now, projected_gb, target)
             if now.gtt_used_gb > ceiling_gb:
                 breach = (
                     f"device memory ran away while loading {target}: GTT "
@@ -365,7 +362,6 @@ async def guarded_load(
             # the width of its sampling interval.
             settled = await probe.sample()
             if settled is not None:
-                await _publish(on_progress, baseline, settled, projected_gb, target)
                 if settled.gtt_used_gb > ceiling_gb:
                     breach = (
                         f"{target} finished loading at GTT {settled.gtt_used_gb:.1f} GB, past "
@@ -392,33 +388,6 @@ async def guarded_load(
             f"{breach}. The load was aborted and the model unloaded — the host was at risk "
             "of a hard freeze, which on this hardware needs a power cycle."
         )
-
-
-async def _publish(
-    on_progress: Callable[[float], Awaitable[None]] | None,
-    baseline: GpuMem,
-    now: GpuMem,
-    projected_gb: float,
-    target: str,
-) -> None:
-    """Turn one watchdog sample into a load fraction, best-effort.
-
-    The device pool is DEVICE-WIDE, not per-process (see this module's known limits), so
-    the delta is only a reading of THIS load because the box loads one model at a time —
-    the evictor makes room before the load starts. Anything else moving the pool during
-    those seconds lands in the figure, which is a fair price for the only measurement of a
-    load in flight that exists on this build.
-
-    No projection means no denominator, and a made-up one would be worse than silence: an
-    uncatalogued model would get a bar climbing against a guess. The surfaces render null
-    as an elapsed count with no percentage, which is exactly the right amount to claim.
-    """
-    if on_progress is None or projected_gb <= 0:
-        return
-    try:
-        await on_progress((now.gtt_used_gb - baseline.gtt_used_gb) / projected_gb)
-    except Exception:  # noqa: BLE001 — narration must never break the load it describes
-        log.warning("gpu_guard.progress_publish_failed", model=target, exc_info=True)
 
 
 async def measure_footprint(probe: GpuMemProbe, before: GpuMem | None, target: str) -> float | None:

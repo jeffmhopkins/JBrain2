@@ -552,7 +552,8 @@ class _LoadProbe:
 
 
 async def _load_in_flight(request: Request) -> dict[str, object] | None:
-    """The load happening right now — `{model, at_ms, percent}` — or None. See `_LoadProbe`."""
+    """The load or prefill happening right now — `{model, at_ms, percent, kind}` — or None.
+    See `_LoadProbe`."""
     probe = cast("_LoadProbe | None", getattr(request.app.state, "load_probe", None))
     if probe is None:
         probe = _LoadProbe()
@@ -570,10 +571,18 @@ async def _read_load_in_flight(request: Request) -> dict[str, object] | None:
     transcription counts, and it is stamped at the moment the load begins rather than when
     the first measurement lands.
 
-    The percent is the load watchdog's own device-memory delta, published onto the row as
-    it samples (`llm.gpu_guard.guarded_load`). It is null until the first sample, on a box
-    with no device probe, and for a model the catalog cannot size — every surface renders
-    that as "loading, no figure" rather than as zero."""
+    The percent covers the WHOLE wait, which is two phases with two different sources: the
+    weights read, measured by the page-cache sweep's own accounting, and then the priming
+    warm-up, measured by its prefill against llama-server's `/slots`
+    (`llm.local_gateway._sweep_page_cache_during_load` and `._warm`). The second used to have
+    no source at all, which is why the bar reached 99% and sat there — MEASURED at 118 s of a
+    198 s load. It is null until the first sample, on a box with no page-cache reading, and
+    for a model the catalog cannot size — every surface renders that as "loading, no figure"
+    rather than as zero.
+
+    `kind` distinguishes a load from a bare PREFILL row, which a slow turn opens without any
+    load happening. The two answer the same question for a status line — what is the GPU
+    doing this second — and want different words on screen."""
     maker = cast(
         "async_sessionmaker[AsyncSession] | None", getattr(request.app.state, "session_maker", None)
     )
@@ -586,7 +595,12 @@ async def _read_load_in_flight(request: Request) -> dict[str, object] | None:
         return None
     if row is None:
         return None
-    return {"model": row["subject"], "at_ms": row["at_ms"], "percent": row["progress"]}
+    return {
+        "model": row["subject"],
+        "at_ms": row["at_ms"],
+        "percent": row["progress"],
+        "kind": row["kind"],
+    }
 
 
 @router.get("/vitals")

@@ -248,6 +248,103 @@ async def test_the_sweeper_fires_on_cache_GROWTH_before_the_interval_elapses(
     assert dropped, "a 9 GiB jump did not trigger a sweep before the interval"
 
 
+async def test_the_size_trigger_measures_growth_since_the_last_DROP_not_the_last_poll(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression that matters most in this function, and the one a single big jump misses.
+
+    Real growth arrives in instalments — ~1.5 GiB/s spread over polls a quarter-second apart is
+    under 0.4 GiB each — so the threshold is only ever reached by ACCUMULATING. Compare against
+    the previous POLL instead of the previous DROP and no single step ever reaches a GiB: the
+    size trigger silently stops firing, the sweep quietly demotes to its 2 s interval, and the
+    transient it exists to bound grows by ~3x. Nothing else here would notice."""
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        local_weights, "drop_weights_page_cache", lambda _d, mid: dropped.append(mid) or 1.0
+    )
+    # 0.4 GiB per poll: never a GiB in one step, past a GiB by the third.
+    readings = iter([0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.8])
+    monkeypatch.setattr(host_metrics, "read_page_cache_gb", lambda: next(readings, 3.0))
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+        models_dir=str(tmp_path),
+    )
+    task = asyncio.create_task(gw._sweep_page_cache_during_load(model))
+    await asyncio.sleep(1.1)  # ~4 polls at 0.25 s, still well short of the 2 s interval
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert dropped, "growth accumulating past a GiB across polls did not trigger a sweep"
+
+
+async def test_the_load_fraction_counts_what_went_PAST_the_cache_not_what_sits_in_it(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bar's first half. The sweep keeps taking the cache back out, so the level is flat
+    (MEASURED: 1.9 GiB before a 69 GiB load and 1.9 GiB after) while the bytes that passed
+    through it are the whole read. Only a running total sees that."""
+    monkeypatch.setattr(local_weights, "drop_weights_page_cache", lambda _d, _m: 1.0)
+    # Grow, get swept back to zero, grow again — the real sawtooth.
+    readings = iter([0.0, 0.6, 1.2, 0.0, 0.6, 1.2, 0.0, 0.6, 1.2])
+    monkeypatch.setattr(host_metrics, "read_page_cache_gb", lambda: next(readings, 1.2))
+    published: list[float] = []
+
+    async def on_progress(value: float) -> None:
+        published.append(value)
+
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+        models_dir=str(tmp_path),
+    )
+    task = asyncio.create_task(
+        gw._sweep_page_cache_during_load(model, projected_gb=10.0, on_progress=on_progress)
+    )
+    await asyncio.sleep(1.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert published, "a load that read GB published no fraction"
+    # Monotonic across the drops: a sawtooth in the LEVEL must not put a sawtooth in the bar.
+    assert published == sorted(published)
+    # And scaled into the weights phase, never past it — the warm-up owns the rest.
+    assert max(published) <= 0.4 + 1e-9
+
+
+async def test_the_load_fraction_is_absent_when_the_catalog_cannot_size_the_model(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No projection is no denominator. Silence beats a bar climbing against a guess.
+    monkeypatch.setattr(local_weights, "drop_weights_page_cache", lambda _d, _m: 1.0)
+    readings = iter([0.0, 2.0, 4.0, 6.0])
+    monkeypatch.setattr(host_metrics, "read_page_cache_gb", lambda: next(readings, 6.0))
+    published: list[float] = []
+
+    async def on_progress(value: float) -> None:
+        published.append(value)
+
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+        models_dir=str(tmp_path),
+    )
+    task = asyncio.create_task(
+        gw._sweep_page_cache_during_load(model, projected_gb=0.0, on_progress=on_progress)
+    )
+    await asyncio.sleep(0.6)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert published == []
+
+
 async def test_the_sweeper_is_a_no_op_without_a_weights_mount() -> None:
     # No mount means nothing to fadvise; it must return rather than spin a pointless loop.
     gw = LocalGatewayClient(
