@@ -430,10 +430,6 @@ async def test_slot_action_proceeds_for_a_resident_model() -> None:
     assert result["n_saved"] == 27476
 
 
-async def _noop_record(kind: str, subject: str, **_: object) -> None:
-    """box_events writes to Postgres; these tests only care about the restore hook."""
-
-
 async def test_a_config_reload_that_kills_a_bystander_is_recorded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -502,86 +498,3 @@ async def test_a_config_regen_that_changes_nothing_records_no_eviction(
     )
     await client.load("qwen3-vl-30b-a3b")
     assert not [r for r in recorded if r.startswith("model_unload")], recorded
-
-
-async def test_reload_casualties_are_handed_to_the_restorer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A config reload kills every running llama-server, including a model that could have
-    CO-RESIDED with the one being loaded — the Q4 vision twin exists precisely so it fits
-    beside gpt-oss-120b. Recording that death is not enough: the operator wanted both models,
-    and nothing else will put the bystander back. Handing it to the residency coordinator as an
-    external displacement reuses the budget-aware restore instead of growing a second one."""
-    monkeypatch.setattr(local_gateway.box_events, "record", _noop_record)
-    restored: list[list[str]] = []
-    resident = {"gpt-oss-120b"}
-
-    def handle(req: httpx.Request) -> httpx.Response:
-        if req.url.path == "/running":
-            return httpx.Response(200, json=sorted(resident))
-        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
-
-    async def regen() -> None:
-        resident.clear()  # llama-swap's reload() -> old.Shutdown()
-
-    client = LocalGatewayClient(
-        "http://gw:8080/v1", transport=httpx.MockTransport(handle), config_regen=regen
-    )
-    client.set_external_eviction_hook(lambda names: restored.append(list(names)))
-    await client.load("qwen3-vl-30b-a3b")
-    assert restored == [["gpt-oss-120b"]], (
-        f"the bystander was never offered for restore: {restored}"
-    )
-
-
-async def test_a_load_that_changes_nothing_offers_no_restore(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Nearly every load re-stamps an identical config and kills nothing. Offering a restore
-    there would queue a displacement that never happened, and the coordinator would go load a
-    model nobody evicted."""
-    monkeypatch.setattr(local_gateway.box_events, "record", _noop_record)
-    restored: list[list[str]] = []
-
-    def handle(req: httpx.Request) -> httpx.Response:
-        if req.url.path == "/running":
-            return httpx.Response(200, json=["gpt-oss-120b"])
-        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
-
-    async def regen() -> None:
-        return None  # content compare said the file already matches
-
-    client = LocalGatewayClient(
-        "http://gw:8080/v1", transport=httpx.MockTransport(handle), config_regen=regen
-    )
-    client.set_external_eviction_hook(lambda names: restored.append(list(names)))
-    await client.load("qwen3-vl-30b-a3b")
-    assert restored == [], restored
-
-
-async def test_a_failed_load_still_offers_the_casualties_for_restore(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The bystander is just as dead when the load it was sacrificed for then fails — which is
-    exactly what happened on the box before the settle wait landed (a 500 on /health, and
-    gpt-oss-120b gone with it). Leaving the restore on the success path would strand the
-    operator with NOTHING resident."""
-    monkeypatch.setattr(local_gateway.box_events, "record", _noop_record)
-    restored: list[list[str]] = []
-    resident = {"gpt-oss-120b"}
-
-    def handle(req: httpx.Request) -> httpx.Response:
-        if req.url.path == "/running":
-            return httpx.Response(200, json=sorted(resident))
-        return httpx.Response(500)  # the load itself fails
-
-    async def regen() -> None:
-        resident.clear()
-
-    client = LocalGatewayClient(
-        "http://gw:8080/v1", transport=httpx.MockTransport(handle), config_regen=regen
-    )
-    client.set_external_eviction_hook(lambda names: restored.append(list(names)))
-    with pytest.raises(LocalGatewayError):
-        await client.load("qwen3-vl-30b-a3b")
-    assert restored == [["gpt-oss-120b"]], f"a failed load stranded the bystander: {restored}"

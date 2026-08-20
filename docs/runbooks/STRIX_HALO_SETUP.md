@@ -916,32 +916,44 @@ settle wait means the casualties are observed fact, not a prediction) and writes
 for <model>"*. So the vitals surface now explains the eviction the owner kept reporting instead
 of showing nothing.
 
-**...and the casualties are PUT BACK.** Narrating the death was still the wrong end state: the
-operator wanted both models. The Q4 vision twin exists *specifically* so it co-resides with
-`gpt-oss-120b` (see its catalog note), so a flag change on it was costing the box a model that
-had room to stay. `local_gateway._offer_restore` hands the casualties to the residency
-coordinator via `note_evicted` + `schedule_restore` — a config reload is an external
-displacement in exactly the sense the coordinator already models, so this reuses its
-budget-aware restore (which never evicts to squeeze a member back in) instead of growing a
-second restore path with its own idea of the memory budget.
+### NEGATIVE RESULT: auto-restoring the reload's casualties (tried, reverted)
 
-Fired from a `finally`, not the success path: a load that FAILED leaves the bystanders just as
-dead — which is precisely what the box showed before the settle wait landed (a 500 on `/health`
-*and* `gpt-oss-120b` gone). Offering only on success would strand the operator with nothing
-resident at all.
+The obvious next step after narrating the casualties is to put them back, and it was built and
+merged (#1174) before being reverted. **Do not rebuild it without reading this.** It handed the
+casualties to the residency coordinator as an external displacement (`note_evicted` +
+`schedule_restore`), reusing the budget-aware restore rather than growing a second one. It
+passed seven mutation-checked tests. On the box it did nothing useful.
 
-Two things worth knowing about it:
+MEASURED 2026-08-20, `gpt-oss-120b` resident, editing then loading `qwen3-vl-30b-q4`:
 
-- It respects the **end-of-turn restore switch** (Settings → LLM). With auto-restore off the
-  casualties stay down and `residency.restore_disabled` is logged — one switch, one meaning.
-- Only *unintended* casualties reach it. A model residency deliberately evicted to make room is
-  already gone before the reload, so it was never in the before-set and is not resurrected.
+```
+13:43:53  I load q4
+13:44:00  model_unload  gpt-oss-120b  "the gateway reloaded to apply changed settings for q4"
+13:44:17  model_unload  q4            FAILED (502 — llama-swap still settling)
+13:44:17  model_load    gpt-oss-120b  ok, detail EMPTY          <- NOT the casualty restore
+13:44:23  resident: gpt-oss-120b, qwen3-vl-30b-q4               <- briefly both
+13:44:24  model_load    q4  FAILED "putting back what a displacement took / device memory ran
+                                    away while loading: GTT 40.4 GB past the 36.1 GB ceiling"
+13:44:26  model_unload  q4            ok
+13:45:07  agent.turn on gpt-oss-120b, slot restored
+```
 
-**Why not fix it in llama-swap instead.** Checked against the pinned build: the admin surface is
-`/api/models/unload`, `/api/models/unload/{model}`, `/running`, `/logs`, `/metrics`,
-`/api/events` — there is no per-model config update and no reload endpoint, `SIGHUP` calls the
-same `reload()`, and `Server.Shutdown` stops the routers that own every process, with nothing
-carried across. The takedown is unavoidable without patching llama-swap; the *loss* is not.
+Two things to read off it:
+
+- **The casualty came back on its own, and not from the restore.** The 13:44:17 load carries an
+  EMPTY detail; the restore stamps `putting back what a displacement took`. `gpt-oss-120b`
+  returned because a real turn wanted it. On a box whose keeper primes a primary model, ordinary
+  turn traffic already reinstates it — the feature is redundant there and inert everywhere the
+  end-of-turn restore switch is off (which is how this box runs).
+- **The `putting back` rows are about q4, not the casualty** — pre-existing displacement
+  bookkeeping reacting to `ensure_room`'s eviction, and it hit the device-memory runaway abort.
+  Not caused by the reverted feature, but it shows the window is already contended; adding a
+  third actor to it bought nothing.
+
+**The problem actually worth solving, which this mis-framed:** a turn wanting the primary model
+runs `ensure_room`, which evicts the model the operator just deliberately loaded. That is the
+churn behind the long-standing "I stage a model and gpt-oss-120b comes back" report — operator
+intent versus keeper intent, not reload collateral.
 
 **Generalisable:** moving a side effect off the writer and onto the reader does not remove it,
 it re-times it. Ask what else is in flight at the new moment — here, the load the caller is
