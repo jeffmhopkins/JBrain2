@@ -1330,8 +1330,7 @@ function OnBoxModelsCard({
   // segment labelled OS/database/services grew by tens of GB whenever a model loaded and the
   // operator had no way to see why from the meter.
   const cacheGb = Math.min(hostMemory?.cache_gb ?? 0, usedGb ?? 0);
-  const systemGb =
-    usedGb !== null ? Math.max(usedGb - residentGb - imgUsedGb - cacheGb, 0) : 0;
+  const systemGb = usedGb !== null ? Math.max(usedGb - residentGb - imgUsedGb - cacheGb, 0) : 0;
   // Honest "used" for the caption: measured used when we have it, else what we can see.
   const shownUsedGb = usedGb ?? residentGb + imgUsedGb;
 
