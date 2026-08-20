@@ -562,13 +562,29 @@ def test_context_checkpoints_are_pinned_low_as_a_memory_trade(tmp_path: Path) ->
     occurrences to 0.
 
     The count and the step are pinned TOGETHER because either alone is inert: 16 checkpoints
-    forced 8192 apart still cannot cover a conversation densely enough."""
+    forced 8192 apart still cannot cover a conversation densely enough.
+
+    The raise is GATED ON THE MEASUREMENT, which is the other half of what this pins. A checkpoint
+    is per slot and unbudgeted above `checkpoint_gb`, and the Nemotron hybrids are unmeasured while
+    one of them runs two slots — so a flat raise would have put 32 checkpoints of unknown size on
+    the box against a budget of zero. A model earns the higher count by having its cost measured;
+    everything else keeps the conservative one."""
     _lay_down(tmp_path)
-    text = llama_swap_config.render(_manifest(), str(tmp_path))
+    manifest = _manifest()
+    # The fixture carries no `checkpoint_gb`, i.e. every model in it is unmeasured.
+    text = llama_swap_config.render(manifest, str(tmp_path))
     server_lines = [ln for ln in text.splitlines() if "llama-server" in ln]
     assert server_lines
-    assert all("--ctx-checkpoints 16" in ln for ln in server_lines)
+    assert all("--ctx-checkpoints 2" in ln for ln in server_lines)
+    # The step is shared and unconditional — it is useless on its own and harmless at any count.
     assert all("--checkpoint-min-step 1024" in ln for ln in server_lines)
+
+    # A measured model earns the raise.
+    measured = [{**m, "checkpoint_gb": 0.28} for m in manifest]
+    text = llama_swap_config.render(measured, str(tmp_path))
+    lines = [ln for ln in text.splitlines() if "llama-server" in ln]
+    assert lines
+    assert all("--ctx-checkpoints 16" in ln for ln in lines)
 
 
 def test_an_operator_override_of_a_shared_flag_appears_exactly_once(tmp_path: Path) -> None:
@@ -635,7 +651,7 @@ def test_an_unrelated_operator_flag_leaves_the_shared_defaults_alone(tmp_path: P
     )
     line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
     assert "-ub 1024" in line
-    assert "--ctx-checkpoints 16" in line
+    assert "--ctx-checkpoints 2" in line
     assert "--cache-reuse 256" in line
 
 

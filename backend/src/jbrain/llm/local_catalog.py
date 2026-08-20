@@ -113,6 +113,29 @@ _KV_REFERENCE_TOKENS = 131072
 # Still half of llama.cpp's own default of 32.
 CTX_CHECKPOINTS = 16
 
+# The count for a model whose per-checkpoint cost has NOT been measured (`checkpoint_gb == 0.0`).
+#
+# The raise only pays where checkpoints are actually CREATED — a hybrid, or an SWA model served
+# without `--swa-full` (llama.cpp zeroes `n_swa` when that flag is set, so gpt-oss creates none at
+# all). Both Nemotron hybrids qualify and are unmeasured, and `nemotron-3.5-lightning-30b` runs TWO
+# slots, so a flat raise would put 32 checkpoints of unknown size on the box against a budget of 0.
+#
+# So the raise is gated on the measurement rather than applied flat: `ctx_checkpoints()` hands the
+# higher count only to models whose cost is known. That makes the setting self-limiting — the
+# count cannot outrun the budget accounting for it — and it is the same principle as the
+# deliberate zero on `checkpoint_gb`: a measurement earns the memory, a guess does not.
+CTX_CHECKPOINTS_UNMEASURED = 2
+
+
+def ctx_checkpoints(checkpoint_gb: float | None) -> int:
+    """Per-slot context checkpoints to serve a model with (`--ctx-checkpoints`).
+
+    Takes the model's measured per-checkpoint cost rather than the model, because the gateway
+    config renders from manifest dicts while the cost model holds `LocalModel`s. 0/None means
+    unmeasured — see `CTX_CHECKPOINTS_UNMEASURED`."""
+    return CTX_CHECKPOINTS if (checkpoint_gb or 0) > 0 else CTX_CHECKPOINTS_UNMEASURED
+
+
 # Minimum token spacing between checkpoints (`--checkpoint-min-step`). llama.cpp defaults to
 # 8192, which we never set — and the count above is worthless without it: 16 checkpoints forced
 # 8192 apart still cannot cover a conversation densely enough to catch a divergence near the
@@ -1068,7 +1091,9 @@ def footprint_gb(
     # Budgeted at the SERVED count — an operator override through `--ctx-checkpoints` is not
     # threaded in here, which is why that flag is bounded in the settings API rather than left
     # open.
-    checkpoints = model.checkpoint_gb * CTX_CHECKPOINTS * model.effective_slots(slots)
+    checkpoints = (
+        model.checkpoint_gb * ctx_checkpoints(model.checkpoint_gb) * model.effective_slots(slots)
+    )
     return round(
         weights
         + kv
