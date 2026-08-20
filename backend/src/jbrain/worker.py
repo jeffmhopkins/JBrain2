@@ -568,6 +568,10 @@ async def run() -> None:
             queue.SYSTEM_CTX
         ),
         residency=residency,
+        # Same prefill diagnostic as the api's router: a deferred job's local turn stalls on
+        # prompt evaluation exactly like a chat turn, and the worker's are the loads nobody is
+        # watching a screen for — a slow prefill there is invisible until the job is late.
+        slots_probe=llm_gateway.slots,
     )
     # The report display-title job (external.report_titler): one LLM one-shot per
     # report, so it takes the router rather than the embed container.

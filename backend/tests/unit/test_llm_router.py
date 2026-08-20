@@ -1,6 +1,8 @@
 """Router behavior: task resolution, the JSON re-ask, and build_router wiring."""
 
+import asyncio
 import json
+from typing import cast
 
 import httpx
 import pytest
@@ -9,8 +11,11 @@ from jbrain.config import Settings
 from jbrain.llm import (
     FakeLlmClient,
     LlmBadResponseError,
+    LlmClient,
     LlmError,
     LlmRouter,
+    LlmTurn,
+    LlmUsage,
     Sampling,
     build_router,
 )
@@ -888,3 +893,76 @@ async def test_admit_local_load_is_inert_without_a_coordinator() -> None:
     the keeper still loads, it just has nothing to make room against."""
     r = LlmRouter({}, {}, residency=None)
     await r.admit_local_load("qwen3.8-27b-q4")  # must not raise
+
+
+class _SlowClient:
+    """A client that keeps the caller waiting before it streams — a local turn in prefill."""
+
+    def __init__(self, wait_s: float) -> None:
+        self._wait_s = wait_s
+
+    async def converse_stream(self, **_kwargs: object):  # noqa: ANN003 — structural fake
+        await asyncio.sleep(self._wait_s)
+        yield LlmTurn(text="ok", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(1, 1))
+
+
+async def _drain(router: LlmRouter, **kwargs: object) -> None:
+    async for _ in router.converse_stream("agent.turn", system="s", messages=[], **kwargs):  # type: ignore[arg-type]
+        pass
+
+
+async def test_a_local_turn_stuck_in_prefill_is_probed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The instrument this exists for: the box's longest unread silence is the gap before a
+    # local model's first token, and `/slots` is the only thing that can describe it.
+    monkeypatch.setattr("jbrain.llm.prefill_probe._SCHEDULE", (0.02,))
+    probed: list[str] = []
+
+    async def slots(served_model: str) -> list[dict[str, object]]:
+        probed.append(served_model)
+        return [{"id": 0}]
+
+    router = LlmRouter(
+        {"local": cast(LlmClient, _SlowClient(0.1))},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        slots_probe=slots,
+    )
+    await _drain(router)
+    assert probed == ["gpt-oss-120b"]
+
+
+async def test_a_cloud_turn_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `/slots` belongs to llama-server. A slow Claude turn is slow for reasons no endpoint on
+    # this box can see, and probing one would ask the local gateway about a model it isn't
+    # serving — reaching a passthrough that LOADS on demand, outside residency.
+    monkeypatch.setattr("jbrain.llm.prefill_probe._SCHEDULE", (0.02,))
+    probed: list[str] = []
+
+    async def slots(served_model: str) -> list[dict[str, object]]:
+        probed.append(served_model)
+        return []
+
+    router = LlmRouter(
+        {"anthropic": cast(LlmClient, _SlowClient(0.1))},
+        {"agent.turn": ("anthropic", "claude-sonnet-4-5")},
+        slots_probe=slots,
+    )
+    await _drain(router)
+    assert probed == []
+
+
+async def test_a_fast_local_turn_costs_no_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("jbrain.llm.prefill_probe._SCHEDULE", (0.2,))
+    probed: list[str] = []
+
+    async def slots(served_model: str) -> list[dict[str, object]]:
+        probed.append(served_model)
+        return []
+
+    router = LlmRouter(
+        {"local": FakeLlmClient(["quick"])},
+        {"agent.turn": ("local", "gpt-oss-120b")},
+        slots_probe=slots,
+    )
+    await _drain(router)
+    await asyncio.sleep(0.3)
+    assert probed == [], "the watch must not outlive the turn"

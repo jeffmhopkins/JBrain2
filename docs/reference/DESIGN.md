@@ -318,6 +318,32 @@ plus expandable detail — with **two levels**:
   drift from what a model actually pins, so the fraction is clamped — a model that outgrows
   its estimate reads as arrived rather than as 118%, and one the catalog over-predicts sits
   short of full, which is honest: the rest is not known.
+- **The wait after the load is still unnarrated, and now instrumented** [decided]. Once the
+  weights are resident the line goes back to "Thinking it through" — but a long prompt on a
+  big local model then spends tens of seconds in **prefill**, eating the prompt before it
+  can say a word. That silence is the same failure the loading line was built to end, one
+  step later in the turn, and it has no reading behind it yet: llama-server tracks prefill
+  per slot and serves it on `/slots`, but the **field names vary by build**, and this box
+  runs a community llama.cpp image pinned to a digest off master. Nothing in this repo has
+  ever read a slot body.
+
+  So the **instrument ships before the indicator**. `llm.prefill_probe` photographs `/slots`
+  when a local turn goes quiet for more than three seconds, three samples a couple of
+  seconds apart — a series, because one frame cannot say which number is the progress and
+  only the prefill counters move between frames. The next slow turn on the live box records
+  the real shape into the log, readable back through `GET /api/debug/logs/{api,worker}` with
+  no terminal; the parser gets written **once, against evidence**. This is deliberately the
+  same move as `footprint_unparsed`, which settled a two-guess argument on its first deploy
+  — and the opposite of what produced the dead load percentage above, which was guessed at
+  three times and shipped `null` every time.
+
+  The capture is **redacted by construction**: `/slots` carries the in-flight prompt, which
+  on this box is the owner's notes, and these lines land in a log the debug API serves back.
+  Because the schema is unknown, redaction cannot be a deny-list of the fields that happen
+  to carry text today — every key and every number survives, every string is replaced by its
+  type and length, and a long array collapses to a count (a prompt also travels as token
+  ids, which is reversible). What is left is exactly what a parser needs and nothing a
+  reader could reconstruct a note from.
 - **It rides the stream that is already open** [decided]. The load is a field on the 1 Hz
   vitals frame (`/ops/vitals/stream`), not a poll or a socket of its own. That stream is
   already open on every screen, already foreground-gated, already access-probed, and

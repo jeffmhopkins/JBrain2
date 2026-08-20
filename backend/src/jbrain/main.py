@@ -475,6 +475,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # (schedule_restore/note_evicted) drive, so admission and displacement
             # bookkeeping stay coherent.
             residency=app.state.residency,
+            # Turns on the prefill diagnostic: on a local turn slow to say anything, this
+            # reads `/slots` off the SAME gateway the coordinator drives.
+            slots_probe=app.state.local_gateway.slots,
         )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.

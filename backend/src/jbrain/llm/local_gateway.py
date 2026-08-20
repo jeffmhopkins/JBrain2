@@ -12,10 +12,14 @@ models are resident in memory:
                                          inference path after load so the first real
                                          turn isn't the slow one, optionally priming a
                                          persona system prompt into the KV cache (see `load`)
-  - GET  /logs                         → recent gateway + upstream stdout, which the
-                                         loading bar mines for the llama.cpp model-load
-                                         percentage (a real "weights read in" signal,
-                                         since we run --no-mmap)
+  - GET  /logs                         → recent gateway stdout, served to the debug
+                                         console. It carries llama-swap's OWN lines only,
+                                         never llama.cpp's — which is why the load
+                                         percentage is measured off device memory
+                                         (gpu_guard) rather than read out of here
+  - GET  /slots  (per model)           → llama-server's per-slot state, including whatever
+                                         this build calls its prefill counters
+                                         (jbrain.llm.prefill_probe)
 
 Best-effort by design. The settings screen must render even when the gateway is
 down, still cold, or too old to expose these endpoints, so `running()` swallows
@@ -59,11 +63,6 @@ _SWEEP_GROWTH_GB = 1.0
 # 2026-08-19 were light by 1.4 and >5.5 GiB, and the smaller of those was enough to abort
 # a healthy load. Below it, drift is ordinary per-build variation and is logged at info.
 _FOOTPRINT_DRIFT_GB = 1.0
-
-# How long to wait for the upstream log stream to attach before loading anyway. Short
-# because it is pure instrumentation: a build without the route sets the event immediately
-# on its 404, and the only case that spends the full budget is a gateway already too sick
-# to answer — where delaying the load further helps nobody.
 
 
 class LocalGatewayError(Exception):
