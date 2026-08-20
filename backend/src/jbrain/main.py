@@ -1,7 +1,7 @@
 import asyncio
 import datetime as dt
 import functools
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -249,6 +249,29 @@ def _prefix_lost_notifier(app: FastAPI) -> Callable[[str], None]:
     return notify
 
 
+def _restore_reload_casualties(app: FastAPI, served_names: Sequence[str]) -> None:
+    """Put back models a gateway config reload killed as collateral.
+
+    Rewriting llama-swap.yaml makes llama-swap reload, and its reload shuts down the server
+    that owns EVERY running llama-server — there is no per-model config update and nothing
+    carries over (checked against the pinned build: the admin surface is unload/running/logs/
+    metrics, and SIGHUP calls the same reload). So the takedown is unavoidable; the LOSS is
+    not. The coordinator already models "a model went away without us deciding it should" as a
+    displacement, with a budget-aware restore that never evicts to squeeze a member back in, so
+    this reuses that rather than growing a second restore path.
+
+    Only unintended casualties arrive here: a model residency deliberately evicted to make room
+    is already gone before the reload, so it was never in the before-set.
+
+    Resolved late (getattr) because the coordinator is built from the gateway that calls this.
+    """
+    coordinator = getattr(app.state, "residency", None)
+    if coordinator is None:
+        return
+    coordinator.note_evicted(served_names)
+    coordinator.schedule_restore()
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
 
@@ -417,6 +440,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             config_regen=lambda: llm_settings_api.regen_gateway_config(settings, settings_store),
             # Lets a finished load drop the page-cache copy of the weights it just read.
             models_dir=settings.local_models_dir,
+        )
+        # A gateway config reload kills every running llama-server, including models nothing
+        # asked to evict — a flag change on a model that could have CO-RESIDED costs the
+        # operator the other one. Hand those casualties to the coordinator as an external
+        # displacement so its normal, budget-aware restore puts them back. Bound after
+        # construction because the coordinator is built FROM this gateway.
+        app.state.local_gateway.set_external_eviction_hook(
+            lambda names: _restore_reload_casualties(app, names)
         )
         # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
         # the free-RAM floor before each local load (passed to build_router below as its

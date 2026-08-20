@@ -916,6 +916,33 @@ settle wait means the casualties are observed fact, not a prediction) and writes
 for <model>"*. So the vitals surface now explains the eviction the owner kept reporting instead
 of showing nothing.
 
+**...and the casualties are PUT BACK.** Narrating the death was still the wrong end state: the
+operator wanted both models. The Q4 vision twin exists *specifically* so it co-resides with
+`gpt-oss-120b` (see its catalog note), so a flag change on it was costing the box a model that
+had room to stay. `local_gateway._offer_restore` hands the casualties to the residency
+coordinator via `note_evicted` + `schedule_restore` — a config reload is an external
+displacement in exactly the sense the coordinator already models, so this reuses its
+budget-aware restore (which never evicts to squeeze a member back in) instead of growing a
+second restore path with its own idea of the memory budget.
+
+Fired from a `finally`, not the success path: a load that FAILED leaves the bystanders just as
+dead — which is precisely what the box showed before the settle wait landed (a 500 on `/health`
+*and* `gpt-oss-120b` gone). Offering only on success would strand the operator with nothing
+resident at all.
+
+Two things worth knowing about it:
+
+- It respects the **end-of-turn restore switch** (Settings → LLM). With auto-restore off the
+  casualties stay down and `residency.restore_disabled` is logged — one switch, one meaning.
+- Only *unintended* casualties reach it. A model residency deliberately evicted to make room is
+  already gone before the reload, so it was never in the before-set and is not resurrected.
+
+**Why not fix it in llama-swap instead.** Checked against the pinned build: the admin surface is
+`/api/models/unload`, `/api/models/unload/{model}`, `/running`, `/logs`, `/metrics`,
+`/api/events` — there is no per-model config update and no reload endpoint, `SIGHUP` calls the
+same `reload()`, and `Server.Shutdown` stops the routers that own every process, with nothing
+carried across. The takedown is unavoidable without patching llama-swap; the *loss* is not.
+
 **Generalisable:** moving a side effect off the writer and onto the reader does not remove it,
 it re-times it. Ask what else is in flight at the new moment — here, the load the caller is
 about to start.
