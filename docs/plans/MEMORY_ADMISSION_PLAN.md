@@ -1,6 +1,6 @@
 # Memory Admission on Unified Memory — Design Spec
 
-> **Status:** Draft (v2 — rewritten after adversarial review) · **Last verified:** 2026-08-19 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4❌ W5◻️
+> **Status:** Draft (v2 — rewritten after adversarial review) · **Last verified:** 2026-08-20 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4❌ W5◻️
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — no LLM or storage
 > surface changes (rules 1–2); tests land with the code (rule 5); rule 10 is
@@ -325,6 +325,13 @@ thresholds (shipped) only helps once memory actually drops.
 > already in the runbook — gpt-oss-120b measures GTT 67.6 against a 68.55
 > projection, i.e. 0.95 GiB *heavy*, so whatever the gap is, it is not a
 > mechanism that applies to every model.
+>
+> **Update 2026-08-19:** seven measured loads are now recorded under W3, and they
+> settle the shape of that gap — the error is **bidirectional** (light at the
+> small end, heavy at the large-context end), so no single causal story and no
+> multiplicative margin covers it. The gpt-oss reading above is also reconciled
+> there: 67.6 is resting GTT and 69.26 is peak-across-warm, and the two are not
+> comparable. Read W3 before rewriting W1–W3.
 
 
 
@@ -400,6 +407,52 @@ says keep `-fit off` on this platform.
   light scales the error with model size and says nothing about why.
 
 ### W3 — measure instead of guess ◻️
+
+> **PARTIALLY DELIVERED 2026-08-19, by a different means than this wave proposes.**
+> `gpu_guard.measure_footprint` — the GTT+VRAM delta across a load, bracketed by the samples the
+> admission guard already takes — is now wired into the load chokepoint and logs
+> `local_gateway.footprint_measured` (predicted / measured / drift) on **every** load. That is not
+> the `no_alloc` dry-run below, and does not replace it: the delta is **one number**, so it can say
+> a catalog entry is wrong but not whether KV or weights is the wrong term. What it does give is a
+> standing instrument instead of a one-off study, and the first seven readings follow.
+>
+> **⚠ These are PEAK-ACROSS-WARM, not resting.** The guard's second sample is taken after
+> `_warm()`, so each figure includes warm-time KV growth and context checkpoints that a slot
+> releases afterwards. MEASURED on `qwen3.5-0.8b`: **5.13 peak vs 3.83 resting** once the slot
+> released. Figures elsewhere in these docs and in `STRIX_HALO_SETUP.md` are resting GTT and are
+> **not comparable** — that difference alone accounts for the apparent contradiction the §4 banner
+> flags, where gpt-oss reads 67.6 resting against a 68.55 projection (0.95 heavy) but 69.26
+> peak-across-warm (0.71 light). Both are correct; they measure different moments.
+>
+> Peak is the right number for an admission guard: peak is what has to fit.
+>
+> | model | served shape | predicted | measured (peak) | drift |
+> |---|---|---|---|---|
+> | qwen3.5-0.8b | 262144×1 | 2.45 | 5.13 | **+2.68** |
+> | qwen3.5-4b | 262144×1 | 7.2 | >12.8 | **guard aborted** |
+> | qwen3-vl-30b-q4 | 32768×1 | 20.59 | 22.06 | +1.47 |
+> | qwen3-vl-30b | 16384×1 | 33.54 | 33.42 | −0.12 |
+> | nemotron-3.5-lightning-30b | 500000×**2** | 56.04 | 39.24 | **−16.80** |
+> | qwen3-coder-next | 262144×1 | 60.15 | 53.51 | −6.64 |
+> | gpt-oss-120b | 131072×1 | 68.55 | 69.26 | +0.71 |
+>
+> **The error is bidirectional.** Light at the small end (the 0.8b costs 2.1× its projection),
+> accurate in the middle, heavy by 16.8 GB on the one running a 500k window across two slots. This
+> is the measurement D4b asked for, and it **confirms D4b's own reasoning**: no multiplicative
+> margin can fix a sign that changes across the range. Tuning 1.75 and +2.0 harder would make the
+> small end safe only by making the large end unloadable.
+>
+> Two conclusions that do NOT need more data:
+> - **The runaway guard works.** It aborted `qwen3.5-4b` (`GTT 12.8 GB, past the 12.7 GB ceiling
+>   for a model predicted at 7.2 GB`) and refused `qwen3-coder-next-q8` at pre-flight in 0 s with
+>   zero allocation. Both were correct refusals.
+> - **D4a is real and measurable.** The warm phase is where the small end's error lives; the
+>   0.8b's 5.13 → 3.83 collapse after slot release is that cost, isolated.
+>
+> Deliberately NOT acted on: the formula is unchanged. Seven points is thin for fitting an error
+> with a per-model and a per-context term, and this projection governs the guard that spent
+> 2026-08-19 correctly refusing dangerous loads. A wrong fit makes the box less safe, not more.
+
 Adopt llama.cpp's `no_alloc` dry-run as an **install-time cross-check**, not a
 replacement (see §2 for why not a replacement). Store the measured
 model/context/compute breakdown per model, alert on divergence from the catalog.
