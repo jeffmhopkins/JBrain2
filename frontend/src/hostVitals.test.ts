@@ -329,3 +329,153 @@ describe("useGpuBusy", () => {
     expect(FakeSource.open).toHaveLength(1);
   });
 });
+
+describe("where a sample lands on the graph's grid", () => {
+  beforeEach(() => {
+    FakeSource.open = [];
+    opsVitals.mockReset();
+    opsVitalsStream.mockReset().mockImplementation(() => new FakeSource());
+    visibility("visible");
+  });
+  afterEach(() => vi.useRealTimers());
+
+  /** Open the shared stream and hand back the fake behind it. */
+  async function streaming(): Promise<{
+    source: FakeSource;
+    module: typeof import("./hostVitals");
+  }> {
+    opsVitals.mockResolvedValue({ gpu_busy_percent: 12 });
+    const module = await load();
+    module.subscribeGpuBusy(() => {});
+    await vi.advanceTimersByTimeAsync(0); // let the access probe resolve
+    const source = FakeSource.open[0];
+    if (source === undefined) throw new Error("no stream opened");
+    return { source, module };
+  }
+
+  it("spaces samples by the box's clock, not by when the frames turned up", async () => {
+    // THE dropout bug. The box reads the gauge once a second and the graph gives each
+    // whole second one slot, but samples were bucketed by the instant the frame ARRIVED:
+    // a few hundred milliseconds of jitter put two readings in one second's slot and left
+    // the next empty, and the trace showed a gap where nothing had been missed.
+    vi.useFakeTimers();
+    const start = 1_800_000_000_000;
+    vi.setSystemTime(start);
+    const { source, module } = await streaming();
+    const boxAt = start - 200; // the box's clock, a little behind this browser's
+
+    source.frame(JSON.stringify({ gpu_busy_percent: 10, samples: [{ at_ms: boxAt, gpu: 10 }] }));
+    vi.setSystemTime(start + 1300); // …and the next frame is late
+    source.frame(
+      JSON.stringify({
+        gpu_busy_percent: 20,
+        samples: [{ at_ms: boxAt + 1000, gpu: 20 }],
+      }),
+    );
+    vi.setSystemTime(start + 1700); // …and the one after it early, catching up
+    source.frame(
+      JSON.stringify({
+        gpu_busy_percent: 30,
+        samples: [{ at_ms: boxAt + 2000, gpu: 30 }],
+      }),
+    );
+
+    const kept = module.vitalsHistory(60);
+    expect(kept.map((s) => s.gpu)).toEqual([10, 20, 30]);
+    const [first, second, third] = kept;
+    // Exactly a second apart however unevenly the frames landed — which is what puts one
+    // sample in each of the plot's per-second slots.
+    expect((second?.at ?? 0) - (first?.at ?? 0)).toBe(1000);
+    expect((third?.at ?? 0) - (second?.at ?? 0)).toBe(1000);
+  });
+
+  it("places a sample from a box whose clock is minutes ahead", async () => {
+    // Stamped on the box and bucketed here: an uncorrected offset would push every
+    // sample past "now", where the plot drops it, and the trace would never fill.
+    vi.useFakeTimers();
+    const start = 1_800_000_000_000;
+    vi.setSystemTime(start);
+    const { source, module } = await streaming();
+
+    source.frame(
+      JSON.stringify({
+        gpu_busy_percent: 55,
+        samples: [{ at_ms: start + 120_000, gpu: 55 }],
+      }),
+    );
+
+    const kept = module.vitalsHistory(60);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.at).toBeLessThanOrEqual(start);
+  });
+
+  it("still records a frame from a box that stamps nothing", async () => {
+    // An older api sends the reading alone. A jittery trace beats no trace.
+    vi.useFakeTimers();
+    const start = 1_800_000_000_000;
+    vi.setSystemTime(start);
+    const { source, module } = await streaming();
+
+    source.send(77);
+
+    expect(module.vitalsHistory(60)).toEqual([{ at: start, gpu: 77, tps: null }]);
+  });
+
+  it("does not record the same second twice when a stream reconnects", async () => {
+    // A fresh connection re-offers its newest sample, which this session may already
+    // hold. Kept twice, the duplicate evicts a real second from the far end of the ring.
+    vi.useFakeTimers();
+    const start = 1_800_000_000_000;
+    vi.setSystemTime(start);
+    const { source, module } = await streaming();
+    const frame = JSON.stringify({
+      gpu_busy_percent: 41,
+      samples: [{ at_ms: start - 500, gpu: 41 }],
+    });
+
+    source.frame(frame);
+    source.frame(frame);
+
+    expect(module.vitalsHistory(60)).toHaveLength(1);
+  });
+
+  it("keeps the higher reading when one second is offered twice", async () => {
+    // A load gauge: under-reporting a spike is the worse lie, and the plot's own
+    // bucketing resolves a repeated second the same way.
+    vi.useFakeTimers();
+    const start = 1_800_000_000_000;
+    vi.setSystemTime(start);
+    const { source, module } = await streaming();
+
+    source.frame(
+      JSON.stringify({ gpu_busy_percent: 4, samples: [{ at_ms: start - 500, gpu: 4 }] }),
+    );
+    source.frame(
+      JSON.stringify({ gpu_busy_percent: 96, samples: [{ at_ms: start - 400, gpu: 96 }] }),
+    );
+
+    expect(module.vitalsHistory(60).map((s) => s.gpu)).toEqual([96]);
+  });
+
+  it("keeps every sample of a catch-up frame after a late tick", async () => {
+    // The stream hands over everything since the last frame it sent, so a tick that ran
+    // late costs latency rather than a second of history.
+    vi.useFakeTimers();
+    const start = 1_800_000_000_000;
+    vi.setSystemTime(start);
+    const { source, module } = await streaming();
+
+    source.frame(
+      JSON.stringify({
+        gpu_busy_percent: 30,
+        samples: [
+          { at_ms: start - 2000, gpu: 10 },
+          { at_ms: start - 1000, gpu: 20 },
+          { at_ms: start, gpu: 30 },
+        ],
+      }),
+    );
+
+    expect(module.vitalsHistory(60).map((s) => s.gpu)).toEqual([10, 20, 30]);
+  });
+});
