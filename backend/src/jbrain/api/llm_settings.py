@@ -1549,6 +1549,29 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
         "-lv",
         "--checkpoint-min-step",
         "--cache-ram",
+        # llama.cpp's replacement for the deprecated `--mmap`/`--no-mmap`/`--mlock` family:
+        # auto | none | mmap | mlock | mmap+mlock | dio. Allowlisted so the ONE unexamined
+        # decision behind this box's memory behaviour can be measured instead of asserted.
+        #
+        # We hardcode `--no-mmap`, justified in the code and the runbook by the phrase "a
+        # gfx1151 stability flag" and nothing else — no measurement, no issue, no date, and it
+        # appears to be inherited from the strix-halo-toolbox recipe, the same source as the
+        # kernel settings already found wrong for this box. It is also the direct cause of the
+        # weights being resident TWICE (GTT plus the page cache the read fills), which is the
+        # 2026-08-19 freeze mechanism and the transient that took the box to 115/121 GB during
+        # one gpt-oss load.
+        #
+        # llama.cpp's own default is `auto` — "mmap, unless a device does not support it" — so
+        # the engine already handles the case our flag was presumably added for. `dio` is the
+        # other candidate: DirectIO bypasses the page cache entirely, which would remove the
+        # second copy at its source rather than reclaiming it afterwards.
+        #
+        # Allowlisted rather than changed: the flag may have been added for a real crash nobody
+        # wrote down, and finding out the hard way costs a power cycle on a box with no terminal.
+        # Setting it here supersedes the hardcoded `--no-mmap` (llama_swap_config._SUPERSEDES)
+        # so exactly one of the two reaches the command line.
+        "--load-mode",
+        "-lm",
     }
 )
 

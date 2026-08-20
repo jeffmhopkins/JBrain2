@@ -816,8 +816,46 @@ still took the host down. `jbrain.llm.gpu_guard` closes that:
 
 ### The weights are resident twice — MEASURED 2026-08-19, after the box died for it
 
-The gateway serves `--no-mmap` (a gfx1151 stability flag), so llama.cpp READS each GGUF
-rather than mapping it. The weights then exist **twice**: once in GTT, once in the page cache
+The gateway serves `--no-mmap`, so llama.cpp READS each GGUF rather than mapping it.
+
+> ⚠ **`--no-mmap`'s justification is a phrase, not evidence — and it is the cause of everything
+> in this section.** The only rationale recorded anywhere (here and in
+> `llama_swap_config.py`) is "a gfx1151 stability flag": no measurement, no upstream issue, no
+> date. It appears to be inherited from the strix-halo-toolbox recipe — the same source as the
+> kernel settings this runbook already documents as wrong for this box.
+>
+> Three things say it deserves re-testing rather than repetition:
+> - **llama.cpp deprecated it.** Every load logs `DEPRECATED: --mmap and --no-mmap are
+>   deprecated. use --load-mode mmap instead`.
+> - **The engine already handles the case the flag presumably exists for.** `--load-mode`
+>   defaults to `auto` = "mmap, unless a device does not support it". Our blanket flag overrides
+>   llama.cpp's own detection.
+> - **`dio` exists.** `--load-mode dio` uses DirectIO, bypassing the page cache entirely — which
+>   would remove the second copy at its source instead of reclaiming it afterwards.
+>
+> MEASURED 2026-08-20, and the reason this matters beyond tidiness: loading `gpt-oss-120b` on an
+> idle box took `used` to **115 GB of 121** — cache climbing to 49 GB while 67 GB was already
+> pinned in GTT. The drop cannot help during that window: llama.cpp has not returned yet. Cache
+> topped out below the full 59 GB only because the kernel was *already reclaiming under GTT
+> pressure*, which is the livelock mechanism itself. The admission guard does not model this
+> transient at all — it projected 68.55 and measured 69.26 resident, both correct, both about
+> the steady state.
+>
+> **How to test it, no deploy needed.** `--load-mode` / `-lm` is on the extra-args allowlist and
+> supersedes the hardcoded `--no-mmap` (exactly one reaches the command line):
+>
+> ```
+> scripts/debug-connect.sh   # PUT /api/debug/llm/local-models/<id>/extra-args
+> #   {"args":["--load-mode","mmap"]}   then load and watch Cached
+> #   {"args":["--load-mode","dio"]}    then load and watch Cached
+> #   {"args":[]}                       clears back to the hardcoded default
+> ```
+>
+> Read `Cached` from `GET /api/debug/host/metrics` during and after the load. A working mmap or
+> dio run should show the transient largely gone. **Not changed by default**: the flag may have
+> been added for a real crash nobody wrote down, and finding out the hard way costs a power
+> cycle on a box with no terminal. Record the result here either way.
+ The weights then exist **twice**: once in GTT, once in the page cache
 the read filled. Sampling a single `gpt-oss-120b` load on the idle box:
 
 | | avail | MemFree | Cached | GTT |
