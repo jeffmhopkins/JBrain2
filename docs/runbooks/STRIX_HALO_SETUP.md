@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-19
+> **Status:** Living · **Last verified:** 2026-08-20
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -852,7 +852,73 @@ exactly this, with the comment *"leave any resident model warm"* — the knowled
 only ever been applied to the boot path.
 
 A PUT that genuinely changes a served command still writes, still reloads, and still costs the
-resident set. That is correct: the model has to relaunch to pick the change up.
+resident set — and *that* is what the content compare could not fix, because a real edit has to
+reach the file eventually. **The re-stamp was therefore moved off the PUT entirely and onto the
+load** (`llm_settings.regen_gateway_config`, called by `local_gateway` immediately before it
+starts a model). Safe because the PWA only allows a model's flags to be edited while it is NOT
+resident (`editable = !m.loaded`), so at edit time there is no process the new flags could apply
+to. Editing now costs the resident set nothing at all; the reload is charged to the load that
+actually needs it.
+
+**The deferral had a second-order race, and the first version shipped with it.** Writing the
+config and then immediately loading means llama-swap's 2 s watcher fires *while the load is
+still in flight* — so the load is killed by its own config change, bystander included:
+
+```
+after edit: reloads=0 resident=gpt-oss-120b     <- editing is now free, as designed
+after load: reloads=1 resident=NONE             <- ...and the load killed both
+```
+
+```
+<gpt-oss-120b> Health check passed
+<qwen3-vl-30b-a3b-q4> Health check passed
+reloading configuration                          <- lands ~2 s late, kills both
+```
+
+`app.box_events` caught both halves of it: a `model_unload` for the edited model (*"its context
+window changed"*, the app's own eviction, correct), then a **failed** `model_load` —
+`Server error '500 Internal Server Error' for url .../upstream/qwen3-vl-30b-a3b-q4/health` —
+and, for the bystander that also died, **no row at all**.
+
+`regen_gateway_config` now compares the config's mtime across the write and, **only when the
+file actually changed**, waits `_GATEWAY_RELOAD_SETTLE_S` before returning to the caller. The
+unchanged case still returns immediately, which is nearly every load.
+
+**Why 4 s and not 30.** llama-swap's `reload()` swaps the server *before* it kills anything:
+
+```go
+activeSrv = newSrv        // the SWAP
+old.Shutdown(30s)         // the old llama-servers are killed here
+```
+
+Only the window before the swap can hurt a load — one that starts after it is served by the new
+server and cannot be killed by that reload. That window is the watcher's 2 s poll plus a
+`LoadConfig` and a `server.New()`, neither of which loads a model. The 30 s `shutdownTimeout` is
+spent *after* the swap, on processes the load no longer races, so it is not the number to size
+against. (First read of this code suggested the opposite and nearly bought a streaming
+log-watcher; the ordering is the whole answer.)
+
+A sleep rather than a readiness probe because llama-swap exposes no "reload done" signal a client
+can poll: `/logs` carries `configuration reloaded`, but only after the shutdown that we do not
+need to wait for, and `/running` is answered by the new server from the moment of the swap.
+
+**Not covered, deliberately:** the old llama-servers can still be dying as the new load starts,
+so both may hold GTT briefly. That inflates the `gpu_guard` baseline sampled just after the wait,
+which errs toward *refusing* a load — the safe direction on a box that freezes when GTT is
+exhausted.
+
+**The eviction is still real, and is now NARRATED.** A genuine flag change has to reach the
+file eventually, so loading an edited model still costs whatever else was resident — that part
+is llama-swap's semantics and cannot be engineered away. What was wrong was the silence.
+`local_gateway._narrate_reload_casualties` samples `/running` either side of the re-stamp (the
+settle wait means the casualties are observed fact, not a prediction) and writes a
+`model_unload` row per model that died, reading *"the gateway reloaded to apply changed settings
+for <model>"*. So the vitals surface now explains the eviction the owner kept reporting instead
+of showing nothing.
+
+**Generalisable:** moving a side effect off the writer and onto the reader does not remove it,
+it re-times it. Ask what else is in flight at the new moment — here, the load the caller is
+about to start.
 
 **Diagnostic recipe, reusable.** `app.box_events` records every unload the APP performs, with a
 distinct `detail` per path (`to make room for X, which you loaded`, `its context window changed`,

@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from jbrain import host_metrics
-from jbrain.llm import local_catalog, local_weights
+from jbrain.llm import local_catalog, local_gateway, local_weights
 from jbrain.llm.local_gateway import (
     LocalGatewayClient,
     LocalGatewayError,
@@ -428,3 +428,73 @@ async def test_slot_action_proceeds_for_a_resident_model() -> None:
 
     result = await _client(handle).slot_action("gpt-oss-120b", 1, "save", filename="x.bin")
     assert result["n_saved"] == 27476
+
+
+async def test_a_config_reload_that_kills_a_bystander_is_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rewriting llama-swap.yaml makes the gateway reload, and its reload kills EVERY running
+    llama-server — not just the model whose setting changed. That eviction is unavoidable, but
+    it must not be SILENT: the kill happens inside llama-swap, which writes no `box_events` row,
+    and that silence is why the owner reported several times that staging a model unloaded
+    gpt-oss-120b and was several times told it was a display artifact.
+    """
+    recorded: list[tuple[str, str, str | None]] = []
+
+    async def _record(kind: str, subject: str, *, detail: str | None = None, **_: object) -> None:
+        recorded.append((kind, subject, detail))
+
+    monkeypatch.setattr(local_gateway.box_events, "record", _record)
+    resident = {"gpt-oss-120b"}  # a bystander, resident before the edited model is loaded
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/running":
+            return httpx.Response(200, json=sorted(resident))
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    async def regen() -> None:
+        resident.clear()  # what llama-swap's reload() -> old.Shutdown() actually does
+
+    client = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(handle),
+        config_regen=regen,
+    )
+    await client.load("qwen3-vl-30b-a3b")
+    evictions = [(subject, detail) for kind, subject, detail in recorded if kind == "model_unload"]
+    assert [s for s, _ in evictions] == ["gpt-oss-120b"], (
+        f"the bystander's death went unrecorded: {recorded}"
+    )
+    # The reason has to NAME the load that caused it, by CATALOG id (what the operator sees in
+    # the PWA), or the vitals row is as mysterious as the silence it replaced.
+    assert evictions[0][1] == "the gateway reloaded to apply changed settings for qwen3-vl-30b"
+
+
+async def test_a_config_regen_that_changes_nothing_records_no_eviction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The common case: nearly every load re-stamps an identical config, no reload fires, and
+    the resident set is untouched. Narrating a phantom eviction there would be worse than the
+    silence — it would teach the operator to ignore the row that matters."""
+    recorded: list[str] = []
+
+    async def _record(kind: str, subject: str, **_: object) -> None:
+        recorded.append(f"{kind}:{subject}")
+
+    monkeypatch.setattr(local_gateway.box_events, "record", _record)
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/running":
+            return httpx.Response(200, json=["gpt-oss-120b"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    async def regen() -> None:
+        return None  # content compare said the file already matches — nothing written
+
+    client = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(handle),
+        config_regen=regen,
+    )
+    await client.load("qwen3-vl-30b-a3b")
+    assert not [r for r in recorded if r.startswith("model_unload")], recorded

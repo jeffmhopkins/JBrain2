@@ -4,6 +4,8 @@ test_settings_pg."""
 
 import asyncio
 from collections.abc import Iterator
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -799,6 +801,58 @@ def test_set_context_window_unloads_a_resident_model() -> None:
     )
     assert resp.status_code == 200
     assert gw.unloaded == ["gpt-oss-120b"]  # evicted so it reloads at 64k
+
+
+async def test_a_changed_config_waits_for_the_gateway_to_reload_before_loading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A config change must settle BEFORE the caller's load, or the reload kills what it loads.
+
+    MEASURED on the box: without this wait the gateway log reads `<gpt-oss-120b> Health check
+    passed` / `<qwen3-vl-30b-a3b-q4> Health check passed` / `reloading configuration` — the load
+    succeeds and is then silently killed by its own config change, taking the resident bystander
+    with it. llama-swap's watcher polls on a 2 s interval, so the reload lands AFTER the model is
+    already up.
+
+    The first version of the load-time deferral had exactly this race: it fixed "editing kills
+    everything" and replaced it with "loading an edited model kills everything, itself included".
+    """
+    slept: list[float] = []
+
+    async def _fake_sleep(secs: float) -> None:
+        slept.append(secs)
+
+    # Rebind the module's OWN `asyncio` name, not `asyncio.sleep` on the shared module object.
+    # Patching the real `asyncio.sleep` hangs the suite: the app's background tick loops
+    # (intake reaper, jpet, tasks) sleep between ticks, and a no-op sleep turns each of them into
+    # a hot spin that starves the event loop. llm_settings uses asyncio for this call only.
+    monkeypatch.setattr(llm_settings, "asyncio", SimpleNamespace(sleep=_fake_sleep))
+    cfg = tmp_path / "llama-swap.yaml"
+    cfg.write_text("stale\n")
+    rewrite = True
+
+    def _fake_regen(*_a: object, **_k: object) -> None:
+        if rewrite:  # a regen that genuinely rewrites the file — the reload-triggering case
+            cfg.write_text("fresh\n")
+
+    monkeypatch.setattr(llm_settings, "_try_regenerate", _fake_regen)
+    settings = _cloud_settings(
+        local_llm_enabled=True,
+        local_models=["qwen3-vl-30b", "gpt-oss-120b"],
+        local_models_dir=str(tmp_path),
+    )
+    await llm_settings.regen_gateway_config(settings, cast(Any, FakeSettingsStore()))
+    assert slept == [llm_settings._GATEWAY_RELOAD_SETTLE_S], (
+        "a changed config did not wait — the reload will land on the model just loaded"
+    )
+
+    # ...and the other direction: the wait is paid ONLY when something changed. Every load calls
+    # this, and almost none of them change anything; charging 4 s to each would be a self-inflicted
+    # tax on the common path.
+    rewrite = False
+    slept.clear()
+    await llm_settings.regen_gateway_config(settings, cast(Any, FakeSettingsStore()))
+    assert slept == [], "an unchanged config waited anyway — every load now pays for the race"
 
 
 def test_editing_one_models_flags_never_rewrites_the_gateway_config(

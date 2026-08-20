@@ -228,6 +228,30 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
         await box_events.record(box_events.MODEL_UNLOAD, served_model)
 
+    async def _narrate_reload_casualties(self, before: set[str], loading: str) -> None:
+        """Record the models a config-driven gateway reload just killed.
+
+        Rewriting llama-swap.yaml makes llama-swap reload, and its reload calls
+        `old.Shutdown()` — killing EVERY running llama-server, not only the one whose setting
+        changed. `regen_gateway_config` waits for that reload to land before returning, so by
+        the time we get here the casualties are observed fact, not a prediction.
+
+        Why this exists at all: the kill happens INSIDE llama-swap, so nothing writes an
+        `app.box_events` row and the vitals surface says nothing. That silence is precisely how
+        the cost stayed invisible while the owner reported several times that staging a model
+        unloaded gpt-oss-120b, and was several times told it was a display artifact. It was not.
+        An unavoidable eviction is acceptable; an unexplained one is not.
+
+        Best-effort: narration must never fail the load it is describing."""
+        if not before:
+            return
+        with contextlib.suppress(Exception):  # noqa: BLE001 — narration must not fail a load
+            model = local_catalog.get_by_served(loading)
+            name = model.id if model is not None else loading
+            reason = f"the gateway reloaded to apply changed settings for {name}"
+            for served in sorted(before - await self.running() - {loading}):
+                await box_events.record(box_events.MODEL_UNLOAD, served, detail=reason)
+
     async def props(self, served_model: str) -> dict[str, object]:
         """llama-server's own `/props` for one RESIDENT model — `build_info` (the ONLY build
         identity available over HTTP), `total_slots`, and the resolved generation settings
@@ -541,7 +565,12 @@ class LocalGatewayClient:
 
         # Bring llama-swap.yaml up to date for the model about to load. No-ops when the
         # rendered config already matches, so this costs nothing unless a setting changed.
+        # When it DID change, `regen_gateway_config` blocks until llama-swap's reload has
+        # landed — the reload kills every running llama-server, so it has to happen BEFORE the
+        # load below rather than ~2 s into it. `_narrate_reload_casualties` then records who
+        # died, because llama-swap's own kill writes nothing.
         if self._config_regen is not None:
+            resident_before = await self.running()
             try:
                 await self._config_regen()
             except Exception as exc:  # noqa: BLE001 — a stale config must never FAIL a load
@@ -551,6 +580,8 @@ class LocalGatewayClient:
                 # `api.llm_settings` also records it to box_events and surfaces it on the
                 # settings screen; this is the LLM-layer half.
                 log.warning("local_gateway.config_regen_failed", model=served_model, error=str(exc))
+            else:
+                await self._narrate_reload_casualties(resident_before, served_model)
 
         # Remember it as OURS before the load runs. `_drop_cache_for_unannounced` skips
         # models in this set because the drop below already covers them, and a load that
