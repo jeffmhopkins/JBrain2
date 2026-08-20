@@ -31,14 +31,31 @@ ARG LOCAL_LLM_BASE=docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:e5acc83b94681
 
 # Build llama-swap (pure-Go) in a throwaway stage so we don't need a toolchain
 # in the runtime image. Pinned to a COMMIT, not a tag: llama-swap releases are
-# tagged `vNNN` (e.g. v228), which Go module versioning can't resolve (it wants
-# semver with a matching major-version import path), so `go install ...@v228`
-# fails with "no matching versions". This commit IS the v228 release and carries
-# the admin API (GET /running, POST /api/models/unload/{model}) the settings
-# screen's loaded-state + unload buttons need; older builds lack it.
+# tagged `vNNN`, which Go module versioning can't resolve (it wants semver with a
+# matching major-version import path), so `go install ...@v250` fails with "no
+# matching versions". This commit IS the v250 release.
+#
+# It carries the admin API (GET /running, POST /api/models/unload/{model}) the
+# settings screen's loaded-state + unload buttons need, and `/logs/stream/{proxy,
+# upstream,<model>}` behind /api/debug/llm/upstream-logs.
+#
+# Moved off v228 (a15e479) for two fixes that both bite this box:
+#   - #875 / #878 — a browser tab left open on llama-swap's OWN web UI falls behind
+#     on llama.cpp's verbose output, the bounded event bus fills, Broadcast blocks
+#     Write, the stdout pipe backs up, and llama.cpp STALLS until the tab closes.
+#   - #946 / #949 — "a request arriving during a process stop would hang forever":
+#     the router decided start/stop from a snapshot that could go stale. That is
+#     this box's normal workload, because the residency evictor unloads models
+#     while requests keep arriving, and it is the best candidate for the upstream
+#     timeouts and the wedged-after-unload state seen on 2026-08-20.
+#
+# VERIFIED before the bump, not assumed: the config this repo generates
+# (jbrain.llm.llama_swap_config.render over the whole catalog) was parsed with
+# v250's own `internal/config.LoadConfig` — 16 models, 2 groups, no error — and
+# every route we call still exists at that tag.
 FROM golang:1.23-bookworm AS swap
 ENV GOTOOLCHAIN=auto
-ARG LLAMA_SWAP_VERSION=a15e47922c3db3e24df75b2648acad5acafeda4b
+ARG LLAMA_SWAP_VERSION=60226b63776efac11e15828abe0bb302ec259699
 RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION}"
 
 FROM ${LOCAL_LLM_BASE}
