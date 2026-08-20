@@ -1,12 +1,15 @@
 """The llama-swap admin client: tolerant /running parsing, best-effort failure
 on running(), and a surfaced error on unload(). All via httpx.MockTransport."""
 
+import asyncio
+import contextlib
 import json
 import pathlib
 
 import httpx
 import pytest
 
+from jbrain import host_metrics
 from jbrain.llm import local_catalog, local_weights
 from jbrain.llm.local_gateway import (
     LocalGatewayClient,
@@ -237,6 +240,46 @@ async def test_tail_logs_raises_when_the_gateway_is_unreachable() -> None:
     # asked for the logs, so an empty success would mislead.
     with pytest.raises(LocalGatewayError):
         await _client(lambda r: httpx.Response(503)).tail_logs()
+
+
+async def test_the_sweeper_fires_on_cache_GROWTH_before_the_interval_elapses(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Size is the trigger that bounds the transient.
+
+    MEASURED: the control load put ~50 GiB of page cache down in ~35 s — about 1.5 GiB/s. An
+    interval cheap enough to poll at leaves GB on the floor between ticks, so growth has to be
+    able to fire the sweep on its own, well before the clock would."""
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        local_weights, "drop_weights_page_cache", lambda _d, mid: dropped.append(mid) or 1.0
+    )
+    # Cache jumps a full GiB immediately; the 2 s interval is nowhere near elapsed.
+    readings = iter([0.0, 0.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0])
+    monkeypatch.setattr(host_metrics, "read_page_cache_gb", lambda: next(readings, 9.0))
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+        models_dir=str(tmp_path),
+    )
+    task = asyncio.create_task(gw._sweep_page_cache_during_load(model))
+    await asyncio.sleep(0.6)  # ~2 polls at 0.25 s, far short of the 2 s interval
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert dropped, "a 9 GiB jump did not trigger a sweep before the interval"
+
+
+async def test_the_sweeper_is_a_no_op_without_a_weights_mount() -> None:
+    # No mount means nothing to fadvise; it must return rather than spin a pointless loop.
+    gw = LocalGatewayClient(
+        "http://gw:8080/v1", transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+    )
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    await asyncio.wait_for(gw._sweep_page_cache_during_load(model), timeout=1.0)
 
 
 async def test_a_model_that_appears_without_us_gets_its_cache_dropped(
