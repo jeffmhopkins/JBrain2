@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import llm_settings
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
-from jbrain.llm import local_catalog, local_gateway
+from jbrain.llm import llama_swap_config, local_catalog, local_gateway
 from jbrain.llm.residency import ResidencyCoordinator
 from jbrain.llm.router import TASK_DEFAULTS
 from jbrain.main import create_app
@@ -799,6 +799,44 @@ def test_set_context_window_unloads_a_resident_model() -> None:
     )
     assert resp.status_code == 200
     assert gw.unloaded == ["gpt-oss-120b"]  # evicted so it reloads at 64k
+
+
+def test_editing_one_models_flags_never_rewrites_the_gateway_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug the owner reported repeatedly, and was repeatedly told was a display artifact:
+    changing a dropdown on model A unloaded model B.
+
+    Rewriting llama-swap.yaml makes llama-swap reload, and its reload calls `old.Shutdown()`,
+    which kills EVERY running llama-server. `_try_regenerate` ran on all four settings PUTs, so
+    editing a model that was not even loaded took down whatever was. Nothing in the app
+    narrated it — the kill is inside llama-swap, so no `box_events` row is written — which is
+    why it read as a phantom. Confirmed live: one image-detail change took gpt-oss-120b from
+    resident to gone, llama-swap logged two reload cycles, and box_events recorded nothing.
+
+    Asserts on the WRITE, not on the file's mtime. `_try_regenerate` is best-effort and
+    silently swallows a render failure, and in a test with no resolvable weight files it fails
+    every time — so an mtime assertion passes just as happily against the OLD eager-regen code,
+    proving nothing. Spying on `llama_swap_config.write` is the only form of this test that
+    actually fails when the regen comes back."""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        llama_swap_config, "write", lambda *a, **k: calls.append("write") or "/tmp/x.yaml"
+    )
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    c, _ = _authed_client(_local_settings(), gw)
+
+    # Edit a DIFFERENT, non-resident model — exactly the reported gesture.
+    resp = c.put(
+        "/api/settings/llm/local-models/qwen3-vl-30b/image-min-tokens",
+        json={"image_min_tokens": 1024},
+    )
+    assert resp.status_code == 200
+    assert calls == [], (
+        "a settings PUT rewrote llama-swap.yaml — the gateway will reload and kill every "
+        "resident model. The re-stamp belongs at load time (LocalGatewayClient._config_regen)."
+    )
+    assert gw.unloaded == [], "editing one model's flags unloaded a different resident model"
 
 
 def test_plan_load_previews_the_eviction_without_touching_the_box(
