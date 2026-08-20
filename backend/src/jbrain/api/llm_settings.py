@@ -7,6 +7,7 @@ so this endpoint is the live control surface — no restart. Owner-only is
 implicit pre-P7; the store's RLS enforces it regardless.
 """
 
+import asyncio
 import contextlib
 import time
 from collections.abc import Mapping, Sequence
@@ -715,7 +716,28 @@ async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> N
     Best-effort by contract: the settings are already persisted, so a failure here only delays
     the gateway catching up and must never fail the load that called it."""
     windows, slots, extra, floors = await _saved_override_maps(store, queue.SYSTEM_CTX)
+    path = Path(settings.local_models_dir or ".") / "llama-swap.yaml"
+    before = path.stat().st_mtime_ns if path.exists() else None
     _try_regenerate(settings, windows, slots, extra, floors)
+    after = path.stat().st_mtime_ns if path.exists() else None
+
+    if before != after:
+        # The file CHANGED, so llama-swap is about to reload — and its reload kills every
+        # running llama-server. Wait for that to land BEFORE the caller starts its load,
+        # otherwise the reload arrives ~2 s later and kills the model that just came up.
+        #
+        # MEASURED on the box, and the reason this wait exists: without it the gateway log
+        # reads `<gpt-oss-120b> Health check passed` / `<qwen3-vl-30b-a3b-q4> Health check
+        # passed` / `reloading configuration` — the load succeeds and is then silently killed
+        # by its own config change, taking the bystander with it. The first version of this
+        # deferral had exactly that race.
+        #
+        # A sleep rather than a readiness probe because llama-swap exposes no "reload done"
+        # signal a client can poll: `/running` answers throughout, and the new server is swapped
+        # in before the old one is shut down. The watcher polls on a 2 s interval, so this is
+        # that plus margin — paid only when a setting actually changed, which is rare.
+        await asyncio.sleep(_GATEWAY_RELOAD_SETTLE_S)
+
     if (err := gateway_config_error()) is not None:
         # The load still proceeds — the model starts, just not at the settings the meter shows.
         # Loud on both surfaces because this path gets ONE attempt per load, where the old
@@ -737,6 +759,13 @@ async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> N
 # `_snapshot` and says so, instead of the operator discovering months later that a model has
 # been serving a window they thought they changed.
 _last_regen_error: str | None = None
+
+# How long to let llama-swap finish reloading after the config actually changed, before the
+# caller's load starts. Its config watcher polls every 2 s (`watching configuration for changes
+# (poll-based, 2s interval)`), and the reload itself builds a new server and shuts the old one
+# down. Overshooting costs a few seconds on the rare load that changed a setting; undershooting
+# means the reload lands ON the freshly loaded model and kills it.
+_GATEWAY_RELOAD_SETTLE_S = 4.0
 
 
 def _try_regenerate(
