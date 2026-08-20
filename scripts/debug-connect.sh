@@ -14,6 +14,7 @@
 #   scripts/debug-connect.sh version-history           # timeline of deployed versions
 #   scripts/debug-connect.sh complete --strength high --system "Be terse" "ping"
 #   echo "long prompt..." | scripts/debug-connect.sh complete --task agent.turn
+#   scripts/debug-connect.sh complete --stream --task agent.turn "hi"  # + ttft_ms & frames
 #   scripts/debug-connect.sh vision <attachment_id> --task vision.caption --system "..."
 #   scripts/debug-connect.sh sql "select code, name from app.domains"
 #   scripts/debug-connect.sh fetch https://example.com/walled --find "keyword"
@@ -44,7 +45,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
-  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -110,8 +111,13 @@ case "$cmd" in
     _call GET "/api/debug/version/history?limit=$lim" | _pp
     ;;
 
-  complete)
-    SYSTEM="" TASK="" STRENGTH="" MAXTOK="" SCHEMA=""
+  complete) # [--stream] [--system S] [--task T] [--strength S] [--max-tokens N] "text"
+    # --stream runs the turn through the STREAMING adapter path — the one a real chat turn
+    # takes — and returns `ttft_ms` plus a timestamped frame per streamed part. That is how
+    # you see WHERE a slow turn's time went: a long first gap is prefill, an even cadence
+    # after it is generation. The frames are buffered on the box, not streamed over the wire,
+    # so this survives the proxy timeout that kills a long held-open request.
+    SYSTEM="" TASK="" STRENGTH="" MAXTOK="" SCHEMA="" STREAM=""
     while [ "${1:-}" != "" ]; do
       case "$1" in
         --system) SYSTEM="$2"; shift 2 ;;
@@ -119,20 +125,28 @@ case "$cmd" in
         --strength) STRENGTH="$2"; shift 2 ;;
         --max-tokens) MAXTOK="$2"; shift 2 ;;
         --json-schema) SCHEMA="$2"; shift 2 ;;  # a JSON Schema string
+        --stream) STREAM=1; shift ;;
         --) shift; break ;;
         -*) echo "unknown flag: $1" >&2; exit 2 ;;
         *) break ;;
       esac
     done
-    USERTEXT="$(_text_arg "$@")"
+    # Via a FILE, not an environment variable. The prompt is the one input here with no
+    # natural size bound — a long-context probe is the whole point of a box serving 256k
+    # windows — and env + argv share a fixed limit a real one blows straight through
+    # ("Argument list too long", measured at ~180 KB).
+    _tf="$(mktemp)"; trap 'rm -f "$_tf"' EXIT
+    _text_arg "$@" > "$_tf"
     body="$(SYSTEM="$SYSTEM" TASK="$TASK" STRENGTH="$STRENGTH" MAXTOK="$MAXTOK" \
-            SCHEMA="$SCHEMA" USERTEXT="$USERTEXT" python3 - <<'PY'
+            SCHEMA="$SCHEMA" STREAM="$STREAM" TEXTFILE="$_tf" python3 - <<'PY'
 import json, os
-b = {"user_text": os.environ["USERTEXT"]}
+with open(os.environ["TEXTFILE"], encoding="utf-8") as f:
+    b = {"user_text": f.read()}
 for key, env in (("system","SYSTEM"),("task","TASK"),("strength","STRENGTH")):
     if os.environ.get(env): b[key] = os.environ[env]
 if os.environ.get("MAXTOK"): b["max_tokens"] = int(os.environ["MAXTOK"])
 if os.environ.get("SCHEMA"): b["json_schema"] = json.loads(os.environ["SCHEMA"])
+if os.environ.get("STREAM"): b["stream"] = True
 print(json.dumps(b))
 PY
 )"

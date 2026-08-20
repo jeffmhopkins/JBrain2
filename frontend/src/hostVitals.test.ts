@@ -357,6 +357,7 @@ describe("useModelLoad", () => {
       model: "gpt-oss-120b",
       at_ms: 1000,
       percent: 0.43,
+      kind: "model_load",
     });
 
     expect(gauge.result.current.percent).toBe(94);
@@ -364,6 +365,7 @@ describe("useModelLoad", () => {
       model: "gpt-oss-120b",
       at_ms: 1000,
       percent: 0.43,
+      kind: "model_load",
     });
   });
 
@@ -380,11 +382,13 @@ describe("useModelLoad", () => {
       model: "qwen35",
       at_ms: 20,
       percent: null,
+      kind: "model_load",
     });
     expect(line.result.current).toEqual({
       model: "qwen35",
       at_ms: 20,
       percent: null,
+      kind: "model_load",
     });
 
     line.unmount();
@@ -408,6 +412,7 @@ describe("useModelLoad", () => {
         model: "gpt-oss-120b",
         at_ms: 5,
         percent: 0.1,
+        kind: "model_load",
       }),
     );
   });
@@ -426,6 +431,7 @@ describe("useModelLoad", () => {
       model: "gpt-oss-120b",
       at_ms: 1000,
       percent: null,
+      kind: "model_load",
     });
   });
 
@@ -456,6 +462,7 @@ describe("useModelLoad", () => {
       model: "gpt-oss-120b",
       at_ms: 1000,
       percent: 0.43,
+      kind: "model_load",
     });
     expect(line.result.current).not.toBeNull();
 
@@ -474,6 +481,7 @@ describe("useModelLoad", () => {
       model: "gpt-oss-120b",
       at_ms: 1000,
       percent: 0.43,
+      kind: "model_load",
     });
 
     visibility("hidden");

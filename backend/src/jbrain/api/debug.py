@@ -16,6 +16,7 @@ import asyncio
 import base64
 import datetime as dt
 import decimal
+import time
 import uuid
 from typing import Annotated, Any, cast
 
@@ -53,7 +54,15 @@ from jbrain.llm import LlmImage
 from jbrain.llm.errors import LlmError
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
-from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmTool, Sampling, UserMessage
+from jbrain.llm.types import (
+    DEFAULT_MAX_TOKENS,
+    LlmTool,
+    LlmTurn,
+    ReasoningChunk,
+    Sampling,
+    TextChunk,
+    UserMessage,
+)
 from jbrain.models.agent import TurnAttachment
 from jbrain.models.notes import Attachment
 from jbrain.models.telemetry import DeployHistoryRepo
@@ -272,6 +281,26 @@ class CompleteRequest(BaseModel):
     # trap the catalog itself warns about — could not be A/B'd against a live model. Per-request
     # and unpersisted: no reload, and nothing here can outlive the call that set it.
     sampling: dict[str, Any] | None = None
+    # Run the turn through the STREAMING adapter path rather than the one-shot one. The two
+    # are different code on this box — `converse_stream` is what a real chat turn takes, and
+    # anything that only happens while a turn streams (the prefill fraction, first-token
+    # latency, the reasoning channel arriving separately from the answer) is invisible to a
+    # console that can only call the one-shot path. Not an SSE response: the frames are
+    # buffered on the box and pulled from /jobs/{id}, because a stream held open across a
+    # Cloudflare Tunnel dies at its request timeout exactly like a long completion does.
+    stream: bool = False
+
+
+class StreamFrame(BaseModel):
+    """One streamed part, stamped with when it arrived relative to the request going out.
+
+    `at_ms` is the whole point. A transcript says what the model answered; the timings say
+    where the wait WAS — a long first gap is prefill, an even cadence after it is generation,
+    and the two have entirely different causes and fixes."""
+
+    at_ms: int
+    kind: str  # "text" | "reasoning" | "final"
+    text: str
 
 
 class CompleteOut(BaseModel):
@@ -284,6 +313,60 @@ class CompleteOut(BaseModel):
     reasoning_effort: str | None
     input_tokens: int
     output_tokens: int
+    # Streamed runs only. `ttft_ms` is the gap before the first part — the prefill wait,
+    # and the reading this whole surface exists to make visible from a box with no terminal.
+    ttft_ms: int | None = None
+    frames: list[StreamFrame] | None = None
+
+
+# A streamed debug run keeps every part it saw, but a chatty model can emit thousands. Past
+# this the frames stop being recorded and the count is reported instead: the shape of a turn —
+# where the gap was, how fast tokens came after it — is settled long before this.
+_MAX_STREAM_FRAMES = 400
+
+
+async def _run_stream(
+    router_: LlmRouter,
+    body: CompleteRequest,
+    task: str,
+    strength: str | None,
+    sampling: Sampling | None,
+) -> tuple[LlmTurn, int | None, list[StreamFrame]]:
+    """Drive `converse_stream` and buffer what comes back, with arrival times.
+
+    Same adapter, same route resolution as `_run_completion` — the only difference is which
+    of the router's two methods is called, which is exactly the difference worth being able
+    to exercise from here."""
+    started = time.perf_counter()
+    ttft_ms: int | None = None
+    frames: list[StreamFrame] = []
+    final: LlmTurn | None = None
+
+    def _stamp() -> int:
+        return int((time.perf_counter() - started) * 1000)
+
+    async for part in router_.converse_stream(
+        task,
+        system=body.system,
+        messages=[UserMessage(text=body.user_text)],
+        max_tokens=body.max_tokens,
+        strength=strength,
+        sampling=sampling,
+    ):
+        at = _stamp()
+        if ttft_ms is None:
+            ttft_ms = at
+        if len(frames) < _MAX_STREAM_FRAMES:
+            if isinstance(part, TextChunk):
+                frames.append(StreamFrame(at_ms=at, kind="text", text=part.text))
+            elif isinstance(part, ReasoningChunk):
+                frames.append(StreamFrame(at_ms=at, kind="reasoning", text=part.text))
+        if isinstance(part, LlmTurn):
+            final = part
+            frames.append(StreamFrame(at_ms=at, kind="final", text=""))
+    if final is None:
+        raise HTTPException(status_code=502, detail="stream ended without a final turn")
+    return final, ttft_ms, frames
 
 
 async def _run_completion(router_: LlmRouter, body: CompleteRequest) -> CompleteOut:
@@ -301,6 +384,24 @@ async def _run_completion(router_: LlmRouter, body: CompleteRequest) -> Complete
         raise HTTPException(status_code=422, detail=f"bad sampling override: {exc}") from exc
     try:
         provider, model = await router_.effective_spec(task, strength)
+        if body.stream:
+            turn, ttft_ms, frames = await _run_stream(router_, body, task, strength, sampling)
+            effort = await router_.effective_reasoning_effort(task, strength)
+            log.info("debug.complete", task=task, provider=provider, model=model, stream=True)
+            return CompleteOut(
+                text=turn.text,
+                # No schema pass on a streamed run: `json_schema` is a one-shot concern (the
+                # router validates the whole body), and honouring it here would mean claiming
+                # a parse this path never did.
+                parsed=None,
+                provider=provider,
+                model=model,
+                reasoning_effort=effort,
+                input_tokens=turn.usage.input_tokens,
+                output_tokens=turn.usage.output_tokens,
+                ttft_ms=ttft_ms,
+                frames=frames,
+            )
         result = await router_.complete(
             task,
             system=body.system,
@@ -313,7 +414,7 @@ async def _run_completion(router_: LlmRouter, body: CompleteRequest) -> Complete
     except LlmError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     effort = await router_.effective_reasoning_effort(task, strength)
-    log.info("debug.complete", task=task, provider=provider, model=model)
+    log.info("debug.complete", task=task, provider=provider, model=model, stream=False)
     return CompleteOut(
         text=result.text,
         parsed=result.parsed,

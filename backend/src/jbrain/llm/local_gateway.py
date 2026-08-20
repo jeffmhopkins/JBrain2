@@ -19,7 +19,7 @@ models are resident in memory:
                                          (gpu_guard) rather than read out of here
   - GET  /slots  (per model)           → llama-server's per-slot state, including whatever
                                          this build calls its prefill counters
-                                         (jbrain.llm.prefill_probe)
+                                         (jbrain.llm.prefill)
 
 Best-effort by design. The settings screen must render even when the gateway is
 down, still cold, or too old to expose these endpoints, so `running()` swallows
@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
@@ -41,7 +42,7 @@ import httpx
 import structlog
 
 from jbrain import box_events, host_metrics
-from jbrain.llm import gpu_guard, local_catalog, local_weights
+from jbrain.llm import gpu_guard, local_catalog, local_weights, prefill
 
 log = structlog.get_logger()
 
@@ -58,6 +59,23 @@ log = structlog.get_logger()
 _SWEEP_POLL_S = 0.25
 _SWEEP_INTERVAL_S = 2.0
 _SWEEP_GROWTH_GB = 1.0
+
+# How the load span's one percentage is split between its two phases, both MEASURED on the box
+# 2026-08-20 from a single cold gpt-oss-120b (span 198.7 s): the weights read ran 0->80 s (span
+# open to `load_cache_swept`, which fires when the health probe returns and the sweeper is
+# cancelled), and the priming warm-up ran 80->198 s. So 60% of the wait was a phase with no
+# signal at all, which is why the bar sat at 0.99 for two minutes and looked stuck.
+#
+# A fixed split rather than a per-model one because BOTH phases scale with the model: the read
+# is size/disk-rate, and the warm is the same persona+tools prefix eaten at a rate that falls as
+# the model grows. Their ratio is far more stable than either duration. It is still one
+# measurement of one model — a second model that disagrees should move this number, not be
+# absorbed into a fudge somewhere else.
+_WEIGHTS_SHARE = 0.4
+
+# Don't republish a fraction that has barely moved. The sweep polls four times a second because
+# the memory transient needs it to; the row behind the bar does not.
+_PROGRESS_STEP = 0.01
 
 # A catalog entry wrong by this much is worth waking someone for: the two found on
 # 2026-08-19 were light by 1.4 and >5.5 GiB, and the smaller of those was enough to abort
@@ -370,8 +388,15 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
         return parsed if isinstance(parsed, dict) else {}
 
-    async def _sweep_page_cache_during_load(self, model: local_catalog.LocalModel | None) -> None:
-        """Evict the weights' page cache WHILE the load runs, not only after it.
+    async def _sweep_page_cache_during_load(
+        self,
+        model: local_catalog.LocalModel | None,
+        *,
+        projected_gb: float = 0.0,
+        on_progress: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
+        """Evict the weights' page cache WHILE the load runs, not only after it — and count
+        what goes past on the way, which is the only reading of the READ itself this box has.
 
         MEASURED on the box, and the reason the after-the-fact drop is not enough: loading
         gpt-oss-120b on an IDLE box took `Cached` from 2.11 to 50.72 GiB and `MemFree` down to
@@ -391,7 +416,26 @@ class LocalGatewayClient:
 
         Fires on whichever comes first: `_SWEEP_INTERVAL_S`, or `_SWEEP_GROWTH_GB` of page-cache
         growth. The size trigger is what bounds the transient — a fast disk can fill GB between
-        two ticks of any interval slow enough to be cheap.
+        two ticks of any interval slow enough to be cheap. `last` is therefore the reading at
+        the last DROP, never at the last poll: comparing against the poll would make the size
+        trigger unreachable (0.25 s of read is nowhere near a GiB) and quietly demote the sweep
+        to its interval alone, which is exactly the transient it exists to bound.
+
+        WHY THE PROGRESS FRACTION IS HERE rather than on the device-memory watchdog, where it
+        was first put: the paragraph above says llama.cpp commits the whole GTT buffer before it
+        reads a byte, so device memory is the RESERVATION. Measured on the box, one cold
+        gpt-oss-120b: the device reading was already at 0.78 four seconds in. Cache growth is
+        the other side of the same read — bytes that actually arrived from disk — so it tracks
+        the work instead of the booking. `read_gb` accumulates the growth each poll sees and so
+        survives the drops that keep taking it back out; that load swept 58 times at roughly a
+        GiB each across a 69 GiB model.
+
+        The numerator is GLOBAL `Cached`, not this model's alone: `cachestat(2)` is per-fd and
+        seccomp-blocked in this container, so `drop_weights_page_cache` returns None here and
+        per-file accounting is unavailable. During a load reading tens of GB the global figure
+        is dominated by the weights; anything else on the box only makes the bar run ahead,
+        which the clamp bounds at "arrived". It is also read at 0.1 GiB resolution
+        (`host_metrics.read_page_cache_gb`), which is fine against ~0.4 GiB of growth per poll.
 
         Best-effort throughout, and cancelled by the caller when the load returns: a failure
         here costs memory, never correctness."""
@@ -399,13 +443,29 @@ class LocalGatewayClient:
             return
         cache_before = host_metrics.read_page_cache_gb()
         sweeps = 0
-        last = cache_before or 0.0
+        last = cache_before or 0.0  # at the last DROP — drives the size trigger, see above
+        prev = last  # at the last POLL — drives the read accumulator, and only that
+        read_gb = 0.0
+        published = 0.0
         elapsed = 0.0
         try:
             while True:
                 await asyncio.sleep(_SWEEP_POLL_S)
                 elapsed += _SWEEP_POLL_S
                 now = host_metrics.read_page_cache_gb()
+                if now is not None:
+                    if now > prev:
+                        read_gb += now - prev
+                    prev = now
+                if on_progress is not None and projected_gb > 0:
+                    fraction = read_gb / projected_gb
+                    # Throttled to the watchdog's old cadence: the poll is four times a second
+                    # because the sweep needs it to be, and a row update that often is narration
+                    # outrunning the work it narrates.
+                    if fraction - published >= _PROGRESS_STEP:
+                        published = fraction
+                        with contextlib.suppress(Exception):
+                            await on_progress(fraction * _WEIGHTS_SHARE)
                 grew = now is not None and (now - last) >= _SWEEP_GROWTH_GB
                 if not grew and elapsed < _SWEEP_INTERVAL_S:
                     continue
@@ -417,6 +477,7 @@ class LocalGatewayClient:
                 sweeps += 1
                 elapsed = 0.0
                 last = host_metrics.read_page_cache_gb() or 0.0
+                prev = last
         except asyncio.CancelledError:
             if sweeps:
                 log.info(
@@ -425,6 +486,8 @@ class LocalGatewayClient:
                     sweeps=sweeps,
                     cache_before_gb=cache_before,
                     cache_after_gb=host_metrics.read_page_cache_gb(),
+                    read_gb=round(read_gb, 2),
+                    projected_gb=round(projected_gb, 2),
                 )
             raise
 
@@ -542,7 +605,15 @@ class LocalGatewayClient:
             projected_gb = local_catalog.load_footprint_gb(model, window, slots=slots)
 
         async def _do_load() -> None:
-            sweeper = asyncio.create_task(self._sweep_page_cache_during_load(model))
+            sweeper = asyncio.create_task(
+                self._sweep_page_cache_during_load(
+                    model,
+                    projected_gb=projected_gb,
+                    # The sweep's own accounting IS the first half of the loading bar; see its
+                    # docstring for why this is not the device-memory watchdog's job.
+                    on_progress=box_events.progress,
+                )
+            )
             try:
                 async with httpx.AsyncClient(
                     timeout=load_timeout, transport=self._transport
@@ -611,12 +682,6 @@ class LocalGatewayClient:
                 projected_gb=projected_gb,
                 target=served_model,
                 abort=lambda: self.unload(served_model),
-                # The watchdog's samples ARE the progress bar. It already reads the device
-                # pool once a second to decide whether to abort; publishing the same
-                # reading onto the open `box_events` row is what puts a percentage on the
-                # chat status line and the vitals list, with no second probe of anything
-                # and nothing new to keep alive.
-                on_progress=box_events.progress,
             )
         finally:
             # MEASURED: an aborted qwen3.5-4b left `Cached` +4.29 GiB — its entire 4.3 GB
@@ -659,7 +724,14 @@ class LocalGatewayClient:
         (see `load`). `tools`, when given, are sent alongside so the rendered prefix matches
         a real tool-carrying turn (the reuse otherwise misses — see `load`). The timeout is
         generous because that prefill is the real work — the same persona+tools prefill that
-        otherwise stalls the user's first turn."""
+        otherwise stalls the user's first turn.
+
+        And because it IS the real work, it is also the load bar's second half. MEASURED: this
+        call took 118 s of a 198 s gpt-oss-120b load, during which the bar had nothing to say
+        and sat where the weights read left it. `llm.prefill` reads the same `/slots` counter a
+        real turn's prefill uses, so the two are one mechanism rather than two that can
+        disagree, and the fraction is mapped into `_WEIGHTS_SHARE`..1 so the bar keeps
+        advancing across the phase boundary instead of restarting."""
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -672,14 +744,34 @@ class LocalGatewayClient:
         }
         if tools:
             body["tools"] = tools
+
+        async def _publish(fraction: float) -> None:
+            await box_events.progress(_WEIGHTS_SHARE + fraction * (1.0 - _WEIGHTS_SHARE))
+
+        prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
+        if tools:
+            # The rendered tool schemas are part of what gets prefilled, and on this box they
+            # are the bulk of it — the primed prefix measured 27,787 tokens.
+            prompt_chars += len(json.dumps(tools))
         try:
-            async with httpx.AsyncClient(
-                timeout=max(self._timeout, 180.0), transport=self._transport
-            ) as client:
-                resp = await client.post(
-                    f"{self._root}/upstream/{served_model}/v1/chat/completions", json=body
-                )
-                resp.raise_for_status()
+            async with (
+                prefill.watch(
+                    self.slots,
+                    served_model,
+                    prompt_chars=prompt_chars,
+                    on_progress=_publish,
+                ) as answered,
+                httpx.AsyncClient(
+                    timeout=max(self._timeout, 180.0), transport=self._transport
+                ) as client,
+            ):
+                try:
+                    resp = await client.post(
+                        f"{self._root}/upstream/{served_model}/v1/chat/completions", json=body
+                    )
+                    resp.raise_for_status()
+                finally:
+                    answered()
         except httpx.HTTPError as exc:
             log.info("local_gateway.warm_skipped", model=served_model, error=str(exc))
 

@@ -131,8 +131,14 @@ export function modelLoadStatus(
   model: string,
   percent: number | null,
   sinceMs: number,
+  what: "model_load" | "prefill" = "model_load",
 ): AgentStatus {
-  return { kind: "loading", label: "Loading", emphasis: model, percent, sinceMs };
+  // A prefill names no model on purpose. "Loading gpt-oss-120b" answers "why is nothing
+  // happening" — the model is not there yet. Once it IS there and the wait is the prompt
+  // being eaten, the model's name explains nothing and the prompt is the thing to name.
+  return what === "prefill"
+    ? { kind: "loading", label: "Reading", emphasis: "your prompt", percent, sinceMs }
+    : { kind: "loading", label: "Loading", emphasis: model, percent, sinceMs };
 }
 
 /** The current agent status, or null when idle (nothing to show). Reads only the

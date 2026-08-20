@@ -364,14 +364,24 @@ async def test_the_load_probe_answers_repeat_readers_from_one_read(
 
     request, reads, _state = _probe_request(
         monkeypatch,
-        {"at_ms": 1_760_000_000_000, "subject": "gpt-oss-120b", "progress": 0.43},
+        {
+            "at_ms": 1_760_000_000_000,
+            "subject": "gpt-oss-120b",
+            "progress": 0.43,
+            "kind": "model_load",
+        },
     )
 
     first = await ops._load_in_flight(request)
     for _ in range(3):
         assert await ops._load_in_flight(request) == first
 
-    assert first == {"model": "gpt-oss-120b", "at_ms": 1_760_000_000_000, "percent": 0.43}
+    assert first == {
+        "model": "gpt-oss-120b",
+        "at_ms": 1_760_000_000_000,
+        "percent": 0.43,
+        "kind": "model_load",
+    }
     assert len(reads) == 1
 
 
@@ -402,13 +412,19 @@ async def test_a_load_with_no_measurement_still_reports_itself(
 
     request, _reads, _state = _probe_request(
         monkeypatch,
-        {"at_ms": 1_760_000_000_000, "subject": "gpt-oss-120b", "progress": None},
+        {
+            "at_ms": 1_760_000_000_000,
+            "subject": "gpt-oss-120b",
+            "progress": None,
+            "kind": "model_load",
+        },
     )
 
     assert (await ops._load_in_flight(request)) == {
         "model": "gpt-oss-120b",
         "at_ms": 1_760_000_000_000,
         "percent": None,
+        "kind": "model_load",
     }
 
 

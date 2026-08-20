@@ -50,6 +50,29 @@ PWA (owner) ──mint──▶ capability token  ──hand off──▶  assis
   auth), so it clears on the next turn once the token lapses, is suspended, or is
   revoked. Diagnostics-only: the trace carries no owner text.
 
+## Streamed turns, buffered on the box
+
+`POST /api/debug/complete` takes `stream: true` (`scripts/debug-connect.sh complete --stream`),
+which runs the turn through the **streaming** adapter path — the one a real chat turn takes —
+instead of the one-shot one. It returns `ttft_ms` and a timestamped frame per streamed part.
+
+Two reasons it exists:
+
+- **The two paths are different code.** Anything that only happens while a turn streams — the
+  prefill fraction, first-token latency, the reasoning channel arriving separately from the
+  answer — is invisible to a console that can only call `complete`. A probe that cannot be
+  exercised cannot be verified, which is how the prefill capture shipped and reported nothing
+  from the console.
+- **It survives the proxy.** The frames are buffered on the box and returned when the turn
+  ends, never streamed over the wire. A long turn held open through a Cloudflare Tunnel dies
+  at its request timeout — measured, a 204 s model load returns `error code: 524` while the
+  load itself carries on fine server-side. For a call expected to outlast the timeout
+  entirely, `POST /complete-async` + `GET /jobs/{id}` is the same trick with the polling made
+  explicit.
+
+`ttft_ms` is the reading to look at: a long first gap is prefill, an even cadence after it is
+generation, and the two have different causes and different fixes.
+
 ## Launch-flag experiments (no terminal)
 
 These routes exist so a llama-server **launch flag** can be tried, measured and reverted from the
@@ -185,7 +208,7 @@ Two gates protect the surface, both fail-closed:
 | `POST /solve` | Run a URL through **ONLY the challenge solver** (byparr), skipping the direct+reader legs — so the stealth browser can be exercised in isolation against a walled URL (Reuters/WSJ/…) without a doomed direct fetch first. Same output shape as `/fetch`; a 400 distinguishes *solver unconfigured* from *byparr ran but still challenged / empty* (a real solve miss — pair with `GET /logs/byparr`). Shares the `web.fetch` scope. |
 | `POST /fetch` `tier=tavily` | Force **ONLY the hosted Tavily Extract tier** (`scripts/debug-connect.sh tavily <url>`). A 400 distinguishes *the tier unwired* (no `JBRAIN_TAVILY_URL`) from *disabled / keyless / a genuine miss* (bad key or Tavily error) — so after a deploy the owner can confirm the Tavily key works against a real walled URL with a handed-over token, no PWA needed. Shares the `web.fetch` scope. |
 | `GET /client-vitals` | What the **browser** last reported about the top-bar vitals stream: frames seen, opens, errors, reopen counts, `readyState`, `sinceLastFrameMs`, the number of samples the browser is holding, and `clockOffsetMs` (how far the box's clock sits from the browser's, as estimated from the frames — samples are placed on the graph with that difference taken out, so a large figure here is a fact about the clocks, not a fault). The one read that separates *the box never sent a frame* from *the browser never received one* — states that need different fixes and are indistinguishable from the box, because a connection the browser declines to open (its per-origin cap, say) leaves no server-side trace at all. `sinceLastFrameMs` is the number that matters: the route emits one a second, so anything above a few thousand means the meter is blind however healthy the socket claims to be. `{"reported": false}` means nobody has opened the vitals detail since this process started, **not** that the meter is broken. Populated by the PWA beaconing every 15s while that screen is open. |
-| `GET /logs/{service}` | Tail a container's logs, proxied to the supervisor (the single owner of docker access), mirroring the owner ops surface. Also where the **prefill capture** lands: when a local turn goes quiet for more than three seconds before its first token, `jbrain.llm.prefill_probe` photographs llama-server's `/slots` three times a couple of seconds apart and writes each frame as an `llm.prefill_slots` event on `api` or `worker`. The point is the **shape** — this build's slot field names are not documented anywhere, and the series shows which of them advance during prompt evaluation, which is what a real prefill percentage would have to be read from. Strings are replaced by their type and length and long arrays by a count (`/slots` carries the in-flight prompt, and token ids are reversible), so the capture is safe to read back and paste. `llm.prefill_slots_failed` instead means the read itself did not land — usually the model was evicted mid-turn. |
+| `GET /logs/{service}` | Tail a container's logs, proxied to the supervisor (the single owner of docker access), mirroring the owner ops surface. |
 | `GET /llm/gateway-logs` | Tail **llama-swap's** buffered log — swap decisions, health checks, and the slot lifecycle, where a slot is acquired on a request and **released** when its generation ends. The read that answers whether a Stop/disconnect halts decoding or the engine runs on. It does **not** carry llama.cpp's own output (that's the next row). 502 if the gateway is unreachable. |
 | `GET /llm/upstream-logs` | Tail **llama-server's** own stdout, which `gateway-logs` cannot show: the slot lifecycle, per-request prompt-eval throughput, context-checkpoint evictions, and a failed load's reason. Reads the history burst llama-swap replays on `/logs/stream/{stream}`; `stream` defaults to `upstream` (all models interleaved) or takes a served model id to isolate one. **It does not carry a load's per-buffer memory breakdown** — verified 2026-08-19: the model loader prints nothing at the default verbosity 3, so a load reads as a ~1.4 s silent gap here *and* in the `local-llm` container log. Use the `local_gateway.footprint_measured` event (the device delta) for a load's memory. An empty body means the engine has printed nothing since llama-swap started — usually no load since boot, not a fault. |
 | `POST /llm/drop-page-cache` | Reclaim the page-cache copy of on-box model weights (`?models=a,b` for specific catalog ids, omit for all). The box serves with `--no-mmap`, so every load leaves the weights resident **twice** — GTT plus the page cache the read filled — and unloading frees only the GTT copy. Since `host_metrics` counts page cache as **used**, that residue shrinks the admission budget for every later load: measured 2026-08-19, 29.19 GiB of stale `gpt-oss-120b` cache left host pages free at 86.2 GB and got `qwen3-coder-next-q8` (needs ~95.5) refused for want of 15.3 GB nothing was using. Safe while models are resident — `POSIX_FADV_DONTNEED` drops clean cache only, never the GTT copy being served from, and weights are read-only. A null `freed_gb` means `cachestat(2)` could not measure the drop (blocked by the container's seccomp profile on this box), **not** that nothing was freed. Previously this needed host shell (`deploy/update-inner.sh`'s global `drop_caches`), which the owner does not have. |

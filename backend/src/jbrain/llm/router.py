@@ -12,6 +12,7 @@ The "local" provider must exist now so going all-local is config, not
 refactor — docs/reference/ANALYSIS.md "Privacy routing".
 """
 
+import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
@@ -19,13 +20,15 @@ from typing import Any, Protocol
 import httpx
 import structlog
 
+from jbrain import box_events
 from jbrain.config import Settings
-from jbrain.llm import local_catalog, model_sampling, prefill_probe
+from jbrain.llm import local_catalog, model_sampling, prefill
 from jbrain.llm.anthropic import AnthropicClient
 from jbrain.llm.errors import LlmBadResponseError, LlmError
 from jbrain.llm.openai_compat import OpenAiCompatClient
 from jbrain.llm.types import (
     DEFAULT_MAX_TOKENS,
+    AssistantMessage,
     LlmClient,
     LlmImage,
     LlmMessage,
@@ -35,7 +38,9 @@ from jbrain.llm.types import (
     LlmUsage,
     Sampling,
     StreamPart,
+    ToolResultMessage,
     UsageRecorder,
+    UserMessage,
 )
 
 log = structlog.get_logger()
@@ -265,6 +270,34 @@ class LocalAdmitter(Protocol):
     async def ensure_room(self, served_model: str) -> None: ...
 
 
+def _prompt_chars(system: str, messages: Sequence[LlmMessage], tools: Sequence[LlmTool]) -> int:
+    """Roughly how much text this turn puts in front of the model, in characters.
+
+    The input to `prefill`'s token estimate, so it wants to be proportional to the real
+    prompt rather than exactly equal to it — a constant factor washes out in the calibration
+    (`prefill.calibrate`), a MISSING TERM does not. Hence tools and tool results are counted:
+    on this box the rendered tool schemas are the bulk of a primed prefix (27,787 tokens
+    measured), and a turn deep in a tool loop is mostly its own transcript.
+
+    Images are counted as their encoded size deliberately not at all: a vision model prices
+    them per tile, not per byte, so their characters would swamp the estimate."""
+    total = len(system)
+    for message in messages:
+        if isinstance(message, UserMessage):
+            total += len(message.text)
+        elif isinstance(message, AssistantMessage):
+            total += len(message.text) + sum(
+                len(call.name) + len(json.dumps(call.arguments, default=str))
+                for call in message.tool_calls
+            )
+        elif isinstance(message, ToolResultMessage):
+            total += sum(len(str(result.content)) for result in message.results)
+    for tool in tools:
+        total += len(tool.name) + len(tool.description)
+        total += len(json.dumps(tool.input_schema, default=str))
+    return total
+
+
 class LlmRouter:
     """The single entry point for application LLM calls.
 
@@ -284,7 +317,7 @@ class LlmRouter:
         local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         residency: LocalAdmitter | None = None,
         local_enabled: bool = True,
-        slots_probe: prefill_probe.SlotsReader | None = None,
+        slots_probe: prefill.SlotsReader | None = None,
     ):
         self._clients = clients
         self._tasks = tasks
@@ -318,9 +351,9 @@ class LlmRouter:
         # model can't fit the box even after evicting everything) propagates and fails the
         # turn/job by design — better one failed call than an OOM hard-lock.
         self._residency = residency
-        # Reads llama-server's `/slots` for the diagnostic that photographs a turn stuck in
-        # prefill (jbrain.llm.prefill_probe). Only the streamed path takes it, and only on a
-        # local route; None everywhere else, where the probe starts no task.
+        # Reads llama-server's `/slots` for the prefill fraction — how far a turn has got
+        # through eating its prompt (jbrain.llm.prefill). Only the streamed path takes it, and
+        # only on a local route; None everywhere else, where the watch starts no task.
         self._slots_probe = slots_probe
 
     async def _admit_local(self, provider: str, model: str) -> None:
@@ -714,11 +747,23 @@ class LlmRouter:
         await self._admit_local(provider, model)
         final: LlmTurn | None = None
         start = time.perf_counter()
-        # The gap before the first part is PREFILL — the model eating the prompt. It is the
-        # longest silence a local turn has, and nothing on this box has ever read it; the probe
-        # photographs `/slots` if the gap runs long, and stops the moment anything streams.
+        # The gap before the first part is PREFILL — the model eating the prompt, and the
+        # longest silence a local turn has. `watch` publishes how far in it is while the gap
+        # runs, and stops the moment anything streams. The denominator is an estimate off the
+        # prompt's own size, which `calibrate` below corrects from the turn's real usage.
         probe = self._slots_probe if provider == local_catalog.LOCAL_PROVIDER else None
-        async with prefill_probe.watch(probe, model) as streaming:
+        prompt_chars = _prompt_chars(system, messages, tools)
+        # The row is opened by the first published fraction, so a turn that answers off a
+        # primed prefix — which is most of them — writes nothing at all.
+        async with (
+            box_events.lazy_span(box_events.PREFILL, model) as publish,
+            prefill.watch(
+                probe,
+                model,
+                prompt_chars=prompt_chars,
+                on_progress=publish if probe is not None else None,
+            ) as streaming,
+        ):
             async for part in client.converse_stream(
                 model=model,
                 system=system,
@@ -734,6 +779,10 @@ class LlmRouter:
                 yield part
         if final is not None:
             elapsed = time.perf_counter() - start
+            # The exact token count for the characters we just sent — the only free, exact
+            # calibration this box offers, and it arrives on every turn.
+            if probe is not None:
+                prefill.calibrate(model, prompt_chars, final.usage.input_tokens)
             await self._record(task, provider, model, final.usage)
             log.info(
                 "llm.converse_stream",
@@ -758,7 +807,7 @@ def build_router(
     overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
     local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
     residency: LocalAdmitter | None = None,
-    slots_probe: prefill_probe.SlotsReader | None = None,
+    slots_probe: prefill.SlotsReader | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
     `overrides_loader` supplies the live DB-backed per-task overrides;
@@ -774,7 +823,7 @@ def build_router(
     uses; everyone else gets a default that is inert on a cloud-only box (enabled off).
 
     `slots_probe` is the gateway's `/slots` reader, and is what turns the prefill diagnostic
-    on (jbrain.llm.prefill_probe). Optional in the way admission is NOT: this one only reads,
+    on (jbrain.llm.prefill). Optional in the way admission is NOT: this one only reads,
     so a caller that omits it loses a log line, not the box."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:

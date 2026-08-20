@@ -320,47 +320,66 @@ plus expandable detail — with **two levels**:
   running** as well: a load the owner started from Settings, or one the worker started, is
   why the next thing they type will sit there, and saying so before they type it is the
   point. Its clock is the **load's**, from the box's own record, not the phase it replaced.
-- **The fraction is measured, not narrated** [decided]. It comes from the load watchdog's
-  own device-memory samples (`llm.gpu_guard.guarded_load`), published onto the open
-  `box_events` row as it goes. That watchdog already reads the device pool once a second to
-  decide whether to abort a runaway load, so the only measurement of a load *in flight* the
-  box has was already being taken — the bar costs a row update and no new probe of
-  anything. It is written where it is read from, so the vitals list, the chat line, and the
-  code-mode loading bar cannot report different percentages for one load.
+- **The fraction is measured, not narrated — and it covers the whole wait** [decided]. A
+  load span is **two phases with two different sources**, because MEASURED on the box one
+  cold gpt-oss-120b span ran 198.7 s and split 80 s reading the weights, then 118 s in the
+  priming warm-up. The second is 60% of the wait the owner sits through.
 
-  This replaced a parse of llama-swap's log buffer, which had **no source on this build**:
-  the model loader prints nothing at the default verbosity (measured — see
-  `runbooks/DEBUG_ACCESS.md` on `/llm/upstream-logs`), so every consumer of that parse had
-  only ever received `null`. The denominator is the catalog's projection, which is known to
-  drift from what a model actually pins, so the fraction is clamped — a model that outgrows
-  its estimate reads as arrived rather than as 118%, and one the catalog over-predicts sits
-  short of full, which is honest: the rest is not known.
-- **The wait after the load is still unnarrated, and now instrumented** [decided]. Once the
-  weights are resident the line goes back to "Thinking it through" — but a long prompt on a
-  big local model then spends tens of seconds in **prefill**, eating the prompt before it
-  can say a word. That silence is the same failure the loading line was built to end, one
-  step later in the turn, and it has no reading behind it yet: llama-server tracks prefill
-  per slot and serves it on `/slots`, but the **field names vary by build**, and this box
-  runs a community llama.cpp image pinned to a digest off master. Nothing in this repo has
-  ever read a slot body.
+  Phase one, the weights read, is measured by the **page-cache sweep's own accounting**
+  (`llm.local_gateway._sweep_page_cache_during_load`): every GiB that appears in `Cached`
+  is a GiB that came off disk, so the running total survives the drops that keep taking it
+  back out. Phase two, the warm-up, is measured by its **prefill** against `/slots` — the
+  same mechanism a real turn's prefill uses, so the two cannot drift apart. The fraction is
+  mapped into 0–40% and 40–100% by their measured shares, so the bar keeps advancing across
+  the phase boundary rather than restarting.
 
-  So the **instrument ships before the indicator**. `llm.prefill_probe` photographs `/slots`
-  when a local turn goes quiet for more than three seconds, three samples a couple of
-  seconds apart — a series, because one frame cannot say which number is the progress and
-  only the prefill counters move between frames. The next slow turn on the live box records
-  the real shape into the log, readable back through `GET /api/debug/logs/{api,worker}` with
-  no terminal; the parser gets written **once, against evidence**. This is deliberately the
-  same move as `footprint_unparsed`, which settled a two-guess argument on its first deploy
-  — and the opposite of what produced the dead load percentage above, which was guessed at
-  three times and shipped `null` every time.
+  It is **not** the load watchdog's device-memory samples, which is what shipped first and
+  is what the earlier version of this entry claimed. Device memory is the **reservation**:
+  llama.cpp commits the whole GTT buffer before it reads a byte (measured — 57 GB committed
+  up front), so that reading was already at 0.78 four seconds into a 198 s span, then flat
+  at 0.99 for the last two minutes. It was not wrong about the load — it was accurately
+  describing a load that had finished while a phase nothing measured ran on. The watchdog is
+  a watchdog again: a question about the booking, which is exactly right for catching a
+  runaway and wrong for "how far in is this".
 
-  The capture is **redacted by construction**: `/slots` carries the in-flight prompt, which
-  on this box is the owner's notes, and these lines land in a log the debug API serves back.
-  Because the schema is unknown, redaction cannot be a deny-list of the fields that happen
-  to carry text today — every key and every number survives, every string is replaced by its
-  type and length, and a long array collapses to a count (a prompt also travels as token
-  ids, which is reversible). What is left is exactly what a parser needs and nothing a
-  reader could reconstruct a note from.
+  Before that it was a parse of llama-swap's log buffer, which had **no source on this
+  build** at all: the model loader prints nothing at the default verbosity, so every
+  consumer had only ever received `null`. Three attempts, each shipped without being checked
+  against a real load; the pattern that ended it was measuring on the box first.
+
+  It is written where it is read from, so the vitals list, the chat line, and the code-mode
+  loading bar cannot report different percentages. The denominator is the catalog's
+  projection, which drifts (measured 69.26 GiB against a predicted 68.55 on that load), so
+  the fraction is clamped — a model that outgrows its estimate reads as arrived rather than
+  as 118%, and one the catalog over-predicts sits short of full, which is honest: the rest
+  is not known.
+- **The wait after the load says so too** [decided]. Once the weights are resident a long
+  prompt still spends tens of seconds in **prefill** before the model can say a word, and
+  that silence is the same failure the loading line was built to end, one step later in the
+  turn. `llm.prefill` reads it from llama-server's `/slots`, on a schema **measured on the
+  box** rather than guessed:
+
+  - `n_prompt_tokens_processed` is the numerator — exact, monotonic, advancing one batch
+    (2048) at a time.
+  - `n_prompt_tokens` is **not** the total. While a slot is busy it reads
+    `processed + batch + cache`, a window trailing the work by one batch; the true total
+    appears only once the slot settles. Used as the denominator it reads 0.75 where the real
+    answer is 0.50.
+  - `next_token[0].n_decoded` separates "still eating the prompt" from "answering", which
+    `is_processing` alone cannot.
+
+  So the numerator is exact and **the denominator is not in the body**. It comes from us:
+  the prompt's own character count over a chars-per-token ratio that every completed turn
+  corrects from its real `usage.prompt_tokens`. Approximate on purpose and clamped, and
+  cheaper than the exact alternative — llama-server's `/tokenize` would cost a second full
+  send of the prompt per slow turn to remove an error a handful of turns removes anyway.
+  Nothing is drawn for a turn that answers inside three seconds, which is what keeps a
+  prompt-cache hit — measured returning instantly on an identical repeat — from ever
+  flashing a bar.
+
+  On screen it is worded as *Reading **your prompt*** rather than by model name: while the
+  weights are still arriving the model's name answers "why is nothing happening", and once
+  they have arrived it explains nothing.
 - **It rides the stream that is already open** [decided]. The load is a field on the 1 Hz
   vitals frame (`/ops/vitals/stream`), not a poll or a socket of its own. That stream is
   already open on every screen, already foreground-gated, already access-probed, and

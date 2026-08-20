@@ -277,7 +277,7 @@ export function FullBrainSurface({
   // started, is the reason the next thing they type will sit there, and saying so before
   // they type it is the point.
   const loadStatus = modelLoad
-    ? modelLoadStatus(modelLoad.model, modelLoad.percent, modelLoad.at_ms)
+    ? modelLoadStatus(modelLoad.model, modelLoad.percent, modelLoad.at_ms, modelLoad.kind)
     : null;
 
   // The session's name lives in the top bar (HomeScreen owns it); the panels are

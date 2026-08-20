@@ -70,15 +70,20 @@ export interface HostVitals {
   loading?: ModelLoad | null;
 }
 
-/** A model load in flight. `percent` is the fraction of the weights actually read in
- *  (0..1), or null when the gateway build prints no parseable progress — which the
- *  surfaces render as "loading, no figure", never as 0%. */
+/** Work the box is doing on the GPU right now, which a status line shows in the present
+ *  tense. `percent` (0..1) is null when nothing has measured it yet — on a box with no
+ *  page-cache reading, or for a model the catalog cannot size — which the surfaces render
+ *  as "working, no figure", never as 0%. */
 export interface ModelLoad {
   model: string;
-  /** When the load started, so a status line counts up from the LOAD rather than from
+  /** When it started, so a status line counts up from THIS work rather than from
    *  whatever phase it interrupted. */
   at_ms: number;
   percent: number | null;
+  /** `model_load` covers both halves of a load — the weights read, then the priming
+   *  warm-up. `prefill` is a turn eating a long prompt with no load involved. Absent on
+   *  an older box, which is read as a load. */
+  kind?: "model_load" | "prefill";
 }
 
 /** What a turn was asked to do, resolved at its start (backend migration 0166). Every
