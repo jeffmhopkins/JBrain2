@@ -33,7 +33,7 @@ from jbrain.host_settings import check_host_settings as host_settings_check
 from jbrain.storage import BackupShelf, BlobStore
 from jbrain.tasks.schedule import FREQS
 from jbrain.usage import usage_summary
-from jbrain.vitals_ring import VitalsRing
+from jbrain.vitals_ring import VitalsRing, seconds_to_next_tick
 from jbrain.workflow import scheduler
 from jbrain.workflow.automations import AutomationsReader
 from jbrain.workflow.registry import ActionRegistry
@@ -481,8 +481,27 @@ async def vitals(request: Request) -> dict[str, object]:
     return {"gpu_busy_percent": _gpu_busy(request)}
 
 
+def _vitals_frame(request: Request, after_ms: int | None) -> dict[str, object]:
+    """One frame: the reading now, plus every sample the client has not been told about.
+
+    `gpu_busy_percent` is the meter's contract — what the box is doing this second, or
+    null when there is no fresh reading. `samples` is the history behind the detail
+    graph's trace, each stamped with the second it is a reading OF.
+
+    Those stamps are what stop the trace showing dropouts. The browser plots one slot per
+    whole second, and it was bucketing by the instant a frame ARRIVED: a few tens of
+    milliseconds of jitter put two readings in one second and none in the next, and the
+    graph drew the empty one as a gap in a history nothing had failed to record. Sending
+    the box's own timestamps takes the network out of the bucketing entirely."""
+    ring = cast(VitalsRing | None, getattr(request.app.state, "vitals_ring", None))
+    if ring is None:
+        return {"gpu_busy_percent": None, "samples": []}
+    return {"gpu_busy_percent": ring.latest(), "samples": ring.newer_than(after_ms)}
+
+
 async def vitals_frames(
-    disconnected: Callable[[], Awaitable[bool]], gauge: Callable[[], float | None]
+    disconnected: Callable[[], Awaitable[bool]],
+    frame: Callable[[int | None], dict[str, object]],
 ) -> AsyncIterator[bytes]:
     """SSE frames of host vitals, one per `_VITALS_PERIOD_S`, until the client goes.
 
@@ -490,14 +509,24 @@ async def vitals_frames(
     the liveness signal that tells the meter its reading is still current, so a
     stalled stream can go stale rather than freeze on a stale number.
 
+    The tick sleeps to the next whole second rather than FOR a whole second, because
+    `sleep(1)` after the work makes the period a second plus the work — the stream slips
+    against the sampler feeding it, and a slipped tick reads one ring sample twice and
+    the one after it never. `frame` is asked for everything since the last frame sent, so
+    a late tick costs latency rather than a sample.
+
     The disconnect check is a parameter rather than a captured `Request` so the loop
     can be driven directly in tests — `TestClient` never delivers an ASGI
     `http.disconnect`, so a route-local closure over `request.is_disconnected` would
     spin forever with no way to stop it."""
+    sent_ms: int | None = None
     while not await disconnected():
-        payload = json.dumps({"gpu_busy_percent": gauge()})
-        yield f"data: {payload}\n\n".encode()
-        await asyncio.sleep(_VITALS_PERIOD_S)
+        payload = frame(sent_ms)
+        samples = cast(list[dict[str, Any]], payload.get("samples") or [])
+        if samples:
+            sent_ms = int(samples[-1]["at_ms"])
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        await asyncio.sleep(seconds_to_next_tick(_VITALS_PERIOD_S))
 
 
 class CallStampOut(BaseModel):
@@ -830,7 +859,7 @@ async def vitals_stream(request: Request) -> StreamingResponse:
     through; the client's own silence watchdog is the backstop for one that ignores
     them."""
     return StreamingResponse(
-        vitals_frames(request.is_disconnected, lambda: _gpu_busy(request)),
+        vitals_frames(request.is_disconnected, lambda after: _vitals_frame(request, after)),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

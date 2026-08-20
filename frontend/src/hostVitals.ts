@@ -98,6 +98,65 @@ export interface VitalsSample {
 
 const history: VitalsSample[] = [];
 
+/** How far the box's clock is from this browser's, in ms, so a sample stamped ON THE BOX
+ *  can be placed on the browser's timeline.
+ *
+ *  Samples are bucketed by the second they were READ, not the instant they arrived —
+ *  that is what stopped the trace showing dropouts, because a few tens of milliseconds of
+ *  arrival jitter was putting two readings in one second's slot and none in the next.
+ *  Placing them needs the two clocks reconciled: a box running a second ahead would
+ *  otherwise push every sample past "now" and the newest slot would never fill. */
+let clockOffset = 0;
+
+/** The lowest `arrival − stamp` seen in the current window, and how many frames into it we
+ *  are. The MINIMUM is the estimate worth keeping: it is the offset plus the fastest trip
+ *  the network managed, so it moves when the clocks move and not when the wifi hiccups. */
+let offsetFloor = Number.POSITIVE_INFINITY;
+let offsetFrames = 0;
+let offsetKnown = false;
+
+/** Frames per re-estimate of the offset — two minutes of stream. */
+const OFFSET_WINDOW_FRAMES = 120;
+
+/** How far the estimate must move before it is applied. Re-basing on every wobble would
+ *  shift the whole grid by a few milliseconds every couple of minutes, which is its own
+ *  way of dropping a sample across a slot boundary — the exact artifact this all exists to
+ *  remove. A clock STEP (an ntp correction, a phone resuming on a new network) is far
+ *  larger than that and does deserve to move the grid, once. */
+const OFFSET_STEP_MS = 250;
+
+/** Note what a frame says about the two clocks. */
+function trackClockOffset(stampedAt: number, arrivedAt: number): void {
+  offsetFloor = Math.min(offsetFloor, arrivedAt - stampedAt);
+  offsetFrames += 1;
+  if (offsetFrames < OFFSET_WINDOW_FRAMES && offsetKnown) return;
+  if (!offsetKnown || Math.abs(offsetFloor - clockOffset) > OFFSET_STEP_MS) {
+    clockOffset = offsetFloor;
+    offsetKnown = true;
+  }
+  offsetFloor = Number.POSITIVE_INFINITY;
+  offsetFrames = 0;
+}
+
+/** One `{at_ms, gpu}` the box recorded, as the stream sends them. */
+interface BoxSample {
+  at_ms: number;
+  gpu: number | null;
+}
+
+/** The samples in a frame, or an empty list for anything that isn't one. A box that
+ *  predates the stamped frame sends none, and the caller falls back to the arrival
+ *  instant — a slightly jittery trace beats no trace. */
+function frameSamples(raw: unknown): BoxSample[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    const at = (entry as { at_ms?: unknown })?.at_ms;
+    if (typeof at !== "number" || !Number.isFinite(at)) return [];
+    const gpu = (entry as { gpu?: unknown })?.gpu;
+    return [{ at_ms: at, gpu: typeof gpu === "number" && Number.isFinite(gpu) ? gpu : null }];
+  });
+}
+
 type Listener = (busy: GpuBusy) => void;
 type Access = "unknown" | "allowed" | "denied";
 
@@ -149,6 +208,11 @@ export function vitalsDiagnostics(): Record<string, unknown> {
     // 0 CONNECTING, 1 OPEN, 2 CLOSED, -1 when there is no stream to ask.
     readyState: source?.readyState ?? -1,
     sinceLastFrameMs: diag.lastFrameAt === 0 ? -1 : Date.now() - diag.lastFrameAt,
+    // Browser clock minus box clock, as estimated from the frames. A large figure here is
+    // not a fault — it says the two clocks disagree, and that samples are being placed
+    // with that disagreement taken out.
+    clockOffsetMs: offsetKnown ? Math.round(clockOffset) : null,
+    samples: history.length,
     published: published.state,
     foreground: isForeground(),
   };
@@ -159,14 +223,48 @@ function publish(busy: GpuBusy): void {
   for (const listener of listeners) listener(busy);
 }
 
-/** Append a sample to the shared ring. Called once per frame — the stream's own 1 Hz
- *  cadence IS the sample clock, so the detail graph and the top bar plot the same
- *  seconds instead of each keeping a private timer that drifts against the other. */
-function remember(busy: GpuBusy, at: number): void {
-  // The token rate rides the same sample as the GPU reading, sampled on the stream's
-  // own 1 Hz tick, so the detail graph plots both channels against ONE time axis
-  // rather than two timers drifting against each other.
-  history.push({ at, gpu: busy.percent, tps: currentTokenRate() });
+/** Append what a frame carried to the shared ring.
+ *
+ *  Each sample is placed at the second the BOX read it, not the second the frame landed
+ *  here. That distinction is the whole fix for the dropouts on the detail graph: the plot
+ *  gives each whole second one slot, the box now emits exactly one sample per whole
+ *  second, and arrival jitter used to be enough to drop two of them into one slot and
+ *  leave the next empty — drawn as a gap in a history nothing had failed to record.
+ *
+ *  A frame carrying no samples is a box that doesn't stamp them; the arrival instant is
+ *  then all there is, which is what this did for every frame before. */
+function remember(busy: GpuBusy, raw: unknown, arrivedAt: number): void {
+  const samples = frameSamples(raw);
+  if (samples.length === 0) {
+    append({ at: arrivedAt, gpu: busy.percent, tps: currentTokenRate() });
+    return;
+  }
+  const newest = samples[samples.length - 1];
+  if (newest !== undefined) trackClockOffset(newest.at_ms, arrivedAt);
+  for (const sample of samples) {
+    // The token rate rides the same sample as the GPU reading, on the stream's own 1 Hz
+    // tick, so the detail graph plots both channels against ONE time axis rather than two
+    // timers drifting against each other. It is a rolling browser-side measure with no
+    // history to look up, so a sample the box is only now catching us up on carries the
+    // rate as it is — true within a second or two, and closer than a hole would be.
+    append({ at: sample.at_ms + clockOffset, gpu: sample.gpu, tps: currentTokenRate() });
+  }
+}
+
+/** Add one sample, folding it into the head when it repeats a second already held — a
+ *  reconnecting stream re-offers its newest sample, and a box that stamps nothing can land
+ *  two frames inside one second. A second entry for one second buys nothing (the plot has
+ *  one slot for it) and evicts a real second from the far end of the ring.
+ *
+ *  The higher reading wins the fold, as it does in the plot's own bucketing: this is a load
+ *  gauge, and under-reporting a spike is the worse lie. */
+function append(sample: VitalsSample): void {
+  const head = history[history.length - 1];
+  if (head !== undefined && Math.floor(head.at / 1000) === Math.floor(sample.at / 1000)) {
+    if ((sample.gpu ?? -1) > (head.gpu ?? -1)) history[history.length - 1] = sample;
+    return;
+  }
+  history.push(sample);
   if (history.length > HISTORY_SAMPLES) history.splice(0, history.length - HISTORY_SAMPLES);
 }
 
@@ -178,10 +276,14 @@ function remember(busy: GpuBusy, at: number): void {
  *  which the server never sees (that is measured in the browser off the chat stream). */
 export function seedVitalsHistory(seeds: { at_ms: number; gpu: number | null }[]): void {
   const now = Date.now();
-  // Seeds are stamped by the SERVER's clock and bucketed against the browser's. A box
-  // running ahead would otherwise place a several-seconds-old peak in the newest
-  // column and draw it as the current reading — against the plot's own honesty rule.
-  const usable = seeds.filter((s) => s.at_ms <= now);
+  // Seeds are stamped by the SERVER's clock and bucketed against the browser's, so they
+  // go through the same offset the live frames do — otherwise the two halves of one trace
+  // sit on two grids, and the seam between them is a gap. A box running ahead would place
+  // a several-seconds-old peak in the newest column and draw it as the current reading,
+  // which the `<= now` filter is here to refuse.
+  const usable = seeds
+    .map((s) => ({ at: s.at_ms + clockOffset, gpu: s.gpu }))
+    .filter((s) => s.at <= now);
   if (usable.length === 0) return;
 
   // Merge by second rather than only prepending what predates the ring. Backgrounding
@@ -190,10 +292,10 @@ export function seedVitalsHistory(seeds: { at_ms: number; gpu: number | null }[]
   // added for, and one an "older than the earliest" rule filters out entirely.
   const held = new Map(history.map((sample) => [Math.floor(sample.at / 1000), sample]));
   for (const seed of usable) {
-    const second = Math.floor(seed.at_ms / 1000);
+    const second = Math.floor(seed.at / 1000);
     // A sample this session saw wins: it carries the token rate, which the server
     // never sees, and its timestamp is on the clock the plot buckets against.
-    if (!held.has(second)) held.set(second, { at: seed.at_ms, gpu: seed.gpu, tps: null });
+    if (!held.has(second)) held.set(second, { at: seed.at, gpu: seed.gpu, tps: null });
   }
   const merged = [...held.values()].sort((a, b) => a.at - b.at);
   history.length = 0;
@@ -237,9 +339,12 @@ function openStream(): void {
     diag.frames += 1;
     diag.lastFrameAt = Date.now();
     try {
-      const frame = JSON.parse(event.data) as { gpu_busy_percent?: unknown };
+      const frame = JSON.parse(event.data) as {
+        gpu_busy_percent?: unknown;
+        samples?: unknown;
+      };
       const busy = fromFrame(frame.gpu_busy_percent);
-      remember(busy, Date.now());
+      remember(busy, frame.samples, Date.now());
       publish(busy);
     } catch {
       // A malformed frame must not kill the stream — the next tick is a second away.

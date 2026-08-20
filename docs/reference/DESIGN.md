@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-08-19
+> **Status:** Living · **Last verified:** 2026-08-20
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -270,6 +270,23 @@ plus expandable detail — with **two levels**:
   would multiply that table thirtyfold for a question that stops mattering a quarter of
   an hour later. The **token rate stays session-local**: it is measured in the browser
   off the chat stream, so its trace still begins empty after a reload.
+- **One sample per wall-clock second, stamped on the box** [decided]. The trace showed
+  occasional one-second dropouts — a gap in a line where nothing had actually failed to
+  record. Nothing was dropping frames; the second was being *aliased away*. The plot gives
+  each whole second one slot, and three separate places each stretched the cadence past a
+  second: the sampler and the stream loop both slept a full second *after* doing their
+  work (so the period was a second plus the work, slipping a whole tick every minute or
+  two), and the browser bucketed each reading by the instant its frame ARRIVED, where a
+  few tens of milliseconds of network jitter is enough to put two readings in one slot and
+  none in the next. All three are fixed at their source: both loops now sleep to the next
+  whole second rather than for a whole second, each sample is stamped with the second it
+  is a reading **of**, and a frame carries every sample since the last frame sent, so
+  neither loop's phase can drop one. The browser plots those stamps, reconciled to its own
+  clock by an offset estimated from the frames themselves (the minimum `arrival − stamp`,
+  re-based only on a step larger than a wobble). A gap on the trace is therefore a second
+  the box genuinely has no reading for — which is the whole point of drawing gaps rather
+  than zeroes. The screen also re-reads the box's ring on a slow timer, because the
+  seconds a *reconnect* costs are seconds the box recorded and the browser did not.
 - **The box narrates what it is doing, not just how loaded it is** [decided]. Between the
   graph and the roster sits *On the box, last N* — model loads, the evictions that made
   room for them, image renders — because the surface's commonest reading was a trace
