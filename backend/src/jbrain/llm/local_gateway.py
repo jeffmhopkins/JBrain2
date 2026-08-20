@@ -31,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
 import httpx
@@ -97,7 +97,6 @@ class LocalGatewayClient:
         timeout: float = 3.0,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
         config_regen: Callable[[], Awaitable[None]] | None = None,
-        on_external_eviction: Callable[[Sequence[str]], None] | None = None,
         windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         slots_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         models_dir: str = "",
@@ -137,7 +136,6 @@ class LocalGatewayClient:
         # Paired with `llama_swap_config.write`'s content compare this is free on the common
         # path: a load whose config already matches writes nothing and triggers no reload.
         self._config_regen = config_regen
-        self._on_external_eviction = on_external_eviction
         self._windows_loader = windows_loader
         self._slots_loader = slots_loader
         # Where the weights live, so a finished load can drop their PAGE-CACHE copy. Same
@@ -153,12 +151,6 @@ class LocalGatewayClient:
         # `_drop_cache_for_unannounced`.
         self._seen_resident: set[str] = set()
         self._loaded_here: set[str] = set()
-
-    def set_external_eviction_hook(self, hook: Callable[[Sequence[str]], None]) -> None:
-        """Bind the restorer AFTER construction. The residency coordinator is built FROM this
-        gateway, so it cannot be passed in at construction without a cycle — and the hook is
-        only ever called from a load, long after wiring is done."""
-        self._on_external_eviction = hook
 
     async def running(self) -> set[str]:
         """Served-model names currently loaded, or an empty set on ANY failure
@@ -236,7 +228,7 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
         await box_events.record(box_events.MODEL_UNLOAD, served_model)
 
-    async def _narrate_reload_casualties(self, before: set[str], loading: str) -> list[str]:
+    async def _narrate_reload_casualties(self, before: set[str], loading: str) -> None:
         """Record the models a config-driven gateway reload just killed.
 
         Rewriting llama-swap.yaml makes llama-swap reload, and its reload calls
@@ -250,39 +242,15 @@ class LocalGatewayClient:
         unloaded gpt-oss-120b, and was several times told it was a display artifact. It was not.
         An unavoidable eviction is acceptable; an unexplained one is not.
 
-        Returns the casualties so the caller can hand them back to whoever restores models.
-
         Best-effort: narration must never fail the load it is describing."""
         if not before:
-            return []
-        gone: list[str] = []
+            return
         with contextlib.suppress(Exception):  # noqa: BLE001 — narration must not fail a load
             model = local_catalog.get_by_served(loading)
             name = model.id if model is not None else loading
             reason = f"the gateway reloaded to apply changed settings for {name}"
-            gone = sorted(before - await self.running() - {loading})
-            for served in gone:
+            for served in sorted(before - await self.running() - {loading}):
                 await box_events.record(box_events.MODEL_UNLOAD, served, detail=reason)
-        return gone
-
-    def _offer_restore(self, casualties: Sequence[str]) -> None:
-        """Hand the reload's casualties to the restorer, which puts back what a displacement
-        took. A config reload is an external displacement in exactly the sense the residency
-        coordinator already models — a model that went away without the app deciding it should
-        — so this reuses `note_evicted` + `schedule_restore` rather than inventing a second
-        restore path with its own idea of the memory budget.
-
-        Only the UNINTENDED casualties reach here: a model residency deliberately evicted to
-        make room is already gone before the reload, so it is not in the before-set. Without
-        this, a flag change on a model that COULD have co-resided silently costs the operator
-        the other model until they notice and reload it by hand.
-
-        Deliberately after the load, not before: the restore is budget-aware but would
-        otherwise be bidding for the same RAM the load it is repairing still needs."""
-        if self._on_external_eviction is None or not casualties:
-            return
-        with contextlib.suppress(Exception):  # noqa: BLE001 — a restore hiccup must not fail a load
-            self._on_external_eviction(list(casualties))
 
     async def props(self, served_model: str) -> dict[str, object]:
         """llama-server's own `/props` for one RESIDENT model — `build_info` (the ONLY build
@@ -601,7 +569,6 @@ class LocalGatewayClient:
         # landed — the reload kills every running llama-server, so it has to happen BEFORE the
         # load below rather than ~2 s into it. `_narrate_reload_casualties` then records who
         # died, because llama-swap's own kill writes nothing.
-        casualties: list[str] = []
         if self._config_regen is not None:
             resident_before = await self.running()
             try:
@@ -614,7 +581,7 @@ class LocalGatewayClient:
                 # settings screen; this is the LLM-layer half.
                 log.warning("local_gateway.config_regen_failed", model=served_model, error=str(exc))
             else:
-                casualties = await self._narrate_reload_casualties(resident_before, served_model)
+                await self._narrate_reload_casualties(resident_before, served_model)
 
         # Remember it as OURS before the load runs. `_drop_cache_for_unannounced` skips
         # models in this set because the drop below already covers them, and a load that
@@ -622,25 +589,6 @@ class LocalGatewayClient:
         # success, keeps a failed load from being dropped twice.
         self._loaded_here.add(served_model)
 
-        try:
-            await self._load_body(
-                served_model, model, projected_gb, warm_system, warm_tools, _do_load
-            )
-        finally:
-            # `finally`: a load that FAILED leaves the bystanders just as dead as one that
-            # succeeded, so they still have to be put back.
-            self._offer_restore(casualties)
-
-    async def _load_body(
-        self,
-        served_model: str,
-        model: local_catalog.LocalModel | None,
-        projected_gb: float,
-        warm_system: str | None,
-        warm_tools: list[dict[str, object]] | None,
-        _do_load: Callable[[], Awaitable[None]],
-    ) -> None:
-        """The load itself, split out only so `load` can wrap it in the restore `finally`."""
         if self._gpu_probe is None:  # no probe wired: the prior, unguarded behaviour
             try:
                 await _do_load()
