@@ -118,6 +118,18 @@ def unresolved_ids(root: str, models: Sequence[Mapping[str, object]]) -> tuple[s
     return tuple(missing)
 
 
+# Flags an operator flag SUPERSEDES rather than duplicates. `--load-mode` is llama.cpp's
+# replacement for the deprecated `--mmap`/`--no-mmap`/`--mlock` family, and it warns when both
+# appear ("only the last flag on the command line will take effect"). Resting on argv order is
+# exactly what #1152 refused to do for `--image-min-tokens`, so setting the new flag removes the
+# old ones instead. Same reasoning generalised: a command line carrying two flags that contradict
+# each other is unreadable as a record of what is actually served.
+_SUPERSEDES: dict[str, tuple[str, ...]] = {
+    "-lm": ("--mmap", "--no-mmap", "--mlock"),
+    "--load-mode": ("--mmap", "--no-mmap", "--mlock"),
+}
+
+
 def _drop_operator_overridden(args: Sequence[str], operator_args: Sequence[str]) -> list[str]:
     """Strip from a base command every flag the operator has also set (and its value), so the
     operator's copy appended afterwards is the ONLY occurrence.
@@ -134,6 +146,8 @@ def _drop_operator_overridden(args: Sequence[str], operator_args: Sequence[str])
     A value is a following token that does not start with `-`, matching how the settings API
     validates these args (every allowlisted flag takes one except the boolean `--swa-full`)."""
     overridden = {a for a in operator_args if a.startswith("-")}
+    for flag in tuple(overridden):
+        overridden.update(_SUPERSEDES.get(flag, ()))
     out: list[str] = []
     skip_value = False
     for token in args:

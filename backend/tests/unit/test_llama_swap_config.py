@@ -640,6 +640,40 @@ def test_dropping_an_overridden_flag_never_swallows_the_flag_after_it(tmp_path: 
     assert llama_swap_config._drop_operator_overridden(["-ub", "1024"], []) == ["-ub", "1024"]
 
 
+def test_load_mode_supersedes_the_hardcoded_no_mmap(tmp_path: Path) -> None:
+    """`--load-mode` replaces the deprecated `--mmap`/`--no-mmap`/`--mlock` family upstream, and
+    llama.cpp warns when both appear: "only the last flag on the command line will take effect".
+
+    Resting on argv order is precisely what #1152 refused to do, so setting the new flag REMOVES
+    the old one rather than out-ordering it. This matters beyond tidiness here: `--no-mmap` is
+    why the weights are resident twice (GTT plus the page cache the read fills), and an operator
+    measuring whether mmap fixes that needs the served command to say unambiguously which mode
+    is in effect."""
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    mid = str(manifest[0]["id"])
+    text = llama_swap_config.render(
+        manifest, str(tmp_path), extra_args={mid: ["--load-mode", "mmap"]}
+    )
+    line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
+    assert "--load-mode mmap" in line
+    assert "--no-mmap" not in line, "both flags reached the command line; argv order decides"
+    # Every OTHER model keeps the default — the override is per model.
+    others = [ln for ln in text.splitlines() if "llama-server" in ln and mid not in ln]
+    assert others and all("--no-mmap" in ln for ln in others)
+
+
+def test_the_short_load_mode_alias_supersedes_too(tmp_path: Path) -> None:
+    # `-lm` is the same flag; a sweep typed either way must not leave `--no-mmap` behind.
+    _lay_down(tmp_path)
+    manifest = _manifest()
+    mid = str(manifest[0]["id"])
+    text = llama_swap_config.render(manifest, str(tmp_path), extra_args={mid: ["-lm", "dio"]})
+    line = next(ln for ln in text.splitlines() if "llama-server" in ln and mid in ln)
+    assert "-lm dio" in line
+    assert "--no-mmap" not in line
+
+
 def test_an_unrelated_operator_flag_leaves_the_shared_defaults_alone(tmp_path: Path) -> None:
     """Only what the operator actually set is stripped — a sweep of one knob must not silently
     drop the tuned defaults beside it."""

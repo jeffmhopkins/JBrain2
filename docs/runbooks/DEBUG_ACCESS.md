@@ -63,7 +63,10 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   not need the model to be loadable, so a bad *value* is always recoverable. The list covers
   `--swa-full`, `--slot-save-path`, `-b`/`-ub`, the four speculative-decoding knobs
   (`--spec-type`, `--spec-draft-n-max`, `--spec-draft-n-min`, `--spec-draft-p-min`), the image
-  pair (`--image-min-tokens`, `--image-max-tokens`) and the cache pair (`--ctx-checkpoints`,
+  pair (`--image-min-tokens`, `--image-max-tokens`), `--load-mode`/`-lm` (which SUPERSEDES the
+  hardcoded `--no-mmap` rather than duplicating it — `auto|none|mmap|mlock|mmap+mlock|dio`, the
+  lever for testing whether the weights need to be resident twice at all), and the cache pair
+  (`--ctx-checkpoints`,
   `--cache-reuse`) — those
   because their right values are empirical and hardware-specific, so without a live path a
   single tuning iteration would cost a catalog edit, a release and an Ops → Update. Setting
