@@ -814,6 +814,32 @@ still took the host down. `jbrain.llm.gpu_guard` closes that:
   to per-process `drm-resident-gtt` before it can be trusted or used to replace the catalog
   estimate.
 
+### The gateway (llama-swap) is pinned to a commit — currently v250
+
+`deploy/Dockerfile.local-llm` pins `LLAMA_SWAP_VERSION` to a full commit SHA, because
+llama-swap tags releases `vNNN` and Go module resolution rejects that. A test
+(`test_llama_swap_pin.py`) keeps it a 40-char SHA and keeps the comment naming the release,
+since a bare SHA is unreviewable and a floating ref would let the gateway change under the box
+on any rebuild.
+
+Moved from v228 to **v250** on 2026-08-20 for two upstream fixes that both bite this box:
+
+- **#875 / #878** — a browser tab left open on llama-swap's **own** web UI falls behind on
+  llama.cpp's verbose output; the bounded event bus fills, `Broadcast` blocks `Write`, the
+  child's stdout pipe backs up, and **llama.cpp stalls** until the tab is closed.
+- **#946 / #949** — *"a request arriving during a process stop would hang forever"*: the router
+  decided start/stop from a snapshot that could go stale. That is this box's ordinary
+  workload — the residency evictor unloads models while requests keep arriving — and it is the
+  best candidate for the upstream timeouts and the wedged-after-unload state seen on
+  2026-08-20.
+
+**Verified before the bump rather than after:** the config this repo generates
+(`llama_swap_config.render` over the whole catalog) was parsed with v250's own
+`internal/config.LoadConfig` — 16 models, 2 groups, no error — and every route the app calls
+(`/running`, `/api/models/unload/{model}`, `/logs`, `/logs/stream/*`, `/upstream/{model}/…`)
+still exists at that tag. Do the same before the next bump; the gateway is the single process
+serving every model, so a config-schema change is an outage.
+
 ### The weights are resident twice — MEASURED 2026-08-19, after the box died for it
 
 The gateway serves `--no-mmap`, so llama.cpp READS each GGUF rather than mapping it.
