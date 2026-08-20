@@ -262,6 +262,28 @@ describe("VitalsScreen", () => {
     await waitFor(() => expect(seedSpy).toHaveBeenCalledWith([{ at_ms: 1_000_000, gpu: 61 }]));
   });
 
+  it("re-reads the box's record so a reconnect is not a hole in the trace", async () => {
+    // The live stream is the graph's source, and nothing in the browser records the
+    // seconds it is down for. The box recorded them; the merge only fills seconds this
+    // session lacks, so re-reading a short window patches the gap instead of leaving it.
+    vi.useFakeTimers();
+    opsVitalsHistory.mockResolvedValue([]);
+    render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(opsVitalsHistory).toHaveBeenCalledWith(900); // the whole ring, on arrival
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+
+    // …and only the recent past on the timer: it is patching a reconnect, not reloading
+    // a quarter of an hour of history every half minute.
+    expect(opsVitalsHistory).toHaveBeenLastCalledWith(120);
+    vi.useRealTimers();
+  });
+
   it("survives having no recorded history", async () => {
     opsVitalsHistory.mockRejectedValue(new Error("nope"));
     render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);

@@ -132,7 +132,10 @@ async def test_a_probe_that_cannot_read_says_so_and_does_not_raise() -> None:
     with structlog.testing.capture_logs() as logs:
         async with prefill_probe.watch(_Reader(fail=True), "gpt-oss-120b", schedule=(0.02,)):
             await asyncio.sleep(0.1)
-    assert [e["event"] for e in logs] == ["llm.prefill_slots_failed"]
+    # Filtered to this module's own events: `capture_logs` taps the whole process, and an
+    # unrelated background tick landing inside the window is not this test's business.
+    said = [e["event"] for e in logs if str(e["event"]).startswith("llm.prefill_")]
+    assert said == ["llm.prefill_slots_failed"]
 
 
 async def test_no_reader_starts_no_task() -> None:

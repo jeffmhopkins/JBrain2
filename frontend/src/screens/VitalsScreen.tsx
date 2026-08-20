@@ -60,6 +60,19 @@ const BEACON_MS = 15_000;
 /** GPU load that reads as pinned. Matches the top bar's band. */
 const HOT_PERCENT = 85;
 
+/** The whole of the box's own ring — the widest window this screen offers. */
+const HISTORY_SECONDS = 900;
+
+/** How often the box's record is re-read, and how much of it is asked for.
+ *
+ *  The live stream is the graph's source, and while it is down — a reconnect, a deploy —
+ *  nothing records those seconds in the browser. The box recorded them anyway, and the
+ *  seeding merge only fills seconds this session lacks, so re-reading a short window
+ *  turns a reconnect from a hole in the trace into a hole for a few seconds. Slow, and
+ *  only while the screen is open and in front of the owner. */
+const RESEED_MS = 30_000;
+const RESEED_SECONDS = 120;
+
 const KIND_LABEL: Record<string, string> = {
   agent: "agent",
   subagent: "sub-agent",
@@ -862,23 +875,34 @@ function Field({ k, v, mono = false }: { k: string; v: string; mono?: boolean })
 
 // ---- data + helpers -------------------------------------------------------
 
-/** Pull the server's recorded GPU history into the shared ring, once, when the surface
- *  opens — so the graph has a past on a device that has only just loaded the app. */
+/** Pull the box's recorded GPU history into the shared ring: on arrival, so the graph has
+ *  a past on a device that has only just loaded the app, and on a slow timer after that,
+ *  so the seconds a dropped stream cost are filled from the record that still has them. */
 function useSeededHistory(): void {
+  const foreground = useForeground();
+
   useEffect(() => {
+    if (!foreground) return;
     let cancelled = false;
-    void (async () => {
+    const seed = async (seconds: number): Promise<void> => {
       try {
-        const samples = await api.opsVitalsHistory(900);
+        const samples = await api.opsVitalsHistory(seconds);
         if (!cancelled) seedVitalsHistory(samples);
       } catch {
         // No history is survivable — the graph fills from the live stream as before.
       }
-    })();
+    };
+    // The whole ring on arrival, and again on coming back to the app, where the hole may
+    // be as wide as the time away. The timer asks only for the recent past: it is there to
+    // patch the seconds a reconnect dropped, and the box's record is the one place those
+    // seconds still exist.
+    void seed(HISTORY_SECONDS);
+    const timer = setInterval(() => void seed(RESEED_SECONDS), RESEED_MS);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, []);
+  }, [foreground]);
 }
 
 /** The roster for the selected window, refetched while the surface is open and the app

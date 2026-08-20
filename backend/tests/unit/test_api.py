@@ -4,17 +4,20 @@ import asyncio
 import itertools
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.main import create_app
+from jbrain.vitals_ring import VitalsRing
 from tests.unit.fakes import FakeAuthRepo
 
 SUPERVISOR_STATUS = {
@@ -217,6 +220,17 @@ def test_ops_vitals_reports_nothing_when_the_sampler_has_gone_stale(
     assert client.get("/api/ops/vitals").json() == {"gpu_busy_percent": None, "loading": None}
 
 
+def _stops_after(ticks: int) -> Callable[[], Awaitable[bool]]:
+    """A disconnect check that lets `ticks` frames through and then reports the client
+    gone, so a stream test ends on its own."""
+    checks = iter([False] * ticks + [True])
+
+    async def disconnected() -> bool:
+        return next(checks)
+
+    return disconnected
+
+
 async def test_ops_vitals_stream_repeats_every_tick(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each tick re-reads and re-sends, whether or not the figure moved — the
     constant cadence is what tells the meter its reading is still live."""
@@ -225,13 +239,12 @@ async def test_ops_vitals_stream_repeats_every_tick(monkeypatch: pytest.MonkeyPa
     readings = iter([61.0, 61.0, 88.5])
     monkeypatch.setattr(ops, "_VITALS_PERIOD_S", 0)
 
-    # Three frames, then the client goes away — the loop must notice and finish.
-    checks = iter([False, False, False, True])
-
-    async def disconnected() -> bool:
-        return next(checks)
-
-    frames = [frame async for frame in ops.vitals_frames(disconnected, lambda: next(readings))]
+    frames = [
+        frame
+        async for frame in ops.vitals_frames(
+            _stops_after(3), lambda _after: {"gpu_busy_percent": next(readings)}
+        )
+    ]
 
     # `loading` is present on every frame, null included: an ABSENT key is indistinguishable,
     # to the meter, from one the transport lost.
@@ -259,12 +272,47 @@ async def test_ops_vitals_stream_carries_the_in_flight_load(
     async def loading() -> dict[str, object]:
         return {"model": "gpt-oss-120b", "at_ms": 1770000000000, "percent": 0.43}
 
-    frames = [frame async for frame in ops.vitals_frames(disconnected, lambda: 94.0, loading)]
+    frames = [
+        frame
+        async for frame in ops.vitals_frames(
+            disconnected, lambda _after: {"gpu_busy_percent": 94.0}, loading
+        )
+    ]
 
     assert frames == [
         b'data: {"gpu_busy_percent": 94.0, "loading": {"model": "gpt-oss-120b", '
         b'"at_ms": 1770000000000, "percent": 0.43}}\n\n'
     ]
+
+
+async def test_ops_vitals_stream_asks_only_for_samples_the_client_lacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each tick asks for everything since the last frame SENT, not for "the reading now".
+
+    The sampler and the stream are two loops on the same second: whichever way their
+    phase falls, a tick that reads the gauge twice in one sampler period skips the next
+    sample entirely, and the graph — one slot per second — draws the missing second as a
+    dropout. Handing over everything since the last frame makes that phase irrelevant."""
+    from jbrain.api import ops
+
+    monkeypatch.setattr(ops, "_VITALS_PERIOD_S", 0)
+    asked: list[int | None] = []
+    ring = VitalsRing()
+    ring.record(1000.0, 10.0)
+    ring.record(1001.0, 20.0)
+
+    def frame(after: int | None) -> dict[str, object]:
+        asked.append(after)
+        # A second tick that lands inside the same sampler period has nothing new to say.
+        return {"gpu_busy_percent": 20.0, "samples": ring.newer_than(after)}
+
+    frames = [frame async for frame in ops.vitals_frames(_stops_after(2), frame)]
+
+    assert asked == [None, 1_001_000], "the second tick did not resume from the first"
+    assert b'"samples": [{"at_ms": 1001000, "gpu": 20.0}]' in frames[0]
+    # Nothing new: the frame still ticks (it is the liveness signal) but repeats no sample.
+    assert b'"samples": []' in frames[1]
 
 
 async def test_ops_vitals_stream_stops_when_the_client_leaves(
@@ -280,7 +328,8 @@ async def test_ops_vitals_stream_stops_when_the_client_leaves(
     async def gone() -> bool:
         return True
 
-    assert [frame async for frame in ops.vitals_frames(gone, lambda: float(next(reads)))] == []
+    frames = ops.vitals_frames(gone, lambda _after: {"gpu_busy_percent": float(next(reads))})
+    assert [frame async for frame in frames] == []
     assert next(reads) == 0, "the gauge was never read for a client already gone"
 
 
@@ -293,8 +342,6 @@ async def test_ops_vitals_stream_stops_when_the_client_leaves(
 def _probe_request(monkeypatch: pytest.MonkeyPatch, row: dict[str, object] | None) -> Any:
     """A bare request carrying just the app state the probe reads, plus a counter of how
     often the underlying row read actually happened."""
-    from types import SimpleNamespace
-
     from jbrain.api import ops
 
     reads: list[int] = []
@@ -396,6 +443,40 @@ async def test_the_idle_case_costs_one_read(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert await ops._load_in_flight(request) is None
     assert len(reads) == 1
+
+
+def test_ops_vitals_frame_stamps_each_sample() -> None:
+    """The frame carries the box's own timestamps, so the browser buckets samples by the
+    second they were READ rather than by the instant they arrived — arrival jitter was
+    putting two readings in one second and none in the next, drawn as a dropout."""
+    from jbrain.api import ops
+
+    ring = VitalsRing()
+    at = time.time()
+    ring.record(at, 44.0)
+
+    frame = ops._vitals_frame(_request_with_ring(ring), None)
+
+    assert frame["gpu_busy_percent"] == 44.0
+    assert frame["samples"] == [{"at_ms": int(at * 1000), "gpu": 44.0}]
+
+
+def test_ops_vitals_frame_survives_a_box_with_no_sampler() -> None:
+    """The ring is set up at startup; a frame asked for before that must say "no reading"
+    rather than take the stream down."""
+    from jbrain.api import ops
+
+    assert ops._vitals_frame(_request_with_ring(None), None) == {
+        "gpu_busy_percent": None,
+        "samples": [],
+    }
+
+
+def _request_with_ring(ring: VitalsRing | None) -> Request:
+    """The one thing `_vitals_frame` reads off a request. A real one would need an ASGI
+    scope built by hand to say nothing more than this."""
+    state = SimpleNamespace() if ring is None else SimpleNamespace(vitals_ring=ring)
+    return cast(Request, SimpleNamespace(app=SimpleNamespace(state=state)))
 
 
 def test_ops_status_proxies_supervisor(client: TestClient, repo: FakeAuthRepo) -> None:
