@@ -28,6 +28,8 @@ strip that suffix once here.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
@@ -35,10 +37,24 @@ from typing import Protocol
 import httpx
 import structlog
 
-from jbrain import box_events
+from jbrain import box_events, host_metrics
 from jbrain.llm import gpu_guard, local_catalog, local_weights
 
 log = structlog.get_logger()
+
+# How the in-flight page-cache sweep is paced (`_sweep_page_cache_during_load`).
+#
+# Two triggers, whichever comes first. TIME alone is not enough: the read that fills the cache
+# runs at disk speed, and the measured control put ~50 GiB there in about 35 s — roughly 1.5
+# GiB per second — so any interval cheap enough to poll at leaves GB on the floor between
+# ticks. SIZE alone is not enough either: a stalled or slow load would never trip it, and the
+# residue would sit until the load finished.
+#
+# 1 GiB bounds the transient at roughly a second of read; 2 s bounds it when growth is slow.
+# The poll itself is one small /proc/meminfo read, so it can be much finer than either.
+_SWEEP_POLL_S = 0.25
+_SWEEP_INTERVAL_S = 2.0
+_SWEEP_GROWTH_GB = 1.0
 
 # A catalog entry wrong by this much is worth waking someone for: the two found on
 # 2026-08-19 were light by 1.4 and >5.5 GiB, and the smaller of those was enough to abort
@@ -319,6 +335,64 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
         return parsed if isinstance(parsed, dict) else {}
 
+    async def _sweep_page_cache_during_load(self, model: local_catalog.LocalModel | None) -> None:
+        """Evict the weights' page cache WHILE the load runs, not only after it.
+
+        MEASURED on the box, and the reason the after-the-fact drop is not enough: loading
+        gpt-oss-120b on an IDLE box took `Cached` from 2.11 to 50.72 GiB and `MemFree` down to
+        6.54 GiB, for about 35 seconds, before the post-load drop reclaimed it. That window is
+        the whole failure mode — the kernel was already reclaiming under GTT pressure, which is
+        what livelocked this host on 2026-08-19.
+
+        Those cached bytes are dead on arrival. llama.cpp allocates the GTT buffer FIRST
+        (measured: 57 GB committed before a byte is read), then reads the GGUF into it, so the
+        page-cache copy is a side effect of the read and is never read again.
+
+        There is no engine flag that avoids it. `--load-mode dio` opens with `O_DIRECT` and then
+        fails on the read — `read_raw_unsafe: Falling back to buffered IO due to Bad address`,
+        i.e. EFAULT, because the destination is device memory the kernel cannot DMA a file into.
+        `mmap` is worse (peak 60.44 GiB, 26% slower). All three modes must go through a buffered
+        read, so evicting continuously is the only lever, and it is entirely ours.
+
+        Fires on whichever comes first: `_SWEEP_INTERVAL_S`, or `_SWEEP_GROWTH_GB` of page-cache
+        growth. The size trigger is what bounds the transient — a fast disk can fill GB between
+        two ticks of any interval slow enough to be cheap.
+
+        Best-effort throughout, and cancelled by the caller when the load returns: a failure
+        here costs memory, never correctness."""
+        if model is None or not self._models_dir:
+            return
+        cache_before = host_metrics.read_page_cache_gb()
+        sweeps = 0
+        last = cache_before or 0.0
+        elapsed = 0.0
+        try:
+            while True:
+                await asyncio.sleep(_SWEEP_POLL_S)
+                elapsed += _SWEEP_POLL_S
+                now = host_metrics.read_page_cache_gb()
+                grew = now is not None and (now - last) >= _SWEEP_GROWTH_GB
+                if not grew and elapsed < _SWEEP_INTERVAL_S:
+                    continue
+                # `to_thread`: the walk + fadvise are blocking syscalls, and stalling the event
+                # loop during a load would delay the very health probe we are timing.
+                await asyncio.to_thread(
+                    local_weights.drop_weights_page_cache, self._models_dir, model.id
+                )
+                sweeps += 1
+                elapsed = 0.0
+                last = host_metrics.read_page_cache_gb() or 0.0
+        except asyncio.CancelledError:
+            if sweeps:
+                log.info(
+                    "local_gateway.load_cache_swept",
+                    model=model.id,
+                    sweeps=sweeps,
+                    cache_before_gb=cache_before,
+                    cache_after_gb=host_metrics.read_page_cache_gb(),
+                )
+            raise
+
     def _drop_weights_cache(self, model: local_catalog.LocalModel | None) -> None:
         """Release the page-cache copy of the weights this load just read.
 
@@ -433,6 +507,7 @@ class LocalGatewayClient:
             projected_gb = local_catalog.load_footprint_gb(model, window, slots=slots)
 
         async def _do_load() -> None:
+            sweeper = asyncio.create_task(self._sweep_page_cache_during_load(model))
             try:
                 async with httpx.AsyncClient(
                     timeout=load_timeout, transport=self._transport
@@ -441,6 +516,10 @@ class LocalGatewayClient:
                     resp.raise_for_status()
             except httpx.HTTPError as exc:
                 raise LocalGatewayError(str(exc)) from exc
+            finally:
+                sweeper.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await sweeper
 
         # Remember it as OURS before the load runs. `_drop_cache_for_unannounced` skips
         # models in this set because the drop below already covers them, and a load that
