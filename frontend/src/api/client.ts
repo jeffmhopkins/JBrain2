@@ -782,6 +782,11 @@ export interface LlmSettings {
    *  rather than folding it into the system segment (with `--no-mmap` it is mostly a second
    *  copy of model weights). Null when /proc/meminfo can't be read. */
   host_memory: { total_gb: number; used_gb: number; cache_gb?: number | null } | null;
+  /** Why llama-swap is serving flags that no longer match the saved settings, or null when it
+   *  is up to date. The re-stamp happens once, right before a load, and is best-effort — so
+   *  without surfacing this a failed write leaves a model quietly running at a window the
+   *  screen claims it is not. */
+  gateway_config_error?: string | null;
   /** The residency free-RAM floor (headroom the evictor keeps free). `fraction` is the
    * effective value (override when set, else `default`); `override` is null when the
    * effective value is the config default. Always present; the card shows only when hosting

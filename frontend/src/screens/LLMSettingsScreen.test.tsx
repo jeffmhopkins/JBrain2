@@ -322,6 +322,29 @@ describe("LLMSettingsScreen", () => {
     expect(screen.getByText(/system 12 GB/)).toBeInTheDocument();
   });
 
+  it("warns when the gateway is serving stale flags", async () => {
+    // The re-stamp now happens ONCE, immediately before a load, and is best-effort. The old
+    // per-PUT regen got a free retry on the operator's next edit; this one does not. A
+    // swallowed failure would leave a model running at a window this screen claims it is not,
+    // with the only trace a log line nobody reads until the model "behaves oddly" weeks on.
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.gateway_config_error = "read-only file system: /models/llama-swap.yaml";
+    stubLlmFetch(s);
+    render(<LLMSettingsScreen />);
+    expect(await screen.findByText(/serving stale flags/)).toBeInTheDocument();
+    expect(screen.getByText(/read-only file system/)).toBeInTheDocument();
+  });
+
+  it("says nothing about the gateway config when it is up to date", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    stubLlmFetch(s);
+    render(<LLMSettingsScreen />);
+    await screen.findByText("High reasoning");
+    expect(screen.queryByText(/serving stale flags/)).not.toBeInTheDocument();
+  });
+
   it("draws page cache as its own segment instead of calling it system", async () => {
     // The bug this pins: `system` was `used - resident`, so page cache landed in a segment
     // labelled "OS, database, on-box services". The gateway serves --no-mmap, so every model

@@ -542,8 +542,15 @@ class LocalGatewayClient:
         # Bring llama-swap.yaml up to date for the model about to load. No-ops when the
         # rendered config already matches, so this costs nothing unless a setting changed.
         if self._config_regen is not None:
-            with contextlib.suppress(Exception):  # a stale config must never fail the load
+            try:
                 await self._config_regen()
+            except Exception as exc:  # noqa: BLE001 — a stale config must never FAIL a load
+                # Loud, not silent. This path gets ONE attempt per load, where the old per-PUT
+                # regen was retried on the operator's next edit — so a swallowed failure here
+                # means a model serving flags nobody can see are stale.
+                # `api.llm_settings` also records it to box_events and surfaces it on the
+                # settings screen; this is the LLM-layer half.
+                log.warning("local_gateway.config_regen_failed", model=served_model, error=str(exc))
 
         # Remember it as OURS before the load runs. `_drop_cache_for_unannounced` skips
         # models in this set because the drop below already covers them, and a load that

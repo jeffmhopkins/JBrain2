@@ -362,6 +362,11 @@ class LlmSettingsOut(BaseModel):
     local_models: list[LocalModelInfo]
     # Live host memory for the drawer meter; None when hosting is off or off-Linux.
     host_memory: HostMemory | None = None
+    # Why llama-swap is serving flags that do not match the saved settings, or None when it is
+    # up to date. The re-stamp happens once, right before a load, and it is best-effort — so
+    # without this a failed write leaves a model quietly running at a window the screen says it
+    # is not, with nothing on screen to say so.
+    gateway_config_error: str | None = None
     # The residency free-RAM floor (headroom the evictor keeps free) — the card's current
     # value + config default. Always present; the screen renders its card only when hosting
     # is on (it's meaningless without a box to budget).
@@ -488,6 +493,7 @@ async def _snapshot(
             for m in local_catalog.CATALOG
         ],
         host_memory=_host_memory(settings),
+        gateway_config_error=gateway_config_error(),
         free_ram=FreeRamInfo(
             fraction=free_ram_override
             if free_ram_override is not None
@@ -710,6 +716,27 @@ async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> N
     the gateway catching up and must never fail the load that called it."""
     windows, slots, extra, floors = await _saved_override_maps(store, queue.SYSTEM_CTX)
     _try_regenerate(settings, windows, slots, extra, floors)
+    if (err := gateway_config_error()) is not None:
+        # The load still proceeds — the model starts, just not at the settings the meter shows.
+        # Loud on both surfaces because this path gets ONE attempt per load, where the old
+        # per-PUT regen was retried on the operator's next edit.
+        with contextlib.suppress(Exception):  # noqa: BLE001 — narration must not fail a load
+            await box_events.record(
+                box_events.GATEWAY_CONFIG_STALE,
+                "llama-swap.yaml",
+                detail=f"the gateway is serving stale flags: {err}",
+                status="failed",
+            )
+
+
+# The last gateway-config re-stamp failure, or None when the most recent attempt succeeded.
+#
+# Module state on purpose: the failure happens during a LOAD (llm.local_gateway._config_regen),
+# in a different request from the settings PUT that caused it and possibly in the worker
+# process, so there is no response to attach it to. The settings screen reads it back through
+# `_snapshot` and says so, instead of the operator discovering months later that a model has
+# been serving a window they thought they changed.
+_last_regen_error: str | None = None
 
 
 def _try_regenerate(
@@ -735,8 +762,21 @@ def _try_regenerate(
             extra_args=extra,
             image_min_tokens=image_min_tokens,
         )
+        _set_regen_error(None)
     except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
+        _set_regen_error(str(exc))
         log.warning("llm_settings.gateway_config_regen_failed", error=str(exc))
+
+
+def _set_regen_error(error: str | None) -> None:
+    global _last_regen_error  # noqa: PLW0603 — see `_last_regen_error` for why it is module state
+    _last_regen_error = error
+
+
+def gateway_config_error() -> str | None:
+    """Why llama-swap is serving flags that do not match the saved settings, or None when it
+    is up to date. Read by `_snapshot` for the settings screen."""
+    return _last_regen_error
 
 
 async def _unload_if_loaded(
