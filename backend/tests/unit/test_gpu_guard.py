@@ -406,4 +406,3 @@ async def test_supervisor_probe_tolerates_a_client_that_does_not_exist_yet() -> 
 
 async def _never_aborts() -> None:
     raise AssertionError("a healthy load must not be aborted")
-
