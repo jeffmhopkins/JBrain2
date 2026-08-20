@@ -778,7 +778,10 @@ export interface LlmSettings {
   local_hosting_enabled: boolean;
   local_models: LocalModelInfo[];
   /** Live unified-memory gauge for the drawer meter; null when hosting is off / off-Linux. */
-  host_memory: { total_gb: number; used_gb: number } | null;
+  /** `cache_gb` is page cache, which `used_gb` INCLUDES — broken out so the meter can name it
+   *  rather than folding it into the system segment (with `--no-mmap` it is mostly a second
+   *  copy of model weights). Null when /proc/meminfo can't be read. */
+  host_memory: { total_gb: number; used_gb: number; cache_gb?: number | null } | null;
   /** The residency free-RAM floor (headroom the evictor keeps free). `fraction` is the
    * effective value (override when set, else `default`); `override` is null when the
    * effective value is the config default. Always present; the card shows only when hosting

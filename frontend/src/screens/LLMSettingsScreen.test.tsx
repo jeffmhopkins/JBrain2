@@ -322,6 +322,58 @@ describe("LLMSettingsScreen", () => {
     expect(screen.getByText(/system 12 GB/)).toBeInTheDocument();
   });
 
+  it("draws page cache as its own segment instead of calling it system", async () => {
+    // The bug this pins: `system` was `used - resident`, so page cache landed in a segment
+    // labelled "OS, database, on-box services". The gateway serves --no-mmap, so every model
+    // load leaves a second copy of its weights in page cache — 39.4 GiB measured on one
+    // gpt-oss-120b load — and an operator watching that segment bloat had no way to see why.
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    // 76 used, of which 30 is page cache and 64 is the resident model.
+    s.host_memory = { total_gb: 121, used_gb: 76, cache_gb: 30 };
+    s.local_models = [
+      lm({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: true,
+        loaded: true,
+        size_gb: 60,
+        disk_gb: 60,
+        kv_gb: 4,
+      }),
+    ];
+    stubLlmFetch(s);
+    render(<LLMSettingsScreen />);
+    expect(await screen.findByText("76 GB used")).toBeInTheDocument();
+    expect(screen.getByText(/cache 30 GB/)).toBeInTheDocument();
+    // Cache comes OUT of system, it is not added on top: 76 - 64 - 30 clamps to 0, so the
+    // system key disappears rather than the bar over-filling past `used`.
+    expect(screen.queryByText(/system \d+ GB/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the old undifferentiated system segment when cache is unavailable", async () => {
+    // An older backend (or an unreadable /proc/meminfo) sends no `cache_gb`. The meter must
+    // degrade to the previous behaviour rather than showing a 0 GB cache segment.
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 121, used_gb: 76 };
+    s.local_models = [
+      lm({
+        id: "gpt-oss-120b",
+        label: "GPT-OSS 120B",
+        enabled: true,
+        loaded: true,
+        size_gb: 60,
+        disk_gb: 60,
+        kv_gb: 4,
+      }),
+    ];
+    stubLlmFetch(s);
+    render(<LLMSettingsScreen />);
+    expect(await screen.findByText(/system 12 GB/)).toBeInTheDocument();
+    expect(screen.queryByText(/cache \d+ GB/)).not.toBeInTheDocument();
+  });
+
   it("clears the free-RAM override with Reset", async () => {
     const seed = initialSettings();
     seed.local_hosting_enabled = true;
