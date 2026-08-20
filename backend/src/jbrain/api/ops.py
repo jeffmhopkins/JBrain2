@@ -503,14 +503,12 @@ class _LoadProbe:
     """One box-wide answer to "is a model loading, and how far in", shared by every surface
     that reports it.
 
-    Shared because the cost is per-READ, not per-client. Both halves of the answer go off
-    the box — a query for the open `app.box_events` row, and a fetch of llama-swap's log
-    buffer to parse the fraction — and the three surfaces that want it (the chat status
-    line, the vitals event list, the top bar's probe) are all 1 Hz, on a screen that may
-    have several open at once. Read per client per frame, a box with four open streams
-    would pull the gateway's whole log buffer four times a second, during a load, which is
-    the one minute the box has nothing to spare. Cached here it is one query and one fetch
-    per second no matter how many are watching.
+    Shared because the cost is per-READ, not per-client. The three surfaces that want it
+    (the chat status line, the vitals event list, the top bar's probe) are all 1 Hz, on a
+    screen that may have several open at once, and each read is a database round trip. Read
+    per client per frame, a box with four open streams would make four of them a second
+    during a load, which is the one minute the box has nothing to spare. Cached here it is
+    one query per second no matter how many are watching.
 
     Single-flight, not merely cached: without the lock, N frames landing together on an
     expired entry all miss and all go to the box — the stampede the cache exists to stop.
@@ -566,12 +564,16 @@ async def _read_load_in_flight(request: Request) -> dict[str, object] | None:
     """The uncached read: the open `model_load` row, plus the fraction of it that has
     actually been read in.
 
-    The row is the authority for WHETHER and WHAT — it is written cross-process, so a load
-    the worker started for a deferred transcription counts, and it is stamped at the moment
-    the load begins rather than when the first progress line appears. The percent is a
-    best-effort embellishment on top: the gateway parses it out of llama.cpp's own log
-    lines, and a build that prints none simply leaves it null, which every surface renders
-    as "loading, no figure" rather than as zero."""
+    Both halves come off ONE row, which is what stops the two from ever disagreeing — a
+    percentage for a load that has already finished, or one carried over from the previous
+    model. It is written cross-process, so a load the worker started for a deferred
+    transcription counts, and it is stamped at the moment the load begins rather than when
+    the first measurement lands.
+
+    The percent is the load watchdog's own device-memory delta, published onto the row as
+    it samples (`llm.gpu_guard.guarded_load`). It is null until the first sample, on a box
+    with no device probe, and for a model the catalog cannot size — every surface renders
+    that as "loading, no figure" rather than as zero."""
     maker = cast(
         "async_sessionmaker[AsyncSession] | None", getattr(request.app.state, "session_maker", None)
     )
@@ -584,31 +586,7 @@ async def _read_load_in_flight(request: Request) -> dict[str, object] | None:
         return None
     if row is None:
         return None
-    return {
-        "model": row["subject"],
-        "at_ms": row["at_ms"],
-        "percent": await _load_percent(request),
-    }
-
-
-async def _load_percent(request: Request) -> float | None:
-    """How far the in-flight load has got, 0..1, or None when there is no parseable signal.
-
-    Read through the gateway's `load_progress`, which parses llama.cpp's own progress lines
-    out of llama-swap's log buffer. That buffer is the BOX's, not this process's, so the
-    figure is right for a load the worker started as well as one we started ourselves —
-    the same reason the row above is read from a table rather than a process-local ring.
-    Optional on the protocol (see `llm.local_gateway.LocalGateway`), so a gateway without
-    it, or a probe that throws, degrades to no figure rather than to no line."""
-    gateway = getattr(request.app.state, "local_gateway", None)
-    probe = getattr(gateway, "load_progress", None)
-    if probe is None:
-        return None
-    try:
-        return cast("float | None", await probe())
-    except Exception as exc:  # noqa: BLE001 — a log hiccup drops the figure, never the line
-        log.info("ops.load_progress_unavailable", error=str(exc))
-        return None
+    return {"model": row["subject"], "at_ms": row["at_ms"], "percent": row["progress"]}
 
 
 @router.get("/vitals")
@@ -926,10 +904,10 @@ class BoxEventOut(BaseModel):
     # Which process did it ("api" / "worker"), so a load nothing on screen asked for can
     # be traced to the background half of the box.
     source: str
-    # How far a STILL-RUNNING load has got, 0..1 — null on every settled row, and on a
-    # running one whose gateway build prints no parseable progress. A finished load has no
-    # fraction to report, and rendering one as 100% would put a progress figure on a row
-    # whose point is that it is over.
+    # How far a STILL-RUNNING load has got, 0..1 — null on every settled row, on one whose
+    # first sample has not landed, and on a box with no device-memory probe to measure it
+    # with. A finished load has no fraction to report, and rendering one as 100% would put a
+    # progress figure on a row whose point is that it is over.
     percent: float | None = None
 
 
@@ -953,21 +931,17 @@ async def vitals_events(
     ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
     window = max(1, min(seconds, _MAX_HISTORY_SECONDS))
     rows = await box_events.recent(maker, ctx, seconds=window)
-    # The live row gets the fraction the chat status line shows, off the same shared probe,
-    # so the two surfaces cannot report different percentages for one load. Matched on the
-    # subject rather than assumed to be the newest running row: `recent` returns image
-    # renders and unloads too, and only the model load has a fraction to carry.
-    live = await _load_in_flight(request)
-    events = [BoxEventOut(**cast("dict[str, Any]", r)) for r in rows]
-    if live is not None:
-        for event in events:
-            if (
-                event.kind == box_events.MODEL_LOAD
-                and event.ended_ms is None
-                and event.status == "running"
-                and event.subject == live["model"]
-            ):
-                event.percent = cast("float | None", live["percent"])
+    # The fraction rides the row, so this list and the chat status line cannot report
+    # different percentages for one load: both read the number the load watchdog wrote.
+    # It replaced a second read here that matched a separately-probed live load back onto
+    # its row by subject — the kind of reconciliation that is only ever needed when one
+    # fact is being kept in two places.
+    events: list[BoxEventOut] = []
+    for row in rows:
+        fields = cast("dict[str, Any]", dict(row))
+        # Defaulted, not required: the fraction is narration on a row that is itself
+        # narration, and a reader missing the key must lose the percentage, never the line.
+        events.append(BoxEventOut(percent=fields.pop("progress", None), **fields))
     return BoxEventsOut(events=events)
 
 

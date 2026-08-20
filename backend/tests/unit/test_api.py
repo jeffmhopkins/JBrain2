@@ -285,19 +285,9 @@ async def test_ops_vitals_stream_stops_when_the_client_leaves(
 
 
 # --- the shared in-flight-load probe -----------------------------------------
-# Three surfaces want "is a model loading, and how far in" at 1 Hz, and both halves of the
-# answer go off the box (a query, plus a fetch of the gateway's whole log buffer). These pin
-# that the cost is paid once per second for the box, not once per client per surface.
-
-
-class _FakeGateway:
-    def __init__(self, progress: float | None = 0.43) -> None:
-        self.progress = progress
-        self.probes = 0
-
-    async def load_progress(self) -> float | None:
-        self.probes += 1
-        return self.progress
+# Three surfaces want "is a model loading, and how far in" at 1 Hz, and the answer is a
+# database round trip. These pin that the cost is paid once per second for the box, not
+# once per client per surface.
 
 
 def _probe_request(monkeypatch: pytest.MonkeyPatch, row: dict[str, object] | None) -> Any:
@@ -314,19 +304,20 @@ def _probe_request(monkeypatch: pytest.MonkeyPatch, row: dict[str, object] | Non
         return row
 
     monkeypatch.setattr(ops.box_events, "in_flight", fake_in_flight)
-    state = SimpleNamespace(session_maker=object(), local_gateway=_FakeGateway())
+    state = SimpleNamespace(session_maker=object())
     return SimpleNamespace(app=SimpleNamespace(state=state)), reads, state
 
 
 async def test_the_load_probe_answers_repeat_readers_from_one_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Four open streams on one screen must not pull the gateway's log buffer four times a
-    second — during a load, which is the one minute the box has nothing to spare."""
+    """Four open streams on one screen must not make four database round trips a second —
+    during a load, which is the one minute the box has nothing to spare."""
     from jbrain.api import ops
 
-    request, reads, state = _probe_request(
-        monkeypatch, {"at_ms": 1_760_000_000_000, "subject": "gpt-oss-120b"}
+    request, reads, _state = _probe_request(
+        monkeypatch,
+        {"at_ms": 1_760_000_000_000, "subject": "gpt-oss-120b", "progress": 0.43},
     )
 
     first = await ops._load_in_flight(request)
@@ -335,7 +326,6 @@ async def test_the_load_probe_answers_repeat_readers_from_one_read(
 
     assert first == {"model": "gpt-oss-120b", "at_ms": 1_760_000_000_000, "percent": 0.43}
     assert len(reads) == 1
-    assert state.local_gateway.probes == 1
 
 
 async def test_the_load_probe_survives_a_box_that_cannot_answer(
@@ -355,18 +345,18 @@ async def test_the_load_probe_survives_a_box_that_cannot_answer(
     assert await ops._load_in_flight(request) is None
 
 
-async def test_a_load_with_no_parseable_progress_still_reports_itself(
+async def test_a_load_with_no_measurement_still_reports_itself(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The model and the start time come from the box's own record; the fraction is an
-    embellishment the gateway may not be able to supply. Losing the figure must not lose
-    the line — a build that prints no progress still has a load worth naming."""
+    embellishment that needs a device-memory probe and a catalog projection. Losing the
+    figure must not lose the line — an unmeasurable load is still one worth naming."""
     from jbrain.api import ops
 
-    request, _reads, state = _probe_request(
-        monkeypatch, {"at_ms": 1_760_000_000_000, "subject": "gpt-oss-120b"}
+    request, _reads, _state = _probe_request(
+        monkeypatch,
+        {"at_ms": 1_760_000_000_000, "subject": "gpt-oss-120b", "progress": None},
     )
-    state.local_gateway.progress = None
 
     assert (await ops._load_in_flight(request)) == {
         "model": "gpt-oss-120b",
@@ -395,18 +385,17 @@ async def test_the_load_probe_gives_up_rather_than_stall_the_frame(
     assert await ops._load_in_flight(request) is None
 
 
-async def test_the_load_probe_does_not_reach_for_a_fraction_when_nothing_is_loading(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The idle case is every second the box is not loading, which is nearly all of them.
-    Fetching the gateway's log buffer through all of them to learn nothing is the cost this
-    ordering avoids."""
+async def test_the_idle_case_costs_one_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The idle case is every second the box is not loading, which is nearly all of them,
+    and it now costs exactly one query: the fraction rides the row, so there is no second
+    read to skip. (There used to be — a fetch of the gateway's whole log buffer, ordered
+    after the row read so the idle second would not pay for it.)"""
     from jbrain.api import ops
 
-    request, _reads, state = _probe_request(monkeypatch, None)
+    request, reads, _state = _probe_request(monkeypatch, None)
 
     assert await ops._load_in_flight(request) is None
-    assert state.local_gateway.probes == 0
+    assert len(reads) == 1
 
 
 def test_ops_status_proxies_supervisor(client: TestClient, repo: FakeAuthRepo) -> None:

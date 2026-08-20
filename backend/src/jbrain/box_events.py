@@ -89,9 +89,15 @@ _CTX = SessionContext(principal_id="box", principal_kind="owner")
 # which is the whole difference between a log and an explanation. A ContextVar rather than
 # a parameter so the reason rides through the `LocalGateway` protocol without widening it:
 # a load reason threaded as an argument would have to appear on the protocol, and every
-# structural test fake would have to grow it (the same argument that keeps `load_progress`
-# off that protocol).
+# structural test fake would have to grow it.
 _reason: ContextVar[str] = ContextVar("box_event_reason", default="")
+
+# The row `span` currently has open, so `progress` can find it without being handed an id.
+# Same argument as `_reason` above: the progress callback is created deep inside the load
+# path (`llm.local_gateway._load_and_warm`, which is where the projection and the device
+# baseline both live) while the row is opened one frame out, in `load`. Threading a handle
+# between them would put a narration parameter on every function in between.
+_open_row: ContextVar[uuid.UUID | None] = ContextVar("box_event_row", default=None)
 
 
 def configure(maker: async_sessionmaker[AsyncSession], *, source: str) -> None:
@@ -160,6 +166,14 @@ _SETTLE = """
     WHERE id = :id
 """
 
+# Guarded on `ended_at IS NULL` so a sample that lands after the row settled cannot reopen
+# a finished load's percentage. The watchdog takes a final sample once the load returns,
+# which races the settle by construction.
+_PROGRESS = """
+    UPDATE app.box_events SET progress = :progress
+    WHERE id = :id AND ended_at IS NULL
+"""
+
 
 async def record(kind: str, subject: str, *, detail: str | None = None, status: str = "ok") -> None:
     """Record something that happened at an instant — an unload, a refusal. `detail`
@@ -196,6 +210,7 @@ async def span(kind: str, subject: str, *, detail: str | None = None) -> AsyncIt
         _INSERT_OPEN,
         {"id": row, "kind": kind, "subject": subject, "detail": _clip(reason), "source": _source},
     )
+    token = _open_row.set(row)
     try:
         yield
     except Exception as exc:
@@ -204,7 +219,29 @@ async def span(kind: str, subject: str, *, detail: str | None = None) -> AsyncIt
             {"id": row, "status": "failed", "detail": _clip(f"{reason} {exc}".strip())},
         )
         raise
+    finally:
+        _open_row.reset(token)
     await _write(_SETTLE, {"id": row, "status": "ok", "detail": _clip(reason)})
+
+
+async def progress(fraction: float) -> None:
+    """Publish how far the enclosing `span` has got, as 0..1.
+
+    Called once a second from the load watchdog, which is already sampling device memory at
+    that cadence for a different reason — so the reading costs a row update and no new probe
+    of anything. Outside a span (or before one has opened) it is a no-op, like every other
+    write here.
+
+    Clamped rather than validated: the denominator is the CATALOG's projection of the load's
+    footprint, and the whole reason `_record_measured_footprint` exists is that the
+    projection drifts from what a model actually pins. A model that outgrows its estimate
+    would otherwise report 118%, and one the catalog over-predicts would stall at 80% and
+    then jump to done. Clamping makes the first read as arrival and leaves the second
+    honest — the bar can sit short of full, which is true: we do not know the rest."""
+    row = _open_row.get()
+    if row is None:
+        return
+    await _write(_PROGRESS, {"id": row, "progress": min(1.0, max(0.0, fraction))})
 
 
 def _status(status: str, at: datetime, ended_at: datetime | None, now: datetime) -> str:
@@ -239,7 +276,7 @@ async def recent(
             await session.execute(
                 text(
                     """
-                    SELECT at, ended_at, kind, subject, detail, status, source
+                    SELECT at, ended_at, kind, subject, detail, status, source, progress
                     FROM app.box_events
                     WHERE at >= :cut OR ended_at >= :cut OR ended_at IS NULL
                     ORDER BY at
@@ -266,6 +303,10 @@ async def recent(
                 "detail": row.detail,
                 "status": status,
                 "source": row.source,
+                # Only while it is still climbing. A settled row's last sample is a
+                # fossil — "loaded gpt-oss-120b" with a 94% beside it invites the reading
+                # that 6% of it failed to arrive.
+                "progress": row.progress if row.ended_at is None else None,
             }
         )
     return out
@@ -300,7 +341,7 @@ async def in_flight(
             await session.execute(
                 text(
                     """
-                    SELECT at, subject, detail, source
+                    SELECT at, subject, detail, source, progress
                     FROM app.box_events
                     WHERE kind = :kind
                       AND ended_at IS NULL
@@ -320,6 +361,7 @@ async def in_flight(
         "subject": row.subject,
         "detail": row.detail,
         "source": row.source,
+        "progress": row.progress,
     }
 
 

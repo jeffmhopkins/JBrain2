@@ -293,3 +293,90 @@ async def test_non_owner_sees_nothing_and_cannot_write(wired: async_sessionmaker
             await session.execute(
                 text("INSERT INTO app.box_events (kind, subject) VALUES ('model_load', 'x')")
             )
+
+
+async def test_progress_rides_the_open_row_and_climbs(wired: async_sessionmaker) -> None:
+    """The percentage lives on the row rather than beside it, so the surfaces that show a
+    load cannot disagree about how far in it is — they read one number."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        # Null until the first sample lands: a load that has just opened has no measurement
+        # yet, and 0% would read as "started and stuck" during the seconds that matters most.
+        first = await box_events.in_flight(wired, owner)
+        assert first is not None
+        assert first["progress"] is None
+
+        await box_events.progress(0.42)
+        during = await box_events.in_flight(wired, owner)
+        assert during is not None
+        assert during["progress"] == pytest.approx(0.42)
+
+        await box_events.progress(0.87)
+        later = await box_events.in_flight(wired, owner)
+        assert later is not None
+        assert later["progress"] == pytest.approx(0.87)
+
+
+async def test_progress_is_clamped_to_the_range_a_bar_can_render(
+    wired: async_sessionmaker,
+) -> None:
+    """The denominator is the CATALOG's projection, and the whole reason the measured
+    footprint is logged separately is that the projection drifts. A model that outgrows its
+    estimate must read as arrived, not as 118%."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        await box_events.progress(1.4)
+        over = await box_events.in_flight(wired, owner)
+        assert over is not None
+        assert over["progress"] == pytest.approx(1.0)
+
+        # And the other end: a sample taken while the pool is momentarily below the
+        # baseline (an eviction still settling) is a floor, not a negative bar.
+        await box_events.progress(-0.2)
+        under = await box_events.in_flight(wired, owner)
+        assert under is not None
+        assert under["progress"] == pytest.approx(0.0)
+
+
+async def test_a_settled_load_reports_no_progress(wired: async_sessionmaker) -> None:
+    """A finished load has no fraction to report. "loaded gpt-oss-120b" beside a 94% invites
+    the reading that 6% of it never arrived, and a 100% is a progress figure on a row whose
+    whole point is that it is over."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        await box_events.progress(0.94)
+
+    rows = await box_events.recent(wired, owner, seconds=60)
+    loads = [r for r in rows if r["kind"] == box_events.MODEL_LOAD]
+    assert len(loads) == 1
+    assert loads[0]["ended_ms"] is not None
+    assert loads[0]["progress"] is None
+
+
+async def test_a_late_sample_cannot_reopen_a_settled_loads_percentage(
+    wired: async_sessionmaker,
+) -> None:
+    """The watchdog takes a final sample once the load returns, which races the settle by
+    construction. The write is guarded on the row still being open so the loser of that race
+    is dropped rather than putting a live-looking percentage on a finished row."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        await box_events.progress(0.5)
+    # The span has closed and reset the ambient row, so this is a no-op twice over.
+    await box_events.progress(1.0)
+
+    rows = await box_events.recent(wired, owner, seconds=60)
+    loads = [r for r in rows if r["kind"] == box_events.MODEL_LOAD]
+    assert loads[0]["progress"] is None
+
+
+async def test_progress_outside_a_span_is_a_no_op(wired: async_sessionmaker) -> None:
+    """Same contract as every other write here: narration never raises, and never invents a
+    row to attach itself to."""
+    owner = await _owner(wired)
+    await box_events.progress(0.5)
+    assert await box_events.recent(wired, owner, seconds=60) == []

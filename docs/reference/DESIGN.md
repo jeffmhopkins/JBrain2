@@ -286,12 +286,13 @@ plus expandable detail — with **two levels**:
   The card is hidden entirely when there is nothing to report; a permanently empty card
   teaches the eye to skip the place the answer appears. A row left open by a process that
   died mid-load ages out as *stale* rather than claiming to still be loading. A **running**
-  load also carries **how far in it is** — "loading gpt-oss-120b… 43%", parsed from the
-  gateway's own log lines. The elapsed count beside a row answers *how long has this been
-  going*; only the fraction answers *how much longer*, which on a load that reads tens of
-  GB is the question actually being asked. No figure when the build prints nothing
-  parseable (never a `0%`, which reads as stuck), and none on a settled row — "loaded
-  gpt-oss-120b 100%" would put a progress figure on a row whose point is that it is over.
+  load also carries **how far in it is** — "loading gpt-oss-120b… 43%", measured as the
+  **device-memory delta** against the catalog's projected footprint. The elapsed count
+  beside a row answers *how long has this been going*; only the fraction answers *how much
+  longer*, which on a load that reads tens of GB is the question actually being asked. No
+  figure before the first sample lands, or on a box with no device probe (never a `0%`,
+  which reads as stuck), and none on a settled row — "loaded gpt-oss-120b 100%" would put a
+  progress figure on a row whose point is that it is over.
 - **A load says so in the chat too, on the line above the composer** [decided]. The same
   reading, deliberately duplicated onto the conversation surface's status line
   (`AgentStatusLine`): *Loading **gpt-oss-120b**… 43% · 12s*. A cold 120B takes the better
@@ -302,14 +303,29 @@ plus expandable detail — with **two levels**:
   running** as well: a load the owner started from Settings, or one the worker started, is
   why the next thing they type will sit there, and saying so before they type it is the
   point. Its clock is the **load's**, from the box's own record, not the phase it replaced.
+- **The fraction is measured, not narrated** [decided]. It comes from the load watchdog's
+  own device-memory samples (`llm.gpu_guard.guarded_load`), published onto the open
+  `box_events` row as it goes. That watchdog already reads the device pool once a second to
+  decide whether to abort a runaway load, so the only measurement of a load *in flight* the
+  box has was already being taken — the bar costs a row update and no new probe of
+  anything. It is written where it is read from, so the vitals list, the chat line, and the
+  code-mode loading bar cannot report different percentages for one load.
+
+  This replaced a parse of llama-swap's log buffer, which had **no source on this build**:
+  the model loader prints nothing at the default verbosity (measured — see
+  `runbooks/DEBUG_ACCESS.md` on `/llm/upstream-logs`), so every consumer of that parse had
+  only ever received `null`. The denominator is the catalog's projection, which is known to
+  drift from what a model actually pins, so the fraction is clamped — a model that outgrows
+  its estimate reads as arrived rather than as 118%, and one the catalog over-predicts sits
+  short of full, which is honest: the rest is not known.
 - **It rides the stream that is already open** [decided]. The load is a field on the 1 Hz
   vitals frame (`/ops/vitals/stream`), not a poll or a socket of its own. That stream is
   already open on every screen, already foreground-gated, already access-probed, and
   already ticking at exactly the cadence a load indicator wants — so the chat line costs no
   new connection and cannot disagree with the trace beside it about what second it is.
-  Both halves of the answer are read **once per second for the box**, not once per client
-  per surface: a screen with several readers open would otherwise pull the gateway's whole
-  log buffer several times a second during the one minute the box has nothing to spare.
+  The answer is read **once per second for the box**, not once per client per surface: a
+  screen with several readers open would otherwise make a database round trip each, every
+  second, during the one minute the box has nothing to spare.
   Every path that gives up on the gauge — a fatal close, a silent socket, backgrounding —
   drops the load with it, so a line can never sit there naming a load that finished four
   minutes ago.

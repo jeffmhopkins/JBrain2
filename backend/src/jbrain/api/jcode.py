@@ -276,17 +276,25 @@ async def _model_payload(request: Request, owner_id: str) -> dict[str, object]:
     # the up-to-2-min health-gated load). `loaded` alone races true early, so the bar
     # keys off `warming` to stay up for the whole real load.
     warming = _warming_models(request)[served] > 0
-    # The real load fraction (weights actually read in), parsed from the gateway logs —
-    # only worth probing during the load window. None means "no parseable signal"; the bar
-    # falls back to a time estimate. Best-effort: a gateway hiccup must not break status.
+    # The real load fraction (device memory actually committed), off the open box_events
+    # row the load watchdog publishes to — the same number the chat status line and the
+    # vitals list show. Only worth reading during the load window. None means "no
+    # measurement"; the bar falls back to a time estimate. Best-effort: a database hiccup
+    # must not break status.
+    #
+    # This used to parse a percentage out of llama-swap's log buffer, which on this box's
+    # build has no source at all: the loader prints nothing at the default verbosity, so
+    # the parse returned None every time and the bar has only ever shown its time estimate.
     progress: float | None = None
-    if warming and gateway is not None:
-        probe = getattr(gateway, "load_progress", None)
-        if probe is not None:
-            try:
-                progress = await probe()
-            except Exception:  # noqa: BLE001 — a log hiccup just drops to the time estimate
-                progress = None
+    if warming:
+        try:
+            row = await box_events.in_flight(_maker(request), _owner_ctx(owner_id))
+        except Exception:  # noqa: BLE001 — an instrument must not fail the status read
+            row = None
+        # Matched on the served model: the row is box-wide, and a load of something else
+        # entirely must not drive this model's bar.
+        if row is not None and row["subject"] == served:
+            progress = cast("float | None", row["progress"])
     return {
         "model": model_id,
         "served": served,
