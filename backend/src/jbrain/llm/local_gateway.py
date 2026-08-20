@@ -96,6 +96,7 @@ class LocalGatewayClient:
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 3.0,
         gpu_probe: gpu_guard.GpuMemProbe | None = None,
+        config_regen: Callable[[], Awaitable[None]] | None = None,
         windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         slots_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
         models_dir: str = "",
@@ -118,6 +119,23 @@ class LocalGatewayClient:
         # served at `-c 262144` against a 32768 catalog default reserved 20.29 GB for a load
         # that took 36.92 GB. Unset (the tests, the CLI without a settings context) falls back
         # to the catalog default and one slot, which is what an unconfigured box serves.
+        # Re-stamp llama-swap.yaml just before a load, instead of on every settings edit.
+        #
+        # Rewriting that file makes llama-swap reload, and its reload calls `old.Shutdown()`,
+        # which kills EVERY running llama-server — not just the model being edited. Doing it on
+        # the settings PUT therefore charged an unrelated resident model for someone changing a
+        # dropdown, silently: the kill happens inside llama-swap, so nothing writes a
+        # `box_events` row and the vitals surface stays quiet. Diagnosed 2026-08-20 from three
+        # consecutive manual loads of gpt-oss with ZERO unload rows between them.
+        #
+        # Deferring is sound because the PWA only lets a model's flags be edited while it is NOT
+        # resident (`editable = !m.loaded`): at edit time there is no process to update, so the
+        # write buys nothing and costs every other model. The moment it IS needed is the edited
+        # model's next load — which is here.
+        #
+        # Paired with `llama_swap_config.write`'s content compare this is free on the common
+        # path: a load whose config already matches writes nothing and triggers no reload.
+        self._config_regen = config_regen
         self._windows_loader = windows_loader
         self._slots_loader = slots_loader
         # Where the weights live, so a finished load can drop their PAGE-CACHE copy. Same
@@ -520,6 +538,12 @@ class LocalGatewayClient:
                 sweeper.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await sweeper
+
+        # Bring llama-swap.yaml up to date for the model about to load. No-ops when the
+        # rendered config already matches, so this costs nothing unless a setting changed.
+        if self._config_regen is not None:
+            with contextlib.suppress(Exception):  # a stale config must never fail the load
+                await self._config_regen()
 
         # Remember it as OURS before the load runs. `_drop_cache_for_unannounced` skips
         # models in this set because the drop below already covers them, and a load that

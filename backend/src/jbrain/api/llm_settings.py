@@ -18,7 +18,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from jbrain import box_events
+from jbrain import box_events, queue
 from jbrain.agent.agents import AGENTS
 from jbrain.agent.priming import HiddenToolsProbe, jerv_prime_spec
 from jbrain.agent.toolregistry import ToolRegistry
@@ -693,6 +693,25 @@ async def _saved_override_maps(
     )
 
 
+async def regen_gateway_config(settings: Settings, store: SqlSettingsStore) -> None:
+    """Re-stamp llama-swap.yaml from the saved overrides. Called by the gateway client
+    IMMEDIATELY BEFORE A LOAD, not by the settings PUTs that change those overrides.
+
+    Rewriting that file makes llama-swap reload, and its reload calls `old.Shutdown()`, which
+    kills EVERY running llama-server — not only the model being edited. Doing it on the PUT
+    therefore charged an unrelated resident model for someone changing a dropdown, and did it
+    silently: the kill is inside llama-swap, so nothing writes a `box_events` row.
+
+    Safe to defer because the PWA only lets a model's flags be edited while it is NOT resident
+    (`editable = !m.loaded`) — at edit time there is no process to update. `llama_swap_config
+    .write` compares content, so when nothing changed this writes nothing and no reload fires.
+
+    Best-effort by contract: the settings are already persisted, so a failure here only delays
+    the gateway catching up and must never fail the load that called it."""
+    windows, slots, extra, floors = await _saved_override_maps(store, queue.SYSTEM_CTX)
+    _try_regenerate(settings, windows, slots, extra, floors)
+
+
 def _try_regenerate(
     settings: Settings,
     windows: dict[str, int],
@@ -990,9 +1009,7 @@ async def set_local_context_window_value(
     ceiling = model.max_context_window
     if window is not None and not (1 <= window <= ceiling):
         raise HTTPException(status_code=422, detail=f"context window must be 1..{ceiling}")
-    windows = await store.set_llm_local_context_window(ctx, model_id=model_id, window=window)
-    _, slots, extra, floors = await _saved_override_maps(store, ctx)
-    _try_regenerate(settings, windows, slots, extra, floors)
+    await store.set_llm_local_context_window(ctx, model_id=model_id, window=window)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1036,9 +1053,7 @@ async def set_local_image_min_tokens(
     if tokens is not None and not (1 <= tokens <= IMAGE_TOKENS_MAX):
         raise HTTPException(status_code=422, detail=f"image floor must be 1..{IMAGE_TOKENS_MAX}")
     ctx = ctx_for(principal)
-    floors = await store.set_llm_local_image_min_tokens(ctx, model_id=model_id, tokens=tokens)
-    windows, slots, extra, _ = await _saved_override_maps(store, ctx)
-    _try_regenerate(settings, windows, slots, extra, floors)
+    await store.set_llm_local_image_min_tokens(ctx, model_id=model_id, tokens=tokens)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1075,9 +1090,7 @@ async def set_local_parallel_slots(
     if body.slots is not None and not (1 <= body.slots <= PARALLEL_SLOTS_MAX):
         raise HTTPException(status_code=422, detail=f"slots must be 1..{PARALLEL_SLOTS_MAX}")
     ctx = ctx_for(principal)
-    slots = await store.set_llm_local_parallel_slots(ctx, model_id=model_id, slots=body.slots)
-    windows, _, extra, floors = await _saved_override_maps(store, ctx)
-    _try_regenerate(settings, windows, slots, extra, floors)
+    await store.set_llm_local_parallel_slots(ctx, model_id=model_id, slots=body.slots)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -1715,9 +1728,7 @@ async def set_local_extra_args(
     running llama-server cannot change its launch flags any more than it can resize its KV."""
     model = _require_provisioned(settings, model_id)
     validated = _validate_extra_args(args, model)
-    extra = await store.set_llm_local_extra_args(ctx, model_id=model_id, args=validated)
-    windows, slots, _, floors = await _saved_override_maps(store, ctx)
-    _try_regenerate(settings, windows, slots, extra, floors)
+    await store.set_llm_local_extra_args(ctx, model_id=model_id, args=validated)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 

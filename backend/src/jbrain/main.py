@@ -411,6 +411,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             gpu_probe=gpu_probe,
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             slots_loader=lambda: settings_store.llm_local_parallel_slots(SYSTEM_CTX),
+            # Re-stamp the gateway config HERE rather than on every settings edit: rewriting
+            # it makes llama-swap reload, and its reload kills every running model, not just
+            # the edited one. See LocalGatewayClient._config_regen.
+            config_regen=lambda: llm_settings_api.regen_gateway_config(settings, settings_store),
             # Lets a finished load drop the page-cache copy of the weights it just read.
             models_dir=settings.local_models_dir,
         )
