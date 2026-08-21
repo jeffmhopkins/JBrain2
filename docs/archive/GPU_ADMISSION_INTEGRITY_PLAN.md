@@ -1,6 +1,17 @@
 # GPU Admission Integrity — every load the box makes goes past the guard
 
-> **Status:** Proposed · **Last verified:** 2026-08-21 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️
+> **Status:** Superseded · **Last verified:** 2026-08-21 · **Waves:** W0❌ W1❌ W2❌ W3❌ W4❌
+
+> **SUPERSEDED by `LOCAL_ONLY_BOX_PLAN.md`.** Four cold adversarial reviews found W0
+> unbuildable (no per-model memory attribution exists on this box), W1 unsound (its keystone
+> category has no data source, and applying it at `local_gateway.py:762` reintroduces the
+> mid-load-baseline bug #1186 fixed), W4's premise unreachable, and W3 in contradiction with
+> W4. The one thing worth shipping out of it — `unload()` racing llama-swap's 10 s graceful
+> stop on a 3 s client timeout — was found BY the review and has shipped separately.
+>
+> Kept for its evidence and for the record of how it failed: three of its claims were labels,
+> summaries or partial source reads mistaken for evidence. The successor plan carries that
+> lesson as a standing rule rather than an anecdote.
 
 > Reconciled with the root `CLAUDE.md` non-negotiables — no LLM-adapter or storage
 > surface changes (rules 1–2); no wave adds a table, so rule 3's isolation test does
