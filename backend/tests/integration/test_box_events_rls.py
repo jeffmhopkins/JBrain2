@@ -405,6 +405,42 @@ async def test_a_late_sample_cannot_reopen_a_settled_loads_percentage(
     assert loads[0]["progress"] is None
 
 
+async def test_a_lazy_span_settles_when_its_work_ends_not_when_its_block_does(
+    wired: async_sessionmaker,
+) -> None:
+    """MEASURED on the box 2026-08-21: a turn showed "Reading your prompt… 4%" while its
+    reasoning was visibly streaming.
+
+    A prefill ends at the first token; the block that wraps it ends when the whole answer
+    does. Settled only at the exit, the row stays open for the length of the generation and
+    `in_flight` keeps handing it to the status line — so the screen describes a wait that
+    finished a paragraph ago."""
+    owner = await _owner(wired)
+
+    async with box_events.lazy_span(box_events.PREFILL, "qwen3.8-27b") as (publish, finish):
+        await publish(0.4)
+        assert await box_events.in_flight(wired, owner) is not None
+
+        await finish()  # the first token arrives
+        assert await box_events.in_flight(wired, owner) is None, (
+            "the prefill row outlived the prefill"
+        )
+        # The rest of the turn runs on inside the block, and must not reopen it.
+        assert await box_events.in_flight(wired, owner) is None
+
+
+async def test_a_lazy_span_that_is_never_published_to_writes_no_row(
+    wired: async_sessionmaker,
+) -> None:
+    """Most turns answer off a primed prefix. A row apiece — opened, settled, pruned a day
+    later — would bury the handful that explain a real spike."""
+    owner = await _owner(wired)
+    async with box_events.lazy_span(box_events.PREFILL, "qwen3.8-27b"):
+        pass
+    assert await box_events.in_flight(wired, owner) is None
+    assert await box_events.recent(wired, owner, seconds=60) == []
+
+
 async def test_progress_outside_a_span_is_a_no_op(wired: async_sessionmaker) -> None:
     """Same contract as every other write here: narration never raises, and never invents a
     row to attach itself to."""

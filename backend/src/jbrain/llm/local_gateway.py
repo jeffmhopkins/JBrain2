@@ -60,21 +60,21 @@ _SWEEP_POLL_S = 0.25
 _SWEEP_INTERVAL_S = 2.0
 _SWEEP_GROWTH_GB = 1.0
 
-# How the load span's one percentage is split between its two phases, both MEASURED on the box
-# 2026-08-20 from a single cold gpt-oss-120b (span 198.7 s): the weights read ran 0->80 s (span
-# open to `load_cache_swept`, which fires when the health probe returns and the sweeper is
-# cancelled), and the priming warm-up ran 80->198 s. So 60% of the wait was a phase with no
-# signal at all, which is why the bar sat at 0.99 for two minutes and looked stuck.
+# How the load span's one percentage is split between its two phases.
 #
-# A fixed split rather than a per-model one because BOTH phases scale with the model: the read
-# is size/disk-rate, and the warm is the same persona+tools prefix eaten at a rate that falls as
-# the model grows. Their ratio is far more stable than either duration. It is still one
-# measurement of one model — a second model that disagrees should move this number, not be
-# absorbed into a fudge somewhere else.
-_WEIGHTS_SHARE = 0.4
+# The weights read owns nearly all of it, because the warm-up that follows is usually a disk
+# read rather than a prefill. MEASURED on 2026-08-21: `warm_keeper.slot_restored` put a saved
+# 27,787-token KV slot back in ~90 ms, against the 118 s the same prefix took to prefill on a
+# load with no saved slot. So the warm is milliseconds in the normal case and a minute or two
+# in the cold one, and no fixed split can be right for both.
+#
+# An earlier version of this constant was 0.4, derived from the single cold load that happened
+# not to have a saved slot. On every restored load after it the bar climbed to 0.384 and
+# stopped, because phase two never published anything. Weighting it the other way makes the
+# common case nearly right and the rare case merely early — and `_warm` publishes 1.0 when it
+# returns either way (see `_warm`), so neither case ends short of full.
+_WEIGHTS_SHARE = 0.9
 
-# Don't republish a fraction that has barely moved. The sweep polls four times a second because
-# the memory transient needs it to; the row behind the bar does not.
 _PROGRESS_STEP = 0.01
 
 # A catalog entry wrong by this much is worth waking someone for: the two found on
@@ -123,6 +123,9 @@ class LocalGatewayClient:
         # console load, and the residency RESTORE — three of the six call sites). A safety
         # check a caller can decline is not a safety check.
         self._gpu_probe = gpu_probe
+        # One lock per served model, so two callers cannot load the same one at once. See
+        # `load` for what that cost the owner without it.
+        self._load_locks: dict[str, asyncio.Lock] = {}
         # The live per-model context-window and parallel-slot overrides (Settings → LLM), read
         # per load. They live here for the same chokepoint reason as the probe: KV is LINEAR in
         # the window, so a guard that reserves for the catalog default while llama-swap serves
@@ -588,9 +591,42 @@ class LocalGatewayClient:
         screen says "loading gpt-oss-120b…" while it happens rather than accounting for it
         a minute later. Same chokepoint argument as the device-memory guard: every caller
         that can commit GPU memory comes through here, so none of them can forget to say
-        so."""
-        async with box_events.span(box_events.MODEL_LOAD, served_model):
-            await self._load_and_warm(served_model, warm_system=warm_system, warm_tools=warm_tools)
+        so.
+
+        SERIALIZED PER MODEL, because a second load of a model already loading is not a load
+        — it is a duplicate that the memory guard then has to refuse. MEASURED on the box
+        2026-08-21: a load of gpt-oss-120b was 48 s in, holding ~29 GB of the device pool it
+        had already committed, when a deferred workflow retried it. The guard did its job and
+        refused ("needs ~68.5 GB but only 39.5 GB is safely available"), which is correct
+        arithmetic and a false alarm: nothing was wrong, the model was arriving. The owner got
+        a red "failed to load" row for a load that succeeded a minute later, and a red row
+        nobody can act on is how a vitals surface stops being read.
+
+        A caller that queues behind an in-flight load takes ITS result: once the lock frees,
+        the model is resident and there is nothing left to do. If the load it waited for
+        FAILED, the model is not resident and this one proceeds — a genuine retry, which is
+        what the second caller wanted in the first place.
+
+        Per PROCESS, not per box. The api and the worker each hold their own client, so this
+        cannot stop the two of them racing; residency's cross-process advisory lock is the
+        seam for that. Both attempts measured here came through one process, which is the
+        case this closes."""
+        lock = self._load_locks.setdefault(served_model, asyncio.Lock())
+        queued = lock.locked()
+        async with lock:
+            if queued and served_model in await self.running():
+                # The load we waited on brought it in. Recorded rather than silent: an
+                # operator watching a load they asked for deserves to know theirs was already
+                # under way, not that nothing happened.
+                log.info("local_gateway.load_joined", model=served_model)
+                await box_events.record(
+                    box_events.MODEL_LOAD, served_model, detail="already loading — joined it"
+                )
+                return
+            async with box_events.span(box_events.MODEL_LOAD, served_model):
+                await self._load_and_warm(
+                    served_model, warm_system=warm_system, warm_tools=warm_tools
+                )
 
     async def _load_and_warm(
         self,
@@ -742,7 +778,15 @@ class LocalGatewayClient:
         and sat where the weights read left it. `llm.prefill` reads the same `/slots` counter a
         real turn's prefill uses, so the two are one mechanism rather than two that can
         disagree, and the fraction is mapped into `_WEIGHTS_SHARE`..1 so the bar keeps
-        advancing across the phase boundary instead of restarting."""
+        advancing across the phase boundary instead of restarting.
+
+        AND IT PUBLISHES 1.0 ON THE WAY OUT, which is the only part of this that is not an
+        estimate. The prefill fraction is measured against a guess at the token count, and
+        that guess over-predicts here by about a third — the primed prefix is mostly tool
+        schemas, and JSON tokenizes far denser than prose — so the bar used to stop at 0.84
+        and sit there. Worse, a restored slot skips the prefill entirely and published
+        nothing at all. Arriving here means the warm is DONE, however it got done, so the
+        honest reading is full."""
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -785,6 +829,10 @@ class LocalGatewayClient:
                     answered()
         except httpx.HTTPError as exc:
             log.info("local_gateway.warm_skipped", model=served_model, error=str(exc))
+        # Outside the `except`: a warm that FAILED still ends the load's wait, and leaving the
+        # bar short on the way to a model that is nonetheless resident and serving would be a
+        # worse lie than the failure it is reporting.
+        await box_events.progress(1.0)
 
     async def tool_probe(self, served_model: str) -> None:
         """Send one tool-CARRYING completion (1 token, discarded) to verify the build's

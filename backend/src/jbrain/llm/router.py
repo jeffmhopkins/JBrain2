@@ -746,6 +746,7 @@ class LlmRouter:
         client = self._clients[provider]
         await self._admit_local(provider, model)
         final: LlmTurn | None = None
+        first_part = True
         start = time.perf_counter()
         # The gap before the first part is PREFILL — the model eating the prompt, and the
         # longest silence a local turn has. `watch` publishes how far in it is while the gap
@@ -756,7 +757,7 @@ class LlmRouter:
         # The row is opened by the first published fraction, so a turn that answers off a
         # primed prefix — which is most of them — writes nothing at all.
         async with (
-            box_events.lazy_span(box_events.PREFILL, model) as publish,
+            box_events.lazy_span(box_events.PREFILL, model) as (publish, prefill_done),
             prefill.watch(
                 probe,
                 model,
@@ -773,6 +774,12 @@ class LlmRouter:
                 reasoning_effort=reasoning_effort,
                 sampling=resolved_sampling,
             ):
+                if first_part:
+                    first_part = False
+                    # Prefill ended HERE, not when this block does. The row has to be settled
+                    # at the moment the wait it describes is over, or the status line reads
+                    # "Reading your prompt…" for the whole answer (measured on the box).
+                    await prefill_done()
                 streaming()
                 if isinstance(part, LlmTurn):
                     final = part
