@@ -1478,28 +1478,6 @@ async def model_metrics(
     return await llm_settings.gateway_metrics(model_id, settings, _gateway(request))
 
 
-@router.post("/llm/local-models/{model_id}/slots/{slot_id}")
-async def slot_action(
-    model_id: str,
-    slot_id: int,
-    request: Request,
-    settings: SettingsDep,
-    _p: DebugDep,
-    action: str,
-    filename: str | None = None,
-) -> dict[str, object]:
-    """Save / restore / erase one KV slot (`action=save|restore|erase`).
-
-    Read the caveat on `LocalGatewayClient.slot_action` before trusting a 200: on a
-    sliding-window model a restore can succeed and then be discarded, and only the gateway log
-    (`GET /logs/local-llm`) says so. Pair every restore with `POST …/prime` and compare the
-    elapsed time against a known-cold prefill — that is the measurement that settles it."""
-    request.state.debug_detail = f"{model_id} slot {slot_id} {action}"
-    return await llm_settings.gateway_slot_action(
-        model_id, slot_id, action, filename, settings, _gateway(request)
-    )
-
-
 @router.post("/llm/local-models/{model_id}/prime")
 async def prime_model(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep

@@ -84,7 +84,7 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   on an unknown flag, so an unrestricted argv here could make a model permanently unloadable
   from a box with no shell. Clearing is the same call with `{"args": []}` — and clearing does
   not need the model to be loadable, so a bad *value* is always recoverable. The list covers
-  `--swa-full`, `--slot-save-path`, `-b`/`-ub`, the four speculative-decoding knobs
+  `--swa-full`, `-b`/`-ub`, the four speculative-decoding knobs
   (`--spec-type`, `--spec-draft-n-max`, `--spec-draft-n-min`, `--spec-draft-p-min`), the image
   pair (`--image-min-tokens`, `--image-max-tokens`), `--load-mode`/`-lm` (which SUPERSEDES the
   hardcoded `--no-mmap` rather than duplicating it — `auto|none|mmap|mlock|mmap+mlock|dio`, the
@@ -106,8 +106,6 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   re-processing` appear, and without them a checkpoint sweep cannot tell a wrong count from
   nothing ever being restored), **`--checkpoint-min-step`** (default 8192, so a ~24k prompt gets
   only ~3 checkpoints by SPACING however high the count goes) and **`--cache-ram`** (default 8192
-  MiB; unlike a KV-slot file the in-RAM prompt cache preserves checkpoints, so it is the lever
-  that survives eviction).
   **`--cache-ram` costs HOST memory, and the default 8 GiB is now budgeted** as
   `local_catalog.CACHE_RAM_GB` in every model's resident footprint. It was not, on the
   reasoning that it "does not touch the GTT budget" — true of `gpu_guard`, and irrelevant to
@@ -161,8 +159,6 @@ console, instead of needing a catalog edit, a release and an Ops → Update per 
   window pays for it exactly.
 - `GET /api/debug/llm/local-models/{id}/props` — `build_info` (the only build identity available
   over HTTP, and this box rebuilds llama.cpp on master by default), real `n_ctx`, `total_slots`.
-- `POST /api/debug/llm/local-models/{id}/slots/{n}?action=save|restore|erase` — llama-server's
-  KV-slot state files. Requires the model to have been launched with `--slot-save-path`.
 - `POST /api/debug/llm/local-models/{id}/prime` — run the real jerv prime and return
   `elapsed_ms`, the measurement instrument for any prefill experiment.
 

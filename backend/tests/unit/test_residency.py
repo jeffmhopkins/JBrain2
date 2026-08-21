@@ -327,22 +327,22 @@ async def test_plan_load_reports_the_eviction_without_touching_the_box(
 async def test_a_second_slot_doubles_the_kv_in_the_eviction_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A dedicated interactive slot doubles gpt-oss's KV again: 76.55 -> 85.55 resident (59
-    # weights + two slots of full-history KV + the 0.55 runtime term + the 8.0 in-RAM prompt
-    # cache every resident model carries).
+    # A dedicated interactive slot doubles gpt-oss's KV again: 68.55 -> 77.55 resident (59
+    # weights + two slots of full-history KV + the 0.55 runtime term). No prompt-cache term
+    # since the gateway serves `-cram 0`.
     # Sized so the single-slot load fits under the ceiling but the two-slot load does NOT —
     # proving the doubled KV reaches the eviction budget (else the operator's opt-in would
-    # silently overcommit the box). used=17 on a 128 GB box, ceiling 96:
-    # 17+76.55=93.6 fits, 17+85.55=102.6 does not.
+    # silently overcommit the box). used=25 on a 128 GB box, ceiling 96:
+    # 25+68.55=93.6 fits, 25+77.55=102.6 does not.
     async def two_slots() -> dict[str, int]:
         return {"gpt-oss-120b": 2}
 
     gw = FakeLocalGateway(running={"qwen3.5-4b"})  # a tiny model resident, evictable
     # Single slot (default loader): fits, no eviction.
-    fits = await _coord(gw, monkeypatch, total=128.0, used=17.0).plan_load("gpt-oss-120b")
+    fits = await _coord(gw, monkeypatch, total=128.0, used=25.0).plan_load("gpt-oss-120b")
     assert fits is not None and fits.victims == () and fits.fits is True
     # Two slots: the extra 9.0 GB KV tips it over the ceiling → must evict the tiny model.
-    over = await _coord(gw, monkeypatch, total=128.0, used=17.0, slots_loader=two_slots).plan_load(
+    over = await _coord(gw, monkeypatch, total=128.0, used=25.0, slots_loader=two_slots).plan_load(
         "gpt-oss-120b"
     )
     assert over is not None and over.victims == ("qwen3.5-4b",)

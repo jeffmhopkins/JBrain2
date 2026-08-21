@@ -187,57 +187,41 @@ local) resident **and primed**. It primes by issuing a throwaway turn down the *
 real turn takes** — `router.converse("agent.turn", …)` with jerv's persona + tools + the
 resolved effort — so the primed KV prefix is byte-identical to what a real turn sends and the
 reuse actually lands. That call also loads the model on demand through residency, so one prime
-both resides and warms it. **The primed prefix is persisted to disk and restored on a cold start.** llama-server writes
-its KV slot to `--slot-save-path /kv/` (a named `llm_kv` volume, so it survives the container
-being recreated by an update), and the keeper restores it before priming. Measured on this box
-2026-08-17: restore 0.3s, and the prime after it 0.19s, against 69-113s cold — the prefill is
-skipped, not shortened. The prime still runs in both paths ON PURPOSE: a restore that silently
-did nothing degrades to a slow prime, never a wrong answer.
+both resides and warms it.
 
-> **The state file is keyed per model, per prompt, per launch line** —
-> `jerv-<model>-<fingerprint>.bin`, where the fingerprint digests the persona, the tool JSON,
-> llama.cpp's `build_info`, the chat template, the served `-c`/`-np`, and the llama-server flags
-> the model runs with — the catalog's `extra_server_args`, the operator's saved extra args, and
-> the `--swa-full` that `kv_full_history` renders (a derived flag no arg tuple carries), hashed
-> raw and unresolved. The flags are in there because `-c`/`-np` count the KV cells but
-> say nothing about their LAYOUT: when `-ctk/-ctv q8_0` landed on the Qwen3.8 27B family
-> (2026-08-21) no other input moved, so every existing file kept a live-looking name and
-> llama-server rejected the restore with `400 mismatched key type (8 != 1, layer 0)` — a cold
-> ~100 s prefill on the one model the owner waits on. That 400 is llama.cpp's own check and the
-> only one it makes beyond layer count, KV row size and `n_stream`; the state file records no
-> model identity, no `n_ctx` and no `n_swa`, so the NAME is what has to carry validity.
+> **There is no disk KV cache, and there deliberately isn't.** The keeper used to persist the
+> primed slot to `--slot-save-path /kv/` and restore it on a cold start. Removed 2026-08-21,
+> because it never worked on either family this box serves. On a HYBRID (every Qwen3.8 27B
+> entry) the restore path calls `prompt.clear()`, wiping the context checkpoints that are a
+> recurrent model's only prefix-reuse mechanism — inert by construction. On gpt-oss it wrote
+> whatever held the single slot at save time: measured at **2,164 tokens** against a ~36k
+> prefix, because `note.extract`, `entity.disambiguate` and `fact.adjudicate` all route there
+> and evict jerv between the prime and the save. A file named as the prefix that restores 2 KB
+> of unrelated KV is worse than no file — every cold start pays the full prefill anyway and
+> nothing corrects it. Residency plus the prime above are what keep the first message fast.
 >
-> It is **not** keyed by date, with one exception: a
-> template that actually renders a date (harmony puts `Current date:` in gpt-oss's system
-> header) keeps the UTC day in the digest, because for that model the prefix really does change
-> at the container's midnight. Qwen3.8's template contains no date construct — checked against
-> `/props` — so its file now stays put until something real moves. It used to rotate nightly
-> for every model, which rewrote ~2 GB, orphaned the previous file, and made the interactive
-> model pay a ~100 s cold prefill for an unchanged prefix.
+> **The in-RAM prompt cache is off too** (`-cram 0`). llama.cpp defaults `--cache-ram` to
+> 8192 MiB, so every resident model silently reserved 8 GiB of host memory — and on Strix Halo
+> host and device draw on one pool. The goal it lost to is CO-RESIDENCY: gpt-oss-120b and a
+> Qwen3.8 27B held together with no swapping. MEASURED 2026-08-21 against the 124.0 GB GTT cap
+> with the guard holding 6 GB back:
 >
-> **The keeper refuses to save a slot that no longer holds the prefix.** MEASURED 2026-08-21
-> on gpt-oss-120b: the prime landed, and the slot saved a moment later held **2,164 tokens**
-> against a ~36k prefix. That model serves `-np 1` while `note.extract`, `entity.disambiguate`
-> and `fact.adjudicate` all route to it, so jerv shares its single slot with every background
-> task and the prime is evicted between the prime and the save. The file that results is worse
-> than no file: it is *named* as the prefix, so every later cold start restores 2 KB of
-> unrelated KV, pays the full prefill anyway, and keeps doing so until something overwrites it.
-> The keeper now reads `/slots` first and skips the save when the slot has lost the prefix —
-> costing a cold prefill next boot, which is what no file costs. `-np 2` is the standing fix
-> for the collision itself (interactive prefix in the last slot, background traffic in slot 0);
-> it doubles `-c`, so it is a memory decision, not a free one.
+> | | resident | headroom |
+> |---|---|---|
+> | `--cache-ram` at its 8 GiB default | 109.3 GB | 8.7 GB |
+> | `-cram 0` | 93.3 GB | 24.7 GB |
 >
-> **Orphans are reclaimed by the update** (`deploy/prune-kv-state.sh`, run from
-> `update-inner.sh`), which keeps the newest 2 files per model and deletes the rest. The update
-> is where orphans come from — a rebuilt llama.cpp moves `build_info` — and it is the only
-> recurring host-side job that can reach the volume: the api container does not mount `llm_kv`,
-> so nothing inside the app can delete these files. Newest-kept rather than wiped, so an update
-> that did NOT rebuild the gateway leaves the live file in place and the next cold start still
-> restores. Verified against a fake volume: three files per model reduce to two, and a
-> directory, a symlink and any non-`jerv-<model>-<16 hex>.bin` name are left untouched.
+> 8.7 GB is one wrong estimate from the freeze this box has taken three times. The cost is
+> real and accepted: an evicted conversation re-prefills instead of being restored from host
+> RAM. Co-residency is what pays for it — a model that is never swapped out is a model whose
+> slots are not being fought over. `local_catalog.CACHE_RAM_GB` is 0.0 to match, and the flag
+> is off the operator allowlist so it cannot be turned back on without the budget following.
 
-> **`--swa-full` is mandatory here, not tuning.** gpt-oss is an interleaved sliding-window
-> model, and a restore into a windowed cache reports full success and is then discarded — same
+> **`--swa-full` on gpt-oss.** It was introduced as the precondition for a KV-slot restore
+> doing anything on an interleaved sliding-window model; that feature is gone, and the flag
+> stays because full history on those layers is what a long conversation needs. The original
+> measurement, kept because it is what the `kv_full_history` budget doubling is derived from:
+> a restore into a windowed cache reports full success and is then discarded — same
 > token count, same bytes, same 0.3s, and llama-server re-prefills anyway. Measured A/B on the
 > box: **69,373 ms without the flag, 194 ms with it.** The catalog carries it as
 > `kv_full_history=True` on gpt-oss-120b, and the shared `_kv_gb` term doubles that model's KV
@@ -316,7 +300,8 @@ did nothing degrades to a slow prime, never a wrong answer.
 > - **`--cache-reuse` is not merely a no-op on a hybrid — it is a hazard.** Its partial-range
 >   `seq_rm` returns false for recurrent memory, which reaches `GGML_ABORT`, i.e. the server dies.
 >   On an identical prompt the reuse loop never executes, which is why we have not seen it.
-> - **`--slot-save-path` restore cannot deliver prefix reuse on a hybrid.** Restore calls
+> - **A slot restore could never deliver prefix reuse on a hybrid** — one of the reasons the
+>   disk KV cache was removed. Restore calls
 >   `prompt.clear()`, which clears the checkpoints, so a disk-restored slot full-reprocesses its
 >   next request. The KV-slot cache is a gpt-oss win; on a hybrid it loads bytes that buy nothing.
 > - **`--swa-full` is inert here** — llama.cpp auto-disables it when `n_swa == 0`, which holds for
@@ -389,10 +374,15 @@ keeps its warm model), best-effort (a missing weight or down gateway never block
 evicts the affected resident models to reload at the corrected `-c` only when the served config
 actually changed.
 
-**Optional: a dedicated interactive slot (Settings → LLM → On-box models).** A single llama-server
-KV slot holds the primed jerv prefix well enough for ordinary traffic (small background/title
-completions don't evict a large prefix), but a genuinely large, different prompt — a 90k-token
-`note.extract`, a long non-jerv turn — *can* push it out. Each on-box model has an **interactive
+**Recommended on gpt-oss: a dedicated interactive slot (Settings → LLM → On-box models).** This
+used to read "optional", on the reasoning that small background completions don't evict a large
+prefix. MEASURED 2026-08-21, and they do: on a single-slot gpt-oss the primed slot was found
+holding **2,164 tokens** against a ~36k jerv prefix, because `note.extract`,
+`entity.disambiguate` and `fact.adjudicate` all route to that model and take the one slot in
+turn. It mattered less while `--cache-ram` was on, which restored the evicted conversation from
+host RAM; with the prompt cache off (above) an evicted prefix is a re-prefill. The 16 GB the
+cache used to take across a co-resident pair is roughly what a second gpt-oss slot costs, so
+this is the same budget spent on the thing that actually helps. Each on-box model has an **interactive
 slot** toggle beside its context-window picker: turning it on gives that model llama-server
 `-np 2` (two KV slots). llama-server routes each request to the slot with the longest matching
 prefix, so jerv turns keep their primed KV in one slot while title/background traffic uses the

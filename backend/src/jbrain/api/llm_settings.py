@@ -1540,9 +1540,7 @@ async def gateway_unload(
 # REFUSES TO START on an unknown flag, and the flag lands in that model's launch command, so an
 # unrestricted argv would let one API call make a model permanently unloadable — on a box with no
 # terminal to fix it from. Each entry is a flag we have a reason to want to try live:
-#   --swa-full        keep full history on sliding-window layers (a precondition for KV-slot
-#                     restore doing anything on gpt-oss; roughly doubles that model's KV)
-#   --slot-save-path  where llama-server reads/writes KV-slot state files
+#   --swa-full        keep full history on sliding-window layers (roughly doubles gpt-oss's KV)
 #   -b / -ub          logical / physical prompt batch — the prompt-processing throughput knobs
 #   --spec-type            which speculative-decoding mode to serve with (e.g. draft-mtp)
 #   --spec-draft-n-max     how many tokens a draft proposes per round
@@ -1608,8 +1606,13 @@ async def gateway_unload(
 # would need a `--chat-template-file` (a file on the box) to be worth overriding.
 #   -lv                     llama-server log verbosity
 #   --checkpoint-min-step   minimum token spacing between context checkpoints
-#   --cache-ram             MiB of host RAM for the prompt cache that survives slot eviction
-# These three are what the NEXT prefill investigation needs, and none of them were reachable.
+# These are what the NEXT prefill investigation needs, and neither was reachable.
+#
+# `--cache-ram` USED to be here and deliberately is not any more. The gateway now serves
+# `-cram 0` and `local_catalog.CACHE_RAM_GB` is 0.0 to match, so an operator turning the cache
+# back on from the PWA would serve up to 32 GiB of host RAM that the residency budget believes
+# does not exist — under-reserving on the one path this box has hard-locked on. The flag and
+# the budget term are one decision; the allowlist cannot be a second, unbudgeted way to move it.
 #
 # `-lv 4` (trace) is the decisive diagnostic and there is no substitute: whether checkpoints are
 # being created and MATCHED is only visible in llama-server's own `created context checkpoint` /
@@ -1620,14 +1623,12 @@ async def gateway_unload(
 #
 # `--checkpoint-min-step` defaults to 8192, so across a ~24k prompt only ~3 checkpoints are
 # permitted by SPACING no matter how high the count goes — tuning the count alone can be
-# pointless. `--cache-ram` (default 8192 MiB) backs the in-RAM prompt cache, which unlike a
-# KV-slot file preserves checkpoints, so it is the lever that actually survives eviction.
+# pointless.
 #
 # Flags taking a value are allowed to carry one; the value itself is NOT interpreted here.
 EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
     {
         "--swa-full",
-        "--slot-save-path",
         "-b",
         "-ub",
         "--spec-type",
@@ -1643,7 +1644,6 @@ EXTRA_ARG_FLAGS: frozenset[str] = frozenset(
         "--reasoning-format",
         "-lv",
         "--checkpoint-min-step",
-        "--cache-ram",
         # KV cache quantisation. `-fa` is already served unconditionally (the gfx1151
         # stability/perf flag), which is llama.cpp's prerequisite for a quantised cache, so
         # this is reachable on this box today.
@@ -1714,10 +1714,6 @@ _EXTRA_ARG_BOUNDS: dict[str, tuple[int, int]] = {
     # Verbosity is a log-volume knob, not a memory one; 4 is TRC, llama.cpp's most verbose.
     # Bounded so a typo cannot ask for a level that does not exist.
     "-lv": (0, 4),
-    # Host RAM (MiB) for the prompt cache. Bounded at 32 GiB: it is host memory rather than
-    # device memory, so it does not touch the GTT budget, but this box has 128 GB total and an
-    # unbounded value here would be a way to starve everything else from one API call.
-    "--cache-ram": (0, 32768),
     # Token spacing between checkpoints. 0 lets llama.cpp choose; the floor of 64 upstream
     # rejects anything denser, and a very large value silently disables checkpointing.
     "--checkpoint-min-step": (0, 131072),
@@ -1738,8 +1734,8 @@ def _validate_extra_args(
     args: list[str], model: local_catalog.LocalModel | None = None
 ) -> list[str]:
     """Reject anything not on EXTRA_ARG_FLAGS. Values are accepted positionally (a token
-    following a flag that takes one), so `--slot-save-path /tmp/kv/` passes while a bare
-    `/tmp/kv/` or an unknown `--foo` is refused. 422 rather than a silent drop — a caller that
+    following a flag that takes one), so `--cache-reuse 256` passes while a bare
+    `256` or an unknown `--foo` is refused. 422 rather than a silent drop — a caller that
     thinks it set a flag and did not would misread every measurement that follows.
 
     Values are otherwise NOT interpreted — a bad one costs a model that will not load, which is
@@ -1871,26 +1867,6 @@ async def gateway_metrics(
     except LocalGatewayError as exc:
         raise HTTPException(status_code=502, detail=f"gateway metrics failed: {exc}") from exc
     return {"spec": parse_spec_counters(text), "raw": text}
-
-
-async def gateway_slot_action(
-    model_id: str,
-    slot_id: int,
-    action: str,
-    filename: str | None,
-    settings: Settings,
-    gateway: LocalGatewayClient,
-) -> dict[str, object]:
-    """Save / restore / erase one KV slot. 422 on an unknown action so a typo can't read as a
-    no-op success; 502 when llama-server rejects (including the 501 it returns when the server
-    was started without `--slot-save-path`)."""
-    if action not in ("save", "restore", "erase"):
-        raise HTTPException(status_code=422, detail="action must be save, restore or erase")
-    model = _require_provisioned(settings, model_id)
-    try:
-        return await gateway.slot_action(model.served_model, slot_id, action, filename=filename)
-    except LocalGatewayError as exc:
-        raise HTTPException(status_code=502, detail=f"gateway slot {action} failed: {exc}") from exc
 
 
 async def gateway_prime(

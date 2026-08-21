@@ -788,16 +788,6 @@ if [ -n "$LOCAL_LLM_RUNNING" ]; then
   docker compose --profile local-llm up -d local-llm || true
 fi
 
-# Reclaim the primed-prefix KV state orphaned by this update. Each file is ~1-2 GB and
-# NOTHING else reclaims them: the name carries a fingerprint, so a superseded one just stops
-# being read. This update is what orphans them (an llama.cpp rebuild moves `build_info`, and a
-# persona/tool/`-c`/`-np` change moves the rest), and it is the only recurring host-side job
-# that can reach the volume — the api container does not mount `llm_kv`. Keeps the newest per
-# model, so a no-rebuild update leaves the LIVE file in place and the next cold start still
-# restores instead of paying its ~100 s prefill. Best-effort, like the prunes below.
-echo "[update] pruning superseded KV state"
-COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" JBRAIN_UPDATER_IMAGE="$HELPER_IMAGE" \
-  sh src/deploy/prune-kv-state.sh || echo "[update] KV-state prune skipped"
 
 # Reclaim space, but never let a prune hiccup fail the whole update (set -e) after
 # the real work is done — a transient daemon error here once surfaced as a bogus
