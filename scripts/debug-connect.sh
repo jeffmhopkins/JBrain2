@@ -37,7 +37,7 @@
 #   scripts/debug-connect.sh slot <id> 0 save|restore|erase  # llama-server KV-slot state files
 #   scripts/debug-connect.sh metrics                   # host telemetry: GPU busy %, power, load
 #   scripts/debug-connect.sh llm                       # show live routing
-#   scripts/debug-connect.sh llm-set agent.turn local:gpt-oss-120b high
+#   scripts/debug-connect.sh llm-set agent.turn gpt-oss-120b high  # bare id, no 'local:'
 #   scripts/debug-connect.sh load gpt-oss-120b
 #   scripts/debug-connect.sh raw GET /api/debug/whoami
 set -euo pipefail
@@ -86,11 +86,30 @@ _pp() { python3 -c 'import sys,json; d=sys.stdin.read();
 try: print(json.dumps(json.loads(d), indent=2))
 except Exception: sys.stdout.write(d)'; }
 
+# Fails LOUDLY on a non-2xx, and that is not politeness — it is a safety property.
+#
+# This used to print the body and exit 0 whatever the status, so a refusal looked exactly
+# like a success: `llm-set agent.turn local:gpt-oss-120b` returns 422 "unknown provider"
+# (ids are bare, with no `local:` prefix), the routing silently did not change, and the
+# caller went on believing it had. MEASURED cost on 2026-08-21: two loads of a 120B on top
+# of an already-resident model, on a box whose documented failure mode is a reclaim livelock
+# that needs a power cycle. A control call that quietly does nothing is worse than one that
+# errors, because the next step is taken on a false premise.
+#
+# The body still prints — a 422 detail is the most useful thing on screen — and the status
+# goes to stderr with a non-zero exit so `set -e` and any `||` guard actually catch it.
 _call() { # METHOD PATH [JSON_BODY]
   local method="$1" path="$2" body="${3:-}"
-  local args=(-sS -X "$method" -H "Authorization: Bearer $KEY")
+  local args=(-sS -X "$method" -H "Authorization: Bearer $KEY" -w '\n%{http_code}')
   [ -n "$body" ] && args+=(-H "Content-Type: application/json" -d "$body")
-  curl "${args[@]}" "$BASE$path"
+  local out code
+  out="$(curl "${args[@]}" "$BASE$path")" || { echo "$out"; echo "curl failed: $method $path" >&2; return 1; }
+  code="${out##*$'\n'}"       # the -w status on the last line
+  printf '%s' "${out%$'\n'*}" # ...stripped back off the body
+  case "$code" in
+    2*) return 0 ;;
+    *)  echo >&2; echo "HTTP $code from $method $path" >&2; return 1 ;;
+  esac
 }
 
 # Read the prompt/SQL text: remaining args if present, else stdin (for heredocs

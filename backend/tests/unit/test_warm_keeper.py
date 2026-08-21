@@ -7,13 +7,15 @@ or the model is evicted.
 
 import asyncio
 import contextlib
-from collections.abc import Collection, Sequence
+import json
+from collections.abc import Callable, Collection, Sequence
+from pathlib import Path
 from typing import cast
 
 import pytest
 
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.llm import warm_keeper
+from jbrain.llm import llama_swap_config, local_catalog, warm_keeper
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import LlmTool
@@ -23,8 +25,19 @@ _DEFAULT = object()  # "argument not given", distinct from an explicit None
 
 
 class _FakeGateway:
-    def __init__(self, *, running: Collection[str] = (), props: object = _DEFAULT, saved=()):
+    def __init__(
+        self,
+        *,
+        running: Collection[str] = (),
+        props: object = _DEFAULT,
+        saved=(),
+        restore_raises: BaseException | None = None,
+    ):
         self._running = set(running)
+        # llama-server's own validity check: a state file whose per-layer K/V type does not
+        # match the running server is a hard 400, not a silent wrong answer. Modelled so a test
+        # can assert the keeper says WHY a restore missed.
+        self._restore_raises = restore_raises
         # An explicit `props=None` models a gateway that cannot say what it is running —
         # distinct from "not specified", hence the sentinel. No props, no honest fingerprint.
         self._props = (
@@ -36,6 +49,7 @@ class _FakeGateway:
         self.actions: list[tuple[str, str]] = []  # (action, filename)
         self.slots: list[int] = []  # slot index each action targeted
         self.events: list[str] = []  # load/restore/save/prime, in the order they happened
+        self.props_calls = 0  # how many times the slot target was derived
 
     async def running(self) -> set[str]:
         return set(self._running)
@@ -49,6 +63,7 @@ class _FakeGateway:
         self._running.add(served_model)
 
     async def props(self, served_model: str) -> dict:
+        self.props_calls += 1
         if served_model not in self._running:
             raise RuntimeError(f"{served_model} is not resident — refusing to read props")
         if not isinstance(self._props, dict):
@@ -67,6 +82,8 @@ class _FakeGateway:
         total = self._props.get("total_slots", 1) if isinstance(self._props, dict) else 1
         if not 0 <= slot_id < int(total):
             raise RuntimeError(f"invalid slot {slot_id} (server has {total})")
+        if action == "restore" and self._restore_raises is not None:
+            raise self._restore_raises
         if action == "restore" and filename not in self._saved:
             raise RuntimeError("no such state file")
         if action == "save":
@@ -135,6 +152,7 @@ def _keeper(
     liveness: object = None,
     hold: Collection[str] = (),
     auto_restore: bool | BaseException = True,
+    extra_args: dict[str, list[str]] | BaseException | Callable[[], object] | None = None,
 ) -> WarmKeeper:
     async def hold_loader() -> Collection[str]:
         return hold
@@ -144,6 +162,14 @@ def _keeper(
             raise auto_restore
         return auto_restore
 
+    async def extra_args_loader() -> dict[str, list[str]]:
+        if isinstance(extra_args, BaseException):
+            raise extra_args
+        if callable(extra_args):
+            # A per-call source, for the tests that need the SECOND read to behave differently.
+            return cast("dict[str, list[str]]", extra_args())
+        return extra_args or {}
+
     return WarmKeeper(
         gateway=cast(LocalGatewayClient, gateway),
         registry=cast(ToolRegistry, _Registry()),
@@ -151,6 +177,7 @@ def _keeper(
         router=cast(LlmRouter, router),
         hold_loader=hold_loader,
         auto_restore_loader=auto_restore_loader,
+        extra_args_loader=extra_args_loader,
         interval_ready=0.01,
         interval_wait=0.01,
     )
@@ -561,3 +588,256 @@ async def test_a_failed_slot_save_is_swallowed_but_carries_its_reason(
     # ...and which slot it tried, which is what would have made the hardcoded index obvious.
     compact = logged.replace(" ", "")  # spacing differs between renderers too
     assert "slot=1" in compact or '"slot":1' in compact
+
+
+# The state file's name has to move whenever the LAUNCH LINE moves, not just when the prompt
+# does. MEASURED 2026-08-21: `-ctk/-ctv q8_0` landed on the Qwen3.8 27B family and nothing else
+# in the fingerprint's inputs changed with it, so every existing file kept a live-looking name
+# and llama-server answered each restore with `400 mismatched key type (8 != 1, layer 0)`.
+
+
+# `qwen3-vl-30b` is served as `qwen3-vl-30b-a3b`: one of only two catalog entries whose id and
+# served name DIFFER. The override store is keyed by catalog id, so every assertion about the
+# override reaching the digest has to run on a model where the two cannot be confused — on
+# `gpt-oss-120b` (id == served name) a lookup by the wrong key passes the test anyway.
+_VL_ID = "qwen3-vl-30b"
+_VL_SERVED = "qwen3-vl-30b-a3b"
+
+
+async def test_an_operator_extra_arg_moves_the_state_files_name() -> None:
+    """The remote escape hatch is exactly how `-ctk q8_0` gets flipped on this box — the owner
+    has no terminal, so the settings PUT is the way it happens. If the name does not follow, the
+    next restart restores f16 cells into a q8 server and pays the cold prefill instead."""
+    gw = _FakeGateway()
+    assert await _keeper(router=_FakeRouter(_VL_SERVED), gateway=gw).reconcile_once() is True
+    f16_name = gw.actions[-1][1]
+
+    gw2 = _FakeGateway()
+    keeper = _keeper(
+        router=_FakeRouter(_VL_SERVED),
+        gateway=gw2,
+        extra_args={_VL_ID: ["-ctk", "q8_0", "-ctv", "q8_0"]},
+    )
+    assert await keeper.reconcile_once() is True
+    assert gw2.actions[-1][1] != f16_name
+
+
+async def test_an_override_keyed_by_the_served_name_is_not_the_operators_override() -> None:
+    """The lookup key is the subtle part, and it is invisible on the models this suite otherwise
+    uses, where id == served name. Keyed by the served name instead, the owner's `-ctk q8_0` on
+    the VL model would never enter the digest: the file would keep a live-looking name and every
+    restore would 400 — the exact defect this argument exists to prevent, unnoticed."""
+    gw = _FakeGateway()
+    plain = _keeper(router=_FakeRouter(_VL_SERVED), gateway=gw)
+    assert await plain.reconcile_once() is True
+    baseline = gw.actions[-1][1]
+
+    gw2 = _FakeGateway()
+    # Keyed by the SERVED name — not where `llm_local_extra_args` stores it, so it is not this
+    # model's override and must leave the name alone.
+    wrong_key = _keeper(
+        router=_FakeRouter(_VL_SERVED), gateway=gw2, extra_args={_VL_SERVED: ["-ctk", "q8_0"]}
+    )
+    assert await wrong_key.reconcile_once() is True
+    assert gw2.actions[-1][1] == baseline
+
+
+async def test_the_catalog_serving_flags_are_part_of_the_launch_line() -> None:
+    """Not only the operator's half. The q8 switch that prompted all this shipped in the CATALOG
+    (`local_catalog`, three Qwen3.8 27B entries), so a digest that saw only the saved overrides
+    would have been blind to the very change it exists to catch."""
+    keeper = _keeper(router=_FakeRouter("qwen3.8-27b-q4"), gateway=_FakeGateway())
+    args = await keeper._server_args("qwen3.8-27b-q4")
+    assert args is not None
+    assert "-ctk" in args and args[args.index("-ctk") + 1] == "q8_0"
+
+
+async def test_an_override_store_that_has_never_been_read_skips_the_slot_cache() -> None:
+    """A PARTIAL launch line is the one answer that does damage. It yields a name that differs
+    from the working path's, so the restore misses AND the save then writes ~2 GB under the
+    wrong name — on a volume only the deploy prunes, to be missed again next boot. Skipping
+    entirely leaves nothing behind, which is how the props failure already fails.
+
+    It is not free, though, and the cost is bigger than one prime: `reconcile_once` records the
+    prime BEFORE it saves, so the next tick short-circuits and the save is never retried. Hence
+    the memo in the test below — this bare-skip path is only for a store that has never once
+    answered."""
+    gw = _FakeGateway()
+    r = _FakeRouter("gpt-oss-120b")
+    keeper = _keeper(router=r, gateway=gw, extra_args=RuntimeError("settings read failed"))
+    assert await keeper.reconcile_once() is True
+    assert gw.actions == []  # neither restored nor saved
+    assert len(r.converses) == 1  # but still primed, the normal cold path
+
+
+async def test_a_later_store_hiccup_reuses_the_last_good_overrides_and_still_saves() -> None:
+    """One transient DB read must not cost the disk cache for the life of the process. It would:
+    the keeper marks itself primed before saving, so a skipped save is never retried while the
+    model stays resident — and this box deliberately keeps it resident. Stale-but-stable names
+    one real launch line, and the prime after a restore is what proves the bytes were useful."""
+    calls = 0
+
+    def flaky() -> dict[str, list[str]]:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise RuntimeError("settings read failed")
+        return {_VL_ID: ["-ctk", "q8_0"]}
+
+    gw = _FakeGateway()
+    keeper = _keeper(router=_FakeRouter(_VL_SERVED), gateway=gw, extra_args=flaky)
+    assert await keeper.reconcile_once() is True
+    assert gw.actions and [a for a, _ in gw.actions] == ["restore", "save"]
+    good = await keeper._server_args(_VL_SERVED)  # the read that worked
+
+    # Every read from here on fails. The launch line must still resolve, still carry the
+    # operator's flag, and be IDENTICAL — a different answer is the ~2 GB mislabelled file
+    # this argument exists to prevent, and no answer costs the disk cache until a reboot.
+    assert calls > 1
+    stale = await keeper._server_args(_VL_SERVED)
+    assert stale == good and stale is not None and "-ctk" in stale
+
+    # A keeper whose FIRST read fails has nothing to reuse, so it skips rather than guessing.
+    fresh = _keeper(
+        router=_FakeRouter(_VL_SERVED),
+        gateway=_FakeGateway(),
+        extra_args=RuntimeError("settings read failed"),
+    )
+    assert await fresh._server_args(_VL_SERVED) is None
+
+
+async def test_the_slot_target_is_derived_once_per_reconcile() -> None:
+    """Restore and save used to derive it independently, with the 70-110 s prime in between. A
+    settings PUT writes the override store BEFORE its best-effort unload, so a flag flipped from
+    the PWA mid-prime made the save file the RUNNING server's KV under the NEXT launch line's
+    name. `-ctk` is caught on the way back in; `--swa-full` is not, and the wasted restore then
+    looks like a hit."""
+    gw = _FakeGateway()
+    assert await _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw).reconcile_once() is True
+    assert gw.actions and [a for a, _ in gw.actions] == ["restore", "save"]
+    assert gw.props_calls == 1, "the launch line was read twice, either side of the prime"
+
+
+async def test_swa_full_is_part_of_the_launch_line_even_though_no_arg_carries_it() -> None:
+    """`--swa-full` is rendered from the catalog's `kv_full_history`, not from
+    `extra_server_args`, so a digest that read only the arg tuples would miss it. It is the
+    flag with the worst failure mode on this box: llama.cpp does not validate `n_swa`, so a
+    mismatched restore reports full success and is then discarded — measured 69,373 ms against
+    194 ms. Blind to it, the keeper would count a wasted restore as a hit and skip the save."""
+    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=_FakeGateway())
+    assert "--swa-full" in (await keeper._server_args("gpt-oss-120b") or ())
+    # And absent where the catalog does not ask for it, or it would be noise in every name.
+    assert "--swa-full" not in (await keeper._server_args("qwen3.8-27b-q4") or ())
+
+
+async def test_a_missed_restore_says_why() -> None:
+    """`400 mismatched key type` and "no file yet on a fresh box" are the same silence at this
+    call site, and they call for opposite reactions: the first says the fingerprint failed to
+    rotate and EVERY restore from here on pays the cold prefill. The swallow stays — a miss is
+    not an error — but the reason has to reach the log."""
+    import structlog.testing
+
+    gw = _FakeGateway(
+        restore_raises=RuntimeError("HTTP 400: mismatched key type (8 != 1, layer 0)")
+    )
+    with structlog.testing.capture_logs() as logs:
+        assert await _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw).reconcile_once()
+    missed = [e for e in logs if e.get("event") == "warm_keeper.slot_restore_missed"]
+    assert missed, "a rejected restore left no trace"
+    assert "mismatched key type" in missed[0]["error"]
+
+
+async def test_an_uncatalogued_served_model_gets_no_slot_cache_rather_than_a_blind_name() -> None:
+    """Nothing outside the catalog is routed today, but the fail-safe direction still matters:
+    for a served name we cannot look up we can see NONE of the launch line — the maximally
+    partial answer — so the name would be keyed on a digest blind to how the thing is served."""
+    keeper = _keeper(router=_FakeRouter("something-the-operator-runs"), gateway=_FakeGateway())
+    assert await keeper._server_args("something-the-operator-runs") is None
+
+
+# The digest reassembles a SUBSET of what `llama_swap_config.render` actually puts on the command
+# line, and that subset is hand-maintained. `--swa-full` is why this test exists: it is rendered
+# from the catalog's `kv_full_history` rather than from `extra_server_args`, so the first version
+# of the fingerprint could not see it — the same shape of bug as the `-ctk` one it was written to
+# fix. This walks the REAL renderer's output and forces every flag to be accounted for, so the
+# next derived flag added to `render` fails here instead of silently leaving stale files valid.
+
+# Covered by the digest, but through `/props` rather than through `_server_args`.
+_VIA_PROPS = {"-c", "-np"}
+
+# KNOWINGLY outside the digest. Each entry needs a reason it cannot invalidate a state file.
+_DIGEST_BLIND = {
+    # Constant for every model on every box — they cannot drift without a code change that
+    # also moves `build_info` or the catalog, and neither changes the KV cells' layout.
+    "--host",
+    "--port",
+    "-ngl",
+    "-fa",
+    "-ub",
+    "--jinja",
+    "--no-warmup",
+    "--metrics",
+    "--slots",  # expose endpoints; the slots one is what the keeper itself calls
+    "--no-mmap",  # how the weights are read off disk, not what the KV holds
+    "--slot-save-path",  # where the file goes, not what is in it
+    "--cache-reuse",  # prefix-reuse threshold; does not change a stored cell
+    "--ctx-checkpoints",
+    "--checkpoint-min-step",  # checkpoint COUNT, not cell layout
+    "--reasoning-format",  # output channel parsing, downstream of the KV entirely
+    "--mmproj",  # the vision projector: not in the text KV a jerv prime writes
+    # Operator-settable (llm_local_image_min_tokens) and so the one real gap here, but it is a
+    # vision-token floor: it moves image prompts, never the persona+tools prefix this file holds.
+    "--image-min-tokens",
+    # The weights. THE known hole: a vendor re-quant under the same catalog id keeps the served
+    # name, layer count and KV row size, so an old file restores cleanly and every turn then runs
+    # on KV computed from different weights — wrong, not merely slow. Tracked separately; adding
+    # the file's size/mtime to the digest is what closes it.
+    "-m",
+}
+
+
+def _rendered_flags(root: Path, model_id: str, **kw: object) -> set[str]:
+    """Every flag token `render` emits for one real catalog model."""
+    manifest = json.loads(local_catalog._manifest([model_id]))
+    entry = manifest[0]
+    (root / model_id).mkdir()
+    (root / model_id / "model-Q8_0.gguf").write_bytes(b"\0")
+    if entry.get("mmproj_include"):
+        (root / model_id / "mmproj-f16.gguf").write_bytes(b"\0")
+    entry["gguf_include"] = "*.gguf"
+    entry["mmproj_include"] = "mmproj*.gguf" if entry.get("mmproj_include") else None
+    text = llama_swap_config.render([entry], str(root), **kw)  # type: ignore[arg-type]
+    cmd = next(ln for ln in text.splitlines() if ln.startswith("      ")).split()
+    return {t for t in cmd if t.startswith("-")}
+
+
+@pytest.mark.parametrize("model_id", ["gpt-oss-120b", "qwen3.8-27b-q4", "qwen3-vl-30b"])
+async def test_every_rendered_flag_is_either_in_the_digest_or_knowingly_out_of_it(
+    tmp_path: Path, model_id: str
+) -> None:
+    """Three models chosen to span the derived flags: gpt-oss carries `--swa-full`, the 27B
+    carries `-ctk/-ctv` and `--spec-type`, the VL model carries `--mmproj` and an id that
+    differs from its served name."""
+    model = local_catalog.get(model_id)
+    assert model is not None
+    seen = _rendered_flags(tmp_path, model_id)
+    keeper = _keeper(router=_FakeRouter(model.served_model), gateway=_FakeGateway())
+    digested = set(await keeper._server_args(model.served_model) or ())
+
+    unaccounted = seen - digested - _VIA_PROPS - _DIGEST_BLIND
+    assert not unaccounted, (
+        f"{sorted(unaccounted)} reach llama-server for {model_id} but nothing in the state "
+        "file's name moves when they do. Add them to WarmKeeper._server_args, or to "
+        "_DIGEST_BLIND with a reason they cannot invalidate a saved KV slot."
+    )
+
+
+async def test_the_tripwire_would_actually_fire(tmp_path: Path) -> None:
+    """The test above passes trivially if the flag set it reads is empty or the blind list
+    swallows everything. Pin both: the renderer really does emit `--swa-full` for gpt-oss, and
+    it really is the digest — not the blind list — that accounts for it."""
+    seen = _rendered_flags(tmp_path, "gpt-oss-120b")
+    assert "--swa-full" in seen
+    assert "--swa-full" not in _VIA_PROPS | _DIGEST_BLIND
+    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=_FakeGateway())
+    assert "--swa-full" in (await keeper._server_args("gpt-oss-120b") or ())

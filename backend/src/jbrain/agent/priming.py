@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -91,11 +91,18 @@ async def jerv_prime_spec(
 
 
 # The KV-slot state file carries NO model identity — llama.cpp validates layer count, KV row
-# size and `n_stream`, and nothing else. A file written by a different build, quant or prompt
-# therefore restores cleanly and is wrong, so the CALLER owns validity. We put the fingerprint
-# in the FILENAME rather than a sidecar: a changed input yields a different name, the restore
-# simply misses, and the keeper falls through to a normal prefill. Self-invalidating, with no
-# metadata file to drift from the bytes it describes.
+# size, `n_stream` and the per-layer K/V TYPE, and nothing else. It does not record which model,
+# `n_ctx` or `n_swa` wrote it. So a file written by a different build, quant or prompt restores
+# cleanly and is wrong, and the CALLER owns validity. We put the fingerprint in the FILENAME
+# rather than a sidecar: a changed input yields a different name, the restore simply misses, and
+# the keeper falls through to a normal prefill. Self-invalidating, with no metadata file to
+# drift from the bytes it describes.
+#
+# The type check is the ONE input llama.cpp catches itself, and it is loud — restoring an f16
+# file into a `-ctk q8_0` server is `HTTP 400 mismatched key type (8 != 1, layer 0)`, not a
+# silent wrong answer. That is a backstop, not the mechanism: it fires only for the cache type,
+# only after the name has already matched, and it still costs the cold prefill it was supposed
+# to avoid. The name is what has to move.
 # Chat-template constructs that render a date into the prompt. A template containing any of
 # these makes the prefix change at UTC midnight even though nothing we control changed, so the
 # date has to enter the fingerprint; a template containing none of them does not.
@@ -125,6 +132,7 @@ def jerv_prime_fingerprint(
     chat_template: str,
     n_ctx: object,
     n_slots: object,
+    server_args: Sequence[str],
     today_utc: str,
 ) -> str:
     """A short digest of everything that changes the bytes llama-server would prefill.
@@ -144,16 +152,31 @@ def jerv_prime_fingerprint(
     prefix that had not changed. So the key is now per model per prompt: it moves when the
     persona, the tools, the build, the template or the served shape moves, and otherwise stays
     put.
+
+    `server_args` are the llama-server flags the model is launched with — the catalog's
+    `extra_server_args` plus whatever the operator has saved through the extra-args escape
+    hatch. They enter the digest because `n_ctx`/`n_slots` do NOT cover the flags that decide
+    the CELLS' layout rather than their count: MEASURED 2026-08-21, adding `-ctk q8_0 -ctv q8_0`
+    to the Qwen3.8 27B family left every existing state file with a name this function still
+    considered live, so each next restore hit `400 mismatched key type` and paid the cold
+    prefill anyway. Hashed RAW, unresolved — `llama_swap_config` later drops overridden and
+    speculative flags, and reproducing that here would be a second implementation free to drift
+    from the first. This is a change detector, not a reproduction, and over-rotating costs one
+    prefill while under-rotating costs a restore that is silently wrong.
     """
     payload = json.dumps(
         {
-            "v": 2,  # bump when the SET of inputs changes, else old names look valid to new code
+            # Tracks the SET of inputs. Redundant when a key is ADDED (the payload already
+            # differs), load-bearing when one is removed or its meaning changes — without it an
+            # old name would look valid to new code and restore state that no longer matches.
+            "v": 3,
             "system": system,
             "tools": tools,
             "build": build_info,
             "template": chat_template,
             "n_ctx": n_ctx,
             "n_slots": n_slots,
+            "args": list(server_args),
             "date": today_utc if template_renders_date(chat_template) else None,
         },
         sort_keys=True,

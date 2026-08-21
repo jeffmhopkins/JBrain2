@@ -115,6 +115,7 @@ _FP = {
     "build_info": "b1234-abcdef",
     "n_ctx": 262144,
     "n_slots": 1,
+    "server_args": ("-fa", "1"),
 }
 
 # A date-free template, like the Qwen3.8 hybrid's (checked against the live gateway's /props:
@@ -172,6 +173,59 @@ def test_everything_that_really_changes_the_prefix_still_moves_the_fingerprint()
     assert fp(chat_template=_DATELESS + " ") != baseline  # template edit
     assert fp(n_ctx=32768) != baseline  # served -c changed
     assert fp(n_slots=2) != baseline  # served -np changed
+    assert fp(server_args=("-fa", "1", "-ctk", "q8_0")) != baseline  # the KV cells changed shape
+
+
+def test_quantising_the_kv_cache_moves_the_fingerprint() -> None:
+    """The regression this argument was added for. MEASURED 2026-08-21: `-ctk/-ctv q8_0` landed
+    on the Qwen3.8 27B family and NONE of the other inputs moved with it — same build, same
+    persona, same template, same `-c`, same `-np`. So every state file kept a name the keeper
+    still considered live, and llama-server answered the restore with `400 mismatched key type
+    (8 != 1, layer 0)`: a cold ~100 s prefill on the one model the owner waits on, every restart.
+
+    Asserted on the FLAGS alone, holding everything else fixed, because that is exactly the
+    combination the real change presented and the only one the old digest was blind to."""
+    fixed = dict(
+        system="persona",
+        tools=[{"name": "t"}],
+        build_info="b1234-abcdef",
+        chat_template=_DATELESS,
+        n_ctx=262144,
+        n_slots=1,
+        today_utc="2026-08-19",
+    )
+    f16 = jerv_prime_fingerprint(server_args=("-fa", "1"), **fixed)  # type: ignore[arg-type]
+    q8 = jerv_prime_fingerprint(
+        server_args=("-fa", "1", "-ctk", "q8_0", "-ctv", "q8_0"),
+        **fixed,  # type: ignore[arg-type]
+    )
+    assert f16 != q8
+
+
+def test_the_flags_are_hashed_in_order_and_unresolved() -> None:
+    """Hashed RAW: the same flags in a different order are a different launch line as far as
+    this digest is concerned, and that is deliberate. `llama_swap_config` drops overridden and
+    speculative flags before it stamps the config, and re-deriving that here would be a second
+    implementation of the resolution rules, free to drift from the first. Over-rotating costs
+    one prefill; under-rotating restores state the server will reject or, worse, accept."""
+    fixed = dict(
+        system="persona",
+        tools=[{"name": "t"}],
+        build_info="b1234-abcdef",
+        chat_template=_DATELESS,
+        n_ctx=262144,
+        n_slots=1,
+        today_utc="2026-08-19",
+    )
+    a = jerv_prime_fingerprint(server_args=("-fa", "1", "--swa-full"), **fixed)  # type: ignore[arg-type]
+    b = jerv_prime_fingerprint(server_args=("--swa-full", "-fa", "1"), **fixed)  # type: ignore[arg-type]
+    assert a != b
+    # A list and a tuple of the same flags are the same launch line, though — the callers'
+    # container type is an implementation detail and must not rotate a ~2 GB file.
+    assert jerv_prime_fingerprint(server_args=["-fa", "1"], **fixed) == jerv_prime_fingerprint(  # type: ignore[arg-type]
+        server_args=("-fa", "1"),
+        **fixed,  # type: ignore[arg-type]
+    )
 
 
 def test_an_unreadable_template_keeps_rotating() -> None:
