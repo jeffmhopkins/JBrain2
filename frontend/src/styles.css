@@ -23495,6 +23495,16 @@ button.task-band:active {
   font-size: var(--fs-note);
 }
 
+/* The load/prefill fraction. `flex: none` so it is never the thing that gives way when a
+   long model name competes for the row — losing the percentage to an ellipsis is what this
+   element exists to stop. Tabular figures so a ticking number does not jitter the row. */
+.vr-pct {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
 .vr-name .kind {
   flex: none;
   font-size: var(--fs-micro);

@@ -498,6 +498,14 @@ _LOAD_PROBE_TTL_S = 1.0
 # frame spacing comfortably inside the watchdog.
 _LOAD_PROBE_BUDGET_S = 2.0
 
+# How long the last good answer may stand in for a read that did not land. Bounded because a
+# held answer is a claim about the present made from the past: a load that ended during the
+# stall would keep the bar up for this long. Comfortably longer than a stall worth riding out
+# and far shorter than any real load (the cold 120B measured at 198 s), so the worst case is
+# a few seconds of a bar that has just finished — against the alternative, which is asserting
+# that the load the box is visibly performing is not happening.
+_LOAD_PROBE_HOLD_S = 6.0
+
 
 class _LoadProbe:
     """One box-wide answer to "is a model loading, and how far in", shared by every surface
@@ -513,14 +521,27 @@ class _LoadProbe:
     Single-flight, not merely cached: without the lock, N frames landing together on an
     expired entry all miss and all go to the box — the stampede the cache exists to stop.
 
-    Best-effort in the same sense as the narration it reads: any failure reports "nothing
-    loading" rather than raising, because this drives an instrument, and an instrument that
-    takes the screen down with it when the box is busy is worse than one that goes quiet."""
+    Best-effort in the same sense as the narration it reads: it never raises, because this
+    drives an instrument, and an instrument that takes the screen down with it when the box
+    is busy is worse than one that goes quiet.
+
+    A READ THAT DID NOT LAND IS NOT AN ANSWER, which is the distinction this class used to
+    lose. A timeout was stamped exactly like a successful "nothing is loading", so a slow
+    read did not report ignorance — it asserted a fact, and cached it. That is the wrong way
+    round for this particular reading: what makes the read slow is contention, the only time
+    there is anything to report is during a load, and a load IS the contention. The instrument
+    was built to fall silent precisely when it has something to say. So a failed read now
+    holds the last good answer for `_LOAD_PROBE_HOLD_S` and only then gives up — "we could not
+    look just now" reads far closer to the truth than "nothing is happening"."""
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._read_at: float | None = None
         self._value: dict[str, object] | None = None
+        # When the last SUCCESSFUL read landed, which is what the hold is measured against.
+        # Separate from `_read_at` (which paces attempts) so a run of failures cannot keep
+        # renewing the hold on an answer that is getting older every second.
+        self._value_at: float | None = None
 
     def _fresh(self, now: float) -> bool:
         return self._read_at is not None and now - self._read_at < _LOAD_PROBE_TTL_S
@@ -535,20 +556,28 @@ class _LoadProbe:
             now = asyncio.get_running_loop().time()
             if self._fresh(now):
                 return self._value
-            self._value = await self._bounded(request)
-            self._read_at = asyncio.get_running_loop().time()
+            landed, value = await self._bounded(request)
+            after = asyncio.get_running_loop().time()
+            if landed:
+                self._value, self._value_at = value, after
+            elif self._value_at is None or after - self._value_at >= _LOAD_PROBE_HOLD_S:
+                # Held long enough. Past here the last answer is too old to keep repeating,
+                # so we go quiet rather than keep asserting it.
+                self._value, self._value_at = None, None
+            # Stamped either way: the next frame must not be sent straight back into the
+            # same stall. The whole tick is what has to stay cheap, not each attempt.
+            self._read_at = after
         return self._value
 
-    async def _bounded(self, request: Request) -> dict[str, object] | None:
-        """The read, inside its budget. A timeout is stamped like any other answer so the
-        next frame is not sent straight back into the same stall — the whole tick is what
-        must stay cheap, not each attempt."""
+    async def _bounded(self, request: Request) -> tuple[bool, dict[str, object] | None]:
+        """The read, inside its budget. Returns whether it LANDED alongside its result, so
+        the caller can tell "nothing is loading" from "we could not find out"."""
         try:
             async with asyncio.timeout(_LOAD_PROBE_BUDGET_S):
-                return await _read_load_in_flight(request)
+                return True, await _read_load_in_flight(request)
         except TimeoutError:
             log.info("ops.load_in_flight_slow", budget_s=_LOAD_PROBE_BUDGET_S)
-            return None
+            return False, None
 
 
 async def _load_in_flight(request: Request) -> dict[str, object] | None:
@@ -591,7 +620,17 @@ async def _read_load_in_flight(request: Request) -> dict[str, object] | None:
     try:
         row = await box_events.in_flight(maker, _BOX_CTX)
     except Exception as exc:  # noqa: BLE001 — an instrument must not fail the surface
-        log.info("ops.load_in_flight_unavailable", error=str(exc))
+        # The exception CLASS and a traceback, not just `str(exc)`: several asyncpg and
+        # SQLAlchemy interface errors stringify to nothing at all, so this line — the one
+        # thing that would name a status line gone quiet — could log `error=""` and settle
+        # nothing. Warning rather than info for the same reason: a read that raises is not
+        # routine, and a search for why the bar vanished should find it.
+        log.warning(
+            "ops.load_in_flight_unavailable",
+            error=str(exc) or repr(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
         return None
     if row is None:
         return None

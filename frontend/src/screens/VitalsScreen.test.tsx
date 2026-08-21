@@ -470,14 +470,20 @@ describe("what the box was doing", () => {
     expect(await screen.findByText("loading gpt-oss-120b…")).toBeInTheDocument();
   });
 
-  it("says how far in a running load is", async () => {
+  it("says how far in a running load is, where a long name cannot clip it", async () => {
     // The elapsed count beside the row answers "how long has this been going". Only the
     // fraction answers "how much longer" — which on a load that reads tens of GB is the
     // question actually being asked while the trace above it sits pinned.
+    //
+    // OUTSIDE the label on purpose. It used to be appended to it, and the label truncates
+    // with an ellipsis — so on a phone the percentage was the part that got cut off, which
+    // is what the owner reported seeing (a row reading "loading gpt-oss-120b…" with the
+    // figure clipped) while the box's own record held 12%.
     opsVitalsEvents.mockResolvedValue([event({ percent: 0.43 })]);
     render(<VitalsScreen selectedTurnId={null} onSelectTurn={vi.fn()} />);
 
-    expect(await screen.findByText("loading gpt-oss-120b… 43%")).toBeInTheDocument();
+    expect(await screen.findByText("loading gpt-oss-120b…")).toBeInTheDocument();
+    expect(screen.getByText("43%")).toBeInTheDocument();
   });
 
   it("shows a load with no parseable fraction without inventing one", async () => {

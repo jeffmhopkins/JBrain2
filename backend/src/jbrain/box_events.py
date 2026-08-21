@@ -175,8 +175,15 @@ _SETTLE = """
 # Guarded on `ended_at IS NULL` so a sample that lands after the row settled cannot reopen
 # a finished load's percentage. The watchdog takes a final sample once the load returns,
 # which races the settle by construction.
+# `GREATEST` is the monotonic clamp, done in SQL rather than in the writer because the two
+# publishers are in different frames (the sweep, then the warm-up's prefill) and a load can be
+# narrated from either half of the box. MEASURED on 2026-08-20: one span published 0.841, then
+# 0.434 nine seconds later — the load's own priming prefill finishes and `warm_keeper` starts a
+# second one, so llama-server's per-task token counter restarts and the second prefill reads
+# far below where the first ended. A bar that walks backwards is wrong whatever caused it, and
+# the row is the one place both publishers meet.
 _PROGRESS = """
-    UPDATE app.box_events SET progress = :progress
+    UPDATE app.box_events SET progress = GREATEST(COALESCE(progress, 0), :progress)
     WHERE id = :id AND ended_at IS NULL
 """
 
@@ -276,12 +283,12 @@ async def progress(fraction: float) -> None:
     of anything. Outside a span (or before one has opened) it is a no-op, like every other
     write here.
 
-    Clamped rather than validated: the denominator is the CATALOG's projection of the load's
-    footprint, and the whole reason `_record_measured_footprint` exists is that the
-    projection drifts from what a model actually pins. A model that outgrows its estimate
-    would otherwise report 118%, and one the catalog over-predicts would stall at 80% and
-    then jump to done. Clamping makes the first read as arrival and leaves the second
-    honest — the bar can sit short of full, which is true: we do not know the rest."""
+    Clamped to 0..1 rather than validated, because both denominators are estimates: the
+    catalog's weight size for the read, and a token estimate for the prefill. One that runs
+    ahead reads as arrival; one that runs behind leaves the bar short of full, which is
+    honest — we do not know the rest.
+
+    Clamped MONOTONICALLY too, in the SQL above: a fraction never goes down within a span."""
     row = _open_row.get()
     if row is None:
         return

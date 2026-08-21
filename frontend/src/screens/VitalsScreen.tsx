@@ -332,6 +332,11 @@ function EventRow({ event }: { event: BoxEvent }) {
       </span>
       {event.detail !== "" && <span className="vr-meta">{event.detail}</span>}
       <span className="vr-right">
+        {/* Never on a settled row: "loaded gpt-oss-120b 100%" would put a progress figure
+            on a row whose whole point is that it is over. */}
+        {running && event.percent != null && (
+          <span className="vr-pct">{Math.round(event.percent * 100)}%</span>
+        )}
         <Elapsed sinceMs={took} ticking={running} />
         <span className="vr-tok">{ago(event.at_ms)}</span>
       </span>
@@ -350,12 +355,11 @@ function eventDot(event: BoxEvent): string {
 /** One event as a sentence. Present tense while it is happening — "loading gpt-oss-120b…"
  *  is the line the owner needs during the spike, and it has to read as NOW.
  *
- *  A running load carries how far in it is when the box can say: the elapsed count beside
- *  it answers "how long has this been going", and only the fraction answers "how much
- *  longer" — which on a load that reads tens of GB is the question actually being asked.
- *  Null when the gateway build prints nothing parseable, and never shown on a settled row:
- *  "loaded gpt-oss-120b 100%" would put a progress figure on a row whose point is that it
- *  is over. */
+ *  The fraction is deliberately NOT in here. It used to be appended to this string, which
+ *  this row truncates with an ellipsis (`.vr-name .n`) — so on a phone "loading
+ *  gpt-oss-120b… 12%" clipped to "loading gpt-oss-120b…" and the one number worth reading
+ *  was the one that got cut. It is its own element beside the elapsed count now, which
+ *  cannot be clipped by a long model name. */
 function eventLabel(event: BoxEvent): string {
   const running = event.ended_ms === null && event.status === "running";
   const failed = event.status === "failed";
@@ -369,8 +373,13 @@ function eventLabel(event: BoxEvent): string {
   if (event.kind === "model_load") {
     if (failed) return `${event.subject} failed to load`;
     if (!running) return `loaded ${event.subject}`;
-    const pct = event.percent == null ? "" : ` ${Math.round(event.percent * 100)}%`;
-    return `loading ${event.subject}…${pct}`;
+    return `loading ${event.subject}…`;
+  }
+  if (event.kind === "prefill") {
+    // A turn eating a long prompt. Named by the work, not the model: the weights are
+    // already on the box by now, so the model's name explains nothing about the wait.
+    if (!running) return "read the prompt";
+    return "reading the prompt…";
   }
   if (event.kind === "model_unload") {
     return failed ? `could not unload ${event.subject}` : `unloaded ${event.subject}`;

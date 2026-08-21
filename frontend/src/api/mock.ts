@@ -4173,13 +4173,39 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   if (path === "/api/ops/llm-usage") return json(LLM_USAGE);
 
+  // A mock load starts with the session and runs for this long, so the status line above the
+  // omnibox can be driven — appearing, advancing, then clearing — without a live box mid-load.
+  const MOCK_LOAD_STARTED = Date.now();
+  const MOCK_LOAD_RUNS_FOR_MS = 90_000;
+
   // The top bar's vitals probe. Its 1 Hz stream is an EventSource, which this fetch
   // shim cannot serve — like the log stream, live host telemetry is out of mock
   // scope — so the chart seeds from this reading, then drops to "no gauge" when the
   // stream fails. Answered anyway because an unanswered probe is not a rejection:
   // the meter would re-probe every 30s for the life of the mock session.
   if (path === "/api/ops/vitals") {
-    return json({ gpu_busy_percent: 64 });
+    // Carries `loading` because the status line above the omnibox reads it from HERE in
+    // mock mode: the 1 Hz stream is an EventSource this shim cannot serve, so the probe is
+    // the only frame the line will ever see. Without it that indicator could not be worked
+    // on — or checked — without a live box mid-load, which is a long way to go to look at a
+    // line of text.
+    const age = Date.now() - MOCK_LOAD_STARTED;
+    return json({
+      gpu_busy_percent: 64,
+      // Finishes rather than running forever: the line has to be watched APPEARING and
+      // GOING AWAY, and a fixture that pins it up permanently would leave the disappearance
+      // — the half that strands a stale bar on screen — untestable, while occupying the
+      // status line for anyone doing unrelated UI work in mock mode.
+      loading:
+        age > MOCK_LOAD_RUNS_FOR_MS
+          ? null
+          : {
+              model: "gpt-oss-120b",
+              at_ms: MOCK_LOAD_STARTED,
+              percent: Math.min(1, age / MOCK_LOAD_RUNS_FOR_MS),
+              kind: "model_load",
+            },
+    });
   }
 
   // The graph's recorded past, so mock mode shows a filled plot.

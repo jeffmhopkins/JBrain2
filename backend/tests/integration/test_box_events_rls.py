@@ -332,12 +332,43 @@ async def test_progress_is_clamped_to_the_range_a_bar_can_render(
         assert over is not None
         assert over["progress"] == pytest.approx(1.0)
 
-        # And the other end: a sample taken while the pool is momentarily below the
-        # baseline (an eviction still settling) is a floor, not a negative bar.
+    # And the other end, on its own span: a sample taken while the pool is momentarily
+    # below the baseline (an eviction still settling) is a floor, not a negative bar. It
+    # needs a fresh row because the clamp below makes a fraction unable to go DOWN.
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
         await box_events.progress(-0.2)
         under = await box_events.in_flight(wired, owner)
         assert under is not None
         assert under["progress"] == pytest.approx(0.0)
+
+
+async def test_a_fraction_never_goes_backwards_within_one_span(
+    wired: async_sessionmaker,
+) -> None:
+    """MEASURED on the box 2026-08-20: one load span published 0.841, then 0.434 nine
+    seconds later.
+
+    A load span carries TWO prefills — the load's own priming warm-up, and `warm_keeper`
+    priming after it — and llama-server's per-task token counter restarts for the second, so
+    the second prefill's fraction reads far below where the first one ended. The clamp lives
+    in the UPDATE rather than in a writer because the two publishers are in different frames
+    and either half of the box can narrate a load; the row is the one place they meet.
+
+    A bar that walks backwards is wrong whatever caused it — it reads as work being undone."""
+    owner = await _owner(wired)
+
+    async with box_events.span(box_events.MODEL_LOAD, "gpt-oss-120b"):
+        await box_events.progress(0.84)
+        await box_events.progress(0.43)  # the second prefill, starting over
+        held = await box_events.in_flight(wired, owner)
+        assert held is not None
+        assert held["progress"] == pytest.approx(0.84)
+
+        # It still ADVANCES — this is a floor, not a freeze.
+        await box_events.progress(0.9)
+        moved = await box_events.in_flight(wired, owner)
+        assert moved is not None
+        assert moved["progress"] == pytest.approx(0.9)
 
 
 async def test_a_settled_load_reports_no_progress(wired: async_sessionmaker) -> None:

@@ -355,6 +355,119 @@ def _probe_request(monkeypatch: pytest.MonkeyPatch, row: dict[str, object] | Non
     return SimpleNamespace(app=SimpleNamespace(state=state)), reads, state
 
 
+async def test_a_read_that_times_out_holds_the_last_answer_instead_of_denying_the_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout is ignorance, not a fact, and this reading is the one where the difference
+    bites hardest: what makes the read slow is contention, the only time there is anything to
+    report is during a load, and a load IS the contention. Stamped as a real answer, the
+    instrument would go quiet exactly when it has something to say — the bar vanishing
+    mid-load on a box that is visibly loading."""
+    from jbrain.api import ops
+
+    row = {
+        "at_ms": 1_760_000_000_000,
+        "subject": "gpt-oss-120b",
+        "progress": 0.4,
+        "kind": "model_load",
+    }
+    stall = False
+
+    async def flaky(maker: object, ctx: object, **kw: object) -> dict[str, object] | None:
+        if stall:
+            await asyncio.sleep(3600)  # never lands inside the budget
+        return row
+
+    monkeypatch.setattr(ops.box_events, "in_flight", flaky)
+    monkeypatch.setattr(ops, "_LOAD_PROBE_BUDGET_S", 0.01)
+    monkeypatch.setattr(ops, "_LOAD_PROBE_TTL_S", 0.0)  # every call re-reads
+    # `Any` for the same reason `_probe_request` above returns it: the probe reads two
+    # attributes off the request, and a real one cannot be built without an ASGI scope.
+    request: Any = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=object()))
+    )
+    probe = ops._LoadProbe()
+
+    good = await probe.read(request)
+    assert good is not None and good["model"] == "gpt-oss-120b"
+
+    stall = True
+    held = await probe.read(request)
+    assert held is not None, "a timed-out read must not report that nothing is loading"
+    assert held["model"] == "gpt-oss-120b"
+
+
+async def test_a_held_answer_is_given_up_once_it_is_too_old(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hold is bounded, because a held answer is a claim about the present made from the
+    past — a load that ended during the stall would otherwise keep its bar up forever. Past
+    the limit the honest report is silence."""
+    from jbrain.api import ops
+
+    row = {
+        "at_ms": 1_760_000_000_000,
+        "subject": "gpt-oss-120b",
+        "progress": 0.4,
+        "kind": "model_load",
+    }
+    stall = False
+
+    async def flaky(maker: object, ctx: object, **kw: object) -> dict[str, object] | None:
+        if stall:
+            await asyncio.sleep(3600)
+        return row
+
+    monkeypatch.setattr(ops.box_events, "in_flight", flaky)
+    monkeypatch.setattr(ops, "_LOAD_PROBE_BUDGET_S", 0.01)
+    monkeypatch.setattr(ops, "_LOAD_PROBE_TTL_S", 0.0)
+    monkeypatch.setattr(ops, "_LOAD_PROBE_HOLD_S", 0.05)
+    # `Any` for the same reason `_probe_request` above returns it: the probe reads two
+    # attributes off the request, and a real one cannot be built without an ASGI scope.
+    request: Any = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=object()))
+    )
+    probe = ops._LoadProbe()
+
+    assert await probe.read(request) is not None
+    stall = True
+    assert await probe.read(request) is not None  # inside the hold
+    await asyncio.sleep(0.08)
+    assert await probe.read(request) is None  # past it — we stop claiming
+
+
+async def test_a_successful_empty_read_still_clears_the_bar_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hold covers reads that did not LAND. A read that landed and found nothing is an
+    answer, and a finished load must leave the screen immediately rather than lingering for
+    the hold — otherwise every load would end with a stuck bar."""
+    from jbrain.api import ops
+
+    row: dict[str, object] | None = {
+        "at_ms": 1_760_000_000_000,
+        "subject": "gpt-oss-120b",
+        "progress": 0.4,
+        "kind": "model_load",
+    }
+
+    async def reads_row(maker: object, ctx: object, **kw: object) -> dict[str, object] | None:
+        return row
+
+    monkeypatch.setattr(ops.box_events, "in_flight", reads_row)
+    monkeypatch.setattr(ops, "_LOAD_PROBE_TTL_S", 0.0)
+    # `Any` for the same reason `_probe_request` above returns it: the probe reads two
+    # attributes off the request, and a real one cannot be built without an ASGI scope.
+    request: Any = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=object()))
+    )
+    probe = ops._LoadProbe()
+
+    assert await probe.read(request) is not None
+    row = None
+    assert await probe.read(request) is None
+
+
 async def test_the_load_probe_answers_repeat_readers_from_one_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
