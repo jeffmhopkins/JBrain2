@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-08-20
+> **Status:** Living · **Last verified:** 2026-08-21
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -194,9 +194,19 @@ being recreated by an update), and the keeper restores it before priming. Measur
 skipped, not shortened. The prime still runs in both paths ON PURPOSE: a restore that silently
 did nothing degrades to a slow prime, never a wrong answer.
 
-> **The state file is keyed per model, per prompt** — `jerv-<model>-<fingerprint>.bin`, where
-> the fingerprint digests the persona, the tool JSON, llama.cpp's `build_info`, the chat
-> template, and the served `-c`/`-np`. It is **not** keyed by date, with one exception: a
+> **The state file is keyed per model, per prompt, per launch line** —
+> `jerv-<model>-<fingerprint>.bin`, where the fingerprint digests the persona, the tool JSON,
+> llama.cpp's `build_info`, the chat template, the served `-c`/`-np`, and the llama-server flags
+> the model runs with (the catalog's `extra_server_args` plus the operator's saved extra args,
+> hashed raw and unresolved). The flags are in there because `-c`/`-np` count the KV cells but
+> say nothing about their LAYOUT: when `-ctk/-ctv q8_0` landed on the Qwen3.8 27B family
+> (2026-08-21) no other input moved, so every existing file kept a live-looking name and
+> llama-server rejected the restore with `400 mismatched key type (8 != 1, layer 0)` — a cold
+> ~100 s prefill on the one model the owner waits on. That 400 is llama.cpp's own check and the
+> only one it makes beyond layer count, KV row size and `n_stream`; the state file records no
+> model identity, no `n_ctx` and no `n_swa`, so the NAME is what has to carry validity.
+>
+> It is **not** keyed by date, with one exception: a
 > template that actually renders a date (harmony puts `Current date:` in gpt-oss's system
 > header) keeps the UTC day in the digest, because for that model the prefix really does change
 > at the container's midnight. Qwen3.8's template contains no date construct — checked against

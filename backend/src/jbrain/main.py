@@ -1172,6 +1172,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # matter what the setting said — so turning auto-reload off stopped restores while
             # a 68 GiB model kept coming straight back, which is not what the switch claims.
             auto_restore_loader=lambda: settings_store.llm_local_auto_restore(SYSTEM_CTX),
+            # The saved per-model llama-server flags, so the primed state file's name moves when
+            # the operator changes one. Without it, flipping `-ctk q8_0` remotely leaves every
+            # existing file under a name the keeper still reads, and llama-server rejects the
+            # restore — a cold prefill on the one model the owner waits on.
+            extra_args_loader=lambda: settings_store.llm_local_extra_args(SYSTEM_CTX),
         )
         warm_keeper_task = asyncio.create_task(app.state.warm_keeper.run())
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to

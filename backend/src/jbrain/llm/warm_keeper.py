@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 
 import structlog
 
@@ -44,6 +44,7 @@ from jbrain.agent.priming import (
     jerv_slot_filename,
 )
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.llm import local_catalog
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.openai_compat import openai_tools
 from jbrain.llm.router import LlmRouter
@@ -91,6 +92,7 @@ class WarmKeeper:
         router: LlmRouter,
         hold_loader: Callable[[], Awaitable[Collection[str]]],
         auto_restore_loader: Callable[[], Awaitable[bool]] | None = None,
+        extra_args_loader: Callable[[], Awaitable[Mapping[str, Sequence[str]]]] | None = None,
         interval_ready: float = 60.0,
         interval_wait: float = 5.0,
     ):
@@ -110,6 +112,12 @@ class WarmKeeper:
         # told something untrue by the UI. It gates LOADING only: a model already resident is
         # still kept primed, because holding a warm prefix costs nothing and is not a load.
         self._auto_restore_loader = auto_restore_loader
+        # The operator's saved per-model llama-server flags — the same mapping
+        # `llama_swap_config` appends to the catalog args when it stamps the config. Read here
+        # ONLY to fingerprint the state file: a flag the operator flips remotely (`-ctk q8_0` is
+        # the one that prompted this) changes the bytes a restore would have to match, and
+        # nothing else in the fingerprint's inputs moves when it does.
+        self._extra_args_loader = extra_args_loader
         # What we last successfully primed: (served_model, hidden-tool-set). None until primed
         # (or after the model is found evicted). Re-prime when this no longer matches the desired.
         self._primed: tuple[str, frozenset[str]] | None = None
@@ -246,18 +254,45 @@ class WarmKeeper:
             await self._try_save(served, system, tools)
         return True
 
+    async def _server_args(self, served_model: str) -> tuple[str, ...] | None:
+        """The llama-server flags this model is launched with — catalog `extra_server_args`
+        first, then the operator's saved extra args, the same order `llama_swap_config`
+        concatenates them in. None when the operator's half cannot be read.
+
+        None rather than "the catalog half alone", because a partial answer is the one outcome
+        that does real damage: it yields a name that differs from the one the working path uses,
+        so the restore misses AND the save then writes the primed state under the wrong name —
+        a second ~2 GB file on a volume nothing prunes, and a cold prefill again next tick. A
+        missing loader is different and safe: it is absent for the whole process, so the name it
+        produces is at least stable."""
+        model = local_catalog.get_by_served(served_model)
+        catalog_args = tuple(model.extra_server_args) if model else ()
+        if self._extra_args_loader is None:
+            return catalog_args
+        try:
+            saved = await self._extra_args_loader()
+        except Exception:  # noqa: BLE001 — a store hiccup must not break the reconcile
+            log.info("warm_keeper.extra_args_unreadable", model=served_model, exc_info=True)
+            return None
+        # Overrides key off the CATALOG id, not the served name — see llm_local_extra_args.
+        return catalog_args + tuple(str(a) for a in (saved.get(model.id, ()) if model else ()))
+
     async def _slot_target(
         self, served_model: str, system: str, tools: list[LlmTool]
     ) -> tuple[str, int] | None:
-        """The state file this exact prefix, build and day would use, AND the slot it belongs in
-        — or None when the gateway cannot tell us what it is running. Best-effort: no props, no
-        fingerprint, no restore (and so a normal cold prime), which is the correct way to fail.
+        """The state file this exact prefix, build, flags and day would use, AND the slot it
+        belongs in — or None when we cannot tell what the model is running. Best-effort: no
+        answer, no fingerprint, no restore (and so a normal cold prime), the correct way to fail.
 
-        Both come from the same `props` call because they must agree: the slot count is already
-        part of the fingerprint, so a file saved under one `-np` is not restored under another."""
+        The slot count comes from the same `props` call as the fingerprint's copy of it because
+        the two must agree: it is already part of the fingerprint, so a file saved under one
+        `-np` is not restored under another."""
         try:
             props = await self._gateway.props(served_model)
         except Exception:  # noqa: BLE001 — a props hiccup must not break the reconcile
+            return None
+        server_args = await self._server_args(served_model)
+        if server_args is None:
             return None
         gen = props.get("default_generation_settings")
         fingerprint = jerv_prime_fingerprint(
@@ -267,6 +302,7 @@ class WarmKeeper:
             chat_template=str(props.get("chat_template", "")),
             n_ctx=(gen or {}).get("n_ctx") if isinstance(gen, dict) else None,
             n_slots=props.get("total_slots"),
+            server_args=server_args,
             today_utc=dt.datetime.now(dt.UTC).strftime("%Y-%m-%d"),
         )
         return jerv_slot_filename(served_model, fingerprint), _interactive_slot(
@@ -282,7 +318,14 @@ class WarmKeeper:
         name, slot = target
         try:
             result = await self._gateway.slot_action(served_model, slot, "restore", filename=name)
-        except Exception:  # noqa: BLE001 — a miss is the common case on a fresh box, not an error
+        except Exception as exc:  # noqa: BLE001 — a miss is the common case, not an error
+            # Carry the reason. A missing file on a fresh box and a `400 mismatched key type`
+            # from a state file the serving flags have outgrown are the same silence here, and
+            # they call for opposite reactions: the first is the system working, the second says
+            # the fingerprint failed to rotate and every restore from now on pays a cold prefill.
+            log.info(
+                "warm_keeper.slot_restore_missed", model=served_model, slot=slot, error=str(exc)
+            )
             return False
         log.info(
             "warm_keeper.slot_restored",
