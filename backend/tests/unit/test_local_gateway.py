@@ -764,3 +764,30 @@ async def test_a_fresh_clients_first_poll_is_marked_as_such(
     gw._drop_cache_for_unannounced({"gpt-oss-120b"})  # the very first poll
     hits = [e for e in seen if e["event"] == "local_gateway.unannounced_load"]
     assert hits and hits[0]["first_poll"] is True
+
+
+async def test_unload_waits_longer_than_the_default_client_timeout() -> None:
+    """llama-swap's unload BLOCKS until the process has stopped, and grants it
+    `DEFAULT_UNLOAD_TIMEOUT = 10` s of graceful stop first. The client default is 3 s, so
+    unloading a 69 GB model raced its own success: every other slow call on this client widens
+    (`max(self._timeout, 180.0)` for the slot ops, `120.0` for the load probe) and this one was
+    missed.
+
+    A false unload failure is expensive in four places, all while the unload succeeds
+    underneath: a `MODEL_UNLOAD status="failed"` row on the owner's vitals surface; a
+    `residency` plan that still counts the victim as resident; `image_gen.render` abandoning
+    the rest of its unload loop before a ComfyUI render; and `cli.py`'s pre-update unload
+    reporting failure inside `set -e`. It also hands control back while the process is still
+    `stopping` — a state `/running` reports as resident, so every caller then reasons from a
+    roster that is wrong."""
+    seen: list[float | None] = []
+
+    class _Recorder(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            seen.append(request.extensions.get("timeout", {}).get("connect"))
+            return httpx.Response(200, json={})
+
+    gw = LocalGatewayClient("http://gw:8080/v1", transport=_Recorder(), timeout=3.0)
+    await gw.unload("gpt-oss-120b")
+    assert seen and seen[0] is not None
+    assert seen[0] >= 30.0, f"unload still races llama-swap's 10 s graceful stop: {seen[0]}s"

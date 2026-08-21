@@ -110,28 +110,48 @@ Neither was decisive, so the source was fetched at the pinned commit
 
 So `state` is on the wire and `_parse_running` discards it. The premise holds.
 
-**And it is not a binary.** `internal/process/process.go:14-20` defines FIVE states:
+**Three states reach the wire, not five.** `process.go:14-20` defines five constants, but
+`internal/router/base.go:366-375` filters TWO of them:
 
-    stopped · starting · ready · stopping · shutdown
+    if st == process.StateStopped || st == process.StateShutdown { continue }
 
-`handleRunning` lists everything not stopped, so `/running` can carry `stopping` and `shutdown`
-too. Nobody in either review considered `stopping`, and it matters here: **a model mid-unload
-still reports as running**, which is the exact window in which today's unload-then-reload race
-happened. A design that only separates "starting" from "ready" gets that case wrong in the same
-way the current code does.
+so only **`starting`, `ready`, `stopping`** can ever appear. *A v2 revision of this plan claimed
+five, having fetched `api.go` and `process.go` and inferred the rest — the fourth instance in one
+day of reading part of a source and guessing the remainder. It would have encoded a `shutdown`
+entry, which production cannot emit, into this wave's own acceptance test: precisely the
+fake-diverges-from-production failure the wave's second hazard warns about.*
+
+`stopping` still matters — a model mid-unload reports as resident — but see W-1: the reason that
+window is wide at all was a client bug, not a design gap, and it is now fixed.
 
 There are **23 call sites across 10 files**. v1 listed five filenames, one of which
 (`api/debug.py`) has **zero**. Each site needs one of **four** answers:
 
-| answer | means | example sites |
-|---|---|---|
-| `running()` | anything not stopped — accounting | `_drop_cache_for_unannounced` |
-| `ready()` | `ready` only — reachability | `_require_resident`, `external_llm.py:218`, `preconditions.py:68` |
-| **arriving** | `starting` — bill the *remaining* footprint | `local_gateway.py:762`, `residency.py:351` |
-| **leaving** | `stopping`/`shutdown` — still consuming, do not reach, do not evict again | the unload path, `image_gen/render.py:205` |
+**v2's four-row table is withdrawn.** Cold review found three of its four rows wrong or
+unbuildable, and the mapping needs re-deriving from scratch:
 
-The fourth row is new to v2 and comes from the source rather than from either review. It is why
-this wave is a state-machine mapping and not a boolean rename.
+- *"bill the remaining footprint"* — **not computable.** `read_memory_gb` is whole-host;
+  `_footprint` is catalog; `gpu_guard.measure_footprint` needs a *completed* load, measures
+  device rather than RAM, and its own docstring says *"Logged rather than stored for now"*.
+  There is no per-model attribution on this box, and `host_metrics.read_page_cache_gb`'s
+  docstring explains why one should not be invented: *"a number split by guesswork would
+  recreate the problem this is fixing."*
+- applying that row at `local_gateway.py:762` **reintroduces defect (a)** — it anchors
+  `guarded_load`'s ceiling to a mid-load baseline, and shrinking `projected` *tightens* the
+  ceiling while the baseline is already inflated. Both terms move the wrong way, into a guard
+  `MEMORY_ADMISSION_PLAN.md:208-222` records as already false-aborting a 4B model on a 0.9%
+  overshoot — which this plan declines to fix.
+- *"leaving — do not evict again"* is **backwards at its own example.** `image_gen/render.py:205`
+  unloads everything to free the pool for ComfyUI; a `starting` model is the largest incoming
+  allocation and skipping it is the worst outcome. Same at `cli.py:64` and `api/jcode.py:162`.
+- assigning `_require_resident` → `ready()` **blinds the load bar**: `/slots` during a load is
+  where the progress fraction comes from, and this branch exists to provide that indicator.
+- at least three answers are missing, including "a `starting` model must still be unloaded so it
+  reloads at a changed `-c`" (`llm_settings.py:831,899`) — a correctness question, not a memory
+  one.
+
+And `api/jcode.py:122-127` already documents this wave's central insight and works around it
+with `_warming_models`. Any re-derivation starts there.
 
 The third category is the wave's real work. `local_gateway.py:762` is the branch that **skips
 `refuse_if_no_device_room` and `guarded_load` entirely** — a plan about admission integrity

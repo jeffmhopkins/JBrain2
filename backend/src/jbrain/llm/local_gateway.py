@@ -295,10 +295,31 @@ class LocalGatewayClient:
         the one chokepoint every path to freeing a model passes through, so instrumenting
         it leaves nothing to forget. WHY it is being unloaded rides in on the caller's
         `box_events.because(...)` — "to make room for gpt-oss-120b", "an image render
-        needs the box" — which is the difference between a log and an explanation."""
+        needs the box" — which is the difference between a log and an explanation.
+
+        The timeout is WIDENED, like every other slow call on this client. llama-swap's
+        `/api/models/unload/{model}` BLOCKS until the process has actually stopped
+        (`internal/router/router.go`: "It blocks until each targeted process has stopped"),
+        and it grants each one `DEFAULT_UNLOAD_TIMEOUT = 10` seconds of graceful stop before
+        escalating — a figure the generated config never overrides. Against that, the client
+        default of 3 s is not a timeout, it is a coin flip on a 69 GB model.
+
+        What that cost, all of it while the unload was SUCCEEDING underneath: a
+        `MODEL_UNLOAD status="failed"` row on the vitals surface the owner reads; a
+        `LocalGatewayError` that makes `residency`'s next plan still count the victim's
+        footprint as resident, which is an eviction-budget error from a direction the budget
+        cannot see; `image_gen.render` abandoning the REST of its unload loop on the first
+        slow model, so a ComfyUI render begins with models still holding the pool; and
+        `cli.py`'s pre-update unload reporting failure on a success inside `set -e`.
+
+        It also manufactures a `stopping` window: control returns to the caller while the
+        process is genuinely still stopping, which is a state `/running` reports as resident.
+        Every one of the six callers then reasons from a roster that says the model is still
+        there. Widened rather than made unbounded, because a genuinely wedged llama-swap must
+        still surface as an error rather than hanging a request."""
         try:
             async with httpx.AsyncClient(
-                timeout=self._timeout, transport=self._transport
+                timeout=max(self._timeout, 30.0), transport=self._transport
             ) as client:
                 resp = await client.post(f"{self._root}/api/models/unload/{served_model}")
                 resp.raise_for_status()
