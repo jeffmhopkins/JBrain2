@@ -166,7 +166,10 @@ def jerv_prime_fingerprint(
     """
     payload = json.dumps(
         {
-            "v": 3,  # bump when the SET of inputs changes, else old names look valid to new code
+            # Tracks the SET of inputs. Redundant when a key is ADDED (the payload already
+            # differs), load-bearing when one is removed or its meaning changes — without it an
+            # old name would look valid to new code and restore state that no longer matches.
+            "v": 3,
             "system": system,
             "tools": tools,
             "build": build_info,

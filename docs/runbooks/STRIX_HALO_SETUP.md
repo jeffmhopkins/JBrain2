@@ -324,11 +324,10 @@ did nothing degrades to a slow prime, never a wrong answer.
 > queues behind a task that may already have been dropped. Measure cold behaviour from the gateway
 > log and `/metrics` deltas, never from the debug client's own wall time.
 
-The cache is keyed by FILENAME — a digest of the system prompt, the serialized tool schemas,
-llama.cpp's `build_info`, the chat template, `n_ctx`/`n_slots`, and the UTC date. Anything that
-changes the bytes changes the name, the restore simply misses, and the keeper falls through to a
-normal prefill. The date is in there because the gpt-oss template renders `Current date:` into
-the system header, so a cache goes stale at the CONTAINER's UTC midnight, not the owner's.
+The cache is keyed by FILENAME — the digest described above (prompt, tool schemas,
+`build_info`, chat template, `n_ctx`/`n_slots`, the launch flags, and the UTC date only for a
+template that renders one). Anything that changes the bytes changes the name, the restore simply
+misses, and the keeper falls through to a normal prefill.
 
 It also listens to the residency coordinator: an eviction, or the bare
 reload the end-of-turn restore does, reports the dropped prefix so the keeper re-primes on its

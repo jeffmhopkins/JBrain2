@@ -118,6 +118,13 @@ class WarmKeeper:
         # the one that prompted this) changes the bytes a restore would have to match, and
         # nothing else in the fingerprint's inputs moves when it does.
         self._extra_args_loader = extra_args_loader
+        # Last override map that actually read. A transient store failure then reuses it rather
+        # than skipping the disk cache, because skipping is worse than it looks: `reconcile_once`
+        # records the prime as done BEFORE it saves, so the next tick short-circuits and the save
+        # is never retried — one DB hiccup at boot would cost a cold prefill on every restart
+        # for the life of the process. Stale-but-stable is the safe direction: it still names one
+        # launch line, and the prime that follows a restore is what proves the bytes were useful.
+        self._last_extra_args: Mapping[str, Sequence[str]] | None = None
         # What we last successfully primed: (served_model, hidden-tool-set). None until primed
         # (or after the model is found evicted). Re-prime when this no longer matches the desired.
         self._primed: tuple[str, frozenset[str]] | None = None
@@ -225,7 +232,14 @@ class WarmKeeper:
                     await self._gateway.load(served)
             except Exception as exc:  # noqa: BLE001 — no room / gateway down: the prime retries
                 log.info("warm_keeper.preload_failed", model=served, error=str(exc))
-        restored = await self._try_restore(served, system, tools)
+        # ONE slot target for the whole reconcile. Deriving it twice put the two derivations
+        # either side of a 70-110 s prime, and the launch line can move in between: a settings
+        # PUT writes the override store BEFORE its best-effort unload, so a flag flipped from
+        # the PWA mid-prime would have the save file the RUNNING server's KV under the NEXT
+        # launch line's name. For `-ctk` llama.cpp catches that on the way back in; for
+        # `--swa-full` it does not, and the wasted restore looks like a hit.
+        target = await self._slot_target(served, system, tools)
+        restored = await self._try_restore(served, target)
         # Prime down the real turn path: resolves agent.turn's model+effort, admits through
         # residency (loading the model if needed), and prefills the exact persona+tools prefix a
         # real turn reuses. max_tokens=1 — we want the prefill in cache, not the output.
@@ -251,7 +265,7 @@ class WarmKeeper:
         if not restored:
             # Only write when we actually paid for the prefill. Saving after a restore would
             # rewrite a byte-identical file every tick for nothing.
-            await self._try_save(served, system, tools)
+            await self._try_save(served, target)
         return True
 
     async def _server_args(self, served_model: str) -> tuple[str, ...] | None:
@@ -259,21 +273,36 @@ class WarmKeeper:
         first, then the operator's saved extra args, the same order `llama_swap_config`
         concatenates them in. None when the operator's half cannot be read.
 
-        None rather than "the catalog half alone", because a partial answer is the one outcome
-        that does real damage: it yields a name that differs from the one the working path uses,
-        so the restore misses AND the save then writes the primed state under the wrong name —
-        a second ~2 GB file on a volume nothing prunes, and a cold prefill again next tick. A
-        missing loader is different and safe: it is absent for the whole process, so the name it
-        produces is at least stable."""
+        None only when the operator's half has never been read at all. A PARTIAL launch line is
+        the one answer that does real damage: it names a launch line that does not exist, so the
+        restore misses AND the save writes ~2 GB under a name nothing will look for, on a volume
+        only the deploy prunes. Once a read has succeeded the memo covers a later hiccup.
+
+        `--swa-full` is derived, not stored in `extra_server_args`: `llama_swap_config` renders
+        it from the catalog's `kv_full_history`, and it is the flag with the WORST failure mode
+        on this box — llama.cpp does not validate `n_swa`, so a mismatched restore reports full
+        success and is then silently discarded (measured: 69,373 ms vs 194 ms). A digest blind
+        to it would call a wasted restore a hit."""
         model = local_catalog.get_by_served(served_model)
         catalog_args = tuple(model.extra_server_args) if model else ()
+        if model is not None and model.kv_full_history:
+            catalog_args += ("--swa-full",)
         if self._extra_args_loader is None:
             return catalog_args
         try:
-            saved = await self._extra_args_loader()
-        except Exception:  # noqa: BLE001 — a store hiccup must not break the reconcile
-            log.info("warm_keeper.extra_args_unreadable", model=served_model, exc_info=True)
-            return None
+            saved: Mapping[str, Sequence[str]] | None = await self._extra_args_loader()
+        except Exception as exc:  # noqa: BLE001 — a store hiccup must not break the reconcile
+            saved = self._last_extra_args
+            log.info(
+                "warm_keeper.extra_args_unreadable",
+                model=served_model,
+                error=str(exc),
+                reused_last=saved is not None,
+            )
+            if saved is None:
+                return None
+        else:
+            self._last_extra_args = saved
         # Overrides key off the CATALOG id, not the served name — see llm_local_extra_args.
         return catalog_args + tuple(str(a) for a in (saved.get(model.id, ()) if model else ()))
 
@@ -309,10 +338,9 @@ class WarmKeeper:
             props.get("total_slots")
         )
 
-    async def _try_restore(self, served_model: str, system: str, tools: list[LlmTool]) -> bool:
+    async def _try_restore(self, served_model: str, target: tuple[str, int] | None) -> bool:
         """Load this prefix's saved KV into the interactive slot. True only means the bytes
         loaded — the prime that follows is what establishes they were USEFUL."""
-        target = await self._slot_target(served_model, system, tools)
         if target is None:
             return False
         name, slot = target
@@ -323,6 +351,9 @@ class WarmKeeper:
             # from a state file the serving flags have outgrown are the same silence here, and
             # they call for opposite reactions: the first is the system working, the second says
             # the fingerprint failed to rotate and every restore from now on pays a cold prefill.
+            # `error=str(exc)`, not `exc_info=True`: this app's structlog chain is TimeStamper +
+            # JSONRenderer with no exception renderer, so `exc_info` reaches the log as a bare
+            # `true` and the reason — the whole point of this line — is dropped.
             log.info(
                 "warm_keeper.slot_restore_missed", model=served_model, slot=slot, error=str(exc)
             )
@@ -335,9 +366,8 @@ class WarmKeeper:
         )
         return True
 
-    async def _try_save(self, served_model: str, system: str, tools: list[LlmTool]) -> None:
+    async def _try_save(self, served_model: str, target: tuple[str, int] | None) -> None:
         """Persist the just-primed slot so the next cold start skips the prefill."""
-        target = await self._slot_target(served_model, system, tools)
         if target is None:
             return
         name, slot = target

@@ -7,7 +7,7 @@ or the model is evicted.
 
 import asyncio
 import contextlib
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import cast
 
 import pytest
@@ -47,6 +47,7 @@ class _FakeGateway:
         self.actions: list[tuple[str, str]] = []  # (action, filename)
         self.slots: list[int] = []  # slot index each action targeted
         self.events: list[str] = []  # load/restore/save/prime, in the order they happened
+        self.props_calls = 0  # how many times the slot target was derived
 
     async def running(self) -> set[str]:
         return set(self._running)
@@ -60,6 +61,7 @@ class _FakeGateway:
         self._running.add(served_model)
 
     async def props(self, served_model: str) -> dict:
+        self.props_calls += 1
         if served_model not in self._running:
             raise RuntimeError(f"{served_model} is not resident — refusing to read props")
         if not isinstance(self._props, dict):
@@ -148,7 +150,7 @@ def _keeper(
     liveness: object = None,
     hold: Collection[str] = (),
     auto_restore: bool | BaseException = True,
-    extra_args: dict[str, list[str]] | BaseException | None = None,
+    extra_args: dict[str, list[str]] | BaseException | Callable[[], object] | None = None,
 ) -> WarmKeeper:
     async def hold_loader() -> Collection[str]:
         return hold
@@ -161,6 +163,9 @@ def _keeper(
     async def extra_args_loader() -> dict[str, list[str]]:
         if isinstance(extra_args, BaseException):
             raise extra_args
+        if callable(extra_args):
+            # A per-call source, for the tests that need the SECOND read to behave differently.
+            return cast("dict[str, list[str]]", extra_args())
         return extra_args or {}
 
     return WarmKeeper(
@@ -589,22 +594,50 @@ async def test_a_failed_slot_save_is_swallowed_but_carries_its_reason(
 # and llama-server answered each restore with `400 mismatched key type (8 != 1, layer 0)`.
 
 
+# `qwen3-vl-30b` is served as `qwen3-vl-30b-a3b`: one of only two catalog entries whose id and
+# served name DIFFER. The override store is keyed by catalog id, so every assertion about the
+# override reaching the digest has to run on a model where the two cannot be confused — on
+# `gpt-oss-120b` (id == served name) a lookup by the wrong key passes the test anyway.
+_VL_ID = "qwen3-vl-30b"
+_VL_SERVED = "qwen3-vl-30b-a3b"
+
+
 async def test_an_operator_extra_arg_moves_the_state_files_name() -> None:
     """The remote escape hatch is exactly how `-ctk q8_0` gets flipped on this box — the owner
     has no terminal, so the settings PUT is the way it happens. If the name does not follow, the
     next restart restores f16 cells into a q8 server and pays the cold prefill instead."""
     gw = _FakeGateway()
-    assert await _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw).reconcile_once() is True
+    assert await _keeper(router=_FakeRouter(_VL_SERVED), gateway=gw).reconcile_once() is True
     f16_name = gw.actions[-1][1]
 
     gw2 = _FakeGateway()
     keeper = _keeper(
-        router=_FakeRouter("gpt-oss-120b"),
+        router=_FakeRouter(_VL_SERVED),
         gateway=gw2,
-        extra_args={"gpt-oss-120b": ["-ctk", "q8_0", "-ctv", "q8_0"]},
+        extra_args={_VL_ID: ["-ctk", "q8_0", "-ctv", "q8_0"]},
     )
     assert await keeper.reconcile_once() is True
     assert gw2.actions[-1][1] != f16_name
+
+
+async def test_an_override_keyed_by_the_served_name_is_not_the_operators_override() -> None:
+    """The lookup key is the subtle part, and it is invisible on the models this suite otherwise
+    uses, where id == served name. Keyed by the served name instead, the owner's `-ctk q8_0` on
+    the VL model would never enter the digest: the file would keep a live-looking name and every
+    restore would 400 — the exact defect this argument exists to prevent, unnoticed."""
+    gw = _FakeGateway()
+    plain = _keeper(router=_FakeRouter(_VL_SERVED), gateway=gw)
+    assert await plain.reconcile_once() is True
+    baseline = gw.actions[-1][1]
+
+    gw2 = _FakeGateway()
+    # Keyed by the SERVED name — not where `llm_local_extra_args` stores it, so it is not this
+    # model's override and must leave the name alone.
+    wrong_key = _keeper(
+        router=_FakeRouter(_VL_SERVED), gateway=gw2, extra_args={_VL_SERVED: ["-ctk", "q8_0"]}
+    )
+    assert await wrong_key.reconcile_once() is True
+    assert gw2.actions[-1][1] == baseline
 
 
 async def test_the_catalog_serving_flags_are_part_of_the_launch_line() -> None:
@@ -617,18 +650,82 @@ async def test_the_catalog_serving_flags_are_part_of_the_launch_line() -> None:
     assert "-ctk" in args and args[args.index("-ctk") + 1] == "q8_0"
 
 
-async def test_an_unreadable_override_store_skips_the_slot_cache_rather_than_guessing() -> None:
+async def test_an_override_store_that_has_never_been_read_skips_the_slot_cache() -> None:
     """A PARTIAL launch line is the one answer that does damage. It yields a name that differs
     from the working path's, so the restore misses AND the save then writes ~2 GB under the
-    wrong name — on a volume nothing prunes, to be missed again next tick. Skipping entirely
-    costs one cold prime and leaves nothing behind, which is how the props failure already
-    fails."""
+    wrong name — on a volume only the deploy prunes, to be missed again next boot. Skipping
+    entirely leaves nothing behind, which is how the props failure already fails.
+
+    It is not free, though, and the cost is bigger than one prime: `reconcile_once` records the
+    prime BEFORE it saves, so the next tick short-circuits and the save is never retried. Hence
+    the memo in the test below — this bare-skip path is only for a store that has never once
+    answered."""
     gw = _FakeGateway()
     r = _FakeRouter("gpt-oss-120b")
     keeper = _keeper(router=r, gateway=gw, extra_args=RuntimeError("settings read failed"))
     assert await keeper.reconcile_once() is True
     assert gw.actions == []  # neither restored nor saved
     assert len(r.converses) == 1  # but still primed, the normal cold path
+
+
+async def test_a_later_store_hiccup_reuses_the_last_good_overrides_and_still_saves() -> None:
+    """One transient DB read must not cost the disk cache for the life of the process. It would:
+    the keeper marks itself primed before saving, so a skipped save is never retried while the
+    model stays resident — and this box deliberately keeps it resident. Stale-but-stable names
+    one real launch line, and the prime after a restore is what proves the bytes were useful."""
+    calls = 0
+
+    def flaky() -> dict[str, list[str]]:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise RuntimeError("settings read failed")
+        return {_VL_ID: ["-ctk", "q8_0"]}
+
+    gw = _FakeGateway()
+    keeper = _keeper(router=_FakeRouter(_VL_SERVED), gateway=gw, extra_args=flaky)
+    assert await keeper.reconcile_once() is True
+    assert gw.actions and [a for a, _ in gw.actions] == ["restore", "save"]
+    good = await keeper._server_args(_VL_SERVED)  # the read that worked
+
+    # Every read from here on fails. The launch line must still resolve, still carry the
+    # operator's flag, and be IDENTICAL — a different answer is the ~2 GB mislabelled file
+    # this argument exists to prevent, and no answer costs the disk cache until a reboot.
+    assert calls > 1
+    stale = await keeper._server_args(_VL_SERVED)
+    assert stale == good and stale is not None and "-ctk" in stale
+
+    # A keeper whose FIRST read fails has nothing to reuse, so it skips rather than guessing.
+    fresh = _keeper(
+        router=_FakeRouter(_VL_SERVED),
+        gateway=_FakeGateway(),
+        extra_args=RuntimeError("settings read failed"),
+    )
+    assert await fresh._server_args(_VL_SERVED) is None
+
+
+async def test_the_slot_target_is_derived_once_per_reconcile() -> None:
+    """Restore and save used to derive it independently, with the 70-110 s prime in between. A
+    settings PUT writes the override store BEFORE its best-effort unload, so a flag flipped from
+    the PWA mid-prime made the save file the RUNNING server's KV under the NEXT launch line's
+    name. `-ctk` is caught on the way back in; `--swa-full` is not, and the wasted restore then
+    looks like a hit."""
+    gw = _FakeGateway()
+    assert await _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=gw).reconcile_once() is True
+    assert gw.actions and [a for a, _ in gw.actions] == ["restore", "save"]
+    assert gw.props_calls == 1, "the launch line was read twice, either side of the prime"
+
+
+async def test_swa_full_is_part_of_the_launch_line_even_though_no_arg_carries_it() -> None:
+    """`--swa-full` is rendered from the catalog's `kv_full_history`, not from
+    `extra_server_args`, so a digest that read only the arg tuples would miss it. It is the
+    flag with the worst failure mode on this box: llama.cpp does not validate `n_swa`, so a
+    mismatched restore reports full success and is then discarded — measured 69,373 ms against
+    194 ms. Blind to it, the keeper would count a wasted restore as a hit and skip the save."""
+    keeper = _keeper(router=_FakeRouter("gpt-oss-120b"), gateway=_FakeGateway())
+    assert "--swa-full" in (await keeper._server_args("gpt-oss-120b") or ())
+    # And absent where the catalog does not ask for it, or it would be noise in every name.
+    assert "--swa-full" not in (await keeper._server_args("qwen3.8-27b-q4") or ())
 
 
 async def test_a_missed_restore_says_why() -> None:
